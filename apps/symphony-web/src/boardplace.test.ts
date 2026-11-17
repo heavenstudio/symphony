@@ -851,3 +851,29 @@ describe("the board's place kept", () => {
     expect(frame()).toBe(0);
   });
 });
+
+it("holds the reading column in the waiting board without a horizontal scroller", () => {
+  const column = element({
+    attributes: { "data-status": "review" },
+    box: { left: 900, right: 1100 },
+  });
+  const row = element({
+    attributes: { "data-slug": "review/one" },
+    box: { top: 250, left: 900, right: 1100 },
+  });
+  const root = element({
+    box: { top: 100, bottom: 1000, left: 0, right: 1400 },
+    all: {
+      ".column[data-status]": [column],
+      '.waiting-columns .column[data-status="review"] [data-slug]': [row],
+    },
+  });
+  vi.stubGlobal("document", {
+    activeElement: null,
+    querySelector: (selector: string) => (selector === ".waiting-columns" ? root : null),
+  });
+  vi.stubGlobal("innerHeight", 800);
+  expect(readerRows()).toBe(
+    '.waiting-columns .column[data-status="review"] [data-slug="review/one"]',
+  );
+});

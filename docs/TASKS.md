@@ -1556,7 +1556,7 @@ its tests) keeps its column and shows the run as a chip. A run for a subtask (a
 slice, or an instruction its agent holds) moves the card of the task it is under. Runs come from the board's
 recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
 the project's own reader; until a machine reports either, the two stages are one
-narrow rail that says so once, and the board's Status filter offers neither of them
+narrow rail that says so once. When a machine reports, the rail opens its Build and Test lists
 ([Machine build and test work](MACHINE_WORK.md#recording-builds-and-tests)).
 
 **Review waiting on nobody is blocked.** A task that only waits on an approval,

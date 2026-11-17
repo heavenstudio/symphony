@@ -34,6 +34,7 @@ export function savedStage(value: string | null): string {
 }
 
 export function waitKind(task: Task): string {
+  if (task.status === "blocked" && !blocked(task)) return "nobody";
   const kind = task.waits_on?.kind ?? "nobody";
   return WAIT_KINDS.includes(kind) ? kind : "nobody";
 }

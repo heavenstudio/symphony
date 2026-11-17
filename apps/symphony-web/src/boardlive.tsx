@@ -686,7 +686,7 @@ export class LiveBoard {
     return d.tasks.filter(
       (task) =>
         status === "waiting" ||
-        (isTask(task) && waitingStage(d.work, task, d.connected) === status),
+        ((isTask(task) || d.query !== "") && waitingStage(d.work, task, d.connected) === status),
     ).length;
   }
 
@@ -743,6 +743,7 @@ export class LiveBoard {
       if (kept) this.keep(part, list, fresh);
       else if (long && fresh !== null) d.long.set(part, { etag: fresh.etag, list });
       d.fromDevice = d.fromDevice.filter((slug) => !list.tasks.some((task) => task.slug === slug));
+      holdPlace(readerRows());
       const hasNext = this.showColumn(status, more, list);
       this.replay(since);
       markTasksReady();

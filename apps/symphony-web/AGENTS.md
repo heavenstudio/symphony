@@ -589,9 +589,12 @@ What holds on every page, and each page's contract where its section above names
   copy's tag and `cache: "no-store"` (`getIf`, `src/request.ts`): a `304` is the
   copy, a `200` replaces it on the page and on the device. The queue keeps `/api/queue` (`queue`,
   `QUEUE` in `src/cache.ts`). The task board keeps its
-  default view only (no search, the last 24 hours, stages by the machine's activity): the counts
+  default waiting view only (no search or wait-kind filter, the last 24 hours, stages by the
+  machine's activity): the counts
   (`counts`), each column's first page (`column:STATUS`) and the machine's work (`work`), never a
-  search, another window or a Load more page; a column drawn from the device is checked at once,
+  search, wait-kind filter, another window or a Load more page. Its cache item ends in `waiting`,
+  so the former board's columns cannot return in this view; a column drawn from the device is
+  checked at once,
   not after its 250 ms. Its listings are read with `work=0`, which places tasks by the machine's
   Build and Test work as before and leaves that work out of the body, whose heartbeats would
   otherwise change every listing's tag; the work is read apart (`/api/machine-work`) and followed
@@ -732,15 +735,23 @@ What holds on every page, and each page's contract where its section above names
   edge nearest its trigger (`data-side`, `src/popup-position.ts`), stays drawn closed while its
   exit eases out (the overlay host lets it go at its `animationend`, `src/overlay.tsx`), and under
   reduced motion only fades (`apps/symphony-web-tests/tests/browser/polish.rs`).
-- **Task views.** The task board (`/tasks`, `src/board.tsx` over `src/boardlive.tsx`, its card
-  `src/taskcard.tsx`), the agents page ([below](#the-agents-page)) and a task's page
-  ([below](#a-tasks-page); the gates' and the timeline's contract,
-  [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)). The
-  board alone takes the window's whole width, where every other page keeps the frame's 1440 px
-  (`main` in `src/styles/board.css`): its pipeline's columns keep their 288 px, which
-  `src/cardheight.ts` repeats, and its scroller scrolls sideways only when the window cannot
-  hold them all. The board fetches counts first, then nearby column pages; finished work defaults to 24 hours, with
-  a week switch and older paging. A feed event that changes what a view lists (a task, a message
+- **Task views.** The task board (`/tasks`, `src/board.tsx` over `src/boardlive.tsx`, its cards
+  and wait lines in `src/boardwait.tsx`), the agents page ([below](#the-agents-page)) and a task's
+  page ([below](#a-tasks-page); [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)).
+  The board implements the owner's option B (`docs/analysis/board-design/b-stuck-in-place.html`):
+  blocked tasks stay first in their original stage, ordered by named wait kind then age, ordinary
+  work oldest first, parked last and finished newest first. An unnamed legacy block is ordinary
+  work. Six lifecycle stages fit a wide page, with a Backlog rail and a Build/Test rail; Backlog,
+  Build, Test and cancelled work open as lists. At 760 px and below one stage is mounted, Review
+  first, with the chosen tab saved per project (`board-waiting-stage`, `src/storage.ts`). The
+  complete wait-kind strip filters to one paged list across stages; there is no Blocked column,
+  sign-off lane, Status select or column pager. Search and the finished window remain.
+  `/api/task-board?view=waiting` supplies complete facets and per-column ordinary/blocked counts;
+  no count is inferred from loaded pages. Cards show title, slug/priority, what they wait on,
+  stage age and reason, with no role or document chips. The one orchestrator banner is amber
+  for stale holders and red when none is there, absent while one is live or no ready work waits.
+  Counts load first, then nearby column pages; finished work defaults to 24 hours with a week switch. A feed event
+  that changes what a view lists (a task, a message
   while searching, the counts) reads the counts again 750 ms on, then the columns, each its first
   page as long as the rows it shows (the listing's `rows`), so the pages Load more brought, and the
   reader's place deep in them, stay (`apps/symphony-web-tests/tests/browser/board_place.rs`); the machine's
@@ -796,11 +807,10 @@ What holds on every page, and each page's contract where its section above names
   What a first visit cannot know a ghost keeps from the last one, per project in the
   browser: the board's columns and counts, kept once the server has answered both its counts and
   the machine's work that places its build and test columns (`SHAPE`, `boardShape` and
-  `keepShape` in `src/board.tsx`; none kept is every column with a card) and
-  the rows of each column's first page as they stood in a window as wide, each one's pitch and
-  its rows of chips (phases, links, roles), a drawn card's or the place a row still waiting holds
-  (`CARDS`, `keptCards`, `drawnRows` there; a card's ghost draws a pill per row of chips and the
-  title lines its pitch has room for); the queue's rows
+  `keepShape` in `src/board.tsx`; none kept is every column with a card).
+  The board's cards reserve two title lines and their wait line in a fixed 110 px box plus an
+  8 px gap (`ROW`, `src/board.tsx`, `src/styles/boardwait.css`), so no height polling or chip-row
+  cache is needed; the queue's rows
   per group (`ROWS` in `src/queue.tsx`) and each
   group's height; a task's head, title, facts and brief at the height drawn in a window as wide
   (`drawnHeight`, `rememberDrawn` in `src/viewport.tsx`), and its gates' room
@@ -811,10 +821,8 @@ What holds on every page, and each page's contract where its section above names
   shorter than those seven lines draws only the bars its box shows whole (`GhostBrief`,
   `src/task-page.tsx`). The timeline's box takes the height `reserved` gives it
   (`src/timeline-slot.tsx`). What is kept is measured
-  as it draws, every 100 ms, and kept again when it changed (the board's `keepRows`, the task
-  page's `rememberDrawn`), until no region in it still waits within the sentinel's reach of
-  the screen (`waitsNear`, for a column of the board's own scroller) or
-  every row of a column has drawn (the board's `keepsWatching`), for
+  as it draws, every 100 ms, and kept again when it changed (the task page's `rememberDrawn`),
+  until no region in it still waits within the sentinel's reach of the screen (`waitsNear`), for
   `KEEP_MS` (30 s) at most, a bound on the work alone: on a loaded machine or a slow
   phone rows draw many seconds after their data. A
   region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
@@ -826,11 +834,9 @@ What holds on every page, and each page's contract where its section above names
   browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
   heading and controls at once, each
   column reserving a card's box per row of its first page (`PAGE` in `src/board.tsx`), at the
-  pitch kept for its place, else `ROW`, a typical card (a title of two lines, a row of links and
-  one of roles; its ghost draws no role chip in a column no agent has taken up, `unstaffed`),
-  and showing Load more only once its first
-  page is in; a row of that page still waiting to be drawn holds what its own card will take,
-  its ghost as tall (`rowCard`, `rowHeight` in `src/cardheight.ts`). A first read that fails
+  fixed pitch `ROW`, with the same title, slug and wait-line bars as its card; it shows Load more
+  only once the first page is in. A row not yet near the screen reserves that same box. A first
+  read that fails
   with nothing drawn yet (a board not made, say) is said in place of the board's ghost, which
   would wait for ever, in the read's words with a retry (`UnreadBoard`); the page reads
   again by itself too. A live update that adds or

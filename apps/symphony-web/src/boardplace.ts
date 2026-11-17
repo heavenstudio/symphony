@@ -37,8 +37,8 @@ export function readerColumn(
 }
 
 /** The status `node`'s column carries, if `node` is in one of the pipeline's columns. */
-function columnOf(node: Element | null | undefined): string | null {
-  return node?.closest?.(".board-scroll .column[data-status]")?.getAttribute("data-status") ?? null;
+function columnOf(node: Element | null | undefined, root = ".board-scroll"): string | null {
+  return node?.closest?.(`${root} .column[data-status]`)?.getAttribute("data-status") ?? null;
 }
 
 /** What of the board's scroller is read: its box and what is in it. */
@@ -53,7 +53,7 @@ function pointerCounts(): boolean {
 }
 
 /** The column the reader is in (`readerColumn`) of those the board's `scroller` shows. */
-function readerStatus(scroller: Surface): string | null {
+function readerStatus(scroller: Surface, root = ".board-scroll"): string | null {
   const box = scroller.getBoundingClientRect();
   const columns = [...scroller.querySelectorAll(".column[data-status]")]
     .map((column): Shown => {
@@ -62,8 +62,8 @@ function readerStatus(scroller: Surface): string | null {
     })
     .filter(([, left, right]) => right > box.left && left < box.right);
   return readerColumn(
-    columnOf(document.activeElement),
-    pointerCounts() ? columnOf(scroller.querySelector(".column[data-status]:hover")) : null,
+    columnOf(document.activeElement, root),
+    pointerCounts() ? columnOf(scroller.querySelector(".column[data-status]:hover"), root) : null,
     columns,
     (box.left + box.right) / 2,
   );
@@ -99,11 +99,13 @@ function quoted(value: string): string {
  */
 export function readerRows(): string {
   if (typeof document === "undefined") return ROWS;
-  const scroller = document.querySelector(".board-scroll");
+  const legacy = document.querySelector(".board-scroll");
+  const root = legacy === null ? ".waiting-columns" : ".board-scroll";
+  const scroller = legacy ?? document.querySelector(root);
   if (scroller === null) return ROWS;
-  const status = readerStatus(scroller);
+  const status = readerStatus(scroller, root);
   if (status === null) return ROWS;
-  const column = `.board-scroll .column[data-status=${quoted(status)}]`;
+  const column = `${root} .column[data-status=${quoted(status)}]`;
   const slug = firstOnScreen(scroller, `${column} ${ROWS}`, true)?.getAttribute("data-slug");
   return typeof slug === "string" ? `${column} [data-slug=${quoted(slug)}]` : ROWS;
 }

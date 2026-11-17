@@ -1,7 +1,7 @@
 import "./styles/boardwait.css";
-// The task board's view (`/tasks`): its filters, its columns (the owner's sign-off, the pipeline in
-// its own scroller, the columns off it), each column's rows mounted near the screen, its task
-// groups, and the ghost it draws before its first read, in the shape and with the cards it had.
+// The approved B task board: complete wait facets, original-stage columns on a desk and one saved
+// stage on a phone. Columns and cards mount near the screen, reserving each card's two-line title
+// and wait line; the first read's ghost keeps the last counts.
 // What it reads and when is boardlive.tsx's.
 
 import {
@@ -26,24 +26,21 @@ import {
   waitAge,
   waitingOrder,
   waitingStage,
+  waitKind,
 } from "./boardwait";
 import { Button } from "./button";
 import { href } from "./project";
 import { SelectField } from "./select";
 import { load, save } from "./storage";
 import { isTask } from "./task";
-import { sameCard, statusWords } from "./taskcard";
+import { statusWords } from "./taskcard";
 import { tick } from "./timing";
 import { failed } from "./trouble";
 import { NearViewport, windowWidth } from "./viewport";
 import type { MachineWork, Orchestrator, Task, WaitingBoard, WaitingColumn } from "./wire";
 import { freshnessWord } from "./work";
 
-/**
- * What a column waiting for its page reserves each of the page's rows, whose tasks it does not
- * know yet: a typical card, its slug, a title of two lines, a role chip and a link chip
- * (`rowHeight`), near the median of a live board's cards (142 px).
- */
+/** A card's fixed 110 px box and its 8 px gap, shared with boardwait.css. */
 export const ROW = 118;
 /** The rows of a column's page, as the server pages it, and the height of Load more under it. */
 export const PAGE = 30;
@@ -148,9 +145,14 @@ export function GhostBoard({ shape }: { shape: [string, number][] }) {
           <span className="ghost-field" style={{ width: "8.125rem" }} />
         </div>
       </div>
-      <div className="ghost-strip">
-        <span className="bone" style={width("80%")} />
-      </div>
+      <nav className="wait-strip" aria-hidden="true">
+        <span className="open-count">0 open</span>
+        {WAIT_KINDS.map((kind, index) => (
+          <span key={kind} className={`wait-chip k-${kind}`}>
+            {WAIT_LABELS[index]} <b>0</b>
+          </span>
+        ))}
+      </nav>
       {phone && (
         <div className="ghost-tabs">
           <span className="bone" style={width("95%")} />
@@ -227,8 +229,6 @@ export type OnLoad = (status: string, more: boolean, query: string, days: number
 
 export interface RowProps {
   task: Task;
-  work: MachineWork;
-  connected: boolean;
   now?: number;
 }
 
@@ -257,7 +257,7 @@ export const BoardRow = memo(function BoardRow({ task, now = Date.now() / 1000 }
 
 /** Whether two rows draw alike. */
 export function sameRow(a: RowProps, b: RowProps): boolean {
-  return a.now === b.now && sameCard(a, b);
+  return a.now === b.now && a.task === b.task;
 }
 
 export interface ColumnProps {
@@ -359,7 +359,7 @@ export const TaskColumn = memo(function TaskColumn({
         )}
         {/* A row waiting to be drawn holds what its own card will take (`rowHeight`). */}
         {rows.map((task) => (
-          <BoardRow key={task.slug} task={task} work={work} connected={connected} now={now} />
+          <BoardRow key={task.slug} task={task} now={now} />
         ))}
         {/* Only once the first page is in: while it is read, there is nothing more to load. */}
         {tasks.length > 0 && count > tasks.length && (
@@ -484,7 +484,14 @@ export function TaskBoard({
   const columns = useMemo(
     () =>
       byColumn(
-        tasks.filter((task) => isTask(task) || search !== "").sort(waitingOrder),
+        tasks
+          .filter(
+            (task) =>
+              (isTask(task) || search !== "") &&
+              (wait === "" ||
+                (waitKind(task) === wait && !["done", "cancelled"].includes(task.status))),
+          )
+          .sort(waitingOrder),
         (task) => (wait === "" ? waitingStage(work, task, connected) : "waiting"),
         kept.current,
       ),
