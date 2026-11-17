@@ -382,8 +382,22 @@ pub fn posted_cards<'a, 't>(
             !named
         });
     }
-    posted.sort_by_key(|card| cards.iter().position(|c| std::ptr::eq(*c, *card)));
-    posted
+    if posted.len() < 2 {
+        return posted;
+    }
+    drop(left);
+    let mut ordered = Vec::with_capacity(posted.len());
+    for &card in cards {
+        // The old stable sort used the first pointer-equal input position: repeated references
+        // stay together there, while equal-valued but distinct cards stay separate.
+        let before = posted.len();
+        posted.retain(|selected| !std::ptr::eq(*selected, card));
+        ordered.extend(std::iter::repeat_n(card, before - posted.len()));
+        if posted.is_empty() {
+            break;
+        }
+    }
+    ordered
 }
 
 /// The owner gate: held while a card the task posted waits on the owner; none while none does.

@@ -1396,3 +1396,115 @@ fn a_branch_holds_work_of_its_own_only_past_the_default_branch() {
         "outside a repository, nothing says it is the default branch's"
     );
 }
+
+#[test]
+fn posted_card_pointer_groups_and_lazy_texts_match_the_original_reader() {
+    fn reference<'a, 't>(
+        cards: &[&'a PendingItem],
+        mut texts: impl Iterator<Item = &'t str>,
+    ) -> Vec<&'a PendingItem> {
+        let mut left = cards.to_vec();
+        let mut posted = Vec::new();
+        while !left.is_empty() {
+            let Some(text) = texts.next() else { break };
+            left.retain(|card| {
+                let named = super::names(text, &card.slug);
+                if named {
+                    posted.push(*card);
+                }
+                !named
+            });
+        }
+        posted.sort_by_key(|card| cards.iter().position(|c| std::ptr::eq(*c, *card)));
+        posted
+    }
+    let a = card("docs/A.md", "x");
+    let b = card("docs/B.md", "y");
+    let equal_but_distinct = card("docs/A.md", "x");
+    let cases = [
+        vec![],
+        vec![&a],
+        vec![&a, &b, &a],
+        vec![&b, &a, &b, &a],
+        vec![&a, &equal_but_distinct, &b, &a, &equal_but_distinct],
+        vec![&equal_but_distinct, &a, &equal_but_distinct, &b, &a],
+    ];
+    for cards in cases {
+        for texts in [
+            vec![],
+            vec!["x"],
+            vec!["y"],
+            vec!["y", "x", "unused"],
+            vec!["x and y", "unused"],
+            vec!["xy or x-2", "none"],
+            vec!["x", "x", "y", "unused"],
+        ] {
+            let old_reads = std::cell::Cell::new(0);
+            let new_reads = std::cell::Cell::new(0);
+            let expected = reference(
+                &cards,
+                texts
+                    .iter()
+                    .copied()
+                    .inspect(|_| old_reads.set(old_reads.get() + 1)),
+            );
+            let actual = posted_cards(
+                &cards,
+                texts
+                    .iter()
+                    .copied()
+                    .inspect(|_| new_reads.set(new_reads.get() + 1)),
+            );
+            assert_eq!(actual.len(), expected.len(), "{texts:?}");
+            assert!(
+                actual
+                    .iter()
+                    .zip(&expected)
+                    .all(|(a, b)| std::ptr::eq(*a, *b)),
+                "pointer order differs for {texts:?}"
+            );
+            assert_eq!(
+                new_reads.get(),
+                old_reads.get(),
+                "text consumption for {texts:?}"
+            );
+        }
+    }
+    let records: Vec<_> = (0..256)
+        .map(|index| card("docs/A.md", &format!("item-{index}")))
+        .collect();
+    let mut refs: Vec<_> = records.iter().collect();
+    // Include nonadjacent pointer aliases; grouping must remain identical at larger sizes too.
+    refs.extend(records.iter().step_by(7));
+    let all = records
+        .iter()
+        .map(|card| card.slug.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let reverse: Vec<_> = records
+        .iter()
+        .rev()
+        .map(|card| card.slug.as_str())
+        .collect();
+    for texts in [vec![all.as_str()], reverse] {
+        let (expected, old_cpu) = test_time::cpu::spent(|| reference(&refs, texts.iter().copied()));
+        let (actual, new_cpu) =
+            test_time::cpu::spent(|| posted_cards(&refs, texts.iter().copied()));
+        assert_eq!(actual.len(), expected.len());
+        assert!(
+            actual
+                .iter()
+                .zip(&expected)
+                .all(|(a, b)| std::ptr::eq(*a, *b))
+        );
+        eprintln!(
+            "posted-card pointer groups: refs={}, texts={}, old_thread_cpu={old_cpu:?}, new_thread_cpu={new_cpu:?}; one extra output allocation after dropping left, <= refs*selected pointer comparisons",
+            refs.len(),
+            texts.len()
+        );
+    }
+    let aliases = posted_cards(&[&a, &b, &a], std::iter::once("x and y"));
+    assert!(std::ptr::eq(aliases[0], &a));
+    assert!(std::ptr::eq(aliases[1], &a));
+    assert!(std::ptr::eq(aliases[2], &b));
+}
