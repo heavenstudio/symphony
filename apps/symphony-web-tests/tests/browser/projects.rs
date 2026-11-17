@@ -397,6 +397,8 @@ const THEME: &str = "({primary: getComputedStyle(document.documentElement)\
 #[test]
 fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look() {
     let board = ScratchBoard::start();
+    // Initialize the scratch database before the server warms its board snapshot.
+    let actor = board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
     let server = OneServer::start(board.address());
     let mut looks = Vec::new();
     for (id, primary, layout) in THEMES {
@@ -440,9 +442,8 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     assert_eq!(shared(&looks[0]), shared(&looks[1]));
 
     // Each project's tasks board, the other entry page, is a first visit of its own too, in a
-    // browser of its own and in its own theme. The board is made first, holding a card for the
-    // page to draw, so the page draws its title too.
-    let actor = board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
+    // browser of its own and in its own theme. On a phone Review opens first; choose Ready to
+    // draw the seeded card's title, counting both stages' requests in this cold visit.
     board.call_in_database(
         DATABASE,
         "create",
@@ -450,8 +451,21 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     );
     for (id, primary, layout) in THEMES {
         let Some(mut browser) = chrome() else { return };
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
+        );
         let page = format!("/{id}/tasks");
         browser.open(&server.url(&page));
+        assert!(
+            browser.wait_for(
+                &ready(".waiting-columns .column[data-status=review]"),
+                SHOWN
+            ),
+            "{page} did not open Review: {}",
+            observed_page(&mut browser)
+        );
+        browser.eval("[...document.querySelectorAll('.stage-tabs button')].find(button => button.textContent.startsWith('Ready')).click()");
         assert!(
             browser.wait_for(
                 &format!(
@@ -493,7 +507,7 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     browser.open(&server.url("/alpha/tasks"));
     assert!(
         browser.wait_for(
-            "document.querySelector('main .page-head h1') !== null && document.querySelector('main > .kanban') !== null",
+            "document.querySelector('main .page-head h1') !== null && document.querySelector('main[data-ready=board] > .waiting-board > .kanban.waiting-columns') !== null",
             SHOWN
         ),
         "/alpha/tasks drew no board: {:?}",
@@ -644,8 +658,9 @@ fn links_stay(browser: &mut Chrome, page: &str, base: &str, drawn: &str, named: 
 #[test]
 fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
     let board = ScratchBoard::start();
-    let server = OneServer::start(board.address());
+    // Initialize the database before the server warms its board snapshot.
     let actor = board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
+    let server = OneServer::start(board.address());
     let by = &actor["handle"];
     for task in [
         json!({"slug":"links/first","title":"First","by":by}),
@@ -657,6 +672,12 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
         board.call_in_database(DATABASE, "create", task);
     }
     let Some(mut browser) = chrome() else { return };
+    // This case checks every stage's card links and the machine rail together. A phone mounts
+    // Review first, while the seeded parent is Ready and its rail opens as a separate list.
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
     for (page, drawn, named) in [
         (
             "/alpha/",
@@ -676,7 +697,6 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
                 "/alpha/agents",
                 // No machine reports alpha's builds: the Build and Test rail's link.
                 "/alpha/agents#machine-context",
-                "/alpha/docs/NOTES.md",
             ],
         ),
         (
@@ -747,6 +767,12 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
     assert!(strays.is_empty(), "a parent task's page: {strays:#?}");
     assert!(
         here.iter().any(|path| path == "/alpha/task/links/child"),
+        "{here:#?}"
+    );
+    // The approved board has no document chips. Its linked parent and child pages each keep
+    // the document link's prefix coverage instead of expecting that retired board markup.
+    assert!(
+        here.iter().any(|path| path == "/alpha/docs/NOTES.md"),
         "{here:#?}"
     );
 }
