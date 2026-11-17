@@ -85,7 +85,7 @@ fn opened_board(page: &mut Chrome, site: &Site) {
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
-            "['visual/ready', 'visual/in-progress', 'visual/review'].every(slug => document.querySelector(`[data-slug=\"${slug}\"] .task-wait`) !== null)",
+            "['visual/ready', 'visual/in-progress', 'visual/review'].every(slug => document.querySelector(`[data-slug=\"${slug}\"] .task-wait`) !== null) && !document.querySelector('main .column[aria-busy=true]')",
             SHOWN
         ),
         "the board did not draw its cards: {:?}",
@@ -132,54 +132,44 @@ fn the_boards_wait_lines_take_their_holders_health_from_its_session() {
         task["waits_on"] = json!({"kind":"working","who":handle,"why":"executor","since":1.0});
     }
     site.set_json("/api/task-board", &listing);
-    // A session event also asks for a listing refresh. Keep that reply at the same health,
-    // so a slow browser cannot have the fixture undo a delta it has just sent.
-    let mut update = |version, handle: &str, health: Option<&str>| {
-        for task in listing["tasks"].as_array_mut().unwrap() {
-            for role in task["roles"].as_array_mut().unwrap() {
-                if role["handle"] == handle {
-                    role["health"] = json!(health.unwrap_or("lost"));
-                }
-            }
-        }
-        site.set_json("/api/task-board", &listing);
-        push(&site, version, handle, health);
-    };
     let Some(mut page) = chrome() else { return };
     opened_board(&mut page, &site);
+    // Session events can request a listing refresh too. Keep it unanswered so only their
+    // deltas can update these reasons, even when a slow browser reaches the refresh's debounce.
+    site.hold_route("/api/task-board", true);
     wait_reasons(&mut page, "executor example", "executor someone-else");
     assert_eq!(
         page.eval("document.querySelectorAll('main .chip[class*=\"health-\"]').length"),
         json!(0)
     );
 
-    update(4183, "someone-else", Some("stale"));
+    push(&site, 4183, "someone-else", Some("stale"));
     wait_reasons(
         &mut page,
         "executor example",
         "executor someone-else (stale)",
     );
-    update(4184, "example", Some("stale"));
+    push(&site, 4184, "example", Some("stale"));
     wait_reasons(
         &mut page,
         "executor example (stale)",
         "executor someone-else (stale)",
     );
 
-    update(4185, "example", None);
+    push(&site, 4185, "example", None);
     wait_reasons(
         &mut page,
         "executor example",
         "executor someone-else (stale)",
     );
 
-    update(4186, "example", Some("stale"));
+    push(&site, 4186, "example", Some("stale"));
     wait_reasons(
         &mut page,
         "executor example (stale)",
         "executor someone-else (stale)",
     );
-    update(4187, "example", Some("live"));
+    push(&site, 4187, "example", Some("live"));
     wait_reasons(
         &mut page,
         "executor example",
