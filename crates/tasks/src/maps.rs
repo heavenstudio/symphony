@@ -1,13 +1,6 @@
-//! A map collected from its pairs through a `Vec` ([`Collect::collect_map`], [`of`]), so the sort
-//! it takes is compiled once for each key and value type, not once for each iterator.
-//!
-//! `BTreeMap`'s `collect` gathers its pairs in a `Vec` and sorts them stably by key, and the sort's
-//! comparison is a closure of that `collect`: it is compiled again, about 4 KB of machine code, for
-//! each type of iterator a map is collected from, and the board collects one map type from a dozen.
-//! Gathered in a `Vec` first, every map of one key and value type is the one `collect` of a `Vec`
-//! ([`of`]), which reuses that `Vec`'s allocation: the same pairs in the same order, a key's last
-//! value kept, as `collect` keeps it (docs/CHECKS.md, "Size budgets"). A map type collected once in
-//! the crate gains nothing by it, and is collected as it is.
+//! Ordered maps built by insertion, sharing the tree's insertion code instead of compiling a
+//! stable sort for every key/value type. Inserting the pairs from the back keeps the last pair
+//! for each equal key, including its key's representation ([`Collect::collect_map`], [`of`]).
 
 use std::collections::BTreeMap;
 
@@ -24,9 +17,13 @@ pub(crate) trait Collect<K, V>: Iterator<Item = (K, V)> + Sized {
 
 impl<K, V, I: Iterator<Item = (K, V)>> Collect<K, V> for I {}
 
-/// `pairs` as a map, a key's last value kept: the one `collect` of a map of `K` and `V`.
+/// `pairs` as a map, a key's last value kept.
 pub(crate) fn of<K: Ord, V>(pairs: Vec<(K, V)>) -> BTreeMap<K, V> {
-    pairs.into_iter().collect()
+    let mut map = BTreeMap::new();
+    for (key, value) in pairs.into_iter().rev() {
+        map.entry(key).or_insert(value);
+    }
+    map
 }
 
 #[cfg(test)]

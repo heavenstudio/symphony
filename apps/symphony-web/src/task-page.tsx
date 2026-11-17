@@ -23,6 +23,7 @@ import { SelectField } from "./select";
 import { GoToSession } from "./session";
 import { field, STALE, useStore } from "./shared";
 import { load, save } from "./storage";
+import { TaskDiffPanel } from "./task-diff";
 import { LiveTask, offerPart, type Thread } from "./task-live";
 import { readBrief } from "./task-read";
 import { statusWords, WorkPhases } from "./taskcard";
@@ -822,6 +823,9 @@ export function TaskDetail({
       ) : (
         pageFailed === "" && <GhostBrief height={heights.brief} />
       )}
+      <NearViewport key={`diff-${slug}`} id={`changes-${slug}`} height={160}>
+        <TaskDiffPanel scope={scope} slug={slug} />
+      </NearViewport>
       <h2>Thread</h2>
       {/* The thread and the composer under it wait under their ghost until the thread on the first
           screen is in, whatever the head and the brief do meanwhile. */}
