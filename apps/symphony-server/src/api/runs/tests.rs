@@ -16,16 +16,16 @@ use symphony_api::{FailedTest, RUN_SCHEMA};
 const TODAY: f64 = 1_794_700_800.0;
 const NOW: f64 = TODAY + 12.0 * 3_600.0;
 
-type DayLockHook = Box<dyn FnOnce(&File)>;
+type DayLockHook = Box<dyn FnOnce()>;
 thread_local! {
     static BEFORE_DAY_LOCK: std::cell::RefCell<Option<DayLockHook>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Hold a reader before the index's lock, on this test's thread alone.
-pub(super) fn before_day_lock(file: &File) {
+pub(super) fn before_day_lock() {
     let hook = BEFORE_DAY_LOCK.take();
     if let Some(hook) = hook {
-        hook(file);
+        hook();
     }
 }
 
@@ -651,9 +651,10 @@ fn a_reader_that_opened_before_an_append_takes_the_longer_day_kept_while_it_wait
             (opened.clone(), resume.clone(), length_seen.clone());
         let (index, runs, all) = (&index, &runs, &all);
         let first = scope.spawn(move || {
-            BEFORE_DAY_LOCK.set(Some(Box::new(move |file| {
+            let path = day_path(runs, TODAY);
+            BEFORE_DAY_LOCK.set(Some(Box::new(move || {
                 slow_seen.store(
-                    file.metadata().unwrap().len(),
+                    std::fs::metadata(path).unwrap().len(),
                     std::sync::atomic::Ordering::Relaxed,
                 );
                 slow_opened.wait();

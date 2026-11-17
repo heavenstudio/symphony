@@ -167,6 +167,8 @@ impl Day {
 
 impl Index {
     fn days(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Kept>> {
+        #[cfg(test)]
+        tests::before_day_lock();
         self.days.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -334,8 +336,6 @@ fn day_file(
         }
         Err(e) => return gone(format!("{name}: {e}")),
     };
-    #[cfg(test)]
-    tests::before_day_lock(&file);
     // Take the status under the lock too: another reader may have stored a longer day while
     // this reader waited. Its descriptor sees the append, so it takes that reader's fold.
     let mut days = index.days();

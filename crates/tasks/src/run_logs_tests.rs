@@ -414,7 +414,12 @@ fn a_file_replaced_before_its_reopen_is_never_read_through_a_link_or_waited_on()
             });
             // Release a blocking open on regression, so the test fails instead of hanging.
             if returned.is_err() && replacement == "fifo" {
-                drop(OpenOptions::new().write(true).open(&path));
+                drop(
+                    OpenOptions::new()
+                        .write(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(&path),
+                );
             }
             (reading.join().unwrap(), returned)
         });
