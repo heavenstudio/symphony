@@ -39,9 +39,9 @@ fn the_panel_collapse_chevron_is_centered_on_phone_and_desktop_and_keeps_its_act
                     };
                 })()"#
                 ),
-                json!({"button":[36,36],"icon":[16,16],"centered":true,
+                json!({"button":[48,36],"icon":[16,16],"centered":true,
                     "label":"Collapse panel","hidden":"true","target":"none"}),
-                "the chevron is centered in the same square target on both tabs at {width}, task={task}"
+                "the chevron is centered without narrowing the target on either tab at {width}, task={task}"
             );
         }
         page.eval("document.getElementById('quick-title').value='Kept task';document.getElementById('quick-title').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#quick-sheet .collapse').focus()");
