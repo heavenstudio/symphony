@@ -63,6 +63,12 @@ fn public_constructors_and_the_adapter_keep_their_shapes() {
     );
     let mut from = ResumeFrom::new(resource.clone(), "quiescence-fact".into());
     from.conversation = Some(ConversationId::new("conversation".into()));
+    let _ = Request::ReconcileResume {
+        resource: None,
+        from,
+        mode: ResumeMode::ReuseWithNewGeneration,
+    };
+    let _: fn(&Request) -> u32 = Request::since;
     let _ = Receipt::new(identity, resource.clone(), "evidence".into());
     let _ = Observation::new(resource.clone(), RuntimeState::Running);
     let _ = ExternalLink::new(resource, "view".into(), 1000);

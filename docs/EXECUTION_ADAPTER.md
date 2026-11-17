@@ -49,11 +49,12 @@ are required. A job's lifetime must never depend on an outstanding RPC or plugin
 | Request | Meaning |
 | --- | --- |
 | `Start` | Create or locate the execution resource for the immutable input. Acceptance does not prove task submission or completion. |
-| `Reconcile` | Resolve the original operation kind/key/input after timeout or takeover. Retain that original identity and use fresh authorization for reconciliation. |
+| `Reconcile` | Resolve a non-resume operation after timeout or takeover. Retain its original kind/key/input and use fresh authorization for reconciliation. |
+| `ReconcileResume` | Resolve a resume while carrying its persisted predecessor, continuation reference and mode. A found resource must satisfy the same ID/generation constraints as direct resume; a plain `Reconcile` for a resume is refused. |
 | `Observe` | Read one resource generation and optional cursor. Return runtime state, conversation and optional checkpoint/completion/artifact-manifest references. |
 | `Cancel` | Request cessation. A receipt confirms acceptance of the request, never quiescence. The coordinator bars promotion when it records cancellation. |
 | `Stop` | Request pause, termination or hard stop as separately advertised. It deletes neither artifacts nor history. |
-| `Resume` | Start a new attempt linked to a same-task predecessor with recorded quiescence evidence and an explicit checkpoint or conversation. New-resource and reuse-with-new-generation modes are separate capabilities. |
+| `Resume` | Start a new attempt linked to a same-task predecessor with recorded quiescence evidence and an explicit checkpoint or conversation. Every supplied conversation ID, checkpoint reference and checkpoint digest must be nonempty, even when another supplied reference is valid. New-resource and reuse-with-new-generation modes are separate capabilities. |
 | `ExternalLink` | Resolve a current-authorized view for the exact resource, with a positive lifetime of at most 30 seconds. Viewing grants no execution control. |
 
 Capabilities advertise operations, stop/resume modes, composite-key idempotency retention,
@@ -74,12 +75,16 @@ delivery stamp. Artifact-manifest availability grants no result eligibility.
 
 ## Process compatibility
 
-`execution::wire::VERSION` is 1.0, independently negotiated from the
+`execution::wire::VERSION` is 1.1, independently negotiated from the
 [UI plugin protocol](PLUGIN_PROTOCOL.md). `negotiate` chooses a common minor in the same major;
 an `Envelope` must carry that exact negotiated version, also pinned in `Profile`. It carries
-the trusted authorization, call and bounded limit. `Envelope::dispatch` is a data boundary for
+the trusted authorization, call and bounded limit. Minor 0 carries the original requests;
+`ReconcileResume` requires minor 1. The host checks `Request::since` before forwarding, and
+dispatch refuses unsupported minors without adapter I/O. No fallback may drop resume constraints.
+The coordinator persists the original predecessor/mode before resume I/O and reuses them for
+reconciliation. `Envelope::dispatch` is a data boundary for
 an authenticated host channel; it launches no process and installs no plugin forwarding seam.
-Every `Answer`, including absence and ambiguity, carries the original operation identity and
+Every `Answer`, including absence and ambiguity, carries the agreed version, original operation identity and
 epochs; `Envelope::accept` checks them and the outcome before returning it to the sender.
 Existing plugin declarations advertise no execution support.
 

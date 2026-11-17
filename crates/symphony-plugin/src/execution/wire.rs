@@ -16,8 +16,9 @@ use super::{
 };
 use crate::protocol::Version;
 
-/// Execution contract version, negotiated independently of `protocol::PROTOCOL`.
-pub const VERSION: Version = Version::new(1, 0);
+/// Execution contract version, negotiated independently of `protocol::PROTOCOL`. Minor 1 adds
+/// ReconcileResume; original requests remain available at minor 0 ([`super::Request::since`]).
+pub const VERSION: Version = Version::new(1, 1);
 
 /// Negotiate a common execution minor, refusing incompatible majors before any operation.
 pub fn negotiate(peer: Version) -> Result<Version, String> {
@@ -91,7 +92,9 @@ impl Envelope {
             deadline,
             now,
         );
-        Ok(Answer::new(self.call.identity.clone(), outcome))
+        let mut answer = Answer::new(self.call.identity.clone(), outcome);
+        answer.contract = agreed;
+        Ok(answer)
     }
 
     /// Read a response only within the sender's original transport deadline. Stale/wrong

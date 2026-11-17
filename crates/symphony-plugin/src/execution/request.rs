@@ -55,7 +55,9 @@ impl Capabilities {
         self.operations.contains(&request.operation())
             && match request {
                 Request::Stop { mode, .. } => self.stop_modes.contains(mode),
-                Request::Resume { mode, .. } => self.resume_modes.contains(mode),
+                Request::Resume { mode, .. } | Request::ReconcileResume { mode, .. } => {
+                    self.resume_modes.contains(mode)
+                }
                 Request::ExternalLink { .. } => self.external_view,
                 _ => true,
             }
@@ -139,6 +141,13 @@ pub enum Request {
     Reconcile {
         resource: Option<Resource>,
     },
+    /// Reconcile an original Resume with its persisted predecessor/mode intact. Since execution
+    /// minor 1; a plain Reconcile cannot recover a Resume because it loses these constraints.
+    ReconcileResume {
+        resource: Option<Resource>,
+        from: ResumeFrom,
+        mode: ResumeMode,
+    },
     Observe {
         resource: Resource,
         cursor: Option<String>,
@@ -162,10 +171,19 @@ pub enum Request {
 }
 
 impl Request {
+    /// Earliest minor of execution contract major 1 that can carry this request. A host must
+    /// check it against its pinned negotiated minor before forwarding to another process.
+    pub fn since(&self) -> u32 {
+        match self {
+            Self::ReconcileResume { .. } => 1,
+            _ => 0,
+        }
+    }
+
     pub fn operation(&self) -> Operation {
         match self {
             Self::Start { .. } => Operation::Start,
-            Self::Reconcile { .. } => Operation::Reconcile,
+            Self::Reconcile { .. } | Self::ReconcileResume { .. } => Operation::Reconcile,
             Self::Observe { .. } => Operation::Observe,
             Self::Cancel { .. } => Operation::Cancel,
             Self::Stop { .. } => Operation::Stop,
@@ -177,11 +195,22 @@ impl Request {
     pub(crate) fn resource(&self) -> Option<&Resource> {
         match self {
             Self::Start { .. } | Self::Resume { .. } => None,
-            Self::Reconcile { resource } => resource.as_ref(),
+            Self::Reconcile { resource } | Self::ReconcileResume { resource, .. } => {
+                resource.as_ref()
+            }
             Self::Observe { resource, .. }
             | Self::Cancel { resource }
             | Self::Stop { resource, .. }
             | Self::ExternalLink { resource, .. } => Some(resource),
+        }
+    }
+
+    pub(crate) fn resume(&self) -> Option<(&ResumeFrom, ResumeMode)> {
+        match self {
+            Self::Resume { from, mode, .. } | Self::ReconcileResume { from, mode, .. } => {
+                Some((from, *mode))
+            }
+            _ => None,
         }
     }
 }

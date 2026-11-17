@@ -97,13 +97,36 @@ impl Fixture {
         self.call.identity.kind = request.operation();
         self.call.request = request;
     }
+
+    fn wire(&self, adapter: &dyn Adapter) -> Outcome {
+        let mut envelope = wire::Envelope::new(
+            self.authorization(),
+            self.call.clone(),
+            CallLimit::new(1000).unwrap(),
+        );
+        envelope.contract = self.profile.contract;
+        let envelope: wire::Envelope =
+            serde_json::from_str(&serde_json::to_string(&envelope).unwrap()).unwrap();
+        let now = Instant::now();
+        let answer = envelope
+            .dispatch_with_clock(adapter, &self.profile, || now)
+            .unwrap();
+        let answer: wire::Answer =
+            serde_json::from_str(&serde_json::to_string(&answer).unwrap()).unwrap();
+        // Sender validation checks that a malformed request could not have authorized a success.
+        // Its definite refusal is already the receiver's result, before any provider I/O.
+        if matches!(answer.outcome, Outcome::Rejected(_)) {
+            return answer.outcome;
+        }
+        envelope.accept(&self.profile, answer)
+    }
 }
 
 #[derive(Default)]
 struct Fake {
     calls: AtomicUsize,
     jobs: AtomicUsize,
-    starts: Mutex<HashMap<ProviderKey, (Input, Receipt)>>,
+    starts: Mutex<HashMap<ProviderKey, (Request, Receipt)>>,
     lose_response: AtomicBool,
     reply: Mutex<Option<Outcome>>,
     deadlines: Mutex<Vec<Instant>>,
@@ -132,6 +155,35 @@ impl ProviderKey {
     }
 }
 
+impl Fake {
+    fn accept(&self, call: &Call, mut resource: Resource) -> Outcome {
+        let mut starts = self.starts.lock().unwrap();
+        let entry = starts
+            .entry(ProviderKey::of(&call.identity))
+            .or_insert_with(|| {
+                let number = self.jobs.fetch_add(1, Ordering::SeqCst) + 1;
+                if number > 1 && matches!(call.request, Request::Start { .. }) {
+                    resource.id = ResourceId::new(format!("resource-{number}"));
+                }
+                (
+                    call.request.clone(),
+                    Receipt::new(call.identity.clone(), resource, "provider-receipt".into()),
+                )
+            });
+        if entry.0 != call.request {
+            return Outcome::Rejected(Rejection::Provider("key/input conflict".into()));
+        }
+        if self.lose_response.swap(false, Ordering::SeqCst) {
+            return Outcome::Unknown(Unknown::ContactLost);
+        }
+        Outcome::Accepted(Receipt::new(
+            call.identity.clone(),
+            entry.1.resource.clone(),
+            "provider-receipt".into(),
+        ))
+    }
+}
+
 impl Adapter for Fake {
     fn execute(&self, call: &Call, auth: &Authorization, deadline: Instant) -> Outcome {
         self.calls.fetch_add(1, Ordering::SeqCst);
@@ -151,27 +203,8 @@ impl Adapter for Fake {
         let receipt =
             |resource| Receipt::new(call.identity.clone(), resource, "provider-receipt".into());
         match &call.request {
-            Request::Start { input } => {
-                let mut starts = self.starts.lock().unwrap();
-                let entry = starts
-                    .entry(ProviderKey::of(&call.identity))
-                    .or_insert_with(|| {
-                        let number = self.jobs.fetch_add(1, Ordering::SeqCst) + 1;
-                        let mut bound = resource();
-                        if number > 1 {
-                            bound.id = ResourceId::new(format!("resource-{number}"));
-                        }
-                        (input.clone(), receipt(bound))
-                    });
-                if entry.0 != *input {
-                    return Outcome::Rejected(Rejection::Provider("key/input conflict".into()));
-                }
-                if self.lose_response.swap(false, Ordering::SeqCst) {
-                    return Outcome::Unknown(Unknown::ContactLost);
-                }
-                Outcome::Accepted(receipt(entry.1.resource.clone()))
-            }
-            Request::Reconcile { .. } => self
+            Request::Start { .. } => self.accept(call, resource()),
+            Request::Reconcile { .. } | Request::ReconcileResume { .. } => self
                 .starts
                 .lock()
                 .unwrap()
@@ -193,7 +226,7 @@ impl Adapter for Fake {
                         next.generation = "generation-2".into();
                     }
                 }
-                Outcome::Accepted(receipt(next))
+                self.accept(call, next)
             }
             Request::ExternalLink { resource, .. } => Outcome::Link(ExternalLink::new(
                 resource.clone(),
@@ -525,12 +558,279 @@ fn prepare_resume(fixture: &mut Fixture, mode: ResumeMode) {
     fixture.set_request(Request::Resume { input, from, mode });
 }
 
+fn reconcile_resume(fixture: &mut Fixture) {
+    let Request::Resume { from, mode, .. } = fixture.call.request.clone() else {
+        unreachable!()
+    };
+    fixture.call.request = Request::ReconcileResume {
+        resource: None,
+        from,
+        mode,
+    };
+}
+
+#[test]
+fn lost_resume_responses_keep_resource_constraints_in_linked_and_wire_recovery() {
+    for mode in [ResumeMode::NewResource, ResumeMode::ReuseWithNewGeneration] {
+        for over_wire in [false, true] {
+            let mut fixture = Fixture::new();
+            prepare_resume(&mut fixture, mode);
+            let original = fixture.call.request.clone();
+            let (from, _) = original.resume().unwrap();
+            let fake = Fake::default();
+            let dispatch = |fixture: &Fixture| {
+                if over_wire {
+                    fixture.wire(&fake)
+                } else {
+                    fixture.invoke(&fake)
+                }
+            };
+            fake.lose_response.store(true, Ordering::SeqCst);
+            assert_eq!(dispatch(&fixture), Outcome::Unknown(Unknown::ContactLost));
+            fixture.call.identity.fencing_epoch += 1;
+            reconcile_resume(&mut fixture);
+            let recovery = fixture.call.request.clone();
+            let Outcome::Found(found) = dispatch(&fixture) else {
+                panic!("recover the accepted resume with its constraints");
+            };
+            assert_ne!(found.resource.attempt.id, from.resource.attempt.id);
+            match mode {
+                ResumeMode::NewResource => assert_ne!(found.resource.id, from.resource.id),
+                ResumeMode::ReuseWithNewGeneration => {
+                    assert_eq!(found.resource.id, from.resource.id);
+                    assert_ne!(found.resource.generation, from.resource.generation);
+                }
+            }
+            assert_eq!(fake.jobs.load(Ordering::SeqCst), 1);
+            let mut wrong_id = found.clone();
+            wrong_id.resource.id = match mode {
+                ResumeMode::NewResource => from.resource.id.clone(),
+                ResumeMode::ReuseWithNewGeneration => ResourceId::new("wrong-resource".into()),
+            };
+            let mut stale = found.clone();
+            stale.resource.id = from.resource.id.clone();
+            stale.resource.generation = from.resource.generation.clone();
+            for bad in [wrong_id, stale] {
+                fixture.call.request = original.clone();
+                *fake.reply.lock().unwrap() = Some(Outcome::Accepted(bad.clone()));
+                assert_eq!(dispatch(&fixture), Outcome::Unknown(Unknown::InvalidReply));
+                fixture.call.request = recovery.clone();
+                *fake.reply.lock().unwrap() = Some(Outcome::Found(bad));
+                assert_eq!(dispatch(&fixture), Outcome::Unknown(Unknown::InvalidReply));
+            }
+            // Even a result satisfying the resume mode must match an already recorded target.
+            let Request::ReconcileResume { resource, .. } = &mut fixture.call.request else {
+                unreachable!()
+            };
+            let mut known = found.resource.clone();
+            known.generation = "recorded-target-generation".into();
+            *resource = Some(known);
+            *fake.reply.lock().unwrap() = Some(Outcome::Found(found));
+            assert_eq!(dispatch(&fixture), Outcome::Unknown(Unknown::InvalidReply));
+            assert_eq!(
+                fake.jobs.load(Ordering::SeqCst),
+                1,
+                "recovery never provisions another job"
+            );
+        }
+    }
+}
+
+#[test]
+fn malformed_resume_references_refuse_linked_and_wire_calls_before_io() {
+    for recovering in [false, true] {
+        for over_wire in [false, true] {
+            for case in 0..6 {
+                let mut fixture = Fixture::new();
+                prepare_resume(&mut fixture, ResumeMode::ReuseWithNewGeneration);
+                let Request::Resume { from, .. } = &mut fixture.call.request else {
+                    unreachable!()
+                };
+                from.conversation = None;
+                match case {
+                    0 => from.conversation = Some(ConversationId::new(String::new())),
+                    1 => from.checkpoint = Some(ContentRef::new(String::new(), "digest".into())),
+                    2 => {
+                        from.checkpoint = Some(ContentRef::new("checkpoint".into(), String::new()))
+                    }
+                    3 => from.checkpoint = Some(ContentRef::new(String::new(), String::new())),
+                    4 => {
+                        from.checkpoint = Some(ContentRef::new(String::new(), String::new()));
+                        from.conversation = Some(ConversationId::new("valid-conversation".into()));
+                    }
+                    _ => {
+                        from.checkpoint =
+                            Some(ContentRef::new("checkpoint".into(), "digest".into()));
+                        from.conversation = Some(ConversationId::new(String::new()));
+                    }
+                }
+                if recovering {
+                    reconcile_resume(&mut fixture);
+                }
+                let fake = Fake::default();
+                let outcome = if over_wire {
+                    fixture.wire(&fake)
+                } else {
+                    fixture.invoke(&fake)
+                };
+                assert_eq!(
+                    outcome,
+                    Outcome::Rejected(Rejection::Resume),
+                    "case {case}, recovery {recovering}, wire {over_wire}"
+                );
+                assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+                let mut receipt = fixture.receipt();
+                receipt.resource.generation = "generation-2".into();
+                let claimed = if recovering {
+                    Outcome::Found(receipt)
+                } else {
+                    Outcome::Accepted(receipt)
+                };
+                let envelope = wire::Envelope::new(
+                    fixture.authorization(),
+                    fixture.call.clone(),
+                    CallLimit::new(1000).unwrap(),
+                );
+                assert_eq!(
+                    envelope.accept(
+                        &fixture.profile,
+                        wire::Answer::new(fixture.call.identity.clone(), claimed)
+                    ),
+                    Outcome::Unknown(Unknown::InvalidReply)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn valid_checkpoint_only_and_conversation_only_resumes_work_linked_and_on_wire() {
+    for recovering in [false, true] {
+        for over_wire in [false, true] {
+            for checkpoint_only in [false, true] {
+                let mut fixture = Fixture::new();
+                prepare_resume(&mut fixture, ResumeMode::ReuseWithNewGeneration);
+                if checkpoint_only {
+                    let Request::Resume { from, .. } = &mut fixture.call.request else {
+                        unreachable!()
+                    };
+                    from.conversation = None;
+                    from.checkpoint = Some(ContentRef::new(
+                        "checkpoint".into(),
+                        "checkpoint-digest".into(),
+                    ));
+                }
+                let fake = Fake::default();
+                let mut receipt = fixture.receipt();
+                receipt.resource.generation = "generation-2".into();
+                let expected = if recovering {
+                    reconcile_resume(&mut fixture);
+                    Outcome::Found(receipt)
+                } else {
+                    Outcome::Accepted(receipt)
+                };
+                *fake.reply.lock().unwrap() = Some(expected.clone());
+                assert_eq!(
+                    if over_wire {
+                        fixture.wire(&fake)
+                    } else {
+                        fixture.invoke(&fake)
+                    },
+                    expected
+                );
+                assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn resume_reconciliation_is_additive_and_negotiated_without_an_unconstrained_fallback() {
+    let mut fixture = Fixture::new();
+    fixture.profile.contract = Version::new(1, 0);
+    assert_eq!(
+        wire::negotiate(fixture.profile.contract).unwrap(),
+        Version::new(1, 0)
+    );
+    assert_eq!(fixture.call.request.since(), 0);
+    let fake = Fake::default();
+    assert_eq!(fixture.invoke(&fake), Outcome::Accepted(fixture.receipt()));
+    assert_eq!(fixture.wire(&fake), Outcome::Accepted(fixture.receipt()));
+    prepare_resume(&mut fixture, ResumeMode::ReuseWithNewGeneration);
+    reconcile_resume(&mut fixture);
+    assert_eq!(fixture.call.request.since(), 1);
+    let before = fake.calls.load(Ordering::SeqCst);
+    assert_eq!(
+        fixture.invoke(&fake),
+        Outcome::Unsupported(Operation::Reconcile)
+    );
+    assert_eq!(
+        fixture.wire(&fake),
+        Outcome::Unsupported(Operation::Reconcile)
+    );
+    let envelope = wire::Envelope::new(
+        fixture.authorization(),
+        fixture.call.clone(),
+        CallLimit::new(1000).unwrap(),
+    );
+    let mut old_envelope = envelope.clone();
+    old_envelope.contract = fixture.profile.contract;
+    let mut receipt = fixture.receipt();
+    receipt.resource.generation = "generation-2".into();
+    let mut claimed = wire::Answer::new(fixture.call.identity.clone(), Outcome::Found(receipt));
+    claimed.contract = old_envelope.contract;
+    assert_eq!(
+        old_envelope.accept(&fixture.profile, claimed.clone()),
+        Outcome::Unknown(Unknown::InvalidReply)
+    );
+    let value = serde_json::to_value(&envelope).unwrap();
+    for field in ["from", "mode"] {
+        let mut missing = value.clone();
+        missing["call"]["request"]["ReconcileResume"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        assert!(serde_json::from_value::<wire::Envelope>(missing).is_err());
+    }
+    fixture.profile.contract = wire::VERSION;
+    fixture.profile.capabilities.resume_modes.clear();
+    assert_eq!(
+        fixture.invoke(&fake),
+        Outcome::Unsupported(Operation::Reconcile)
+    );
+    assert_eq!(
+        fixture.wire(&fake),
+        Outcome::Unsupported(Operation::Reconcile)
+    );
+    assert_eq!(
+        envelope.accept(
+            &fixture.profile,
+            wire::Answer::new(fixture.call.identity.clone(), claimed.outcome)
+        ),
+        Outcome::Unknown(Unknown::InvalidReply)
+    );
+    fixture.call.identity.kind = Operation::Start;
+    assert_eq!(
+        fixture.invoke(&fake),
+        Outcome::Rejected(Rejection::Identity)
+    );
+    fixture.call.identity.kind = Operation::Resume;
+    fixture.call.request = Request::Reconcile { resource: None };
+    assert_eq!(fixture.invoke(&fake), Outcome::Rejected(Rejection::Resume));
+    assert_eq!(fixture.wire(&fake), Outcome::Rejected(Rejection::Resume));
+    assert_eq!(fake.calls.load(Ordering::SeqCst), before);
+}
+
 #[test]
 fn resume_requires_a_new_attempt_same_scope_quiescence_and_an_explicit_reference() {
     let fake = Fake::default();
-    for mode in [ResumeMode::NewResource, ResumeMode::ReuseWithNewGeneration] {
+    for (attempt, mode) in [
+        ([2; 16], ResumeMode::NewResource),
+        ([3; 16], ResumeMode::ReuseWithNewGeneration),
+    ] {
         let mut fixture = Fixture::new();
         prepare_resume(&mut fixture, mode);
+        fixture.call.identity.attempt.id = AttemptId::new(attempt);
         assert!(matches!(fixture.invoke(&fake), Outcome::Accepted(_)));
     }
     for variant in 0..7 {
@@ -732,10 +1032,10 @@ fn process_envelopes_negotiate_fail_closed_and_ignore_payload_owner_claims() {
     let mut incompatible = decoded.clone();
     incompatible.contract = Version::new(2, 0);
     assert!(incompatible.dispatch(&fake, &fixture.profile).is_err());
-    incompatible.contract = Version::new(1, 1);
+    incompatible.contract = Version::new(1, 2);
     assert!(incompatible.dispatch(&fake, &fixture.profile).is_err());
     let mut wrong_pin = fixture.profile.clone();
-    wrong_pin.contract = Version::new(1, 1);
+    wrong_pin.contract = Version::new(1, 2);
     assert!(decoded.dispatch(&fake, &wrong_pin).is_err());
     assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
     for field in ["authorization", "call", "contract", "limit"] {

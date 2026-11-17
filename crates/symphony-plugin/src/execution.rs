@@ -131,7 +131,7 @@ fn invoke_with_clock(
     if let Err(reason) = validate(profile, authorization, call) {
         return Outcome::Rejected(reason);
     }
-    if !profile.capabilities.supports(&call.request) {
+    if !supported(profile, &call.request) {
         return Outcome::Unsupported(call.request.operation());
     }
     let outcome = adapter.execute(call, authorization, deadline);
@@ -164,7 +164,7 @@ fn validate(profile: &Profile, auth: &Authorization, call: &Call) -> Result<(), 
     if profile.scope != id.attempt.scope || profile.configuration != id.configuration {
         return Err(Rejection::Scope);
     }
-    if profile.contract != wire::VERSION
+    if wire::negotiate(profile.contract).ok() != Some(profile.contract)
         || id.key.is_empty()
         || id.input_digest.is_empty()
         || id.configuration.is_empty()
@@ -174,6 +174,13 @@ fn validate(profile: &Profile, auth: &Authorization, call: &Call) -> Result<(), 
         || (call.request.operation() != Operation::Reconcile && id.kind != call.request.operation())
     {
         return Err(Rejection::Identity);
+    }
+    match &call.request {
+        Request::Reconcile { .. } if id.kind == Operation::Resume => return Err(Rejection::Resume),
+        Request::ReconcileResume { .. } if id.kind != Operation::Resume => {
+            return Err(Rejection::Identity);
+        }
+        _ => {}
     }
     if let Some(resource) = call.request.resource()
         && !same_resource_scope(resource, id)
@@ -192,7 +199,7 @@ fn validate(profile: &Profile, auth: &Authorization, call: &Call) -> Result<(), 
         }
         _ => {}
     }
-    if let Request::Resume { from, .. } = &call.request {
+    if let Some((from, _)) = call.request.resume() {
         let previous = &from.resource;
         if previous.attempt.scope != id.attempt.scope
             || previous.attempt.task != id.attempt.task
@@ -202,6 +209,13 @@ fn validate(profile: &Profile, auth: &Authorization, call: &Call) -> Result<(), 
             || previous.generation.is_empty()
             || from.quiescence.is_empty()
             || (from.checkpoint.is_none() && from.conversation.is_none())
+            || from.checkpoint.as_ref().is_some_and(|checkpoint| {
+                checkpoint.reference.is_empty() || checkpoint.digest.is_empty()
+            })
+            || from
+                .conversation
+                .as_ref()
+                .is_some_and(|conversation| conversation.value().is_empty())
         {
             return Err(Rejection::Resume);
         }
@@ -221,7 +235,7 @@ fn valid_receipt(call: &Call, receipt: &Receipt) -> bool {
     {
         return false;
     }
-    if let Request::Resume { from, mode, .. } = &call.request {
+    if let Some((from, mode)) = call.request.resume() {
         return match mode {
             ResumeMode::NewResource => receipt.resource.id != from.resource.id,
             ResumeMode::ReuseWithNewGeneration => {
@@ -235,6 +249,9 @@ fn valid_receipt(call: &Call, receipt: &Receipt) -> bool {
 
 fn valid_outcome(profile: &Profile, call: &Call, outcome: &Outcome) -> bool {
     let operation = call.request.operation();
+    if !supported(profile, &call.request) {
+        return matches!(outcome, Outcome::Unsupported(unsupported) if *unsupported == operation);
+    }
     match outcome {
         Outcome::Accepted(receipt) => {
             matches!(
@@ -274,6 +291,10 @@ fn valid_outcome(profile: &Profile, call: &Call, outcome: &Outcome) -> bool {
         Outcome::Unsupported(unsupported) => *unsupported == operation,
         Outcome::Rejected(_) | Outcome::Unknown(_) => true,
     }
+}
+
+fn supported(profile: &Profile, request: &Request) -> bool {
+    request.since() <= profile.contract.minor && profile.capabilities.supports(request)
 }
 
 #[cfg(test)]
