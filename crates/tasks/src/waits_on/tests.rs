@@ -347,27 +347,32 @@ fn a_block_reads_what_its_record_names() {
 #[test]
 fn a_block_on_the_owners_stamp_waits_on_his_decision_named_by_his_approve_never_by_him() {
     let board = [
-        // The default landing's hold.
+        // The default landing's reason still names its tip.
         blocked_on(
             task("held", "blocked"),
             "check:owner",
             Some("the owner's approve of 0123abc"),
         ),
         blocked_on(task("held-bare", "blocked"), "check:owner", None),
+        blocked_on(
+            task("manual", "blocked"),
+            "check:owner",
+            Some("review the sketch"),
+        ),
         // Another stamp is a check still.
         blocked_on(task("owners", "blocked"), "check:owners", None),
     ];
     assert_eq!(
         read(&board, "held"),
-        says(
-            DECISION,
-            "the owner's approve of 0123abc",
-            "its landing waits on it"
-        )
+        says(DECISION, OWNER_APPROVE, "the owner's approve of 0123abc")
     );
     assert_eq!(
         read(&board, "held-bare"),
-        says(DECISION, OWNER_APPROVE, "its landing waits on it")
+        says(DECISION, OWNER_APPROVE, "the owner's approval")
+    );
+    assert_eq!(
+        read(&board, "manual"),
+        says(DECISION, OWNER_APPROVE, "review the sketch")
     );
     assert_eq!(
         read(&board, "owners"),
@@ -375,7 +380,7 @@ fn a_block_on_the_owners_stamp_waits_on_his_decision_named_by_his_approve_never_
     );
     assert_eq!(
         said(&line_of(&board, "held").unwrap(), 300.0),
-        "Waits: on decision: the owner's approve of 0123abc · its landing waits on it · 5 min"
+        "Waits: on decision: the owner's approve of its tip · the owner's approve of 0123abc · 5 min"
     );
 }
 
@@ -640,6 +645,36 @@ fn the_show_line_says_kind_who_why_and_age() {
     assert_eq!(age(-3.0), "0 s");
     assert_eq!(age(5.0 * 3600.0), "5 h");
     assert_eq!(age(36.0 * 3600.0), "2 d");
+}
+
+#[test]
+fn show_omits_who_only_when_the_reason_names_it_in_full() {
+    for (who, why) in [
+        ("art", "start after review"),
+        ("build", "rebuild the client"),
+        ("card", "card-longer was answered"),
+        ("card", "parent/card is pending"),
+        ("card", "card.md is pending"),
+        ("card", "card_name is pending"),
+        ("café", "décaféiné"),
+    ] {
+        assert_eq!(
+            said(&Line::new(CHECK, who, why), 0.0),
+            format!("Waits: on check: {who} · {why} · 0 s")
+        );
+    }
+    for why in [
+        "card",
+        "waiting on card",
+        "card: pending",
+        "(card) is pending",
+        "card-longer then card",
+    ] {
+        assert_eq!(
+            said(&Line::new(DECISION, "card", why), 0.0),
+            format!("Waits: on decision · {why} · 0 s")
+        );
+    }
 }
 
 #[test]

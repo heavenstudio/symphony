@@ -55,6 +55,44 @@ fn agent(handle: &str, state: &str, tool: f64) -> symphony_api::Agent {
     .unwrap()
 }
 
+#[test]
+fn test_presence_changes_the_waits_line_even_when_the_board_did_not_change() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let f = Fixture::new(
+        Seed::default()
+            .session(QUIET)
+            .task(OPEN, "in_progress")
+            .role(OPEN, QUIET, "executor"),
+    );
+    f.advance(700.0);
+    let hub = Hub::new(&root, &root.join("build/client"));
+    hub.refresh_page("", &root).unwrap();
+    let raw = f.store.board().unwrap();
+    assert_eq!(raw.tasks[0].roles[0].health, symphony_board::Health::Lost);
+    let waits = || {
+        hub.task_snapshot().unwrap().tasks[0]
+            .waits_on
+            .clone()
+            .unwrap()
+    };
+    Published::of(&hub, &f.store, vec![agent(QUIET, "gone", NOW)]);
+    assert_eq!(waits().kind, "nobody");
+    let began = Published::of(&hub, &f.store, vec![agent(QUIET, "running_test", NOW)]);
+    assert_eq!(
+        (waits().kind.as_str(), waits().who.as_str()),
+        ("working", QUIET)
+    );
+    assert_eq!(began.regions().get("task-fields"), Some(&1));
+    assert!(!began.regions().contains_key("task-counts"));
+    let same = Published::of(&hub, &f.store, vec![agent(QUIET, "running_test", NOW)]);
+    assert!(same.changes.is_empty());
+    let ended = Published::of(&hub, &f.store, vec![agent(QUIET, "gone", NOW)]);
+    assert_eq!(waits().kind, "nobody");
+    assert_eq!(ended.regions().get("task-fields"), Some(&1));
+    assert_eq!(f.store.board().unwrap(), raw);
+}
+
 /// What one observation of the board, with `agents` as the agents view read them, published on
 /// the main page: its changes, and the bytes of the events that carried them.
 struct Published {

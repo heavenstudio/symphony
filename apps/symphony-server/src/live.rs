@@ -292,6 +292,7 @@ struct TaskState {
     /// Shared with the reads that take what they need of it, so none copies the whole board.
     last: Option<Arc<Tasks>>,
     raw: Option<symphony_board::Board>,
+    busy: Vec<String>,
     error: Option<String>,
 }
 
@@ -363,6 +364,7 @@ impl Hub {
             tasks: Mutex::new(TaskState {
                 last: None,
                 raw: None,
+                busy: Vec::new(),
                 error: Some(STARTING.into()),
             }),
             listing: RwLock::new(Err(STARTING.into())),
@@ -1493,9 +1495,16 @@ impl Hub {
         snapshot: symphony_board::Board,
         agents: symphony_api::Agents,
     ) -> Result<(), String> {
+        let mut busy: Vec<String> = agents
+            .agents
+            .iter()
+            .filter(|agent| agent.state == "running_test")
+            .map(|agent| agent.handle.clone())
+            .collect();
+        busy.sort_unstable();
         let unchanged = {
             let state = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            (state.raw.as_ref() == Some(&snapshot))
+            (state.raw.as_ref() == Some(&snapshot) && state.busy == busy)
                 .then(|| state.last.clone())
                 .flatten()
         };
@@ -1509,7 +1518,12 @@ impl Hub {
                 measured("task stages", || waiting.stood.read(store, &snapshot))
                     .map_err(|e| e.to_string())?;
                 let (next, latest) = measured("board snapshot", || {
-                    taskview::snapshot_board(&snapshot, &waiting.stood, &waiting.lane)
+                    taskview::snapshot_board_with_busy(
+                        &snapshot,
+                        &waiting.stood,
+                        &waiting.lane,
+                        &busy,
+                    )
                 });
                 (Arc::new(next), latest)
             }
@@ -1570,7 +1584,12 @@ impl Hub {
                 if waiting.lane != lane {
                     waiting.lane = lane;
                     let (again, _) = measured("board snapshot", || {
-                        taskview::snapshot_board(&snapshot, &waiting.stood, &waiting.lane)
+                        taskview::snapshot_board_with_busy(
+                            &snapshot,
+                            &waiting.stood,
+                            &waiting.lane,
+                            &busy,
+                        )
                     });
                     next = Arc::new(again);
                 }
@@ -1673,6 +1692,7 @@ impl Hub {
         }
         held.last = Some(next.clone());
         held.raw = Some(snapshot);
+        held.busy = busy;
         held.error = None;
         self.publish_listing(Ok(Arc::clone(&next)));
         drop(held);
@@ -2327,8 +2347,14 @@ impl PartialEq for Shown<'_> {
 
 /// Whether `a` and `b` are the same task, or differ only in their holders' health. Every field is
 /// named, so a new one is compared or the build fails.
-#[expect(clippy::float_cmp, reason = "the task's own derived equality")]
 fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
+    task_inputs_alike(a, b) && a.waits_on == b.waits_on
+}
+
+/// Task inputs used by sign-off and column counts. A health-derived waits line is sent to the
+/// client, but changes none of these inputs.
+#[expect(clippy::float_cmp, reason = "the task's own derived equality")]
+fn task_inputs_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
     let symphony_api::Task {
         slug,
         title,
@@ -2344,7 +2370,7 @@ fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         roles,
         instruction,
         fields,
-        waits_on,
+        waits_on: _,
         review_rounds,
         from,
     } = a;
@@ -2362,7 +2388,6 @@ fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         && *instruction == b.instruction
         && *fields == b.fields
         && *review_rounds == b.review_rounds
-        && *waits_on == b.waits_on
         && *from == b.from
         && roles_alike(roles, &b.roles)
 }
@@ -2385,7 +2410,7 @@ fn roles_alike(a: &[symphony_api::Role], b: &[symphony_api::Role]) -> bool {
 
 /// Whether the board's tasks are the same in `old` and `new`, their holders' health aside.
 fn tasks_alike(old: &[symphony_api::Task], new: &[symphony_api::Task]) -> bool {
-    old.len() == new.len() && old.iter().zip(new).all(|(a, b)| shown_alike(a, b))
+    old.len() == new.len() && old.iter().zip(new).all(|(a, b)| task_inputs_alike(a, b))
 }
 
 fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[symphony_api::Task]) {
@@ -2628,6 +2653,53 @@ mod tests {
             .iter()
             .map(|item| item.slug.clone())
             .collect()
+    }
+
+    #[test]
+    fn a_health_flip_updates_the_waits_line_without_signoff_reads_or_column_counts() {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let f = Fixture::new(
+            Seed::default()
+                .session("worker")
+                .task("tools/health", "in_progress")
+                .role("tools/health", "worker", "executor")
+                .link("tools/health", "doc", "docs/TOPIC.md"),
+        );
+        let hub = Hub::new(&root, &root.join("build/client"));
+        hub.refresh_page("", &root).unwrap();
+        observe(&hub, &f.store);
+        // Sign-off would have to read the thread: the linked card is absent from the brief.
+        assert!(hub.task_signoff.lock().unwrap().is_empty());
+        let signoff_inputs = hub.signoff_pending.lock().unwrap().clone();
+        f.advance(91.0);
+        let board = f.store.board().unwrap();
+        let before = f.store.client().requests();
+        hub.update_board(&f.store, board, hub.agent_snapshot().unwrap())
+            .unwrap();
+        let pages = hub.pages.read().unwrap();
+        let event: Value = serde_json::from_str(&pages[""].history.back().unwrap().json).unwrap();
+        let regions: Vec<_> = event["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|change| change["region"].as_str().unwrap())
+            .collect();
+        eprintln!(
+            "health flip: {} requests; regions: {}",
+            f.store.client().requests() - before,
+            regions.join(", ")
+        );
+        assert_eq!(
+            f.store.client().requests() - before,
+            2,
+            "no sign-off thread read"
+        );
+        assert_eq!(regions, ["task-fields", "session", "counts"]);
+        assert_eq!(*hub.signoff_pending.lock().unwrap(), signoff_inputs);
+        let changed = &event["changes"][0]["data"]["fields"];
+        assert_eq!(changed["waits_on"]["who"], "worker (stale)");
+        assert_eq!(changed.as_object().unwrap().len(), 1);
     }
 
     #[test]

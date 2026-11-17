@@ -433,8 +433,8 @@ fn a_task_waiting_on_the_owner_alone_is_held_blocked_and_lands_from_there() {
         (waits.kind, waits.who, waits.why.as_str()),
         (
             DECISION,
-            format!("the owner's approve of {at}"),
-            "its landing waits on it"
+            symphony_board::waits_on::OWNER_APPROVE.to_string(),
+            format!("the owner's approve of {at}").as_str()
         )
     );
     // Landed again before the owner gives it: still waiting, still blocked.
