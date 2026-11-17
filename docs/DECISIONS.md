@@ -5,6 +5,21 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Waiting on you
+
+### Task timeline
+
+- [ ] **timeline-orchestrator-messages** — The task timeline would show an Orchestrator lane, with each holder and handover at its recorded time. Messages sit on the same horizontal clock. Selecting one shows its direction with an arrow between lanes, its full address and text, and a link to the thread. One arrow shows at a time, so the history stays readable. On a phone, the existing 240 px list gains orchestrator steps and sender → recipient rows; Show all opens the rest. Approve this presentation, or comment. [[analysis/timeline-orchestrator#The drawing]]
+  [2026-11-17 17:19] agent — For `inbox/no-orchestrator-in-timeline`. The cited task, `app/ui-polish-2`, records quiet-plover joining as orchestrator (#1463) and cobalt-petrel reporting to `@orchestrator` (#1614, #1727), but its timeline has neither. Its earlier orchestrator posts are broadcasts, not private messages to the executor. The current page, on the installed release: ![Current timeline, desktop](analysis/timeline-orchestrator/before-wide.png) ![Current timeline, phone](analysis/timeline-orchestrator/before-phone.png)
+
+    **Proposed, illustrated rather than built:** invented handles and times show both directions and a handover. The executor reports to amber-robin before the handover; birch-wren sends a follow-up afterward. Every lane uses the same scale, including the closer time view. ![Proposed orchestrator lane and incoming message](analysis/timeline-orchestrator/proposed-wide.png) ![Proposed outgoing message on a closer time scale](analysis/timeline-orchestrator/proposed-direction-wide.png) ![Proposed phone list and selected message](analysis/timeline-orchestrator/proposed-phone.png) [Open the interactive mockup](analysis/timeline-orchestrator/mockup.html).
+
+    Show all on a phone reveals the assignment and handover as well as both message directions: ![Proposed phone history expanded](analysis/timeline-orchestrator/proposed-phone-all.png)
+
+    **Meaning and cost.** A span means the role was held, not continuous work. An arrow means addressed to, not delivered or answered. Broadcasts and uncertain endpoints keep their recorded words; no reply connection is guessed. This needs role-history replay and additive timeline fields, plus selection and thread links in the client; the board already stores addresses and times, so no routing or storage migration is proposed. Selecting a message adds a press before its arrow and full text show; it avoids a web of crossing arrows. The mockup validates this presentation, not production performance or complete routing edge cases.
+
+    **Earlier verdicts checked.** **reports-task-page-pictures** (A) chooses common gates and horizontal lanes wide, with a chronological list on a phone; it does not decide how messages connect. **task-page-timeline-place** (C) keeps the phone's 240 px box. The later note on `inbox/timeline-should-not-be-collapsed-by-defa` keeps desktop lanes open. Your rejection of **timeline-burst-drawing**, “yes. rework the proposal to be more horizontal based.”, keeps runs at actual horizontal times: these pictures reuse rows for sequential runs and show one common closer time view. This card adds orchestrator and message presentation only; it does not replace that run-layout work or ask its rejected folding options again.
+
 ## Auto-approved: spot-check
 
 ### Releases
