@@ -350,3 +350,29 @@
     margin-bottom: 10px;
   }
 }
+.waiting-card.p0 .prio {
+  color: var(--dislike);
+}
+.waiting-card.p1 .prio {
+  color: var(--question);
+}
+.waiting-card-ghost {
+  box-sizing: border-box;
+  padding: 7px 10px;
+}
+.waiting-card-ghost > .bone {
+  display: block;
+  height: 12px;
+  margin: 4px 0;
+}
+@media (max-width: 760px) {
+  .waiting-columns .ghost-column > div:first-child {
+    display: none;
+  }
+}
+.wait-chip,
+.open-count,
+.stage-tabs button,
+.column-summary button {
+  min-height: 0;
+}
