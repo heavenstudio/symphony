@@ -5,10 +5,11 @@
 
 use super::{Context, Stop};
 use crate::cli::shape;
+use crate::json_object::object;
 use crate::stages::stats::{Row, Spread, Summary, Waiting, summarize};
 use crate::stages::{Facts, hours, stages};
 use crate::{Store, sys};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// How far back `stats` looks unless `--days` says.
 const DAYS: i64 = 14;
@@ -161,77 +162,99 @@ fn text(s: &Summary) -> Vec<String> {
 }
 
 fn count(n: usize) -> Value {
-    json!(i64::try_from(n).unwrap_or(i64::MAX))
+    Value::from(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
 fn spread_json(s: &Spread) -> Value {
-    json!({
-        "tasks": count(s.n),
-        "median": s.median,
-        "p75": s.p75,
-        "p90": s.p90,
-    })
+    object(vec![
+        ("tasks", count(s.n)),
+        ("median", Value::from(s.median)),
+        ("p75", Value::from(s.p75)),
+        ("p90", Value::from(s.p90)),
+    ])
 }
 
 fn waiting_json(w: &Waiting) -> Value {
-    json!({
-        "tasks": count(w.count),
-        "median_seconds": w.median_seconds,
-    })
+    object(vec![
+        ("tasks", count(w.count)),
+        ("median_seconds", Value::from(w.median_seconds)),
+    ])
 }
 
 /// The summary as `stats --json` prints it; every duration in seconds.
 fn json(s: &Summary) -> Value {
     let opt = |spread: &Option<Spread>| spread.as_ref().map_or(Value::Null, spread_json);
-    json!({
-        "days": s.days,
-        "tasks": count(s.tasks),
-        "by_status": shape::keyed(
-            s.by_status.iter().map(|(k, n)| (k.clone(), count(*n))),
+    object(vec![
+        ("days", Value::from(s.days)),
+        ("tasks", count(s.tasks)),
+        (
+            "by_status",
+            shape::keyed(s.by_status.iter().map(|(k, n)| (k.clone(), count(*n)))),
         ),
-        "lead_seconds": opt(&s.lead),
-        "stage_seconds": shape::keyed(
-            (s.per_stage.iter()).map(|(status, held)| (status.clone(), spread_json(held))),
+        ("lead_seconds", opt(&s.lead)),
+        (
+            "stage_seconds",
+            shape::keyed(
+                (s.per_stage.iter()).map(|(status, held)| (status.clone(), spread_json(held))),
+            ),
         ),
-        "waiting_before_first_claim_seconds": opt(&s.unclaimed),
-        "bounces": Value::Array(
-            (s.bounces.iter())
-                .map(|(bounces, tasks)| json!({
-                    "bounces": i64::from(*bounces),
-                    "tasks": count(*tasks),
-                }))
-                .collect(),
+        ("waiting_before_first_claim_seconds", opt(&s.unclaimed)),
+        (
+            "bounces",
+            Value::Array(
+                (s.bounces.iter())
+                    .map(|(bounces, tasks)| {
+                        object(vec![
+                            ("bounces", Value::from(i64::from(*bounces))),
+                            ("tasks", count(*tasks)),
+                        ])
+                    })
+                    .collect(),
+            ),
         ),
-        "done_per_day": Value::Array(
-            (s.done_per_day.iter())
-                .map(|(day, done)| json!({
-                    "day": day,
-                    "done": count(*done),
-                }))
-                .collect(),
+        (
+            "done_per_day",
+            Value::Array(
+                (s.done_per_day.iter())
+                    .map(|(day, done)| {
+                        object(vec![
+                            ("day", Value::from(day.as_str())),
+                            ("done", count(*done)),
+                        ])
+                    })
+                    .collect(),
+            ),
         ),
-        "slowest": Value::Array(
-            (s.slowest.iter())
-                .map(|sitting| json!({
-                    "slug": &sitting.slug,
-                    "status": &sitting.status,
-                    "seconds": sitting.seconds,
-                }))
-                .collect(),
+        (
+            "slowest",
+            Value::Array(
+                (s.slowest.iter())
+                    .map(|sitting| {
+                        object(vec![
+                            ("slug", Value::from(sitting.slug.as_str())),
+                            ("status", Value::from(sitting.status.as_str())),
+                            ("seconds", Value::from(sitting.seconds)),
+                        ])
+                    })
+                    .collect(),
+            ),
         ),
-        "blocked": waiting_json(&s.blocked),
-        "ready_unstaffed": waiting_json(&s.unstaffed),
-        "arms": shape::keyed(s.arms.iter().map(|arm| {
-            (
-                arm.name.clone(),
-                json!({
-                    "tasks": count(arm.tasks),
-                    "done": count(arm.done),
-                    "lead_seconds": opt(&arm.lead),
-                    "review_seconds": opt(&arm.review),
-                    "bounces": i64::from(arm.bounces),
-                }),
-            )
-        })),
-    })
+        ("blocked", waiting_json(&s.blocked)),
+        ("ready_unstaffed", waiting_json(&s.unstaffed)),
+        (
+            "arms",
+            shape::keyed(s.arms.iter().map(|arm| {
+                (
+                    arm.name.clone(),
+                    object(vec![
+                        ("tasks", count(arm.tasks)),
+                        ("done", count(arm.done)),
+                        ("lead_seconds", opt(&arm.lead)),
+                        ("review_seconds", opt(&arm.review)),
+                        ("bounces", Value::from(i64::from(arm.bounces))),
+                    ]),
+                )
+            })),
+        ),
+    ])
 }

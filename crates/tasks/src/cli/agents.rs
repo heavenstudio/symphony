@@ -41,12 +41,13 @@
 mod place;
 
 use crate::health::Health;
+use crate::json_object::object;
 use crate::rows::TaskSessionRow;
 use crate::usage::{Cost, Prices, Tokens};
 use crate::{Binding, Error, Session, Store, Task};
 pub use place::{Began, PROCESS, PROCESS_SCAN_SECONDS, Process, ProcessScan};
 use place::{Stay, resolve, waited_on};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 mod attribution;
@@ -198,21 +199,27 @@ pub struct View {
 }
 
 fn ok(asked: bool) -> Value {
-    json!(if asked { "ok" } else { "unavailable" })
+    Value::from(if asked { "ok" } else { "unavailable" })
 }
 
 impl View {
     /// The contract, in its key order.
     pub fn json(&self) -> Value {
-        json!({
-            "generated": self.generated,
-            "probes": {
-                "herdr": ok(self.herdr),
-                "slots": ok(self.slots),
-            },
-            "agents": Value::Array(self.agents.iter().map(Agent::json).collect()),
-            "machine_work": super::machine_work::json(&self.machine_work),
-        })
+        object(vec![
+            ("generated", Value::from(self.generated)),
+            (
+                "probes",
+                object(vec![("herdr", ok(self.herdr)), ("slots", ok(self.slots))]),
+            ),
+            (
+                "agents",
+                Value::Array(self.agents.iter().map(Agent::json).collect()),
+            ),
+            (
+                "machine_work",
+                super::machine_work::json(&self.machine_work),
+            ),
+        ])
     }
 }
 
@@ -222,62 +229,64 @@ impl Agent {
             .tasks
             .iter()
             .map(|t| {
-                json!({
-                    "slug": &t.slug,
-                    "role": &t.role,
-                    "status": &t.status,
-                })
+                object(vec![
+                    ("slug", Value::from(t.slug.as_str())),
+                    ("role", Value::from(t.role.as_str())),
+                    ("status", Value::from(t.status.as_str())),
+                ])
             })
             .collect();
         let detail = self.detail.as_ref().map_or(Value::Null, |d| {
-            json!({
-                "recipe": &d.recipe,
-                "phase": &d.phase,
-                "since": d.since,
-            })
+            object(vec![
+                ("recipe", Value::from(d.recipe.as_str())),
+                ("phase", Value::from(d.phase.as_str())),
+                ("since", Value::from(d.since)),
+            ])
         });
         let said = self.last_message.as_ref().map_or(Value::Null, |m| {
-            json!({
-                "slug": &m.slug,
-                "ts": m.ts,
-                "text": &m.text,
-            })
+            object(vec![
+                ("slug", Value::from(m.slug.as_str())),
+                ("ts", Value::from(m.ts)),
+                ("text", Value::from(m.text.as_str())),
+            ])
         });
-        let count = |n: usize| json!(i64::try_from(n).unwrap_or(i64::MAX));
+        let count = |n: usize| Value::from(i64::try_from(n).unwrap_or(i64::MAX));
         let slots = self.slots.map_or(Value::Null, |s| {
-            json!({
-                "open": count(s.open),
-                "cap": count(s.cap),
-            })
+            object(vec![("open", count(s.open)), ("cap", count(s.cap))])
         });
-        json!({
-            "handle": &self.handle,
-            "kind": &self.kind,
-            "model": &self.model,
-            "parent": self.parent.as_deref(),
-            "task": self.task.as_deref(),
-            "role": self.role.as_deref(),
-            "tasks": Value::Array(held),
-            "following": count(self.following),
-            "worktree": &self.worktree,
-            "branch": &self.branch,
-            "agent": self.agent.as_deref(),
-            "session_id": self.session_id.as_deref(),
-            "pane": self.pane.as_deref(),
-            "callback": self.callback.as_deref(),
-            "chat": self.chat,
-            "state": self.state,
-            "state_detail": detail,
-            "health": self.health.as_str(),
-            "last_tool_call": self.last_tool_call,
-            "last_message": said,
-            "slots": slots,
-            "session_url": self.session_url.as_deref(),
-            "in_process": self.in_process,
-            "tokens": self.tokens.as_ref().map_or(Value::Null, Tokens::json),
-            "cost": (self.cost.as_ref())
-                .map_or(Value::Null, |c| c.json(&Prices::embedded().read)),
-        })
+        object(vec![
+            ("handle", Value::from(self.handle.as_str())),
+            ("kind", Value::from(self.kind.as_str())),
+            ("model", Value::from(self.model.as_str())),
+            ("parent", Value::from(self.parent.as_deref())),
+            ("task", Value::from(self.task.as_deref())),
+            ("role", Value::from(self.role.as_deref())),
+            ("tasks", Value::Array(held)),
+            ("following", count(self.following)),
+            ("worktree", Value::from(self.worktree.as_str())),
+            ("branch", Value::from(self.branch.as_str())),
+            ("agent", Value::from(self.agent.as_deref())),
+            ("session_id", Value::from(self.session_id.as_deref())),
+            ("pane", Value::from(self.pane.as_deref())),
+            ("callback", Value::from(self.callback.as_deref())),
+            ("chat", Value::from(self.chat)),
+            ("state", Value::from(self.state)),
+            ("state_detail", detail),
+            ("health", Value::from(self.health.as_str())),
+            ("last_tool_call", Value::from(self.last_tool_call)),
+            ("last_message", said),
+            ("slots", slots),
+            ("session_url", Value::from(self.session_url.as_deref())),
+            ("in_process", Value::from(self.in_process)),
+            (
+                "tokens",
+                self.tokens.as_ref().map_or(Value::Null, Tokens::json),
+            ),
+            (
+                "cost",
+                (self.cost.as_ref()).map_or(Value::Null, |c| c.json(&Prices::embedded().read)),
+            ),
+        ])
     }
 }
 

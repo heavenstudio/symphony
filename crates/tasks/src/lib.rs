@@ -51,6 +51,7 @@ pub mod fast_fix;
 pub mod folders;
 pub mod git;
 pub mod health;
+mod json_object;
 pub mod land;
 pub mod launch;
 pub mod limits;

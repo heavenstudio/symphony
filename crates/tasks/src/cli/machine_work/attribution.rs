@@ -62,12 +62,12 @@ fn assign(
     let mut tasks: Vec<_> = records
         .iter()
         .filter(|r| r.closed.is_none() && r.handle == handle && r.worktree == operation.checkout)
-        .map(|r| &r.slug)
+        .map(|r| r.slug.as_str())
         .collect();
     tasks.sort_unstable();
     tasks.dedup();
     if tasks.len() == 1 {
-        operation.task = Some(tasks[0].clone());
+        operation.task = Some(tasks[0].to_owned());
     }
 }
 

@@ -15,10 +15,11 @@
 pub mod price;
 pub mod transcript;
 
+use crate::json_object::object;
 use crate::rows::UsageRow;
 pub use price::{Cost, Prices};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// The tokens of model calls on one model at one speed: what a beat hands the board.
@@ -68,15 +69,15 @@ impl Tokens {
 
     /// The JSON the agents API and `tasks show --json` give.
     pub fn json(&self) -> Value {
-        let count = |n: u64| json!(i64::try_from(n).unwrap_or(i64::MAX));
-        json!({
-            "input": count(self.input),
-            "cache_write_5m": count(self.cache_write_5m),
-            "cache_write_1h": count(self.cache_write_1h),
-            "cache_read": count(self.cache_read),
-            "output": count(self.output),
-            "calls": count(self.calls),
-        })
+        let count = |n: u64| Value::from(i64::try_from(n).unwrap_or(i64::MAX));
+        object(vec![
+            ("input", count(self.input)),
+            ("cache_write_5m", count(self.cache_write_5m)),
+            ("cache_write_1h", count(self.cache_write_1h)),
+            ("cache_read", count(self.cache_read)),
+            ("output", count(self.output)),
+            ("calls", count(self.calls)),
+        ])
     }
 }
 
@@ -194,46 +195,46 @@ impl Tally {
         let cost = |cost: &Cost| cost.json(&prices.read);
         let roles = (self.roles.iter())
             .map(|(role, spend)| {
-                json!({
-                    "role": role,
-                    "tokens": spend.tokens.json(),
-                    "cost": cost(&spend.cost),
-                })
+                object(vec![
+                    ("role", Value::from(role.as_str())),
+                    ("tokens", spend.tokens.json()),
+                    ("cost", cost(&spend.cost)),
+                ])
             })
             .collect();
         let rounds = (self.rounds.iter())
             .map(|(round, spend)| {
-                json!({
-                    "round": *round,
-                    "tokens": spend.tokens.json(),
-                    "cost": cost(&spend.cost),
-                })
+                object(vec![
+                    ("round", Value::from(*round)),
+                    ("tokens", spend.tokens.json()),
+                    ("cost", cost(&spend.cost)),
+                ])
             })
             .collect();
         let rows = (rows.iter())
             .map(|row| {
                 let spend = row.spend(prices);
-                json!({
-                    "handle": &row.handle,
-                    "slug": &row.slug,
-                    "role": &row.role,
-                    "model": &row.model,
-                    "speed": &row.speed,
-                    "round": row.round,
-                    "tokens": spend.tokens.json(),
-                    "cost": cost(&spend.cost),
-                    "first": row.first,
-                    "last": row.last,
-                })
+                object(vec![
+                    ("handle", Value::from(row.handle.as_str())),
+                    ("slug", Value::from(row.slug.as_str())),
+                    ("role", Value::from(row.role.as_str())),
+                    ("model", Value::from(row.model.as_str())),
+                    ("speed", Value::from(row.speed.as_str())),
+                    ("round", Value::from(row.round)),
+                    ("tokens", spend.tokens.json()),
+                    ("cost", cost(&spend.cost)),
+                    ("first", Value::from(row.first)),
+                    ("last", Value::from(row.last)),
+                ])
             })
             .collect();
-        json!({
-            "total": self.total.tokens.json(),
-            "cost": cost(&self.total.cost),
-            "by_role": Value::Array(roles),
-            "by_round": Value::Array(rounds),
-            "rows": Value::Array(rows),
-        })
+        object(vec![
+            ("total", self.total.tokens.json()),
+            ("cost", cost(&self.total.cost)),
+            ("by_role", Value::Array(roles)),
+            ("by_round", Value::Array(rounds)),
+            ("rows", Value::Array(rows)),
+        ])
     }
 
     /// The lines `tasks show` prints: the tokens, then their estimated cost, each all told, by role
