@@ -16,11 +16,22 @@ JSON parsing or save dispatch. No successful save or valid JSON is necessary. Th
 checks still apply; this is not a bypass of those checks. The upload and focus routes have
 separate bounds and do not cause this defect.
 
-The ordinary repair is to bound JSON collection at 2 MiB and answer 413 on overflow, including
+The repair bounds JSON collection at 2 MiB and answers 413 on overflow, including
 when no Content-Length is supplied. This matches the size of Axum's default extractor limit;
 direct body collection does not use that extractor. It must preserve the existing empty-body
 and malformed-JSON behavior and gate-before-body order. Reservation and overlap coordination
 are on `tools/public-code-boundary-review`; no overlapping save/journal work is included here.
+
+The cap was checked against the existing callers: the 13 `save::ROUTES` carry individual
+decisions, comments, task fields/actions or chat text, not complete repository files. The client
+[editor payloads](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-web/src/editor.tsx#L70)
+and [quick chat payloads](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-web/src/quick.tsx#L173)
+send prose plus identifiers. [Attachments](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-web/src/attach.tsx#L101)
+use a separate raw-file POST and insert references into that prose, rather than base64 bytes.
+Two MiB leaves substantial room for those individual posts and follows the framework's familiar
+default. This is a new explicit limit: a JSON post larger than that now gets 413, even if valid;
+the contract does not promise unlimited prose. No upload limit is reduced and no wire field is
+changed. Aggregate concurrent memory use and slow admitted clients remain deployment limits.
 
 ### B2: admitted peers have project-wide read and owner-write authority
 
@@ -77,6 +88,7 @@ the separate publication inventory task, coordinated with `cobalt-ibis-6` on the
 | Bytes 1.12.1, HTTP/body buffers | [RUSTSEC-2026-0007](https://rustsec.org/advisories/RUSTSEC-2026-0007.html) is patched from 1.11.1. The locked version meets the fix; B1 is a separate unbounded-allocation issue. |
 | Comrak 0.57.0, document rendering | [URL case handling](https://rustsec.org/advisories/RUSTSEC-2021-0026.html) and [entity escaping](https://rustsec.org/advisories/RUSTSEC-2021-0063.html) are patched from 0.9.1 and 0.10.1 respectively. The locked version meets both fixes. Trusted project markup/renderers and client rendering are broader than those advisories; this review does not certify every client HTML sink. |
 | gix 0.87.1 / gix-fs 0.22.1 / gix-worktree 0.56.0, repository discovery/history | [GHSA-6p9q-f2xg-6pr5](https://github.com/GitoxideLabs/gitoxide/security/advisories/GHSA-6p9q-f2xg-6pr5) **does include these locked versions**; gix-fs is fixed in 0.23.0. Its forced-checkout prerequisite is not reached here: the application selects basic/blob-diff/revision/sha1 features, no `gix-worktree-state` appears in this lockfile, and inspected gix call sites discover repositories/read objects/diffs rather than materialize a checkout. Worktree creation uses Git CLI. This is a reachability disposition, not a claim the dependency version is patched; reconsider it if checkout/mutation features are enabled. The older [RUSTSEC-2024-0350](https://rustsec.org/advisories/RUSTSEC-2024-0350.html) is fixed from gix-fs 0.11.0. |
+| rustix 1.1.5, via gix-index 0.55.0 and tempfile 3.27.0 | [RUSTSEC-2026-0486](https://rustsec.org/advisories/RUSTSEC-2026-0486.html) affects this version; patched from 1.1.6. The six affected APIs read/list extended attributes with zero-length buffers. `cargo tree --locked -p symphony-server -i rustix` identifies these two direct callers; their installed source uses stat/temporary-file operations, with no affected xattr calls. Application Rust sources likewise call none. Thus the reviewed server file paths do not reach the affected operation; this does not mark the locked version patched or dispose of unrelated targets. |
 
 The inventory executor independently confirmed that tiny_http, multipart and multer are absent
 from the initial root lockfile. The earlier targeted audit's framing/multipart advisory subjects
@@ -84,14 +96,75 @@ are therefore not this server's handler stack. Serde JSON 1.0.151 decodes native
 payloads; plugin lines and JSON recursion are bounded. This review does not infer safety for
 every locked crate from an empty search result.
 
+The inventory executor's [preserved source-bound audit and inventory](/artifacts/uploads/0f3ba5212be524067079e6dc29aa3427651cebf4835cbce2b4096c72ddb7b64b.txt)
+binds its cargo-audit 0.22.2 result to initial source `3b460adb` and RustSec database
+`233155b4025b854c68a4b199c0e32d7fd53291a2` (2026-11-17): zero vulnerability entries,
+**five informational warnings**, no ignored advisories, yank lookup excluded. One is the rustix
+warning triaged above. The other exact warning versions (fxhash 0.2.1, proc-macro-error 1.0.4,
+glib 0.18.5, rand 0.7.3) belong outside that executor's packaged archive set; this review does not
+extend its server conclusions to the desktop or other targets. The gix forced-checkout GHSA is
+absent from that database snapshot, which is why the upstream advisory was checked separately.
+The source/feature trace also reads `versions.rs` and `docview/comparison.rs`, `docview/regroup.rs`
+under `crates/symphony/src`, and the Git CLI adapter `apps/symphony-server/src/api/task_diff/git.rs`.
+The [upstream supplement](/artifacts/uploads/cc12d1e0a3e6b8c53e09ebd6071b3892ed6cf49517efd205959e4d6bd04d4050.txt)
+preserves the separate gix advisory, fix, version and database-gap evidence.
+
 ## Disposition and evidence
 
 Initial finding B1 and reservations were posted before production edits. At initial source
 `3b460adb62827f674669e8e99f3090561107264f`, the recorded command
 `just --one -- test-rs -p symphony-server --lib -- gate:: api::tests:: media_files:: write::upload_tests::`
 passed: **33 passed, 0 failed**, 0.57 seconds in the test harness (first compilation 3m 16s).
-The remaining test references above identify source cases read, not a claim that they all ran.
-Focused regression runs and the final inspected source commit will be added after remediation.
+The final inspected **production source commit is
+`bb294b057e228fca218a2537e5c5adb88c468885`**. B1 is fixed in its
+[write handler and bounded collector](https://github.com/heavenstudio/symphony/blob/bb294b057e228fca218a2537e5c5adb88c468885/apps/symphony-server/src/write.rs#L77),
+with [six regression tests](https://github.com/heavenstudio/symphony/blob/bb294b057e228fca218a2537e5c5adb88c468885/apps/symphony-server/src/write/body_tests.rs).
+The report-only commits after that source commit change no production code. No confirmed
+high-impact finding remains unexplained within the reviewed boundaries: B1 is repaired; B2/B3
+are explicit trust/deployment limits; the affected dependency versions have the reachability
+dispositions above, not waivers or claims they were patched.
+
+The task's final recorded evidence uses these focused targets; the review tip and each run's
+commit, result and log are available through `tasks runs tools/public-code-boundary-review`.
+
+| Recorded command (each prefixed `just --one --`) | Green result |
+| --- | --- |
+| `test-rs -p symphony-server --lib -- gate:: front::tests:: media_files:: write:: api::feed_socket::` | 54 passed, 0 failed; includes all six new body tests and existing upload/peer/Origin/file sandbox cases. |
+| `test-rs -p symphony-server --test after_host_origin -- host_and_origin_guard_native_handlers_without_side_effects` | 1 passed, 0 failed; real HTTP refusals and successful document/ask/board writes in the private fixture. |
+| `test-rs -p symphony-server --test after_http -- native_routes_media_and_persistence` | 1 passed, 0 failed; raw-file/metadata/symlink refusals, media and save persistence. |
+| `test-rs -p symphony-app --lib -- plugins::process::tests plugins::process::content::tests entrypoint:: docview::outside_tests uploads::tests` | 77 passed, 0 failed; protocol failure/cancellation/limits, command argv and uploads. |
+| `test-rs -p symphony-app --test project -- entrypoints::` | 13 passed, 0 failed; mappings, include/exclude, external symlinks and upload boundaries. |
+| `test-rs -p symphony-app --test hooks -- owner_words` | 4 passed, 0 failed. |
+| `lint-rs` | Format, workspace/all-target Clippy, TypeScript wire checks, client lint and unit tests passed. |
+| `crates-check` | Passed; packages are not yet on crates.io, so no published source comparison is available. This is not a publish dry-run or publication. |
+| `docs-check` | Both document audit and status lint passed. |
+
+**Coverage analysis.** At source commit `bb294b05`, the recorded command
+`tools/record.sh --pipeline test test 'JSON save body coverage' tools/cargo.sh llvm-cov --locked -p symphony-server --lib --json --output-path artifacts/tools/public-code-boundary-review/coverage.json -- write::body_tests::`
+passed all six tests. The new `json_body` function and its generated async/error closures have
+**32 of 32 LLVM code regions covered (100%)**, with no uncovered regions in that function.
+This is source-region coverage, not branch/MC/DC coverage or whole-server coverage. Reading the
+tests against those regions confirms empty, null/object, exact-cap, single-chunk overflow,
+unknown-length multi-chunk overflow, transport failure and malformed JSON cases. Router cases
+also prove no save store opens on overflow and no body is polled for a refused Host/Origin.
+No assertion, budget or lint was weakened. The initial lint found an oversized error type;
+the implementation now carries only status/message until constructing the HTTP response.
+The first coverage report could not write into a missing output directory; its retry and the
+final-source run succeeded. No whole suite was run. The measured focused test harnesses take
+fractions of a second for units and seconds for the real HTTP fixture; first compilation, not
+test work, dominated these runs, so no test-performance refactor is justified here.
+
+**Private HTTP probe.** A foreground server built from repair commit `44dab2f0` served an owned
+temporary repository at `http://127.0.0.1:58740/`; its `/api/front` confirmed that scratch root.
+`curl --noproxy '*' --max-time 30 -sS -i -H 'Content-Type: application/json' --data-binary @oversized.json http://127.0.0.1:58740/api/comment`
+with a valid JSON body of 2 MiB + 1 byte returned **413**, JSON error, `no-store` and `nosniff`.
+The same command with `--data-binary '{'` returned **400**; with `--data-binary '{}'` and
+`-H 'Host: foreign.example'` it returned **403**. The owned server was signalled by its recorded
+PID and observed stopped. The later compact error representation changes no response contract;
+final-source router and real HTTP tests cover it again.
+
+The branch changes server source, which is a release input. **Client build inputs, wire shapes,
+dependency versions and distribution are unchanged**; no generated distribution is committed.
 
 No live write request, external upload, production credential access, shared-service restart,
 remote setting change, history rewrite or publication is part of this review. Test fixtures are
