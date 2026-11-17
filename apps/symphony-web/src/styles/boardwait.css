@@ -239,7 +239,8 @@
 .task-wait .age.old {
   color: var(--dislike);
 }
-.blocked-mark {
+.blocked-mark,
+.review-mark {
   display: inline-block;
   font-size: 0.66rem;
   font-weight: 700;
@@ -254,6 +255,10 @@
 }
 .waiting-card.is-blocked {
   background: color-mix(in srgb, var(--dislike) 5%, var(--card));
+}
+.review-mark {
+  color: var(--question);
+  background: color-mix(in srgb, var(--question) 14%, transparent);
 }
 .waiting-card.k-queued,
 .waiting-card.k-parked {

@@ -19,6 +19,8 @@ import type {
 
 const isText = (value: unknown): value is string => typeof value === "string";
 const isNumber = (value: unknown): value is number => typeof value === "number";
+const isReviewCount = (value: unknown): value is number =>
+  isNumber(value) && Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
 const isTexts = (value: unknown): value is string[] => Array.isArray(value) && value.every(isText);
 /** As serde reads an `Option`: absent and `null` are none. */
 const absent = (value: unknown) => value === undefined || value === null;
@@ -53,6 +55,7 @@ export function readTask(value: unknown): Task | null {
     (absent(field(value, "parent")) || isText(field(value, "parent"))) &&
     isTexts(field(value, "links")) &&
     isRoles(field(value, "roles")) &&
+    (absent(field(value, "review_rounds")) || isReviewCount(field(value, "review_rounds"))) &&
     (absent(field(value, "waits_on")) || isWaitsOn(field(value, "waits_on"))) &&
     (absent(field(value, "from")) || isText(field(value, "from")))
     ? { ...(value as Task), parent: (field(value, "parent") as string | undefined) ?? null }
@@ -130,6 +133,7 @@ const FIELDS: [keyof TaskFields, (value: unknown) => boolean][] = [
   ["depends", isTexts],
   ["roles", isRoles],
   ["instruction", (value) => typeof value === "boolean"],
+  ["review_rounds", isReviewCount],
   ["waits_on", isWaitsOn],
   ["from", isText],
 ];
@@ -260,6 +264,7 @@ export function merge(task: Task, fields: TaskFields): Task {
     "priority",
     "updated",
     "instruction",
+    "review_rounds",
   ] as const) {
     const value = fields[name];
     if (value !== undefined && value !== null) (next as Record<string, unknown>)[name] = value;

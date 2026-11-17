@@ -750,7 +750,11 @@ What holds on every page, and each page's contract where its section above names
   sign-off lane, Status select or column pager. Search and the finished window remain.
   `/api/task-board?view=waiting` supplies complete facets and per-column ordinary/blocked counts;
   no count is inferred from loaded pages. Cards show title, slug/priority, what they wait on,
-  stage age and reason, with no role or document chips. The one orchestrator banner is amber
+  stage age and reason, with no role or document chips. A positive authoritative `review_rounds`
+  adds one `1 review` / `N reviews` mark before the title, on open and finished cards; zero or
+  unavailable summaries show no mark. Live fields update known counts; a full replacement clears
+  an unavailable summary. No task detail read or subtask count supplies the mark.
+  The one orchestrator banner is amber
   for stale holders and red when none is there, absent while one is live or no ready work waits.
   Counts load first, then nearby column pages; finished work defaults to 24 hours with a week switch. A feed event
   that changes what a view lists (a task, a message

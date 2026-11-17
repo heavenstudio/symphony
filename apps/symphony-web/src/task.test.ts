@@ -192,6 +192,22 @@ describe("a change the feed sends", () => {
 });
 
 describe("a task's changed fields", () => {
+  it("validates review counts and applies known zero as a real update", () => {
+    for (const count of [undefined, null, 0, 1, 3, 0xffffffff]) {
+      const fields = count === undefined ? {} : { review_rounds: count };
+      expect(readTask({ ...aTask("w/a"), ...fields })).not.toBeNull();
+      expect(readTaskChange({ key: "w/a", fields })).not.toBeNull();
+    }
+    for (const count of [-1, 1.5, Infinity, NaN, "3", 0x100000000]) {
+      expect(readTask({ ...aTask("w/a"), review_rounds: count })).toBeNull();
+      expect(readTaskChange({ key: "w/a", fields: { review_rounds: count } })).toBeNull();
+    }
+    const task = aTask("w/a", { review_rounds: 3 });
+    expect(merge(task, { review_rounds: 1 }).review_rounds).toBe(1);
+    expect(merge(task, { review_rounds: 0 }).review_rounds).toBe(0);
+    expect(merge(task, { review_rounds: null }).review_rounds).toBe(3);
+    expect(merge(task, {}).review_rounds).toBe(3);
+  });
   it("land in the task, the rest of it as it was", () => {
     const task = aTask("w/a", { parent: "w", links: ["docs/A.md"] });
     const changed = merge(task, {

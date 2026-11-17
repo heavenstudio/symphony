@@ -227,6 +227,23 @@ describe("a task the feed sends", () => {
 });
 
 describe("two reads of a task", () => {
+  it("applies live round counts and clears an unavailable summary on full replacement", () => {
+    const { board, d, host } = live();
+    const task = aTask("w/a", { status: "done", updated: NOW / 1000 });
+    d.tasks = [{ ...task, review_rounds: 1 }];
+    expect(board.apply(event(["task-fields", { key: "w/a", fields: { review_rounds: 3 } }]))).toBe(
+      false,
+    );
+    expect(d.tasks[0]?.review_rounds).toBe(3);
+    expect(board.apply(event(["task-fields", { key: "w/a", fields: { review_rounds: 0 } }]))).toBe(
+      false,
+    );
+    expect(d.tasks[0]?.review_rounds).toBe(0);
+    expect(board.apply(event(["task", { key: "w/a", value: task }]))).toBe(false);
+    expect(d.tasks).toHaveLength(1);
+    expect(d.tasks[0]?.review_rounds).toBeUndefined();
+    expect(host.redraw).toHaveBeenCalledTimes(3);
+  });
   it("are the same when they say the same, whatever objects they are", () => {
     const a = aTask("w/a", { roles: [] });
     expect(sameTask(a, a)).toBe(true);

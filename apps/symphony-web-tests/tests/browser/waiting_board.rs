@@ -74,6 +74,14 @@ fn listing() -> Value {
         true,
         now - 3600.0,
     ));
+    for row in &mut tasks {
+        match row["slug"].as_str().unwrap() {
+            "review/decision" => row["review_rounds"] = json!(1),
+            "review/nobody" => row["review_rounds"] = json!(3),
+            "review/check-older" => row["review_rounds"] = json!(0),
+            _ => {}
+        }
+    }
     let counts: Vec<Value> = STAGES
         .iter()
         .map(|stage| {
@@ -179,6 +187,62 @@ fn named_waits_stay_in_their_stage_in_order_with_parked_last_and_no_unnamed_bloc
         .contains("oldest 10 d")
     );
     shot(&mut page, "waiting-phone");
+}
+
+#[test]
+fn review_marks_follow_live_counts_without_changing_card_geometry_or_reading_details() {
+    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let mut answer = listing();
+    site.set_json("/api/task-board", &answer);
+    let Some(mut page) = chrome() else { return };
+    open(&mut page, &site, 390);
+    crate::wait_for_feed(&site).expect("the board never followed its feed");
+    let mark =
+        "document.querySelector('[data-slug=\"review/decision\"] .review-mark')?.textContent ?? ''";
+    assert_eq!(page.eval(mark), json!("1 review"));
+    assert_eq!(
+        page.eval(
+            "document.querySelector('[data-slug=\"review/nobody\"] .review-mark')?.textContent"
+        ),
+        json!("3 reviews")
+    );
+    assert_eq!(
+        page.eval("document.querySelector('[data-slug=\"review/check-older\"] .review-mark')"),
+        Value::Null
+    );
+    page.eval("window.roundCardHeight=document.querySelector('[data-slug=\"review/decision\"]').getBoundingClientRect().height");
+    let board: Value = serde_json::from_str(&crate::common::fixture("board.json")).unwrap();
+    let version = board["version"].as_u64().unwrap();
+    for (step, count, expected) in [(1, 3, "3 reviews"), (2, 0, ""), (3, 1, "1 review")] {
+        answer["tasks"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["slug"] == "review/decision")
+            .unwrap()["review_rounds"] = json!(count);
+        site.set_json("/api/task-board", &answer);
+        site.push(version+step,&json!({"version":version+step,"changes":[{"region":"task-fields","data":{"key":"review/decision","fields":{"review_rounds":count}}}]}).to_string());
+        assert!(page.wait_for(&format!("({mark}) === {}", json!(expected)), SHOWN));
+        assert_eq!(page.eval("document.querySelector('[data-slug=\"review/decision\"]').getBoundingClientRect().height===roundCardHeight"),json!(true));
+    }
+    let replacement = answer["tasks"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["slug"] == "review/decision")
+        .unwrap();
+    replacement.as_object_mut().unwrap().remove("review_rounds");
+    let replacement = replacement.clone();
+    site.set_json("/api/task-board", &answer);
+    site.push(version+4,&json!({"version":version+4,"changes":[{"region":"task","data":{"key":"review/decision","value":replacement}}]}).to_string());
+    assert!(page.wait_for(&format!("({mark}) === ''"), SHOWN));
+    assert!(
+        !site
+            .targets()
+            .iter()
+            .any(|url| url.contains("/api/task-page") || url.contains("/api/task-history")),
+        "badges must use board summaries"
+    );
 }
 
 #[test]

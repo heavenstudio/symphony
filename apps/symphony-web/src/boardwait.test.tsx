@@ -25,6 +25,18 @@ const task = (kind: string, who = "named", hours = 1) =>
   });
 
 describe("waiting cards", () => {
+  it.each([undefined, null, 0, 1, 3])("draws only known positive review counts (%s)", (rounds) => {
+    for (const status of ["review", "done", "cancelled"]) {
+      const t = aTask("work/task", {
+        status,
+        ...(rounds === undefined ? {} : { review_rounds: rounds }),
+      });
+      const html = render(<WaitCard task={t} now={now} />);
+      if (rounds === 1) expect(html).toContain('class="review-mark">1 review</span>');
+      else if (rounds === 3) expect(html).toContain('class="review-mark">3 reviews</span>');
+      else expect(html).not.toContain("review-mark");
+    }
+  });
   it.each([
     ["decision", "On your decision named"],
     ["check", "On named"],

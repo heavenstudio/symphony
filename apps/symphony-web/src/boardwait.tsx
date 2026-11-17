@@ -126,6 +126,11 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
     >
       <a className="taskcard-title" href={href(`/task/${task.slug}`)}>
         {blocked(task) && <span className="blocked-mark">blocked</span>}
+        {(task.review_rounds ?? 0) > 0 && (
+          <span className="review-mark">
+            {task.review_rounds} {task.review_rounds === 1 ? "review" : "reviews"}
+          </span>
+        )}
         {task.title}
       </a>
       <div className="waiting-slug">
