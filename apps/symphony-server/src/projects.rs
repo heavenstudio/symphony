@@ -48,6 +48,7 @@ use tower::ServiceExt;
 
 use crate::front::Shared;
 use crate::host::{Build, Lack};
+use crate::live::{Signal, Standing};
 
 mod retired;
 
@@ -711,7 +712,10 @@ fn listing(projects: &Projects, served: &[Served]) -> Response {
 }
 
 /// `project` as [`listing`] lists it: its refusal alone while refused, else what its hub holds,
-/// the version of its main page's feed read with that page's counts and with its task asks.
+/// the version of its main page's feed read with that page's counts and with its task asks, and
+/// the line the project list draws under it while its board is not well ([`Hub::standing`]).
+///
+/// [`Hub::standing`]: crate::live::Hub::standing
 fn listed(project: &Served) -> symphony_api::ListedProject {
     let id = &project.entry.id;
     let mut listed = symphony_api::ListedProject {
@@ -732,8 +736,7 @@ fn listed(project: &Served) -> symphony_api::ListedProject {
     else {
         return listed;
     };
-    let health = hub.health_notice();
-    listed.unwell = (!health.is_empty()).then_some(health);
+    listed.unwell = hub.standing().unwell();
     // A writer's panic leaves at worst a page between two of its regions' updates, as the list's.
     let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
     if let Some(page) = pages.get("") {
@@ -766,8 +769,8 @@ fn home(served: &[Served]) -> Response {
     )
 }
 
-/// The project list: each registered project's counts, whether it has a board, and whether its
-/// board is unwell, from the hub's memory: the list reads no board.
+/// The project list: each registered project's counts, whether it has a board, and how its board
+/// stands, from the hub's memory: the list reads no board.
 fn list(served: &[Served]) -> String {
     // Each project is warmed as the registry is read, so its counts are the hub's at hand; one
     // still warming shows none yet.
@@ -781,9 +784,18 @@ fn list(served: &[Served]) -> String {
                 let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
                 pages.get("").map(|page| page.board.counts.clone())
             });
-            let health = hub.map(|hub| hub.health_notice()).unwrap_or_default();
+            let standing = hub.map(|hub| hub.standing());
+            let blocked = (hub.and_then(|hub| hub.tasks_read().ok()))
+                .map(|tasks| Blocked::of(&tasks.tasks))
+                .unwrap_or_default();
             let boardless = hub.is_some_and(|hub| hub.boardless());
-            list_row(project, counts.as_ref(), &health, boardless)
+            list_row(
+                project,
+                counts.as_ref(),
+                standing.as_ref(),
+                blocked,
+                boardless,
+            )
         })
         .collect();
     format!(
@@ -792,17 +804,20 @@ fn list(served: &[Served]) -> String {
     )
 }
 
-/// One project in the list: its name and link, then its counts or why it is not served, that it
-/// has no task board when it has none (`boardless`), said as plainly as its counts, and `health`,
-/// what its hub says of its board while that is unwell.
+/// One project in the list: the dot of how its board stands (`standing`, none while its hub is
+/// not up or it is refused), its name and link, then its counts or why it is not served, that it
+/// has no task board when it has none (`boardless`), said as plainly as its counts, its `blocked`
+/// tasks, and, while its board is not well, the line saying why in the dot's colour.
 fn list_row(
     project: &Served,
     counts: Option<&symphony_api::Counts>,
-    health: &str,
+    standing: Option<&Standing>,
+    blocked: Blocked,
     boardless: bool,
 ) -> String {
     use symphony::markup::escape;
     let name = name(project);
+    let standing = standing.filter(|_| project.refused.is_none());
     let detail = match (&project.refused, counts) {
         (Some(why), _) => format!("<span class=\"refused\">{}</span>", escape(why)),
         (None, Some(counts)) => {
@@ -816,27 +831,85 @@ fn list_row(
                 None if boardless => " · no task board".to_string(),
                 None => String::new(),
             };
+            let cards = if counts.waiting == 1 { "card" } else { "cards" };
             format!(
-                "<span class=\"counts\">{} waiting on you{tasks}</span>",
-                counts.waiting
+                "<span class=\"counts\">{} decision {cards} waiting on you{tasks}{}</span>",
+                counts.waiting,
+                blocked.said()
             )
         }
         (None, None) if boardless => "<span class=\"counts\">No task board</span>".to_string(),
         (None, None) => String::new(),
     };
-    let health = if health.is_empty() {
-        String::new()
-    } else {
+    let dot = standing.map_or_else(String::new, |standing| {
         format!(
-            "<span class=\"health\" role=\"status\">⚠ {}</span>",
-            escape(health)
+            "<span class=\"dot {}\" role=\"img\" aria-label=\"{said}\" title=\"{said}\"></span>",
+            standing.signal.name(),
+            said = standing.signal.said()
         )
-    };
+    });
+    let line = standing
+        .filter(|standing| standing.signal != Signal::Green)
+        .map_or_else(String::new, |standing| {
+            format!(
+                "<span class=\"health {}\" role=\"status\">{}</span>",
+                standing.signal.name(),
+                escape(&standing.line)
+            )
+        });
     format!(
-        "<li><a href=\"/{id}/\">{}</a>{detail}{health}</li>",
+        "<li>{dot}<a href=\"/{id}/\">{}</a>{detail}{line}</li>",
         escape(&name),
         id = escape(&project.entry.id)
     )
+}
+
+/// The blocked tasks of a board's last read, as the list counts them: the tasks (not their
+/// subtasks, as the list's other counts) blocked on the wire, where a block that names nothing is
+/// sent in the status it stopped in and so is not counted (nor one sent blocked for want of that
+/// status), and those of them that wait on a decision of the owner's
+/// (`symphony_board::waits_on::DECISION`).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Blocked {
+    tasks: usize,
+    on_decision: usize,
+}
+
+impl Blocked {
+    fn of(tasks: &[symphony_api::Task]) -> Blocked {
+        use symphony_board::waits_on::{NO_REASON, NOBODY};
+        // One the listing could not send in the stage it stopped in still names nothing.
+        let named = |task: &&symphony_api::Task| {
+            !(task.waits_on.as_ref()).is_some_and(|w| w.kind == NOBODY && w.why == NO_REASON)
+        };
+        let blocked: Vec<&symphony_api::Task> =
+            symphony_api::tasks_in_status(tasks, symphony_api::TaskStatus::Blocked)
+                .filter(named)
+                .collect();
+        Blocked {
+            tasks: blocked.len(),
+            on_decision: (blocked.iter())
+                .filter(|task| {
+                    (task.waits_on.as_ref())
+                        .is_some_and(|waits| waits.kind == symphony_board::waits_on::DECISION)
+                })
+                .count(),
+        }
+    }
+
+    /// The counts' last part, in bold: ` · 41 blocked, 9 of them waiting on your decision`, the
+    /// decision's part only when one waits on it; nothing while none is blocked.
+    fn said(self) -> String {
+        if self.tasks == 0 {
+            return String::new();
+        }
+        let decision = if self.on_decision == 0 {
+            String::new()
+        } else {
+            format!(", {} of them waiting on your decision", self.on_decision)
+        };
+        format!(" · <strong>{} blocked{decision}</strong>", self.tasks)
+    }
 }
 
 /// `/<id>/theme.css`: the project's theme tokens, revalidated by their ETag.

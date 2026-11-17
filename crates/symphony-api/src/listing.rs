@@ -36,8 +36,9 @@ pub struct ListedProject {
     pub name: String,
     /// Why this server does not serve it, when it does not; its counts are none then.
     pub refused: Option<String>,
-    /// What the server says of its board while that is unwell, the warning its pages show; none
-    /// while it is well.
+    /// The line the server's project list draws under it while its board is not well: the warning
+    /// its pages show while the board is unwell, else that it is slow or that no live orchestrator
+    /// staffs the work waiting to start (docs/TASKS.md, "Board health"); none while it is well.
     pub unwell: Option<String>,
     /// The version of its feed the counts below were read at: its feed follows from here
     /// (`/<id>/api/feed?since=`). None until its board view is read, and while it is refused.
