@@ -54,21 +54,7 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .app-nav { padding-bottom:16px; border-bottom:1px solid var(--border); margin-bottom:20px; }
 .kanban, .ghost-kanban { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4); }
 .kanban > *, .ghost-kanban > * { min-width:0; }
-/* The board's scroller fits the window under what the page draws above it (the header, the
-   heading, the filters and the hint: 277 px on a desk, 303 to 374 in a narrow window as its filters
-   wrap, 298 on a phone with its filters shut and 447 with them open) and over the dock's band
-   (frame.css), so its own horizontal scrollbar, at its foot, is never under the prev/next bar,
-   nor under the "+", which sits in that band, at its lift, when no bar draws. Its ghost is as
-   tall. */
-:root { --board-dock:var(--dock); }
-.board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px - var(--board-dock,0px))); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
-.board-scroll:focus-visible { outline:2px solid var(--primary); outline-offset:4px; }
-.board-scroll-hint, .ghost-hint { margin:0; font-size:var(--fs-sm); }
-/* The pipeline clips its rows' 600 px look-ahead below its longest column, which would otherwise
-   lengthen the board's scroll until the last rows drew, then drop a card a link scrolled to there.
-   The clip stands as far out as the board's own padding, so the columns' shadows paint as before. */
-.pipeline { display:flex; gap:12px; width:max-content; align-items:flex-start; overflow:clip; overflow-clip-margin:12px; }
-.pipeline > .column, .ghost-column { flex:0 0 288px; width:288px; box-sizing:border-box; scroll-snap-align:start; }
+.ghost-column { flex:0 0 288px; width:288px; box-sizing:border-box; scroll-snap-align:start; }
 .column, .ghost-column { --c:var(--muted-foreground); background:color-mix(in srgb,var(--c) 4%,var(--card)); border:1px solid var(--border); border-top:3px solid var(--c); border-radius:var(--r-lg); padding:10px 10px 4px; min-width:0; min-height:120px; box-shadow:var(--shadow-1); }
 /* A column of the board's ghost is the column `data-for` names, in its colour. */
 .column[data-status=backlog], [data-for=backlog] { --c:var(--pending); }
@@ -76,7 +62,7 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .column[data-status=ready], [data-for=ready] { --c:var(--auto); }
 .column[data-status=in_progress], [data-for=in_progress] { --c:var(--primary); }
 .column[data-status=build], .column[data-status=test], .column[data-status=build-test], [data-for=build], [data-for=test], [data-for=build-test] { --c:var(--primary); }
-.pipeline > .column.rail, .ghost-column[data-for=build-test] { flex:0 0 136px; width:136px; background:transparent; box-shadow:none; border-style:dashed; border-top-style:solid; font-size:var(--fs-sm); }
+.ghost-column[data-for=build-test] { flex:0 0 136px; width:136px; background:transparent; box-shadow:none; border-style:dashed; border-top-style:solid; font-size:var(--fs-sm); }
 .column.rail p { margin:0 2px 8px; }
 .column[data-status=review], .column[data-status=signoff], [data-for=review], [data-for=signoff] { --c:var(--question); }
 .column[data-status=done], [data-for=done] { --c:var(--like); }
@@ -188,7 +174,6 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .ghost-heading { font-size:var(--fs-xl); line-height:1.25; margin:1.6em 0 .8em; }
 .ghost-meta { font-size:var(--fs-sm); margin:0 0 12px; }
 .ghost-card { box-sizing:border-box; overflow:hidden; } .ghost-card > div { margin-top:2px; } .ghost-card > .bone:first-child { --w:55%; font-size:.75em; } .ghost-card > .ghost-pill { display:block; width:fit-content; margin-top:4px; line-height:1.45; } .ghost-card > div + .ghost-pill { margin-top:6px; }
-.ghost-pipeline { display:flex; gap:12px; align-items:flex-start; overflow:auto; padding-bottom:12px; max-height:max(320px,calc(100dvh - 320px - var(--board-dock,0px))); }
 /* A heading's line is as tall as its count's. */
 .ghost-column > div:first-child { font-size:.72rem; line-height:1.25; min-height:calc(var(--fs-xs) * 1.25); margin:2px 2px 10px; }
 [data-for=build-test] > div:first-child { min-height:0; } [data-for=build-test] > .skeleton { margin:0 2px 8px; }
@@ -370,8 +355,6 @@ a.bar:hover { background:var(--background); }
   .tiles { grid-template-columns:repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  .pipeline > .column, .ghost-pipeline > .ghost-column:not([data-for=build-test]) { flex-basis:280px; width:280px; }
-  .board-scroll, .ghost-pipeline { max-height:max(280px,calc(100dvh - 420px - var(--board-dock,0px))); }
   main { --page-end:96px; padding:var(--sp-4) var(--sp-4) var(--page-end); }
   .page-head h1, .task-head h1, .trouble h1, .ghost-title { font-size:var(--fs-2xl); }
   .ghost-title > .bone + .bone { display:inline-block; }
@@ -385,32 +368,10 @@ a.bar:hover { background:var(--background); }
 }
 /* A phone, held upright: no phone is wider. */
 @media (max-width: 600px) {
-  /* One column on the screen at a time: each as wide as the board's scroller (the rail too), and a
-     swipe lands on the next one whole. apps/symphony-web/src/cardheight.ts repeats the width. Each
-     selector is as specific as the narrow window's above, its ghost's by `[data-for]`. */
-  .board-scroll, .ghost-pipeline { container-type:inline-size; }
-  .board-scroll { scroll-snap-type:x mandatory; }
-  .pipeline > .column, .pipeline > .column.rail, .ghost-pipeline > .ghost-column[data-for] { flex-basis:100cqi; width:100cqi; scroll-snap-stop:always; }
-  /* Each column as tall as the longest, so a reader scrolled down one still swipes, and steps by
-     key, to the next: Chrome snaps only to a column that reaches as far down as the board shows.
-     apps/symphony-web/src/boardswipe.ts holds a long flick to one column. */
-  .pipeline, .ghost-pipeline { align-items:stretch; }
-  /* A column's heading stays at the board's top while the reader scrolls down the column, and says
-     which of the pipeline's columns it is: with one column on the screen, no neighbour in sight
-     says it. Its box takes the column's padding across, where its margins were, so a card scrolls
-     under it whole, and its text and height stay where they were; the board's scroll padding keeps
-     what is scrolled into view below it (a link's card, a focused one). The rail has no fill of
-     its own: its heading takes the page's. */
-  .pipeline > .column > h2 { position:sticky; top:0; z-index:1; margin:0 -10px 2px; padding:2px 12px 8px; background:inherit; }
-  .pipeline > .column.rail > h2 { background:var(--background); }
-  .column-place { display:inline; }
-  .board-scroll { scroll-padding-top:calc(var(--fs-xs) * 1.25 + 12px); }
   /* The search and the filters are behind their button, shown only while it is pressed. */
   .dx-button.board-filters-toggle, .ghost-field.ghost-filters-toggle { display:flex; width:fit-content; margin:0 0 16px; }
   .ghost-field.ghost-filters-toggle { width:143px; }
   .filters:not([data-open=true]) { display:none; }
-  .board-scroll, .ghost-pipeline { max-height:max(280px,calc(100dvh - 323px - var(--board-dock,0px))); }
-  .filters[data-open=true] + .kanban > .board-scroll { max-height:max(280px,calc(100dvh - 472px - var(--board-dock,0px))); }
   /* A page that ends in a composer has its notices in its flow, under it: a band fixed over a
      phone's page covers whatever scrolls through it, the composer among it. Drawn at their own
      place, the top of the block they share with their reserve (live.tsx), they stand in its room

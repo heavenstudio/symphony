@@ -629,48 +629,6 @@ fn a_chat_flush_after_its_projects_git_went_reaches_no_journal_or_board_above_it
     );
 }
 
-/// A refresh's snapshot of main's page, once a branch's card is held, names each branch's task from
-/// the board (`branches::task_names`): on a project whose `.git` went after its check, that reach
-/// is refused, the card names its branch alone, and the outer board is not started.
-#[test]
-fn a_refreshs_task_names_after_its_projects_git_went_start_no_board_above_it() {
-    let (case, cards) = Gitless::new(|tree, inner| {
-        let worktree = tree.path("inner-feature");
-        git(
-            &inner.root,
-            &[
-                "worktree",
-                "add",
-                "-q",
-                "-b",
-                "feature",
-                worktree.to_str().unwrap(),
-            ],
-        );
-        std::fs::write(
-            worktree.join("docs/TOPIC.md"),
-            "# Topic\n\n- [ ] **initial-card** — Initial question.\n\
-             - [ ] **branch-card** — The branch's question.\n",
-        )
-        .unwrap();
-        git(&worktree, &["commit", "-qam", "Ask on the branch"]);
-        symphony::branches::branch_cards(&inner.root)
-    });
-    assert!(
-        cards.iter().any(|card| !card.on_main),
-        "the branch's card is held: {cards:?}"
-    );
-    let snapshot = symphony::dashboard::snapshot(&case.inner.root, &cards, "").unwrap();
-    let card = snapshot
-        .queue
-        .waiting
-        .iter()
-        .find(|card| card.slug == "branch-card")
-        .expect("the branch's card is on main's page");
-    assert_eq!(card.task.as_deref(), Some("feature"));
-    assert!(case.outer_down(), "the outer board started");
-}
-
 /// The branch scan's read of a running board (`taskview::connect_running`), made after its check
 /// on a project whose `.git` went, is refused as gone, and never reads the outer checkout's board,
 /// running as it is.

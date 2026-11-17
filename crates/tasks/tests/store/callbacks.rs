@@ -814,8 +814,8 @@ fn an_idle_clock_reports_stale_and_lost_children_without_a_board_mutation(backen
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
         f.store.database().requests() - requests,
-        3,
-        "the warm tick must reach the idle shortcut before the clock advances"
+        4,
+        "the warm tick reaches the idle shortcut after its task-block reconciliation read"
     );
     let marker = f.store.marker().unwrap();
     f.advance(91.0);
