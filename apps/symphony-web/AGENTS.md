@@ -188,6 +188,13 @@ the rest of the build, so the build is the same from any checkout and shell.
 its guides and of the notice styles, so the regenerator rebuilds the distribution when one
 changes. The server embeds the files as it embeds the rest, and needs no Node to run. The build
 needs Git, Bash, jq, the pinned Node and a Rust toolchain for the publisher.
+Vite's `build.license` inventories the packages in emitted chunks with their installed license
+text (`.vite/licenses.json`). `notices.sh` combines it with `copied-controls.txt` and the copied
+controls' selected MIT text into `assets/third-party-HASH.txt`, named by the shell and retained
+in `builds.json` with that build. The server packages, embeds and installs it with the other
+client files. A missing inventory, missing text or license other than MIT refuses packaging,
+so a dependency with different terms needs an explicit license selection in this step. The
+repository's MIT license covers its own code; dependencies retain their own licenses.
 `report.sh OUT` prints what each kind of the build in OUT makes a browser fetch
 ([Budget](#what-the-pages-keep)).
 
