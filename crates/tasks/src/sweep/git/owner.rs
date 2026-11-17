@@ -4,10 +4,13 @@
 //!
 //! A card and its lines are read as the Symphony reads them (`symphony_docs::syntax`), and a line
 //! counts only where no copy of its card in the commits it is compared with holds it: so a line a
-//! regroup only moved (within the file, or to a card in another changed file) is no answer, and an
-//! agent's own note is none either.
+//! regroup only moved or copied (within the file, or from any committed register) is no answer,
+//! and an agent's own note is none either. A card's slug is its identity: renaming a card carrying
+//! owner lines needs those lines committed under the new slug before a land. Git's text grep
+//! selects files containing the owner marker before any file or blob is materialized here, so
+//! unrelated text and binaries are never loaded into the register parser, even at the root.
 
-use super::command::{blobs, told};
+use super::command::{blobs, grep, told};
 use std::collections::BTreeMap;
 use std::path::Path;
 use symphony_docs::syntax::{cards, entries, lines};
@@ -71,12 +74,38 @@ fn names(out: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// Text files containing the owner marker, in the worktree (including untracked files) or `rev`.
+/// Git prints only names, excluding binary files; exit 1 means no matches, not a failed read.
+fn candidates(path: &Path, specs: &[&str], rev: Option<&str>) -> Result<Vec<String>, String> {
+    let mut args = vec!["grep", "-I", "-l", "-z", "-F", "-e", OWNER];
+    if let Some(rev) = rev {
+        args.push(rev);
+    } else {
+        args.push("--untracked");
+    }
+    args.push("--");
+    args.extend(specs);
+    let found = names(&grep(path, &args)?.stdout);
+    Ok(found
+        .into_iter()
+        .map(|name| match rev {
+            Some(rev) => name
+                .strip_prefix(&format!("{rev}:"))
+                .unwrap_or(&name)
+                .to_string(),
+            None => name,
+        })
+        .collect())
+}
+
 /// The owner's answers the worktree at `path` holds under the project's document folders
 /// `folders` that no commit has: each owner's dated line, under a card, of a document its files
 /// changed or added since its HEAD that none of HEAD's copies of those documents holds on that
-/// card, nor, given a commit `tip`, the tip's copies (a land's: what it carries). Lines are
-/// compared as a count per card, so a line a regroup only moved is none. An answer git cannot read
-/// is an error, never none: a caller that cannot tell must keep what it would lose.
+/// card, nor, given a commit `tip`, the tip's copies (a land's: what it carries). Every committed
+/// register in the folders counts, including unchanged ones copied into a changed or new file.
+/// Lines are compared as a count per card within each written file, so several files copying the
+/// same committed register are none. An answer git cannot read is an error, never none: a caller
+/// that cannot tell must keep what it would lose.
 pub fn answers(path: &Path, folders: &[String], tip: Option<&str>) -> Result<Vec<Answer>, String> {
     let specs = pathspecs(folders);
     // Both names of a file moved: its old name's copy in HEAD holds the lines it moved.
@@ -86,8 +115,22 @@ pub fn answers(path: &Path, folders: &[String], tip: Option<&str>) -> Result<Vec
     untracked.extend(&specs);
     let changed = names(&told(path, &diff)?.stdout);
     let added = names(&told(path, &untracked)?.stdout);
+    if changed.is_empty() && added.is_empty() {
+        return Ok(Vec::new());
+    }
+    let changed_specs: Vec<String> = changed
+        .iter()
+        .chain(&added)
+        .map(|file| format!(":(literal){file}"))
+        .collect();
+    let changed_specs: Vec<&str> = changed_specs.iter().map(String::as_str).collect();
+    let candidates = candidates(path, &changed_specs, None)?;
     let mut written: Vec<(String, Line)> = Vec::new();
-    for file in changed.iter().chain(&added) {
+    for file in changed
+        .iter()
+        .chain(&added)
+        .filter(|file| candidates.contains(file))
+    {
         let at = path.join(file);
         if at.is_dir() {
             continue; // a submodule or a nested checkout: no document
@@ -105,18 +148,21 @@ pub fn answers(path: &Path, folders: &[String], tip: Option<&str>) -> Result<Vec
     // What the commits compared with hold on each card, wherever in those documents it is.
     let revs: Vec<&str> = std::iter::once("HEAD").chain(tip).collect();
     let mut objects = Vec::new();
-    for file in &changed {
-        if file.contains('\n') {
-            return Err(format!("{file:?} cannot be named to git cat-file"));
+    for (at, rev) in revs.iter().enumerate() {
+        for file in self::candidates(path, &specs, Some(rev))? {
+            if file.contains('\n') {
+                return Err(format!("{file:?} cannot be named to git cat-file"));
+            }
+            objects.push((at, format!("{rev}:{file}")));
         }
-        objects.extend(revs.iter().map(|rev| format!("{rev}:{file}")));
     }
     // How many copies of each line one commit holds, the most of either: HEAD's and the tip's are
     // two versions of the same documents, never two lines.
     let mut counts: Vec<BTreeMap<Line, usize>> = vec![BTreeMap::new(); revs.len()];
-    for (at, text) in blobs(path, &objects)?.into_iter().enumerate() {
+    let specs: Vec<String> = objects.iter().map(|(_, spec)| spec.clone()).collect();
+    for ((at, _), text) in objects.iter().zip(blobs(path, &specs)?) {
         for line in text.as_deref().map(owner_lines).unwrap_or_default() {
-            *counts[at % revs.len()].entry(line).or_default() += 1;
+            *counts[*at].entry(line).or_default() += 1;
         }
     }
     let mut held: BTreeMap<&Line, usize> = BTreeMap::new();
@@ -125,9 +171,17 @@ pub fn answers(path: &Path, folders: &[String], tip: Option<&str>) -> Result<Vec
         *most = (*most).max(*n);
     }
     let mut left: Vec<Answer> = Vec::new();
+    // Written lines are grouped by file. Reuse the line-key count map within each group.
+    let mut seen_file = None;
+    let mut seen = BTreeMap::new();
     for (file, line) in &written {
-        if let Some(n) = held.get_mut(line).filter(|n| **n > 0) {
-            *n -= 1;
+        if seen_file != Some(file) {
+            seen.clear();
+            seen_file = Some(file);
+        }
+        let n = seen.entry(line).or_insert(0usize);
+        *n += 1;
+        if *n <= held.get(line).copied().unwrap_or(0) {
             continue;
         }
         let answer = Answer {
@@ -289,5 +343,99 @@ mod tests {
             [answer("docs/E.md", "x")]
         );
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn unchanged_registers_hold_copies_in_backups_and_changed_files_but_not_renamed_cards() {
+        let register = "- [x] **x** — X.\n  [2026-11-14 01:52] owner · approved — go\n";
+        let root = repository("copies", &[("docs/D.md", register), ("docs/E.md", "# E\n")]);
+        let docs = vec!["docs".to_string()];
+        write(&root, "docs/D.md.orig", register);
+        assert_eq!(answers(&root, &docs, None).unwrap(), []);
+        write(&root, "docs/E.md", register);
+        // Several copies of a known line still add no owner answer.
+        assert_eq!(answers(&root, &docs, None).unwrap(), []);
+        write(
+            &root,
+            "docs/E.md",
+            &register.replace("**x**", "**renamed**"),
+        );
+        assert_eq!(
+            answers(&root, &docs, None).unwrap(),
+            [Answer {
+                file: "docs/E.md".into(),
+                card: "renamed".into(),
+            }]
+        );
+        // The land's tip holds the renamed card in an otherwise unchanged register too.
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-qm", "rename"]);
+        git(&root, &["branch", "tip"]);
+        git(&root, &["checkout", "-q", "HEAD^"]);
+        write(
+            &root,
+            "docs/copy.md",
+            &register.replace("**x**", "**renamed**"),
+        );
+        assert_eq!(answers(&root, &docs, Some("tip")).unwrap(), []);
+        assert!(answers(&root, &docs, Some("missing-tip")).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn binary_files_are_never_registers_even_when_the_whole_checkout_is_read() {
+        let register = "- [x] **binary** — X.\n  [2026-11-14 01:52] owner · approved — go\n";
+        let root = repository("binary", &[("docs/D.md", "# D\n")]);
+        // Large binary assets can contain a register's bytes without being a document. A real
+        // answer elsewhere makes the reader compare committed files as well as worktree files.
+        let mut bytes = vec![0; 4 * 1024 * 1024];
+        bytes[..register.len()].copy_from_slice(register.as_bytes());
+        std::fs::write(root.join("asset.bin"), &bytes).unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-qm", "asset"]);
+        std::fs::write(root.join("copy.bin"), bytes).unwrap();
+        write(
+            &root,
+            "docs/D.md",
+            &register.replace("**binary**", "**real**"),
+        );
+        assert_eq!(
+            answers(&root, &[String::new()], None).unwrap(),
+            [Answer {
+                file: "docs/D.md".into(),
+                card: "real".into(),
+            }]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_changed_file_is_an_error_with_or_without_other_matches() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = repository("unreadable", &[("docs/D.md", "# D\n")]);
+        write(&root, "docs/hidden.md", "# Hidden\n");
+        std::fs::set_permissions(
+            root.join("docs/hidden.md"),
+            std::fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        for text in [
+            "# Changed\n",
+            "- [x] **x** — X.\n  [2026-11-14 01:52] owner · approved — go\n",
+        ] {
+            write(&root, "docs/D.md", text);
+            let error = answers(&root, &["docs".into()], None).unwrap_err();
+            assert!(
+                error.starts_with("git grep could not read in ")
+                    && error.contains("docs/hidden.md"),
+                "{error}"
+            );
+        }
+        std::fs::set_permissions(
+            root.join("docs/hidden.md"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

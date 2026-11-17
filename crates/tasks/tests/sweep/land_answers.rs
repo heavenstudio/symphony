@@ -33,14 +33,17 @@ fn refused_for(held: &str) -> String {
 /// What the executor is told to do after the refusal `line`; `elsewhere` when a worktree not on the
 /// branch holds the answer.
 fn told_to(line: &str, elsewhere: bool) -> String {
+    if elsewhere {
+        return format!(
+            "land refused: {line}. Commit each answer on its worktree's own branch and card \
+             (from a detached worktree, copy it onto the same card on {SLUG} and commit it there). \
+             If {SLUG}'s tip changes, move it back to review (`just tasks move {SLUG} review`) and \
+             ask its reviewer to approve the new tip naming it"
+        );
+    }
     format!(
-        "land refused: {line}. Commit it on {SLUG} there{}, then move it back to review (`just \
-         tasks move {SLUG} review`) and ask its reviewer to approve the new tip naming it",
-        if elsewhere {
-            format!(" (from a worktree not on it, copy the line onto its card on {SLUG})")
-        } else {
-            String::new()
-        }
+        "land refused: {line}. Commit it on {SLUG} there, then move it back to review (`just \
+         tasks move {SLUG} review`) and ask its reviewer to approve the new tip naming it"
     )
 }
 
@@ -234,6 +237,26 @@ fn a_worktree_at_the_tip_on_another_branch_or_detached_holding_an_answer_refuses
         fs::read_to_string(r.root.join(DOC)).unwrap(),
         answered(REGISTER)
     );
+}
+
+#[test]
+fn a_stacked_branch_commits_its_answer_on_its_own_card_before_the_base_lands() {
+    let r = Repo::new();
+    manifest(&r, "");
+    let wt = branch(&r, SLUG, DOC, REGISTER);
+    let tip = head(&wt, "HEAD");
+    let people = approved(&r, SLUG, &format!("{tip} is good"));
+    let stacked = r.add("stacked", Some("feat/stacked"), &tip);
+    let own = answered(&REGISTER.replace("card-b", "stacked-card"));
+    write(&stacked, DOC, &own);
+    let line = landed(&r, SLUG, &people.orch).1.unwrap_err();
+    let told = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+    assert_eq!(told.text, told_to(&line, true));
+    git(&stacked, &["commit", "-qam", "keep stacked answer"]);
+    landed(&r, SLUG, &people.orch).1.unwrap();
+    assert_eq!(head(&r.root, "main^2"), tip);
+    assert_eq!(fs::read_to_string(r.root.join(DOC)).unwrap(), REGISTER);
+    assert_eq!(fs::read_to_string(stacked.join(DOC)).unwrap(), own);
 }
 
 /// A register's cards regrouped, uncommitted (as the Symphony's save regroups them), only move

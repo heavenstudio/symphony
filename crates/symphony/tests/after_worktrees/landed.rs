@@ -416,6 +416,218 @@ pub(super) fn a_line_on_a_card_main_closed_since_the_branch_posted_it_is_mains()
     );
 }
 
+pub(super) fn save_routing_and_page_use_the_registers_closure() {
+    isolated(
+        "save_routing_and_page_agree_on_which_cards_main_closed",
+        |_| {
+            let tree = committing();
+            let cases = [
+                (
+                    "rejected-open",
+                    '-',
+                    "  [2026-11-11 12:00] owner · rejected — Too dark.\n",
+                    false,
+                ),
+                (
+                    "approved-open",
+                    'x',
+                    "  [2026-11-11 12:00] owner · approved — One question.\n",
+                    false,
+                ),
+                (
+                    "rejected-answered",
+                    '-',
+                    "  [2026-11-11 12:00] owner · rejected — Too dark.\n  [2026-11-11 13:00] agent — Replaced.\n",
+                    true,
+                ),
+                (
+                    "approved-closed",
+                    'x',
+                    "  [2026-11-11 12:00] owner · approved\n",
+                    true,
+                ),
+                (
+                    "resolved",
+                    'r',
+                    "  [2026-11-11 12:00] agent · resolved\n",
+                    true,
+                ),
+            ];
+            let base: String = cases
+                .iter()
+                .map(|(slug, _, _, _)| card(slug, ' ', ""))
+                .collect();
+            tree.write(DOC, &register(&base));
+            commit(&tree.root, "base", 1);
+            let live = branch(&tree, "feat/closure", "closure");
+            write(&live, &base.replace("Proposal", "Revision"));
+            commit(&live, "revise", 2);
+            let main: String = cases
+                .iter()
+                .map(|(slug, mark, lines, _)| card(slug, *mark, lines))
+                .collect();
+            tree.write(DOC, &register(&main));
+            commit(&tree.root, "main replies", 3);
+            let scan = symphony::branches::scan_pages(&tree.root, &BTreeSet::new());
+            let overrides = symphony::branches::page_cards(
+                &tree.root,
+                &live,
+                DOC,
+                &[],
+                &[],
+                &scan.pages[&format!("@feat~closure/{DOC}")],
+            );
+            for (slug, _, _, closed) in cases {
+                assert_eq!(
+                    symphony::branches::mains_card(
+                        &tree.root,
+                        symphony::branches::Page::Tree(&live),
+                        DOC,
+                        slug
+                    ),
+                    closed,
+                    "{slug}: save routing"
+                );
+                assert_eq!(
+                    overrides
+                        .iter()
+                        .any(|card| card.slug == slug && card.text.starts_with("Proposal")),
+                    closed,
+                    "{slug}: page draws main's closure"
+                );
+            }
+        },
+    );
+}
+
+pub(super) fn a_finished_revision_stays_one_card_until_its_answer_lands(revise_options: bool) {
+    isolated(
+        if revise_options {
+            "a_finished_option_revision_and_its_answer_stay_one_card_until_landed"
+        } else {
+            "a_finished_revision_and_its_answer_stay_one_card_until_landed"
+        },
+        |_| {
+            let tree = committing();
+            let base = card(
+                "revised",
+                ' ',
+                if revise_options {
+                    "  [2026-11-11 09:01] agent — A: original option.\n"
+                } else {
+                    ""
+                },
+            );
+            tree.write(DOC, &register(&base));
+            commit(&tree.root, "base", 1);
+            let wt = branch(&tree, "feat/done", "done");
+            let revision = if revise_options {
+                base.replace("A: original option.", "A: revised option.")
+            } else {
+                base.replace("Proposal revised.", "A revised proposal.")
+            };
+            let heading = if revise_options {
+                "Proposal revised."
+            } else {
+                "A revised proposal."
+            };
+            write(&wt, &revision);
+            commit(&wt, "revise", 2);
+            let finished = BTreeSet::from(["feat/done".to_string()]);
+            let assert_pages = |finished: &BTreeSet<String>| {
+                let seen = shown(&tree.root, finished);
+                for (path, at, scope) in [
+                    (DOC.to_string(), &tree.root, ""),
+                    (format!("@feat~done/{DOC}"), &wt, "feat~done"),
+                ] {
+                    let cards = seen
+                        .snapshot
+                        .pages
+                        .get(&path)
+                        .map_or(&[][..], Vec::as_slice);
+                    let page = docview::document_showing(&Render::new(at), DOC, scope, &[], cards)
+                        .unwrap();
+                    assert_eq!(
+                        page.cards.iter().filter(|c| c.slug == "revised").count(),
+                        1,
+                        "{path}: one rendered card"
+                    );
+                    assert!(
+                        page.sections.iter().any(|s| s.html.contains(heading)),
+                        "{path}"
+                    );
+                    if revise_options {
+                        assert!(
+                            page.threads["revised"].html.contains("A: revised option."),
+                            "{path}: revised option when finished={finished:?}"
+                        );
+                    }
+                }
+                seen
+            };
+            let live = assert_pages(&BTreeSet::new());
+            assert_eq!(
+                live.snapshot.queue.waiting[0].doc,
+                format!("@feat~done/{DOC}")
+            );
+            let before = assert_pages(&finished);
+            assert_eq!(before.waiting, ["revised"]);
+            assert_eq!(
+                before.snapshot.queue.waiting[0].doc,
+                format!("@feat~done/{DOC}"),
+                "main's page saves on the revision's branch"
+            );
+            let saves = symphony::save::Saves::start(&tree.root);
+            post(
+                &saves,
+                "feat~done",
+                "/api/decision",
+                json!({"path":DOC, "slug":"revised", "state":"approved", "note":"Keep the revision"}),
+            );
+            saves.close();
+            assert!(!tree.read(DOC).contains("owner"));
+            assert_eq!(
+                symphony::landing::owner_lines_left(&wt),
+                [DOC],
+                "the landing reader keeps the answer until committed"
+            );
+            let answered = assert_pages(&finished);
+            assert_eq!(answered.agent, ["revised"]);
+            for path in [DOC.to_string(), format!("@feat~done/{DOC}")] {
+                assert!(
+                    answered.snapshot.pages[&path][0]
+                        .raw
+                        .iter()
+                        .any(|line| line.contains("Keep the revision")),
+                    "{path}: the owner's answer stays with the revision"
+                );
+            }
+            commit(&wt, "carry owner answer", 3);
+            assert!(symphony::landing::owner_lines_left(&wt).is_empty());
+            command(
+                &tree.root,
+                &[
+                    "-c",
+                    "commit.gpgsign=false",
+                    "merge",
+                    "--no-ff",
+                    "-m",
+                    "land revision",
+                    "feat/done",
+                ],
+                4,
+            );
+            let (committed, _) = status_and_page(&tree.root);
+            assert_eq!(committed, states(&[("revised", "approved")]));
+            assert!(tree.read(DOC).contains(heading));
+            if revise_options {
+                assert!(tree.read(DOC).contains("A: revised option."));
+            }
+            assert!(tree.read(DOC).contains("Keep the revision"));
+        },
+    );
+}
+
 pub(super) fn a_verdict_from_a_gone_worktrees_page_reads_its_kept_branch() {
     let name = "a_verdict_from_a_gone_worktrees_page_is_judged_on_its_branch_while_it_is_kept";
     let bin = super::common::Tree::new();

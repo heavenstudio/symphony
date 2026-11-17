@@ -1,6 +1,7 @@
 import "./styles/boardwait.css";
 // The approved B task board: complete wait facets, original-stage columns on a desk and one saved
-// stage on a phone. Columns and cards mount near the screen, reserving each card's two-line title
+// stage on a phone. Desk columns scroll sideways at a readable width. Columns and cards mount
+// near the screen, reserving each card's two-line title
 // and wait line; the first read's ghost keeps the last counts.
 // What it reads and when is boardlive.tsx's.
 
@@ -73,7 +74,7 @@ export function boardShape(counts: [string, number][]): [string, number][] {
   return STAGES.map((status) => [status, counts.find(([one]) => one === status)?.[1] ?? 0]);
 }
 function defaultShape(): [string, number][] {
-  return STAGES.map((status) => [status, 1]);
+  return STAGES.map((status) => [status, status === "build" || status === "test" ? 0 : 1]);
 }
 
 /** The shape `kept` (as SHAPE holds it) gives the board; `defaultShape` for none. */
@@ -135,9 +136,12 @@ export function GhostBoard({ shape }: { shape: [string, number][] }) {
   const stages = phone ? [savedStage(load(STAGE_KEY))] : STAGES;
   return (
     <div className="waiting-board waiting-ghost">
-      <span className="ghost-field ghost-filters-toggle">
-        <span className="bone" style={width("16ch")} />
-      </span>
+      <div className="board-toolbar">
+        <span className="ghost-field ghost-filters-toggle">
+          <span className="bone" style={width("16ch")} />
+        </span>
+        {!phone && <span className="ghost-field ghost-backlog" />}
+      </div>
       <div className="row filters">
         <div>
           Search tasks and messages
@@ -162,17 +166,18 @@ export function GhostBoard({ shape }: { shape: [string, number][] }) {
         </div>
       )}
       <div className="ghost-kanban waiting-columns">
-        {!phone && <div className="backlog-rail">Backlog</div>}
-        {stages.flatMap((status) => [
-          <GhostColumn
-            key={status}
-            status={status}
-            count={shape.find(([one]) => one === status)?.[1] ?? 1}
-          />,
-          ...(!phone && status === "in_progress"
-            ? [<GhostColumn key="build-test" status="build-test" count={0} />]
-            : []),
-        ])}
+        <div className="waiting-pipeline">
+          {stages.map((status) => (
+            <GhostColumn
+              key={status}
+              status={status}
+              count={
+                shape.find(([one]) => one === status)?.[1] ??
+                (status === "build" || status === "test" ? 0 : 1)
+              }
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -193,20 +198,6 @@ export function UnreadBoard({ why, retry }: { why: string; retry: () => void }) 
     </section>
   );
 }
-
-const UnreportedRail = memo(function UnreportedRail({ connected }: { connected: boolean }) {
-  return (
-    <section className="column rail" data-status="build-test" aria-label="Build and test">
-      <h2>build · test</h2>
-      <p className="muted work-empty">
-        {connected
-          ? "No machine reports this project's builds or tests."
-          : "Disconnected · build and test activity unknown"}
-      </p>
-      <a href={href("/agents#machine-context")}>Machine details</a>
-    </section>
-  );
-});
 
 /** What the Build column says of the machines: how sure their observation is, and where the
  * whole inventory is. */
@@ -279,6 +270,8 @@ export interface ColumnProps {
   now?: number;
   cancelled?: number;
   onCancelled?: (() => void) | undefined;
+  /** Load the column an explicit row link names, including while it is off screen. */
+  eager?: boolean;
 }
 
 /** A column of the board: its heading and count, its rows near the screen, and Load more. Drawn again
@@ -298,6 +291,7 @@ export const TaskColumn = memo(function TaskColumn({
   now = Date.now() / 1000,
   cancelled = 0,
   onCancelled,
+  eager = false,
 }: ColumnProps) {
   const [visible, setVisible] = useState(false);
   // Complete totals make empty-column reads unnecessary. Retained rows still refresh so a
@@ -343,14 +337,20 @@ export const TaskColumn = memo(function TaskColumn({
       </div>
       {status === "build" && <BoardContext work={work} connected={connected} />}
       {count === 0 && (status === "build" || status === "test") && (
-        <p className="muted work-empty">{`No tasks with fresh ${status} activity.`}</p>
+        <p className="muted work-empty">
+          {!connected
+            ? `Disconnected · ${status} activity unknown`
+            : work.machines.length === 0
+              ? `No ${status} observations reported.`
+              : `No tasks with fresh ${status} activity.`}
+        </p>
       )}
       <NearViewport
         id={`column-${status}`}
         height={reserved}
         onEnter={() => setVisible(true)}
         ghost={ghosts}
-        eager={follows}
+        eager={follows || eager}
       >
         {reading && (
           <div style={{ minHeight: `${reserved}px` }} data-pending="true">
@@ -533,8 +533,20 @@ export function TaskBoard({
     days,
     onLoad,
   ]);
-  const surface = useRef<HTMLDivElement>(null);
+  const surface = useRef<HTMLElement>(null);
   useKeptPlace(surface, true, true);
+  const showingColumns = !phone && wait === "" && opened === "";
+  const columnLeft = useRef(0);
+  const wasShowingColumns = useRef(showingColumns);
+  const rememberColumns = () => {
+    if (showingColumns && surface.current !== null) columnLeft.current = surface.current.scrollLeft;
+  };
+  useLayoutEffect(() => {
+    if (showingColumns && !wasShowingColumns.current && surface.current !== null) {
+      surface.current.scrollLeft = columnLeft.current;
+    }
+    wasShowingColumns.current = showingColumns;
+  }, [showingColumns]);
   // Follow only the card holding the keyboard focus. Adjust this component's state before
   // React commits the move, while BoardRow can still read the old title link to restore it.
   const focused = wait === "" ? focusedSlug() : null;
@@ -604,10 +616,10 @@ export function TaskBoard({
   kept.current = columns;
   const count = (status: string) => counts.find(([one]) => one === status)?.[1] ?? 0;
   const meta = (status: string) => waiting?.columns.find((one) => one.status === status);
-  const toggleCancelled = useCallback(
-    () => setOpened((before) => (before === "cancelled" ? "" : "cancelled")),
-    [],
-  );
+  const toggleCancelled = useCallback(() => {
+    if (showingColumns && surface.current !== null) columnLeft.current = surface.current.scrollLeft;
+    setOpened((before) => (before === "cancelled" ? "" : "cancelled"));
+  }, [showingColumns]);
   const column = (status: string) => (
     <TaskColumn
       key={status}
@@ -625,10 +637,12 @@ export function TaskBoard({
       now={now}
       cancelled={count("cancelled")}
       onCancelled={toggleCancelled}
+      eager={slug !== "" && destination === status}
     />
   );
   const filter = (query: string, days: number) => onFilter(query, days, wait);
   const chooseWait = (kind: string) => {
+    rememberColumns();
     const next = wait === kind ? "" : kind;
     setWait(next);
     onFilter(search, days, next);
@@ -641,15 +655,30 @@ export function TaskBoard({
           {linkError} <Button onClick={() => setRetryLink(retryLink + 1)}>Retry</Button>
         </p>
       )}
-      <Button
-        type="button"
-        className="board-filters-toggle"
-        aria-expanded={filtering}
-        aria-controls="board-filters"
-        onClick={() => setFiltering(!filtering)}
-      >
-        Search and filters
-      </Button>
+      <div className="board-toolbar">
+        <Button
+          type="button"
+          className="board-filters-toggle"
+          aria-expanded={filtering}
+          aria-controls="board-filters"
+          onClick={() => setFiltering(!filtering)}
+        >
+          Search and filters
+        </Button>
+        {!phone && wait === "" && (
+          <Button
+            className="board-backlog"
+            data-open-stage="backlog"
+            aria-expanded={opened === "backlog"}
+            onClick={() => {
+              rememberColumns();
+              setOpened(opened === "backlog" ? "" : "backlog");
+            }}
+          >
+            Backlog {count("backlog")}
+          </Button>
+        )}
+      </div>
       <div id="board-filters" className="row filters" data-open={filtering}>
         <label>
           Search tasks and messages{" "}
@@ -747,8 +776,11 @@ export function TaskBoard({
           Back to stages
         </Button>
       )}
-      <div
+      <section
         ref={surface}
+        aria-label="Task columns"
+        tabIndex={phone ? undefined : 0}
+        onScroll={rememberColumns}
         className={`kanban waiting-columns${wait !== "" || (!phone && opened !== "") ? " wait-list" : ""}`}
       >
         {wait !== "" ? (
@@ -758,52 +790,15 @@ export function TaskBoard({
         ) : opened !== "" ? (
           column(opened)
         ) : (
-          <>
-            <button
-              type="button"
-              className="backlog-rail"
-              data-open-stage="backlog"
-              aria-expanded={false}
-              onClick={() => setOpened("backlog")}
-            >
-              Backlog {count("backlog")}
-            </button>
+          <div className="waiting-pipeline">
             {STAGES.map((stage) => (
               <div className="stage-slot" key={stage}>
                 {column(stage)}
               </div>
-            )).flatMap((element, index) =>
-              index === 3
-                ? [
-                    element,
-                    <div className="machine-rail" key="machine">
-                      {machine ? (
-                        <>
-                          <button
-                            type="button"
-                            data-open-stage="build"
-                            onClick={() => setOpened("build")}
-                          >
-                            Build {count("build")}
-                          </button>
-                          <button
-                            type="button"
-                            data-open-stage="test"
-                            onClick={() => setOpened("test")}
-                          >
-                            Test {count("test")}
-                          </button>
-                        </>
-                      ) : (
-                        <UnreportedRail connected={connected} />
-                      )}
-                    </div>,
-                  ]
-                : [element],
-            )}
-          </>
+            ))}
+          </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

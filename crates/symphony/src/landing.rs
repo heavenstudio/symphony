@@ -27,39 +27,26 @@ pub fn is_doc(project: &crate::project::Project, path: &str) -> bool {
     project.is_page(path)
 }
 
-/// Documents holding an owner answer no commit has. An unreadable checkout is kept by the caller's
-/// status check; disappearing checkouts are skipped, never allowed to crash the sweep.
+/// Documents holding an owner answer no commit has, read by the board's landing/sweep reader.
+/// A read failure returns a diagnostic entry, preserving the gate's nonempty-means-keep contract;
+/// disappearing checkouts are skipped.
 pub fn owner_lines_left(root: &Path) -> Vec<String> {
-    let project = crate::project::Project::of(root);
-    // This is another agent's checkout, unlike the generators' private worktrees. A diff may
-    // refresh its index despite GIT_OPTIONAL_LOCKS, so disable that refresh explicitly.
-    let diff = symphony_board::sys::output(
-        crate::children::git()
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .args(["-c", "diff.autoRefreshIndex=false"])
-            .args(["diff", "-U0", "HEAD", "--"])
-            .args(project.pathspecs())
-            .current_dir(root),
-    )
-    .ok()
-    .filter(|done| done.status.success())
-    .map(|done| String::from_utf8_lossy(&done.stdout).into_owned())
-    .unwrap_or_default();
-    let mut file = "";
-    let mut left = Vec::new();
-    for line in diff.lines() {
-        if let Some(name) = line.strip_prefix("+++ b/") {
-            file = name;
-        } else if line.starts_with('+')
-            && !line.starts_with("+++")
-            && line.split('—').next().unwrap_or("").contains("] owner")
-            && project.holding(file).is_some()
-            && !left.iter().any(|name| name == file)
-        {
-            left.push(file.to_string());
-        }
+    if !root.exists() {
+        return Vec::new();
     }
-    left
+    match symphony_board::sweep::git::answers(
+        root,
+        &symphony_board::project::documents_at(root),
+        None,
+    ) {
+        Ok(answers) => answers
+            .into_iter()
+            .map(|answer| answer.file)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        Err(why) => vec![format!("owner answers could not be read: {why}")],
+    }
 }
 
 static NEXT: AtomicU64 = AtomicU64::new(0);

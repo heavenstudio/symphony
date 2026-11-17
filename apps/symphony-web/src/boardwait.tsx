@@ -5,7 +5,7 @@ import { href } from "./project";
 import { slugOrder } from "./task";
 import { markTasksReady } from "./taskcard";
 import type { MachineWork, Orchestrator, Task } from "./wire";
-import { taskStage } from "./work";
+import { PIPELINE, taskStage } from "./work";
 
 export const WAIT_KINDS = ["decision", "nobody", "check", "task", "working", "queued", "parked"];
 export const WAIT_LABELS = [
@@ -17,7 +17,7 @@ export const WAIT_LABELS = [
   "Queued",
   "Parked",
 ];
-export const STAGES = ["concept", "design", "ready", "in_progress", "review", "done"];
+export const STAGES: string[] = [...PIPELINE];
 export const PHONE_STAGES = [
   "review",
   "in_progress",

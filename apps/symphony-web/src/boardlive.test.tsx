@@ -507,7 +507,7 @@ describe("the live board's counts", () => {
     expect(localStorage.getItem(SHAPE)).toBeNull();
     await board.machineWork();
     expect(localStorage.getItem(SHAPE)).toBe(
-      "concept 0\ndesign 0\nready 2\nin_progress 0\nreview 0\ndone 0",
+      "concept 0\ndesign 0\nready 2\nin_progress 0\nbuild 0\ntest 0\nreview 0\ndone 0",
     );
   });
 
@@ -528,18 +528,18 @@ describe("the live board's counts", () => {
     await board.counts();
     await board.machineWork();
     expect(localStorage.getItem(SHAPE)).toBe(
-      "concept 0\ndesign 0\nready 1\nin_progress 0\nreview 2\ndone 0",
+      "concept 0\ndesign 0\nready 1\nin_progress 0\nbuild 0\ntest 0\nreview 2\ndone 0",
     );
     d.waiting = false;
     void board.column("ready", false, "", 1);
     await pass(250);
     expect(localStorage.getItem(SHAPE)).toBe(
-      "concept 0\ndesign 0\nready 1\nin_progress 0\nreview 2\ndone 0",
+      "concept 0\ndesign 0\nready 1\nin_progress 0\nbuild 0\ntest 0\nreview 2\ndone 0",
     );
     void board.column("review", false, "", 1);
     await pass(250);
     expect(localStorage.getItem(SHAPE)).toBe(
-      "concept 0\ndesign 0\nready 1\nin_progress 0\nreview 2\ndone 0",
+      "concept 0\ndesign 0\nready 1\nin_progress 0\nbuild 0\ntest 0\nreview 2\ndone 0",
     );
   });
 });
@@ -1598,7 +1598,9 @@ describe("the task board's page", () => {
     let html = view(board);
     expect(html).toMatch(/^<main data-ready="board" data-feed="live" aria-busy="false">/);
     expect(html).not.toContain("Loading tasks…");
-    expect(html).toContain('<div class="kanban waiting-columns">');
+    expect(html).toContain(
+      '<section aria-label="Task columns" tabindex="0" class="kanban waiting-columns">',
+    );
     expect(html).toContain('<span class="count">2</span>');
     html = view(board, true);
     expect(html).toContain('data-feed="stale"');
@@ -1633,7 +1635,8 @@ describe("the task board's page", () => {
       "design",
       "ready",
       "in_progress",
-      "build-test",
+      "build",
+      "test",
       "review",
       "done",
     ]);
