@@ -97,13 +97,13 @@ async fn embedded_and_project_scoped_pages_use_the_same_root_asset_urls() {
     let script = crate::client::script(&html).trim_start_matches('/');
     let expected = links(crate::client::asset(script).unwrap(), "board").unwrap();
     assert!(!expected.is_empty());
-    page(&shared, "/tasks", &mut html).await;
+    page(&shared, "board", &mut html).await;
     assert_eq!(
         html,
         original.replace("</head>", &format!("{expected}</head>"))
     );
     assert!(!html.contains("href=\"/alpha/assets/"));
     let mut unknown = original.clone();
-    page(&shared, "/api/board", &mut unknown).await;
+    page(&shared, "missing", &mut unknown).await;
     assert_eq!(unknown, original);
 }

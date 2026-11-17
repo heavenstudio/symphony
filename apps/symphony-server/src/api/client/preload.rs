@@ -5,11 +5,7 @@ use super::{Shared, content_hashed, directory_asset};
 
 /// Read the manifest from the shell this page actually names, rather than the newest build.
 /// An absent or older manifest leaves loading to the shell, as does a client not yet built.
-pub(super) async fn page(shared: &Shared, path: &str, html: &mut String) {
-    let Some(kind) = super::super::client_kind(&super::super::project_view(&shared.root), path)
-    else {
-        return;
-    };
+pub(super) async fn page(shared: &Shared, kind: &str, html: &mut String) {
     let script = crate::client::script(html).trim_start_matches('/');
     if !content_hashed(script) {
         return;

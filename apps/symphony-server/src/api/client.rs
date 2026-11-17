@@ -4,7 +4,7 @@
 //! A build file is sent gzipped once per content ([`gzipped`]); the page, which takes its project
 //! on every request, is left to the router's per-request compression.
 
-use super::{Request, client_page, error, matches_etag, project_view};
+use super::{Request, client_kind, error, matches_etag, project_view};
 use crate::front::Shared;
 use axum::body::Bytes;
 use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode, Version, header};
@@ -36,7 +36,8 @@ pub(crate) fn compressed_per_request(
 }
 
 pub(super) async fn static_response(shared: &Shared, path: &str, request: &Request) -> Response {
-    let relative = if client_page(&project_view(&shared.root), path) {
+    let kind = client_kind(&project_view(&shared.root), path);
+    let relative = if kind.is_some() {
         "index.html"
     } else {
         path.trim_start_matches('/')
@@ -69,8 +70,10 @@ pub(super) async fn static_response(shared: &Shared, path: &str, request: &Reque
     if page {
         let mut shell = String::from_utf8_lossy(&bytes).into_owned();
         // The development proxy replaces this shell's manifest with source entries.
-        if !request.headers().contains_key("x-symphony-dev") {
-            preload::page(shared, path, &mut shell).await;
+        if !request.headers().contains_key("x-symphony-dev")
+            && let Some(kind) = kind
+        {
+            preload::page(shared, kind, &mut shell).await;
         }
         bytes = Bytes::from(crate::shell::page(&shell, &shared.root, &shared.base, ""));
     }
