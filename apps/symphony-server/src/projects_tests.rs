@@ -66,16 +66,48 @@ impl Machine {
         path: &str,
         headers: &[(&str, &str)],
     ) -> Response {
-        let mut request = Request::builder().uri(path).header(header::HOST, host);
-        for (name, value) in headers {
-            request = request.header(*name, *value);
-        }
-        router(self.projects.clone())
-            .layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()))
-            .oneshot(request.body(Body::empty()).unwrap())
-            .await
-            .unwrap()
+        asked(self.projects.clone(), client, host, path, headers).await
     }
+}
+
+/// `path` asked of `projects`' server by `client` of the Host `host`.
+async fn asked(
+    projects: Arc<Projects>,
+    client: &str,
+    host: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> Response {
+    let mut request = Request::builder().uri(path).header(header::HOST, host);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    router(projects)
+        .layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()))
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+/// How long a test waits on an answer asked aside; only a stall reaches it.
+const BACKSTOP: std::time::Duration = test_time::backstop(std::time::Duration::from_secs(15));
+
+/// `path` asked of `machine` on loopback on a thread of its own, its body sent once it answers:
+/// what a test waits on, with [`BACKSTOP`], while it holds what the answer must not wait on.
+fn asked_aside(machine: &Machine, path: &'static str) -> std::sync::mpsc::Receiver<String> {
+    let projects = machine.projects.clone();
+    let (send, answered) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let body = runtime.block_on(async {
+            text(asked(projects, "127.0.0.1:1", "127.0.0.1:1", path, &[]).await).await
+        });
+        let _ = send.send(body);
+    });
+    answered
 }
 
 fn location(response: &Response) -> &str {
@@ -1075,8 +1107,9 @@ async fn the_project_list_names_each_project_with_its_counts_first_card_and_task
 /// nothing left out. Drawing the list, or listing it as data, sends the board no request.
 #[tokio::test]
 async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_blocked() {
-    use crate::testing::board::{Fixture, GONE, NOW, Seed, task};
+    use crate::testing::board::{Fixture, GONE, HOST, NOW, Seed, task};
     use std::panic::Location;
+    use std::sync::atomic::AtomicUsize;
     use symphony_board::board_health::{Query, QueryLog, queries_of};
     use symphony_board::rows::{SessionRow, TaskRow};
     use symphony_board::waits_on::{BLOCKED, Blocked as Block};
@@ -1148,18 +1181,39 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
     let client = board.store.client();
     hub.health
         .reading(queries_of(client.addr(), "sf", client.database()));
+    // The hub's reader, the way it reads the board for a page, opens this board, counted: a read
+    // through it is a request this board's count holds.
+    let connects = Arc::new(AtomicUsize::new(0));
+    hub.connect_reader = {
+        let (counted, client) = (Arc::clone(&connects), board.other_client());
+        Box::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            symphony_board::Store::with(
+                symphony_board::rpc::Client::new(client.addr(), "sf", client.database()),
+                Box::new(|| NOW),
+                Box::new(|_| false),
+                HOST,
+            )
+            .map_err(|e| e.to_string())
+        })
+    };
     hub.observe(&board.store);
     let hub = Arc::new(hub);
     assert!(machine.projects.starter.api.set(hub.clone()).is_ok());
     let list = || async { text(machine.get("/", &[]).await).await };
 
-    // Drawn and listed from the hub's memory: the board's request count does not move.
+    // Drawn and listed from the hub's memory: the board's request count does not move, and no
+    // reader of it is opened.
     let requests = || hub.health.report(clock.now()).queries.count;
     let read = requests();
     assert!(read > 0, "the board's read is counted");
     let live = list().await;
     listed(&machine, "alpha").await;
-    assert_eq!(requests(), read, "the list sent the board no request");
+    assert_eq!(
+        (requests(), connects.load(Ordering::SeqCst)),
+        (read, 0),
+        "the list and the listing sent the board no request and opened no reader of it"
+    );
     // From here the hour's requests are the test's own.
     let log = Arc::new(QueryLog::default());
     hub.health.reading(Arc::clone(&log));
@@ -1189,6 +1243,26 @@ async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_bl
     );
     assert_eq!(
         listed(&machine, "alpha").await.unwell.as_deref(),
+        Some("orchestrator stale")
+    );
+
+    // A board read holds the hub's task state across its reads of the board, as a slow board's
+    // does for as long as it is slow: the list and the listing answer meanwhile from the board's
+    // last read, waiting on none of it. One that waited would wait until the hold ends.
+    let held = hub.hold_board_read();
+    let drawn = asked_aside(&machine, "/");
+    let listing = asked_aside(&machine, symphony_api::PROJECTS_PATH);
+    let drawn = drawn
+        .recv_timeout(BACKSTOP)
+        .expect("the list waited on the board's read");
+    let listing = listing
+        .recv_timeout(BACKSTOP)
+        .expect("the listing waited on the board's read");
+    drop(held);
+    assert_eq!(row(&drawn, "alpha"), row(&stale, "alpha"));
+    let listing: symphony_api::ProjectList = serde_json::from_str(&listing).unwrap();
+    assert_eq!(
+        listing.projects[0].unwell.as_deref(),
         Some("orchestrator stale")
     );
 
