@@ -54,15 +54,17 @@ pub(crate) fn build(dist: &Path, embedded: bool) -> String {
     } else {
         std::fs::read_to_string(dist.join("index.html")).unwrap_or_default()
     };
-    // The build names the shell's script by its content. This is exactly the path the browser
-    // compares with Board.build.
+    script(&shell).to_string()
+}
+
+/// The exact shell this HTML loads, including a retained build's shell.
+pub(crate) fn script(shell: &str) -> &str {
     shell
         .split("src=\"")
         .skip(1)
         .filter_map(|s| s.split('"').next())
         .find(|src| src.ends_with(".js"))
         .unwrap_or("")
-        .to_string()
 }
 
 #[cfg(test)]

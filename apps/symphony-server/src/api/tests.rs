@@ -211,3 +211,42 @@ fn matches_etag_handles_whitespace_empty_values_and_invalid_headers() {
         assert_eq!(matches_etag(&request, "\"fresh\""), expected, "{case}");
     }
 }
+
+#[test]
+fn initial_preloads_choose_the_shells_kind_for_each_client_route() {
+    let project = symphony_api::ProjectView {
+        nav: vec![symphony_api::NavItem {
+            href: "/shelf".into(),
+            label: "Shelf".into(),
+            title: "Shelf".into(),
+            document: "docs/SHELF.md".into(),
+        }],
+        ..Default::default()
+    };
+    for (path, kind) in [
+        ("/", "review"),
+        ("/tasks/", "board"),
+        ("/task/", "board"),
+        ("/task/tools/x", "task"),
+        ("/agents", "agents"),
+        ("/queue/", "queue"),
+        ("/reports", "reports"),
+        ("/runs", "runs"),
+        ("/shelf/", "docs"),
+        ("/docs/", "docs"),
+        ("/docs/page.md", "docs"),
+        ("/docs/page.html", "docs"),
+    ] {
+        assert_eq!(client_kind(&project, path), Some(kind), "{path}");
+    }
+    let root = symphony_api::ProjectView {
+        entrypoints: vec![String::new()],
+        ..project.clone()
+    };
+    assert_eq!(client_kind(&root, "/"), Some("docs"));
+    assert_eq!(client_kind(&root, "/tasks"), Some("board"));
+    assert_eq!(client_kind(&root, "/page.md"), Some("docs"));
+    for path in ["/assets/file.js", "/api/board", "/unknown"] {
+        assert_eq!(client_kind(&project, path), None, "{path}");
+    }
+}

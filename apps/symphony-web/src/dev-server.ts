@@ -270,7 +270,14 @@ export function devConfig(root: string, args: DevArgs, plugins: Plugin[]): Inlin
       port: args.port,
       strictPort: true,
       cors: false,
-      proxy: { [PROXIED]: { target: origin(args.server), changeOrigin: false, ws: true } },
+      proxy: {
+        [PROXIED]: {
+          target: origin(args.server),
+          changeOrigin: false,
+          ws: true,
+          headers: { "x-symphony-dev": "1" },
+        },
+      },
       fs: { allow: ["."] },
     },
     plugins,
