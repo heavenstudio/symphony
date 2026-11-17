@@ -102,6 +102,9 @@ describe("the sheet", () => {
     );
     expect(markup).toContain('class="dx-tooltip-trigger collapse"');
     expect(markup).toContain('aria-label="Collapse panel"');
+    expect(markup).toMatch(
+      /aria-label="Collapse panel"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"[^>]*><path d="m6 9 6 6 6-6"><\/path><\/svg><\/button>/,
+    );
     expect(markup).toContain(
       '<div class="quick-thread" aria-live="polite"><p class="muted">Ask about this page.</p></div>',
     );
