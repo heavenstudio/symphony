@@ -22,6 +22,11 @@ async fn refused(response: Response, status: StatusCode, message: &str) {
     );
 }
 
+async fn body_refused(body: Body, status: StatusCode, message: &str) {
+    let (code, why) = json_body(body).await.unwrap_err();
+    refused(error(code, why), status, message).await;
+}
+
 #[tokio::test]
 async fn empty_small_and_exactly_capped_json_keep_their_values() {
     for (body, expected) in [
@@ -45,8 +50,8 @@ async fn empty_small_and_exactly_capped_json_keep_their_values() {
 async fn a_single_body_over_the_cap_is_a_413_even_when_it_is_valid_json() {
     let mut body = b"{}".to_vec();
     body.resize(JSON_BYTES + 1, b' ');
-    refused(
-        json_body(Body::from(body)).await.unwrap_err(),
+    body_refused(
+        Body::from(body),
         StatusCode::PAYLOAD_TOO_LARGE,
         "JSON saves are at most 2 MiB",
     )
@@ -65,8 +70,8 @@ async fn a_stream_without_a_length_is_stopped_at_the_first_chunk_past_the_cap() 
         };
         std::task::Poll::Ready(Some(Ok::<_, std::io::Error>(bytes)))
     }));
-    refused(
-        json_body(body).await.unwrap_err(),
+    body_refused(
+        body,
         StatusCode::PAYLOAD_TOO_LARGE,
         "JSON saves are at most 2 MiB",
     )
@@ -80,12 +85,7 @@ async fn malformed_json_and_transport_errors_stay_bad_requests() {
         "fixture body broke off",
     ))]));
     for body in [Body::from("{"), broken] {
-        refused(
-            json_body(body).await.unwrap_err(),
-            StatusCode::BAD_REQUEST,
-            "bad JSON:",
-        )
-        .await;
+        body_refused(body, StatusCode::BAD_REQUEST, "bad JSON:").await;
     }
 }
 
