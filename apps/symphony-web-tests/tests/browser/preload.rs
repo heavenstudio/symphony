@@ -248,7 +248,7 @@ fn html_preloads_start_every_kinds_chunks_while_its_shell_is_held_and_are_reused
         site.hold_route(shell, true);
         let Some(mut chrome) = chrome() else { return };
         chrome.save_data();
-        chrome.open(&site.url(path));
+        chrome.call("Page.navigate", json!({"url": site.url(path)}));
         if let Err(stall) = test_time::until_true(
             format!("{kind}'s HTML preloads requested before the shell answers"),
             STALL,
