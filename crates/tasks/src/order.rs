@@ -8,6 +8,10 @@
 //! place: the order `slice::sort_by` gives, equal elements in the order they stood. What each
 //! element type and comparison still compiles is the move and a call (docs/CHECKS.md, "Size
 //! budgets").
+//!
+//! This allocates one position per element, and compares before moving any element. It serves
+//! inspection and reporting sorts, where sharing the code is worth that extra allocation. Busy
+//! board paths keep their in-place sorts. A comparison that panics leaves the elements untouched.
 
 use std::cmp::Ordering;
 
