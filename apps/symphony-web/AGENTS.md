@@ -314,9 +314,11 @@ own signal), a read that failed sooner, on the feed's waits. Each window's last 
 this device (`openReports`: the item `reports` of its checkout, a part a window, whole, as the
 largest is some 140 KB and all nine a third of a megabyte; outside the caps as the board's reads
 are) and drawn at once on a return or when its window is chosen again, marked `data-cache=device`
-and said in the other pages' words in the shared sheet's notice stack until a read answers: a
-`304` for a window no roll-up changed, or a new answer, drawn and kept in its place. A read that
-fails leaves the kept copy drawn, said not reachable, under the failed read's own line. The
+and said as the other pages say it, in their notices (`PageNotices`, from the chunk of `live.tsx`
+the cache's read already loads: the reserve that keeps the page's end clear of the stack, and the
+toasts above it) until a read answers: a `304` for a window no roll-up changed, or a new answer,
+drawn and kept in its place. A read that fails leaves the kept copy drawn, said not reachable,
+under the failed read's own line, which a choice of window clears until its own read fails. The
 periods are read by path as the server writes them (`Bucket`): a source with no record of a period
 is none there, a count by status that leaves out its zeros a zero. Four
 figures sit over five sections of charts, one column on a phone and two from 960 px. Each figure

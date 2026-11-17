@@ -673,59 +673,78 @@ describe("the page's view", () => {
     expect(html).toContain("chart-slot");
   });
 
-  it("marks a copy from this device and says it is checking, until a read answers", () => {
-    const now = new Date(2026, 10, 15, 16, 0);
-    const saved = new Date(2026, 10, 15, 14, 32).getTime();
-    const drawn = (device: number | null, shown: Page | null = page()) =>
-      renderToStaticMarkup(
+  describe("drawn from this device", () => {
+    // The notices say the kept copy's time against the page's clock.
+    afterEach(() => vi.useRealTimers());
+    const at = (now: Date) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(now);
+    };
+    /** The page's notices: the stack, then its reserve, in the block they share at its end. */
+    const NOTICES =
+      /<div class="page-notice-end"><div class="stale page-notices notice-stack"( hidden="")?>(.*?)<\/div><div class="feed-notice-space page-notice-reserve notice-stack" aria-hidden="true">(.*?)<\/div><\/div><\/div>$/;
+    const notices = (html: string) => {
+      const [, hidden, stack, reserve] = html.match(NOTICES) ?? [];
+      return { hidden: hidden !== undefined, stack, reserve };
+    };
+
+    it("is marked and said checking at the page's end, its reserve as tall, until a read answers", () => {
+      at(new Date(2026, 10, 15, 16, 0));
+      const saved = new Date(2026, 10, 15, 14, 32).getTime();
+      const drawn = (device: number | null, shown: Page | null = page()) =>
+        renderToStaticMarkup(
+          <ReportsView grain="day" days={3} page={shown} device={device} onAsk={() => {}} />,
+        );
+      const checking = "Shown from this device, saved 14:32. Checking for changes…";
+      let html = drawn(saved);
+      expect(html).toContain('data-ready="reports" data-cache="device"');
+      expect(html).toContain("chart-slot");
+      expect(notices(html)).toEqual({
+        hidden: false,
+        stack: `<p class="pill wait device-notice" role="status">${checking}</p>`,
+        reserve: `<p class="pill">${checking}</p>`,
+      });
+      // Answered, a 304 or a new page: nothing says the device any more, and the stack is hidden
+      // over its reserve.
+      html = drawn(null);
+      expect(html).not.toContain("data-cache");
+      expect(html).not.toContain("device-notice");
+      expect(notices(html)).toMatchObject({ hidden: true, stack: "" });
+      // No copy drawn, nothing to mark: the ghost is no device's.
+      html = drawn(saved, null);
+      expect(html).not.toContain("data-cache");
+      expect(html).not.toContain("device-notice");
+      expect(notices(html)).toMatchObject({ hidden: true, stack: "" });
+    });
+
+    it("stays drawn under a failed read, said not reachable, the read's own line once", () => {
+      at(new Date(2026, 10, 15, 16, 0));
+      const saved = new Date(2026, 10, 14, 9, 5).getTime();
+      const html = renderToStaticMarkup(
         <ReportsView
           grain="day"
           days={3}
-          page={shown}
-          device={device}
-          now={now}
+          page={page()}
+          error="The server could not be reached"
+          device={saved}
           onAsk={() => {}}
         />,
       );
-    let html = drawn(saved);
-    expect(html).toContain('data-ready="reports" data-cache="device"');
-    expect(html).toContain(
-      '<div class="stale page-notices notice-stack"><p class="pill wait device-notice" role="status">' +
-        "Shown from this device, saved 14:32. Checking for changes…</p></div>",
-    );
-    expect(html).toContain("chart-slot");
-    // Answered, a 304 or a new page: nothing says the device any more.
-    html = drawn(null);
-    expect(html).not.toContain("data-cache");
-    expect(html).not.toContain("device-notice");
-    // No copy drawn, nothing to mark: the ghost is no device's.
-    html = drawn(saved, null);
-    expect(html).not.toContain("data-cache");
-    expect(html).not.toContain("device-notice");
-  });
-
-  it("keeps a device's copy drawn under a failed read, said not reachable and tried again", () => {
-    const now = new Date(2026, 10, 15, 16, 0);
-    const saved = new Date(2026, 10, 14, 9, 5).getTime();
-    const html = renderToStaticMarkup(
-      <ReportsView
-        grain="day"
-        days={3}
-        page={page()}
-        error="The server could not be reached"
-        device={saved}
-        now={now}
-        onAsk={() => {}}
-      />,
-    );
-    expect(html).toContain('data-ready="reports" data-cache="device"');
-    expect(html).toContain("chart-slot");
-    expect(html).toContain(
-      'role="status">Not reachable: shown from this device, saved yesterday 09:05</p>',
-    );
-    expect(html).toContain(
-      'role="alert">The reports could not be read. The server could not be reached; check the connection. Trying again…</p>',
-    );
+      expect(html).toContain('data-ready="reports" data-cache="device"');
+      expect(html).toContain("chart-slot");
+      expect(notices(html)).toMatchObject({
+        hidden: false,
+        stack:
+          '<p class="pill wait device-notice" role="status">' +
+          "Not reachable: shown from this device, saved yesterday 09:05</p>",
+      });
+      // The failed read is said in the page, over the charts, and not again among the notices.
+      expect(html.match(/role="alert"/g)).toHaveLength(1);
+      expect(html).toContain(
+        '<p class="reports-error" role="alert">The reports could not be read. The server could ' +
+          "not be reached; check the connection. Trying again…</p>",
+      );
+    });
   });
 
   it("writes its window and a failure each as one text, as the Dioxus page does", () => {
