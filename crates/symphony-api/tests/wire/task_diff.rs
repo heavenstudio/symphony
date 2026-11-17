@@ -35,7 +35,7 @@ fn summaries_round_trip_branch_landing_and_unavailable_with_explicit_nulls() {
         assert_eq!((read.source, read.truncated), (source, truncated));
         if source == TaskDiffSource::Unavailable {
             assert_eq!((read.base, read.head), (None, None));
-            assert!(read.files.is_empty());
+            assert_eq!(read.files, Vec::new());
             assert_eq!(
                 read.reason.as_deref(),
                 Some("Task branch is gone without a landing")
