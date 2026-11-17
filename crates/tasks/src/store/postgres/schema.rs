@@ -118,9 +118,13 @@ pub(in crate::store) struct Table {
 
 use Kind::{Array, Bool, Float, Int, Object, Text};
 
-/// The board's twenty tables, each in the order of its fields, and `words`, what SurrealDB's
-/// full-text indexes hold ([`WORDS`]).
-pub(in crate::store) const TABLES: [Table; 21] = [
+/// The board's twenty tables, `words` (the full-text indexes, [`WORDS`]), and `copy_fields`
+/// (the imported fields' numeric spellings, [`super::copy`]).
+pub(in crate::store) const TABLES: [Table; 22] = [
+    Table {
+        name: "copy_fields",
+        columns: &[req("original", Text)],
+    },
     Table {
         name: "task",
         columns: &[
@@ -493,9 +497,7 @@ const WORDS: &str = r"
 CREATE OR REPLACE FUNCTION board_terms(input text) RETURNS TABLE (term text, at bigint)
 LANGUAGE sql IMMUTABLE STRICT AS $f$
 SELECT term, at FROM (SELECT CASE WHEN octet_length(m[1]) = char_length(m[1]) THEN m[1]
-    ELSE translate(regexp_replace(normalize(translate(replace(replace(replace(replace(replace(
-        m[1], 'ß', 'ss'), 'æ', 'ae'), 'œ', 'oe'), 'þ', 'th'), 'ŋ', 'NG'), 'µðøđħıĸŀłŧ', 'udoddhikllt'),
-        NFKD), '[̀-ͯ]', '', 'g'), '⁄', '/') END AS term, at
+    ELSE translate(regexp_replace(normalize(LATIN, NFKD), '[̀-ͯ]', '', 'g'), '⁄', '/') END AS term, at
     FROM regexp_matches(lower(input COLLATE pg_c_utf8), '[[:alpha:]]+|[NUMBERS]+|[!-/:-@[-`{-~]', 'g')
         WITH ORDINALITY AS t (m, at)) t
 WHERE term <> ''
@@ -521,6 +523,39 @@ $f$;
 
 /// Each table `words` holds the terms of, and its fields that it reads.
 const WORDED: [(&str, &[&str]); 2] = [("task", &["title", "body", "slug"]), ("message", &["text"])];
+
+/// Latin exceptions to NFKD with accents removed, grouped by their ASCII spelling. The data
+/// is from deunicode 1.6.2 (BSD-3-Clause, https://github.com/kornelski/deunicode), the analyzer SurrealDB
+/// 3.3 uses: each named Latin letter whose spelling differs from NFKD, plus the unit sign µ.
+/// Apply these to the original letters, before decomposition: e.g. ǿ is o, ŉ is 'n (not ʼn).
+/// Its license is kept in `latin.LICENSE`. No database extension or full transliteration
+/// library is linked into the board.
+fn latin() -> String {
+    let (mut from, mut to) = (String::new(), String::new());
+    let mut expanded = Vec::new();
+    for line in include_str!("latin.tsv").lines() {
+        let (ascii, letters) = line
+            .split_once('\t')
+            .expect("Latin mapping is tab separated");
+        if ascii.len() == 1 {
+            from.push_str(letters);
+            to.extend(std::iter::repeat_n(
+                ascii.chars().next().unwrap(),
+                letters.chars().count(),
+            ));
+        } else {
+            expanded.push((ascii, letters));
+        }
+    }
+    let quoted = |s: &str| s.replace('\'', "''");
+    let mut folded = format!("translate(m[1], '{}', '{}')", quoted(&from), quoted(&to));
+    for (ascii, letters) in expanded {
+        for c in letters.chars() {
+            folded = format!("replace({folded}, '{c}', '{}')", quoted(ascii));
+        }
+    }
+    folded
+}
 
 /// The characters SurrealDB's tokenizer reads as a number (`char::is_numeric`) and not as a
 /// letter, as the ranges of a bracket expression: a few in every script, so they are made here
@@ -593,7 +628,15 @@ fn triggers() -> String {
         );
     }
     sql.push_str(
-        "CREATE OR REPLACE TRIGGER session_made AFTER INSERT OR DELETE ON session \
+        "CREATE OR REPLACE FUNCTION board_uncopy_fields() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+    DELETE FROM copy_fields WHERE id = OLD.id;
+    RETURN NULL;
+END
+$f$;
+CREATE OR REPLACE TRIGGER task_uncopy_fields AFTER DELETE ON task
+    FOR EACH ROW EXECUTE FUNCTION board_uncopy_fields();
+CREATE OR REPLACE TRIGGER session_made AFTER INSERT OR DELETE ON session \
          FOR EACH ROW EXECUTE FUNCTION board_session_changed();
 CREATE OR REPLACE TRIGGER session_changed AFTER UPDATE ON session \
          FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION board_session_changed();
@@ -652,8 +695,11 @@ pub(in crate::store) fn define() -> String {
     sql.push_str(UNIQUES);
     sql.push_str(INDEXES);
     sql.push_str(FUNCTIONS);
-    static ANALYZED: std::sync::LazyLock<String> =
-        std::sync::LazyLock::new(|| WORDS.replace("NUMBERS", &numbers()));
+    static ANALYZED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        WORDS
+            .replace("NUMBERS", &numbers())
+            .replace("LATIN", &latin())
+    });
     sql.push_str(&ANALYZED);
     sql.push_str(&triggers());
     sql
@@ -727,11 +773,11 @@ mod tests {
     }
 
     #[test]
-    fn the_board_has_twenty_tables_and_its_words_each_named_once() {
+    fn the_boards_tables_words_and_copied_fields_are_each_named_once() {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 21);
+        assert_eq!(names.len(), 22);
         let defined = define();
         for name in names {
             assert!(

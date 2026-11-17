@@ -209,3 +209,86 @@ on_both! {
         assert_eq!(found("tail"), Vec::<String>::new());
     }
 }
+
+/// Uncommon Latin letters still match their ASCII spelling. Decomposition must not leave ø
+/// behind in ǿ, or change the spelling of ŉ and the long s. Both query directions are checked.
+#[test]
+fn latin_letters_beyond_extended_a_find_and_rank_alike() {
+    let (surreal, postgres) = (
+        Fixture::empty(),
+        Fixture::on(Backend::PostgreSql, Seed::default()),
+    );
+    let cases = [
+        ("ƒoo", "foo"),
+        ("ƀar", "bar"),
+        ("ǿresund", "oresund"),
+        ("Crème", "creme"),
+        ("ǣther", "aether"),
+        ("ſalt", "salt"),
+        ("ꜳrdvark", "aardvark"),
+        ("ﬃeld", "ffield"),
+        ("ｆｕｌｌ", "full"),
+        ("ɖelta", "delta"),
+        ("ȣzel", "ouzel"),
+        ("Øresund", "oresund"),
+        ("ƑOO", "foo"),
+    ];
+    for (n, (title, _)) in cases.iter().enumerate() {
+        let slug = format!("latin/{n}");
+        create(&surreal.store, &slug, title, "");
+        create(&postgres.store, &slug, title, "");
+    }
+    create(&surreal.store, "latin/apostrophe", "ŉame", "");
+    create(&postgres.store, "latin/apostrophe", "ŉame", "");
+    for (n, (title, ascii)) in cases.iter().enumerate() {
+        for query in [title, ascii] {
+            let expected = answered(&surreal.store, query);
+            assert!(
+                expected
+                    .0
+                    .iter()
+                    .any(|(slug, _)| *slug == format!("latin/{n}")),
+                "{query:?}"
+            );
+            assert_eq!(answered(&postgres.store, query), expected, "{query:?}");
+        }
+    }
+    // ascii folding follows tokenization: ŉame becomes one term "'name", while the ASCII
+    // query 'name is two terms. These do not match even on SurrealDB.
+    for query in ["ŉame", "'name", "name"] {
+        let expected = answered(&surreal.store, query);
+        assert_eq!(expected.0.len(), usize::from(query == "ŉame"), "{query}");
+        assert_eq!(answered(&postgres.store, query), expected, "{query}");
+    }
+}
+
+/// Compare the analyzer itself across the Latin blocks, including every letter in Extended-B,
+/// IPA, phonetic extensions, Extended Additional/C/D/E, the ligatures and fullwidth forms.
+/// These ranges are independent of the implementation's exception data.
+#[test]
+fn the_analyzer_agrees_over_latin_blocks() {
+    use symphony_board::{Database, pg::Step};
+    let (surreal, postgres) = (
+        Fixture::empty(),
+        Fixture::on(Backend::PostgreSql, Seed::default()),
+    );
+    let Database::PostgreSql(pg) = postgres.other_database() else {
+        unreachable!()
+    };
+    // Named Latin alphabetic characters in Unicode 14's blocks, not the implementation's
+    // folding table; phonetic Greek/Cyrillic letters in the same blocks are outside this contract.
+    for letters in include_str!("latin-letters.txt").lines() {
+        let text = letters.chars().map(|c| format!("{c} ")).collect::<String>();
+        let there = surreal
+            .other_client()
+            .query(
+                "RETURN search::analyze('task_words', $text);",
+                json!({"text": text}),
+            )
+            .unwrap();
+        let param = json!({"text": text}).to_string();
+        let here = pg.request(&[Step::with("SELECT coalesce(jsonb_agg(term ORDER BY at), '[]') FROM board_terms($1::jsonb ->> 'text')", &param)]).unwrap();
+        let here: serde_json::Value = serde_json::from_str(here[0].value().unwrap()).unwrap();
+        assert_eq!(here, there[0], "Latin block {letters}");
+    }
+}

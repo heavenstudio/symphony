@@ -153,7 +153,14 @@ const WAITING: &str =
 #[test]
 fn an_import_cut_short_leaves_the_board_as_it_was_and_made_again_ends_whole() {
     let board = realistic::board();
-    let f = Fixture::on(Backend::PostgreSql, Seed { dump: everything() });
+    let mut before = everything();
+    before.tasks[0].fields = serde_json::from_value(json!({"probe": {"number": 1e30}})).unwrap();
+    let f = Fixture::on(
+        Backend::PostgreSql,
+        Seed {
+            dump: before.clone(),
+        },
+    );
     let (holder, watcher) = (connection(&f), connection(&f));
     // The copy's last table: the import waits there, every other table emptied and written.
     holder
@@ -174,11 +181,76 @@ fn an_import_cut_short_leaves_the_board_as_it_was_and_made_again_ends_whole() {
         assert!(matches!(cut_short, Err(Error::Db(_))), "{cut_short:?}");
     });
     holder.simple("ROLLBACK").unwrap();
-    assert_eq!(
-        f.store.dump().unwrap(),
-        everything(),
-        "nothing of it stayed"
-    );
+    assert_eq!(f.store.dump().unwrap(), before, "nothing of it stayed");
     f.other().copy(&board).unwrap();
     same(&f.store.dump().unwrap(), &board, "the import made again");
+}
+
+/// jsonb expands exponents and forgets negative zero. The exported numeric tokens, including
+/// integers above f64's exact range and exponent floats which are also valid i64s, survive.
+#[test]
+fn numeric_fields_keep_the_surrealdb_exports_representation() {
+    let mut board = everything();
+    board.tasks[0].fields = serde_json::from_value(json!({"probe": {"numbers": {
+        "large": 1e30, "small": 1e-30, "fraction": 1.234_567_890_123_456_7,
+        "integer": 9_007_199_254_740_993_i64, "exponent_in_i64": 1e18,
+        "zero": -0.0, "values": [1.0, -1e30, 1e-100, {"deep": 1e100}],
+        "text": "1e+30", "null": null, "bool": true
+    }}}))
+    .unwrap();
+    let surreal = Fixture::on(Backend::SurrealDb, Seed { dump: board });
+    let exported = surreal.store.dump().unwrap();
+    let postgres = Fixture::on(
+        Backend::PostgreSql,
+        Seed {
+            dump: exported.clone(),
+        },
+    );
+    let mut expected = exported;
+    let check = |expected: &Dump| {
+        let back = postgres.store.dump().unwrap();
+        assert_eq!(&back, expected);
+        assert_eq!(
+            serde_json::to_string(&back).unwrap(),
+            serde_json::to_string(expected).unwrap()
+        );
+    };
+    check(&expected);
+    let slug = expected.tasks[0].slug.clone();
+    let raw = postgres.store.raw();
+    // A write beside the copied numbers must not discard them; a changed number is not restored.
+    raw.row("task", slug.as_str())
+        .set(json!({"fields.probe.added": "new", "fields.probe.numbers.large": 42}))
+        .unwrap();
+    expected.tasks[0]
+        .fields
+        .get_mut("probe")
+        .unwrap()
+        .insert("added".into(), json!("new"));
+    expected.tasks[0]
+        .fields
+        .get_mut("probe")
+        .unwrap()
+        .get_mut("numbers")
+        .unwrap()["large"] = json!(42);
+    check(&expected);
+    // Replacing the copy updates its saved forms in the same transaction.
+    postgres.store.copy(&expected).unwrap();
+    check(&expected);
+    raw.row("task", slug.as_str()).delete().unwrap();
+    assert_eq!(raw.table("copy_fields").count().unwrap(), 0);
+    let fresh = symphony_board::NewTask::new(&slug, "New task at the same slug", "owner");
+    postgres.store.create(&fresh).unwrap();
+    raw.row("task", slug.as_str())
+        .set(json!({"fields": {"probe": {"numbers": 99}}}))
+        .unwrap();
+    let back = postgres.store.dump().unwrap();
+    assert_eq!(
+        back.tasks
+            .iter()
+            .find(|task| task.slug == slug)
+            .unwrap()
+            .fields,
+        serde_json::from_value(json!({"probe": {"numbers": 99}})).unwrap()
+    );
 }

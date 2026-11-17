@@ -2,6 +2,11 @@
 //! board in one transaction, and the board read back in the dump's shape ([`DUMP`]). A board's
 //! dump is one request here, the largest a board holds being far below what one takes, so a copy
 //! stages nothing: one cut short leaves the board as it was, and is made again whole.
+//!
+//! `copy_fields` keeps imported fields as text beside their task: jsonb cannot preserve a JSON
+//! number's spelling or distinguish an exponent float from an integer. The dump gives both that
+//! text and its jsonb normalization to `Store::dump`, which restores unchanged numbers. A delete
+//! removes the text with the task; another copy replaces it in the same transaction.
 
 use super::schema::{self, Kind};
 use super::{Pg, row};
@@ -20,7 +25,9 @@ INSERT INTO {table} SELECT r.* FROM jsonb_populate_recordset(NULL::{table}, v ->
         );
     }
     block.push_str(
-        "INSERT INTO counter (id, last, ts) VALUES ('\"message\"', (v ->> 'last')::bigint, (v ->> 'last_ts')::double precision)
+        "DELETE FROM copy_fields;
+INSERT INTO copy_fields SELECT r.* FROM jsonb_populate_recordset(NULL::copy_fields, v -> 'copy_fields') AS r;
+INSERT INTO counter (id, last, ts) VALUES ('\"message\"', (v ->> 'last')::bigint, (v ->> 'last_ts')::double precision)
     ON CONFLICT (id) DO UPDATE SET last = EXCLUDED.last, ts = EXCLUDED.ts;
 INSERT INTO counter (id, last) VALUES ('\"task\"', (v ->> 'last_task')::bigint)
     ON CONFLICT (id) DO UPDATE SET last = EXCLUDED.last;
@@ -60,7 +67,12 @@ pub(in crate::store) static DUMP: std::sync::LazyLock<String> = std::sync::LazyL
             )
         })
         .collect();
-    format!("jsonb_build_object({})", tables.join(",\n    "))
+    format!(
+        "jsonb_build_array(jsonb_build_object({}),
+        coalesce((SELECT jsonb_agg(jsonb_build_array(id, original, original::jsonb))
+            FROM copy_fields), '[]'::jsonb))",
+        tables.join(",\n    ")
+    )
 });
 
 /// The row `alias` of `table` read as [`row`] reads one, but for its objects and arrays, kept
