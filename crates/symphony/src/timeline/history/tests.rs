@@ -232,27 +232,31 @@ fn a_message_without_child_creation_history_does_not_prove_an_inherited_start() 
 }
 
 #[test]
-fn a_parent_snapshot_contradicting_the_latest_move_cannot_identify_a_historical_holder() {
-    for current_parent in [Some("new"), None] {
+fn a_parent_snapshot_or_move_chain_contradiction_cannot_identify_a_historical_holder() {
+    for (current_parent, later_moves) in [
+        (Some("new"), vec![]),
+        (None, vec![]),
+        (
+            Some("new"),
+            vec![system(6, "owner put it under new (was other)")],
+        ),
+    ] {
+        let mut lines = vec![
+            system(3, "owner put it under old (was nothing)"),
+            message(
+                4,
+                4.0,
+                "msg",
+                "after an unrecorded move",
+                "e",
+                Some("@orchestrator"),
+            ),
+        ];
+        lines.extend(later_moves);
         let mut sources: BTreeMap<String, Source> = BTreeMap::from([
             (
                 "child".into(),
-                source(
-                    "child",
-                    current_parent,
-                    vec![
-                        system(3, "owner put it under old (was nothing)"),
-                        message(
-                            4,
-                            4.0,
-                            "msg",
-                            "after an unrecorded move",
-                            "e",
-                            Some("@orchestrator"),
-                        ),
-                    ],
-                    false,
-                ),
+                source("child", current_parent, lines, false),
             ),
             (
                 "old".into(),
@@ -272,6 +276,7 @@ fn a_parent_snapshot_contradicting_the_latest_move_cannot_identify_a_historical_
                     false,
                 ),
             ),
+            ("other".into(), source("other", None, vec![], false)),
         ]);
         let h = load("child", |slug| {
             sources
@@ -355,10 +360,15 @@ fn reparenting_to_the_top_stops_inheritance_without_filling_the_gap() {
         None,
         vec![
             system(1, "created by worker"),
+            system(2, "owner put it under parent (was nothing)"),
             system(3, "owner put it under nothing (was parent)"),
             message(4, 4.0, "msg", "?", "e", Some("@orchestrator")),
         ],
         false,
+    );
+    assert!(
+        s.complete(),
+        "a coherent recorded move chain stays reliable"
     );
     assert_eq!(s.parent_at(2), Some("parent"));
     assert_eq!(s.parent_at(3), None);

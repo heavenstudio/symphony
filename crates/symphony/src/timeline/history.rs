@@ -28,12 +28,13 @@ impl Source {
                 && parent_move(line).is_none()
         });
         // A parent change missing from the thread has no known time or historical destination.
-        replay.uncertain |= window
-            .lines
-            .iter()
-            .rev()
-            .find_map(parent_move)
-            .is_some_and(|moved| moved.to != window.parent.as_deref());
+        let mut recorded_parent: Option<Option<&str>> = None;
+        for moved in window.lines.iter().filter_map(parent_move) {
+            replay.uncertain |= recorded_parent.is_some_and(|previous| previous != moved.from);
+            recorded_parent = Some(moved.to);
+        }
+        replay.uncertain |=
+            recorded_parent.is_some_and(|parent| parent != window.parent.as_deref());
         // A missing close or reopening supplies no invented boundary in either direction.
         replay.uncertain |= matches!(window.status.as_str(), "done" | "cancelled") != replay.closed;
         Self { window, replay }
