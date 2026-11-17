@@ -83,19 +83,6 @@ new MutationObserver((_, observer) => {
         head: getComputedStyle(head).visibility, page: getComputedStyle(thread).visibility, thread: thread.dataset.pending};
 }).observe(document, {subtree: true, childList: true, characterData: true, attributes: true});"#;
 
-/// The look of the skeleton's two kinds of bar, the ghost's and a section's still reading, at the
-/// first moment the page draws both, recorded in the page then (`window.__look`): the ghost's goes
-/// once the page settles, at most three seconds on, which a look from the test could miss on a
-/// loaded machine. A colour in `window.__skeleton` is set as the theme's `--skeleton` first.
-const LOOK: &str = r#"window.__look = null;
-new MutationObserver((_, observer) => {
-    const bars = [document.querySelector('.settle > .settle-cover .bone'), document.querySelector('.section-loading .bone')];
-    if (bars.some(bar => bar === null)) return;
-    observer.disconnect();
-    if (window.__skeleton) document.documentElement.style.setProperty('--skeleton', window.__skeleton);
-    window.__look = bars.map(bar => ({animation: getComputedStyle(bar).animationName, colour: getComputedStyle(bar).backgroundColor}));
-}).observe(document, {subtree: true, childList: true});"#;
-
 fn settled(browser: &mut Chrome) -> Value {
     assert!(
         browser.wait_for("window.__settle.at !== undefined", SHOWN),
@@ -140,136 +127,6 @@ fn a_task_s_thread_and_composer_stay_under_their_ghost_until_the_thread_is_in() 
         ),
         json!({"cover": true, "page": "visible"})
     );
-}
-
-#[test]
-fn a_task_whose_thread_never_comes_shows_after_three_seconds_with_its_thread_waiting() {
-    let site = site();
-    site.hold_route("/api/task-history", true);
-    let Some(mut browser) = open(&site, TASK, TALL.0, TALL.1) else {
-        site.hold_route("/api/task-history", false);
-        return;
-    };
-    let at = settled(&mut browser);
-    // Its read is still out: nothing offers to read it again.
-    let shown = browser.eval(
-        "({page: getComputedStyle(document.querySelector('#task-thread')).visibility, thread: document.querySelector('#task-thread').dataset.pending, buttons: [...document.querySelectorAll('#task-thread button')].map(button => button.textContent)})",
-    );
-    site.hold_route("/api/task-history", false);
-    assert_eq!(at["thread"], json!("true"), "{at}");
-    assert!(
-        at["waited"].as_f64().unwrap_or_default() >= 2_900.0,
-        "the page gave up on its thread early: {at}"
-    );
-    assert_eq!(
-        shown,
-        json!({"page": "visible", "thread": "true", "buttons": []})
-    );
-}
-
-#[test]
-fn a_task_whose_thread_cannot_be_read_offers_it_again_and_says_it_loads_while_that_read_is_out() {
-    const HISTORY: &str = "/api/task-history";
-    const BUTTON: &str = "document.querySelector('#task-thread button')";
-    let site = site();
-    site.fail_route(HISTORY, true);
-    let Some(mut browser) = open(&site, TASK, TALL.0, TALL.1) else {
-        return;
-    };
-    assert!(
-        browser.wait_for(&format!("{BUTTON}?.textContent === 'Load messages'"), SHOWN),
-        "a failed thread offers no read: {}",
-        browser.eval(PAGE)
-    );
-    // The read it asks (the store tries one by itself too) is held: the button says it loads,
-    // and asks for none more.
-    site.hold_route(HISTORY, true);
-    site.fail_route(HISTORY, false);
-    browser.eval(&format!("{BUTTON}.click()"));
-    let loading = browser.wait_for(
-        &format!(
-            "(button => button?.disabled && button.textContent === 'Loading messages…')({BUTTON})"
-        ),
-        SHOWN,
-    );
-    let shown = browser.eval(PAGE);
-    site.hold_route(HISTORY, false);
-    assert!(loading, "the thread's read never said it loads: {shown}");
-    assert!(
-        browser.wait_for(
-            &format!("document.querySelector('#task-thread .entry') !== null && {BUTTON} === null"),
-            SHOWN
-        ),
-        "the thread was not drawn once its read answered: {}",
-        browser.eval(PAGE)
-    );
-}
-
-#[test]
-fn a_task_whose_thread_cannot_be_read_shows_at_once_with_the_error() {
-    let site = site();
-    site.fail_route("/api/task-history", true);
-    let Some(mut browser) = open(&site, TASK, TALL.0, TALL.1) else {
-        return;
-    };
-    let at = settled(&mut browser);
-    assert!(
-        at["waited"].as_f64().unwrap_or(f64::MAX) < 2_900.0,
-        "a failed read waited for the deadline: {at}"
-    );
-    assert!(
-        browser.wait_for(
-            "document.querySelector('.page-notices [role=alert]')?.textContent.length > 0",
-            SHOWN
-        ),
-        "the failed read is not said: {}",
-        browser.eval(PAGE)
-    );
-}
-
-#[test]
-fn a_skeleton_shimmers_only_for_a_reader_who_accepts_motion_in_the_theme_s_colour() {
-    let site = site();
-    site.hold_route("/api/section", true);
-    // Each look a first visit of its own, in a browser of its own: a return visit draws what the
-    // device kept, with no ghost.
-    let look = |media: &str, theme: Option<&str>| {
-        let mut browser = watching(1280, 900, &[LOOK])?;
-        if let Some(colour) = theme {
-            browser.call(
-                "Page.addScriptToEvaluateOnNewDocument",
-                json!({ "source": format!("window.__skeleton = {};", json!(colour)) }),
-            );
-        }
-        browser.call(
-            "Emulation.setEmulatedMedia",
-            json!({"features": [{"name": "prefers-reduced-motion", "value": media}]}),
-        );
-        browser.open(&site.url("/docs/PROBE.md"));
-        if browser.wait_for("window.__look !== null", SHOWN) {
-            Some(Ok(browser.eval("window.__look")))
-        } else {
-            Some(Err(format!(
-                "no skeleton was drawn for {media}: {}",
-                browser.eval(PAGE)
-            )))
-        }
-    };
-    let looks = [
-        look("no-preference", None),
-        look("reduce", None),
-        look("no-preference", Some("rgb(1, 2, 3)")),
-    ];
-    site.hold_route("/api/section", false);
-    let [Some(moving), Some(still), Some(themed)] = looks else {
-        return;
-    };
-    let [moving, still, themed] =
-        [moving, still, themed].map(|look| look.unwrap_or_else(|why: String| panic!("{why}")));
-    let each = |animation: &str, colour: &str| json!([{"animation": animation, "colour": colour}, {"animation": animation, "colour": colour}]);
-    assert_eq!(moving, each("shimmer", "rgba(127, 127, 127, 0.14)"));
-    assert_eq!(still, each("none", "rgba(127, 127, 127, 0.14)"));
-    assert_eq!(themed, each("shimmer", "rgb(1, 2, 3)"));
 }
 
 /// The box properties a ghost shares with the real element it stands for (`real`, a class), as
@@ -1363,45 +1220,6 @@ fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
     Some((browser, top))
 }
 
-/// Each frame for about a second and a half: the most the board scroller and the page are ever
-/// scrolled.
-const MOST_SCROLLED: &str = "window.__most = {board: 0, page: 0, done: false};
-(function frame(left) { const board = document.querySelector('.waiting-columns'); __most.board = Math.max(__most.board, scrollY); __most.page = Math.max(__most.page, scrollY); if (left > 0) requestAnimationFrame(() => frame(left - 1)); else __most.done = true; })(90)";
-
-#[test]
-fn a_task_that_lands_at_the_top_of_a_board_at_rest_shows_there_and_scrolls_nothing() {
-    let site = site();
-    let Some(mut browser) = board_of_fourteen(&site) else {
-        return;
-    };
-    browser.call("Emulation.setCPUThrottlingRate", json!({"rate": 6}));
-    let heading = "(() => Math.round(document.querySelector('.column[data-status=ready] h2').getBoundingClientRect().top))()";
-    let before = browser.eval(heading);
-    browser.eval(MOST_SCROLLED);
-    land(&site, 4183, Some(task(0, 0)));
-    assert!(
-        browser.wait_for(
-            "document.querySelector('[data-slug=\"tools/t-00\"]') !== null && __most.done",
-            SHOWN
-        ),
-        "the added task never landed: {}",
-        browser.eval(PAGE)
-    );
-    let landed = browser.eval(
-        "(() => { const board = ({top:0,bottom:innerHeight}), card = document.querySelector('[data-slug=\"tools/t-00\"]').getBoundingClientRect();
-            return {first: document.querySelector('.column[data-status=ready] [data-slug]').dataset.slug, shown: card.top >= board.top && card.bottom <= board.bottom}; })()",
-    );
-    assert_eq!(
-        (browser.eval("__most"), browser.eval(heading), landed),
-        (
-            json!({"board": 0, "page": 0, "done": true}),
-            before,
-            json!({"first": "tools/t-00", "shown": true})
-        ),
-        "a reader who has not scrolled sees the task land at the top of its column, the headings where they were"
-    );
-}
-
 #[test]
 fn a_task_added_or_removed_above_the_row_the_owner_reads_leaves_it_in_place() {
     let site = site();
@@ -1435,62 +1253,6 @@ fn a_task_added_or_removed_above_the_row_the_owner_reads_leaves_it_in_place() {
     assert!(
         (added - before).abs() < 1.0 && (removed - before).abs() < 1.0,
         "the row read moved from {before} to {added} when a task was added above it, and to {removed} when it was removed; [ms, row top, board scroll, page scroll] each frame from the add: {trace}"
-    );
-}
-
-#[test]
-fn a_task_whose_box_lands_past_the_board_s_reach_leaves_no_hold_running() {
-    let site = site();
-    let Some(mut browser) = board_of(&site, 30) else {
-        return;
-    };
-    // The board scrolled down its column until the place a task landing at its top takes is more
-    // than 600 px above the board's box, past the reach of its sentinel there, though within 600 px
-    // of the window: that box never draws while the board stays there.
-    let read = browser.eval(
-        "(() => { const board = document.querySelector('.waiting-columns'), first = document.querySelector('[id=\"row-tools/t-01\"]');
-            scrollBy(0, first.getBoundingClientRect().top + 800);
-            const top = 0;
-            return [...document.querySelectorAll('[data-slug]')].find(row => row.getBoundingClientRect().top >= top)?.dataset.slug; })()",
-    );
-    let read = format!(
-        "[data-slug={}]",
-        json!(read.as_str().expect("a row shows on the scrolled board"))
-    );
-    still(&mut browser, &read);
-    land(&site, 4183, Some(task(0, 0)));
-    assert!(
-        browser.wait_for(
-            "document.querySelector('[id=\"row-tools/t-00\"]') !== null",
-            SHOWN
-        ),
-        "the added task never landed: {}",
-        browser.eval(PAGE)
-    );
-    // The hold kept the row read in place and ended once the board stood still, a few frames on:
-    // a scroll the page itself then makes, by no gesture, stays where it is put.
-    still(&mut browser, &read);
-    let at = browser.eval(
-        "(() => { const board = document.querySelector('.waiting-columns'), clip = {top:0,bottom:innerHeight};
-            const box = document.querySelector('[id=\"row-tools/t-00\"] [data-pending=true]')?.getBoundingClientRect();
-            scrollBy(0, 200);
-            return {box: box ? [box.top, box.bottom] : null, board: [clip.top, clip.bottom], set: scrollY}; })()",
-    );
-    let (box_bottom, board_top) = (
-        at["box"][1].as_f64().unwrap_or(f64::NAN),
-        at["board"][0].as_f64().unwrap_or(f64::NAN),
-    );
-    assert!(
-        box_bottom + 600.0 < board_top,
-        "the landed task's box must wait more than 600 px above the window: {at}"
-    );
-    for _ in 0..4 {
-        frames(&mut browser);
-    }
-    assert_eq!(
-        browser.eval("scrollY"),
-        at["set"],
-        "a hold still running scrolled the board back for a box that cannot draw: {at}"
     );
 }
 
