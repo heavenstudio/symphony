@@ -33,19 +33,20 @@ card pictures, including those of past decisions, are committed beside their doc
 evidence may stay outside Git. The cancelled reference-index task is not an implemented durable
 reference ledger. This proposal changes neither current retention nor existing documents.
 
-Downstream source copies supplied by the reporter were also inspected: the
+Downstream source was also read through the authenticated GitHub contents API, pinned to commit
+`61f5ab6c50504a0d97552d19e4796d3ea20c7cc3`: the
 [session artifact routes](https://github.com/toptal/maestro/blob/61f5ab6c50504a0d97552d19e4796d3ea20c7cc3/maestro-api/src/routes/artifacts.rs)
 authorize ownership and execute stat/read operations in the session pod; the
 [shared-copy store](https://github.com/toptal/maestro/blob/61f5ab6c50504a0d97552d19e4796d3ea20c7cc3/maestro-api-artifacts/src/shared_artifact_copy_store.rs)
 keys put/get/delete by link ID, without an immutable-generation argument. These are different
 read paths: a saved copy need not require a live pod. Neither interface alone establishes the
-immutable project evidence contract below. The reporter attributes both copies to commit
-`61f5ab6c50504a0d97552d19e4796d3ea20c7cc3`; their SHA-256 values are respectively
+immutable project evidence contract below. The decoded files independently match the reporter's
+cached source copies; their SHA-256 values are respectively
 `9167eee274e8e0ec14c4a50c73acc02c8df2aeb63cc44a4b00609068310bc3d6` and
 `6d99585a3b82d474ed7dc347e15a0ed1abdfdcd67f8c98b58019eabbfe0a8e20`.
-That commit is absent from the local repositories located here, so its provenance has not been
-independently refetched. Share-lifetime purge behavior is reported by the brief, not proved by
-these two files alone. No platform bucket, paid resource or hosted team URL is selected here.
+Share-lifetime purge behavior is reported by the brief, not proved by these two files alone.
+No platform bucket, paid resource or hosted team URL is selected here, and source inspection
+does not verify a deployed service.
 
 ## Smallest boundary
 
