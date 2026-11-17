@@ -454,10 +454,7 @@ rewritten under this rule is the test run alone five times on the loaded machine
 stated with each result, and once more under a load of the agent's own (a few busy loops in its own
 process group, started and stopped by their PIDs).
 
-**Out of the release run for a quiet machine:** none. Proposed and waiting for the owner's word:
-`phone::the_board_is_interactive_within_two_seconds_on_a_mid_phone` (the board interactive within
-2 s on a mid phone, which a loaded machine's wall cannot stand in for); it runs in the release run
-until then.
+**Out of the release run for a quiet machine:** none.
 
 ## Size budgets
 
