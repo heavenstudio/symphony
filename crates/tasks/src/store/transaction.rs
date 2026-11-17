@@ -53,7 +53,7 @@ impl Store {
         body: impl Into<Statement<'a>>,
         vars: Value,
     ) -> Result<T, Failure> {
-        read_on(&self.db, &body.into(), vars)
+        decoded(read_on(&self.db, &body.into(), vars)?)
     }
 
     /// [`Store::read`] through the unanswered-post lookup's client when one is set, which waits a
@@ -65,7 +65,11 @@ impl Store {
         body: impl Into<Statement<'a>>,
         vars: Value,
     ) -> Result<T, Failure> {
-        read_on(self.lookup.as_ref().unwrap_or(&self.db), &body.into(), vars)
+        decoded(read_on(
+            self.lookup.as_ref().unwrap_or(&self.db),
+            &body.into(),
+            vars,
+        )?)
     }
 
     /// A task write returns recipient presence in its snapshot and dispatches after decoding it.
@@ -92,10 +96,16 @@ impl Store {
     pub(super) fn run_transaction<'a, T: DeserializeOwned>(
         &self,
         body: impl Into<Statement<'a>>,
-        mut vars: Value,
+        vars: Value,
         run: Run,
     ) -> Result<T, Failure> {
-        let body = body.into();
+        decoded(self.run_statement(&body.into(), vars, run)?)
+    }
+
+    /// [`Store::run_transaction`]'s work, its answer as the database gave it: one body for every
+    /// statement and answer, so no caller's types make a copy of it.
+    #[track_caller]
+    fn run_statement(&self, body: &Statement, mut vars: Value, run: Run) -> Result<Value, Failure> {
         if !matches!(run, Run::Staging) {
             unset_nulls(&mut vars);
         }
@@ -132,12 +142,17 @@ impl Store {
         if dispatch && sql::posts(&body.surreal) {
             self.after_write();
         }
-        serde_json::from_value(answer).map_err(|e| {
-            Failure::Stop(Error::Db(format!(
-                "an answer not in the board's shape: {e}"
-            )))
-        })
+        Ok(answer)
     }
+}
+
+/// `answer` as the caller's type.
+fn decoded<T: DeserializeOwned>(answer: Value) -> Result<T, Failure> {
+    serde_json::from_value(answer).map_err(|e| {
+        Failure::Stop(Error::Db(format!(
+            "an answer not in the board's shape: {e}"
+        )))
+    })
 }
 
 impl Store {
@@ -153,7 +168,11 @@ impl Store {
         sql: impl Into<Statement<'a>>,
         vars: Value,
     ) -> Result<Vec<Value>, DbError> {
-        let sql = sql.into();
+        self.request_statement(&sql.into(), vars)
+    }
+
+    #[track_caller]
+    fn request_statement(&self, sql: &Statement, vars: Value) -> Result<Vec<Value>, DbError> {
         match &self.db {
             Database::SurrealDb(client) => client.query(&sql.surreal, vars),
             Database::PostgreSql(client) => {
@@ -213,11 +232,7 @@ pub(super) fn on_postgres(
 
 /// `body`, one read, answered by the board in `db` ([`Store::read`]).
 #[track_caller]
-fn read_on<T: DeserializeOwned>(
-    db: &Database,
-    body: &Statement,
-    mut vars: Value,
-) -> Result<T, Failure> {
+fn read_on(db: &Database, body: &Statement, mut vars: Value) -> Result<Value, Failure> {
     unset_nulls(&mut vars);
     let answer = match db {
         Database::SurrealDb(client) => client.query(&body.surreal, vars)?.pop(),
@@ -228,12 +243,7 @@ fn read_on<T: DeserializeOwned>(
             Some(on_postgres(client, twin, &vars, false)?)
         }
     };
-    let answer = answer.ok_or_else(|| Failure::Stop(Error::Db("a read gave no answer".into())))?;
-    serde_json::from_value(answer).map_err(|e| {
-        Failure::Stop(Error::Db(format!(
-            "an answer not in the board's shape: {e}"
-        )))
-    })
+    answer.ok_or_else(|| Failure::Stop(Error::Db("a read gave no answer".into())))
 }
 
 fn unset_nulls(value: &mut Value) {

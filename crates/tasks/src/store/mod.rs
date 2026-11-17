@@ -733,10 +733,19 @@ impl Store {
     fn written<'a>(
         &self,
         body: impl Into<Statement<'a>>,
+        vars: Value,
+        slug: &str,
+    ) -> Result<Task, Failure> {
+        self.written_statement(body.into(), vars, slug)
+    }
+
+    #[track_caller]
+    fn written_statement(
+        &self,
+        body: Statement,
         mut vars: Value,
         slug: &str,
     ) -> Result<Task, Failure> {
-        let body = body.into();
         let which = Which::Slug(slug);
         let (read, more) = reading(&which, Sessions::Shown);
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
