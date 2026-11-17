@@ -1,22 +1,27 @@
-//! The board searches by words alone. Word matches and ranking stay in SurrealDB, including
-//! message-only matches. The exact slug branch retains identifiers containing punctuation even when
-//! the analyzer splits them into words.
+//! The board searches by words alone. Word matches and ranking stay in the database, including
+//! message-only matches: SurrealDB's full-text indexes, and on PostgreSQL their twin, the same
+//! analyzer's terms and the same BM25 ([`super::postgres::search`]). The exact slug branch retains
+//! identifiers containing punctuation even when the analyzer splits them into words.
 //!
 //! The search by meaning the board had is deleted (DECISIONS: board-search-by-meaning). Its tables
 //! (`task_chunk` with its `embedding` field and HNSW index, `task_embedding_source`,
 //! `task_embedding_checkpoint`) keep their definitions in the schema, as removing one is a schema
 //! move, and a board that holds their rows keeps them: nothing here reads or writes them.
+use super::postgres::{self, Pg};
+use super::statement::both;
 use super::surreal::search as sql;
 use super::*;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SearchHit {
     pub slug: String,
     pub score: f64,
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct SearchSource {
+/// Where a task matched a search: its slug, the field (`title`, `body`, `slug`, `message`) and
+/// that field's text.
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct SearchSource {
     pub slug: String,
     pub source: String,
     pub text: String,
@@ -72,12 +77,14 @@ impl Store {
         if !validate_query(query)? {
             return Ok(Vec::new());
         }
-        self.retrying(|| self.transact(sql::SEARCH, json!({"query": query.trim().to_lowercase()})))
+        let search = || both(sql::SEARCH, Pg::read(postgres::search::SEARCH.as_str()));
+        let vars = json!({"query": query.trim().to_lowercase()});
+        self.retrying(|| self.transact(search(), vars.clone()))
     }
 
     /// Fetch matching text for the displayed hits only. Prefer title, brief and thread context
     /// over repeating the slug. Use the database's analyzer rather than guessing matches in Rust.
-    pub(crate) fn search_sources(
+    pub fn search_sources(
         &self,
         query: &str,
         slugs: &[&str],
@@ -85,12 +92,10 @@ impl Store {
         if slugs.is_empty() {
             return Ok(Default::default());
         }
-        let groups: BTreeMap<String, Vec<ScoredSource>> = self.retrying(|| {
-            self.transact(
-                sql::SOURCES,
-                json!({"query": query.trim().to_lowercase(), "slugs": slugs}),
-            )
-        })?;
+        let sources = || both(sql::SOURCES, Pg::read(postgres::search::SOURCES.as_str()));
+        let vars = json!({"query": query.trim().to_lowercase(), "slugs": slugs});
+        let groups: BTreeMap<String, Vec<ScoredSource>> =
+            self.retrying(|| self.transact(sources(), vars.clone()))?;
         // array::concat limits its output to 1 MiB. Keep each SELECT's rows in the same
         // snapshot, but concatenate/sort here so a large matching brief still has an excerpt.
         let mut rows: Vec<_> = groups.into_values().flatten().collect();

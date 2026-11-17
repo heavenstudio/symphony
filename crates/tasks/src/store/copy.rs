@@ -1,7 +1,7 @@
 //! The copy of a whole board: a dump (every row, table by table, [`Dump`]) written in one
 //! transaction, replacing what the board held, and read back in the same shape.
 
-use super::postgres;
+use super::postgres::{self, Pg};
 use super::statement::both;
 use super::surreal::copy as sql;
 use super::transaction::Run;
@@ -14,8 +14,12 @@ use std::hash::{BuildHasher, RandomState};
 
 impl Store {
     /// Remove every copy's staging table (`copy_…`): what a copy killed while it staged leaves. Only for
-    /// a caller that knows no copy runs meanwhile.
+    /// a caller that knows no copy runs meanwhile. A board on PostgreSQL has none: its copy is one
+    /// request ([`postgres::copy`]).
     pub fn remove_staging(&self) -> Result<(), Error> {
+        if self.db.is_postgresql() {
+            return Ok(());
+        }
         let tables: Vec<String> = self.retrying(|| self.transact(sql::TABLES, json!({})))?;
         let staged = tables.iter().map(String::as_str).filter(|table| {
             table.starts_with("copy_")
@@ -214,9 +218,17 @@ impl Store {
     }
 
     /// Every row of the board, in the shape the copy reads, each table in the order of its key: what a
-    /// copy wrote, read back.
+    /// copy wrote, read back. An object inside a task's fields has its keys in their order as text,
+    /// as SurrealDB keeps them, where PostgreSQL keeps the shorter first: a board's export is one text
+    /// in either database.
     pub fn dump(&self) -> Result<Dump, Error> {
-        self.retrying(|| self.transact(sql::DUMP, json!({})))
+        let dump = || both(sql::DUMP, Pg::read(postgres::copy::DUMP.as_str()));
+        let mut dump: Dump = self.retrying(|| self.transact(dump(), json!({})))?;
+        let fields = (dump.tasks.iter_mut()).flat_map(|task| task.fields.values_mut());
+        for value in fields.flat_map(|namespace| namespace.values_mut()) {
+            value.sort_all_objects();
+        }
+        Ok(dump)
     }
 }
 

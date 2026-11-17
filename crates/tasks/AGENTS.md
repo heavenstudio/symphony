@@ -154,6 +154,10 @@ back](../../docs/TASKS.md#a-board-that-went-back).
 
 `store/search.rs` and `cli/search.rs` are `tasks search`: by words alone, ranked by SurrealDB's
 full-text indexes over titles, briefs, slugs and threads, with no inference and no network request.
+On PostgreSQL the same analyzer's terms are counted by triggers into `words`
+(`store/postgres/schema.rs`) and scored by SurrealDB's own BM25 (`store/postgres/search.rs`), so a
+search finds and ranks alike on either, each score to the bit (`tests/store/search.rs`); only a
+word in another script differs, which SurrealDB spells in Latin letters and PostgreSQL keeps.
 The board had a search by meaning, deleted
 ([its card](../../docs/DECISIONS.md#board-search-by-meaning)): the tables it wrote (`task_chunk`,
 `task_embedding_source`, `task_embedding_checkpoint`) keep their definitions in `schema.rs`, since

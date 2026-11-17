@@ -1,8 +1,8 @@
-//! The copy of a whole board: a dump in JSON, which `tasks-copy` puts in
-//! SurrealDB in one transaction, and `Store::dump` reads it back in the same shape, each table in the
-//! order of its key.
+//! The copy of a whole board: a dump in JSON, which `Store::copy` puts on either database in one
+//! transaction (`tasks-copy` on SurrealDB), and `Store::dump` reads it back in the same shape, each
+//! table in the order of its key.
 
-use crate::common::{Fixture, NOW, Seed, client, server_addr, session, task};
+use crate::common::{Backend, Fixture, NOW, Seed, client, server_addr, session, task};
 use symphony_board::rows::{
     AskRow, BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, HeldRow, LinkRow, MessageRow, RoleRow,
     SessionRow, TaskRow, TaskSessionRow, UsageRow,
@@ -217,51 +217,73 @@ fn board_env(db: &symphony_board::rpc::Client) -> cli::Env {
     }
 }
 
-#[test]
-fn a_copy_reads_back_as_it_was_written() {
-    let f = Fixture::new(Seed { dump: everything() });
-    assert_eq!(f.store.dump().unwrap(), everything());
-}
-
-#[test]
-fn copying_again_replaces_the_board() {
-    let f = Fixture::new(Seed { dump: everything() });
-    let smaller = Seed::default()
-        .session("coral-hare")
-        .task("docs/x", "backlog")
-        .dump;
-    f.store.copy(&smaller).unwrap();
-    assert_eq!(f.store.dump().unwrap(), smaller);
-}
-
-#[test]
-fn a_dump_the_board_would_refuse_leaves_the_board_as_it_was() {
-    let f = Fixture::new(Seed { dump: everything() });
-    let mut bad = Seed::default()
-        .session("coral-hare")
-        .task("docs/x", "backlog")
-        .dump;
-    bad.messages.push(MessageRow {
-        id: 1,
-        slug: "docs/x".into(),
-        sender: "coral-hare".into(),
-        kind: "shout".into(),
-        text: "!".into(),
-        ts: NOW,
-        ..Default::default()
-    });
-    match f.store.copy(&bad) {
-        Err(Error::Db(why)) => assert!(why.contains("shout"), "{why}"),
-        other => panic!("expected the server to refuse the copy, got {other:?}"),
+on_both! {
+    fn a_copy_reads_back_as_it_was_written(backend: Backend) {
+        let f = Fixture::on(backend, Seed { dump: everything() });
+        assert_eq!(f.store.dump().unwrap(), everything());
     }
-    assert_eq!(f.store.dump().unwrap(), everything());
-}
 
-#[test]
-fn a_board_opened_again_is_kept() {
-    let f = Fixture::new(Seed { dump: everything() });
-    let again = Store::open(f.other_client()).unwrap();
-    assert_eq!(again.dump().unwrap(), everything());
+    fn copying_again_replaces_the_board(backend: Backend) {
+        let f = Fixture::on(backend, Seed { dump: everything() });
+        let smaller = Seed::default()
+            .session("coral-hare")
+            .task("docs/x", "backlog")
+            .dump;
+        f.store.copy(&smaller).unwrap();
+        assert_eq!(f.store.dump().unwrap(), smaller);
+        f.store.copy(&Dump::default()).unwrap();
+        assert_eq!(f.store.dump().unwrap(), Dump::default());
+    }
+
+    fn a_dump_the_board_would_refuse_leaves_the_board_as_it_was(backend: Backend) {
+        let f = Fixture::on(backend, Seed { dump: everything() });
+        let mut bad = Seed::default()
+            .session("coral-hare")
+            .task("docs/x", "backlog")
+            .dump;
+        bad.messages.push(MessageRow {
+            id: 1,
+            slug: "docs/x".into(),
+            sender: "coral-hare".into(),
+            kind: "shout".into(),
+            text: "!".into(),
+            ts: NOW,
+            ..Default::default()
+        });
+        match f.store.copy(&bad) {
+            Err(Error::Db(why)) => assert!(why.contains("shout"), "{why}"),
+            other => panic!("expected the server to refuse the copy, got {other:?}"),
+        }
+        assert_eq!(f.store.dump().unwrap(), everything());
+    }
+
+    fn a_board_opened_again_is_kept(backend: Backend) {
+        let f = Fixture::on(backend, Seed { dump: everything() });
+        assert_eq!(f.other().dump().unwrap(), everything());
+    }
+
+    fn a_null_inside_a_tasks_fields_is_copied_and_read_back(backend: Backend) {
+        let mut dump = everything();
+        dump.tasks[0].fields = [(
+            "fixture".into(),
+            [(
+                "settings".into(),
+                serde_json::json!({"empty": null, "items": [null, {"value": null}]}),
+            )]
+            .into_iter()
+            .collect(),
+        )]
+        .into_iter()
+        .collect();
+        let f = Fixture::on(backend, Seed { dump: dump.clone() });
+        assert_eq!(f.store.dump().unwrap(), dump);
+    }
+
+    fn a_board_with_nothing_staged_removes_no_staging(backend: Backend) {
+        let f = Fixture::on(backend, Seed { dump: everything() });
+        f.store.remove_staging().unwrap();
+        assert_eq!(f.store.dump().unwrap(), everything());
+    }
 }
 
 #[test]
@@ -412,38 +434,42 @@ fn the_copy_binary_is_the_command() {
     assert_eq!(refused.status.code(), Some(2));
 }
 
-#[test]
-fn text_that_reads_as_another_type_stays_text() {
-    let mut seed = Seed::default().session("amber-heron");
-    let lookalikes = [
-        "approve: looks right",
-        "a:b",
-        "2024-01-01T00:00:00Z",
-        "00000000-0000-0000-0000-000000000000",
-        "1s",
-        "NONE",
-        "<string> 1",
-    ];
-    for (i, text) in lookalikes.iter().enumerate() {
-        let id = i as i64 + 1;
-        seed = seed.task_row(TaskRow {
-            id,
-            title: text.to_string(),
-            body: text.to_string(),
-            ..task(&format!("t/{id}"), "ready")
-        });
-        seed.dump.messages.push(MessageRow {
-            id,
-            slug: format!("t/{id}"),
-            sender: "owner".into(),
-            kind: "msg".into(),
-            text: text.to_string(),
-            ts: NOW,
-            ..Default::default()
-        });
+on_both! {
+    fn text_that_reads_as_another_type_stays_text(backend: Backend) {
+        let mut seed = Seed::default().session("amber-heron");
+        let lookalikes = [
+            "approve: looks right",
+            "a:b",
+            "2024-01-01T00:00:00Z",
+            "00000000-0000-0000-0000-000000000000",
+            "1s",
+            "NONE",
+            "null",
+            "<string> 1",
+            "'); DROP TABLE task; --",
+            "{\"a\": 1}",
+        ];
+        for (i, text) in lookalikes.iter().enumerate() {
+            let id = i as i64 + 1;
+            seed = seed.task_row(TaskRow {
+                id,
+                title: text.to_string(),
+                body: text.to_string(),
+                ..task(&format!("t/{id}"), "ready")
+            });
+            seed.dump.messages.push(MessageRow {
+                id,
+                slug: format!("t/{id}"),
+                sender: "owner".into(),
+                kind: "msg".into(),
+                text: text.to_string(),
+                ts: NOW,
+                ..Default::default()
+            });
+        }
+        let f = Fixture::on(backend, seed.clone());
+        assert_eq!(f.store.dump().unwrap(), seed.dump);
     }
-    let f = Fixture::new(seed.clone());
-    assert_eq!(f.store.dump().unwrap(), seed.dump);
 }
 
 /// A board bigger than the server takes in one request (4 MiB): 1200 messages of 4 KiB each.
@@ -554,6 +580,22 @@ fn a_board_bigger_than_one_request_is_copied_whole() {
         BOARD_TABLES,
         "nothing of the copy is left behind"
     );
+}
+
+/// On PostgreSQL a board bigger than SurrealDB's request is still one request, and a copy refused
+/// at its last row leaves the board as it was.
+#[test]
+fn on_postgresql_a_big_board_is_copied_in_one_request_and_refused_whole() {
+    let f = Fixture::on(Backend::PostgreSql, Seed { dump: everything() });
+    let before = f.store.database().requests();
+    f.store.copy(&a_big_board()).unwrap();
+    assert_eq!(f.store.database().requests() - before, 1);
+    assert_eq!(f.store.dump().unwrap(), a_big_board());
+    let mut bad = a_big_board();
+    bad.messages.last_mut().unwrap().kind = "shout".into();
+    bad.tasks[0].title = "Not this one".into();
+    assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
+    assert_eq!(f.store.dump().unwrap(), a_big_board());
 }
 
 #[test]

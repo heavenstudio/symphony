@@ -1,5 +1,6 @@
 //! The board's tables on PostgreSQL, their indexes, and the triggers that are SurrealDB's events:
-//! the board's marker and each sender's last word ([`DEFINE`]).
+//! the board's marker and each sender's last word ([`define`]); and the terms SurrealDB's
+//! full-text indexes hold, which triggers keep too ([`WORDS`]).
 //!
 //! Every table keys its rows by `id`, the SurrealDB record's id as JSON (a text, a number, or the
 //! parts of a compound id), so a row is named alike on either database ([`super::super::raw`]).
@@ -117,8 +118,9 @@ pub(in crate::store) struct Table {
 
 use Kind::{Array, Bool, Float, Int, Object, Text};
 
-/// The board's twenty tables, each in the order of its fields.
-pub(in crate::store) const TABLES: [Table; 20] = [
+/// The board's twenty tables, each in the order of its fields, and `words`, what SurrealDB's
+/// full-text indexes hold ([`WORDS`]).
+pub(in crate::store) const TABLES: [Table; 21] = [
     Table {
         name: "task",
         columns: &[
@@ -325,6 +327,15 @@ pub(in crate::store) const TABLES: [Table; 20] = [
             req("last", Float),
         ],
     },
+    Table {
+        name: "words",
+        columns: &[
+            req("source", Text),
+            req("slug", Text),
+            req("terms", Object),
+            req("length", Int),
+        ],
+    },
 ];
 
 /// The board's table named `name`, when it is one: a table a newer schema adds is SCHEMALESS here.
@@ -332,9 +343,10 @@ pub(in crate::store) fn table(name: &str) -> Option<&'static Table> {
     TABLES.iter().find(|table| table.name == name)
 }
 
-/// The indexes SurrealDB's schema defines that a read here uses, the full-text ones left to the
-/// search's own slice, and the marker's own.
+/// The indexes SurrealDB's schema defines that a read here uses, the full-text ones as one index
+/// of the terms in `words`, and the marker's own.
 const INDEXES: &str = "
+CREATE INDEX IF NOT EXISTS words_terms ON words USING gin (terms);
 CREATE INDEX IF NOT EXISTS task_status ON task (status);
 CREATE INDEX IF NOT EXISTS task_parent ON task (parent);
 CREATE INDEX IF NOT EXISTS link_slug ON link (slug);
@@ -464,6 +476,75 @@ END
 $f$;
 ";
 
+/// What SurrealDB's full-text indexes hold (`task_words`, [`crate::schema::ANALYZERS`]): each
+/// task's title, brief and slug and each thread line's text, a row of `words` each, its `terms`
+/// counted and their number its `length`, kept by the triggers `board_words` names in each
+/// table's fields it reads. The search's twins read it ([`super::search`]).
+///
+/// `board_terms(input)`: the analyzer, each term with where it is. SurrealDB's tokenizers split a
+/// text at each change of class (a letter, a number, ASCII punctuation one character a term),
+/// dropping the rest; its filters then lower each term and make it ASCII (`deunicode`). Here a
+/// letter is PostgreSQL's (`[[:alpha:]]`, Unicode's alphabetic, as Rust's `is_alphabetic`, a newer
+/// Unicode's letters aside), a number Rust's own (`NUMBERS`, [`numbers`]), and a term outside
+/// ASCII is decomposed (NFKD) with its accents dropped and the Latin letters that have no
+/// decomposition spelt as `deunicode` spells them; another script is kept as it is, where
+/// `deunicode` spells it in Latin letters.
+const WORDS: &str = r"
+CREATE OR REPLACE FUNCTION board_terms(input text) RETURNS TABLE (term text, at bigint)
+LANGUAGE sql IMMUTABLE STRICT AS $f$
+SELECT term, at FROM (SELECT CASE WHEN octet_length(m[1]) = char_length(m[1]) THEN m[1]
+    ELSE translate(regexp_replace(normalize(translate(replace(replace(replace(replace(replace(
+        m[1], 'ß', 'ss'), 'æ', 'ae'), 'œ', 'oe'), 'þ', 'th'), 'ŋ', 'NG'), 'µðøđħıĸŀłŧ', 'udoddhikllt'),
+        NFKD), '[̀-ͯ]', '', 'g'), '⁄', '/') END AS term, at
+    FROM regexp_matches(lower(input COLLATE pg_c_utf8), '[[:alpha:]]+|[NUMBERS]+|[!-/:-@[-`{-~]', 'g')
+        WITH ORDINALITY AS t (m, at)) t
+WHERE term <> ''
+$f$;
+
+CREATE OR REPLACE FUNCTION board_words() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        DELETE FROM words WHERE id IN (SELECT jsonb_build_array(f, OLD.id) FROM unnest(TG_ARGV) f);
+    END IF;
+    IF TG_OP <> 'DELETE' THEN
+        INSERT INTO words (id, source, slug, terms, length)
+        SELECT jsonb_build_array(f, NEW.id), f, NEW.slug,
+            coalesce(jsonb_object_agg(term, n) FILTER (WHERE n > 0), '{}'), coalesce(sum(n), 0)
+        FROM unnest(TG_ARGV) f LEFT JOIN LATERAL
+            (SELECT term, count(*) AS n FROM board_terms(to_jsonb(NEW) ->> f) GROUP BY term) w ON true
+        GROUP BY f;
+    END IF;
+    RETURN NULL;
+END
+$f$;
+";
+
+/// Each table `words` holds the terms of, and its fields that it reads.
+const WORDED: [(&str, &[&str]); 2] = [("task", &["title", "body", "slug"]), ("message", &["text"])];
+
+/// The characters SurrealDB's tokenizer reads as a number (`char::is_numeric`) and not as a
+/// letter, as the ranges of a bracket expression: a few in every script, so they are made here
+/// rather than spelt out.
+fn numbers() -> String {
+    let mut class = String::new();
+    let mut from = None;
+    for at in 0..=0x11_0000 {
+        let number = char::from_u32(at).is_some_and(|c| c.is_numeric() && !c.is_alphabetic());
+        match from {
+            None if number => from = Some(at),
+            Some(start) if !number => {
+                let _ = write!(class, "\\x{start:x}");
+                if at - 1 > start {
+                    let _ = write!(class, "-\\x{:x}", at - 1);
+                }
+                from = None;
+            }
+            _ => {}
+        }
+    }
+    class
+}
+
 /// The tables whose every change moves the marker, as SurrealDB's `board_changed` events do;
 /// `session` and `callback_state` move it by triggers of their own.
 const MARKED: [&str; 8] = [
@@ -478,9 +559,30 @@ const MARKED: [&str; 8] = [
 ];
 
 /// The triggers: the marker on every board input, a session's own revision, a callback
-/// registration's fields that a reader reads, and each sender's last word.
+/// registration's fields that a reader reads, each sender's last word, and the terms of each
+/// text searched.
 fn triggers() -> String {
     let mut sql = String::new();
+    for (table, fields) in WORDED {
+        // A row's terms are counted again when a field read changes, or the task it is of.
+        let slug = (!fields.contains(&"slug")).then_some(&"slug");
+        let read = |row: &str| {
+            let read: Vec<String> = (fields.iter().chain(slug))
+                .map(|field| format!("{row}.{field}"))
+                .collect();
+            read.join(", ")
+        };
+        let named: Vec<String> = fields.iter().map(|field| format!("'{field}'")).collect();
+        let (named, old, new) = (named.join(", "), read("OLD"), read("NEW"));
+        let _ = writeln!(
+            sql,
+            "CREATE OR REPLACE TRIGGER {table}_words AFTER INSERT OR DELETE ON {table} \
+             FOR EACH ROW EXECUTE FUNCTION board_words({named});\n\
+             CREATE OR REPLACE TRIGGER {table}_words_changed AFTER UPDATE ON {table} \
+             FOR EACH ROW WHEN (({old}) IS DISTINCT FROM ({new})) \
+             EXECUTE FUNCTION board_words({named});"
+        );
+    }
     for table in MARKED {
         let _ = writeln!(
             sql,
@@ -550,6 +652,9 @@ pub(in crate::store) fn define() -> String {
     sql.push_str(UNIQUES);
     sql.push_str(INDEXES);
     sql.push_str(FUNCTIONS);
+    static ANALYZED: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| WORDS.replace("NUMBERS", &numbers()));
+    sql.push_str(&ANALYZED);
     sql.push_str(&triggers());
     sql
 }
@@ -600,12 +705,33 @@ mod tests {
         assert!(table("moved").is_none() && table("task_chunk").is_none());
     }
 
+    /// The numbers are Rust's, ranges of them and single ones, and no letter among them.
     #[test]
-    fn the_board_has_twenty_tables_each_named_once() {
+    fn the_analyzers_numbers_are_rusts_that_are_no_letters() {
+        let class = numbers();
+        assert!(
+            class.starts_with("\\x30-\\x39\\xb2-\\xb3\\xb9\\xbc-\\xbe\\x660-\\x669"),
+            "{class}"
+        );
+        let mut held = 0;
+        for range in class.split("\\x").filter(|at| !at.is_empty()) {
+            let at = u32::from_str_radix(range.trim_end_matches('-'), 16).unwrap();
+            let c = char::from_u32(at).unwrap();
+            assert!(c.is_numeric() && !c.is_alphabetic(), "{c:?}");
+            held += 1;
+        }
+        assert!(held > 200, "{held}");
+        for letter in ['Ⅳ', 'a', 'µ'] {
+            assert!(!class.contains(&format!("\\x{:x}", u32::from(letter))));
+        }
+    }
+
+    #[test]
+    fn the_board_has_twenty_tables_and_its_words_each_named_once() {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 20);
+        assert_eq!(names.len(), 21);
         let defined = define();
         for name in names {
             assert!(
@@ -619,5 +745,16 @@ mod tests {
                 "{table}"
             );
         }
+        assert!(defined.contains(
+            "TRIGGER task_words_changed AFTER UPDATE ON task FOR EACH ROW WHEN \
+             ((OLD.title, OLD.body, OLD.slug) IS DISTINCT FROM \
+             (NEW.title, NEW.body, NEW.slug)) EXECUTE FUNCTION \
+             board_words('title', 'body', 'slug');"
+        ));
+        assert!(defined.contains(
+            "WHEN ((OLD.text, OLD.slug) IS DISTINCT FROM (NEW.text, NEW.slug)) \
+             EXECUTE FUNCTION board_words('text');"
+        ));
+        assert!(!defined.contains("NUMBERS") && defined.contains("|[\\x30-\\x39"));
     }
 }

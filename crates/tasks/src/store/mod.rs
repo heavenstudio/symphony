@@ -78,7 +78,7 @@ pub use opening::Opening;
 pub use raw::{Raw, Rows as RawRows};
 use reading::native_health;
 pub use report_lines::{ReportRead, ReportTask};
-pub use search::SearchHit;
+pub use search::{SearchHit, SearchSource};
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use stamp::TaskStamp;

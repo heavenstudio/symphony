@@ -23,6 +23,7 @@ pub(in crate::store) mod opening;
 pub(in crate::store) mod raw;
 pub(in crate::store) mod reading;
 pub(in crate::store) mod schema;
+pub(in crate::store) mod search;
 pub(in crate::store) mod sessions;
 pub(in crate::store) mod snapshot;
 pub(in crate::store) mod work;
