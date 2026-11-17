@@ -1,4 +1,8 @@
 //! Approval observations through the existing fake-HC child, native listener and durable outbox.
+
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: the panes, listeners and
+// outbox these observations go through are that slice's statements.
+
 use super::super::callbacks::Listener;
 use super::*;
 use symphony_board::cli::attach::PaneWatch;

@@ -6,7 +6,7 @@
 //! above the deepest open one, never one for each task.
 
 use super::{EIGHT, K, O, capped, sessions, with};
-use crate::common::{Fixture, session, task};
+use crate::common::{Backend, Fixture, session, task};
 use serde_json::json;
 use symphony_board::SLOT_READS;
 use symphony_board::rows::TaskRow;
@@ -18,7 +18,7 @@ const DEEPEST: usize = 3;
 
 /// The board: [`DONE`] finished tasks under twenty orchestrators and forty workers, six of O's
 /// open, one more open three levels below a task of O's, and two ready to claim.
-fn big() -> Fixture {
+fn big(backend: Backend) -> Fixture {
     let mut seed = sessions();
     for n in 0..20 {
         seed = seed.session(&format!("orch-{n}"));
@@ -52,7 +52,7 @@ fn big() -> Fixture {
     );
     seed = with(seed, "work/next", "ready", None, Some(O));
     seed = with(seed, "plain/next", "ready", None, Some(O));
-    Fixture::new(seed.session_row(session("unused")))
+    Fixture::on(backend, seed.session_row(session("unused")))
 }
 
 /// Whether a plan's line holds a subquery in a predicate, which EXPLAIN shows as `(Operator)`.
@@ -69,9 +69,10 @@ fn subquery_in_predicate(line: &str) -> bool {
     })
 }
 
+// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
 #[test]
 fn the_caps_reads_are_planned_on_an_index_and_a_capped_claim_adds_a_round_trip_a_level() {
-    let f = big();
+    let f = big(Backend::SurrealDb);
     let client = f.store.client();
     let vars = json!({
         "slot_statuses": ["in_progress", "review"],

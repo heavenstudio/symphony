@@ -3,6 +3,8 @@
 //! `symphony::gates`) asks for it on each of its reads, and reads the task and its thread again
 //! only once it moved.
 
+use super::postgres::stamp as pg;
+use super::statement::both;
 use super::surreal::stamp as sql;
 use super::{Error, Store};
 use serde_json::{Value, json};
@@ -22,7 +24,8 @@ impl Store {
     /// A reservation lapses by the clock, with no row written, so a stamp does not tell a task
     /// whose reservation lapsed from the one before.
     pub fn task_stamp(&self, slug: &str) -> Result<Option<TaskStamp>, Error> {
-        let read: Value = self.retrying(|| self.read(sql::READ, json!({"slug": slug})))?;
+        let read: Value =
+            self.retrying(|| self.read(both(sql::READ, pg::read()), json!({"slug": slug})))?;
         let known = read.get("task").is_some_and(|task| !task.is_null());
         Ok(known.then_some(TaskStamp(read)))
     }
