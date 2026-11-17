@@ -27,7 +27,7 @@ body { margin:0; color:var(--foreground); background:var(--background); font:16p
 main { --page-end:120px; --feed-notice-bottom:calc(132px + env(safe-area-inset-bottom)); max-width:1440px; margin:0 auto; padding:var(--sp-5) var(--sp-5) var(--page-end); }
 /* The task board, its ghost too, takes the window's whole width, so a window wide enough shows every
    column of its pipeline with no sideways scroll; every other page keeps its reading width. */
-main[data-ready="board"] { max-width:none; }
+main:has(> .waiting-board) { max-width:none; }
 h1, h2, h3 { line-height:1.25; letter-spacing:-.01em; } h1 { font-size:var(--fs-2xl); } h2 { font-size:var(--fs-xl); margin-top:1.6em; }
 a { color:var(--primary); }
 img { max-width:100%; height:auto; }
