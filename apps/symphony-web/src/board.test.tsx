@@ -271,3 +271,12 @@ it("follows a focused task to its new phone stage without following unrelated mo
     "review",
   ]);
 });
+
+it("opens a hidden rail stage for a task holding the focus on a wide board", () => {
+  const focused = { getAttribute: () => "follow", querySelectorAll: () => [] };
+  vi.stubGlobal("document", { activeElement: { closest: () => focused } });
+  const html = board({ tasks: [aTask("follow", { status: "backlog" })] });
+  expect(columns(html)).toEqual(["backlog"]);
+  expect(html).toContain("Back to stages");
+  expect(html).toContain('class="kanban waiting-columns wait-list"');
+});

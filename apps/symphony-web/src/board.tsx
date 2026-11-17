@@ -320,7 +320,7 @@ export const TaskColumn = memo(function TaskColumn({
       </h2>
       <div className="column-summary">
         {status === "done" ? (
-          <button type="button" onClick={onCancelled}>
+          <button type="button" data-open-stage="cancelled" onClick={onCancelled}>
             {cancelled} cancelled · {days === 1 ? "today" : "this week"}
           </button>
         ) : (
@@ -469,13 +469,29 @@ export function TaskBoard({
         setSelected(destination);
         setOpened("");
       } else setOpened(destination);
-    } else if (!phone && !STAGES.includes(destination) && opened !== destination) {
-      setOpened(destination);
+    } else if (!phone) {
+      const next = STAGES.includes(destination) ? "" : destination;
+      if (opened !== next) setOpened(next);
     }
   }
   useEffect(() => {
     save(STAGE_KEY, selected);
   }, [selected]);
+  const previousOpen = useRef(opened);
+  useLayoutEffect(() => {
+    const previous = previousOpen.current;
+    previousOpen.current = opened;
+    if (previous === opened || document.activeElement !== document.body) return;
+    const target = phone
+      ? '.stage-tabs button[aria-current="page"]'
+      : opened !== ""
+        ? ".back-to-stages"
+        : previous !== ""
+          ? `[data-open-stage="${previous}"]`
+          : null;
+    if (target !== null)
+      document.querySelector<HTMLButtonElement>(target)?.focus({ preventScroll: true });
+  }, [opened, phone]);
   useEffect(() => {
     const resize = () => setPhone(windowWidth() <= 760);
     window.addEventListener("resize", resize);
@@ -630,16 +646,26 @@ export function TaskBoard({
             ))}
         </nav>
       )}
-      <div className={`kanban waiting-columns${wait !== "" ? " wait-list" : ""}`}>
+      {!phone && wait === "" && opened !== "" && (
+        <Button className="back-to-stages" onClick={() => setOpened("")}>
+          Back to stages
+        </Button>
+      )}
+      <div
+        className={`kanban waiting-columns${wait !== "" || (!phone && opened !== "") ? " wait-list" : ""}`}
+      >
         {wait !== "" ? (
           column("waiting")
         ) : phone ? (
           column(opened || selected)
+        ) : opened !== "" ? (
+          column(opened)
         ) : (
           <>
             <button
               type="button"
               className="backlog-rail"
+              data-open-stage="backlog"
               aria-expanded={opened === "backlog"}
               onClick={() => setOpened(opened === "backlog" ? "" : "backlog")}
             >
@@ -658,12 +684,14 @@ export function TaskBoard({
                         <>
                           <button
                             type="button"
+                            data-open-stage="build"
                             onClick={() => setOpened(opened === "build" ? "" : "build")}
                           >
                             Build {count("build")}
                           </button>
                           <button
                             type="button"
+                            data-open-stage="test"
                             onClick={() => setOpened(opened === "test" ? "" : "test")}
                           >
                             Test {count("test")}
@@ -679,9 +707,6 @@ export function TaskBoard({
           </>
         )}
       </div>
-      {!phone && wait === "" && opened !== "" && (
-        <div className="opened-stage">{column(opened)}</div>
-      )}
     </div>
   );
 }
