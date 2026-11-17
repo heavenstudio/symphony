@@ -83,11 +83,14 @@ main's, or one main changed after the branch forked, is skipped.
   text or its lines, not main's), are not on disk in its worktree waits until they are: the server
   checks those files on a timer and posts the card when they land. `just symphony-cli docs-audit
   --check` refuses it ([below](#writing-a-card)).
-- **Live branches only.** A branch merged into main, or whose task the board says is done or cancelled
+- **Until a branch lands.** A branch merged into main posts nothing. A branch whose task the board
+  says is done or cancelled
   (every task that names the branch: the task named like it, and the tasks that record it as their
-  executor's branch), posts nothing. A reviewer's approval sets a task done before its branch lands, so
-  an approved branch's cards and answers leave the owner's view until the branch lands; what the owner
-  said there, and the answers under it, stay (below).
+  executor's branch) keeps its posted revisions of main's proposal text until it lands, as a live
+  branch does, including rewrites of options or body content under an unchanged heading. A plain
+  appended reply keeps the existing proposal. The page and the queue draw the same revised card,
+  and an answer saved from either belongs to that branch. Its other cards keep only what the
+  owner said there and the answers under it (below).
 - **One card.** A card main holds and a branch posted is one card wherever the owner reads it: the queue,
   main's page and the branch's page all show both copies' lines in time order, so the owner's line and the
   agent's answer show wherever either was written. Its mark is that of the copy whose latest verdict line
@@ -103,7 +106,8 @@ main's, or one main changed after the branch forked, is skipped.
   group, the register regrouped as a save would regroup it, each block still standing for the
   file's own lines, where a save or a comment from the page lands.
 - **The owner's word never disappears.** A line the owner saved in any worktree counts, whether the
-  branch is live or finished and whether the card is posted or a draft. On a card a live branch posted,
+  branch is live or finished and whether the card is posted or a draft. On a card a live branch posted
+  or a finished branch's posted revision of main's proposal text,
   it is laid on the branch's copy, which is one card with main's by the rule above. Otherwise (a card the
   branch did not post, a draft, a finished branch's thread) it is laid on main's copy of the card when
   main has it, else it stands as the card of the branch's page, waiting on an agent. Laid on main's copy,
