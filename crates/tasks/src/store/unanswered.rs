@@ -58,6 +58,9 @@ pub(crate) struct Pending {
     pub health: Health,
     seen: f64,
     pub status: String,
+    /// Today's executor, including the last holder after departure; advice can follow staffing
+    /// without changing this post's historical recipient or treating a handoff as an answer.
+    pub executor: Option<(String, Health)>,
 }
 
 impl Pending {
@@ -162,6 +165,10 @@ fn owed(
 ) {
     let mut thread: Vec<_> = rows.into_iter().map(super::message).collect();
     let recipients = recipients::resolve(&thread, &task.roles);
+    let executor = recipients::executor(&thread, &task.roles).map(|handle| {
+        let health = sessions.get(handle.as_str()).map_or(Health::Left, |s| s.0);
+        (handle, health)
+    });
     for post in &mut thread {
         if post.kind == "system"
             && (!post.text.starts_with(&format!("{} released ", post.sender))
@@ -233,6 +240,7 @@ fn owed(
                     health: session.map_or(Health::Left, |s| s.0),
                     seen: session.map_or(0.0, |s| s.1),
                     status: task.status.clone(),
+                    executor: executor.clone(),
                 });
             }
         }
