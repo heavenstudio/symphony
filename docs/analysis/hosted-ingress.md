@@ -229,8 +229,9 @@ Readiness is 200 only when all required components of the selected project are u
   key/policy material are usable;
 - the exact project root/revision is materialized, and the matching shell and referenced client
   assets are present and readable;
-- the selected database is connected within its configured capacity, its schema is known and
-  compatible with this writer, and the first real project board read has completed;
+- the selected database, login, project identity and recovery generation are verified; its
+  engine/schema combination is proved compatible with this writer, and a real bounded project
+  board read through the shared connection pool has completed;
 - required document/evidence providers are initialized, and no stop, migration or writer fence
   makes the service unavailable.
 
@@ -239,12 +240,18 @@ states such as `board_unavailable`, `schema_incompatible` or `draining`; use `Ca
 no-store`. Keep paths, subject/tenant, connection strings, credentials and raw errors in neither
 body nor headers. Revision identifiers are deployment provenance, not filesystem paths.
 Prefer bounded, recently successful component observations with explicit freshness/expiry;
-do not run a migration or expensive full scan on every probe. A stale success cannot survive
-the freshness bound or a known dependency failure.
+do not run a migration or expensive full scan on every probe. Probe reads and connections count
+within the shared pool and deployment connection budget, with no extra probe-only connection
+outside the cap. No available pool capacity means 503. A stale success cannot survive the
+freshness bound or a known dependency failure. Reconnect revalidates database/login/project,
+recovery generation and engine/schema before a successful board read restores readiness.
 
 Database outage, exhausted capacity, unknown/newer schema, migration in progress or failed first
 board read yields 503 readiness and 503 dependent operations, without a local fallback or stale
-successful mutation. An intentionally configured document-only service could have a different
+successful mutation. The database contract's proved-compatible, one-version-behind read-only
+access may support authorized diagnostics; it cannot make a normal writing application ready
+when its writer is incompatible. That deployment keeps readiness at 503. An intentionally
+configured document-only service could have a different
 contract; it cannot call itself board-ready. An open TCP port or a rendered shell proves only
 that those bytes were served. The consumer must configure the HTTP startup and readiness probes
 to use this readiness response under the [runtime health-check contract][probes], with liveness
@@ -273,7 +280,7 @@ authorization policy remain in the consuming adapter. This design does not autho
 | Visitor verification | Valid signature/issuer/app/tenant succeeds only with a project grant. Missing/duplicate/forged/expired/future/unknown-key/other-issuer/route/other-app assertions fail before body/state access. Inject clock and key rotation/outage; verify no fail-open cache. |
 | Proxy and browser boundary | Direct origin, forged forwarded headers, extra chains, invalid/conflicting Host and foreign/null/missing Origin fail. Test CSRF omission/mismatch and encoded target aliases across reads, saves, media/ranges, assets and upgrades. |
 | Project isolation | Same subject with another tenant, no grant, read-only grant, another project in path/body/artifact/cursor and a legacy plugin cannot read or mutate outside admission. Check denied cache hits, metadata and every byte read. |
-| Startup and probes | Assigned/missing/zero/invalid PORT; wrong root/revision; missing/mismatched client; first board read blocked; DB down/exhausted; unsupported schema and migration. TCP/shell success never makes readiness 200. No diagnostics secrets escape. |
+| Startup and probes | Assigned/missing/zero/invalid PORT; wrong root/revision; missing/mismatched client; wrong database/login/project or recovery generation; bounded board read blocked; shared pool exhausted with no probe connection outside its cap; unsupported engine/schema and migration. Compatible read-only diagnostics cannot ready an incompatible writer. Reconnect revalidates identity/schema; known outage invalidates prior success. TCP/shell success never makes readiness 200. No diagnostics secrets escape. |
 | Shutdown and restart | PID 1 receives SIGTERM during save/body/commit/response; readiness drops, new writes fail, committed state survives restart and incomplete state is explicit. Children are reaped; no duplicate mutation after an ambiguous response. Empty disk rehydrates only pinned inputs. |
 | Feeds and revocation | SSE/WebSocket across timeout, deployment/restart and another instance; cursor gap/reset, refreshed identity, token expiry, policy change and auth loss. No cross-project events or unauthorized continued stream. |
 
