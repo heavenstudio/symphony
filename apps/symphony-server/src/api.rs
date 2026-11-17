@@ -1441,6 +1441,7 @@ pub(crate) fn client_page(project: &symphony_api::ProjectView, path: &str) -> bo
 fn client_kind(project: &symphony_api::ProjectView, path: &str) -> Option<&'static str> {
     let page = path.trim_end_matches('/');
     match page {
+        "" if project.is_document_route("") => Some("docs"),
         "" => Some("review"),
         "/tasks" | "/task" => Some("board"),
         "/agents" => Some("agents"),

@@ -239,6 +239,13 @@ fn initial_preloads_choose_the_shells_kind_for_each_client_route() {
     ] {
         assert_eq!(client_kind(&project, path), Some(kind), "{path}");
     }
+    let root = symphony_api::ProjectView {
+        entrypoints: vec![String::new()],
+        ..project.clone()
+    };
+    assert_eq!(client_kind(&root, "/"), Some("docs"));
+    assert_eq!(client_kind(&root, "/tasks"), Some("board"));
+    assert_eq!(client_kind(&root, "/page.md"), Some("docs"));
     for path in ["/assets/file.js", "/api/board", "/unknown"] {
         assert_eq!(client_kind(&project, path), None, "{path}");
     }
