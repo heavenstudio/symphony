@@ -2,6 +2,100 @@
 use super::*;
 use crate::{common, owner_controls::ScratchBoard, restored::Native};
 
+#[test]
+fn a_failed_newest_message_attempt_waits_for_explicit_retry_without_a_request_loop() {
+    let t = history_fixture();
+    let site = message_site(&t);
+    site.set_json("/api/task-history", &thread(&t, &[2], None));
+    let Some(mut page) = chrome() else { return };
+    view(&mut page, 1280, false);
+    page.open(&site.url(TASK));
+    assert!(page.wait_for("document.getElementById('tl-message-choice') !== null && document.getElementById('message-2') !== null", SHOWN));
+    site.fail_route("/api/task-history", true);
+    // Hold every store retry/backoff timer. A third immediate request is captured before it
+    // reaches the network, so a regression fails by its request count without an unbounded loop.
+    page.eval(r#"(() => {
+        window.selectionReads = 0;
+        window.boundSelectionReads = true;
+        const fetch = window.fetch.bind(window), timer = window.setTimeout.bind(window);
+        window.fetch = (...args) => {
+            if (String(args[0]).includes('/api/task-history')) {
+                window.selectionReads++;
+                if (window.boundSelectionReads && window.selectionReads >= 3) return new Promise(() => {});
+            }
+            return fetch(...args);
+        };
+        window.setTimeout = (fn, ms, ...args) => ms >= 1000 && ms <= 30000 ? 0 : timer(fn, ms, ...args);
+    })()"#);
+    pick(&mut page, 4);
+    let retry = "document.querySelector('.tl-message-details [role=status] button')?.textContent === 'Retry message'";
+    assert!(page.wait_for(retry, SHOWN));
+    assert_eq!(page.eval("window.selectionReads"), json!(1));
+    tap(&mut page, ".tl-message-details [role=status] button");
+    assert!(page.wait_for(
+        &format!("window.selectionReads >= 3 || ({retry}) && window.selectionReads === 2"),
+        SHOWN
+    ));
+    frames(&mut page);
+    assert_eq!(page.eval("window.selectionReads"), json!(2));
+    assert_eq!(page.eval(retry), json!(true));
+    // A recovered server answers the next explicit retry through the same thread store.
+    site.set_json("/api/task-history", &thread(&t, &[2, 4, 5], None));
+    site.fail_route("/api/task-history", false);
+    page.eval("window.boundSelectionReads = false");
+    tap(&mut page, ".tl-message-details [role=status] button");
+    assert!(page.wait_for("document.querySelector('.tl-message-details .entry')?.textContent.includes('Original body 4')", SHOWN));
+    assert_eq!(page.eval("window.selectionReads"), json!(3));
+}
+
+#[test]
+fn desktop_tab_traversal_skips_phone_message_controls_and_restores_them_when_narrowed() {
+    let site = message_site(&history_fixture());
+    let Some(mut page) = chrome() else { return };
+    view(&mut page, 1280, false);
+    page.open(&site.url(TASK));
+    assert!(page.wait_for("document.querySelectorAll('.tl-message-row').length === 3 && document.getElementById('tl-message-choice') !== null", SHOWN));
+    let wide = "[...document.querySelectorAll('.tl-message-row')].every(b => b.tabIndex === -1)";
+    assert_eq!(page.eval(wide), json!(true));
+    assert_eq!(
+        page.eval("document.querySelector('.tl-list').getAttribute('aria-hidden')"),
+        Value::Null
+    );
+    assert_eq!(page.eval("document.querySelector('.tl-list').textContent.includes('first-orchestrator → @executor')"), json!(true));
+    page.eval("(() => { const start = document.createElement('button'); start.id='timeline-tab-start'; start.textContent='Start'; document.getElementById('timeline').prepend(start); start.focus(); })()");
+    components::key(&mut page, "Tab", "Tab", 9);
+    assert_eq!(page.eval("document.activeElement.id"), json!("tl-stop-0"));
+    let marks = page
+        .eval("document.querySelectorAll('.tl-message-mark').length")
+        .as_u64()
+        .unwrap();
+    for _ in 0..=marks {
+        components::key(&mut page, "Tab", "Tab", 9);
+        assert_eq!(
+            page.eval("document.activeElement.closest('.tl-list')"),
+            Value::Null
+        );
+        assert_eq!(page.eval("(() => {const b=document.activeElement.getBoundingClientRect();return b.width>1 && b.height>1})()"), json!(true));
+    }
+    assert_eq!(
+        page.eval("document.activeElement.id"),
+        json!("tl-message-choice")
+    );
+    view(&mut page, 390, true);
+    assert!(page.wait_for(
+        "[...document.querySelectorAll('.tl-message-row')].every(b => b.tabIndex === 0)",
+        SHOWN
+    ));
+    tap(&mut page, ".tl-more");
+    tap(&mut page, ".tl-message-row[data-message='2']");
+    assert!(page.wait_for(
+        "document.querySelector('.tl-message-details h3')?.textContent.startsWith('Message #2 ')",
+        SHOWN
+    ));
+    view(&mut page, 1280, false);
+    assert!(page.wait_for(wide, SHOWN));
+}
+
 fn history_fixture() -> Value {
     let mut t = fixture();
     let start = t["created"].as_f64().unwrap();

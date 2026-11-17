@@ -2,6 +2,7 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
+import { stopsOf, TimelineDrawn } from "./timeline";
 import {
   address,
   endpointLane,
@@ -197,6 +198,27 @@ describe("recorded timeline history", () => {
 });
 
 describe("timeline message details", () => {
+  it("keeps the chronology accessible while only phone message rows enter its tab order", () => {
+    const draw = (wide: boolean) =>
+      renderToStaticMarkup(
+        <TimelineDrawn
+          timeline={timeline()}
+          selection={{ messages: [msg()], selected: null, choose: vi.fn() }}
+          wide={wide}
+          all
+          clipped={false}
+          detail=""
+          stops={stopsOf(0, vi.fn(), vi.fn())}
+          toggle={vi.fn()}
+        />,
+      );
+    const phone = draw(false);
+    const desktop = draw(true);
+    expect(phone).toContain('class="tl-label tl-message-row" tabindex="0" data-message="4"');
+    expect(desktop).toContain('class="tl-label tl-message-row" tabindex="-1" data-message="4"');
+    expect(desktop).toContain('<ol class="tl-list" aria-label="Steps">');
+    expect(desktop).toContain("one → @executor</button>");
+  });
   it("selects colliding entries with previous, next and keyboard directions", () => {
     const choose = vi.fn();
     const nodes = (node: ReactNode): ReactElement<Record<string, unknown>>[] => {

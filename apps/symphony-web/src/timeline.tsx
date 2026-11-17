@@ -342,7 +342,15 @@ function BarView({ bar, word }: { bar: Bar; word: [string, string] | null }) {
  * parts being the keyboard's; while it has it, the style sheet shows all of the run under its bar. */
 const isRun = (row: Row) => row.sub && !row.event;
 
-function RowView({ row, selection }: { row: Row; selection?: MessageSelection | undefined }) {
+function RowView({
+  row,
+  selection,
+  wide,
+}: {
+  row: Row;
+  selection?: MessageSelection | undefined;
+  wide: boolean;
+}) {
   const kind = !row.sub ? "tl-row" : row.event ? "tl-row tl-sub tl-event" : "tl-row tl-sub";
   const run = isRun(row);
   return (
@@ -360,6 +368,7 @@ function RowView({ row, selection }: { row: Row; selection?: MessageSelection | 
           <button
             type="button"
             className="tl-label tl-message-row"
+            tabIndex={wide ? -1 : 0}
             data-message={row.message}
             aria-pressed={selection?.selected === row.message}
             onClick={() => selection?.choose(row.message as number)}
@@ -602,6 +611,8 @@ export interface DrawnProps {
   /** The part of the box the steps are drawn in. */
   body?: Ref<HTMLDivElement> | undefined;
   selection?: MessageSelection | undefined;
+  /** The phone list stays readable by assistive technology wide, without invisible tab stops. */
+  wide?: boolean;
 }
 
 /**
@@ -618,6 +629,7 @@ export function TimelineDrawn({
   toggle,
   body,
   selection,
+  wide = false,
 }: DrawnProps) {
   const [first, machine] = totals(timeline);
   const note = keptNote(timeline);
@@ -645,6 +657,7 @@ export function TimelineDrawn({
               key={row.message === undefined ? place : `message-${row.message}`}
               row={row}
               selection={selection}
+              wide={wide}
             />
           ))}
         </ol>
@@ -708,6 +721,24 @@ export function TimelineView({ timeline, onDrawn, thread, details }: ViewProps):
   const [loading, setLoading] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const reads = useMemo(
+    () => ({
+      selected,
+      attempt,
+      cursors: new Set<string>(),
+      failed: false,
+      stopped: false,
+    }),
+    [selected, attempt],
+  );
+  const currentReads = useRef(reads);
+  currentReads.current = reads;
+  useEffect(() => {
+    reads.stopped = false;
+    return () => {
+      reads.stopped = true;
+    };
+  }, [reads]);
   const messages = timeline.history ? messagesOf(timeline.history, thread?.entries) : [];
   const selection: MessageSelection = {
     messages,
@@ -725,35 +756,26 @@ export function TimelineView({ timeline, onDrawn, thread, details }: ViewProps):
   const entries = thread?.entries;
   const before = thread?.before;
   const pending = thread?.pending;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the thread callbacks change on parent draws; its entries and cursor alone drive paging, attempt retries on request
+  // biome-ignore lint/correctness/useExhaustiveDependencies: callbacks change on parent draws; the attempt and thread cursor drive paging, pending joins a read already owned by the store
   useEffect(() => {
     if (!thread || selected === null || thread.entries.some((e) => e.message.id === selected)) {
       setLoading(false);
       return;
     }
-    if (thread.pending) return;
-    let left = false;
-    setLoading(true);
+    if (reads.failed) return;
     const newest = thread.entries.reduce((last, e) => Math.max(last, e.message.id), -Infinity);
-    const read =
-      selected > newest || thread.error
-        ? thread.latest
-        : thread.before !== null
-          ? thread.earlier
-          : null;
-    if (!read) {
+    const latest = thread.pending || selected > newest || thread.error !== null;
+    const cursor = latest ? "latest" : thread.before === null ? null : `before:${thread.before}`;
+    if (cursor === null || reads.cursors.has(cursor)) return;
+    reads.cursors.add(cursor);
+    setLoading(true);
+    void (latest ? thread.latest() : thread.earlier()).then((error) => {
+      if (reads.stopped || currentReads.current !== reads) return;
+      reads.failed = error !== null;
       setLoading(false);
-      return;
-    }
-    void read().then((error) => {
-      if (left) return;
-      setLoading(false);
-      if (error) setMessageError(error);
+      setMessageError(error);
     });
-    return () => {
-      left = true;
-    };
-  }, [selected, entries, before, pending, attempt]);
+  }, [selected, entries, before, pending, reads]);
   const [all, setAll] = useState(false);
   const [clipped, setClipped] = useState(false);
   const [detail, setDetail] = useState("");
@@ -811,6 +833,7 @@ export function TimelineView({ timeline, onDrawn, thread, details }: ViewProps):
       <TimelineDrawn
         timeline={projected}
         selection={selection}
+        wide={typeof innerWidth !== "undefined" && isWide()}
         all={all}
         clipped={clipped}
         detail={detail}

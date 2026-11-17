@@ -513,13 +513,13 @@ describe("the timeline's host", () => {
     const onDrawn = vi.fn();
     renderToStaticMarkup(<TimelineView timeline={pictures()} onDrawn={onDrawn} />);
     // The style sheet is put before the draw is measured, which it lays out.
-    // Selection adds one layout effect for the visible phone row and one thread-read effect.
-    expect([react.layouts.length, react.effects.length]).toEqual([3, 2]);
+    // Selection adds one layout effect for the phone row, plus attempt lifetime and thread-read effects.
+    expect([react.layouts.length, react.effects.length]).toEqual([3, 3]);
     expect(react.layouts[0]).toBe(putStyle);
     // No element was drawn here: nothing to measure, nothing said.
     react.layouts[1]?.();
     expect(onDrawn).not.toHaveBeenCalled();
-    const stop = react.effects[1]?.();
+    const stop = react.effects[2]?.();
     expect(typeof stop).toBe("function");
     stop?.();
   });
