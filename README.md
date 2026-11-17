@@ -102,6 +102,18 @@ plugins and its own verification, approval and landing policy
 [RULES.md](RULES.md) the standing rules, and [the server guide](apps/symphony-server/README.md)
 how the server is put together.
 
+The PostgreSQL tests need PostgreSQL 18 or later, installed with your package manager, with its
+`bin` folder on `PATH`. On a Mac with Homebrew:
+
+```sh
+brew install postgresql@18
+export PATH="$(brew --prefix postgresql@18)/bin:$PATH"
+```
+
+An explicit `[board] postgresql` absolute folder in `symphony.toml` overrides discovery. All
+tools come from that one installation; missing tools or an older server fail with setup guidance
+([the project setting](docs/PROJECT_FILE.md#board)). Tests start only their own scratch servers.
+
 ## License
 
 MIT. Copyright (c) 2026 Stefano Benatti. See [LICENSE](LICENSE).

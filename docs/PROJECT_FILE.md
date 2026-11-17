@@ -195,13 +195,28 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `review_alarm_hours` | `4` | the hours review must stay over the ratio to raise it |
 | `review_alarm_clear_hours` | `1` | the hours review must stay at or under it to clear it |
 | `swept_cap_gb` | `5` | the gigabytes the evidence kept of removed worktrees may hold before the sweep asks for a check by hand |
-| `postgresql` | none: no PostgreSQL | the absolute folder of the machine's PostgreSQL programs, installed by its package manager, which only a scratch board's server starts so far ([DECISIONS](DECISIONS.md#postgresql-binary-source)) |
+| `postgresql` | discover `postgres` on `PATH` | an explicit absolute folder of the machine's PostgreSQL programs takes precedence over discovery; only a scratch board's server starts it so far ([DECISIONS](DECISIONS.md#postgresql-binary-source)) |
 | `machine_wip` | none | `[board.machine_wip.MACHINE]`, advice per machine, as below |
 | `machine_work_reader` | none | the project's own machine-work reader, an executable the server runs ([MACHINE_WORK](MACHINE_WORK.md)) |
 | `slot_locks` | none | the folder of the project's test-slot locks, which the agents view probes; under `.git/`, the git common dir |
 | `assessments` | none: an assessment is refused | the folder of the project's landing assessments; under `.git/`, the git common dir |
 | `export` | none | read and checked, acted on by nothing of the Symphony's own (`just tasks export` takes `--out`) |
 | `disposable` | `[]` | read and checked, acted on by nothing of the Symphony's own (the sweep keeps its own list) |
+
+PostgreSQL setup requires version 18 or later, installed by the machine's package manager.
+Without an explicit `postgresql`, discovery takes the first executable `postgres` on `PATH`;
+`initdb`, `pg_ctl` and `psql` must be executable in the same folder. On a Mac with Homebrew:
+
+```sh
+brew install postgresql@18
+export PATH="$(brew --prefix postgresql@18)/bin:$PATH"
+```
+
+For another installation, put its `bin` folder on `PATH` or set `[board] postgresql` to its
+absolute path. An explicit value always wins, including when it is invalid. A missing tool,
+failed version probe or server older than 18 fails with setup guidance; discovery never skips
+an incompatible installation to select another. It inspects programs only, starting no database;
+only scratch boards use PostgreSQL so far.
 
 ## `[board.machine_wip.MACHINE]`
 

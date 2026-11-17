@@ -127,9 +127,11 @@ PATH, or fnm to fetch it once: `tools/node.sh`); the consuming project's binarie
 prerequisites. The client build needs Git, Bash and jq, and native
 board fixtures need lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`).
 The board's server tests (`just test-rs -p symphony-board --test server`, and so the release run)
-need the machine's PostgreSQL in the folder `symphony.toml`'s `[board] postgresql` names
-(`brew install postgresql@18` on a Mac): without it each PostgreSQL test fails naming the folder,
-the key and that install. This repository has no hosted GitHub CI requirement.
+need the machine's PostgreSQL 18 or later: the absolute folder `symphony.toml`'s `[board]
+postgresql` names, otherwise the first executable `postgres` on `PATH`, with `initdb`, `pg_ctl`
+and `psql` in that same folder. [The setup](docs/PROJECT_FILE.md#board) gives the portable
+Homebrew line; absent or incompatible tools fail with setup guidance. This repository has no
+hosted GitHub CI requirement.
 
 ## This repository as its own project
 

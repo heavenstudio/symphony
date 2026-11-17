@@ -206,6 +206,32 @@ struct StandIn {
 }
 
 impl StandIn {
+    fn installation(name: &str, release: &str) -> StandIn {
+        Self::new(
+            name,
+            &[
+                ("postgres", &postgres(release, "exit 1")),
+                ("initdb", INITDB),
+                ("pg_ctl", "exit 0"),
+                ("psql", "exit 0"),
+            ],
+        )
+    }
+
+    fn configure(&self, folder: &Path) {
+        let value = toml::Value::String(folder.display().to_string());
+        fs::write(
+            self.dir.join(crate::project::FILE),
+            format!("[board]\npostgresql = {value}\n"),
+        )
+        .unwrap();
+    }
+
+    fn discover(&self, folders: &[&Path]) -> Result<PathBuf, String> {
+        let path = std::env::join_paths(folders).unwrap();
+        discover_with_path(&self.dir, Some(&path))
+    }
+
     fn new(name: &str, programs: &[(&str, &str)]) -> StandIn {
         let dir = std::env::temp_dir().join(format!("pg-stand-in-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -243,6 +269,214 @@ fn postgres(release: &str, serving: &str) -> String {
 
 /// An `initdb` that makes a data folder with no more in it than its release.
 const INITDB: &str = "mkdir -p \"$2\" && echo 18 > \"$2/PG_VERSION\"";
+
+#[test]
+fn an_alternate_prefix_with_spaces_is_discovered_without_a_project_file() {
+    let fixture = StandIn::installation("alternate prefix", "18.7");
+    assert!(!fixture.dir.join(crate::project::FILE).exists());
+    let found = fixture
+        .discover(&[&fixture.dir, &fixture.pg.programs])
+        .unwrap();
+    assert_eq!(found, fixture.pg.programs);
+    for name in ["postgres", "initdb", "pg_ctl", "psql"] {
+        assert!(executable(&found.join(name)), "{name}");
+    }
+    assert!(!fixture.pg.data().exists(), "discovery writes no database");
+    // An unrelated project setting leaves discovery enabled too.
+    fs::write(
+        fixture.dir.join(crate::project::FILE),
+        "[board]\nguide = 'x.md'\n",
+    )
+    .unwrap();
+    assert_eq!(fixture.discover(&[&fixture.pg.programs]).unwrap(), found);
+}
+
+#[test]
+fn an_explicit_override_wins_over_path_and_works_without_path() {
+    let chosen = StandIn::installation("override", "18.7");
+    let other = StandIn::installation("other-prefix", "17.2");
+    chosen.configure(&chosen.pg.programs);
+    assert_eq!(
+        chosen.discover(&[&other.pg.programs]).unwrap(),
+        chosen.pg.programs
+    );
+    assert_eq!(
+        discover_with_path(&chosen.dir, None).unwrap(),
+        chosen.pg.programs
+    );
+    // The public entrypoint also reads the explicit folder, irrespective of the real PATH.
+    assert_eq!(discover_programs(&chosen.dir).unwrap(), chosen.pg.programs);
+}
+
+#[test]
+fn an_invalid_override_is_refused_without_falling_back_to_path() {
+    let fixture = StandIn::installation("invalid-override", "18.7");
+    for folder in [fixture.dir.join("missing"), fixture.pg.program("postgres")] {
+        fixture.configure(&folder);
+        let refused = fixture.discover(&[&fixture.pg.programs]).unwrap_err();
+        assert!(refused.contains(&folder.display().to_string()), "{refused}");
+        assert!(refused.contains("PostgreSQL is not at"), "{refused}");
+        assert!(refused.contains("[board] postgresql"), "{refused}");
+    }
+    for text in ["[board]\npostgresql = 'relative/bin'\n", "[board\n"] {
+        fs::write(fixture.dir.join(crate::project::FILE), text).unwrap();
+        assert!(fixture.discover(&[&fixture.pg.programs]).is_err());
+    }
+}
+
+#[test]
+fn missing_or_unset_path_names_the_required_release_and_setup_choices() {
+    let fixture = StandIn::new("absent-tools", &[]);
+    for refused in [
+        fixture.discover(&[&fixture.pg.programs]).unwrap_err(),
+        discover_with_path(&fixture.dir, None).unwrap_err(),
+    ] {
+        for needed in [
+            "no executable postgres on PATH",
+            "PostgreSQL 18 or later",
+            "brew install postgresql@18",
+            "[board] postgresql",
+            "symphony.toml",
+        ] {
+            assert!(refused.contains(needed), "{needed}: {refused}");
+        }
+    }
+}
+
+#[test]
+fn path_skips_non_executable_files_and_directories_named_postgres() {
+    let skipped = StandIn::installation("non-executable", "17.2");
+    fs::set_permissions(
+        skipped.pg.program("postgres"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    let folder = StandIn::new("directory-program", &[]);
+    fs::create_dir(folder.pg.program("postgres")).unwrap();
+    let chosen = StandIn::installation("executable", "18.7");
+    assert_eq!(
+        chosen
+            .discover(&[
+                &skipped.pg.programs,
+                &folder.pg.programs,
+                &chosen.pg.programs
+            ])
+            .unwrap(),
+        chosen.pg.programs
+    );
+    // An explicit non-executable installation is an error, not a discovery request.
+    chosen.configure(&skipped.pg.programs);
+    assert!(
+        chosen
+            .discover(&[&chosen.pg.programs])
+            .unwrap_err()
+            .contains("not executable")
+    );
+}
+
+#[test]
+fn an_old_first_installation_or_override_is_refused_not_skipped() {
+    let old = StandIn::installation("old-first", "17.2");
+    let valid = StandIn::installation("valid-second", "18.7");
+    for configured in [false, true] {
+        if configured {
+            valid.configure(&old.pg.programs);
+        }
+        let refused = valid
+            .discover(&[&old.pg.programs, &valid.pg.programs])
+            .unwrap_err();
+        assert!(
+            refused.contains("is PostgreSQL 17.2; the board runs on 18 or later"),
+            "{refused}"
+        );
+        assert!(
+            refused.contains(&old.pg.program("postgres").display().to_string()),
+            "{refused}"
+        );
+        assert!(refused.contains("[board] postgresql"), "{refused}");
+    }
+}
+
+#[test]
+fn missing_or_non_executable_companions_are_not_taken_from_another_installation() {
+    let complete = StandIn::installation("complete", "18.7");
+    for tool in ["initdb", "pg_ctl", "psql"] {
+        let partial = StandIn::installation(&format!("missing-{tool}"), "18.7");
+        fs::remove_file(partial.pg.program(tool)).unwrap();
+        let refused = partial
+            .discover(&[&partial.pg.programs, &complete.pg.programs])
+            .unwrap_err();
+        assert!(
+            refused.contains(&partial.pg.program(tool).display().to_string()),
+            "{refused}"
+        );
+        assert!(
+            refused.contains("all PostgreSQL tools must be in"),
+            "{refused}"
+        );
+        fs::write(partial.pg.program(tool), "#!/bin/sh\nexit 0\n").unwrap();
+        assert!(
+            partial
+                .discover(&[&partial.pg.programs])
+                .unwrap_err()
+                .contains("not executable")
+        );
+    }
+}
+
+#[test]
+fn a_failed_or_unrunnable_version_probe_is_not_a_compatible_installation() {
+    let fixture = StandIn::new(
+        "failed-probe",
+        &[(
+            "postgres",
+            "echo 'postgres (PostgreSQL) 18.7'; echo broken >&2; exit 1",
+        )],
+    );
+    let refused = fixture.discover(&[&fixture.pg.programs]).unwrap_err();
+    assert!(refused.contains("--version failed"), "{refused}");
+    assert!(refused.contains("broken"), "{refused}");
+    fs::write(fixture.pg.program("postgres"), "#!/no/such/interpreter\n").unwrap();
+    let refused = fixture.discover(&[&fixture.pg.programs]).unwrap_err();
+    assert!(refused.contains("could not run"), "{refused}");
+    assert!(refused.contains("[board] postgresql"), "{refused}");
+}
+
+#[test]
+fn a_newer_major_keeps_the_existing_minimum_version_contract() {
+    let fixture = StandIn::installation("newer", "19.1");
+    assert_eq!(
+        fixture.discover(&[&fixture.pg.programs]).unwrap(),
+        fixture.pg.programs
+    );
+}
+
+#[test]
+fn discovered_tools_initialize_a_clean_scratch_board_with_owned_fixtures_only() {
+    let fixture = StandIn::installation("scratch-setup", "18.7");
+    assert!(!fixture.pg.data().exists());
+    let found = fixture.discover(&[&fixture.pg.programs]).unwrap();
+    let pg = fixture.pg.home.postgresql(&found);
+    // The fixture deliberately has no database server: setup reaches its start after initdb,
+    // then reports its exit, leaving no running process or database outside this fixture.
+    assert!(
+        pg.ensure()
+            .unwrap_err()
+            .to_string()
+            .contains("did not start")
+    );
+    assert_eq!(
+        fs::read_to_string(pg.data().join("PG_VERSION")).unwrap(),
+        "18\n"
+    );
+    assert_eq!(
+        fs::read_to_string(pg.data().join("postgresql.conf")).unwrap(),
+        settings(&pg.socket())
+    );
+    assert!(!fixture.dir.join("board/postgresql.making").exists());
+    assert_eq!(pg.stop().unwrap(), None);
+    assert!(!pg.socket().exists());
+}
 
 #[test]
 fn a_release_older_than_the_oldest_or_none_is_refused_naming_it() {
