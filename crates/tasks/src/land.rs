@@ -2980,16 +2980,19 @@ impl Landing<'_> {
                 self.holding(&held)
             ),
             "@executor",
-            format!(
-                "Commit it on {slug} there{}, then move it back to review (`just tasks move {slug} \
-                 review`) and ask its reviewer to approve the new tip naming it",
-                if elsewhere {
-                    " (from a worktree not on it, copy the line onto its card on {slug})"
-                        .replace("{slug}", slug)
-                } else {
-                    String::new()
-                }
-            ),
+            if elsewhere {
+                format!(
+                    "Commit each answer on its worktree's own branch and card (from a detached \
+                     worktree, copy it onto the same card on {slug} and commit it there). If \
+                     {slug}'s tip changes, move it back to review (`just tasks move {slug} review`) \
+                     and ask its reviewer to approve the new tip naming it"
+                )
+            } else {
+                format!(
+                    "Commit it on {slug} there, then move it back to review (`just tasks move \
+                     {slug} review`) and ask its reviewer to approve the new tip naming it"
+                )
+            },
         ))
     }
 

@@ -332,7 +332,6 @@ export class PlaceKeeper {
    * shows, and back down, in one go the screen never draws between.
    */
   private across(place: Place): void {
-    if (this.windowed) return;
     const { scroller } = this;
     if (Math.round(scroller.scrollLeft) === place.left) return;
     const down = scroller.scrollTop;

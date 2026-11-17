@@ -2,7 +2,7 @@
 //! alone and stops it, leaving no process; a second start takes the data the first made; a board
 //! under a folder too long for a socket path starts; and a server ends with the process that
 //! started it. Each test's board is a folder of its own under the temporary folder, its server
-//! the machine's PostgreSQL the repository's project file names (`[board] postgresql`).
+//! the machine's PostgreSQL selected by the project file or discovered on PATH.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -14,12 +14,10 @@ use symphony_board::sys::{self, command, pid_alive};
 /// supervisor's shells behind it.
 const GONE: Duration = test_time::backstop(Duration::from_secs(10));
 
-/// The folder of the machine's PostgreSQL programs, as the repository's project file names it.
+/// The folder of the machine's PostgreSQL programs, configured or discovered on PATH.
 fn programs() -> PathBuf {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    postgres::programs(&root).unwrap().expect(
-        "the repository's symphony.toml names the machine's PostgreSQL ([board] postgresql)",
-    )
+    postgres::discover_programs(&root).unwrap()
 }
 
 /// A board of a test's own under the temporary folder, its PostgreSQL stopped and its folder
