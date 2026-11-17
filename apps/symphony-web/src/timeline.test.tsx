@@ -245,7 +245,11 @@ describe("the timeline drawn", () => {
     expect(drawn).toContain(
       '<li><span class="tl-key tl-key-work"></span>worked or ran</li><li><span class="tl-key tl-key-wait"></span>queued or waiting</li><li><span class="tl-key tl-key-running"></span>running now</li><li class="tl-wide"><span class="tl-key tl-g tl-g-met"></span>gate met</li>',
     );
-    expect(drawn.endsWith("</ul></div></div>")).toBe(true);
+    expect(
+      drawn.endsWith(
+        '</ul></div></div><p class="tl-note">Role and address history unavailable.</p>',
+      ),
+    ).toBe(true);
   });
 
   it("a task with nothing but its making draws one stage and no other lane", () => {
