@@ -20,6 +20,7 @@ import { snapshot } from "./shared";
 import { load, save } from "./storage";
 import { timelinePart } from "./task-live";
 import type { HostProps } from "./timeline";
+import type { ThreadAccess } from "./timeline-messages";
 import { useVisibility } from "./viewport";
 
 /** The id of the box the timeline is drawn in. */
@@ -187,8 +188,9 @@ export function whenImported(told: (host: Host) => void): () => void {
 
 /** The task's timeline box, one per task: another task's page gets a new one, so its height holds
  * for the visit. `scope` is the checkout the route names. */
-export function TimelineSlot({ slug, scope }: { slug: string; scope: string }): JSX.Element {
-  return <SlotBox key={slug} slug={slug} scope={scope} />;
+type SlotProps = { slug: string; scope: string; thread?: ThreadAccess | undefined };
+export function TimelineSlot({ slug, scope, thread }: SlotProps): JSX.Element {
+  return <SlotBox key={slug} slug={slug} scope={scope} thread={thread} />;
 }
 
 /** The box's two heights, for its style sheet to take the one its width draws. */
@@ -202,9 +204,10 @@ export function boxStyle(narrow: number, wide: number): CSSProperties {
  * imported once the box nears the screen and its part has something to draw (an answer, or why
  * there is none), behind nothing else; and the timeline drawn in it from that answer.
  */
-function SlotBox({ slug, scope }: { slug: string; scope: string }) {
+function SlotBox({ slug, scope, thread }: SlotProps) {
   const [[narrow, wide]] = useState(() => reserved(slug));
   const [shown, watch] = useVisibility(false);
+  const [details, setDetails] = useState<HTMLDivElement | null>(null);
   const [Timeline, setTimeline] = useState<Host | null>(loadedHost);
   const part = timelinePart(scope, slug);
   const parts = useContext(PartsContext);
@@ -247,6 +250,8 @@ function SlotBox({ slug, scope }: { slug: string; scope: string }) {
           <div id="timeline-root">
             <Timeline
               slug={slug}
+              thread={thread}
+              details={details}
               part={answer}
               read={read}
               onDrawn={(wideDraw, natural) => keep(slug, wideDraw, natural)}
@@ -254,6 +259,7 @@ function SlotBox({ slug, scope }: { slug: string; scope: string }) {
           </div>
         )}
       </div>
+      <div className="tl-message-place" ref={setDetails} />
     </section>
   );
 }

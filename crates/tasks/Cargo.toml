@@ -1,6 +1,6 @@
 [package]
 name = "symphony-board"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = true
@@ -27,7 +27,7 @@ symphony-env = { path = "../symphony-env", version = "1.0.0" }
 # The command a mistyped word was nearest to, shared with the `symphony` command line.
 symphony-args = { path = "../symphony-args", version = "1.0.0" }
 # The run line the recorder appends to the day files (src/runs.rs), the type the Runs page reads.
-symphony-api = { path = "../symphony-api", version = "=0.1.0" }
+symphony-api = { path = "../symphony-api", version = "=0.2.0" }
 # A card and the owner's lines under it, read as the Symphony reads them: the owner's answers a
 # worktree holds that no commit has, which the sweep keeps and a land refuses (src/sweep/git/owner.rs).
 symphony-docs = { path = "../symphony-docs", version = "1.0.0" }

@@ -20,6 +20,7 @@
 // it by the browser tests.
 
 import { field } from "./shared";
+import { address, endpointLane, readHistory } from "./timeline-history";
 import type {
   Claim,
   GateLane,
@@ -403,6 +404,7 @@ export interface Row {
   word: [string, string] | null;
   /** The whole of it, for a pointer resting on the row. */
   title: string;
+  message?: number;
 }
 
 /** Who held the executor role while `stage` went on: the first claim over it. */
@@ -660,7 +662,36 @@ export function rows(timeline: TaskTimeline): Row[] {
     }
   });
   listed.push(...under.slice(next));
-  if (dateOf(timeline, timeline.created) !== dateOf(timeline, timelineEnd(timeline))) {
+  if (timeline.history) {
+    const instant = (start: number, label: string, title = label): Row => ({
+      start,
+      label,
+      title,
+      day: null,
+      at: clockOf(timeline, start),
+      sub: true,
+      event: true,
+      tone: "muted-foreground",
+      took: null,
+      bar: null,
+      word: null,
+    });
+    for (const role of timeline.history.roles.filter((r) => r.role === "orchestrator")) {
+      const detail = `${role.by} holds orchestrator; source ${role.source}${role.uncertain ? "; uncertain boundaries" : ""}`;
+      listed.push(instant(role.from, `Orchestrator: ${role.by}`, detail));
+      if (role.to !== null)
+        listed.push(instant(role.to, `Orchestrator released: ${role.by}`, detail));
+    }
+    for (const message of timeline.history.messages) {
+      listed.push({
+        ...instant(message.at, address(message), `Message #${message.id}: ${address(message)}`),
+        message: message.id,
+      });
+    }
+    listed.sort((a, b) => a.start - b.start || (a.message ?? 0) - (b.message ?? 0));
+  }
+  const earliest = Math.min(timeline.created, listed[0]?.start ?? timeline.created);
+  if (dateOf(timeline, earliest) !== dateOf(timeline, new Scale(timeline).end)) {
     let last: string | null = null;
     for (const row of listed) {
       const day = dateOf(timeline, row.start);
@@ -829,10 +860,16 @@ export class Scale {
   readonly now: number;
 
   constructor(readonly timeline: TaskTimeline) {
-    const created = timeline.created;
+    const created = (timeline.history?.messages ?? []).reduce(
+      (first, message) => Math.min(first, message.at),
+      timeline.created,
+    );
     const offset = offsetAt(timeline, created);
     this.start = created - remEuclid(created + offset, 3600);
-    this.end = timelineEnd(timeline);
+    this.end = (timeline.history?.messages ?? []).reduce(
+      (last, message) => Math.max(last, message.at),
+      timelineEnd(timeline),
+    );
     this.span = Math.max(this.end - this.start, 60);
     this.now = timeline.now;
   }
@@ -1132,6 +1169,35 @@ export function lanes(timeline: TaskTimeline): Lanes {
       segs: stageSegs(timeline, scale),
     },
   ];
+  if (timeline.history) {
+    const roles = timeline.history.roles.filter((role) => role.role === "orchestrator");
+    const segs: Seg[] = roles.map((role) => {
+      // Uncertain boundaries are instants, never a corrected or invented duration.
+      const width = role.uncertain
+        ? 0
+        : scale.width(role.from, role.to ?? timeline.closed ?? timeline.now);
+      return {
+        left: scale.at(role.from),
+        width,
+        tone: "resolved",
+        look: "waiting",
+        text: fitted(role.by, "", width),
+        after: null,
+        under: null,
+        row: 0,
+        title: `${role.by} held orchestrator from ${role.from} to ${role.to ?? "open"}; source ${role.source}${role.uncertain ? "; uncertain boundaries" : ""}; not continuous work or connection`,
+        stop: true,
+      };
+    });
+    drawn.push({
+      key: "orchestrator",
+      name: "Orchestrator",
+      who: "recorded role holds",
+      rows: 1,
+      dense: false,
+      segs,
+    });
+  }
   if (timeline.claims.length > 0) {
     drawn.push({
       key: "executor",
@@ -1150,6 +1216,37 @@ export function lanes(timeline: TaskTimeline): Lanes {
       rows: 1,
       dense: false,
       segs: roundSegs(timeline, scale),
+    });
+  }
+  if (timeline.history?.messages.length) {
+    for (const [role, name] of [
+      ["executor", "Executor"],
+      ["reviewer", "Reviewer"],
+    ] as const) {
+      if (
+        !drawn.some((lane) => lane.key === role) &&
+        timeline.history.messages.some(
+          (m) =>
+            endpointLane(m.from, m.sender) === role || endpointLane(m.to, m.recipient) === role,
+        )
+      ) {
+        drawn.push({
+          key: role,
+          name,
+          who: "holder unknown",
+          rows: 1,
+          dense: false,
+          segs: [],
+        });
+      }
+    }
+    drawn.push({
+      key: "other",
+      name: "Other / task messages",
+      who: "outside, everyone or unknown",
+      rows: 1,
+      dense: false,
+      segs: [],
     });
   }
   const builds = timeline.runs.filter((run) => run.phase === "build");
@@ -1373,6 +1470,10 @@ export function readTimeline(value: unknown): TaskTimeline | null {
   const rounds = listOf(field(value, "rounds"), readRound);
   const runs = listOf(field(value, "runs"), readRun);
   const gates = listOf(field(value, "gates"), readLane);
+  const rawHistory = field(value, "history");
+  const history =
+    rawHistory === undefined || rawHistory === null ? undefined : readHistory(rawHistory);
+  if (history === null) return null;
   if (!isNumber(now) || !isNumber(created)) return null;
   if (
     zone === null ||
@@ -1404,5 +1505,6 @@ export function readTimeline(value: unknown): TaskTimeline | null {
     rounds,
     runs,
     gates,
+    ...(history === undefined ? {} : { history }),
   };
 }

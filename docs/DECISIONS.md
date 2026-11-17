@@ -384,6 +384,19 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-17 20:42] owner · approved — B
   [2026-11-17 20:45] agent — Your “B” selects automatic activation of a valid committed workflow when the board reads it. Missing mappings or prerequisites must stop activation; stale writers and active attempts remain fenced, failures keep the previous version, and rollback is a new audited activation with history retained. Implementation will follow this choice rather than require a separate activation action.
   [2026-11-17 20:45] agent · resolved
+- [r] **revision-bound-project-guards** — A project could require a person's approval of exact requirements, a candidate or a package and destination before a delivery handoff. Where should the authoritative approval record live? A: Symphony stores the common human request/decision records; the project supplies criteria and gate membership. B: each project owns its approval ledger and supplies exact, versioned attestations to Symphony's transition service. Both check current inputs and authorized people at admission and before an adapter sends a merge or deployment. Recommended: A. Approve and say A or B, or comment. [[analysis/revision-bound-transition-guards#Where approval authority lives]]
+  [2026-11-17 20:14] agent — Proposed for `design/revision-bound-transition-guards`. This is design only: no runtime enforcement, human identity service, consumer edit or live migration is claimed or authorized here.
+
+    **A:** Symphony implements the record lifecycle, authenticated decision methods and audit once, beside its paired-store admission checks. Projects adopt those common facts and fresh-approval rules. **B:** projects choose or build their own ledger and preserve its decision semantics, but must supply bounded availability, history and versioned revocation/freshness integration. Today's cached Gates answer and custom landing command are not that contract. Both preserve existing stamps, project landing ownership and unchanged projects with no guards.
+
+    **Shared limit.** A changed bound input, policy or workflow activation requires a fresh approval; the recommended contract has no carry-forward. External effects are authorized at their last validated dispatch snapshot: a later withdrawal cannot recall an already sent request. A project requiring stronger remote revocation needs a cooperating adapter before that edge can activate. A supplies no human login or membership service by itself; B cannot authorize advancement from an unavailable or outdated ledger.
+
+    **Earlier verdicts checked.** **project-workflow-shape** approved C and its unchanged defaults; it does not decide the artifact/approval authority or external-effect guarantee. **needed-stamps** keeps its four generic readers and project replacement policy: this extension adds no stamp kind, check runner or assessor waiver. **configurable-workflow-activation** remains a separate pending choice about when a graph becomes active. **hosted-ingress-boundary** also remains pending; its visitor context alone would not establish project gate membership. None approves this concrete guard/principal/record contract. Gate placements in the linked delivery requirements do not assign project approvers or deployment targets.
+  [2026-11-17 20:28] agent — Clarified the source-backed alternatives: the delivery requirements prescribe human decisions on exact artifacts, while the existing gate/landing seams retain project evidence policy; neither chooses approval-record custody. The analysis details A and B's required authority adapter. This asks only the new guard policy, separately from workflow activation and durable byte storage.
+  [2026-11-17 20:44] owner · approved — B
+  [2026-11-17 20:54] agent — Your “B” selects project-owned approval ledgers supplying exact, versioned attestations to Symphony. Admission must refuse unavailable, stale or revoked authority and recheck current inputs and authorized people before dispatch. Symphony will not own the human approval ledger; the analysis and implementation handoff will be aligned to B while preserving the existing stamps and project landing policy.
+  [2026-11-17 20:54] agent · resolved
+
 - [r] **project-workflow-shape** — A project could give its board extra steps, such as Implement then Validate, while a project with no settings keeps today's flow. How much can it replace? A: names and column order only; the steps and permissions stay fixed. B: extra preparation and work steps, each tied to today's lifecycle, with rules for who moves between them; one ready stage, one review and the existing completion rules remain. C: any state graph, including several review or delivery stages, with new rules for staffing, recovery and completion. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/project-workflow#The workflow choice]]
   [2026-11-17 10:34] agent — Posted for `tools/studio/project-workflow`. This is a design only; no project changes its flow before implementation.
 
@@ -415,6 +428,7 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-17 17:32] owner · approved
   [2026-11-17 19:18] agent · resolved
   [2026-11-17 20:45] agent · resolved
+  [2026-11-17 20:54] agent · resolved
 
 ### The header
 
@@ -481,6 +495,8 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-17 17:22] agent — Recovered the original card from `85fb3482` with the existing owner verdict preserved. Recorded: A, keep every outline at once. The analysis and pictures are the evidence measured on 2026-11-16; these measurements have not been rerun.
   [2026-11-17 19:18] agent · resolved
   [2026-11-17 20:45] agent · resolved
+  [2026-11-17 20:54] agent · resolved
+
 - [r] **components-draw-when-data-arrives** — Each part of a page (a task's thread, its gates, a chart) would draw the moment its own data arrives, the copy from this device first, and redraw itself when newer data comes, with no part waiting for a slower one. Several pages do this already, each in its own hand-written way; Reports, the queue and home still arrive whole, and most pages start their reads one step later than they need to. How should a part get its data? A: one small piece of our own code that every page uses; each part asks the server for its own data, and the live channel tells a part when it has newer data to fetch. Reports' charts arrive in three groups. Nothing more to download. B: the same, built on the TanStack Query library: 10 kB more on each first visit, for features we already have or do not use. C: the same, but the data itself travels on the live channel, the streaming you described, in place of separate requests: a new protocol, and an unchanged part can no longer be answered with nothing. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/components-draw-when-their-data-arrives#The choice]]
   [2026-11-15 12:16] agent — Posted for the board task `app/components-draw-when-their-data-arrives`, from your words: "each component should be able to render itself once the data it needs is available".
 
