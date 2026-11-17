@@ -431,7 +431,7 @@ async fn judge(
     // a connection's address or a test's mock alike, a plain extension read only the first.
     request.extensions_mut().insert(ConnectInfo(peer));
     let ip = peer.ip();
-    let allowed = ip.is_loopback() || {
+    let allowed = crate::hosted::admission(&request).is_some() || ip.is_loopback() || {
         let shared = shared.clone();
         crate::spawn::blocking(move || shared.gate.allows(ip))
             .await
