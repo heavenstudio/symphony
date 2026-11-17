@@ -968,6 +968,21 @@ pub fn land(
     recorder: Option<&Path>,
     out: &mut dyn Write,
 ) -> Result<String, Stop> {
+    land_with_clock(store, env, slug, actor, recorder, out, &Instant::now)
+}
+
+/// [`land`] with the monotonic clock its command timeouts read. A test can hold time still
+/// through setup and advance it once the command it means to expire is ready. Signal polling
+/// and the grace for ending a process group still use real time.
+pub fn land_with_clock(
+    store: &Store,
+    env: &Env,
+    slug: &str,
+    actor: &str,
+    recorder: Option<&Path>,
+    out: &mut dyn Write,
+    now: &(dyn Fn() -> Instant + Sync),
+) -> Result<String, Stop> {
     let common = crate::git::common_dir(&env.cwd).map_err(|e| Stop::Refused(e.to_string()))?;
     let main = trigger::main_checkout(&common)
         .ok_or_else(|| {
@@ -1008,6 +1023,7 @@ pub fn land(
         tree,
         log,
         interrupts: interrupts.as_ref(),
+        now,
         recorder,
         named: false,
         out,
@@ -1462,15 +1478,16 @@ fn watched<T>(
     group: u32,
     limit: Duration,
     interrupts: Option<&sys::Interrupts>,
+    now: &(dyn Fn() -> Instant + Sync),
     wait: impl FnOnce() -> T,
 ) -> (T, Ended) {
     use std::sync::mpsc::{RecvTimeoutError, channel};
     let (waited, ended) = std::thread::scope(|scope| {
         let (done, finished) = channel::<()>();
         let watchdog = scope.spawn(move || {
-            let deadline = Instant::now() + limit;
+            let deadline = now() + limit;
             let ended = loop {
-                let left = deadline.saturating_duration_since(Instant::now());
+                let left = deadline.saturating_duration_since(now());
                 if left.is_zero() {
                     break Ended::Late;
                 }
@@ -1635,6 +1652,8 @@ struct Landing<'a> {
     task: bool,
     /// The signals the land takes, when it holds the process's one scope.
     interrupts: Option<&'a sys::Interrupts>,
+    /// The monotonic clock the command timeouts read.
+    now: &'a (dyn Fn() -> Instant + Sync),
     /// The `tasks` running the land, which records a review command it starts.
     recorder: Option<&'a Path>,
     /// Whether the task's approve names the tip it lands, so a conflict in documents alone is
@@ -2399,7 +2418,7 @@ impl Landing<'_> {
         self.running(group, &command.join(" "), false);
         let limit = self.settings.timeout;
         let mut printed = Vec::new();
-        let (status, ended) = watched(group, limit, self.interrupts, || {
+        let (status, ended) = watched(group, limit, self.interrupts, self.now, || {
             if let Some(mut stdout) = child.stdout.take() {
                 let _ = stdout.read_to_end(&mut printed);
             }
@@ -2925,7 +2944,9 @@ impl Landing<'_> {
         let group = child.id();
         self.running(group, &format!("git {}", args.join(" ")), false);
         let limit = self.settings.network();
-        let (done, ended) = watched(group, limit, self.interrupts, || sys::wait_output(child));
+        let (done, ended) = watched(group, limit, self.interrupts, self.now, || {
+            sys::wait_output(child)
+        });
         self.ran();
         match ended {
             Ended::Late => Err(format!(
