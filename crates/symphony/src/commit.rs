@@ -1018,22 +1018,25 @@ impl<'a> Histories<'a> {
 fn merge_history(current: &str, base: &str, new: &str, plugins: &Plugins) -> Option<String> {
     // Preserve main's stable order among cards that end up in the same generated group.
     let current_lines: Vec<_> = current.lines().collect();
-    let order = crate::register::parse_decisions(&current_lines)
+    let mut order = BTreeMap::new();
+    for (index, card) in crate::register::parse_decisions(&current_lines)
         .into_iter()
         .enumerate()
-        .map(|(index, card)| (card.slug, index))
-        .collect();
+    {
+        order.insert(card.slug, index);
+    }
     let current_text = canonical_register(current, &order, plugins)?;
     let base_text = canonical_register(base, &order, plugins)?;
     let new_text = canonical_register(new, &order, plugins)?;
     let current = Histories::read(&current_text)?;
     let base = Histories::read(&base_text)?;
     let new = Histories::read(&new_text)?;
-    let added = crate::register::parse_decisions(&current_text.lines().collect::<Vec<_>>())
-        .into_iter()
-        .filter(|card| !base.cards.contains_key(&card.slug))
-        .map(|card| (card.slug, card.topic))
-        .collect();
+    let mut added = BTreeMap::new();
+    for card in crate::register::parse_decisions(&current_text.lines().collect::<Vec<_>>()) {
+        if !base.cards.contains_key(&card.slug) {
+            added.insert(card.slug, card.topic);
+        }
+    }
     if !same_skeleton(&current.skeleton, &base.skeleton, &added) || new.skeleton != base.skeleton {
         return None;
     }

@@ -280,3 +280,12 @@ fn unseen_reply_lookup_uses_the_last_duplicate_card_on_each_side() {
     .unwrap_or_else(|_| panic!("valid histories must merge"));
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn duplicate_card_histories_on_any_side_are_refused() {
+    let one = "- [ ] **a** — A.\n  [2026-10-20 10:00] agent — Existing answer.\n";
+    let duplicate = format!("{one}{one}");
+    assert_eq!(merge_history(&duplicate, one, one), None);
+    assert_eq!(merge_history(one, &duplicate, one), None);
+    assert_eq!(merge_history(one, one, &duplicate), None);
+}
