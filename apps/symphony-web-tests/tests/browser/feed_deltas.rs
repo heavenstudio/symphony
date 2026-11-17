@@ -263,6 +263,19 @@ fn a_live_update_to_one_card_draws_only_that_card_and_its_column() {
         "{:?}",
         page.eval(&format!("window.__commits.slice({from})"))
     );
+    // The stable column action still opens Cancelled after a live update and returns to stages.
+    page.eval(
+        "document.querySelector('.column[data-status=done] [data-open-stage=cancelled]').click()",
+    );
+    assert!(page.wait_for(
+        "document.querySelector('.column[data-status=cancelled] .taskcard') !== null",
+        SHOWN
+    ));
+    page.eval("document.querySelector('.back-to-stages').click()");
+    assert!(page.wait_for(
+        "document.querySelector('.column[data-status=ready] .taskcard') !== null",
+        SHOWN
+    ));
 }
 
 #[test]
