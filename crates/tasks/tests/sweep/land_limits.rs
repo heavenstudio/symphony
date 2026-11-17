@@ -54,8 +54,8 @@ fn a_check_past_the_timeout_is_ended_whole_and_refused() {
     let r = Repo::new();
     let child = r.dir.join("child.pid");
     let group = r.dir.join("check.pid");
-    // The child reports readiness after ignoring TERM, so ending the whole group must also
-    // reach the watchdog's KILL path. Neither process has a wall-clock end of its own.
+    // Both processes ignore TERM; the child reports readiness after installing that trap, so
+    // the timeout must reach the watchdog's KILL path. Neither has a wall-clock end of its own.
     let background = script(
         &r.dir,
         "background",
@@ -65,7 +65,7 @@ fn a_check_past_the_timeout_is_ended_whole_and_refused() {
         ),
     );
     let check = format!(
-        "echo $$ > '{}'; '{}' & wait",
+        "trap '' TERM; echo $$ > '{}'; '{}' & wait",
         group.display(),
         background.display()
     );
