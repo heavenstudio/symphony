@@ -97,7 +97,70 @@ impl Store {
         let groups: BTreeMap<String, Vec<ScoredSource>> =
             self.retrying(|| self.transact(sources(), vars.clone()))?;
         // array::concat limits its output to 1 MiB. Keep each SELECT's rows in the same
-        // snapshot, but concatenate/sort here so a large matching brief still has an excerpt.
+        // snapshot, then choose the best excerpt without collecting and sorting every match.
+        Ok(best_sources(groups))
+    }
+}
+
+/// One source per slug, using the existing rank/score/text order and keeping the first equal row.
+fn best_sources(groups: BTreeMap<String, Vec<ScoredSource>>) -> BTreeMap<String, SearchSource> {
+    use std::collections::btree_map::Entry;
+    let mut best: BTreeMap<String, ScoredSource> = BTreeMap::new();
+    for row in groups.into_values().flatten() {
+        match best.entry(row.source.slug.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(row);
+            }
+            Entry::Occupied(mut entry) => {
+                let previous = entry.get();
+                // The entry has this same slug. Only a strictly better row replaces it.
+                if row
+                    .rank
+                    .cmp(&previous.rank)
+                    .then_with(|| previous.score.total_cmp(&row.score))
+                    .then_with(|| row.source.text.cmp(&previous.source.text))
+                    .is_lt()
+                {
+                    entry.insert(row);
+                }
+            }
+        }
+    }
+    let mut sources = BTreeMap::new();
+    for (slug, row) in best {
+        sources.insert(slug, row.source);
+    }
+    sources
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type Spec = (&'static str, &'static str, &'static str, u8, f64);
+
+    fn grouped(specs: &[Spec], groups: usize) -> BTreeMap<String, Vec<ScoredSource>> {
+        let mut rows: BTreeMap<String, Vec<ScoredSource>> = BTreeMap::new();
+        for (at, &(slug, source, text, rank, score)) in specs.iter().enumerate() {
+            rows.entry(format!("group-{}", at % groups))
+                .or_default()
+                .push(ScoredSource {
+                    source: SearchSource {
+                        slug: slug.into(),
+                        source: source.into(),
+                        text: text.into(),
+                    },
+                    rank,
+                    score,
+                });
+        }
+        rows
+    }
+
+    /// The previous selection: a stable sort of all matches, then the first source per slug.
+    fn sorted_sources(
+        groups: BTreeMap<String, Vec<ScoredSource>>,
+    ) -> BTreeMap<String, SearchSource> {
         let mut rows: Vec<_> = groups.into_values().flatten().collect();
         rows.sort_by(|a, b| {
             a.rank
@@ -106,18 +169,108 @@ impl Store {
                 .then_with(|| a.source.slug.cmp(&b.source.slug))
                 .then_with(|| a.source.text.cmp(&b.source.text))
         });
-        let mut sources = std::collections::BTreeMap::new();
+        let mut sources = BTreeMap::new();
         for row in rows {
             let row = row.source;
             sources.entry(row.slug.clone()).or_insert(row);
         }
-        Ok(sources)
+        sources
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    #[test]
+    fn snippet_selection_preserves_rank_score_text_order_and_first_equal_row() {
+        let specs = [
+            ("a/task", "body", "body", 2, 100.0),
+            ("a/task", "title", "title", 1, 0.0),
+            ("b/task", "low", "a", 3, 1.0),
+            ("b/task", "high", "z", 3, 2.0),
+            ("c/task", "first", "same", 3, 4.0),
+            ("c/task", "second", "same", 3, 4.0),
+            ("d/task", "message", "猫", 3, 4.0),
+            ("d/task", "message", "a", 3, 4.0),
+            ("e/task", "negative-zero", "zero", 3, -0.0),
+            ("e/task", "positive-zero", "zero", 3, 0.0),
+        ];
+        let chosen = best_sources(grouped(&specs, 1));
+        assert_eq!(chosen["a/task"].source, "title");
+        assert_eq!(chosen["b/task"].source, "high");
+        assert_eq!(chosen["c/task"].source, "first");
+        assert_eq!(chosen["d/task"].text, "a");
+        assert_eq!(chosen["e/task"].source, "positive-zero");
+        assert_eq!(chosen, sorted_sources(grouped(&specs, 1)));
+    }
+
+    #[test]
+    fn snippet_selection_matches_the_previous_sort_across_orders_groups_and_float_edges() {
+        let specs = [
+            ("a/task", "body", "body", 2, 100.0),
+            ("a/task", "title", "title", 1, 0.0),
+            ("b/task", "first", "same", 3, 4.0),
+            ("b/task", "second", "same", 3, 4.0),
+            ("c/task", "message", "猫", 3, 4.0),
+            ("c/task", "message", "", 3, 4.0),
+            ("d/task", "minus-zero", "0", 3, -0.0),
+            ("d/task", "plus-zero", "0", 3, 0.0),
+            ("e/task", "infinite", "x", 3, f64::INFINITY),
+            ("e/task", "nan-low", "x", 3, f64::NAN),
+            (
+                "e/task",
+                "nan-high",
+                "x",
+                3,
+                f64::from_bits(0x7ff8_0000_0000_0001),
+            ),
+            (
+                "e/task",
+                "negative-nan",
+                "x",
+                3,
+                f64::from_bits(0xfff8_0000_0000_0001),
+            ),
+            ("f/task", "first-rank", "x", 0, f64::NEG_INFINITY),
+            ("f/task", "last-rank", "x", u8::MAX, f64::INFINITY),
+        ];
+        for groups in [1, 2, 4] {
+            for reverse in [false, true] {
+                for offset in 0..specs.len() {
+                    let mut ordered = specs.to_vec();
+                    ordered.rotate_left(offset);
+                    if reverse {
+                        ordered.reverse();
+                    }
+                    assert_eq!(
+                        best_sources(grouped(&ordered, groups)),
+                        sorted_sources(grouped(&ordered, groups)),
+                        "groups={groups} reverse={reverse} offset={offset}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn snippet_selection_handles_empty_groups_and_preserves_group_order_for_equal_rows() {
+        let mut groups = BTreeMap::new();
+        groups.insert("empty".into(), vec![]);
+        assert!(best_sources(groups).is_empty());
+        assert!(best_sources(BTreeMap::new()).is_empty());
+        let mut groups = BTreeMap::new();
+        groups.insert(
+            "z".into(),
+            grouped(&[("a/b", "later-group", "same", 3, 1.0)], 1)
+                .into_values()
+                .next()
+                .unwrap(),
+        );
+        groups.insert(
+            "a".into(),
+            grouped(&[("a/b", "earlier-group", "same", 3, 1.0)], 1)
+                .into_values()
+                .next()
+                .unwrap(),
+        );
+        assert_eq!(best_sources(groups)["a/b"].source, "earlier-group");
+    }
 
     /// A source's rank and score are its own fields, read outside serde's buffer for the flattened
     /// source, so the score reads in every form a float is written, from text and from a value.
