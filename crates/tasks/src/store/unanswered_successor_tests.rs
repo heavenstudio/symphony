@@ -4,6 +4,8 @@ use super::*;
 use crate::store_fixture::HOST;
 use std::cell::Cell;
 
+const THREAD: &str = "00000000-0000-4000-8000-000000000001";
+
 fn replacement(f: &Fixture, pending: &Pending) -> String {
     f.advance(31.0 * 60.0);
     let next = f.session("worker");
@@ -214,4 +216,130 @@ fn successor_roles_are_read_through_the_task_index() {
     let plan = plan[0].as_str().unwrap();
     assert!(plan.contains("role_slug"), "{plan}");
     assert!(!plan.contains("TableScan"), "{plan}");
+}
+
+#[test]
+fn native_registration_from_an_absent_row_and_confirmation_of_an_existing_row_refuse_stale_reservations()
+ {
+    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+        for existing in [false, true] {
+            let (f, pending) = setup(backend);
+            let next = replacement(&f, &pending);
+            let elsewhere = f.elsewhere();
+            let address = format!("codex:{THREAD}");
+            if existing {
+                elsewhere
+                    .callback(&next, Some(&address), false, false)
+                    .unwrap();
+            }
+            f.advance(31.0 * 60.0);
+            let rows = answers::rows(&f.store, &pending.handle, pending.post.id).unwrap();
+            let parents = answers::parents(&f.store, &rows).unwrap();
+            let observed = successors::read(&f.store, &pending).unwrap().unwrap();
+            assert!(!observed.active(&f.store, &pending, &BTreeSet::new()));
+            assert_eq!(
+                f.store
+                    .raw()
+                    .row("callback_state", next.as_str())
+                    .exists()
+                    .unwrap(),
+                existing
+            );
+            if existing {
+                let seen = elsewhere
+                    .callback_presence(
+                        Some(&crate::Presence {
+                            threads: BTreeSet::from([THREAD.into()]),
+                            ..Default::default()
+                        }),
+                        true,
+                    )
+                    .unwrap();
+                assert!(seen.contains(&next));
+            } else {
+                elsewhere
+                    .callback(&next, Some(&address), false, false)
+                    .unwrap();
+            }
+            assert!(
+                !f.store
+                    .reserve_unanswered_restore_observed(&pending, &rows, &parents, Some(&observed))
+                    .unwrap()
+            );
+            assert!(!reserved(&f, &pending));
+            f.advance(31.0 * 60.0);
+            assert!(f.store.claim_unanswered_restore(&pending).unwrap());
+        }
+    }
+}
+
+#[test]
+fn recovery_fences_touch_only_the_observed_task_sessions_and_existing_native_row() {
+    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+        let (f, pending) = setup(backend);
+        let next = replacement(&f, &pending);
+        let address = format!("codex:{THREAD}");
+        f.elsewhere()
+            .callback(&next, Some(&address), false, false)
+            .unwrap();
+        f.advance(31.0 * 60.0);
+        let observed = successors::read(&f.store, &pending).unwrap().unwrap();
+        assert_eq!(observed.value["holders"].as_array().unwrap().len(), 1);
+        assert_eq!(observed.value["holders"][0][0], next);
+        let revision = |h: &str| {
+            f.store.raw().row("session_revision", h).get().unwrap()["writes"]
+                .as_i64()
+                .unwrap_or(0)
+        };
+        let task_version = || {
+            f.store
+                .raw()
+                .row("task", pending.slug.as_str())
+                .get()
+                .unwrap()["version"]
+                .as_i64()
+                .unwrap()
+        };
+        let native_revision = || {
+            f.store
+                .raw()
+                .row("callback_state", next.as_str())
+                .get()
+                .unwrap()["recovery_revision"]
+                .as_i64()
+                .unwrap_or(0)
+        };
+        let before = (
+            revision(&pending.handle),
+            revision(&next),
+            task_version(),
+            native_revision(),
+        );
+        assert!(f.store.claim_unanswered_restore(&pending).unwrap());
+        let after = (
+            revision(&pending.handle),
+            revision(&next),
+            task_version(),
+            native_revision(),
+        );
+        assert_eq!((after.0 - before.0, after.1 - before.1), (1, 1));
+        let (task_writes, native_writes) = match backend {
+            Backend::SurrealDb => (1, 1),
+            Backend::PostgreSql => (0, 0),
+        };
+        assert_eq!(
+            (after.2 - before.2, after.3 - before.3),
+            (task_writes, native_writes)
+        );
+        eprintln!(
+            "{backend:?}: successor observation: 1 indexed read, 1 holder; reservation: 2 session revision writes, {task_writes} task version write, {native_writes} native revision write (PostgreSQL locks task/native rows)"
+        );
+        // Existing registration writers retain the new, optional bookkeeping value, and callback
+        // readers still decode the registration without knowing it.
+        f.elsewhere()
+            .callback(&next, Some(&address), false, false)
+            .unwrap();
+        assert_eq!(native_revision(), native_writes);
+        assert!(f.store.callbacks().unwrap().contains_key(&next));
+    }
 }

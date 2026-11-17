@@ -1,5 +1,9 @@
 //! Current executor eligibility, independent of historical post attribution. Recovery reserves
 //! against the exact task/session/native inputs it judged; a changed observation consumes no try.
+//! New registrations share the existing session-revision fence, including absent callback rows.
+//! Existing native writers change the callback row itself: SurrealDB advances its schemaless
+//! `recovery_revision` (absent means zero; older readers ignore and writers preserve it), whereas
+//! PostgreSQL locks that row. No session field or schema change is needed.
 
 use super::{Error, Health, Pending, Store, both, pg, recovery_error, sql};
 use crate::health;
