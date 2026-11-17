@@ -192,16 +192,16 @@ event's own bound and needs no helper, unless nothing else ends it but a stop: t
 `just lint-rs` refuses a new one with a line naming this rule: clippy's `disallowed-methods`
 (`clippy.toml`, which `crates/tasks/clippy.toml` starts with) for `std::thread::sleep`, tokio's
 `sleep`, `sleep_until`, `interval` and `interval_at`, and the server's `Shared::wait` and
-`Backstop::wait`, and Biome for the client's `setTimeout`,
-`setInterval` and `src/timing.ts`'s plain `sleep` (`apps/symphony-web/biome.json`). Each site kept
-is the baseline: its linter's own suppression, `#[expect(clippy::disallowed_methods, reason =
-"no-timed-waits baseline: WHY")]` or `// biome-ignore …: no-timed-waits baseline: WHY`, where WHY
-names the event it should wait for. The baseline only shrinks: a site converted leaves its
-suppression unfulfilled or unused, which fails `just lint-rs` until it is removed, and a new
-suppression is a new timer, which a reviewer refuses. `git grep 'no-timed-waits baseline'` lists
-it. The lint reads every Rust target, the board crate's tests too, which start their children
-through `crates/tasks/tests/support/children.rs`, whose constructors alone carry the expectation
-the board's spawn rule asks for. It does not read the shell scripts: those are read in review.
+`Backstop::wait`, and Biome for the client's `setTimeout`, `setInterval` and `src/timing.ts`'s
+plain `sleep` (`apps/symphony-web/biome.json`). Each site kept is the baseline: its linter's own
+suppression, `#[expect(clippy::disallowed_methods, reason = "no-timed-waits baseline: WHY")]` or
+`// biome-ignore …: no-timed-waits baseline: WHY`, where WHY names the event it should wait for.
+The baseline only shrinks: a site converted leaves its suppression unfulfilled or unused, which
+fails `just lint-rs` until it is removed, and a new suppression is a new timer, which a reviewer
+refuses. `git grep 'no-timed-waits baseline'` lists it. The lint reads every Rust target, the board
+crate's tests too, which start their children through `crates/tasks/tests/support/children.rs`,
+whose constructors alone carry the expectation the board's spawn rule asks for. It does not read
+the shell scripts: those are read in review.
 
 ## Tests
 
