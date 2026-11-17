@@ -1,0 +1,7 @@
+{
+  "base": "0123456789abcdef0123456789abcdef01234567",
+  "head": "89abcdef0123456789abcdef0123456789abcdef",
+  "path": "src/new.rs",
+  "patch": "@@ -0,0 +1 @@\n+hello 猫\n",
+  "truncated": false
+}

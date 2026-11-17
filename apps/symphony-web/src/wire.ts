@@ -28,6 +28,8 @@ export const QUICK_TASK_TITLE_MAX = 200;
 export const TASK_ACTION_ROUTE = "/api/task-action";
 export const TASK_GATES_PATH = "/api/task-gates";
 export const TASK_TIMELINE_PATH = "/api/task-timeline";
+export const TASK_DIFF_PATH = "/api/task-diff";
+export const TASK_DIFF_FILE_PATH = "/api/task-diff-file";
 export const TIMELINE_EVERY = 60;
 export const AGENT_FOCUS_PATH = "/api/agent-focus";
 export const AGENT_SCREEN_PATH = "/api/agent-screen";
@@ -1611,4 +1613,44 @@ export type GateSpan = {
   from: number;
   by?: string | null;
   detail: string;
+};
+
+export type TaskDiffSource = "branch" | "landing" | "unavailable";
+
+export type TaskDiff = {
+  source: TaskDiffSource;
+  /**
+   * The full base commit id; null when no comparison is available.
+   */
+  base: string | null;
+  /**
+   * The full head commit id; null when no comparison is available.
+   */
+  head: string | null;
+  files: Array<TaskDiffFile>;
+  /**
+   * The answer leaves out some of the comparison because a read bound was reached.
+   */
+  truncated: boolean;
+  /**
+   * Why the comparison is unavailable or incomplete, otherwise null. An unavailable answer
+   * explains a gone branch without a landing, missing history or a failed or timed-out read.
+   */
+  reason: string | null;
+};
+
+export type TaskDiffFile = { path: string; added: number | null; removed: number | null };
+
+export type TaskDiffPatch = {
+  base: string;
+  head: string;
+  /**
+   * The repository-relative path the request named.
+   */
+  path: string;
+  patch: string;
+  /**
+   * The patch text stops at a read bound.
+   */
+  truncated: boolean;
 };
