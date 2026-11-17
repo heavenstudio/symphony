@@ -1,67 +1,73 @@
 //! The board's records as JSON: the fields and their order.
 
+use crate::json_object::object;
 use crate::rows::TaskSessionRow;
 use crate::stages::Stages;
 use crate::{Ask, Landed, Message, Role, Session, Task};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// An ask as the board holds it, with its age at `now` and whether that makes it late.
 pub fn ask(a: &Ask, now: f64) -> Value {
     let (age, late) = crate::store::asks::age(a, now);
-    json!({
-        "id": a.id,
-        "kind": &a.kind,
-        "path": a.path.as_deref(),
-        "card": a.card.as_deref(),
-        "block": a.block.as_deref(),
-        "tree": a.tree.as_deref(),
-        "task": a.task.as_deref(),
-        "thread": a.thread.as_deref(),
-        "words": &a.words,
-        "asked": a.asked,
-        "lines": a.lines,
-        "last": a.last,
-        "holder": a.holder.as_deref(),
-        "held": a.held,
-        "before": Value::Array(
-            a.before
-                .iter()
-                .map(|h| json!({
-                    "handle": &h.handle,
-                    "since": h.since,
-                    "until": h.until,
-                    "why": &h.why,
-                }))
-                .collect(),
+    object(vec![
+        ("id", Value::from(a.id)),
+        ("kind", Value::from(a.kind.as_str())),
+        ("path", Value::from(a.path.as_deref())),
+        ("card", Value::from(a.card.as_deref())),
+        ("block", Value::from(a.block.as_deref())),
+        ("tree", Value::from(a.tree.as_deref())),
+        ("task", Value::from(a.task.as_deref())),
+        ("thread", Value::from(a.thread.as_deref())),
+        ("words", Value::from(a.words.as_str())),
+        ("asked", Value::from(a.asked)),
+        ("lines", Value::from(a.lines)),
+        ("last", Value::from(a.last)),
+        ("holder", Value::from(a.holder.as_deref())),
+        ("held", Value::from(a.held)),
+        (
+            "before",
+            Value::Array(
+                a.before
+                    .iter()
+                    .map(|h| {
+                        object(vec![
+                            ("handle", Value::from(h.handle.as_str())),
+                            ("since", Value::from(h.since)),
+                            ("until", Value::from(h.until)),
+                            ("why", Value::from(h.why.as_str())),
+                        ])
+                    })
+                    .collect(),
+            ),
         ),
-        "open": a.open,
-        "answered": a.answered,
-        "answered_by": a.answered_by.as_deref(),
-        "answer": a.answer.as_deref(),
-        "closed": a.closed,
-        "gone": a.gone.as_deref(),
-        "gone_since": a.gone_since,
-        "age": age,
-        "late": late,
-    })
+        ("open", Value::from(a.open)),
+        ("answered", Value::from(a.answered)),
+        ("answered_by", Value::from(a.answered_by.as_deref())),
+        ("answer", Value::from(a.answer.as_deref())),
+        ("closed", Value::from(a.closed)),
+        ("gone", Value::from(a.gone.as_deref())),
+        ("gone_since", Value::from(a.gone_since)),
+        ("age", Value::from(age)),
+        ("late", Value::from(late)),
+    ])
 }
 
 pub fn task(t: &Task) -> Value {
-    json!({
-        "slug": &t.slug,
-        "title": &t.title,
-        "body": &t.body,
-        "status": &t.status,
-        "priority": t.priority,
-        "parent": t.parent.as_deref(),
-        "created_by": &t.created_by,
-        "created": t.created,
-        "updated": t.updated,
-        "links": &t.links,
-        "depends": &t.depends,
-        "roles": Value::Array(t.roles.iter().map(role).collect()),
-        "instruction": t.instruction,
-    })
+    object(vec![
+        ("slug", Value::from(t.slug.as_str())),
+        ("title", Value::from(t.title.as_str())),
+        ("body", Value::from(t.body.as_str())),
+        ("status", Value::from(t.status.as_str())),
+        ("priority", Value::from(t.priority)),
+        ("parent", Value::from(t.parent.as_deref())),
+        ("created_by", Value::from(t.created_by.as_str())),
+        ("created", Value::from(t.created)),
+        ("updated", Value::from(t.updated)),
+        ("links", Value::from(t.links.as_slice())),
+        ("depends", Value::from(t.depends.as_slice())),
+        ("roles", Value::Array(t.roles.iter().map(role).collect())),
+        ("instruction", Value::from(t.instruction)),
+    ])
 }
 
 /// A task as `tasks list --json` lists it: with `in_status_since`, when it took the status it holds
@@ -69,7 +75,7 @@ pub fn task(t: &Task) -> Value {
 pub fn listed(t: &Task, in_status_since: Option<f64>) -> Value {
     let mut shaped = task(t);
     if let Value::Object(fields) = &mut shaped {
-        fields.insert("in_status_since".into(), json!(in_status_since));
+        fields.insert("in_status_since".into(), Value::from(in_status_since));
     }
     shaped
 }
@@ -78,7 +84,7 @@ pub fn listed(t: &Task, in_status_since: Option<f64>) -> Value {
 pub fn landed(l: &Landed) -> Value {
     let mut shaped = task(&l.task);
     if let Value::Object(fields) = &mut shaped {
-        fields.insert("from".into(), json!(&l.from));
+        fields.insert("from".into(), Value::from(l.from.as_str()));
     }
     shaped
 }
@@ -90,37 +96,48 @@ pub fn keyed(fields: impl Iterator<Item = (String, Value)>) -> Value {
 
 /// Where a task's time went ([`crate::stages`]); every duration in seconds.
 pub fn stages(s: &Stages) -> Value {
-    json!({
-        "statuses": keyed(s.stages.iter().map(|stage| {
-            (
-                stage.status.clone(),
-                json!({
-                    "first_entered": stage.first_entered,
-                    "seconds": stage.seconds,
-                    "visits": i64::from(stage.visits),
-                }),
-            )
-        })),
-        "segments": Value::Array(
-            s.segments
-                .iter()
-                .map(|segment| json!({
-                    "status": &segment.status,
-                    "from": segment.from,
-                    "to": segment.to,
-                    "by": segment.by.as_deref(),
-                }))
-                .collect(),
+    object(vec![
+        (
+            "statuses",
+            keyed(s.stages.iter().map(|stage| {
+                (
+                    stage.status.clone(),
+                    object(vec![
+                        ("first_entered", Value::from(stage.first_entered)),
+                        ("seconds", Value::from(stage.seconds)),
+                        ("visits", Value::from(i64::from(stage.visits))),
+                    ]),
+                )
+            })),
         ),
-        "unclaimed_seconds": s.unclaimed_seconds,
-        "first_claimed": s.first_claimed,
-        "bounces": i64::from(s.bounces),
-        "current": {
-            "status": &s.current,
-            "since": s.current_since,
-        },
-        "closed": s.closed,
-    })
+        (
+            "segments",
+            Value::Array(
+                s.segments
+                    .iter()
+                    .map(|segment| {
+                        object(vec![
+                            ("status", Value::from(segment.status.as_str())),
+                            ("from", Value::from(segment.from)),
+                            ("to", Value::from(segment.to)),
+                            ("by", Value::from(segment.by.as_deref())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        ("unclaimed_seconds", Value::from(s.unclaimed_seconds)),
+        ("first_claimed", Value::from(s.first_claimed)),
+        ("bounces", Value::from(i64::from(s.bounces))),
+        (
+            "current",
+            object(vec![
+                ("status", Value::from(s.current.as_str())),
+                ("since", Value::from(s.current_since)),
+            ]),
+        ),
+        ("closed", Value::from(s.closed)),
+    ])
 }
 
 pub fn tasks(ts: &[Task]) -> Value {
@@ -128,46 +145,46 @@ pub fn tasks(ts: &[Task]) -> Value {
 }
 
 fn role(r: &Role) -> Value {
-    json!({
-        "handle": &r.handle,
-        "role": &r.role,
-        "since": r.since,
-        "expires": r.expires,
-        "health": r.health.as_str(),
-    })
+    object(vec![
+        ("handle", Value::from(r.handle.as_str())),
+        ("role", Value::from(r.role.as_str())),
+        ("since", Value::from(r.since)),
+        ("expires", Value::from(r.expires)),
+        ("health", Value::from(r.health.as_str())),
+    ])
 }
 
 pub fn session(s: &Session) -> Value {
     let r = &s.row;
     let affinity: Vec<&str> = r.affinity.split(',').filter(|a| !a.is_empty()).collect();
-    json!({
-        "handle": &r.handle,
-        "kind": &r.kind,
-        "parent": r.parent.as_deref(),
-        "worktree": &r.worktree,
-        "branch": &r.branch,
-        "model": &r.model,
-        "pid": r.pid,
-        "host": &r.host,
-        "affinity": &affinity,
-        "connected": r.connected,
-        "last_seen": r.last_seen,
-        "last_tool": r.last_tool,
-        "left_at": r.left_at,
-        "health": s.health.as_str(),
-    })
+    object(vec![
+        ("handle", Value::from(r.handle.as_str())),
+        ("kind", Value::from(r.kind.as_str())),
+        ("parent", Value::from(r.parent.as_deref())),
+        ("worktree", Value::from(r.worktree.as_str())),
+        ("branch", Value::from(r.branch.as_str())),
+        ("model", Value::from(r.model.as_str())),
+        ("pid", Value::from(r.pid)),
+        ("host", Value::from(r.host.as_str())),
+        ("affinity", Value::from(affinity.as_slice())),
+        ("connected", Value::from(r.connected)),
+        ("last_seen", Value::from(r.last_seen)),
+        ("last_tool", Value::from(r.last_tool)),
+        ("left_at", Value::from(r.left_at)),
+        ("health", Value::from(s.health.as_str())),
+    ])
 }
 
 pub fn message(m: &Message) -> Value {
-    json!({
-        "id": m.id,
-        "slug": &m.slug,
-        "sender": &m.sender,
-        "recipient": m.recipient.as_deref(),
-        "kind": &m.kind,
-        "text": &m.text,
-        "ts": m.ts,
-    })
+    object(vec![
+        ("id", Value::from(m.id)),
+        ("slug", Value::from(m.slug.as_str())),
+        ("sender", Value::from(m.sender.as_str())),
+        ("recipient", Value::from(m.recipient.as_deref())),
+        ("kind", Value::from(m.kind.as_str())),
+        ("text", Value::from(m.text.as_str())),
+        ("ts", Value::from(m.ts)),
+    ])
 }
 
 pub fn messages(ms: &[Message]) -> Value {
@@ -175,20 +192,20 @@ pub fn messages(ms: &[Message]) -> Value {
 }
 
 pub fn launch(r: &TaskSessionRow) -> Value {
-    json!({
-        "slug": &r.slug,
-        "handle": &r.handle,
-        "role": &r.role,
-        "claude_session": &r.claude_session,
-        "worktree": &r.worktree,
-        "branch": &r.branch,
-        "pane": &r.pane,
-        "model": &r.model,
-        "started": r.started,
-        "closed": r.closed,
-        "closed_why": &r.closed_why,
-        "restore": &r.restore,
-    })
+    object(vec![
+        ("slug", Value::from(r.slug.as_str())),
+        ("handle", Value::from(r.handle.as_str())),
+        ("role", Value::from(r.role.as_str())),
+        ("claude_session", Value::from(r.claude_session.as_str())),
+        ("worktree", Value::from(r.worktree.as_str())),
+        ("branch", Value::from(r.branch.as_str())),
+        ("pane", Value::from(r.pane.as_str())),
+        ("model", Value::from(r.model.as_str())),
+        ("started", Value::from(r.started)),
+        ("closed", Value::from(r.closed)),
+        ("closed_why", Value::from(r.closed_why.as_str())),
+        ("restore", Value::from(r.restore.as_str())),
+    ])
 }
 
 pub fn launches(rs: &[TaskSessionRow]) -> Value {
@@ -198,6 +215,7 @@ pub fn launches(rs: &[TaskSessionRow]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn messages_preserve_text_integer_limits_and_float_values() {
