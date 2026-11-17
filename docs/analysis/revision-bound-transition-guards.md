@@ -4,12 +4,19 @@ A project can require a person's approval before a particular delivery handoff. 
 must identify what the person saw: the requirements, candidate, evidence and destination. A
 later candidate cannot inherit it merely because the task is still in the same column.
 
-This is the proposed artifact-guard extension to the
+This is the design contract for the artifact-guard extension to the
 [configurable workflow contract](configurable-delivery-workflow.md#Admission and authority),
-awaiting [its enforcement decision](../DECISIONS.md#revision-bound-project-guards). It defines
-one authoritative admission boundary, not a check runner, risk engine or replacement stamp
-catalogue. No API, approval store, human identity integration or enforcement is implemented by
-this document. Implementation also waits for the workflow contract's activation choice.
+using the project-owned approval authority selected on
+[its enforcement card](../DECISIONS.md#revision-bound-project-guards). Symphony supplies atomic
+admission and refusal; the project supplies authoritative human approval records and exact,
+versioned attestations. This is not a check runner, risk engine or replacement stamp catalogue.
+No API, ledger adapter, human identity integration or enforcement is implemented by this document.
+
+The [activation choice](../DECISIONS.md#configurable-workflow-activation) selects automatic
+activation of a valid committed workflow, with complete mappings and prerequisite checks.
+The [ingress choice](../DECISIONS.md#hosted-ingress-boundary) selects the server adapter for
+trusted visitor/project context. Those directions are decided; their implementations and the
+project's approval-authority integration must exist before protected operations can activate.
 
 ## Source and ownership
 
@@ -38,54 +45,52 @@ proposal. These are existing seams, not evidence that this extension is already 
 | `crates/tasks/src/stamps.rs`, `stamps/read.rs`, `land/needs.rs` | Four generic readers and per-tip assessments decide default landing evidence. Keep their meanings and readers. An assessment cannot waive a configured project guard. |
 | `crates/symphony-plugin/src/lib.rs`, `Gates` | Typed project gate display, cached by status, branch tip and `kept_while`. Reuse presentation vocabulary; the answer carries no admission authority. |
 | The same module, `BoardAction::submit` | Receives root, task and payload/note, without authenticated-person context. It cannot safely record these human approvals as it stands. |
-| `crates/tasks/src/store/transaction.rs`, `schema.rs`, `store/postgres/schema.rs` | Guarded transactions and paired stores are the persistence seam. Atomic input/evidence comparisons and approval facts still need implementation. |
+| `crates/tasks/src/store/transaction.rs`, `schema.rs`, `store/postgres/schema.rs` | Guarded transactions and paired stores are the persistence seam. Atomic input/evidence/authority-generation comparisons and admission receipts still need implementation; human approval records remain project-owned. |
 | [Workflow admission](configurable-delivery-workflow.md#Admission and authority) | Reserves project-policy receipts, expected revisions and typed effects. This proposal supplies artifact and approval semantics for that boundary. |
 | [Durable attempts](remote-execution-attempts.md#Durable records and identities) | Proposed immutable attempt/input and result-manifest references join evidence to its producer. Attempt success grants no approval or transition. |
 
-Under the recommended shared-record option below, the project owns criteria, applicability,
-approver membership and any quorum or separation
-requirements beyond existing reviewer independence. It also owns its artifact storage, checks,
-test locks, environment descriptions and landing/deployment implementation. Symphony owns the
-scoped immutable facts, trusted-principal admission, atomic comparisons, audit and refusal.
-Project code evaluates its criteria against a supplied snapshot; it cannot manufacture a
-human principal, bypass core scoping or mutate workflow state through its answer.
+The project owns its authoritative approval ledger, decision methods, criteria, applicability,
+approver membership and any quorum or separation requirements beyond existing reviewer
+independence. It also owns artifact storage, checks, test locks, environment descriptions and
+landing/deployment implementation. Symphony owns the board's input selections, accepted authority
+generation bindings, admission receipts, transition/effect audit and atomic refusal. Project
+code evaluates criteria and attests ledger facts against a supplied snapshot; it cannot turn an
+agent into an authenticated person, bypass core scoping or mutate workflow state through its answer.
 
 ## Where approval authority lives
 
-The unresolved choice is who owns the authoritative human decision record at a protected
-handoff. The delivery requirements establish exact-artifact human decisions and refusal of
-unauthorized advancement; they do not choose where those decisions are stored. The approved
-[workflow direction](../DECISIONS.md#project-workflow-shape) chooses the configurable graph.
-The [stamp decision](../DECISIONS.md#needed-stamps) preserves generic readers and project
-landing ownership. Neither supplies or chooses this new approval authority.
+The project chooses or builds the authoritative human approval ledger. Its adapter provides
+authenticated request/decision operations, retained decision history and exact versioned,
+revocation-aware attestations. Symphony checks those attestations through one mandatory
+admission path with project/task/gate/input/target bindings. It does not own a common approval
+record lifecycle or reconstruct the project's ledger from its audit receipts.
 
-| Option | Source basis and proposed boundary | Cost and tradeoff |
-| --- | --- | --- |
-| A: shared decision records | Extend the board's guarded, paired-store transactions with common immutable request/decision facts. Project code supplies criteria and membership, as the existing typed gate seam supplies project evidence; the board validates current human facts at admission. | Symphony implements and versions the record lifecycle, authenticated decision methods, audit and UI once. Projects adopt that model and its conservative fresh-approval rules; host authentication and membership integration are still needed. |
-| B: project approval authority | Keep human request/decision facts in an approval ledger the project chooses or builds. Extend the project-policy seam beyond today's display-only `Gates` answer with authenticated decision operations and exact versioned attestations; the board stores admission receipts and authoritative generation bindings. | Projects keep their own approval semantics and storage, but implement the ledger, audit/history and a bounded freshness/revocation protocol. Protected admission depends on that service being available and compatible. The existing cache or custom landing command alone cannot provide it. |
+| Project authority | Symphony admission |
+| --- | --- |
+| Request/round creation, human decisions and withdrawal, authenticated membership and quorum, immutable facts and their retention | Trusted adapter/issuer configuration, expected input/workflow bindings, monotonic authority observations, committing transition predicates and admission/refusal audit |
+| Current ledger generation and durable publication/reconciliation of decision or revocation observations | Atomic comparison of the accepted authority generation and board read set in both stores; refusing missing, stale, rejected, revoked or unavailable authority |
+| Authenticated evidence of who approved which exact request, with its result, time, policy and evidence references | Minimal attestation snapshot/digest, fact references, verified scope and initiating/applying principal needed to audit the admitted operation |
 
-Both options use the same mandatory admission path and exact project/task/gate/input/target
-bindings. Neither adds a generic stamp kind or lets an assessment waive a gate. Both require
-authenticated people, retained rejection/rework history, commit-time generation checks and
-adapter checks before external effects. Missing, stale or unavailable authority refuses the
-protected operation. A project with no guards retains its existing behavior.
+The configured authority identity, adapter version and trust material come from the active
+committed project policy, never a task payload or caller-supplied issuer. A signature establishes
+provenance, not current authorization: an older signed pass cannot override a newer withdrawal,
+authority epoch or policy. The project bears the ledger's audit, availability and compatibility
+obligations. Missing capability keeps protected operations unavailable; it does not make them
+advisory or fall back to a cached pass.
 
-For B, the project authority must publish a versioned decision/withdrawal observation into the
-board's guarded generation discipline before that observation can authorize admission. If it
-requires revocation effective across systems immediately, it must cooperate in an admission
-barrier; a fetched signature or timestamp alone cannot make a later database commit atomic with
-the external ledger. The last-validated-snapshot limit also applies to remote effects under A.
-Neither option promises unreported remote revocation. These limits are eligibility conditions
-for the project's adapter, not permission to fall back to an old pass.
+The project authority publishes versioned decision/withdrawal observations into the board's
+guarded generation discipline before an attestation at that generation can authorize admission.
+Immediate revocation across systems requires a cooperating admission barrier. A fetched
+signature or timestamp alone cannot make a later database commit atomic with an external ledger.
+The [external-effect boundary](#The external effect boundary) therefore retains its truthful
+last-validated-dispatch limit. These are adapter eligibility conditions, not permission to
+ignore known stale authority.
 
-Recommend A: it puts the shared approval lifecycle beside the transaction that must arbitrate
-it and gives every protected route the same human-decision semantics. B remains a real
-alternative for a project that needs its own approval authority and accepts its extra adapter
-and availability obligations; the sources do not show an existing service already meeting them.
-The remaining sections specify A in detail. Choosing B would retain these identity/admission
-invariants while placing request/decision custody and its decision methods behind the project
-authority adapter. The separate workflow activation and durable-byte-storage choices decide
-neither option. This is a design choice, with no runtime comparison or implementation claimed.
+The [workflow direction](../DECISIONS.md#project-workflow-shape) still chooses the graph and the
+[stamp decision](../DECISIONS.md#needed-stamps) still preserves generic readers and project
+landing ownership. No stamp kind or assessment waiver is added. Projects without guards retain
+their existing behavior. Historical alternatives and the approval-record ownership decision
+remain on [the enforcement card](../DECISIONS.md#revision-bound-project-guards).
 
 ## Identities and records
 
@@ -99,10 +104,16 @@ data, not accepted settings or released Rust fields.
 | Input manifest | Immutable ID/digest and schema version; delivery/task scope; named artifact slots; explicit upstream accepted-output references and dependency links. Each applicable slot is present; a project policy explicitly declares an inapplicable slot. Omission is unknown. |
 | Current selection | Project/delivery/task scope, selected manifest and per-input revisions; monotonic selection revision. Historical manifests never change. The repository head and external target preconditions are independently checked where they matter. |
 | Gate definition/binding | Project gate ID, immutable policy/criteria version, scope, protected workflow edge/effect classes, required input/evidence slots and approver capabilities. It belongs to the active committed project policy, never a branch-local field or task assessment. |
-| Approval request | Unique instance/round ID; project/task/delivery scope; gate and policy version; workflow revision and activation generation; exact scoped manifest and evidence references; target identity where applicable; request revision and pending/superseded projection. |
-| Decision fact | Request ID, approve/reject/withdraw result, stable authenticated person ID and identity issuer, authorization-policy/membership revision, server accepted time, optional policy expiry, evidence references and rationale. Append-only sequence and actor-bound operation key identify the fact. |
-| Admission receipt | Project/task/edge and source revision; workflow revision/activation; policy/guard implementation version; exact input/evidence/dependency/authority generations; required approval fact IDs; result/reasons; evaluation time and bounded validity. It is an internal decision record, not a bearer permit. |
+| Approval request | Project-ledger-owned unique instance/round ID; project/task/delivery scope; gate and policy version; workflow revision and activation generation; exact scoped manifest and evidence references; target identity where applicable; request revision and pending/superseded projection. |
+| Decision fact | Project-ledger-owned request ID, approve/reject/withdraw result, stable authenticated person ID and identity issuer, authorization-policy/membership revision, authority accepted time, optional policy expiry, evidence references and rationale. Append-only sequence and actor-bound operation key identify the fact. |
+| Authority attestation | Configured authority/adapter identity and contract version; project/task/gate/request scope; workflow revision/activation; exact manifest/evidence/dependency/target bindings; ledger epoch and monotonic decision/revocation generation; human fact references/digests, authorized person/capability and current aggregate result; issued time, validity bound and authenticated integrity proof. |
+| Admission receipt | Board-owned project/task/edge and source revision; workflow revision/activation; policy/guard implementation version; exact input/evidence/dependency/accepted-authority generations; attestation snapshot/digest and project-ledger fact references; result/reasons and board accepted time. It is an internal admission audit record, not a bearer permit or human approval ledger. |
 | Transition/effect history | Initiating principal and applying service, before/after revisions, receipt/fact references, refusal or committed result, rework relationship, durable external-effect intent and observed outcome. Retained IDs resolve after renames and policy changes. |
+
+Approval requests and decision facts stay in the project ledger; their fields above define the
+proof the adapter must be able to supply, not new Symphony-owned approval tables. Board audit
+retains the minimal attestation material and references needed to explain an operation. Complete
+human decision history, authoritative current result and its restore remain the project's duty.
 
 The project's input manifest identifies baseline/specification, repository/code commit, locked
 test definition and lock revision, test/build results, environment/configuration revision,
@@ -133,25 +144,34 @@ principals are separate types with narrowly assigned capabilities; neither can b
 by submitting an agent handle, `owner`, email, role name or claimed identity in a payload.
 An agent may prepare evidence and request a decision, subject to its task authority.
 
-The trusted project identity adapter supplies versioned membership and authorization facts.
-The board maintains the authoritative accepted authorization generation used for decisions;
-unknown, expired or unavailable membership refuses a new decision and protected admission.
-Record the person who decided separately from the server that saved it. Existing independent
-review remains independently required where the workflow/landing policy requires it.
+The trusted project identity adapter supplies versioned membership and authorization facts to
+the project's approval authority. That authority validates permission for the human decision;
+Symphony validates its current attestation and accepted generation for a protected transition.
+Unknown, expired or unavailable membership refuses a new decision and protected admission.
+Record the person who decided separately from the service that saved it and the service that
+applied the transition. Existing independent review remains independently required where the
+workflow/landing policy requires it. The server ingress adapter supplies trusted visitor context;
+it does not itself assign gate membership or manufacture a project approval.
 
 A person reads the immutable request, inputs, evidence and target, then explicitly submits a
 decision with the expected request, selection, workflow and authorization revisions. The
-service checks those bindings and permission in the committing transaction. A stale form cannot
-approve the replacement candidate. Duplicate identical submissions return the original result;
-replaying an actor-bound operation as another person, or with another payload, refuses. Separate
-people deciding concurrently produce separate facts only while the same request is current. The project's versioned rule
-decides how their decisions combine; Symphony verifies every referenced approving fact and
-required capability, and never treats a rejection or missing quorum as pass.
+project authority checks permission and expected ledger revisions in its own committing
+transaction. The decision remains bound to that exact board/input snapshot. A stale form cannot
+approve a replacement candidate: known stale inputs refuse at decision time, and a race with a
+board change leaves at most a historical decision whose attestation fails current admission.
+Duplicate identical submissions return the original result; replaying an actor-bound operation
+as another person, or with another payload, refuses. Separate
+people deciding concurrently produce separate facts only while the same ledger request is
+current. The project's versioned rule decides how their decisions combine. Its authenticated
+attestation identifies the current decision set and satisfied required capabilities; Symphony
+checks that proof's scope, provenance, revisions and required bindings. A rejection, missing
+quorum or unverified approving fact cannot become pass through an adapter's status label.
 
-Approval does not itself move the task or perform delivery. The next operation reads the
-current decision set. Rejection and withdrawal invalidate pass immediately through a generation
-change; a later approve requires an explicit new request/round. Older approval cannot reappear
-when a newer rejection, expiry or supersession is removed from a display. No first-slice
+Approval does not itself move the task or perform delivery. The next operation obtains a fresh
+attestation of the current decision set. Rejection and withdrawal advance the project's ledger
+generation and invalidate its positive attestation; their accepted board observation fences
+admission, as below. A later approve requires an explicit new request/round. Older approval
+cannot reappear when a newer rejection, expiry or supersession is removed from a display. No first-slice
 carry-forward is supported: a changed bound input, policy or workflow activation requires a
 fresh decision. Even reactivating identical workflow content uses a new generation.
 Withdrawal requires the original person or an explicitly authorized project revoker and records
@@ -165,11 +185,34 @@ contract supplies no login system, directory integration or direct approval from
 
 ## Invalidation and dependencies
 
-All selection, decision, evidence, accepted-output and authority changes pass through the same
-versioned service. In the transaction that changes one, advance a project guard generation and
-its affected record revisions. Admission compares that generation as well as the exact read
-set, preventing a dependency added during evaluation from escaping the comparison. Unrelated
-changes can force a fresh evaluation without invalidating an unaffected human approval.
+Board-owned selection, dependency-link, evidence, accepted-output and policy changes pass
+through the versioned board service. In the transaction that changes one, advance a project
+guard generation and its affected record revisions. Project-ledger changes instead use the
+authority protocol below; they are not writes to a common Symphony approval table. Admission
+compares the board guard generation, accepted authority generation and exact read set,
+preventing a dependency added during evaluation from escaping the comparison. Unrelated changes
+can force a fresh evaluation without invalidating an unaffected human approval.
+
+The project authority atomically saves a decision/withdrawal, a new ledger generation and
+durable observation intent in its own ledger. The authenticated observation names project,
+authority epoch, expected previous generation and current decision-state digest. Symphony
+accepts it with compare-and-set, advances its guard fence and records an idempotent acknowledgement.
+Out-of-order observations cannot lower a generation; conflicting digests at one generation or
+an unknown epoch make authority unknown until reconciled. A ledger restore needs a new authority
+epoch and explicit reconciliation, not reuse of an old pass.
+
+A positive attestation must name the acknowledged generation and match a fresh evaluation of
+the authority's current state. An unacknowledged newer generation, lost acknowledgement or
+unavailable authority requires reconciliation and re-evaluation before new admission. A crash
+retries the same observation key; it does not regenerate the human decision. Revocation and
+expiry known to either side cannot be hidden by cached attestation data.
+
+These stores do not share a transaction. An observation that has not reached Symphony cannot
+atomically revoke a transition it already admitted on an earlier validated snapshot. A project
+requiring immediate cross-system revocation must supply a cooperative admission barrier that
+fences outstanding observations/receipts before the change becomes effective for admission;
+otherwise that stronger policy cannot activate. Receipt validity bounds are required but are
+not a substitute for this barrier. Final effect dispatch always revalidates current authority.
 
 | Change | Required consequence |
 | --- | --- |
@@ -202,25 +245,30 @@ an adapter that can enforce it at the external boundary.
 
 ## One admission path
 
-The new guard seam is an additive, versioned project-policy call beside `Gates`, with explicit
+The new guard seam is an additive, versioned project-authority call beside `Gates`, with explicit
 capability negotiation. It accepts the immutable operation snapshot and scoped principal
-context; it returns typed pass/refusal/unknown, required decision references and reasons, bound
-to all revisions it read. Artifact storage stays with the project. This is bounded evaluation
-of existing evidence, with no arbitrary command launcher and no irreversible side effect.
+context; it returns an authenticated typed attestation with pass/refusal/unknown, required
+ledger decision references and reasons, bound to all revisions it read. Request/decision writes
+use the project's authenticated authority methods; evidence and ledger custody stay with the
+project. This is bounded evaluation of existing evidence, with no arbitrary command launcher
+and no irreversible side effect.
 
 1. Resolve the active workflow/guard bindings from committed authoritative policy. Check the
    trusted actor's task relationship, operation capability and expected source/workflow/input
-   revisions. Read candidate inputs, dependencies, evidence, approval rounds and authorization
-   generations. Required guards are conjunctive with existing board and stamp predicates.
+   revisions. Read candidate inputs, dependencies, evidence and accepted authority generations;
+   the adapter resolves current project-ledger rounds and authorization facts. Required guards
+   are conjunctive with existing board and stamp predicates.
 2. Evaluate project criteria outside the database transaction, with a deadline. A missing
    required adapter, absent/pending/rejected/outdated/unknown evidence, error, panic, timeout or
    unsupported contract refuses the operation. Do not commit position, role, slot, outcome or
    effect changes; retain an auditable refusal with reason and relevant revisions.
 3. In one guarded transaction compare the project guard generation, activation, task source,
-   selected manifest, all evidence/dependency/current-round revisions and authorization facts.
-   Verify the receipt's exact scope and every required approving human fact, its current
-   eligibility and validity. Reevaluate board predicates and the existing generic stamp
-   requirements where applicable. Then commit the transition, audit, idempotency result and
+   selected manifest, all evidence/dependency revisions and accepted authority epoch/generation.
+   Verify attestation integrity from the configured issuer, exact scope, acknowledged current
+   ledger/round and authorization bindings, required approving fact references, eligible human
+   capabilities and validity. Do not query or mutate the external ledger in this transaction.
+   Reevaluate board predicates and the existing generic stamp requirements where applicable.
+   Then commit the transition, audit, idempotency result and
    durable effect intent together. A read-only snapshot alone is insufficient: concurrent
    invalidation and admission must conflict or serialize on the authoritative records.
 4. On a race return stale with the current accessible blockers; do not silently reevaluate and
@@ -228,11 +276,12 @@ of existing evidence, with no arbitrary command launcher and no irreversible sid
    immutable payload. A successful retry returns the original transition, not another move.
    Recovery retries use its saved fencing identity and expected revisions.
 
-For authorization outside the database, the trusted adapter must publish a versioned fact with
-an explicit freshness/expiry contract before evaluation. Commit checks the board's accepted
-generation and server clock. This establishes admission against that fact, not atomic visibility
-of an unreported directory revocation. Strict live authorization requires a cooperating authority
-or refuses activation. A plugin cache or self-reported timestamp supplies neither guarantee.
+For the external approval ledger and authorization facts, commit checks the board's accepted
+authority generation, the attestation's explicit freshness/expiry contract and server clock.
+This establishes admission against the attested snapshot, not atomic visibility of an unreported
+ledger or directory revocation. Strict live authorization requires a cooperating authority or
+refuses activation. A plugin cache, signature alone or self-reported timestamp supplies neither
+guarantee. Symphony audits the evidence it admitted without taking over ledger custody.
 
 The service is also the store/library enforcement boundary. Caller-supplied raw status, task
 fields, a successful plugin button, an assessor's empty stamp list or an unguarded old Rust
@@ -288,6 +337,8 @@ failed attempt/effect with deliberate retry or rollback, each newly admitted whe
 The gate panel reuses typed gate status and evidence links, with additive request/fact/input
 identities and accessible actions. Phone and wide views show which person capability is needed,
 the exact candidate/target, pending/rejected/outdated/unknown reason and reapproval/rework link.
+Human actions are delegated to the configured project authority with trusted actor context and
+expected request/input revisions; Symphony does not save them as its own approval records.
 The person sees what changed before deciding. Unauthorized viewers receive only permitted
 artifact and membership detail. CLI/API report the same stable refusal codes and current
 accessible blockers. A notification links to this request; its delivery is not a decision fact.
@@ -308,25 +359,32 @@ project must constrain its merge/deploy credentials and routes to its enforcing 
 Ship new public calls beside working old APIs for the consumer two-release window. Do not add
 authenticated-person claims to caller-controlled `Submission` or repurpose legacy owner/review
 stamps. A negotiated new kit/protocol seam carries trusted context and guard references;
-unsupported versions refuse protected actions. Persist additive board-owned records in both
-stores, preserve strict old-row decoding and copy/export history, and fence incompatible writers
-before guard activation. No live migration, consuming-profile edit or cloud integration is
-authorized by landing this analysis.
+unsupported versions refuse protected actions. Persist additive board-owned authority
+observations, admission receipts and effect/audit records in both stores, preserving strict
+old-row decoding and copy/export history. Project approval-ledger backup/restore remains its
+authority's duty; a board restore cannot reinstate old approvals or grants. Reconcile the
+authority epoch/generation and fence incompatible writers before guarded operation resumes.
+No live migration, consuming-profile edit or cloud integration is authorized by landing this
+analysis.
 
 ## Implementation and evidence
 
-After the enforcement and workflow activation decisions, land the additive shared contract
-before its consumers. One implementation parent can then carry the store, admission/routes and
-client slices, coordinating with workflow and attempt implementations. Project criteria and
-authenticated host integration are prerequisites to a real project activation, not guessed
-defaults in Symphony.
+The enforcement, automatic workflow activation and server-ingress adapter directions are
+decided. Land the additive attestation/admission contract before its consumers. One
+implementation parent can then carry board authority-fence/receipt storage, admission/routes
+and delegated client actions, coordinating with workflow and attempt implementations. The
+project supplies its approval-ledger adapter and authenticated decision methods. Project
+criteria, versioned revocation/freshness support and trusted host membership integration are
+prerequisites to a real project activation, not guessed defaults in Symphony. Automatic
+activation still refuses an incompatible definition or missing adapter/mapping prerequisite;
+it does not manufacture approval or carry an old request into a new activation generation.
 
 | Slice | Required focused proof |
 | --- | --- |
-| Contract/identity | Canonical manifest and digest tests, explicit inapplicable/missing slots, project/task/gate/round/target isolation, locked-test bindings, protocol capability/error cases and consumer compile guards. |
-| Approval/store | Fake authenticated people, agents and services; forged identities refused; current/removed/unknown membership, quorum/rejection/withdrawal/expiry, new round and duplicate/conflicting key tests. Both SurrealDB and PostgreSQL preserve facts and refuse unauthorized writes. |
+| Contract/identity | Canonical manifest and digest tests, explicit inapplicable/missing slots, project/task/gate/round/target isolation, locked-test bindings, attestation issuer/integrity and epoch/generation checks, protocol capability/error cases and consumer compile guards. |
+| Project authority/board storage | Fake project ledgers and authenticated people, agents and services; forged identities/issuers refused; current/removed/unknown membership, quorum/rejection/withdrawal/expiry, new round and duplicate/conflicting keys. Both SurrealDB and PostgreSQL preserve accepted authority fences, attestation receipts and audit without creating a common approval ledger; project adapter contract tests prove its fact/history custody. |
 | Invalidation/admission | Concurrent baseline versus decision and transition, dependency update/addition, parallel child completion, policy activation, input ABA, double transition and approval revocation; no partial writes. Verify unaffected scope survives while affected downstream approvals stale immediately for admission. |
-| Every route/effect | UI/API/CLI/Rust, scheduler/reaper, result callbacks, subtask/covered/parent closes, import/restore and old-writer bypass attempts. Missing/error/panic/timeout/cached pass refuses. Default/project landing parity, head/package/target movement, crash before send/after effect, duplicate reconciliation and failed deploy/retry fixtures. |
+| Every route/effect | UI/API/CLI/Rust, scheduler/reaper, result callbacks, subtask/covered/parent closes, import/restore and old-writer bypass attempts. Missing/error/panic/timeout/cached pass refuses. Test out-of-order/replayed attestations, lost observation acknowledgements, ledger/board restore epochs and withdrawal during evaluation/dispatch. Default/project landing parity, head/package/target movement, crash before send/after effect, duplicate reconciliation and failed deploy/retry fixtures. |
 | Client/project integration | Phone/wide pending, rejected, outdated, unknown and changed-target gate views; a person approves the exact request, stale form refuses, agent cannot approve. Client build/lint, screenshots and isolated four-handoff fixture with fake membership and guards, plus unchanged default-project behavior. |
 
 Run each slice's closest unit/store/contract/API/CLI tests and repository lint. Review coverage
