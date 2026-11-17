@@ -172,14 +172,22 @@ async fn served(root: &Path, url: &str, headers: &[(&str, &str)]) -> (u16, Strin
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
-    (status, control, etag, String::from_utf8(body.to_vec()).unwrap())
+    (
+        status,
+        control,
+        etag,
+        String::from_utf8(body.to_vec()).unwrap(),
+    )
 }
 
 /// The theme files the page asks for, under the base: its stylesheet, its tab's icon and its
 /// header's icon, each with the version the shell gave it.
 fn theme_files(page: &str) -> [String; 3] {
     let href = |open: &str| {
-        let at = page.find(open).unwrap_or_else(|| panic!("{open} in {page}")) + open.len();
+        let at = page
+            .find(open)
+            .unwrap_or_else(|| panic!("{open} in {page}"))
+            + open.len();
         page[at..at + page[at..].find('"').unwrap()].to_string()
     };
     [
@@ -243,8 +251,12 @@ async fn a_theme_file_asked_with_the_shells_version_is_kept_until_it_changes() {
         (200, symphony::assets::REVALIDATE, etag.as_str()),
         "with no version it is revalidated by its tag"
     );
-    let (status, _, _, body) =
-        served(&root, "/lantern/look/look.css", &[("If-None-Match", etag.as_str())]).await;
+    let (status, _, _, body) = served(
+        &root,
+        "/lantern/look/look.css",
+        &[("If-None-Match", etag.as_str())],
+    )
+    .await;
     assert_eq!((status, body.as_str()), (304, ""));
 }
 

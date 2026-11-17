@@ -3,9 +3,7 @@
 
 use std::path::Path;
 
-use symphony::assets::{
-    KEEP, REVALIDATE, bust, cache_headers, local_file, validator, versioned,
-};
+use symphony::assets::{KEEP, REVALIDATE, bust, cache_headers, local_file, validator, versioned};
 
 use super::{Tree, png};
 
@@ -162,7 +160,10 @@ fn a_request_naming_the_current_validator_may_be_kept_for_good() {
 
 /// The `v` of `url`, which [`versioned`] gave it.
 fn version(url: &str) -> &str {
-    let at = url.find("?v=").unwrap_or_else(|| panic!("no version in {url}")) + "?v=".len();
+    let at = url
+        .find("?v=")
+        .unwrap_or_else(|| panic!("no version in {url}"))
+        + "?v=".len();
     url[at..].split('#').next().unwrap()
 }
 
@@ -171,8 +172,12 @@ fn a_path_is_versioned_by_the_validator_its_answer_is_kept_for_good_under() {
     let tree = project();
     tree.write("look/look.css", "main{}");
     let url = versioned("/look/look.css", &tree.root);
-    assert_eq!(url, format!("/look/look.css?v={}", v(&tree, "look/look.css")));
-    let (etag, control) = cache_headers(&tree.path("look/look.css"), &format!("v={}", version(&url)));
+    assert_eq!(
+        url,
+        format!("/look/look.css?v={}", v(&tree, "look/look.css"))
+    );
+    let (etag, control) =
+        cache_headers(&tree.path("look/look.css"), &format!("v={}", version(&url)));
     assert_eq!((etag, control), (format!("\"{}\"", version(&url)), KEEP));
     tree.write("look/look.css", "main{color:red}");
     let changed = versioned("/look/look.css", &tree.root);
