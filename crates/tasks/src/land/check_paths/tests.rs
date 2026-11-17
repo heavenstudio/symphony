@@ -174,7 +174,7 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
         "crates/symphony/src/nightly/checks.rs",
         "crates/symphony/src/nightly/steps.rs",
         "crates/tasks/src/land.rs",
-        "crates/tasks/src/fast_fix.rs",
+        "crates/tasks/src/stamps.rs",
         "crates/tasks/src/red.rs",
         "crates/tasks/src/store/work/red.rs",
     ] {
@@ -184,6 +184,13 @@ fn the_default_names_the_tests_the_recipes_the_budget_and_the_project_files_chec
         named("crates/tasks/src/land/check_paths.rs"),
         ["/crates/tasks/src/land/"]
     );
+    for reader in ["read.rs", "read/tests.rs", "tests.rs"] {
+        let matches = named(&format!("crates/tasks/src/stamps/{reader}"));
+        assert!(
+            matches.contains(&"/crates/tasks/src/stamps/"),
+            "{reader}: {matches:?}"
+        );
+    }
     // The docs audit's modules: what pictures it judges, and the reader of the recipes a text may
     // name, whose lists are under `tools/`.
     for module in ["pictures.rs", "recipes.rs"] {

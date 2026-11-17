@@ -50,7 +50,7 @@ fn needed(stamps: &[&str], tip: Option<&str>) -> Needed {
 }
 
 #[test]
-fn a_task_needs_its_assessment_on_its_tip_the_defaults_with_none_and_review_alone_as_a_fast_fix() {
+fn a_task_needs_its_assessment_even_with_a_legacy_mark_and_the_defaults_with_none() {
     let unassessed = Needed::of(&task(Vec::new()), &nowhere(), Some(TIP)).unwrap();
     assert_eq!(unassessed.stamps, ["review"]);
     assert!(unassessed.review() && unassessed.needs.is_none());
@@ -67,14 +67,14 @@ fn a_task_needs_its_assessment_on_its_tip_the_defaults_with_none_and_review_alon
     // On another tip, or from the brief, the defaults stand beside what it names.
     assert_eq!(needed(&["tests"], Some(OTHER)).stamps, ["tests", "review"]);
     assert_eq!(needed(&[], None).stamps, ["review"]);
-    // A fast fix is judged as before stamps, its needs unread.
+    // A legacy mark never bypasses the assessment.
     let fast = task(vec![
-        (crate::fast_fix::MARK, json!("a one-line fix")),
+        ("fast_fix", json!("a one-line fix")),
         (crate::stamps::NEEDS, assessed(&["tests"], Some(TIP))),
     ]);
     let fast = Needed::of(&fast, &nowhere(), Some(TIP)).unwrap();
-    assert_eq!(fast.stamps, ["review"]);
-    assert!(fast.needs.is_none() && !fast.told());
+    assert_eq!(fast.stamps, ["tests"]);
+    assert!(fast.needs.is_some() && fast.told());
 }
 
 #[test]

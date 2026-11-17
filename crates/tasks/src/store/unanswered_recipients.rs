@@ -40,6 +40,22 @@ enum Change {
     Release(Option<&'static str>),
 }
 
+/// Today's exclusive executor, or its last holder after departure. This supplies routing identity,
+/// not proof of current ownership, and is separate from the per-post recipients `resolve` returns.
+pub(super) fn executor(thread: &[Message], current: &[Role]) -> Option<String> {
+    current
+        .iter()
+        .find(|r| r.role == "executor")
+        .map(|r| r.handle.clone())
+        .or_else(|| {
+            thread
+                .iter()
+                .filter(|post| matches!(change(post), Some(Change::Acquire("executor"))))
+                .max_by_key(|post| post.id)
+                .map(|post| post.sender.clone())
+        })
+}
+
 fn change(post: &Message) -> Option<Change> {
     if post.kind != "system" {
         return None;
@@ -249,5 +265,28 @@ mod tests {
         assert_eq!(resolved[&2], assigned(&["a"], "reviewer"));
         assert_eq!(resolved[&5], assigned(&["a"], "reviewer"));
         assert!(!resolved.contains_key(&6));
+    }
+
+    #[test]
+    fn recovery_uses_the_latest_executor_even_after_departure_without_reassigning_posts() {
+        let mut thread = vec![
+            post(1, "a", "a claimed it", None),
+            post(2, "owner", "old", Some("@executor")),
+            post(3, "b", "b claimed it, handed over from a (lost)", None),
+            post(4, "b", "b released every role (left)", None),
+            post(5, "reviewer", "reviewer joined as reviewer", None),
+        ];
+        thread.reverse();
+        assert_eq!(executor(&thread, &[]).as_deref(), Some("b"));
+        assert_eq!(resolve(&thread, &[])[&2], assigned(&["a"], "executor"));
+        let current = [Role {
+            handle: "imported".into(),
+            role: "executor".into(),
+            since: 2.0,
+            expires: None,
+            health: super::super::super::Health::Live,
+        }];
+        assert_eq!(executor(&thread, &current).as_deref(), Some("imported"));
+        assert!(executor(&[], &[]).is_none());
     }
 }

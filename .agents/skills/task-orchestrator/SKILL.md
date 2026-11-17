@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 53b95bdeec26a194 files=SKILL.md -->
+<!-- symphony-stamp: f23625a4eb9dbc0d files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -43,9 +43,7 @@ full suite).
    tests/nightly-red-*) before anything else. Its assessor (step 5) reads what its
    fix needs: its tests, the failing tests unchanged and green at its tip, and a
    fresh reviewer's approve as well where the fix changes a test, a check, a budget
-   or a run step ([land] check_paths). One filed with the fast-fix mark by an older
-   board keeps that path until it closes: yours to approve when its fix changes no
-   test or check, a fresh reviewer's otherwise. A test red on load (it passes
+   or a run step ([land] check_paths). A test red on load (it passes
    alone, or its failure is a wall-clock bound, a sleep-ordered step or a timeout
    under load) is discarded in its red's own fix,
    with a line on the red's thread naming it, the evidence and what it proved; the
@@ -113,8 +111,7 @@ full suite).
    Follow the project's review tiers and stamps. Reviewers must be independent of
    author, requester and lander. Never let an executor approve its own branch: the
    board refuses the verdict of a session that executed the task or a slice of it (a
-   subtask filed without --instruction), and, but on a task an older board filed
-   with the fast-fix mark, the reviewer's role and the verdict of one that
+   subtask filed without --instruction), and the reviewer's role and the verdict of one that
    orchestrates it, orchestrated it or filed it, you included; a fresh reviewer gives
    it, holding the reviewer role on the task.
    Land a task with just land SLUG --as HANDLE once every stamp it needs stands on

@@ -3,6 +3,9 @@ use crate::common::Backend;
 
 use super::*;
 
+#[path = "pull_recovery.rs"]
+mod recovery;
+
 on_both! {
 fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty(backend: Backend) {
     for existing_gap in [false, true] {

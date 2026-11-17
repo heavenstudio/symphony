@@ -69,18 +69,41 @@ pub(in crate::store) fn parents() -> Pg<'static> {
     )
 }
 
-/// Fence the recipient and lock the observed task edges: PostgreSQL repeatable-read alone
-/// would let a concurrent reply or parent move commit after the check without a write conflict.
+fn successor_inputs() -> String {
+    format!("jsonb_build_object('version', (SELECT version FROM task WHERE slug = v ->> 'slug'),
+        'holders', coalesce((SELECT jsonb_agg(jsonb_build_array(r.handle,
+            (SELECT {} FROM session s WHERE s.handle = r.handle),
+            (SELECT doc -> 'address' FROM callback_state WHERE id = to_jsonb(r.handle)),
+            coalesce((SELECT doc -> 'confirmed_until' FROM callback_state WHERE id = to_jsonb(r.handle)), '0'::jsonb)
+        ) ORDER BY r.handle) FROM role r WHERE r.slug = v ->> 'slug' AND r.role = 'executor'), '[]'::jsonb))",
+        super::row("s"))
+}
+
+pub(in crate::store) fn successors() -> Pg<'static> {
+    Pg::read(successor_inputs())
+}
+
+/// Fence sessions in the task writer's order and lock observed task edges and native presence:
+/// repeatable-read alone would allow a reply, replacement or confirmation to pass the decision.
 pub(in crate::store) fn reserve() -> Pg<'static> {
     Pg::script(format!(
-        "DECLARE key_ jsonb := jsonb_build_array(v -> 'slug', v -> 'handle', v -> 'post'); status_ text; BEGIN \
+        "DECLARE key_ jsonb := jsonb_build_array(v -> 'slug', v -> 'handle', v -> 'post'); status_ text; successor_ jsonb; witness_ text; BEGIN \
         board_answer := 'false'; \
-        {} \
+        FOR witness_ IN SELECT v ->> 'handle' UNION SELECT h ->> 0 \
+            FROM jsonb_array_elements(coalesce(v -> 'successors' -> 'holders', '[]'::jsonb)) h ORDER BY 1 LOOP \
+            {witness_fence} \
+        END LOOP; \
         PERFORM 1 FROM task WHERE slug = v ->> 'slug' OR slug IN \
-            (SELECT p ->> 0 FROM jsonb_array_elements(v -> 'parents') p) ORDER BY slug FOR SHARE; \
+            (SELECT p ->> 0 FROM jsonb_array_elements(v -> 'parents') p) ORDER BY slug FOR UPDATE; \
+        IF v ? 'successors' THEN \
+            FOR successor_ IN SELECT h FROM jsonb_array_elements(v -> 'successors' -> 'holders') h LOOP \
+                PERFORM 1 FROM callback_state WHERE id = successor_ -> 0 FOR UPDATE; \
+            END LOOP; \
+        END IF; \
         IF NOT EXISTS (SELECT 1 FROM unanswered_restore WHERE id = key_) \
             AND (SELECT last_seen FROM session WHERE handle = v ->> 'handle') = (v ->> 'seen')::double precision \
-            AND {} = v -> 'answers' \
+            AND {answers} = v -> 'answers' \
+            AND (NOT v ? 'successors' OR {successor_inputs} = v -> 'successors') \
             AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'parents') p \
                 WHERE (SELECT parent FROM task WHERE slug = p ->> 0) IS DISTINCT FROM p ->> 1) THEN \
             SELECT status INTO status_ FROM task WHERE slug = v ->> 'slug'; \
@@ -91,8 +114,9 @@ pub(in crate::store) fn reserve() -> Pg<'static> {
                 board_answer := to_jsonb(FOUND); \
             END IF; \
         END IF; END;",
-        super::fence("v ->> 'handle'"),
-        answers()
+        witness_fence = super::fence("witness_"),
+        answers = answers(),
+        successor_inputs = successor_inputs()
     ))
 }
 

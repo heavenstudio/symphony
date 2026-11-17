@@ -234,10 +234,24 @@ describe("a file in its viewer", () => {
       'data-viewer-call="settle"',
       'title="From above"',
       ">Above</button>",
-      '<a href="/a.item" download="true">.item</a>',
+      '<a href="/a.item" download="a.item">.item</a>',
     ]) {
       expect(html).toContain(part);
     }
+  });
+
+  it.each([
+    ["/models/final.item", "final.item"],
+    ["/models/final.item?v=/other.item", "final.item"],
+    ["/models/final.item#view/other.item", "final.item"],
+    ["/models/final.item?v=2#view", "final.item"],
+    ["/models/模型 final", "模型 final"],
+    ['/models/a & "b".item', "a &amp; &quot;b&quot;.item"],
+  ])("downloads %s under its file name", (src, filename) => {
+    const html = renderToStaticMarkup(
+      <FileViewer src={src} caption="A different caption" viewer={VIEWER} />,
+    );
+    expect(html).toContain(`download="${filename}">.item</a>`);
   });
 
   it("draws nothing for a foreign file or script, or an element that is no custom element", () => {

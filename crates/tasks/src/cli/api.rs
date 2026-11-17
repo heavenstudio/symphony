@@ -32,37 +32,11 @@ mod context;
 )]
 pub use context::{run, serve};
 
-/// The api's major: what a caller relies on, which a later build of the same major still answers.
-pub const MAJOR: i64 = 1;
+/// The api's major: version 2 refuses the retired `create.fast_fix` argument.
+pub const MAJOR: i64 = 2;
 
-/// The api's minor within [`MAJOR`]: one more each time a method takes or does something an
-/// earlier build refused or did otherwise (1: `landed`'s
-/// `from`, before which a build declares none; 2: `say`'s `key`; 3: its `adopt`; 4: `hold`, a
-/// landing's move to blocked that keeps the task's slot; 5: board-authored `notify`, whose notices
-/// take literal session recipients; 6: `move`'s `from`, the statuses alone it moves from, as a
-/// landing's changes verdict sends work in review back; 7: `create`'s `red`, the mark of a task
-/// filed for a red, which takes no slot, `mark_red` for a red filed before it and `unmark_red` for
-/// one left open as ordinary work, each from a session of kind `filer` alone, which `register`
-/// takes; 8: `tasks_for_branch`, the shared slug/recorded-branch pairing;
-/// 9: `assessment_state` and checked `record_waits`, whose `assessment/1` replies attest
-/// the task fence or the original committed occurrence; assessment/2 additionally requires the
-/// versioned producer publication binding and observes its source on every checked attempt;
-/// 10: `amend`, a task's new title and further document links in one write, which the Symphony's
-/// verdict roll-up keeps current with; 11: `landed`'s `from` takes `done`, a task its reviewer
-/// approved, which stays done; `create` takes `fast_fix`, why a fix needs no reviewer, under which
-/// its orchestrator gives the verdict, still taken for an older client though no command of this
-/// build files one ([`crate::fast_fix`]); `move` takes an approved task no landing closed from done
-/// back to review; and `verdict` refuses a session that ever executed the task; 12: the owner's
-/// asks, `open_ask`, `ask`, `asks`, `hold_ask`, `answer_ask`, `answer_about` and `close_ask`,
-/// over the board's `ask` table; 13: `done`'s `covered_by`, a task closed as covered by another
-/// task's landing, and `move`'s `reason`, a post saying why it moves, in the move's write; 14:
-/// `in_status_since`, when each task named took the status it holds, by slug, as `tasks list
-/// --json` carries it; 15: `move`'s and `hold`'s `on` and `why`, what a block waits on
-/// ([`crate::waits_on::Thing`]) and why in a few words, kept on the task in the move's write, a
-/// block given neither recording nothing, as before). Each added a method or what one takes, and
-/// none removed or changed what an earlier build took or answered, so the fifteen are minors of
-/// major 1.
-pub const MINOR: i64 = 15;
+/// The api's minor within [`MAJOR`].
+pub const MINOR: i64 = 0;
 
 /// Why a call has no result.
 enum Fail {
