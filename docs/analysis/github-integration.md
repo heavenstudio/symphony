@@ -8,13 +8,20 @@ Recommend one optional GitHub adapter with independently enabled issue and PR ca
 runs outside the board through the versioned JSON API. A process plugin can present status and
 explicit actions. Disabling it leaves local tasks, reviews and landing available.
 
+The [delivery decision](../DECISIONS.md#github-outbound-pr-delivery) directs enabled PR mode to
+the requirements in [[task:inbox/change-just-land-and-review-commands-to]]: stamped/code work
+lands through `gh` PR squash merge, with the required local evidence represented and enforced
+on GitHub. Checks remain local; there is no per-PR hosted CI. Simple document-only local delivery
+is an optional constrained exception for that concept to specify. These are design requirements,
+not changes to today's production landing command.
+
 ## Existing contracts and gaps
 
 | Boundary | What exists | Relevant limit |
 | --- | --- | --- |
 | Board access | [Tasks API](../TASKS.md#the-tasks-api) 2.0: `version`, `tasks`, `get`, `create`, `amend`, `thread`, keyed `say`, guarded lifecycle operations | Creation already enforces unique slugs; internal task ID is not exposed here. No conditional brief update; `amend` updates title/links, not the brief. |
 | Presentation | [Process plugins](../PLUGIN_PROTOCOL.md): commands, components, routes, board actions, watches | A watch warms/forgets state; it is not a durable task-event feed. Process plugins cannot supply board fields or gates. |
-| Delivery here | [Default land](../TASKS.md#the-default-landing): required stamps at the reviewed tip, local merge, then main push | [Standing rules](../../RULES.md) authorize no task-branch pushes. Outbound PR publication needs an explicit policy change before activation here. |
+| Delivery here | [Default land](../TASKS.md#the-default-landing): required stamps at the reviewed tip, local merge, then main push | This remains the implemented path. Enabled PR delivery needs the separately scoped squash-merge/evidence enforcement implementation and selected branch publication before activation. |
 | GitHub | Issue and PR REST endpoints | Issue listings include PRs. Separate them by `pull_request`; use PR endpoints for PR identity/head information. [GitHub documents the distinction](https://docs.github.com/en/rest/issues/issues). |
 
 The adapter never writes database tables directly or derives API behavior from Symphony source.
@@ -39,6 +46,8 @@ Initially an explicit bounded reconcile command does the work. A scheduler may l
 same operation. Neither a page render nor each agent/worktree starts a worker. One lock protects
 the project's shared integration state, not the machine. GitHub failures leave pending work and
 visible diagnostics; they do not stop the board or implicitly become landing gates.
+In enabled PR delivery, the configured GitHub evidence gate is explicit: a failed remote check
+or unavailable merge blocks that delivery, without silently falling back to local merge.
 
 ## Enable, disable and credentials
 
@@ -68,8 +77,10 @@ a second publisher unnoticed.
 
 Prefer a repository-scoped GitHub App installation for unattended use. Issue exchange needs
 issues read/write; PR publication needs pull requests read/write, and branch publication also
-needs contents write. Import/track-only operation can stay read-only. No administration or
-workflows permission is requested. GitHub supports restricting installation tokens to selected
+needs contents write. Import/track-only operation can stay read-only. These are transport
+permissions; the separate landing concept specifies trusted stamp reporting and repository
+enforcement permissions. No administration or workflow mutation is implicit in the adapter.
+GitHub supports restricting installation tokens to selected
 repositories and permissions; see [App security practices](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/best-practices-for-creating-a-github-app).
 An explicit fine-grained token provider can serve a local trial; never silently reuse all `gh`
 or Git credentials. Key material belongs in an OS credential store or restricted operator secret
@@ -89,7 +100,7 @@ attachments or linked private URLs automatically.
 | Public local description | Curated export may differ from the execution brief. Preview before first publication; later edits use the same conflict rule. |
 | Labels/assignees | Write only configured adapter-owned labels; preserve all others. Priority mapping is explicit. GitHub assignees are not agent handles. |
 | Workflow, roles, dependencies, stamps | Symphony owns these. Remote close/reopen becomes a triage request, never automatic local completion, cancellation or revival. |
-| Delivery | A proved local land can close its linked issue when that task's policy asks. Cancellation has a separate explanation and is never recorded as delivery. |
+| Delivery | A proved configured land can close its linked issue when that task's policy asks. In enabled PR mode that includes the canonical remote squash result and local reconciliation. Cancellation has a separate explanation and is never recorded as delivery. |
 | Comments | Selected remote discussion becomes attributed keyed notes. Export only messages explicitly marked public, excluding private owner notes, logs, screenshots, callback addresses and attachments. |
 | Contributor PR | Link and show head SHA/state. New commits invalidate evidence for the previous SHA. GitHub review does not automatically become a local verdict. |
 
@@ -141,26 +152,32 @@ No tunnel or shared-server reconfiguration is implicit.
 
 A PR needs a remote head and base. Main against that same main after delivery cannot represent
 the delivered diff; [GitHub's PR endpoint](https://docs.github.com/en/rest/pulls/pulls#create-a-pull-request)
-defines those inputs. This is the material delivery decision:
+defines those inputs. The enabled-mode requirements are settled; their detailed landing design
+is owned by [[task:inbox/change-just-land-and-review-commands-to]].
 
-| Option | Visible result | Effect on policy |
-| --- | --- | --- |
-| **A. Track PRs and publish delivery links first** | Incoming PRs linked to tasks; local deliveries update issues with merge links. | Only land pushes main. Creates no outbound task PR. Smallest initial release. |
-| **B. Publish PR before local land — recommended for outbound PRs** | One PR per parent task and a stable remote head showing its reviewed SHA. | Explicitly permit selected task-branch pushes; local land remains sole merger/pusher of main. |
-| C. GitHub merges, local board reconciles | GitHub becomes merge authority. | Replaces present local stamp/merge/closure sequence; outside this proposal. |
-
-Under B, publish only after the executor's one merge of main and named review tip. Push the
+Publish the parent task's draft PR after the executor's one merge of main and named review tip.
+Push the
 configured publication branch to a checked remote using argument arrays; open a draft PR with
 curated public content and SHA. This grants no stamp. Review fixes append commits. Unexpected
 remote edits or non-fast-forward updates stop for reconciliation; no force push is included.
 
-Before land, local tip, mapped PR head and required evidence must name the same SHA. Publication
-stays advisory by default; projects wanting it mandatory must configure that in their landing
-policy. After local merge and successful main push, reconcile observed GitHub state and post the
-merge link once. Prove in a scratch repository whether the local merge shape makes GitHub mark
-the PR merged; a successful close API call is not proof of merge. No GitHub merge endpoint,
-auto-merge, independent main push, tag publication, protection change or visibility change is
-part of the adapter. Importing an external PR never checks out or executes its code.
+Before land, local tip, canonical PR head and required evidence must name the same SHA. Publish
+the assessment's required or explicitly waived local evidence to GitHub so missing/stale stamps
+block merge. A remote label, comment or unauthenticated success claim is not a local stamp.
+The landing concept defines the trusted reporter, waiver authority and enforcement boundary;
+this adapter does not invent another gate engine or run hosted checks.
+
+The landing command performs the enabled `gh` squash merge, records its resulting remote commit
+and reconciles local state. Journal the attempt before dispatch and recover its canonical result
+after a lost response; a successful PR-close call is not proof of merge. Squash provenance must
+retain the reviewed PR head and its evidence even though the resulting main commit differs.
+Post delivery links/close linked issues only after that configured delivery is proved.
+
+Simple document-only local delivery may remain where a constrained policy can enforce its
+scope; a `.md` filename alone must not grant a general protected-branch bypass. The separate
+concept decides that boundary, retries, branch protection and reconciliation. Disabled PR mode
+retains local landing. The adapter never merges autonomously, enables auto-merge, publishes tags
+or changes visibility/protections. Importing an external PR never checks out or executes its code.
 
 ## Implementation and decision handoff
 
@@ -173,12 +190,13 @@ part of the adapter. Importing an external PR never checks out or executes its c
 4. Add exchange/recovery tests: lost responses, duplicate creation, state loss, concurrent edits,
    rename/transfer, 404/401, changing pagination, rate limits, disable during dispatch, reenable
    previews, malicious content, and credentials/paths in diagnostics.
-5. Add status/actions plugin and PR tracking. Add publication only after choosing B; test stale
-   heads, remote divergence, review fixes, failed main push, merge detection and crash recovery
-   after push but before acknowledgment.
+5. Add status/actions plugin and PR tracking, then implement the settled enabled PR direction
+   with its landing/evidence prerequisite. Test stale heads, remote divergence, review fixes,
+   missing/waived stamps, squash provenance, constrained document delivery and crash recovery
+   after remote success but before acknowledgment.
 
-The [delivery card](../DECISIONS.md#github-outbound-pr-delivery) asks A or B with the policy change
-and extra public branch exposure visible. A does not fulfill outbound PR creation; B does.
-Optionality and MIT are already settled by the task, so need no new question. Separate packages
-can wait for a real deployment need. The additive cards preserve existing register content and
-owner history; no broader migration is included.
+The [delivery card](../DECISIONS.md#github-outbound-pr-delivery) records the referral to the
+owner-created PR landing task; its requirements replace an assumption that every mode merges
+locally. No second A/B answer is needed. Optionality and MIT are settled too. Separate packages
+can wait for a real deployment need. Existing register content and owner history remain intact;
+no production integration or broad document migration is implemented here.

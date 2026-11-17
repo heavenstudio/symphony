@@ -4,6 +4,12 @@ This is the scratch-only evidence for deciding how to treat the historical path 
 [public-readiness audit](public-readiness.md). It grants no publication clearance and changes no
 real repository ref, release tag, board, credential, setting or consuming checkout.
 
+The [recorded decision](../DECISIONS.md#github-historical-path-treatment) is **A: retain existing
+public history and clean current assumptions/future outputs**. The scratch rewrite below is
+comparison evidence, not an operation to apply. Existing release targets, consumer pins and
+evidence identities remain intact; the historical paths alone do not require a rewrite to
+complete readiness remediation.
+
 The confirmed material is a personal home-directory prefix in twelve historical client WASM
 blobs and one retired shipped-skill text blob. The [audit manifest](public-readiness.md#historical-path-manifest)
 identifies each without its private value. Classification found 863 build/cache paths and 261
@@ -86,13 +92,14 @@ frozen tip.
 
 ## The decision and compatibility cost
 
-The [history-treatment card](../DECISIONS.md#github-historical-path-treatment) asks this choice
-separately from outbound PR delivery.
+The [history-treatment card](../DECISIONS.md#github-historical-path-treatment) records A,
+separately from outbound PR delivery. The comparison retains the unselected option's concrete
+cost for reference.
 
 | Choice | Privacy effect | Compatibility effect |
 | --- | --- | --- |
-| **A. Preserve public history; remove personal paths from future outputs — recommended on current evidence** | Existing historical source/cache paths remain public. Fix current machine assumptions and prevent new personal build-path leakage. A later confirmed secret/private-material finding triggers new triage. | Existing Git pins, tags, task evidence and clones keep their identities. No exceptional force update or coordinated clone migration. |
-| **B. Coordinate targeted history cleanup** | Removes the identified path-bearing objects from the rewritten reachable graph, retaining register text/history. Does not recall copies, forks or cached views already public. | Main, both older heads, all ten tags and the known consumer pin need migration; old compiled-client versions become incomplete. Existing task stamps, links and runs keyed by old SHAs need a disposition. No live rewrite without owner choice and a separately coordinated execution plan. |
+| **A. Preserve public history; remove personal paths from future outputs — selected** | Existing historical source/cache paths remain public. Fix current machine assumptions and prevent new personal build-path leakage. A later confirmed secret/private-material finding triggers new triage. | Existing Git pins, tags, task evidence and clones keep their identities. No exceptional force update or coordinated clone migration. |
+| B. Coordinate targeted history cleanup — not selected | Removes the identified path-bearing objects from the rewritten reachable graph, retaining register text/history. Does not recall copies, forks or cached views already public. | Main, both older heads, all ten tags and the known consumer pin need migration; old compiled-client versions become incomplete. Existing task stamps, links and runs keyed by old SHAs need a disposition. No live rewrite is authorized by the recorded A decision. |
 
 Under B, identical current source trees do not make old commit IDs valid in a fresh clone of the
 rewritten graph. The consumer needs a new manifest revision and lockfile through its own gate;
@@ -110,6 +117,12 @@ Earlier decisions checked: the [accepted client distribution timing](../DECISION
 keeps Git distribution available until consumers migrate; [consumer versioning](../DECISIONS.md#consumer-contract-versioning)
 and [delivery](../DECISIONS.md#release-delivery) retain existing pin contracts; the
 [picture-storage split](../DECISIONS.md#pictures-in-every-clone) keeps card pictures and owner
-history. None chooses whether these personal source/cache paths justify rewriting that history.
-A keeps those identities; B is an explicit privacy-versus-compatibility choice. Optional
-integration and MIT licensing are already settled and are not asked again.
+history. They did not themselves settle this personal-path scope; the recorded A decision does.
+Optional integration and MIT licensing remain settled and are not asked again.
+
+Current media privacy remediation belongs to [[task:docs/public-media-privacy-review]], including
+the four timeline-burst wide images with confirmed machine labels. Clearly labelled redacted
+derivatives can repair their current presentation without rewriting public history or presenting
+an edited capture as an original. That task owns exact image hashes, regions and replacements;
+this historical-path decision does not turn unconfirmed media concerns into credentials or grant
+general permission to erase historical evidence.
