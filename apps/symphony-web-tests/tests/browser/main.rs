@@ -12,10 +12,6 @@
 //!   beside the total. Deferred page kinds and the whole build are reported separately; a
 //!   visit pays for the resources it actually loads;
 //! - a return visit loads at most 20 KB (the build is cached by its hashed names);
-//! - on an emulated mid phone over a tailnet link (CPU slowed 4x, 10 Mbit/s, 40 ms round trip)
-//!   the board is interactive within 2 s of wall time, not charged at the machine's load: most
-//!   of it is the network and the server, which a loaded machine does not slow, and a board
-//!   answered late must fail it whatever the load (the wall is 0.4-0.5 s at load 8.5);
 //! - one feed event changes one card in place, and the page fetches nothing for it;
 //! - a page the browser keeps for back and forward holds no feed stream, and a kept page shown
 //!   again reads what changed (`kept_pages`).
