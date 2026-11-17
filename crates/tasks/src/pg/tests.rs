@@ -119,8 +119,12 @@ impl Fake {
                     }
                     stream.write_all(&bytes(answer)).unwrap();
                 }
-                // Nothing more is said: a client still reading meets the connection's end.
-                stream.shutdown(std::net::Shutdown::Write).unwrap();
+                // A client still reading meets the end; one done may already have disconnected.
+                stream
+                    .shutdown(std::net::Shutdown::Write)
+                    .unwrap_or_else(|why| {
+                        assert_eq!(why.kind(), std::io::ErrorKind::NotConnected, "{why}");
+                    });
                 let mut rest = Vec::new();
                 let _ = stream.read_to_end(&mut rest);
                 after.extend(rest);
@@ -510,7 +514,7 @@ fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_client
 }
 
 #[test]
-fn a_server_gone_after_an_answer_fails_the_next_request_as_it_is_sent() {
+fn a_server_gone_after_an_answer_fails_the_next_request_and_drops_its_connection() {
     let (tell, gone) = mpsc::channel();
     let dir = serving(move |mut stream| {
         while wire::read(&mut stream).unwrap().kind != b'S' {}
@@ -519,15 +523,23 @@ fn a_server_gone_after_an_answer_fails_the_next_request_as_it_is_sent() {
         tell.send(()).unwrap();
     });
     let client = Client::new(dir.path(), "board");
-    client.request(&[Step::bare("SELECT 1")]).unwrap();
-    gone.recv().unwrap();
-    let Err(DbError::Failed(said)) = client.request(&[Step::bare("SELECT 1")]) else {
-        panic!("a request to a server that has gone fails");
+    let failed = bounded("a request to a server that has gone", move || {
+        client.request(&[Step::bare("SELECT 1")]).unwrap();
+        gone.recv().unwrap();
+        let failed = client.request(&[Step::bare("SELECT 1")]);
+        (failed, client.connection.lock().unwrap().is_none())
+    });
+    let (Err(DbError::Failed(said)), true) = failed else {
+        panic!("a request to a server that has gone fails, and its connection goes: {failed:?}");
     };
-    assert!(said.contains(": sending a request: "), "{said}");
+    // Either the write or the first read can meet the close. Reconnecting would instead say
+    // "is not answering on": this request must fail on the connection it already held.
     assert!(
-        client.connection.lock().unwrap().is_none(),
-        "the connection went"
+        said.starts_with(&format!(
+            "the board's PostgreSQL at {}: ",
+            dir.path().display()
+        )),
+        "{said}"
     );
 }
 
