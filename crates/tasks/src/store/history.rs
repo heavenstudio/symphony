@@ -30,23 +30,6 @@ fn status_vars(since: f64) -> Value {
     ])
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn status_variables_keep_every_field_its_order_and_numeric_value() {
-        for since in [0.0, -0.0, f64::MAX] {
-            let expected = json!({
-                "since": since, "moved": MOVED, "claimed": CLAIMED,
-                "block": BLOCK_LINE, "unblock": UNBLOCK_LINE,
-                "waits": WAITS_SET, "under": UNDER,
-            });
-            assert_eq!(status_vars(since).to_string(), expected.to_string());
-        }
-    }
-}
-
 impl Store {
     /// The current waits occurrence from historical boards whose assessment has no sequence.
     /// Match the standing text as well, so malformed or unrelated evidence supplies no identity.
@@ -192,5 +175,22 @@ impl Store {
             reading = further;
         }
         Ok(found)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_variables_keep_every_field_its_order_and_numeric_value() {
+        for since in [0.0, -0.0, f64::MAX] {
+            let expected = json!({
+                "since": since, "moved": MOVED, "claimed": CLAIMED,
+                "block": BLOCK_LINE, "unblock": UNBLOCK_LINE,
+                "waits": WAITS_SET, "under": UNDER,
+            });
+            assert_eq!(status_vars(since).to_string(), expected.to_string());
+        }
     }
 }
