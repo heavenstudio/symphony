@@ -238,7 +238,7 @@ fn numeric_fields_keep_the_surrealdb_exports_representation() {
     postgres.store.copy(&expected).unwrap();
     check(&expected);
     raw.row("task", slug.as_str()).delete().unwrap();
-    assert_eq!(raw.table("copy_fields").count().unwrap(), 0);
+    assert_eq!(raw.table("copied_fields").count().unwrap(), 0);
     let fresh = symphony_board::NewTask::new(&slug, "New task at the same slug", "owner");
     postgres.store.create(&fresh).unwrap();
     raw.row("task", slug.as_str())

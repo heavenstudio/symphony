@@ -3,7 +3,7 @@
 //! dump is one request here, the largest a board holds being far below what one takes, so a copy
 //! stages nothing: one cut short leaves the board as it was, and is made again whole.
 //!
-//! `copy_fields` keeps imported fields as text beside their task: jsonb cannot preserve a JSON
+//! `copied_fields` keeps imported fields as text beside their task: jsonb cannot preserve a JSON
 //! number's spelling or distinguish an exponent float from an integer. The dump gives both that
 //! text and its jsonb normalization to `Store::dump`, which restores unchanged numbers. A delete
 //! removes the text with the task; another copy replaces it in the same transaction.
@@ -25,8 +25,8 @@ INSERT INTO {table} SELECT r.* FROM jsonb_populate_recordset(NULL::{table}, v ->
         );
     }
     block.push_str(
-        "DELETE FROM copy_fields;
-INSERT INTO copy_fields SELECT r.* FROM jsonb_populate_recordset(NULL::copy_fields, v -> 'copy_fields') AS r;
+        "DELETE FROM copied_fields;
+INSERT INTO copied_fields SELECT r.* FROM jsonb_populate_recordset(NULL::copied_fields, v -> 'copied_fields') AS r;
 INSERT INTO counter (id, last, ts) VALUES ('\"message\"', (v ->> 'last')::bigint, (v ->> 'last_ts')::double precision)
     ON CONFLICT (id) DO UPDATE SET last = EXCLUDED.last, ts = EXCLUDED.ts;
 INSERT INTO counter (id, last) VALUES ('\"task\"', (v ->> 'last_task')::bigint)
@@ -70,7 +70,7 @@ pub(in crate::store) static DUMP: std::sync::LazyLock<String> = std::sync::LazyL
     format!(
         "jsonb_build_array(jsonb_build_object({}),
         coalesce((SELECT jsonb_agg(jsonb_build_array(id, original, original::jsonb))
-            FROM copy_fields), '[]'::jsonb))",
+            FROM copied_fields), '[]'::jsonb))",
         tables.join(",\n    ")
     )
 });

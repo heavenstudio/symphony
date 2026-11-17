@@ -168,7 +168,7 @@ impl Store {
                 .collect();
             vars[*table] = Value::Array(rows);
         }
-        vars["copy_fields"] = Value::Array(
+        vars["copied_fields"] = Value::Array(
             tables
                 .iter()
                 .filter(|(table, _)| *table == "task")
@@ -236,7 +236,7 @@ impl Store {
     /// as SurrealDB keeps them, where PostgreSQL keeps the shorter first: a board's export is one text
     /// in either database. PostgreSQL also restores a copied field's numeric spelling while that
     /// value is unchanged: jsonb alone expands exponents and forgets negative zero. The original
-    /// fields text in `copy_fields` is replaced with the copy and removed with the task.
+    /// fields text in `copied_fields` is replaced with the copy and removed with the task.
     pub fn dump(&self) -> Result<Dump, Error> {
         let dump = || both(sql::DUMP, Pg::read(postgres::copy::DUMP.as_str()));
         let mut dump: Dump = if self.db.is_postgresql() {

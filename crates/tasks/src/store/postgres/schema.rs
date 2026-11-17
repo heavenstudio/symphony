@@ -118,11 +118,11 @@ pub(in crate::store) struct Table {
 
 use Kind::{Array, Bool, Float, Int, Object, Text};
 
-/// The board's twenty tables, `words` (the full-text indexes, [`WORDS`]), and `copy_fields`
+/// The board's twenty tables, `words` (the full-text indexes, [`WORDS`]), and `copied_fields`
 /// (the imported fields' numeric spellings, [`super::copy`]).
 pub(in crate::store) const TABLES: [Table; 22] = [
     Table {
-        name: "copy_fields",
+        name: "copied_fields",
         columns: &[req("original", Text)],
     },
     Table {
@@ -628,14 +628,14 @@ fn triggers() -> String {
         );
     }
     sql.push_str(
-        "CREATE OR REPLACE FUNCTION board_uncopy_fields() RETURNS trigger LANGUAGE plpgsql AS $f$
+        "CREATE OR REPLACE FUNCTION board_uncopied_fields() RETURNS trigger LANGUAGE plpgsql AS $f$
 BEGIN
-    DELETE FROM copy_fields WHERE id = OLD.id;
+    DELETE FROM copied_fields WHERE id = OLD.id;
     RETURN NULL;
 END
 $f$;
-CREATE OR REPLACE TRIGGER task_uncopy_fields AFTER DELETE ON task
-    FOR EACH ROW EXECUTE FUNCTION board_uncopy_fields();
+CREATE OR REPLACE TRIGGER task_uncopied_fields AFTER DELETE ON task
+    FOR EACH ROW EXECUTE FUNCTION board_uncopied_fields();
 CREATE OR REPLACE TRIGGER session_made AFTER INSERT OR DELETE ON session \
          FOR EACH ROW EXECUTE FUNCTION board_session_changed();
 CREATE OR REPLACE TRIGGER session_changed AFTER UPDATE ON session \
