@@ -115,7 +115,7 @@ fn best_sources(groups: BTreeMap<String, Vec<ScoredSource>>) -> BTreeMap<String,
             Entry::Occupied(mut entry) => {
                 let previous = rows
                     .get(*entry.get())
-                    .expect("selected indices came from these same rows");
+                    .expect("selected row exists");
                 // The entry has this same slug. Only a strictly better row replaces it.
                 if row
                     .rank
@@ -136,7 +136,7 @@ fn best_sources(groups: BTreeMap<String, Vec<ScoredSource>>) -> BTreeMap<String,
     for at in chosen {
         let row = &mut rows
             .get_mut(at)
-            .expect("selected indices came from these same rows")
+            .expect("selected row exists")
             .source;
         let slug = std::mem::take(&mut row.slug);
         sources.insert(
