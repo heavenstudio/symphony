@@ -384,7 +384,7 @@ impl Store {
         let mut slugs: Vec<String> = self.retrying(|| {
             self.transact(read(), json!({"handle": handle, "executing": EXECUTING}))
         })?;
-        slugs.sort();
+        slugs.sort_unstable();
         slugs.dedup();
         Ok(slugs)
     }

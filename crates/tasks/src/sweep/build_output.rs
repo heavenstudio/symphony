@@ -216,7 +216,7 @@ fn folders(path: &Path, alive: &dyn Fn(i64) -> bool) -> Vec<Folder> {
             .map(|entry| entry.path())
             .filter(|aside| within(path, aside))
             .collect();
-        left.sort();
+        left.sort_unstable();
         found.extend(left.into_iter().map(Folder::Cargo));
     }
     found.extend(
@@ -304,7 +304,7 @@ fn build_locks(folder: &Path) -> Vec<PathBuf> {
         .flat_map(|dir| LOCKS.map(|lock| dir.join(lock)))
         .filter(|lock| fs::symlink_metadata(lock).is_ok_and(|meta| meta.is_file()))
         .collect();
-    locks.sort();
+    locks.sort_unstable();
     locks
 }
 

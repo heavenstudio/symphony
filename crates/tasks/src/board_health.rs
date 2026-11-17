@@ -433,7 +433,7 @@ impl Queries {
             .filter(|(at, _)| keep(minute(*at)))
             .map(|(_, ms)| *ms)
             .collect();
-        latencies.sort_by(f64::total_cmp);
+        latencies.sort_unstable_by(f64::total_cmp);
         writes.p50_ms = percentile(&latencies, 50);
         writes.p90_ms = percentile(&latencies, 90);
         (queries, writes)

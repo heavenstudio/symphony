@@ -186,7 +186,7 @@ impl Home {
                 })
             })
             .collect();
-        found.sort_by(|a, b| order(&b.name).cmp(&order(&a.name)));
+        crate::order::sort_by(&mut found, &|a, b| order(&b.name).cmp(&order(&a.name)));
         Ok(found)
     }
 
@@ -457,7 +457,7 @@ fn log_and_manifest(store: &Path) -> Option<Vec<(PathBuf, u64, SystemTime)>> {
             }
         }
     }
-    found.sort();
+    found.sort_unstable();
     Some(found)
 }
 
