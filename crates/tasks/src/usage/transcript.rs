@@ -252,19 +252,11 @@ fn read(transcript: &Path, kept: &mut Kept) -> std::io::Result<Vec<Spent>> {
 /// `agent-ID.meta.json` says `"isFork": true` and names the call (`toolUseId`). None for any other
 /// transcript, or a meta that cannot be read, which is read whole.
 fn inherited_until(transcript: &Path) -> Option<String> {
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Meta {
-        is_fork: Option<bool>,
-        tool_use_id: Option<String>,
-    }
     let name = transcript.file_name()?.to_str()?.strip_suffix(".jsonl")?;
-    let meta = fs::read(transcript.with_file_name(format!("{name}.meta.json"))).ok()?;
-    let meta: Meta = serde_json::from_slice(&meta).ok()?;
-    meta.is_fork
-        .filter(|fork| *fork)
-        .and(meta.tool_use_id)
-        .filter(|call| !call.is_empty())
+    let meta = fs::read_to_string(transcript.with_file_name(format!("{name}.meta.json"))).ok()?;
+    let meta: Value = serde_json::from_str(&meta).ok()?;
+    let call = meta["toolUseId"].as_str().filter(|call| !call.is_empty())?;
+    (meta["isFork"] == true).then(|| call.to_string())
 }
 
 /// Whether `line` is the tool result that answers `call`: the user line ending a fork's inheritance.
@@ -289,80 +281,65 @@ fn answers(line: &[u8], call: &str) -> bool {
 
 /// One transcript line: an assistant message's id and usage, when it is one. A line that names
 /// neither is passed over unparsed, by the standard library's search, which is optimised in every
-/// build: most of a transcript is tool results, and the hook's build is a debug one.
+/// build: most of a transcript is tool results, and the hook's build is a debug one. One that does
+/// is read as a `serde_json::Value`, which every build parses anyway, so `tasks` carries no
+/// deserializer of its own for it; it is passed over when a field read here holds another kind than
+/// Claude Code writes there (a count that is no whole number, a model or a speed that is no text, a
+/// usage or a split that is no object).
 fn message(line: &[u8]) -> Option<(String, Spent)> {
     let line = std::str::from_utf8(line).ok()?;
     if !line.contains("\"assistant\"") || !line.contains("\"usage\"") {
         return None;
     }
-    let line: Line = serde_json::from_str(line).ok()?;
-    if line.kind.as_deref() != Some("assistant") {
+    let line: Value = serde_json::from_str(line).ok()?;
+    let (message, usage) = (&line["message"], &line["message"]["usage"]);
+    if line["type"] != "assistant" || !usage.is_object() {
         return None;
     }
-    let message = line.message?;
-    let (id, usage) = (message.id?, message.usage?);
-    let model = message.model.unwrap_or_default();
+    let id = message["id"].as_str()?;
+    let model = or_null(&message["model"], Value::as_str)?.unwrap_or_default();
     if id.is_empty() || model == "<synthetic>" {
         return None;
     }
-    let n = |count: Option<u64>| count.unwrap_or(0);
-    let written = n(usage.cache_creation_input_tokens);
-    let (five, hour) = usage.cache_creation.map_or((written, 0), |split| {
-        let (five, hour) = (
-            n(split.ephemeral_5m_input_tokens),
-            n(split.ephemeral_1h_input_tokens),
-        );
-        (five + written.saturating_sub(five + hour), hour)
-    });
-    let speed = usage
-        .speed
+    let n = |count: &Value| or_null(count, Value::as_u64).map(Option::unwrap_or_default);
+    let written = n(&usage["cache_creation_input_tokens"])?;
+    let split = &usage["cache_creation"];
+    let (five, hour) = match or_null(split, Value::as_object)? {
+        None => (written, 0),
+        Some(_) => {
+            let five = n(&split["ephemeral_5m_input_tokens"])?;
+            let hour = n(&split["ephemeral_1h_input_tokens"])?;
+            (five + written.saturating_sub(five + hour), hour)
+        }
+    };
+    let speed = or_null(&usage["speed"], Value::as_str)?
         .filter(|speed| !speed.is_empty())
-        .unwrap_or_else(|| "standard".into());
+        .unwrap_or("standard");
     Some((
-        id,
+        id.to_string(),
         Spent {
-            model,
-            speed,
+            model: model.to_string(),
+            speed: speed.to_string(),
             tokens: Tokens {
-                input: n(usage.input_tokens),
+                input: n(&usage["input_tokens"])?,
                 cache_write_5m: five,
                 cache_write_1h: hour,
-                cache_read: n(usage.cache_read_input_tokens),
-                output: n(usage.output_tokens),
+                cache_read: n(&usage["cache_read_input_tokens"])?,
+                output: n(&usage["output_tokens"])?,
                 calls: 1,
             },
         },
     ))
 }
 
-#[derive(Deserialize)]
-struct Line {
-    #[serde(rename = "type")]
-    kind: Option<String>,
-    message: Option<Message>,
-}
-
-#[derive(Deserialize)]
-struct Message {
-    id: Option<String>,
-    model: Option<String>,
-    usage: Option<Usage>,
-}
-
-#[derive(Deserialize)]
-struct Usage {
-    input_tokens: Option<u64>,
-    output_tokens: Option<u64>,
-    cache_read_input_tokens: Option<u64>,
-    cache_creation_input_tokens: Option<u64>,
-    cache_creation: Option<Creation>,
-    speed: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Creation {
-    ephemeral_5m_input_tokens: Option<u64>,
-    ephemeral_1h_input_tokens: Option<u64>,
+/// `value` as `kind` reads it: `Some(None)` when it is absent or null, and none at all when it holds
+/// another kind, which passes its line over.
+fn or_null<'a, T>(value: &'a Value, kind: fn(&'a Value) -> Option<T>) -> Option<Option<T>> {
+    if value.is_null() {
+        Some(None)
+    } else {
+        kind(value).map(Some)
+    }
 }
 
 /// Remove from `folder` each ledger, and its lock, nothing wrote to for [`PRUNE_AFTER`] by `now`
