@@ -590,6 +590,15 @@ fn reach_board(
         None => Ok(()),
     };
     if let Some(addr) = env.var("TASKS_SERVER") {
+        if let Some(socket) = addr.strip_prefix("postgresql:")
+            && (!Path::new(socket).is_absolute()
+                || socket.contains('\0')
+                || socket.starts_with("//"))
+        {
+            return Err(format!(
+                "TASKS_SERVER={addr:?} must name an absolute PostgreSQL socket folder as postgresql:/path"
+            ));
+        }
         let live = crate::live::named_server(addr, db, cwd, machine(env).as_deref());
         guard(&live)?;
         return Ok(Reached {
@@ -644,6 +653,15 @@ fn reach_board(
     })
 }
 
+/// A named scratch server can be a PostgreSQL socket folder. Repository discovery still
+/// reaches the existing server; no configured or live board is switched by this adapter.
+fn named_database(client: Client) -> crate::Database {
+    match client.addr().strip_prefix("postgresql:") {
+        Some(socket) => crate::pg::Client::new(Path::new(socket), client.database()).into(),
+        None => client.into(),
+    }
+}
+
 /// The board `reached`, to read and write by this build's schema, read by `clock`: a newer board
 /// is refused before any write, naming its project, and an older live one moved forward only as
 /// [`crate::live::may_move`] lets this build.
@@ -660,7 +678,7 @@ fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store
         .live(reached.live)
         .scratch(crate::live::SCRATCH_FLAG);
     let named = reached.project.is_none();
-    Store::opening(reached.client, clock, probe, &host, &how)
+    Store::opening_on(named_database(reached.client), clock, probe, &host, &how)
         .map(|store| naming(store, named))
         .map_err(|e| e.to_string())
 }
@@ -708,7 +726,7 @@ fn unchecked(reached: Reached, clock: &Clock) -> Store {
         .live(reached.live);
     let named = reached.project.is_none();
     naming(
-        Store::unchecked_as(reached.client, clock, probe, &host, &how),
+        Store::unchecked_on(named_database(reached.client), clock, probe, &host, &how),
         named,
     )
 }
@@ -740,6 +758,55 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_scratch_servers_keep_their_backend_and_database() {
+        for (address, postgres) in [
+            ("127.0.0.1:9", false),
+            ("postgresql:/tmp/board socket", true),
+        ] {
+            let env = Env {
+                vars: [
+                    ("TASKS_SERVER".into(), address.into()),
+                    ("TASKS_DATABASE".into(), "scratch_route".into()),
+                ]
+                .into(),
+                cwd: std::env::temp_dir(),
+            };
+            let reached = reach_board(&env, &env.cwd, Reaching::Peek, None).unwrap();
+            assert!(reached.project.is_none());
+            assert!(reached.live.is_none());
+            let database = named_database(reached.client);
+            assert_eq!(database.is_postgresql(), postgres);
+            assert_eq!(database.addr(), address);
+            assert_eq!(database.database(), "scratch_route");
+            assert_eq!(
+                database.requests(),
+                0,
+                "selecting a route makes no connection"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_explicit_postgresql_socket_addresses_are_refused_before_connecting() {
+        for address in [
+            "postgresql:",
+            "postgresql:relative",
+            "postgresql://host/database",
+            "postgresql:/tmp/\0socket",
+        ] {
+            let env = Env {
+                vars: [("TASKS_SERVER".into(), address.into())].into(),
+                cwd: std::env::temp_dir(),
+            };
+            let why = match reach_board(&env, &env.cwd, Reaching::Peek, None) {
+                Ok(_) => panic!("accepted {address:?}"),
+                Err(why) => why,
+            };
+            assert!(why.contains("absolute PostgreSQL socket folder"), "{why}");
+        }
+    }
 
     #[test]
     fn a_deadline_a_setting_names_replaces_the_products_and_no_number_leaves_it() {

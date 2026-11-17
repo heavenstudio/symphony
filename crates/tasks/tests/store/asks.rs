@@ -535,6 +535,7 @@ fn an_ask_moves_the_boards_marker(backend: Backend) {
 }
 }
 
+// SurrealDB alone: reconstructs SurrealDB schema 16, before the ask table existed.
 #[test]
 fn a_board_of_schema_16_gains_the_ask_table_with_every_row_kept() {
     let f = board(Backend::SurrealDb);

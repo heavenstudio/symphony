@@ -97,8 +97,12 @@ impl Store {
         {
             let floor = pool.as_ref().map_or(since, |pool| pool.floor.min(since));
             let read = sql::pool();
-            let (latest, rows): (i64, Value) = self
-                .retrying(|| self.read(&read, json!({"floor": floor, "delivered": DELIVERED})))?;
+            let (latest, rows): (i64, Value) = self.retrying(|| {
+                self.read(
+                    super::statement::both(&read, super::postgres::pool::pool()),
+                    json!({"floor": floor, "delivered": DELIVERED}),
+                )
+            })?;
             *pool = Some(Pool {
                 floor,
                 latest,

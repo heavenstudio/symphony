@@ -133,7 +133,7 @@ fn measured_inbox(f: &Fixture, handle: &str) -> (Vec<Message>, usize) {
                 bytes += read;
             }
         });
-        let client = Client::new(&addr.to_string(), "sf", f.store.client().database());
+        let client = Client::new(&addr.to_string(), "sf", f.store.database().database());
         let store = Store::unchecked(client, Box::new(|| NOW), Box::new(|_| false), HOST);
         let messages = store.inbox(handle);
         let bytes = proxy.join().unwrap().unwrap();
@@ -141,6 +141,7 @@ fn measured_inbox(f: &Fixture, handle: &str) -> (Vec<Message>, usize) {
     })
 }
 
+// SurrealDB-only: measures HTTP response bytes through its protocol relay.
 #[test]
 fn acknowledged_and_unaddressed_history_does_not_travel_as_message_bodies() {
     use symphony_board::rows::{DeliveryRow, MessageRow};
@@ -188,6 +189,7 @@ fn acknowledged_and_unaddressed_history_does_not_travel_as_message_bodies() {
 /// waits, in the CPU the server spends on it: read before and after each query from a server of the
 /// test's own, which no other test's queries reach. The client itself waits for the answer up to
 /// the backstop of that wait, however long a loaded machine keeps the server from the CPU.
+// SurrealDB alone: measures its server CPU and plans a SurrealQL key-selection query.
 #[test]
 fn acknowledged_key_selection_fits_the_shared_store_wait() {
     use std::time::{Duration, Instant};
@@ -232,11 +234,11 @@ fn acknowledged_key_selection_fits_the_shared_store_wait() {
     let _ = std::fs::remove_file(&log);
 }
 
+on_both! {
 /// A recipient further behind than one dispatch pass's pool reaches (a session long unobserved,
 /// its cursor 2100 lines back) reads its inbox from the message table, from its cursor on, and
 /// still hears what was said to it, and nothing of the lines it could never hear.
-#[test]
-fn a_recipient_far_behind_the_board_reads_its_inbox_from_its_cursor() {
+fn a_recipient_far_behind_the_board_reads_its_inbox_from_its_cursor(backend: Backend) {
     use crate::callbacks::Listener;
     use symphony_board::rows::MessageRow;
     let mut seed = Seed::default()
@@ -254,8 +256,8 @@ fn a_recipient_far_behind_the_board_reads_its_inbox_from_its_cursor() {
             ts: NOW,
         })
         .collect();
-    let f = Fixture::new(seed);
-    let listener = Listener::new(f.store.client().database());
+    let f = Fixture::on(backend, seed);
+    let listener = Listener::new(f.store.database().database());
     f.store
         .callback(
             "worker",
@@ -279,6 +281,7 @@ fn a_recipient_far_behind_the_board_reads_its_inbox_from_its_cursor() {
         !heard.iter().any(|line| line.contains("line ")),
         "{heard:?}"
     );
+}
 }
 
 on_both! {

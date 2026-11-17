@@ -27,6 +27,7 @@ fn request(host: &str, db: &str, sql: &str) -> Vec<u8> {
 /// The second write comes on the held connection after the first, which the relay has sent on
 /// while it holds the answer; the caller then closes the connection, as a client closes one whose
 /// answer did not come.
+// SurrealDB alone: exercises the SurrealDB HTTP connection resend protocol.
 #[test]
 fn a_write_sent_again_on_a_held_connection_is_counted_and_runs_on_the_server() {
     let f = Fixture::empty();

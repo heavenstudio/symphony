@@ -3,11 +3,10 @@
 //! it with nothing said since, top-level and subtasks, each with its whole thread (a post by its
 //! sender and time alone) and the red mark; one request, and no write. Then the board's figures of
 //! the day file from that read, on the scratch board the store itself wrote through its commands
-//! ([`crate::common::report_board`]).
+//! ([`crate::common::report_board_on`]).
 
-use crate::common::{Backend, Fixture, NOW, Seed, report_board as board, report_board_on};
+use crate::common::{Backend, Fixture, NOW, Seed, report_board, report_board_on};
 use symphony_board::NewTask;
-use symphony_board::board_health::queries_of;
 use symphony_board::reports::{DAY, HOUR, day, day_start};
 use symphony_board::sweep::trigger::now;
 
@@ -16,12 +15,14 @@ fn midnight() -> f64 {
     day_start(NOW)
 }
 
-// SurrealDB query telemetry is engine-specific; the same report history is checked on both below.
-#[test]
-fn one_request_reads_every_open_task_and_every_one_written_since_and_writes_nothing() {
-    let f = board();
-    let client = f.store.client();
-    let log = queries_of(client.addr(), "sf", client.database());
+on_both! {
+fn one_request_reads_every_open_task_and_every_one_written_since_and_writes_nothing(backend: Backend) {
+    // Exercise the default fixture that the server's roll-up tests share too.
+    let f = match backend {
+        Backend::SurrealDb => report_board(),
+        Backend::PostgreSql => report_board_on(backend),
+    };
+    let log = f.store.database().queries();
     let (before, writes_before) = log.report(now());
     let read = f.store.report_records(midnight()).unwrap();
     let (after, writes_after) = log.report(now());
@@ -74,6 +75,7 @@ fn one_request_reads_every_open_task_and_every_one_written_since_and_writes_noth
         16,
         "a verdict is cut to its first words"
     );
+}
 }
 
 on_both! {

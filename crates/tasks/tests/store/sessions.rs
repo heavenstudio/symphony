@@ -1,16 +1,15 @@
 //! Sessions: registering, being seen, a Claude Code agent's tool calls beating for a handle, leaving and
 //! coming back.
+use crate::common::Backend;
 
 use crate::common::{Fixture, GONE, HOST, NOW, Seed, refused};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Barrier};
 use symphony_board::health::LIVE_SECONDS;
-use symphony_board::rows::BarredKeyRow;
-use symphony_board::rpc::Client;
 use symphony_board::{Beat, Health, NewSession, Pick, Store};
 
-fn executing() -> (Fixture, String) {
-    let f = Fixture::new(Seed::default().task("sim/jump", "ready"));
+fn executing(backend: Backend) -> (Fixture, String) {
+    let f = Fixture::on(backend, Seed::default().task("sim/jump", "ready"));
     let h = f.session("worker");
     f.store.claim("sim/jump", &h).unwrap();
     (f, h)
@@ -83,19 +82,20 @@ impl Pick for Stuck {
     }
 }
 
-#[test]
-fn register_gives_a_readable_unique_handle() {
-    let f = Fixture::empty();
+on_both! {
+fn register_gives_a_readable_unique_handle(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let handles: HashSet<String> = (0..40).map(|_| f.session("worker")).collect();
     assert_eq!(handles.len(), 40);
     for h in &handles {
         assert!(readable(h), "{h}");
     }
 }
+}
 
-#[test]
-fn a_session_is_registered_with_what_it_says_of_itself() {
-    let f = Fixture::empty();
+on_both! {
+fn a_session_is_registered_with_what_it_says_of_itself(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let parent = f.session("orchestrator");
     let session = f
         .store
@@ -132,10 +132,11 @@ fn a_session_is_registered_with_what_it_says_of_itself() {
     assert_eq!((row.agent.as_deref(), session.health), (None, Health::Live));
     assert_eq!(f.store.session(&row.handle).unwrap(), session);
 }
+}
 
-#[test]
-fn every_kind_is_a_session_and_no_other() {
-    let f = Fixture::empty();
+on_both! {
+fn every_kind_is_a_session_and_no_other(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     for kind in ["orchestrator", "worker", "reviewer", "chat", "app", "filer"] {
         let h = f.session(kind);
         assert_eq!(f.store.session(&h).unwrap().row.kind, kind);
@@ -145,10 +146,11 @@ fn every_kind_is_a_session_and_no_other() {
         "kind must be one of orchestrator, worker, reviewer, chat, app, filer"
     );
 }
+}
 
-#[test]
-fn an_unknown_parent_is_refused() {
-    let f = Fixture::empty();
+on_both! {
+fn an_unknown_parent_is_refused(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let orphan = NewSession {
         parent: Some("nobody-here".into()),
         ..NewSession::new("worker")
@@ -159,10 +161,11 @@ fn an_unknown_parent_is_refused() {
     );
     assert!(f.store.sessions().unwrap().is_empty());
 }
+}
 
-#[test]
-fn handles_stay_unique_when_the_word_lists_run_out() {
-    let f = Fixture::empty();
+on_both! {
+fn handles_stay_unique_when_the_word_lists_run_out(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let stuck = f.other().picking(Stuck::new(false));
     let handles: Vec<String> = (0..3)
         .map(|_| {
@@ -175,10 +178,11 @@ fn handles_stay_unique_when_the_word_lists_run_out() {
         .collect();
     assert_eq!(handles, ["amber-heron", "amber-heron-2", "amber-heron-3"]);
 }
+}
 
-#[test]
-fn a_handle_not_found_in_two_hundred_tries_is_refused() {
-    let f = Fixture::empty();
+on_both! {
+fn a_handle_not_found_in_two_hundred_tries_is_refused(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let stuck = f.other().picking(Stuck::new(true));
     stuck.register(&NewSession::new("worker")).unwrap();
     stuck.register(&NewSession::new("worker")).unwrap();
@@ -187,10 +191,11 @@ fn a_handle_not_found_in_two_hundred_tries_is_refused() {
         "could not find a free session handle"
     );
 }
+}
 
-#[test]
-fn concurrent_registers_never_share_a_handle() {
-    let f = Fixture::empty();
+on_both! {
+fn concurrent_registers_never_share_a_handle(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let barrier = Arc::new(Barrier::new(6));
     let threads: Vec<_> = (0..6)
         .map(|_| {
@@ -209,10 +214,11 @@ fn concurrent_registers_never_share_a_handle() {
     assert_eq!(handles.len(), 6, "{handles:?}");
     assert_eq!(f.store.sessions().unwrap().len(), 6);
 }
+}
 
-#[test]
-fn sessions_come_by_when_they_connected_with_their_health() {
-    let f = Fixture::empty();
+on_both! {
+fn sessions_come_by_when_they_connected_with_their_health(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let early = f.session("worker");
     f.advance(1.0);
     let late = f.session("reviewer");
@@ -226,20 +232,22 @@ fn sessions_come_by_when_they_connected_with_their_health() {
         .collect();
     assert_eq!(read, [(early, Health::Left), (late, Health::Stale)]);
 }
+}
 
-#[test]
-fn touch_keeps_a_session_live() {
-    let f = Fixture::empty();
+on_both! {
+fn touch_keeps_a_session_live(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let h = f.session("worker");
     f.advance(LIVE_SECONDS + 1.0);
     f.store.touch(&h).unwrap();
     assert_eq!(f.health(&h), Health::Live);
     assert_eq!(f.store.session(&h).unwrap().row.last_seen, f.now());
 }
+}
 
-#[test]
-fn touch_of_an_unknown_or_left_session_is_refused() {
-    let f = Fixture::empty();
+on_both! {
+fn touch_of_an_unknown_or_left_session_is_refused(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     assert_eq!(
         refused(f.store.touch("ghost-owl")),
         f.no_session("ghost-owl")
@@ -251,10 +259,11 @@ fn touch_of_an_unknown_or_left_session_is_refused() {
         format!("session {h} has left; attach again")
     );
 }
+}
 
-#[test]
-fn reattach_takes_the_handle_back_with_its_roles() {
-    let f = Fixture::new(Seed::default().task("sim/jump", "ready"));
+on_both! {
+fn reattach_takes_the_handle_back_with_its_roles(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default().task("sim/jump", "ready"));
     let h = f.session_with(monitored("worker", HOST));
     f.store.claim("sim/jump", &h).unwrap();
     f.advance(LIVE_SECONDS + 1.0);
@@ -270,10 +279,11 @@ fn reattach_takes_the_handle_back_with_its_roles() {
         [h.as_str()]
     );
 }
+}
 
-#[test]
-fn reattach_without_a_monitor_forgets_the_old_one() {
-    let f = Fixture::empty();
+on_both! {
+fn reattach_without_a_monitor_forgets_the_old_one(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let h = f.session_with(monitored("worker", HOST));
     let back = f.store.reattach(&h, None).unwrap();
     assert_eq!(
@@ -281,10 +291,11 @@ fn reattach_without_a_monitor_forgets_the_old_one() {
         (None, "", Health::Live)
     );
 }
+}
 
-#[test]
-fn reattach_of_a_left_session_is_refused() {
-    let f = Fixture::empty();
+on_both! {
+fn reattach_of_a_left_session_is_refused(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let h = f.session("worker");
     f.store.leave(&h).unwrap();
     assert_eq!(
@@ -292,10 +303,11 @@ fn reattach_of_a_left_session_is_refused() {
         format!("session {h} has left; attach again")
     );
 }
+}
 
-#[test]
-fn leave_releases_every_role_on_the_record_and_ends_the_session() {
-    let f = Fixture::new(
+on_both! {
+fn leave_releases_every_role_on_the_record_and_ends_the_session(backend: Backend) {
+    let f = Fixture::on(backend,
         Seed::default()
             .session("amber-heron")
             .session("brisk-finch")
@@ -354,10 +366,11 @@ fn leave_releases_every_role_on_the_record_and_ends_the_session() {
         f.no_session("ghost-owl")
     );
 }
+}
 
-#[test]
-fn a_session_that_left_comes_back_holding_nothing() {
-    let f = Fixture::new(
+on_both! {
+fn a_session_that_left_comes_back_holding_nothing(backend: Backend) {
+    let f = Fixture::on(backend,
         Seed::default()
             .session("amber-heron")
             .task("sim/jump", "in_progress")
@@ -378,10 +391,11 @@ fn a_session_that_left_comes_back_holding_nothing() {
         "no session 'ghost-owl'"
     );
 }
+}
 
-#[test]
-fn a_bound_agent_beating_stays_live_past_the_lost_line() {
-    let (f, h) = executing();
+on_both! {
+fn a_bound_agent_beating_stays_live_past_the_lost_line(backend: Backend) {
+    let (f, h) = executing(backend);
     assert!(f.store.bind_agent("agent-1", &h, false).unwrap());
     for _ in 0..(GONE as i64 / 30 + 2) {
         f.advance(30.0);
@@ -392,20 +406,22 @@ fn a_bound_agent_beating_stays_live_past_the_lost_line() {
     }
     assert_eq!(f.health(&h), Health::Live);
 }
+}
 
+on_both! {
 /// A beat that read the clock, then lost the race to one that read it later, never takes `last_seen`
 /// back: the SQLite store read the clock inside its write lock.
-#[test]
-fn a_beat_that_read_the_clock_first_and_wrote_last_never_takes_last_seen_back() {
-    let (f, h) = executing();
+fn a_beat_that_read_the_clock_first_and_wrote_last_never_takes_last_seen_back(backend: Backend) {
+    let (f, h) = executing(backend);
     assert!(f.store.bind_agent("agent-1", &h, false).unwrap());
-    let client = f.other_client();
+    let client = f.other_database();
     let slow = f.slow(move || {
-        let later = Store::with(
-            Client::new(client.addr(), "sf", client.database()),
+        let later = Store::opening_on(
+            client.another(),
             Box::new(|| NOW + 30.0),
             Box::new(|_| false),
             HOST,
+            &symphony_board::Opening::write(),
         )
         .unwrap();
         later.agent_beat("agent-1", &Beat::default()).unwrap();
@@ -416,18 +432,20 @@ fn a_beat_that_read_the_clock_first_and_wrote_last_never_takes_last_seen_back() 
     );
     assert_eq!(f.store.session(&h).unwrap().row.last_seen, NOW + 30.0);
 }
+}
 
-#[test]
-fn an_unbound_agent_beats_nobody() {
-    let (f, h) = executing();
+on_both! {
+fn an_unbound_agent_beats_nobody(backend: Backend) {
+    let (f, h) = executing(backend);
     f.advance(LIVE_SECONDS + 1.0);
     assert_eq!(f.store.agent_beat("agent-9", &beat()).unwrap(), None);
     assert_eq!(f.health(&h), Health::Stale);
 }
+}
 
-#[test]
-fn the_binding_follows_the_latest_handle_named() {
-    let f = Fixture::empty();
+on_both! {
+fn the_binding_follows_the_latest_handle_named(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (a, b) = (f.session("worker"), f.session("worker"));
     f.store.bind_agent("agent-1", &a, false).unwrap();
     f.store.agent_beat("agent-1", &busy(600.0, "long")).unwrap();
@@ -452,10 +470,11 @@ fn the_binding_follows_the_latest_handle_named() {
         BTreeMap::from([(b, "agent-1".to_string())])
     );
 }
+}
 
-#[test]
-fn binding_the_handle_already_bound_writes_nothing() {
-    let f = Fixture::empty();
+on_both! {
+fn binding_the_handle_already_bound_writes_nothing(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let h = f.session("worker");
     f.advance(10.0);
     assert!(f.store.bind_agent("agent-1", &h, false).unwrap());
@@ -463,10 +482,11 @@ fn binding_the_handle_already_bound_writes_nothing() {
     assert!(f.store.bind_agent("agent-1", &h, false).unwrap());
     assert_eq!(f.store.session(&h).unwrap().row.last_seen, NOW + 10.0);
 }
+}
 
-#[test]
-fn concurrent_binds_of_one_agent_leave_it_one_handle() {
-    let f = Fixture::empty();
+on_both! {
+fn concurrent_binds_of_one_agent_leave_it_one_handle(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let handles: Vec<String> = (0..6).map(|_| f.session("worker")).collect();
     let barrier = Arc::new(Barrier::new(handles.len()));
     let threads: Vec<_> = handles
@@ -491,20 +511,22 @@ fn concurrent_binds_of_one_agent_leave_it_one_handle() {
         .collect();
     assert_eq!(bound.len(), 1, "{bound:?}");
 }
+}
 
-#[test]
-fn an_unknown_or_left_handle_is_not_bound() {
-    let f = Fixture::empty();
+on_both! {
+fn an_unknown_or_left_handle_is_not_bound(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let h = f.session("worker");
     f.store.leave(&h).unwrap();
     assert!(!f.store.bind_agent("agent-1", &h, false).unwrap());
     assert!(!f.store.bind_agent("agent-1", "ghost-owl", false).unwrap());
     assert_eq!(f.store.agent_beat("agent-1", &beat()).unwrap(), None);
 }
+}
 
-#[test]
-fn a_session_that_left_is_not_revived_by_its_agent() {
-    let f = Fixture::empty();
+on_both! {
+fn a_session_that_left_is_not_revived_by_its_agent(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let h = f.session("worker");
     f.store.bind_agent("agent-1", &h, false).unwrap();
     f.store.leave(&h).unwrap();
@@ -513,10 +535,11 @@ fn a_session_that_left_is_not_revived_by_its_agent() {
     assert_eq!(f.store.handle_for_agent("agent-1").unwrap(), None);
     assert!(f.store.bound_agents().unwrap().is_empty());
 }
+}
 
-#[test]
-fn one_long_call_reads_live_until_it_could_have_ended() {
-    let (f, h) = executing();
+on_both! {
+fn one_long_call_reads_live_until_it_could_have_ended(backend: Backend) {
+    let (f, h) = executing(backend);
     f.store.bind_agent("agent-1", &h, false).unwrap();
     f.store
         .agent_beat(
@@ -540,10 +563,11 @@ fn one_long_call_reads_live_until_it_could_have_ended() {
     f.advance(LIVE_SECONDS + 1.0);
     assert_eq!(f.health(&h), Health::Stale);
 }
+}
 
-#[test]
-fn a_call_ending_clears_only_its_own_busy_mark() {
-    let (f, h) = executing();
+on_both! {
+fn a_call_ending_clears_only_its_own_busy_mark(backend: Backend) {
+    let (f, h) = executing(backend);
     f.store.bind_agent("agent-1", &h, false).unwrap();
     f.store
         .agent_beat("agent-1", &busy(120.0, "short"))
@@ -561,39 +585,43 @@ fn a_call_ending_clears_only_its_own_busy_mark() {
     f.advance(LIVE_SECONDS + 1.0);
     assert_eq!(f.health(&h), Health::Stale);
 }
+}
 
-#[test]
-fn a_shorter_call_does_not_cut_a_longer_mark() {
-    let (f, h) = executing();
+on_both! {
+fn a_shorter_call_does_not_cut_a_longer_mark(backend: Backend) {
+    let (f, h) = executing(backend);
     f.store.bind_agent("agent-1", &h, false).unwrap();
     f.store.agent_beat("agent-1", &busy(600.0, "long")).unwrap();
     f.store.agent_beat("agent-1", &busy(10.0, "short")).unwrap();
     f.advance(500.0);
     assert_eq!(f.health(&h), Health::Live);
 }
+}
 
-#[test]
-fn a_busy_mark_a_beat_set_and_nobody_cleared_lapses_to_lost() {
-    let (f, h) = executing();
+on_both! {
+fn a_busy_mark_a_beat_set_and_nobody_cleared_lapses_to_lost(backend: Backend) {
+    let (f, h) = executing(backend);
     f.store.bind_agent("agent-1", &h, false).unwrap();
     f.store.agent_beat("agent-1", &busy(600.0, "long")).unwrap();
     f.advance(600.0 + GONE);
     assert_eq!(f.health(&h), Health::Lost);
 }
+}
 
-#[test]
-fn a_child_that_stops_beating_while_it_holds_a_claim_is_lost() {
-    let (f, h) = executing();
+on_both! {
+fn a_child_that_stops_beating_while_it_holds_a_claim_is_lost(backend: Backend) {
+    let (f, h) = executing(backend);
     f.store.bind_agent("agent-1", &h, false).unwrap();
     f.store.agent_beat("agent-1", &beat()).unwrap();
     f.advance(GONE);
     assert_eq!(f.health(&h), Health::Lost);
     assert_eq!(f.store.claimable(&h).unwrap(), ["sim/jump"]);
 }
+}
 
-#[test]
-fn a_session_with_a_live_monitor_is_never_bound() {
-    let f = Fixture::empty();
+on_both! {
+fn a_session_with_a_live_monitor_is_never_bound(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.alive(&[41]);
     let h = f.session_with(monitored("orchestrator", HOST));
     assert!(!f.store.bind_agent("agent-1", &h, false).unwrap());
@@ -602,19 +630,21 @@ fn a_session_with_a_live_monitor_is_never_bound() {
     f.alive(&[]);
     assert!(f.store.bind_agent("agent-1", &h, false).unwrap()); // its monitor is gone
 }
+}
 
-#[test]
-fn a_full_session_keeps_the_first_handle_it_names() {
-    let f = Fixture::empty();
+on_both! {
+fn a_full_session_keeps_the_first_handle_it_names(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (mine, theirs) = (f.session("worker"), f.session("worker"));
     assert!(f.store.bind_agent("s-pane", &mine, true).unwrap());
     assert!(!f.store.bind_agent("s-pane", &theirs, true).unwrap()); // registering or relaying for a child
     assert_eq!(f.store.handle_for_agent("s-pane").unwrap(), Some(mine));
 }
+}
 
-#[test]
-fn a_session_naming_a_monitored_handle_lets_go_and_is_barred() {
-    let f = Fixture::empty();
+on_both! {
+fn a_session_naming_a_monitored_handle_lets_go_and_is_barred(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     f.alive(&[41]);
     let orch = f.session_with(monitored("orchestrator", HOST));
     let child = f.session("worker");
@@ -629,17 +659,14 @@ fn a_session_naming_a_monitored_handle_lets_go_and_is_barred() {
     assert!(!f.store.bind_agent("s-orch", &child, true).unwrap());
     assert!(!f.store.bind_agent("s-orch", &orch, true).unwrap());
     assert_eq!(f.store.agent_beat("s-orch", &beat()).unwrap(), None);
-    assert_eq!(
-        f.store.dump().unwrap().barred_keys,
-        [BarredKeyRow {
-            key: "s-orch".into()
-        }]
-    );
+    assert_eq!(f.store.raw().table("barred_key").count().unwrap(), 1);
+    assert_eq!(f.store.raw().row("barred_key", "s-orch").field("key").unwrap(), serde_json::json!("s-orch"));
+}
 }
 
-#[test]
-fn only_a_tool_call_beat_moves_last_tool() {
-    let f = Fixture::new(Seed::default().task("sim/jump", "ready"));
+on_both! {
+fn only_a_tool_call_beat_moves_last_tool(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default().task("sim/jump", "ready"));
     let h = f.session("worker");
     assert_eq!(f.store.session(&h).unwrap().row.last_tool, None);
     f.advance(20.0);
@@ -657,4 +684,5 @@ fn only_a_tool_call_beat_moves_last_tool() {
         f.store.session(&h).unwrap().row.last_tool,
         Some(f.now() - 20.0)
     );
+}
 }

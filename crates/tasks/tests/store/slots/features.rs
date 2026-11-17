@@ -1,4 +1,5 @@
 //! Parent-feature accounting and recorded-branch pairing through the real store boundary.
+use crate::common::Backend;
 
 use super::*;
 use symphony_board::NewLaunch;
@@ -56,16 +57,14 @@ on_both! {
     }
 }
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a launch recorded
-// (`Store::record_launch`) has no PostgreSQL twin yet.
-#[test]
-fn a_branch_mirror_and_regular_nested_children_share_the_parent_slot_at_eight() {
+on_both! {
+fn a_branch_mirror_and_regular_nested_children_share_the_parent_slot_at_eight(backend: Backend) {
     let mut seed = eight_and_seed(&[("next", "ready")]);
     seed = with(seed, "part", "in_progress", Some("work/a"), Some(P));
     seed = with(seed, "nested", "review", Some("part"), Some(P));
     seed = with(seed, "review/alias", "review", None, None);
     seed = with(seed, "review-2/alias", "review", None, None);
-    let f = Fixture::new(seed.role("part", K, "executor"));
+    let f = Fixture::on(backend, seed.role("part", K, "executor"));
     f.store
         .record_launch(&NewLaunch {
             branch: "alias".into(),
@@ -110,16 +109,15 @@ fn a_branch_mirror_and_regular_nested_children_share_the_parent_slot_at_eight() 
         "{said}"
     );
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a launch recorded
-// (`Store::record_launch`) has no PostgreSQL twin yet.
-#[test]
-fn a_mirror_finds_its_inactive_recorded_task_and_latest_executor_branch_only() {
+on_both! {
+fn a_mirror_finds_its_inactive_recorded_task_and_latest_executor_branch_only(backend: Backend) {
     let seed = eight_and_seed(&[])
         .task("legacy", "done")
         .role("legacy", O, "orchestrator")
         .task("review/new-branch", "ready");
-    let f = Fixture::new(seed);
+    let f = Fixture::on(backend, seed);
     for (handle, branch) in [(K, "old-branch"), (W, "new-branch")] {
         f.store
             .record_launch(&NewLaunch {
@@ -138,15 +136,14 @@ fn a_mirror_finds_its_inactive_recorded_task_and_latest_executor_branch_only() {
     assert!(said.contains("olive-orch holds 8"), "{said}");
     assert_eq!(store.get("legacy").unwrap().status, "done");
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a launch recorded
-// (`Store::record_launch`) has no PostgreSQL twin yet.
-#[test]
-fn discovering_a_held_tasks_branch_does_not_erase_its_hold_above_the_cap() {
+on_both! {
+fn discovering_a_held_tasks_branch_does_not_erase_its_hold_above_the_cap(backend: Backend) {
     let seed = with(sessions(), "kept", "review", None, Some(O));
     let seed = with(seed, "busy", "in_progress", None, Some(O));
     let seed = with(seed, "review/alias", "ready", None, None);
-    let f = Fixture::new(seed);
+    let f = Fixture::on(backend, seed);
     f.store
         .record_launch(&NewLaunch {
             branch: "alias".into(),
@@ -161,4 +158,5 @@ fn discovering_a_held_tasks_branch_does_not_erase_its_hold_above_the_cap() {
         "joining the held slot is allowed even above the cap"
     );
     assert_eq!(store.get("kept").unwrap().status, "blocked");
+}
 }

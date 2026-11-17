@@ -1,5 +1,6 @@
 //! The checked entry's atomic fence and original receipts. API and production-entry acceptance
 //! exercise the transport separately; these native cases protect the mutation's own races.
+use crate::common::Backend;
 
 use super::*;
 
@@ -169,12 +170,10 @@ on_both! {
     }
 }
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
-// has no PostgreSQL twin yet.
-#[test]
-fn source_observations_refuse_fresh_writes_but_never_hide_a_committed_receipt() {
+on_both! {
+fn source_observations_refuse_fresh_writes_but_never_hide_a_committed_receipt(backend: Backend) {
     use symphony_board::Error;
-    let f = Fixture::new(Seed::default().session(ACTOR));
+    let f = Fixture::on(backend, Seed::default().session(ACTOR));
     f.task(SLUG);
     let expected = f.store.assessment_state(SLUG).unwrap();
     let before = f.store.get(SLUG).unwrap();
@@ -226,12 +225,11 @@ fn source_observations_refuse_fresh_writes_but_never_hide_a_committed_receipt() 
         assert_eq!(f.said(SLUG), lines, "{observation:?}");
     }
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
-// has no PostgreSQL twin yet.
-#[test]
-fn a_known_older_receipt_survives_moved_state_and_a_departed_writer_without_replacing_the_newer() {
-    let f = Fixture::new(Seed::default().session(ACTOR));
+on_both! {
+fn a_known_older_receipt_survives_moved_state_and_a_departed_writer_without_replacing_the_newer(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default().session(ACTOR));
     f.task(SLUG);
     f.store
         .set_field(SLUG, "game", "effort", &json!(3), ACTOR)
@@ -274,4 +272,5 @@ fn a_known_older_receipt_survives_moved_state_and_a_departed_writer_without_repl
     assert_eq!(after.fields["game"]["effort"], json!(3));
     assert_eq!(after.fields["_board"]["assessed"]["id"], json!("second"));
     assert_eq!(f.said(SLUG), lines);
+}
 }

@@ -701,17 +701,17 @@ impl Fixture {
     }
 }
 
+/// The default report fixture, shared with the server's roll-up tests.
+pub fn report_board() -> Fixture {
+    report_board_on(Backend::SurrealDb)
+}
+
 /// The scratch board the day files' tests read (`tests/store/reports.rs`, the server's roll-up),
 /// written through the store's commands from the day before the UTC midnight before [`NOW`] to 09:30
 /// after it, where its clock is left: tasks across statuses, `sim/b` bounced twice by two `changes`
 /// verdicts, the red `tests/main-red-1` filed and closed, `sim/a` approved and landed, `sim/old`
 /// open since the day before, `sim/gone` closed then, and `sim/b`'s review subtask; the sessions
 /// that work it registered the day before but one, an opus worker at 01:00.
-pub fn report_board() -> Fixture {
-    report_board_on(Backend::SurrealDb)
-}
-
-/// The report history written through the same public commands on either backend.
 pub fn report_board_on(backend: Backend) -> Fixture {
     let f = Fixture::on(backend, Seed::default());
     f.at_hour(-24.0);
@@ -851,32 +851,35 @@ pub fn refused<T: std::fmt::Debug>(result: Result<T, symphony_board::Error>) -> 
     }
 }
 
+/// An hc with no terminal, used by presence sweeps and closes of historical panes.
+pub struct NoTerminals;
+impl symphony_board::launch::hc::Hc for NoTerminals {
+    fn run(&self, _args: &[&str]) -> Result<String, symphony_board::launch::LaunchError> {
+        Ok(r#"{"terminals":[]}"#.into())
+    }
+    fn feed(
+        &self,
+        _args: &[&str],
+        _input: &str,
+    ) -> Result<String, symphony_board::launch::LaunchError> {
+        panic!("no terminal needs the core's documents")
+    }
+    fn app(&self, _args: &[&str]) -> Result<String, symphony_board::launch::LaunchError> {
+        panic!("no terminal needs the window")
+    }
+    fn caller(&self) -> Option<String> {
+        None
+    }
+    fn board(&self) -> String {
+        "lamp-works/tasks".into()
+    }
+}
+
 /// The public presence sweep `store` runs over an hc that lists no terminal, keeping its round in
 /// `state`: it looks up no terminal or process, and refreshes and prunes the board's callbacks as
 /// ever.
 pub fn sweep_presence(store: &Store, state: PathBuf) {
-    use symphony_board::launch::LaunchError;
-    use symphony_board::launch::hc::Hc;
     use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
-
-    struct NoTerminals;
-    impl Hc for NoTerminals {
-        fn run(&self, _args: &[&str]) -> Result<String, LaunchError> {
-            Ok(r#"{"terminals":[]}"#.into())
-        }
-        fn feed(&self, _args: &[&str], _input: &str) -> Result<String, LaunchError> {
-            panic!("no terminal needs the core's documents")
-        }
-        fn app(&self, _args: &[&str]) -> Result<String, LaunchError> {
-            panic!("no terminal needs the window")
-        }
-        fn caller(&self) -> Option<String> {
-            None
-        }
-        fn board(&self) -> String {
-            "lamp-works/tasks".into()
-        }
-    }
 
     let sweep = Reap {
         state,

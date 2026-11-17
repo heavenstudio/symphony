@@ -63,17 +63,3 @@ on_both! {
         assert_eq!(other.marker().unwrap(), was);
     }
 }
-
-#[test]
-fn a_statement_with_no_postgresql_twin_yet_is_refused_there_naming_its_line_and_nothing_is_sent() {
-    let f = board(Backend::PostgreSql);
-    let sent = f.store.database().requests();
-    let why = f.store.sessions_of("owner").unwrap_err().to_string();
-    assert!(
-        why.contains("has no PostgreSQL twin yet: nothing was sent"),
-        "{why}"
-    );
-    assert!(why.contains("src/store/launches.rs:"), "{why}");
-    assert_eq!(f.store.database().requests(), sent, "nothing was sent");
-    assert_eq!(f.store.thread("tools/one").unwrap().len(), 0);
-}

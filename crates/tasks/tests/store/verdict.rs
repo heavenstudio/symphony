@@ -115,12 +115,10 @@ on_both! {
     }
 }
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: the open panes' read
-// (`Store::open_task_sessions`) has no PostgreSQL twin yet.
-#[test]
-fn changes_for_an_executor_gone_quiet_tell_the_orchestrator_and_an_approve_does_not() {
+on_both! {
+fn changes_for_an_executor_gone_quiet_tell_the_orchestrator_and_an_approve_does_not(backend: Backend) {
     for verdict in ["approve", "changes"] {
-        let f = in_review(Backend::SurrealDb);
+        let f = in_review(backend);
         f.advance(LIVE_SECONDS + 1.0);
         f.store
             .verdict("sim/jump", "brisk-finch", verdict, "the hash moved")
@@ -142,6 +140,7 @@ fn changes_for_an_executor_gone_quiet_tell_the_orchestrator_and_an_approve_does_
         });
         assert_eq!(told, Vec::from_iter(expected), "{verdict}");
     }
+}
 }
 
 /// What the board tells `handle`, which requested the work on `sim/jump` (`did`: it orchestrated
