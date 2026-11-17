@@ -206,8 +206,9 @@ checks as one recipe (`just --one -- test-rs …`, `just --one -- lint-rs`), so 
 the task from its held role. Keep `--one --` before the recipe: the first option refuses a second
 recipe before either runs, and the separator ends option parsing. Do not repeat session/task
 assignments on each command. This repository's `.codex/rules/checks.rules` allows its named
-checks, including the two document checks, to
-record shared state outside the worktree sandbox; it grants no directory-wide access. A check
+checks to record shared state outside the worktree sandbox; it grants no directory-wide access.
+For both document checks use `just --one -- docs-check`, whose arguments are fixed; the generic
+document CLI also accepts flags that write documents. A check
 run for another task still needs the explicit attribution above and the active approval flow.
 Full sessions register their own callback early with `just tasks callback --as HANDLE`;
 in-process agents read their inbox instead. An orchestrator also reads

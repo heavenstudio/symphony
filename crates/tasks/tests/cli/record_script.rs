@@ -876,6 +876,45 @@ fn one_recipe_test_commands_keep_argument_boundaries_task_commit_and_red_status(
 }
 
 #[test]
+fn one_recipe_document_checks_keep_fixed_arguments_and_both_records() {
+    let setup = Setup::new("record-script-one-recipe-docs");
+    let recipes = Recipes::new(&setup);
+    let log = setup.dir.join("document-arguments");
+    executable(
+        &recipes.tree.join("tools/rs-bin.sh"),
+        "#!/bin/sh\nprintf '%s|' \"$@\" >> \"$DOC_ARGS\"\nprintf '\\n' >> \"$DOC_ARGS\"\n",
+    );
+    let vars = [("DOC_ARGS", log.to_str().unwrap())];
+    for tail in ["--tidy", "release", "--justfile"] {
+        let done = recipes.just_with(&["--one", "--", "docs-check", tail], &vars);
+        assert!(!done.status.success(), "{tail}: {done:?}");
+        assert!(!log.exists(), "{tail}: a check ran before the refusal");
+    }
+    let done = recipes.just_with(&["--one", "--", "docs-check"], &vars);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "symphony|docs-audit|--check|\nsymphony|status|--lint|\n"
+    );
+    let labels: Vec<_> = setup
+        .history(2)
+        .into_iter()
+        .map(|record| {
+            assert_eq!(record.phase, Phase::Test);
+            assert_eq!(record.exit_code, Some(0));
+            record.label
+        })
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "just symphony-cli docs-audit --check",
+            "just symphony-cli status --lint"
+        ]
+    );
+}
+
+#[test]
 fn the_crates_check_recipe_records_its_task_tip_streams_and_status_or_runs_without_a_recorder() {
     let setup = Setup::new("record-script-crates-check");
     let recipes = Recipes::new(&setup);

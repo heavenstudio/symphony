@@ -4,7 +4,7 @@
 # --one rejects a second recipe before execution, and -- ends just's option parsing. Prefix
 # matches can still include invalid extra words: the installed just parser refuses those.
 prefix_rule(
-    pattern=["just", "--one", "--", ["fmt", "lint-rs", "test-rs", "client-lint", "client-check", "client-update", "symphony-ui-dist", "settings-check", "crates-check"]],
+    pattern=["just", "--one", "--", ["fmt", "lint-rs", "test-rs", "client-lint", "client-check", "client-update", "symphony-ui-dist", "settings-check", "crates-check", "docs-check"]],
     decision="allow",
     justification="Run this repository's named build and check recipes with their recorder",
     match=[
@@ -17,6 +17,7 @@ prefix_rule(
         "just --one -- symphony-ui-dist",
         "just --one -- settings-check",
         "just --one -- crates-check",
+        "just --one -- docs-check",
     ],
     not_match=[
         "just test-rs-extra",
@@ -44,21 +45,8 @@ prefix_rule(
         "just --one -- release",
         "just --one -- symphony --shared",
         "just --one -- --justfile /tmp/other.just lint-rs",
+        "just --one -- symphony-cli docs-audit --check",
+        "just --one -- symphony-cli status --lint",
+        "just --one -- symphony-cli status --lint --tidy",
     ],
-)
-
-prefix_rule(
-    pattern=["just", "--one", "--", "symphony-cli", "docs-audit", "--check"],
-    decision="allow",
-    justification="Record the repository's document audit",
-    match=["just --one -- symphony-cli docs-audit --check"],
-    not_match=["just symphony-cli docs-audit --check", "just --one -- symphony-cli docs-audit", "just --one -- symphony-cli init --root ."],
-)
-
-prefix_rule(
-    pattern=["just", "--one", "--", "symphony-cli", "status", "--lint"],
-    decision="allow",
-    justification="Record the repository's document lint",
-    match=["just --one -- symphony-cli status --lint"],
-    not_match=["just symphony-cli status --lint", "just --one -- symphony-cli status --tidy", "just --one -- symphony-cli serve"],
 )
