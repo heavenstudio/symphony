@@ -431,7 +431,7 @@ impl Clock {
                     *now += seconds;
                     *now
                 };
-                let _ = writeln!(err, "STEP {at}");
+                let _ = writeln!(err, "STEP {at:?}");
                 let _ = err.flush();
                 let mut byte = [0u8; 1];
                 while matches!(input.read(&mut byte), Ok(1)) && byte[0] != b'\n' {}
