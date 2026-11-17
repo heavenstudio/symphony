@@ -70,12 +70,19 @@ the separate publication inventory task, coordinated with `cobalt-ibis-6` on the
 
 | Reached dependency | Advisory disposition |
 | --- | --- |
-| Axum 0.8.9 / axum-core | [RUSTSEC-2022-0055](https://rustsec.org/advisories/RUSTSEC-2022-0055.html) concerns extractor body limits, patched in axum-core 0.2.8/0.3.0-rc.2 and Axum 0.5.16/0.6.0-rc.2. The locked version is later, but the application's explicit unlimited collection independently recreates the resource-exhaustion class (B1). Updating dependencies alone would not fix it. |
+| Axum 0.8.9 / axum-core 0.5.6 | [RUSTSEC-2022-0055](https://rustsec.org/advisories/RUSTSEC-2022-0055.html) concerns extractor body limits, patched in axum-core 0.2.8/0.3.0-rc.2 and Axum 0.5.16/0.6.0-rc.2. The locked version is later, but the application's explicit unlimited collection independently recreates the resource-exhaustion class (B1). Updating dependencies alone would not fix it. |
 | Hyper 1.12.0, HTTP/1 parser | [Content-Length parsing](https://rustsec.org/advisories/RUSTSEC-2021-0078.html) and [chunk-size overflow](https://rustsec.org/advisories/RUSTSEC-2021-0079.html) are patched from 0.14.10. The locked version is outside those affected ranges. Proxy deployment assumptions are still B2. |
 | Tungstenite 0.29.0, feed WebSocket | [RUSTSEC-2023-0065](https://rustsec.org/advisories/RUSTSEC-2023-0065.html) is patched from 0.20.1. The locked version is outside its affected range. Native Host/Origin checks run before the upgrade. |
 | Tokio 1.54.1, runtime/file/socket operations | [Interval race](https://rustsec.org/advisories/RUSTSEC-2026-0384.html) is patched in 1.54.1; [AsyncFd I/O safety](https://rustsec.org/advisories/RUSTSEC-2026-0386.html) is patched in 1.53.3 and selected older branches. The locked version meets both fixes. |
 | Bytes 1.12.1, HTTP/body buffers | [RUSTSEC-2026-0007](https://rustsec.org/advisories/RUSTSEC-2026-0007.html) is patched from 1.11.1. The locked version meets the fix; B1 is a separate unbounded-allocation issue. |
 | Comrak 0.57.0, document rendering | [URL case handling](https://rustsec.org/advisories/RUSTSEC-2021-0026.html) and [entity escaping](https://rustsec.org/advisories/RUSTSEC-2021-0063.html) are patched from 0.9.1 and 0.10.1 respectively. The locked version meets both fixes. Trusted project markup/renderers and client rendering are broader than those advisories; this review does not certify every client HTML sink. |
+| gix 0.87.1 / gix-fs 0.22.1 / gix-worktree 0.56.0, repository discovery/history | [GHSA-6p9q-f2xg-6pr5](https://github.com/GitoxideLabs/gitoxide/security/advisories/GHSA-6p9q-f2xg-6pr5) **does include these locked versions**; gix-fs is fixed in 0.23.0. Its forced-checkout prerequisite is not reached here: the application selects basic/blob-diff/revision/sha1 features, no `gix-worktree-state` appears in this lockfile, and inspected gix call sites discover repositories/read objects/diffs rather than materialize a checkout. Worktree creation uses Git CLI. This is a reachability disposition, not a claim the dependency version is patched; reconsider it if checkout/mutation features are enabled. The older [RUSTSEC-2024-0350](https://rustsec.org/advisories/RUSTSEC-2024-0350.html) is fixed from gix-fs 0.11.0. |
+
+The inventory executor independently confirmed that tiny_http, multipart and multer are absent
+from the initial root lockfile. The earlier targeted audit's framing/multipart advisory subjects
+are therefore not this server's handler stack. Serde JSON 1.0.151 decodes native and plugin
+payloads; plugin lines and JSON recursion are bounded. This review does not infer safety for
+every locked crate from an empty search result.
 
 ## Disposition and evidence
 
