@@ -44,13 +44,13 @@
 //!
 //! An orchestrator holding the orchestrator role on as many open tasks as the limit
 //! (`[limits] orchestrator_tasks`, [`crate::orchestration::counted`]) or more sees it in its
-//! header, `orchestrates=OPEN/LIMIT`, as it is given and takes no more; past the limit an
-//! [`OVER_LIMIT`] line says by how many and how it lets the unstarted ones go, an entry of its own,
-//! delivered once until it is under again:
+//! header, `orchestrates=OPEN/LIMIT`, as it is given and takes no more but a red; past the limit
+//! an [`OVER_LIMIT`] line says by how many and how it lets the unstarted ones go, an entry of its
+//! own, delivered once until it is under again:
 //!
 //! ```text
 //! PULL 14:05 executing=6 ready_unstaffed=2 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0 orchestrates=66/16
-//!   over_limit silver-sparrow orchestrates=66 limit=16 — 50 past it: it is given no task and takes none until it is under; let the unstarted ones go with `just tasks release SLUG --role orchestrator`
+//!   over_limit silver-sparrow orchestrates=66 limit=16 — 50 past it: it is given and takes no task but a red until it is under; let the unstarted ones go with `just tasks release SLUG --role orchestrator`
 //! ```
 //!
 //! A recipient told a digest before hears the next one as what changed since the last one it
@@ -442,7 +442,7 @@ impl Digest {
             .filter(|(_, count)| self.scoped && **count > self.limit)
             .map(|(handle, count)| {
                 let past = count - self.limit;
-                (handle.clone(), format!("  {OVER_LIMIT} {handle} orchestrates={count} limit={} — {past} past it: it is given no task and takes none until it is under; let the unstarted ones go with `just tasks release SLUG --role orchestrator`", self.limit))
+                (handle.clone(), format!("  {OVER_LIMIT} {handle} orchestrates={count} limit={} — {past} past it: it is given and takes no task but a red until it is under; let the unstarted ones go with `just tasks release SLUG --role orchestrator`", self.limit))
             })
             .collect()
     }
