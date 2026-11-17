@@ -27,6 +27,13 @@ impl Source {
                 && line.text.contains(symphony_board::alarm::UNDER)
                 && parent_move(line).is_none()
         });
+        // A parent change missing from the thread has no known time or historical destination.
+        replay.uncertain |= window
+            .lines
+            .iter()
+            .rev()
+            .find_map(parent_move)
+            .is_some_and(|moved| moved.to != window.parent.as_deref());
         // A missing close or reopening supplies no invented boundary in either direction.
         replay.uncertain |= matches!(window.status.as_str(), "done" | "cancelled") != replay.closed;
         Self { window, replay }
@@ -336,8 +343,26 @@ fn orchestrators(slug: &str, sources: &BTreeMap<String, Source>) -> Vec<RoleSpan
     };
     let first = local.window.lines.first().map_or(i64::MAX, |line| line.id);
     let mut events = BTreeMap::new();
-    for source in sources.values() {
+    let mut boundaries = BTreeSet::new();
+    for (source_slug, source) in sources {
+        for span in source
+            .replay
+            .spans
+            .iter()
+            .filter(|span| span.role == "orchestrator")
+        {
+            boundaries.insert(span.from_id);
+            boundaries.extend(span.to_id);
+        }
+        boundaries.extend(source.replay.edges.iter().map(|(id, _, _)| *id));
         for line in &source.window.lines {
+            if parent_move(line).is_some()
+                || (source_slug == slug
+                    && line.kind == "system"
+                    && line.text.starts_with(symphony_board::stages::CREATED))
+            {
+                boundaries.insert(line.id);
+            }
             if line.id >= first {
                 events.insert(line.id, line);
             }
@@ -376,7 +401,8 @@ fn orchestrators(slug: &str, sources: &BTreeMap<String, Source>) -> Vec<RoleSpan
                     from_id: event.id,
                     to: None,
                     to_id: None,
-                    uncertain: !reliable,
+                    // An ordinary first observation cannot prove an assignment's start.
+                    uncertain: !reliable || !boundaries.contains(&event.id),
                 });
             }
         }

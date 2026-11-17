@@ -166,6 +166,131 @@ fn inheritance_uses_the_recorded_parent_at_send_time_and_names_its_source() {
         bounds,
         [("old", 3, Some(5)), ("new", 5, Some(7)), ("child", 7, None)]
     );
+    assert!(h.roles.iter().all(|span| !span.uncertain));
+}
+
+#[test]
+fn a_message_without_child_creation_history_does_not_prove_an_inherited_start() {
+    let h = history(BTreeMap::from([
+        (
+            "child".into(),
+            source(
+                "child",
+                Some("parent"),
+                vec![
+                    message(
+                        3,
+                        3.0,
+                        "msg",
+                        "first observation",
+                        "e",
+                        Some("@orchestrator"),
+                    ),
+                    message(
+                        4,
+                        4.0,
+                        "msg",
+                        "later observation",
+                        "e",
+                        Some("@orchestrator"),
+                    ),
+                ],
+                false,
+            ),
+        ),
+        (
+            "parent".into(),
+            source(
+                "parent",
+                None,
+                vec![system(1, "o joined as orchestrator")],
+                false,
+            ),
+        ),
+    ]));
+    assert_eq!(h.roles.len(), 1);
+    let span = &h.roles[0];
+    assert_eq!(
+        (
+            span.source.as_str(),
+            span.by.as_str(),
+            span.from_id,
+            span.from,
+            span.to_id
+        ),
+        ("parent", "o", 3, 3.0, None)
+    );
+    assert!(
+        span.uncertain,
+        "the first message is an observation, not an assignment boundary"
+    );
+    assert!(
+        h.messages
+            .iter()
+            .all(|message| message.to.state == EndpointState::Known)
+    );
+}
+
+#[test]
+fn a_parent_snapshot_contradicting_the_latest_move_cannot_identify_a_historical_holder() {
+    for current_parent in [Some("new"), None] {
+        let mut sources: BTreeMap<String, Source> = BTreeMap::from([
+            (
+                "child".into(),
+                source(
+                    "child",
+                    current_parent,
+                    vec![
+                        system(3, "owner put it under old (was nothing)"),
+                        message(
+                            4,
+                            4.0,
+                            "msg",
+                            "after an unrecorded move",
+                            "e",
+                            Some("@orchestrator"),
+                        ),
+                    ],
+                    false,
+                ),
+            ),
+            (
+                "old".into(),
+                source(
+                    "old",
+                    None,
+                    vec![system(1, "old-holder joined as orchestrator")],
+                    false,
+                ),
+            ),
+            (
+                "new".into(),
+                source(
+                    "new",
+                    None,
+                    vec![system(2, "new-holder joined as orchestrator")],
+                    false,
+                ),
+            ),
+        ]);
+        let h = load("child", |slug| {
+            sources
+                .remove(slug)
+                .ok_or_else(|| symphony_board::Error::Refused("missing source".into()))
+        });
+        assert_eq!(h.sources[0].state, HistoryState::Partial);
+        assert_eq!(
+            h.sources[0].before, None,
+            "no range cutoff explains the contradiction"
+        );
+        assert_eq!(h.messages[0].recipient.as_deref(), Some("@orchestrator"));
+        assert_eq!(h.messages[0].to.state, EndpointState::Unknown);
+        assert!(
+            h.messages[0].to.candidates.is_empty(),
+            "neither parent may be backfilled"
+        );
+        assert!(h.roles.is_empty());
+    }
 }
 
 #[test]
