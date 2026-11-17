@@ -8,7 +8,6 @@ mod questions;
 use crate::common::{Backend, Fixture, HOST, NOW, Seed, refused};
 use std::collections::BTreeSet;
 use symphony_board::health::LIVE_SECONDS;
-use symphony_board::rpc::Client;
 use symphony_board::{Health, LANDS_FROM, Message, NewLaunch, NewTask, Store};
 
 fn texts(messages: Vec<Message>) -> Vec<String> {
@@ -83,21 +82,22 @@ fn a_message_is_said_on_the_record(backend: Backend) {
 }
 }
 
+on_both! {
 /// A line that read the clock, then lost the race to one that read it later, is never dated before
 /// the line ahead of it on the record: the SQLite store read the clock inside its write lock.
-#[test]
-fn a_line_is_never_dated_before_the_line_ahead_of_it() {
-    let f = Fixture::empty();
+fn a_line_is_never_dated_before_the_line_ahead_of_it(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let (a, b) = (f.session("worker"), f.session("worker"));
     f.task("sim/jump");
-    let client = f.other_client();
+    let client = f.other_database();
     let first = b.clone();
     let slow = f.slow(move || {
-        let later = Store::with(
-            Client::new(client.addr(), "sf", client.database()),
+        let later = Store::opening_on(
+            client.another(),
             Box::new(|| NOW + 30.0),
             Box::new(|_| false),
             HOST,
+            &symphony_board::Opening::write(),
         )
         .unwrap();
         later.say("sim/jump", &first, "first", None).unwrap();
@@ -116,6 +116,7 @@ fn a_line_is_never_dated_before_the_line_ahead_of_it() {
             ("second".to_string(), NOW + 30.0)
         ]
     );
+}
 }
 
 /// fleet-vole: a line from a clock a day ahead dated every later line a day ahead too, and a session that
@@ -725,9 +726,9 @@ fn a_post_its_live_executor_reads_tells_nobody_else(backend: Backend) {
 }
 }
 
-#[test]
-fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_how_to_restore_it() {
-    let f = in_review(Backend::SurrealDb);
+on_both! {
+fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_how_to_restore_it(backend: Backend) {
+    let f = in_review(backend);
     pane_closed(&f);
     assert_eq!(
         f.health("amber-heron"),
@@ -769,13 +770,14 @@ fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_how_to_res
         Vec::<String>::new()
     );
 }
+}
 
+on_both! {
 /// A landing that closes work taken back to in progress says so to its executor in the verdict
 /// itself, and to the orchestrator when no executor reads it; one that closes work in review tells
 /// nobody. Both count as the task's landing.
-#[test]
-fn a_landing_of_work_taken_back_reaches_its_executor_or_the_orchestrator() {
-    let f = in_review(Backend::SurrealDb);
+fn a_landing_of_work_taken_back_reaches_its_executor_or_the_orchestrator(backend: Backend) {
+    let f = in_review(backend);
     pane_closed(&f);
     f.store
         .landed(
@@ -787,7 +789,7 @@ fn a_landing_of_work_taken_back_reaches_its_executor_or_the_orchestrator() {
         )
         .unwrap();
     assert_eq!(told(&f), Vec::<String>::new());
-    let f = in_review(Backend::SurrealDb);
+    let f = in_review(backend);
     f.store
         .move_to("sim/jump", "in_progress", "amber-heron")
         .unwrap();
@@ -828,10 +830,11 @@ fn a_landing_of_work_taken_back_reaches_its_executor_or_the_orchestrator() {
     );
     assert_eq!(landings(&f), BTreeSet::from(["sim/jump".to_string()]));
 }
+}
 
-#[test]
-fn a_post_to_the_executor_by_handle_is_checked_and_one_to_another_handle_is_not() {
-    let f = in_review(Backend::SurrealDb);
+on_both! {
+fn a_post_to_the_executor_by_handle_is_checked_and_one_to_another_handle_is_not(backend: Backend) {
+    let f = in_review(backend);
     pane_closed(&f);
     f.store
         .say("sim/jump", "ochre-owl", "your turn", Some("brisk-finch"))
@@ -848,6 +851,7 @@ fn a_post_to_the_executor_by_handle_is_checked_and_one_to_another_handle_is_not(
             sent.id
         )]
     );
+}
 }
 
 on_both! {
@@ -883,9 +887,9 @@ fn a_quiet_executor_with_no_callback_is_named_by_its_health(backend: Backend) {
 }
 }
 
-#[test]
-fn a_quiet_executor_with_a_native_callback_is_reached() {
-    let f = in_review(Backend::SurrealDb);
+on_both! {
+fn a_quiet_executor_with_a_native_callback_is_reached(backend: Backend) {
+    let f = in_review(backend);
     f.advance(LIVE_SECONDS + 1.0);
     // Registered on another host, so this board's dispatch never tries to deliver it.
     (f.store.raw().row("callback_state", "amber-heron"))
@@ -905,6 +909,7 @@ fn a_quiet_executor_with_a_native_callback_is_reached() {
         )
         .unwrap();
     assert_eq!(told(&f), Vec::<String>::new());
+}
 }
 
 on_both! {

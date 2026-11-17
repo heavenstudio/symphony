@@ -39,6 +39,7 @@ fn legacy_board() -> Fixture {
     f
 }
 
+// SurrealDB alone: reconstructs and retires the historical SurrealDB scalar marker.
 #[test]
 fn migration_preserves_the_live_marker_and_retires_the_scalar_once() {
     let f = legacy_board();
@@ -62,6 +63,7 @@ fn migration_preserves_the_live_marker_and_retires_the_scalar_once() {
     assert_eq!(field(&f, "counter", "board", "last"), json!(i64::MIN));
 }
 
+// SurrealDB alone: reconstructs and retires the historical SurrealDB scalar marker.
 #[test]
 fn a_failed_migration_rolls_back_both_marker_transfer_and_retirement() {
     let f = legacy_board();
@@ -96,6 +98,7 @@ fn a_failed_migration_rolls_back_both_marker_transfer_and_retirement() {
     assert_eq!(field(&f, "counter", "board", "last"), json!(i64::MIN));
 }
 
+// SurrealDB alone: reconstructs and retires the historical SurrealDB scalar marker.
 #[test]
 fn a_retired_scalar_without_its_successor_refuses_instead_of_resetting_the_marker() {
     let f = Fixture::empty();

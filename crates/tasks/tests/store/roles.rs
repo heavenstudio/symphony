@@ -785,15 +785,13 @@ fn told(f: &Fixture, handle: &str) -> Vec<String> {
         .collect()
 }
 
+on_both! {
 /// A branch that gained commits after its approve, a merge of main to clear a conflict the landing
 /// refused, say, goes back to review for a fresh approve: by its executor, reviewer or
 /// orchestrator, and only while the approve stands, so never once a landing has closed it. Its
 /// executor and reviewer are told, where their inbox and PULL digest find it.
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: the open panes' read
-// (`Store::open_task_sessions`) has no PostgreSQL twin yet.
-#[test]
-fn an_approved_task_no_landing_closed_goes_back_to_review_for_a_fresh_approve() {
-    let (f, orch, exe, rev) = in_review(Backend::SurrealDb);
+fn an_approved_task_no_landing_closed_goes_back_to_review_for_a_fresh_approve(backend: Backend) {
+    let (f, orch, exe, rev) = in_review(backend);
     f.store
         .verdict("sim/jump", &rev, "approve", "good")
         .unwrap();
@@ -862,6 +860,7 @@ fn an_approved_task_no_landing_closed_goes_back_to_review_for_a_fresh_approve() 
             closed_by_its_landing(&f, status)
         );
     }
+}
 }
 
 /// What a move of `sim/jump` to `status` is told once its landing closed it: it moves no further,
@@ -1010,13 +1009,11 @@ on_both! {
     }
 }
 
+on_both! {
 /// A role on the task that is not one of the three sends it nowhere; with no executor to read
 /// the notice, its orchestrator hears it, and restaffs.
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: the open panes' read
-// (`Store::open_task_sessions`) has no PostgreSQL twin yet.
-#[test]
-fn a_reopen_no_executor_reads_is_said_to_the_orchestrator_and_a_reservation_reopens_nothing() {
-    let (f, orch, exe, rev) = in_review(Backend::SurrealDb);
+fn a_reopen_no_executor_reads_is_said_to_the_orchestrator_and_a_reservation_reopens_nothing(backend: Backend) {
+    let (f, orch, exe, rev) = in_review(backend);
     // Its executor gone, a session reserves it while it is in review.
     f.store.release("sim/jump", &exe, Some("executor")).unwrap();
     let reserver = f.session("worker");
@@ -1052,12 +1049,11 @@ fn a_reopen_no_executor_reads_is_said_to_the_orchestrator_and_a_reservation_reop
     );
     assert!(told(&f, &orch).contains(&unread), "{:?}", told(&f, &orch));
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn a_subtask_made_for_a_handle_is_reserved_without_a_lapse() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_subtask_made_for_a_handle_is_reserved_without_a_lapse(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (agent, other) = (f.session("worker"), f.session("worker"));
     f.task("a");
     let made = f.task_with(NewTask {
@@ -1089,4 +1085,5 @@ fn a_subtask_made_for_a_handle_is_reserved_without_a_lapse() {
             .holders("executor"),
         [agent.as_str()]
     );
+}
 }

@@ -156,10 +156,8 @@ on_both! {
     }
 }
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a launch recorded
-// (`Store::record_launch`) has no PostgreSQL twin yet.
-#[test]
-fn one_owned_observation_groups_nested_and_branch_mirror_keys_without_writing_state() {
+on_both! {
+fn one_owned_observation_groups_nested_and_branch_mirror_keys_without_writing_state(backend: Backend) {
     let seed = with(sessions(), "feature", "ready", None, Some(O));
     let seed = with(seed, "part", "in_progress", Some("feature"), Some(P));
     let seed = seed.task_row(TaskRow {
@@ -171,7 +169,7 @@ fn one_owned_observation_groups_nested_and_branch_mirror_keys_without_writing_st
     let seed = with(seed, "review/alias", "review", None, Some(P));
     let seed = with(seed, "review-2/alias", "review", None, Some(P));
     let seed = with(seed, "second", "in_progress", None, Some(P));
-    let f = Fixture::new(seed);
+    let f = Fixture::on(backend, seed);
     f.store
         .record_launch(&NewLaunch {
             branch: "alias".into(),
@@ -181,9 +179,9 @@ fn one_owned_observation_groups_nested_and_branch_mirror_keys_without_writing_st
     let original = f.rows();
     let counters = || f.store.raw().table("counter").get().unwrap();
     let original_counters = counters();
-    let before = f.store.client().requests();
+    let before = f.store.database().requests();
     let observed = f.store.slot_holdings().unwrap();
-    assert_eq!(f.store.client().requests() - before, 1);
+    assert_eq!(f.store.database().requests() - before, 1);
     let expected = holdings(&[(O, &["feature"]), (P, &["second"])]);
     assert_eq!(observed, expected);
     assert_eq!(f.rows(), original);
@@ -204,4 +202,5 @@ fn one_owned_observation_groups_nested_and_branch_mirror_keys_without_writing_st
         f.store.slot_holdings().unwrap(),
         holdings(&[(O, &["feature"])])
     );
+}
 }

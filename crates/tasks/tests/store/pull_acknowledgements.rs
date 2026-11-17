@@ -8,6 +8,7 @@
 //! Only an older dispatcher's own PULL of the same entries reads as the one awaited, so work
 //! withheld from the orchestrator is counted once more after one when a hand-over makes it its
 //! own, never lost, and nothing repeats after.
+use crate::common::Backend;
 
 use super::common::sweep_presence;
 use super::hand_over_outage::Outage;
@@ -19,7 +20,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
-use symphony_board::rpc::Client;
+use symphony_board::Database;
 use symphony_board::{NewTask, Raw};
 
 /// A digest entry: its list, and the slug or handle it names.
@@ -29,12 +30,18 @@ type Entry = (String, String);
 /// the PULL waiting as told and its queue as ended, and nothing of what that PULL left untold.
 fn older_acknowledges(outage: &Outage) {
     let pull = waiting_pull(outage).expect("a PULL waits");
-    outage.fixture.store.client().query(
-        "LET $pull = type::record('callback_event', [$handle, $key]);
-         UPDATE type::record('callback_state', $handle) SET pull_entries = $pull.pull_entries, pull_queued = NONE RETURN NONE;
-         UPDATE callback_event SET delivered = true WHERE handle = $handle RETURN NONE;",
-        json!({"handle":outage.former, "key":pull.key}),
-    ).unwrap();
+    let raw = outage.fixture.store.raw();
+    let entries = raw
+        .row("callback_event", json!([outage.former, pull.key]))
+        .field("pull_entries")
+        .unwrap();
+    raw.row("callback_state", outage.former.as_str())
+        .set(json!({"pull_entries":entries,"pull_queued":null}))
+        .unwrap();
+    raw.table("callback_event")
+        .matching(json!({"handle":outage.former}))
+        .set(json!({"delivered":true}))
+        .unwrap();
 }
 
 /// The callback record of the former orchestrator an older dispatcher reads.
@@ -62,7 +69,6 @@ fn older_dispatch(outage: &Outage, older: Older) {
     let Outage {
         fixture, former, ..
     } = outage;
-    let client = fixture.store.client();
     let found = (fixture.store.raw().row("callback_state", former.as_str()))
         .fields(&["pull_entries", "pull_queued"]);
     let before: Recorded = serde_json::from_value(found.unwrap()).unwrap();
@@ -81,29 +87,55 @@ fn older_dispatch(outage: &Outage, older: Older) {
         (false, false) => before.pull_queued,
     };
     let text: Vec<String> = whole.event_lines().iter().map(|l| l.to_string()).collect();
-    client.query(
-        "LET $s = (SELECT revision FROM ONLY type::record('callback_state', $handle));
-         LET $revision = math::max([type::record('callback_lease', $handle).revision ?? 0, $s.revision ?? 0]) + 1;
-         UPSERT type::record('callback_lease', $handle) SET revision = $revision RETURN NONE;
-         IF $computes { UPDATE callback_event SET pull_entries = pull_entries.filter(|$entry| $entry IN $entries)
-            WHERE handle = $handle AND delivered != true AND pull_entries != NONE RETURN NONE; };
-         IF $new {
-            DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE;
-            LET $key = string::concat('pull-', <string> $revision);
-            LET $counted = (UPSERT ONLY type::record('counter', ['callback-event', $handle]) SET last = (last ?? 0) + 1);
-            CREATE type::record('callback_event', [$handle, $key]) CONTENT { key: $key, handle: $handle, text: $text, attempts: 0,
-                sequence: $counted.last, pull_entries: $entries } RETURN NONE;
-         };
-         UPDATE type::record('callback_state', $handle) SET revision = $revision, observed_registration = registration_revision ?? 0,
-            pull = IF $computes { $now } ELSE { pull }, pull_entries = IF $computes { $recorded } ELSE { pull_entries }, pull_queued = $queued RETURN NONE;",
-        json!({"handle":former, "computes":computes, "new":new, "entries":entries, "recorded":recorded,
-            "queued":queued, "text":text.join("\n"), "now":fixture.now()}),
-    ).unwrap();
+    let raw = fixture.store.raw();
+    let state = raw.row("callback_state", former.as_str());
+    let lease = raw.row("callback_lease", former.as_str());
+    let revision = state
+        .field("revision")
+        .unwrap()
+        .as_u64()
+        .unwrap_or(0)
+        .max(lease.field("revision").unwrap().as_u64().unwrap_or(0))
+        + 1;
+    lease.set(json!({"revision":revision})).unwrap();
+    let rows = raw
+        .table("callback_event")
+        .matching(json!({"handle":former}))
+        .get()
+        .unwrap();
+    for row in rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["delivered"] != true)
+    {
+        let at = raw.row("callback_event", json!([former, row["key"]]));
+        if new && row["key"].as_str().unwrap().starts_with("pull-") {
+            at.delete().unwrap();
+        } else if computes && row.get("pull_entries").is_some() {
+            let kept: BTreeSet<Entry> =
+                serde_json::from_value(row["pull_entries"].clone()).unwrap();
+            at.set(json!({"pull_entries": &kept & &entries})).unwrap();
+        }
+    }
+    if new {
+        let counter = raw.row("counter", json!(["callback-event", former]));
+        let sequence = counter.field("last").unwrap().as_u64().unwrap_or(0) + 1;
+        counter.set(json!({"last":sequence})).unwrap();
+        let key = format!("pull-{revision}");
+        raw.row("callback_event", json!([former,key])).put(json!({"key":key,"handle":former,"text":text.join("\n"),"attempts":0,"sequence":sequence,"pull_entries":entries})).unwrap();
+    }
+    let mut fields = json!({"revision":revision,"observed_registration":state.field("registration_revision").unwrap().as_u64().unwrap_or(0),"pull_queued":queued});
+    if computes {
+        fields["pull"] = json!(fixture.now());
+        fields["pull_entries"] = json!(recorded);
+    }
+    state.set(fields).unwrap();
 }
 
-#[test]
-fn an_older_dispatcher_acknowledging_the_pull_this_one_queued_records_what_it_told() {
-    let outage = waited(Attempts::One);
+on_both! {
+fn an_older_dispatcher_acknowledging_the_pull_this_one_queued_records_what_it_told(backend: Backend) {
+    let outage = waited(backend, Attempts::One);
     let Outage {
         fixture,
         elsewhere,
@@ -122,6 +154,7 @@ fn an_older_dispatcher_acknowledging_the_pull_this_one_queued_records_what_it_to
     let back = outage.back();
     said_once(&outage, &back);
 }
+}
 
 /// What an older dispatcher writes before it delivers the PULL waiting for the former orchestrator.
 #[derive(Clone, Copy, Debug)]
@@ -136,15 +169,15 @@ enum OlderWrites {
     Return,
 }
 
-#[test]
-fn work_handed_to_the_orchestrator_is_counted_once_whatever_an_older_dispatcher_acknowledged() {
+on_both! {
+fn work_handed_to_the_orchestrator_is_counted_once_whatever_an_older_dispatcher_acknowledged(backend: Backend) {
     let cases = [
         OlderWrites::Nothing,
         OlderWrites::Observation,
         OlderWrites::Return,
     ];
     for case in cases {
-        let outage = waited(Attempts::One);
+        let outage = waited(backend, Attempts::One);
         let Outage {
             fixture,
             elsewhere,
@@ -187,6 +220,7 @@ fn work_handed_to_the_orchestrator_is_counted_once_whatever_an_older_dispatcher_
         );
         said_once(&outage, &back);
     }
+}
 }
 
 /// The former orchestrator's task is executing, and the successor's has a child awaiting review;
@@ -235,9 +269,9 @@ fn handed_over(outage: &Outage, head: &str) -> [String; 4] {
     ]
 }
 
-#[test]
-fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it_is_its_own() {
-    let outage = Outage::new();
+on_both! {
+fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it_is_its_own(backend: Backend) {
+    let outage = Outage::on(backend);
     let Outage {
         fixture,
         elsewhere,
@@ -262,6 +296,7 @@ fn an_older_observation_never_hides_work_withheld_from_the_orchestrator_until_it
     assert_eq!(told, handed_over(&outage, CHANGED));
     said_once(&outage, &back);
 }
+}
 
 /// Which generation acknowledges the former orchestrator's first PULL.
 #[derive(Clone, Copy, Debug)]
@@ -272,10 +307,10 @@ enum FirstReceipt {
     Older,
 }
 
-#[test]
-fn work_the_first_pull_withheld_is_counted_after_a_hand_over_whoever_acknowledged_it() {
+on_both! {
+fn work_the_first_pull_withheld_is_counted_after_a_hand_over_whoever_acknowledged_it(backend: Backend) {
     for first in [FirstReceipt::ThisGeneration, FirstReceipt::Older] {
-        let outage = Outage::new();
+        let outage = Outage::on(backend);
         let Outage {
             fixture,
             elsewhere,
@@ -316,10 +351,11 @@ fn work_the_first_pull_withheld_is_counted_after_a_hand_over_whoever_acknowledge
         said_once(&outage, &back);
     }
 }
+}
 
-#[test]
-fn an_inbox_receipt_of_a_pull_keeps_what_it_withheld_untold() {
-    let outage = waited(Attempts::One);
+on_both! {
+fn an_inbox_receipt_of_a_pull_keeps_what_it_withheld_untold(backend: Backend) {
+    let outage = waited(backend, Attempts::One);
     let Outage {
         fixture,
         elsewhere,
@@ -342,10 +378,11 @@ fn an_inbox_receipt_of_a_pull_keeps_what_it_withheld_untold() {
     assert_eq!(pull, changed, "{told:?}");
     said_once(&outage, &back);
 }
+}
 
 /// The entries `handle`'s callback record holds as told, of either generation's acknowledgement.
-fn recorded(client: &Client, handle: &str) -> BTreeSet<Entry> {
-    let found = Raw::on(client).row("callback_state", handle);
+fn recorded(client: &Database, handle: &str) -> BTreeSet<Entry> {
+    let found = Raw::of(client).row("callback_state", handle);
     serde_json::from_value(found.field("pull_entries").unwrap()).unwrap()
 }
 
@@ -369,15 +406,15 @@ enum AfterReceipt {
     SweptElsewhere,
 }
 
-#[test]
-fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone() {
+on_both! {
+fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone(backend: Backend) {
     let cases = [
         AfterReceipt::Nothing,
         AfterReceipt::SweptHere,
         AfterReceipt::SweptElsewhere,
     ];
     for after in cases {
-        let outage = Outage::new();
+        let outage = Outage::on(backend);
         let Outage {
             fixture,
             elsewhere,
@@ -408,14 +445,14 @@ fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone() {
             ..NewTask::new("scratch/foreign/new", "Another row", "owner")
         };
         elsewhere.create(&new).unwrap();
-        let (client, other, here) = (fixture.other_client(), fixture.elsewhere(), fixture.other());
+        let (client, other, here) = (fixture.other_database(), fixture.elsewhere(), fixture.other());
         let round = std::env::temp_dir().join(format!("{}-sweep.json", client.database()));
         let met = Arc::new(Mutex::new(Receipt::default()));
         let (recipient, during) = (former.clone(), Arc::clone(&met));
         let dispatcher = fixture.busy(move || {
             let mut during = during.lock().unwrap();
             let lease = || {
-                let until = Raw::on(&client).row("callback_lease", recipient.as_str());
+                let until = Raw::of(&client).row("callback_lease", recipient.as_str());
                 let until = until.field("until").unwrap();
                 !until.is_null() && until.as_f64() != Some(0.0)
             };
@@ -435,7 +472,7 @@ fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone() {
                     }
                     let there = |key: &&String| {
                         let event = json!([recipient, key]);
-                        (Raw::on(&client).row("callback_event", event).exists()).unwrap()
+                        (Raw::of(&client).row("callback_event", event).exists()).unwrap()
                     };
                     during.remaining = keys.iter().filter(there).cloned().collect();
                 }
@@ -463,7 +500,7 @@ fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone() {
             "{after:?}: the dispatch never read the board again"
         );
         // What the receipt recorded stands: no PULL waits, and none says that row again.
-        let now = recorded(fixture.store.client(), former);
+        let now = recorded(fixture.store.database(), former);
         assert!(now.contains(&row), "{after:?}: {now:?}");
         let waiting = waiting_pull(&outage);
         assert!(waiting.is_none(), "{after:?}: {waiting:?}");
@@ -477,6 +514,7 @@ fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone() {
         assert_eq!(older, older_record(fixture, former), "{after:?}");
     }
 }
+}
 
 /// What the former orchestrator heard of the successor's task before it was handed over.
 #[derive(Clone, Copy, Debug)]
@@ -488,10 +526,10 @@ enum Before {
     ToldByAnOlderPull,
 }
 
-#[test]
-fn work_a_hand_over_brings_is_counted_in_one_pull_however_many_an_older_dispatcher_queues_after() {
+on_both! {
+fn work_a_hand_over_brings_is_counted_in_one_pull_however_many_an_older_dispatcher_queues_after(backend: Backend) {
     for before in [Before::Withheld, Before::ToldByAnOlderPull] {
-        let outage = waited(Attempts::One);
+        let outage = waited(backend, Attempts::One);
         let Outage {
             fixture,
             elsewhere,
@@ -543,23 +581,40 @@ fn work_a_hand_over_brings_is_counted_in_one_pull_however_many_an_older_dispatch
         said_once(&outage, &back);
     }
 }
+}
 
 /// A dispatcher that keeps `pull_awaiting` but not `pull_said` (one built before PULLs said only
 /// what changed) delivers what waits for the former orchestrator: it records the PULL's entries as
 /// told and ends what was awaited, and leaves `pull_said` as this generation last recorded it.
 fn unsaid_acknowledges(outage: &Outage) {
     let pull = waiting_pull(outage).expect("a PULL waits");
-    outage.fixture.store.client().query(
-        "LET $pull = type::record('callback_event', [$handle, $key]);
-         UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE;
-         UPDATE callback_event SET delivered = true WHERE handle = $handle RETURN NONE;",
-        json!({"handle":outage.former, "key":pull.key}),
-    ).unwrap();
+    let raw = outage.fixture.store.raw();
+    let pull = raw
+        .row("callback_event", json!([outage.former, pull.key]))
+        .get()
+        .unwrap();
+    let state = raw.row("callback_state", outage.former.as_str());
+    let mut unanswered: BTreeSet<Entry> =
+        serde_json::from_value(state.field("pull_unanswered").unwrap()).unwrap_or_default();
+    let entries: BTreeSet<Entry> = serde_json::from_value(pull["pull_entries"].clone()).unwrap();
+    let withheld: BTreeSet<Entry> =
+        serde_json::from_value(pull["pull_withheld"].clone()).unwrap_or_default();
+    unanswered.extend(
+        entries
+            .iter()
+            .filter(|e| e.0 == "unanswered" && !withheld.contains(*e))
+            .cloned(),
+    );
+    state.set(json!({"pull_unanswered":unanswered,"pull_entries":entries,"pull_withheld":withheld,"pull_awaiting":null,"pull_queued":null})).unwrap();
+    raw.table("callback_event")
+        .matching(json!({"handle":outage.former}))
+        .set(json!({"delivered":true}))
+        .unwrap();
 }
 
-#[test]
-fn a_pull_acknowledged_without_its_baseline_is_followed_by_the_whole_digest() {
-    let outage = Outage::new();
+on_both! {
+fn a_pull_acknowledged_without_its_baseline_is_followed_by_the_whole_digest(backend: Backend) {
+    let outage = Outage::on(backend);
     let Outage {
         fixture,
         elsewhere,
@@ -587,4 +642,5 @@ ready_unstaffed p2 scratch/more — Jump departure
 ready_unstaffed p2 scratch/one — Jump departure";
     assert_eq!(pull, whole, "{told:?}");
     said_once(&outage, &back);
+}
 }

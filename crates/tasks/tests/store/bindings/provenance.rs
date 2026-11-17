@@ -1,4 +1,5 @@
 //! Proven full-session ownership survives stale bind decisions and in-process callers.
+use crate::common::Backend;
 
 use super::*;
 use crate::callbacks::Listener;
@@ -6,10 +7,10 @@ use serde_json::json;
 
 mod freshness;
 
-#[test]
-fn legacy_bindings_without_provenance_can_be_classified_once_and_retried() {
+on_both! {
+fn legacy_bindings_without_provenance_can_be_classified_once_and_retried(backend: Backend) {
     for full in [false, true] {
-        let f = Fixture::empty();
+        let f = Fixture::on(backend, crate::common::Seed::default());
         let h = f.session("worker");
         // A supported legacy row carries its agent id before binding metadata existed.
         (f.store.raw().row("session", h.as_str()))
@@ -45,10 +46,11 @@ fn legacy_bindings_without_provenance_can_be_classified_once_and_retried() {
         );
     }
 }
+}
 
-#[test]
-fn a_proven_full_session_key_cannot_move_or_downgrade_to_another_handle() {
-    let f = Fixture::empty();
+on_both! {
+fn a_proven_full_session_key_cannot_move_or_downgrade_to_another_handle(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let (full, other) = (f.session("worker"), f.session("worker"));
     assert!(f.store.bind_agent("full-key", &full, true).unwrap());
     let before = binding_of(&f, &full);
@@ -63,10 +65,11 @@ fn a_proven_full_session_key_cannot_move_or_downgrade_to_another_handle() {
         "a full-session retry is valid"
     );
 }
+}
 
-#[test]
-fn a_target_proven_full_after_the_snapshot_rejects_takeover_transactionally() {
-    let f = Fixture::empty();
+on_both! {
+fn a_target_proven_full_after_the_snapshot_rejects_takeover_transactionally(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let h = f.session("worker");
     let (protect, handle) = (f.other(), h.clone());
     let late = f.late(move || {
@@ -94,10 +97,11 @@ fn a_target_proven_full_after_the_snapshot_rejects_takeover_transactionally() {
         "the rejected transaction rolled back its guard write"
     );
 }
+}
 
-#[test]
-fn an_incoming_key_proven_full_after_the_snapshot_keeps_its_original_handle() {
-    let f = Fixture::empty();
+on_both! {
+fn an_incoming_key_proven_full_after_the_snapshot_keeps_its_original_handle(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let (anchor, target) = (f.session("worker"), f.session("worker"));
     let (protect, original) = (f.other(), anchor.clone());
     let late = f.late(move || {
@@ -113,24 +117,17 @@ fn an_incoming_key_proven_full_after_the_snapshot_keeps_its_original_handle() {
         Some(anchor)
     );
 }
+}
 
-#[test]
-fn a_native_callback_without_binding_provenance_still_prevents_takeover() {
-    let f = Fixture::empty();
+on_both! {
+fn a_native_callback_without_binding_provenance_still_prevents_takeover(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let h = f.session("worker");
-    let listener = Listener::new(f.store.client().database());
+    let listener = Listener::new(f.store.database().database());
     let address = format!("uds:{}", listener.path.display());
     f.store.callback(&h, Some(&address), false, false).unwrap();
     assert!(f.store.agent_bindings().unwrap().is_empty());
-    let channel = || {
-        f.store
-            .client()
-            .query(
-                "RETURN type::record('callback_state', $handle);",
-                json!({"handle":h}),
-            )
-            .unwrap()
-    };
+    let channel = || f.store.raw().row("callback_state", h.as_str()).get().unwrap();
     let before = channel();
     assert!(!f.store.bind_agent("sub-key", &h, false).unwrap());
     assert_eq!(
@@ -146,12 +143,13 @@ fn a_native_callback_without_binding_provenance_still_prevents_takeover() {
         "removing the sole fence permits binding"
     );
 }
+}
 
-#[test]
-fn a_native_callback_registered_after_the_snapshot_is_retained_on_retry() {
-    let f = Fixture::empty();
+on_both! {
+fn a_native_callback_registered_after_the_snapshot_is_retained_on_retry(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let h = f.session("worker");
-    let listener = Listener::new(f.store.client().database());
+    let listener = Listener::new(f.store.database().database());
     let address = format!("uds:{}", listener.path.display());
     struct Registration {
         store: symphony_board::Store,
@@ -183,4 +181,5 @@ fn a_native_callback_registered_after_the_snapshot_is_retained_on_retry() {
         .unwrap();
     assert_eq!(channel, json!(address));
     assert!(f.store.agent_bindings().unwrap().is_empty());
+}
 }

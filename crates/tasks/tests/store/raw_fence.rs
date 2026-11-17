@@ -28,7 +28,7 @@ const SCRATCH: &str = "a scratch table of its own";
 const AS_WRITTEN: &str = "a row written as the fixture cannot";
 
 /// Every test file that still sends a statement, by its path under the package.
-const STILL_SENDS: [(&str, &str); 48] = [
+const STILL_SENDS: [(&str, &str); 40] = [
     ("tests/cli/attach.rs", ENGINE),
     ("tests/cli/launch_rollback.rs", ENGINE),
     ("tests/cli/main_only/writers.rs", AS_WRITTEN),
@@ -46,10 +46,8 @@ const STILL_SENDS: [(&str, &str); 48] = [
     ("tests/server/hold.rs", SCRATCH),
     ("tests/server/left_replay.rs", SCRATCH),
     ("tests/server/reclaim.rs", ENGINE),
-    ("tests/store/approval_freshness.rs", ONE_REQUEST),
     ("tests/store/asks.rs", ENGINE),
     ("tests/store/bindings.rs", ENGINE),
-    ("tests/store/bindings/provenance.rs", ENGINE),
     ("tests/store/board.rs", ENGINE),
     ("tests/store/callbacks.rs", ENGINE),
     ("tests/store/closing.rs", ENGINE),
@@ -57,23 +55,17 @@ const STILL_SENDS: [(&str, &str); 48] = [
     ("tests/store/copy.rs", ENGINE),
     ("tests/store/copy_marker.rs", ENGINE),
     ("tests/store/fields.rs", ENGINE),
-    ("tests/store/hand_over_outage.rs", ONE_REQUEST),
     ("tests/store/held_stream.rs", SCRATCH),
-    ("tests/store/low_volume/canonical.rs", LIBRARY),
     ("tests/store/marker_retirement.rs", ENGINE),
     ("tests/store/messages/inbox.rs", LIBRARY),
     ("tests/store/open_read.rs", ENGINE),
     ("tests/store/pg_client.rs", ENGINE),
-    ("tests/store/pull_acknowledgements.rs", ONE_REQUEST),
-    ("tests/store/quiet_callbacks.rs", LIBRARY),
     ("tests/store/quiet_pull.rs", ENGINE),
     ("tests/store/schema.rs", ENGINE),
     ("tests/store/schema_copy.rs", ENGINE),
     ("tests/store/session_marker.rs", ENGINE),
-    ("tests/store/session_urls.rs", ONE_REQUEST),
     ("tests/store/slots/cost.rs", ENGINE),
     ("tests/store/slots/migration.rs", ENGINE),
-    ("tests/store/slow_builds.rs", ONE_REQUEST),
     ("tests/store/start.rs", ENGINE),
     ("tests/store/usage.rs", ENGINE),
     ("tests/store/writers.rs", ENGINE),

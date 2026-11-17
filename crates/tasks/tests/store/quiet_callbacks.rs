@@ -2,6 +2,7 @@
 use super::callbacks::Listener;
 use super::common::Fixture;
 use crate::children::Child as _;
+use crate::common::Backend;
 use serde_json::json;
 use std::os::unix::fs::MetadataExt;
 use symphony_board::NewTask;
@@ -39,7 +40,7 @@ impl Drop for CommandDirectory {
 }
 
 pub(super) fn listen(f: &Fixture, handle: &str) -> Listener {
-    let listener = Listener::new(&format!("{}-{handle}", f.store.client().database()));
+    let listener = Listener::new(&format!("{}-{handle}", f.store.database().database()));
     f.store
         .callback(
             handle,
@@ -59,12 +60,12 @@ use expectations::{callback_state, listen_orchestrator};
 #[path = "quiet_pull.rs"]
 mod pull_updates;
 
-#[test]
-fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
+on_both! {
+fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged(backend: Backend) {
     // Run in a private repository so the real machine probe sees only this test's slot.
     const CHILD: &str = "SYMPHONY_STALE_CHILD_FIXTURE";
     if std::env::var_os(CHILD).is_none() {
-        let dir = std::env::temp_dir().join(format!("symphony-stale-child-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("symphony-stale-child-{}-{backend:?}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let _directory = CommandDirectory(dir.clone());
         assert!(
@@ -78,7 +79,7 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
         let output = sys::output(Command::of(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "quiet_callbacks::a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged",
+                &format!("quiet_callbacks::a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged::{}", if backend == Backend::PostgreSql { "postgresql" } else { "surrealdb" }),
                 "--nocapture",
             ])
             .current_dir(&dir)
@@ -93,12 +94,12 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
         return;
     }
-    use super::common::{Seed, session};
+    use crate::common::{Seed, session};
     let mut parent = session("parent");
     parent.kind = "orchestrator".into();
     let mut child = session("child");
     child.parent = Some("parent".into());
-    let f = Fixture::new(
+    let f = Fixture::on(backend,
         Seed::default()
             .session_row(parent)
             .session_row(child)
@@ -156,13 +157,14 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
         "ending the test restores raw health"
     );
 }
+}
 
-#[test]
-fn an_armed_idle_gate_delivers_a_reservation_lapse_without_a_marker_change() {
-    use super::common::{NOW, Seed, session};
+on_both! {
+fn an_armed_idle_gate_delivers_a_reservation_lapse_without_a_marker_change(backend: Backend) {
+    use crate::common::{NOW, Seed, session};
     let mut orch = session("orchestrator");
     orch.kind = "orchestrator".into();
-    let f = Fixture::new(
+    let f = Fixture::on(backend,
         Seed::default()
             .session_row(orch)
             .session("worker")
@@ -176,21 +178,15 @@ fn an_armed_idle_gate_delivers_a_reservation_lapse_without_a_marker_change() {
         "PULL executing=0 ready_unstaffed=1 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0\nready_unstaffed p2 tools/reserved — Task tools/reserved (reserved worker)",
     );
     f.store.dispatch_callbacks().unwrap();
-    let requests = f.store.client().requests();
+    let requests = f.store.database().requests();
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
-        f.store.client().requests() - requests,
+        f.store.database().requests() - requests,
         4,
         "the idle gate is armed; one canonical holdings read still detects hold-only changes"
     );
     let marker = || {
-        f.store
-            .client()
-            .query(
-                &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
-                json!({}),
-            )
-            .unwrap()
+        f.store.marker().unwrap()
     };
     let before = marker();
     let checkpoint = || {
@@ -211,6 +207,7 @@ fn an_armed_idle_gate_delivers_a_reservation_lapse_without_a_marker_change() {
         "the lapse schedules the digest before its periodic deadline"
     );
 }
+}
 
 fn old_seen_write(f: &Fixture, handle: &str) {
     let before = callback_state(f, handle);
@@ -230,9 +227,9 @@ fn old_seen_write(f: &Fixture, handle: &str) {
     assert_eq!(after["delivery_version"], before["delivery_version"]);
 }
 
-#[test]
-fn an_undelivered_first_empty_pull_keeps_its_key_until_it_is_received() {
-    let f = Fixture::empty();
+on_both! {
+fn an_undelivered_first_empty_pull_keeps_its_key_until_it_is_received(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let sender = f.session("worker");
     // Persist the registration before its first dispatch, then lose the listener. This is the
@@ -264,7 +261,7 @@ fn an_undelivered_first_empty_pull_keeps_its_key_until_it_is_received() {
         f.store.dispatch_callbacks().unwrap();
         assert_eq!(f.store.callback_inbox(&orch).unwrap(), pending);
     }
-    let recovered = Listener::new(&format!("{}-first-retry", f.store.client().database()));
+    let recovered = Listener::new(&format!("{}-first-retry", f.store.database().database()));
     f.store
         .callback(
             &orch,
@@ -283,10 +280,11 @@ fn an_undelivered_first_empty_pull_keeps_its_key_until_it_is_received() {
     f.store.dispatch_callbacks().unwrap();
     assert!(recovered.drain(&f, &sender, &orch).is_empty());
 }
+}
 
-#[test]
-fn addressed_messages_verdicts_owner_messages_and_plain_bytes() {
-    let f = Fixture::empty();
+on_both! {
+fn addressed_messages_verdicts_owner_messages_and_plain_bytes(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let exe = f.session("worker");
     let rev = f.session("reviewer");
@@ -370,10 +368,11 @@ fn addressed_messages_verdicts_owner_messages_and_plain_bytes() {
     assert_eq!(e.text(), line);
     assert_eq!(r.text(), line);
 }
+}
 
-#[test]
-fn ready_again_is_the_other_actors_action_even_when_i_created_the_task() {
-    let f = Fixture::empty();
+on_both! {
+fn ready_again_is_the_other_actors_action_even_when_i_created_the_task(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let other = f.session("worker");
     let o = listen_orchestrator(&f, &orch, EMPTY_PULL);
@@ -394,11 +393,12 @@ fn ready_again_is_the_other_actors_action_even_when_i_created_the_task() {
         ]
     );
 }
+}
 
-#[test]
-fn a_new_root_subscription_has_no_history_or_subtask_role_pushes_but_keeps_future_verdicts() {
+on_both! {
+fn a_new_root_subscription_has_no_history_or_subtask_role_pushes_but_keeps_future_verdicts(backend: Backend) {
     for register_first in [false, true] {
-        let f = Fixture::empty();
+        let f = Fixture::on(backend, crate::common::Seed::default());
         let orch = f.session("orchestrator");
         let exe = f.session("worker");
         let rev = f.session("reviewer");
@@ -470,10 +470,11 @@ fn a_new_root_subscription_has_no_history_or_subtask_role_pushes_but_keeps_futur
         );
     }
 }
+}
 
-#[test]
-fn an_unreviewed_task_returning_is_new_even_when_its_status_never_changes() {
-    let f = Fixture::empty();
+on_both! {
+fn an_unreviewed_task_returning_is_new_even_when_its_status_never_changes(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let exe = f.session("worker");
     let rev = f.session("reviewer");
@@ -511,13 +512,14 @@ fn an_unreviewed_task_returning_is_new_even_when_its_status_never_changes() {
         "the return pushes once"
     );
 }
+}
 
-#[test]
-fn a_reviewer_receives_the_verdict_or_its_status_without_duplicates() {
+on_both! {
+fn a_reviewer_receives_the_verdict_or_its_status_without_duplicates(backend: Backend) {
     for by_owner in [false, true] {
         // Imported boards can carry named senders too. A verdict still needs a registered
         // reviewer, even when its sender is the owner whose messages reach every participant.
-        let f = Fixture::new(super::common::Seed::default().session("owner"));
+        let f = Fixture::on(backend, crate::common::Seed::default().session("owner"));
         let exe = f.session("worker");
         let first = f.session("reviewer");
         let second = f.session("reviewer");
@@ -566,10 +568,11 @@ fn a_reviewer_receives_the_verdict_or_its_status_without_duplicates() {
         assert_eq!(listener.drain(&f, &exe, &second), [expected], "{by_owner}");
     }
 }
+}
 
-#[test]
-fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
-    let f = Fixture::empty();
+on_both! {
+fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     f.task("tools/probes");
@@ -581,7 +584,7 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
     let dir = std::env::temp_dir().join(format!(
         "symphony-callback-probes-{}-{}",
         std::process::id(),
-        f.store.client().database()
+        f.store.database().database()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let directory = CommandDirectory(dir.clone());
@@ -628,8 +631,8 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
                 .env_remove("GIT_DIR")
                 .env_remove("GIT_WORK_TREE")
                 .env_remove("GIT_COMMON_DIR")
-                .env("TASKS_SERVER", f.store.client().addr())
-                .env("TASKS_DATABASE", f.store.client().database())
+                .env("TASKS_SERVER", f.store.database().addr())
+                .env("TASKS_DATABASE", f.store.database().database())
                 .env("TASKS_NOW", f.now().to_string())
                 .env("TASKS_SWEEP", "off")
                 // The command's own dispatch is the one counted: it ends before the count is read.
@@ -713,10 +716,11 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
     drop(directory);
     assert!(!dir.exists());
 }
+}
 
-#[test]
-fn one_dispatch_coalesces_launch_roles_and_suppresses_self_events() {
-    let f = Fixture::empty();
+on_both! {
+fn one_dispatch_coalesces_launch_roles_and_suppresses_self_events(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let exe = f.session("worker");
     let rev = f.session("reviewer");
@@ -756,10 +760,11 @@ fn one_dispatch_coalesces_launch_roles_and_suppresses_self_events() {
     );
     assert!(r.drain(&f, &exe, &rev).is_empty());
 }
+}
 
-#[test]
-fn a_later_blocked_move_is_not_hidden_by_a_verdict_in_the_same_dispatch() {
-    let f = Fixture::empty();
+on_both! {
+fn a_later_blocked_move_is_not_hidden_by_a_verdict_in_the_same_dispatch(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let exe = f.session("worker");
     let rev = f.session("reviewer");
@@ -801,10 +806,11 @@ fn a_later_blocked_move_is_not_hidden_by_a_verdict_in_the_same_dispatch() {
         ]
     );
 }
+}
 
-#[test]
-fn changed_digest_is_plain_and_delivered_once_even_after_any_age() {
-    let f = Fixture::empty();
+on_both! {
+fn changed_digest_is_plain_and_delivered_once_even_after_any_age(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let sender = f.session("worker");
     let o = listen_orchestrator(&f, &orch, EMPTY_PULL);
@@ -866,10 +872,11 @@ fn changed_digest_is_plain_and_delivered_once_even_after_any_age() {
     assert!(f.store.send_agent(&orch, &orch, "self").unwrap());
     assert!(o.drain(&f, &sender, &orch).is_empty());
 }
+}
 
-#[test]
-fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
-    let f = Fixture::empty();
+on_both! {
+fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let sender = f.session("worker");
     let o = listen_orchestrator(&f, &orch, EMPTY_PULL);
@@ -940,7 +947,7 @@ fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
         "a new action replaces the pending digest instead of duplicating it"
     );
     // Re-register at a new listener after the retry budget; the latest durable digest is reused.
-    let o = Listener::new(&format!("{}-recovered", f.store.client().database()));
+    let o = Listener::new(&format!("{}-recovered", f.store.database().database()));
     assert_ne!(o.path, path);
     f.store
         .callback(
@@ -998,10 +1005,11 @@ fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
         "PULL counts unchanged\nready_unstaffed p2 tools/later — Jump departure\nresolved ready_unstaffed tools/manual".to_string()
     ], "a manual inbox receipt also establishes the last delivered lists");
 }
+}
 
-#[test]
-fn batching_retry_and_chat_recipient_gating_keep_their_delivery_contracts() {
-    let f = Fixture::empty();
+on_both! {
+fn batching_retry_and_chat_recipient_gating_keep_their_delivery_contracts(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let sender = f.session("worker");
     let worker = f.session("worker");
     let chat = f.session("worker");
@@ -1043,7 +1051,7 @@ fn batching_retry_and_chat_recipient_gating_keep_their_delivery_contracts() {
         f.store.inbox(&worker).unwrap().as_slice(),
         std::slice::from_ref(&retry)
     );
-    let listener = Listener::new(&format!("{}-{worker}", f.store.client().database()));
+    let listener = Listener::new(&format!("{}-{worker}", f.store.database().database()));
     f.store.dispatch_callbacks().unwrap();
     f.advance(6.0);
     f.store.dispatch_callbacks().unwrap();
@@ -1078,11 +1086,12 @@ fn batching_retry_and_chat_recipient_gating_keep_their_delivery_contracts() {
     assert!(c.drain(&f, &sender, &chat).is_empty());
     assert!(listener.drain(&f, &sender, &worker).is_empty());
 }
+}
 
-#[test]
-fn a_legacy_upgrade_baselines_once_across_older_seen_writes_and_keeps_retries() {
+on_both! {
+fn a_legacy_upgrade_baselines_once_across_older_seen_writes_and_keeps_retries(backend: Backend) {
     for pending in [false, true] {
-        let f = Fixture::empty();
+        let f = Fixture::on(backend, crate::common::Seed::default());
         let orch = f.session("orchestrator");
         let exe = f.session("worker");
         let rev = f.session("reviewer");
@@ -1249,16 +1258,17 @@ fn a_legacy_upgrade_baselines_once_across_older_seen_writes_and_keeps_retries() 
         assert!(o.drain(&f, &exe, &orch).is_empty());
     }
 }
+}
 
-#[test]
-fn codex_steering_requires_opt_in_and_preserves_queue_and_retry_without_a_live_daemon() {
-    let f = Fixture::empty();
+on_both! {
+fn codex_steering_requires_opt_in_and_preserves_queue_and_retry_without_a_live_daemon(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let worker = f.session("worker");
     let sender = f.session("worker");
     let dir = std::env::temp_dir().join(format!(
         "symphony-codex-{}-{}",
         std::process::id(),
-        f.store.client().database()
+        f.store.database().database()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let directory = CommandDirectory(dir.clone());
@@ -1342,8 +1352,8 @@ done
             .env_remove("GIT_CONFIG_COUNT")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "true")
-            .env("TASKS_SERVER", f.store.client().addr())
-            .env("TASKS_DATABASE", f.store.client().database())
+            .env("TASKS_SERVER", f.store.database().addr())
+            .env("TASKS_DATABASE", f.store.database().database())
             .env("TASKS_NOW", f.now().to_string())
             .env("TASKS_SWEEP", "off")
             // Each command's deliveries end with it, so the stand-in's log is read after them all.
@@ -1539,4 +1549,5 @@ done
     assert_eq!(f.store.callback_inbox(&worker).unwrap().len(), 2);
     drop(directory);
     assert!(!dir.exists(), "the private stand-in repository is removed");
+}
 }

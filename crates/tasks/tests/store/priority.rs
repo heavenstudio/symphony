@@ -182,11 +182,9 @@ on_both! {
     }
 }
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
-// has no PostgreSQL twin yet.
-#[test]
-fn invalid_priorities_missing_tasks_and_invalid_actors_leave_the_board_unchanged() {
-    let f = Fixture::new(
+on_both! {
+fn invalid_priorities_missing_tasks_and_invalid_actors_leave_the_board_unchanged(backend: Backend) {
+    let f = Fixture::on(backend,
         Seed::default()
             .session("brisk-finch")
             .session("amber-heron"),
@@ -216,10 +214,10 @@ fn invalid_priorities_missing_tasks_and_invalid_actors_leave_the_board_unchanged
         assert_eq!(f.rows(), before);
     }
 }
+}
 
-// On SurrealDB alone: it reaches the board through SurrealDB's own client.
-#[test]
-fn a_priority_edit_sends_no_callback_to_a_listening_orchestrator() {
+on_both! {
+fn a_priority_edit_sends_no_callback_to_a_listening_orchestrator(backend: Backend) {
     use std::io::Read;
     use std::os::unix::net::UnixListener;
 
@@ -249,7 +247,7 @@ fn a_priority_edit_sends_no_callback_to_a_listening_orchestrator() {
         }
     }
 
-    let f = Fixture::new(Seed::default());
+    let f = Fixture::on(backend, Seed::default());
     let actor = f.session("worker");
     let watcher = f.session("orchestrator");
     f.task("sim/jump");
@@ -259,7 +257,7 @@ fn a_priority_edit_sends_no_callback_to_a_listening_orchestrator() {
     let path = std::path::PathBuf::from("/tmp").join(format!(
         "symphony-priority-{}-{}.sock",
         std::process::id(),
-        f.other_client().database()
+        f.store.database().database()
     ));
     let socket = Socket {
         listener: UnixListener::bind(&path).unwrap(),
@@ -282,4 +280,5 @@ fn a_priority_edit_sends_no_callback_to_a_listening_orchestrator() {
     assert!(envelopes(&socket.listener).is_empty());
     assert!(f.store.callbacks().unwrap().contains_key(&watcher));
     assert!(f.store.callback_inbox(&watcher).unwrap().is_empty());
+}
 }

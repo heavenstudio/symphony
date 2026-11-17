@@ -22,7 +22,7 @@ const ROLES_OF: &str = "coalesce((SELECT jsonb_agg(jsonb_build_object('slug', r.
 /// Every counter of `kind`, `counter:[KIND, NAME]`, as a list of `[NAME, column]`.
 fn counters(kind: &str, column: &str) -> String {
     format!(
-        "coalesce((SELECT jsonb_agg(jsonb_build_array(c.id ->> 1, c.{column}) ORDER BY c.id ->> 1) \
+        "coalesce((SELECT jsonb_agg(jsonb_build_array(c.id -> 1, c.{column}) ORDER BY c.id ->> 1) \
     FROM counter c WHERE c.id ->> 0 = '{kind}'), '[]')"
     )
 }

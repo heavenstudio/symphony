@@ -91,11 +91,9 @@ on_both! {
     }
 }
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
-// has no PostgreSQL twin yet.
-#[test]
-fn bad_names_values_tasks_and_actors_leave_the_board_unchanged() {
-    let f = Fixture::new(
+on_both! {
+fn bad_names_values_tasks_and_actors_leave_the_board_unchanged(backend: Backend) {
+    let f = Fixture::on(backend,
         Seed::default()
             .session("brisk-finch")
             .session("amber-heron"),
@@ -160,8 +158,9 @@ fn bad_names_values_tasks_and_actors_leave_the_board_unchanged() {
     }
     assert_eq!(f.rows(), before);
 }
+}
 
-// On SurrealDB alone: SurrealDB's engine is its subject.
+// SurrealDB alone: reconstructs its historical schema-9 field definitions.
 #[test]
 fn a_board_of_schema_nine_gains_the_field_when_this_schema_opens_it() {
     let f = Fixture::new(Seed::default().session("brisk-finch"));
@@ -188,7 +187,7 @@ fn a_board_of_schema_nine_gains_the_field_when_this_schema_opens_it() {
 /// A schema-9 open runs its own definitions, every one `IF NOT EXISTS`, and names version 9: the
 /// field's definition and a task's fields stay, and the next open of this schema names its own
 /// version again.
-// On SurrealDB alone: SurrealDB's engine is its subject.
+// SurrealDB alone: reconstructs its historical schema-9 field definitions.
 #[test]
 fn an_open_from_schema_nine_keeps_the_field_and_its_values() {
     let f = Fixture::new(Seed::default().session("brisk-finch"));

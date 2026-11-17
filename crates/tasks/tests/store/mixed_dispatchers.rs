@@ -1,6 +1,7 @@
 //! Dispatchers built before one orchestrator per task and after it, alternating on one
 //! orchestrator's callback state: the fields older ones read keep their whole-board meaning, and
 //! neither repeats a line the other said.
+use crate::common::Backend;
 
 use super::common::Fixture;
 use super::orchestrators::{go_quiet_but, heard};
@@ -156,8 +157,8 @@ struct TwoOrchestrators {
 }
 
 impl TwoOrchestrators {
-    fn new() -> TwoOrchestrators {
-        let fixture = Fixture::empty();
+    fn new(backend: Backend) -> TwoOrchestrators {
+        let fixture = Fixture::on(backend, crate::common::Seed::default());
         let orchestrator = fixture.session("orchestrator");
         let other = fixture.session("orchestrator");
         let child = |kind: &str, parent: &str| {
@@ -195,15 +196,15 @@ impl TwoOrchestrators {
     }
 }
 
-#[test]
-fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none() {
+on_both! {
+fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none(backend: Backend) {
     let TwoOrchestrators {
         fixture,
         orchestrator,
         other,
         hand,
         worker,
-    } = TwoOrchestrators::new();
+    } = TwoOrchestrators::new(backend);
     let listener = listen(&fixture, &orchestrator);
     let ears = [(&listener, orchestrator.as_str())];
     let pull = |executing: u8, orphaned: u8| {
@@ -281,4 +282,5 @@ fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none() {
         ],
         "never kid, the other's work, or a line twice"
     );
+}
 }

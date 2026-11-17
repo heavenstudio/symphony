@@ -18,6 +18,7 @@ fn folder(name: &str) -> PathBuf {
     dir
 }
 
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
 #[test]
 fn the_server_comes_up_with_its_log_in_a_folder_that_was_not_there() {
     let dir = folder("absent");
@@ -30,6 +31,7 @@ fn the_server_comes_up_with_its_log_in_a_folder_that_was_not_there() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
 #[test]
 fn a_server_that_ends_at_once_is_reported_with_its_status_and_what_it_said() {
     let dir = folder("ends");
@@ -47,6 +49,7 @@ fn a_server_that_ends_at_once_is_reported_with_its_status_and_what_it_said() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
 #[test]
 fn a_server_binary_that_is_not_there_is_reported_with_what_the_shell_said() {
     let dir = folder("missing");
@@ -68,6 +71,7 @@ fn a_server_binary_that_is_not_there_is_reported_with_what_the_shell_said() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
 #[test]
 fn a_server_whose_port_is_taken_on_each_start_is_started_on_another_until_the_bound() {
     let dir = folder("taken");
@@ -93,6 +97,7 @@ fn a_server_whose_port_is_taken_on_each_start_is_started_on_another_until_the_bo
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
 #[test]
 fn a_server_on_a_surrealkv_engine_keeps_its_rows_in_that_folder_for_the_next_one() {
     let dir = folder("surrealkv");
@@ -120,6 +125,7 @@ fn a_server_on_a_surrealkv_engine_keeps_its_rows_in_that_folder_for_the_next_one
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
 #[test]
 fn a_server_up_on_another_engine_than_the_one_named_fails_its_start_with_why() {
     let dir = folder("elsewhere");
@@ -158,6 +164,7 @@ fn a_server_up_on_another_engine_than_the_one_named_fails_its_start_with_why() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
 #[test]
 fn a_store_is_held_where_its_engine_names_only_while_its_lock_is_taken() {
     let dir = folder("held");
@@ -202,6 +209,7 @@ fn a_store_is_held_where_its_engine_names_only_while_its_lock_is_taken() {
 /// A lock the system will not take on that file at all is no answer either way: said as such, not
 /// as a store held or free. macOS refuses `flock` on a FIFO (`EOPNOTSUPP`).
 #[cfg(target_os = "macos")]
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
 #[test]
 fn a_store_lock_that_cannot_be_tried_is_said_so() {
     let dir = folder("untried");
@@ -227,6 +235,7 @@ fn a_store_lock_that_cannot_be_tried_is_said_so() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+// SurrealDB alone: exercises the SurrealDB process launcher, its engine flags, locks and HTTP gates.
 #[test]
 fn the_tests_server_reaches_a_gate_on_this_machine_and_no_other_host() {
     let db = client();

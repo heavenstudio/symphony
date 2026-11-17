@@ -36,11 +36,9 @@ on_both! {
     }
 }
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a launch recorded
-// (`Store::record_launch`) has no PostgreSQL twin yet.
-#[test]
-fn a_tasks_stamp_stands_until_the_task_or_its_thread_changes() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_tasks_stamp_stands_until_the_task_or_its_thread_changes(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     f.task("sim/other");
     let worker = f.session("worker");
@@ -86,4 +84,5 @@ fn a_tasks_stamp_stands_until_the_task_or_its_thread_changes() {
     moved("a branch recorded with no line");
     f.task_with(under("sim/jump/work", "sim/jump"));
     moved("a task made under it");
+}
 }

@@ -1,5 +1,7 @@
 //! The agent sessions `just tasks launch` started for a task: what restoring one needs.
 
+use super::postgres::{Pg, launches as pg};
+use super::statement::both;
 use super::surreal::launches as sql;
 use super::work::no_task;
 use super::{Error, REFUSED, Store, refused, repr};
@@ -146,7 +148,9 @@ impl Store {
             "no_task": format!("{REFUSED}{}", no_task(&launch.slug)),
             "no_session": format!("{REFUSED}no session {}", repr(&launch.handle)),
         });
-        let claude_session = self.retrying(|| self.transact::<String>(&body, vars.clone()))?;
+        let claude_session = self.retrying(|| {
+            self.transact::<String>(both(&body, pg::record_launch(launch.log)), vars.clone())
+        })?;
         Ok(TaskSessionRow {
             claude_session,
             ..row
@@ -168,20 +172,29 @@ impl Store {
 
     /// The tasks `handle` was launched for, by when it started on each.
     pub fn sessions_of(&self, handle: &str) -> Result<Vec<TaskSessionRow>, Error> {
-        self.task_sessions_where(&sql::sessions_of_handle(), json!({"handle": handle}))
+        self.task_sessions_where(
+            &sql::sessions_of_handle(),
+            pg::sessions_of_handle(),
+            json!({"handle": handle}),
+        )
     }
 
     pub fn all_task_sessions(&self) -> Result<Vec<TaskSessionRow>, Error> {
-        self.task_sessions_where(&sql::all_sessions(), json!({}))
+        self.task_sessions_where(&sql::all_sessions(), pg::all_sessions(), json!({}))
     }
 
     /// Those whose pane is not closed.
     pub fn open_task_sessions(&self) -> Result<Vec<TaskSessionRow>, Error> {
-        self.task_sessions_where(&sql::open_sessions(), json!({}))
+        self.task_sessions_where(&sql::open_sessions(), pg::open_sessions(), json!({}))
     }
 
-    fn task_sessions_where(&self, read: &str, vars: Value) -> Result<Vec<TaskSessionRow>, Error> {
-        self.retrying(|| self.transact(read, vars.clone()))
+    fn task_sessions_where(
+        &self,
+        read: &str,
+        pg: Pg<'static>,
+        vars: Value,
+    ) -> Result<Vec<TaskSessionRow>, Error> {
+        self.retrying(|| self.transact(both(read, pg.clone()), vars.clone()))
     }
 
     /// Its pane is closed. The record stays, with the line that brings it back. A Codex record whose
@@ -196,7 +209,7 @@ impl Store {
         restore: &str,
     ) -> Result<(), Error> {
         let vars = closure_vars(slug, handle, why, restore);
-        self.change_task_session::<Value>(slug, handle, &sql::close(), vars)
+        self.change_task_session::<Value>(slug, handle, &sql::close(), pg::close(), vars)
             .map(|_| ())
     }
 
@@ -214,7 +227,13 @@ impl Store {
         let mut vars = closure_vars(&record.slug, &record.handle, why, restore);
         same_launch(&mut vars, record);
         held(&mut vars, &record.handle, hold);
-        self.change_task_session(&record.slug, &record.handle, &sql::close_as(), vars)
+        self.change_task_session(
+            &record.slug,
+            &record.handle,
+            &sql::close_as(),
+            pg::close_as(),
+            vars,
+        )
     }
 
     /// Record `launch` as a session found running in its pane and closed there at once, said in one
@@ -263,7 +282,8 @@ impl Store {
             ]);
         }
         held(&mut vars, &launch.handle, hold);
-        let kept: Option<String> = self.retrying(|| self.transact(&body, vars.clone()))?;
+        let kept: Option<String> =
+            self.retrying(|| self.transact(both(&body, pg::record_found_closed()), vars.clone()))?;
         Ok(kept.map(|claude_session| TaskSessionRow {
             claude_session,
             ..row
@@ -274,8 +294,14 @@ impl Store {
     pub fn reopen_task_session(&self, slug: &str, handle: &str, pane: &str) -> Result<(), Error> {
         let body = sql::reopen();
         let said = format!("restored {handle} in pane {pane}");
-        self.change_task_session::<Value>(slug, handle, &body, json!({"pane": pane, "said": said}))
-            .map(|_| ())
+        self.change_task_session::<Value>(
+            slug,
+            handle,
+            &body,
+            pg::reopen(),
+            json!({"pane": pane, "said": said}),
+        )
+        .map(|_| ())
     }
 
     /// [`Store::reopen_task_session`] in `pane` of the session `record` was read as, by the restore
@@ -295,7 +321,7 @@ impl Store {
         same_launch(&mut vars, record);
         held(&mut vars, handle, hold);
         let body = sql::reopen_as();
-        self.change_task_session(&record.slug, handle, &body, vars)
+        self.change_task_session(&record.slug, handle, &body, pg::reopen_as(), vars)
     }
 
     /// Take `handle`'s session for `doing` (`a close by ACTOR`, `a restore`): the lease a close and a
@@ -309,7 +335,7 @@ impl Store {
         let now = self.now();
         let taken: Lease = self.retrying(|| {
             self.transact(
-                sql::TAKE_SESSION,
+                both(sql::TAKE_SESSION, pg::take_session()),
                 json!({"handle": handle, "doing": doing, "now": now, "seconds": SESSION_LEASE_SECONDS}),
             )
         })?;
@@ -331,7 +357,7 @@ impl Store {
     pub fn renew_session(&self, handle: &str, revision: u64) -> Result<bool, Error> {
         self.retrying(|| {
             self.transact(
-                sql::RENEW_SESSION,
+                both(sql::RENEW_SESSION, pg::renew_session()),
                 json!({"handle": handle, "revision": revision, "now": self.now(), "seconds": SESSION_LEASE_SECONDS}),
             )
         })
@@ -341,7 +367,7 @@ impl Store {
     pub fn release_session(&self, handle: &str, revision: u64) -> Result<(), Error> {
         self.retrying(|| {
             self.transact::<Value>(
-                sql::RELEASE_SESSION,
+                both(sql::RELEASE_SESSION, pg::release_session()),
                 json!({"handle": handle, "revision": revision}),
             )
         })
@@ -353,6 +379,7 @@ impl Store {
         slug: &str,
         handle: &str,
         body: &str,
+        pg: Pg<'static>,
         more: Value,
     ) -> Result<T, Error> {
         let mut vars = json!({
@@ -362,7 +389,7 @@ impl Store {
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
-        self.retrying(|| self.transact(body, vars.clone()))
+        self.retrying(|| self.transact(both(body, pg.clone()), vars.clone()))
     }
 }
 

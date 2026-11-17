@@ -135,10 +135,8 @@ on_both! {
     }
 }
 
-// On SurrealDB alone until tools/board-pg-threads-and-asks: the landings posted
-// (`Store::landings_posted`) has no PostgreSQL twin yet.
-#[test]
-fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull() {
+on_both! {
+fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull(backend: Backend) {
     for actor in ["owner", "amber-heron"] {
         let mut seed = Seed::default()
             .session("amber-heron")
@@ -155,7 +153,7 @@ fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull
                 .link(&slug, "dep", "sim/prerequisite")
                 .link(&slug, "dep", "sim/second-prerequisite");
         }
-        let f = Fixture::new(seed);
+        let f = Fixture::on(backend, seed);
         f.store
             .move_to("sim/prerequisite", "cancelled", actor)
             .unwrap();
@@ -236,12 +234,11 @@ fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull
         assert!(refused(f.store.claim("sim/later", "amber-heron")).contains("is blocked"));
     }
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn next_offers_work_whose_executor_or_reserver_is_gone() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn next_offers_work_whose_executor_or_reserver_is_gone(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (gone, other) = (f.session("worker"), f.session("worker"));
     f.task_with(NewTask {
         status: "design".into(),
@@ -257,12 +254,11 @@ fn next_offers_work_whose_executor_or_reserver_is_gone() {
     f.store.claim("sim/booked", &other).unwrap();
     assert_eq!(next(&f, &other).as_deref(), Some("sim/held"));
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn a_subtask_made_for_a_handle_is_offered_to_it_alone() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_subtask_made_for_a_handle_is_offered_to_it_alone(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (agent, other) = (f.session("worker"), f.session("worker"));
     f.task("a");
     f.task_with(NewTask {
@@ -275,4 +271,5 @@ fn a_subtask_made_for_a_handle_is_offered_to_it_alone() {
     f.store.touch(&other).unwrap();
     assert_eq!(next(&f, &agent).as_deref(), Some("a/review"));
     assert_eq!(next(&f, &other).as_deref(), Some("a"));
+}
 }

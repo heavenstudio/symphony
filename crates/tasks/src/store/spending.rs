@@ -1,6 +1,8 @@
 //! The tokens sessions spent ([`crate::usage`]): added by a beat in its own transaction
 //! ([`sql::SPEND`]), read back by task and by session.
 
+use super::postgres::spending as pg;
+use super::statement::both;
 use super::surreal::spending as sql;
 use super::{Error, Store};
 use crate::health::FINISHED;
@@ -24,7 +26,7 @@ impl Store {
         if slugs.is_empty() {
             return Ok(Vec::new());
         }
-        self.retrying(|| self.read(sql::SPENT_ON, json!({"slugs": slugs})))
+        self.retrying(|| self.read(both(sql::SPENT_ON, pg::spent_on()), json!({"slugs": slugs})))
     }
 
     /// The tokens each of `handles` spent, all told, and what they cost at the prices every build
@@ -33,8 +35,12 @@ impl Store {
         if handles.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let rows: Vec<UsageRow> =
-            self.retrying(|| self.read(sql::SPENT_BY, json!({"handles": handles})))?;
+        let rows: Vec<UsageRow> = self.retrying(|| {
+            self.read(
+                both(sql::SPENT_BY, pg::spent_by()),
+                json!({"handles": handles}),
+            )
+        })?;
         let prices = Prices::embedded();
         let mut by = BTreeMap::new();
         for row in &rows {

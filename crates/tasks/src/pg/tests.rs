@@ -700,3 +700,27 @@ fn a_bounded_client_waits_the_shorter_of_its_own_wait_and_the_bound_and_keeps_it
     assert_eq!(short.of("postgres").timeout, Duration::from_secs(3));
     assert_eq!((short.database(), short.requests()), ("board_1", 0));
 }
+
+#[test]
+fn request_telemetry_counts_reads_writes_and_failures_once_and_is_shared_by_board() {
+    let fake = Fake::new(vec![Script {
+        started: STARTED,
+        answers: vec![JSONB_AND_NULL, NOTICE, SYNTAX],
+    }]);
+    let client = fake.client();
+    let log = client.queries();
+    assert!(Arc::ptr_eq(&log, &client.another().queries()));
+    assert!(!Arc::ptr_eq(&log, &client.of("another").queries()));
+    client.request(&[Step::bare("SELECT 1")]).unwrap();
+    client
+        .request(&[Step::bare(
+            "DO $$ BEGIN UPDATE task SET title = 'new'; END $$",
+        )])
+        .unwrap();
+    assert!(client.simple("SELECT 'x' FROM").is_err());
+    let (queries, writes) = log.report(crate::sweep::trigger::now());
+    assert_eq!((queries.count, queries.failed, writes.count), (3, 1, 1));
+    assert_eq!(client.requests(), 3);
+    drop(client);
+    fake.sent();
+}
