@@ -127,7 +127,11 @@ fn a_project_page_takes_its_theme_and_the_header_its_client_pages_draw_under_its
         page.contains("<title>Not found · Lantern &lt;Works&gt;</title>"),
         "{page}"
     );
-    assert!(page.contains("href=\"/lantern/look/icon.svg?v="), "{page}");
+    let version = symphony::assets::validator(&tree.path("look/icon.svg"));
+    assert!(
+        page.contains(&format!("href=\"/lantern/look/icon.svg?v={version}\"")),
+        "{page}"
+    );
     assert!(
         !page.contains("data:image/svg+xml") && !page.contains("apple-touch-icon"),
         "the theme's icon wins, and the Symphony's is on no home screen for it: {page}"
@@ -138,12 +142,12 @@ fn a_project_page_takes_its_theme_and_the_header_its_client_pages_draw_under_its
         page.find("--primary:#2f5d9e").unwrap() < theme,
         "the theme's tokens come after the client's: {page}"
     );
-    // The theme's own icon and name, then the switch, then the client's own pages in its order
-    // and with its names, under the base.
+    // The theme's own icon, versioned as the tab's is, and name, then the switch, then the
+    // client's own pages in its order and with its names, under the base.
     assert!(
-        page.contains(
+        page.contains(&format!(
             "<header class=\"app-header\" id=\"top\"><span class=\"app-brand\"><img \
-             class=\"app-mark\" src=\"/lantern/look/icon.svg\" alt=\"\"><span \
+             class=\"app-mark\" src=\"/lantern/look/icon.svg?v={version}\" alt=\"\"><span \
              class=\"app-name\">Lantern &lt;Works&gt;</span></span><a href=\"/\" \
              class=\"project-switch\">Projects</a><nav class=\"app-pages\" \
              aria-label=\"Pages\"><a href=\"/lantern/\">Home</a><a \
@@ -151,7 +155,7 @@ fn a_project_page_takes_its_theme_and_the_header_its_client_pages_draw_under_its
              href=\"/lantern/tasks\">Board</a><a href=\"/lantern/reports\">Reports</a><a \
              href=\"/lantern/runs\">Runs</a><a href=\"/lantern/agents\">Agents</a></nav><nav \
              class=\"crumbs\" aria-label=\"Breadcrumbs\"><span>not found</span></nav>"
-        ),
+        )),
         "{page}"
     );
     assert_eq!(notice_of(&page), said);

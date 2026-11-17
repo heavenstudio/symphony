@@ -2,14 +2,15 @@
 //! The head takes the project's theme package: its name as the title, its icon (the Symphony's
 //! own, [`crate::mark`], where the package has none), its tokens inline,
 //! its stylesheets after them (the shell puts each page kind's styles before these, so the package
-//! wins), and its layout variants on the root element, which the client's styles select. The body
-//! takes the project's view ([`symphony_api::PROJECT_ELEMENT`]), under the base the one server
-//! serves it at, and on a page the server draws itself ([`crate::pages`]) that page's notice. With
-//! no package the Symphony's defaults stand, its mark as the icon among them.
+//! wins), and its layout variants on the root element, which the client's styles select. Each file
+//! of the package is named by the version its answer is kept for good under ([`versioned`]). The
+//! body takes the project's view ([`symphony_api::PROJECT_ELEMENT`]), under the base the one server
+//! serves it at, its header's icon versioned as the tab's is, and on a page the server draws itself
+//! ([`crate::pages`]) that page's notice. With no package the Symphony's defaults stand, its mark
+//! as the icon among them.
 
 use std::path::Path;
 
-use sha2::Digest;
 use symphony::markup::escape;
 use symphony::project::Project;
 use symphony::theme::Package;
@@ -71,6 +72,9 @@ pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String
     let element = body.map_or_else(String::new, |_| {
         let mut view = project.view_at(root);
         view.base = base.into();
+        if !view.mark.is_empty() {
+            view.mark = versioned(root, "", &view.mark)[1..].to_string();
+        }
         Project::element(&view)
     });
     if !element.is_empty() {
@@ -124,21 +128,12 @@ fn head(root: &Path, base: &str, package: &Package) -> String {
     head
 }
 
-/// The project file `rel`'s URL under `base`, with its content's hash as its version, so a
-/// changed file is fetched again; a file that cannot be read goes without one.
-fn versioned(root: &Path, base: &str, rel: &str) -> String {
-    let path = format!("{base}/{}", rel.trim_start_matches('/'));
-    match std::fs::read(root.join(rel)) {
-        Ok(bytes) => {
-            let hash: String = sha2::Sha256::digest(&bytes)
-                .iter()
-                .take(8)
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
-            format!("{path}?v={hash}")
-        }
-        Err(_) => path,
-    }
+/// The project file `rel`'s URL under `base`, versioned by the validator its answer is kept for
+/// good under ([`symphony::assets::versioned`]), so a changed file is fetched again; a path no
+/// file answers goes without one.
+pub(crate) fn versioned(root: &Path, base: &str, rel: &str) -> String {
+    let path = format!("/{}", rel.trim_start_matches('/'));
+    format!("{base}{}", symphony::assets::versioned(&path, root))
 }
 
 #[cfg(test)]
