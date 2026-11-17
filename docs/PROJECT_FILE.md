@@ -41,6 +41,31 @@ check green at its tip, recorded as a test run, with no reviewer
 project records it through its own build wrapper
 ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)).
 
+## `[workflow]`
+
+This table is a strict **candidate format**, available through
+`symphony::project::workflow::candidate`. Runtime project loading refuses any supplied workflow
+with `unsupported_activation`: the authoritative storage/admission engine is not available.
+Omission retains the current board behavior and selects built-in definition v1 in the candidate
+reader. Candidate parsing never changes a board. The [workflow reference](WORKFLOW.md) documents
+every nested field, validation and the remaining activation work.
+
+All fields below are required when the candidate table is present; lists may be empty only
+where validation allows it. Unknown fields and variants refuse the candidate.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `format` | required | definition format version, currently `1` |
+| `initial` | required | initial `{ phase, state }` pair |
+| `task_kinds` | required | nonempty list of supported stable task-kind IDs |
+| `phases` | required | phase IDs, labels, display/phone order and column membership |
+| `states` | required | coordination-state IDs and labels |
+| `positions` | required | valid pairs and their staffing, slot, dependency, outcome and recovery declarations |
+| `edges` | required | typed routes, authority requirements, inputs, guards and effects |
+| `capabilities` | required | declared host capability IDs; declarations grant no authority |
+| `adapters` | required | declared host adapter IDs; declarations supply no adapter |
+| `guards` | required | opaque policy requirements by stable ID and adapter |
+
 ## `[project]`
 
 | Key | Default | What it sets |
