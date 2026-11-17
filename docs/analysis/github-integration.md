@@ -177,7 +177,8 @@ part of the adapter. Importing an external PR never checks out or executes its c
    heads, remote divergence, review fixes, failed main push, merge detection and crash recovery
    after push but before acknowledgment.
 
-Route **delivery A or B** to its own owner card, showing the policy change and extra public branch
-exposure. A does not fulfill outbound PR creation; B does. Optionality and MIT are already
-settled by the task, so need no new question. Separate packages can wait for a real deployment
-need. This branch leaves the shared decision register untouched for its current editors.
+The [delivery card](../DECISIONS.md#github-outbound-pr-delivery) asks A or B with the policy change
+and extra public branch exposure visible. A does not fulfill outbound PR creation; B does.
+Optionality and MIT are already settled by the task, so need no new question. Separate packages
+can wait for a real deployment need. The additive cards preserve existing register content and
+owner history; no broader migration is included.

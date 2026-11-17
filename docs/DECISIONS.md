@@ -5,6 +5,22 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### GitHub delivery
+
+- [ ] **github-outbound-pr-delivery** — Symphony can show local work on GitHub either as delivery updates linking the landed commit, or as pull requests opened before the local merge. Which should the first optional integration deliver? A: issue exchange and incoming PR tracking first; local deliveries post merge links, with outbound PR creation deferred. B: also publish a draft PR from a selected task branch before local land, naming its reviewed commit. This explicitly permits those branch pushes when enabled; local stamps still decide readiness and the local land alone merges/pushes main. Recommended: B, because it delivers outbound PRs as requested. Approve and say A or B in the note, or comment. [[analysis/github-integration#Pull requests and local land]]
+  [2026-11-17 18:59] agent — The current policy pushes only main through land. A keeps that policy but does not create outbound PRs. B exposes selected task branches and needs a publisher, scoped credentials and recovery; a PR or GitHub review grants no local approval. Neither option enables integration now or lets GitHub merge main.
+
+    **Earlier verdicts checked.** **needed-stamps** governs local evidence and stays in force under both choices. **release-delivery** governs installed releases, not task branches. Your task asks for optional GitHub integration and PR delivery; it does not choose the publication step or authorize implementation during this design phase. Optionality and MIT are already settled and are not asked again.
+
+### Historical paths
+
+- [ ] **github-historical-path-treatment** — Older published binaries and one retired guide contain personal home/source-folder paths. No credential is confirmed. Should removing those paths also rewrite existing public Git history? A: retain existing history, clean current machine assumptions and prevent paths in future outputs; the old non-credential paths remain public. B: coordinate targeted history cleanup, removing the identified binary versions and redacting the retired text. Recommended: A on the present evidence, because B changes release and consumer identities without recovering copies already public. Approve and say A or B in the note, or comment. [[analysis/github-history-treatment#The decision and compatibility cost]]
+  [2026-11-17 18:59] agent — The isolated scratch proof removes all thirteen identified blobs and the personal prefix while retaining all 198 register-history blobs and the current main/ten release trees. It changes 3,338 commit IDs, every advertised release target and the known consumer pin; two older branch trees also lose compiled client assets. B requires coordinated refs, consumer manifest/lock updates through its own gate, worktree recovery and a disposition for evidence linked to old SHAs. No real ref, visibility, credential or setting changed.
+
+    **Earlier verdicts checked.** **client-in-the-crate** (A) retains Git distribution until consumers migrate; **consumer-contract-versioning** (B) and **release-delivery** retain the consumer contract. **pictures-in-every-clone** (F) keeps document/card pictures and their history. None decides whether these personal paths justify changing the repository's existing identities. The task requests a sensitive/local-path audit and removal; this card makes the historical scope and its compatibility cost explicit, without treating generic paths as credentials. Containment coordination stays with the orchestrator; B is not a claim that forks, caches or clones can be recalled.
+
 ## Auto-approved: spot-check
 
 ### Releases

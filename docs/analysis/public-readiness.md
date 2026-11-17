@@ -6,8 +6,10 @@ is separate from repository readiness.
 
 **The repository was already public when inspected.** `gh repo view heavenstudio/symphony`
 reported PUBLIC, `isPrivate: false`, main as default branch, MIT recognized, issues enabled and
-wiki disabled. This session changed no setting, credential, history, tag or visibility. The
-remaining work is review and remediation of existing exposure.
+wiki disabled; the initial finding was recorded at 17:37 on the task thread on 2026-11-17.
+A read-only visibility/license recheck at **2026-11-17 17:49:20 UTC** again returned PUBLIC,
+`isPrivate: false` and MIT. This is verified exposure context, not a visibility change by this
+session. The remaining work is review and remediation of existing exposure.
 
 ## Scope and method
 
@@ -49,8 +51,8 @@ for the requested review.
 | --- | --- | --- |
 | S1 | History scan returned three `generic-api-key` candidates: `apps/symphony-server/tests/after_host_origin/after_host_origin.rs:735` in `29c2b1c7beee86e47a0f149258bc6ffc075fe3e0` and `22afbd67bcfbb44f5f044c2ad17403ddfb49396c`, and `apps/symphony-server/src/api/feed_socket.rs:417` in the latter. Current scan found the same two test locations at lines 737 and 424. Source inspection identifies the public RFC 6455 sample nonce used for handshakes. | False positives, not credentials. Both raw scan exits were 1 for candidates; they are not presented as clean scanner runs. No suppression or test changed. |
 | S2 | No confirmed credential emerged from those candidates, the commit-message scan or the private-key-marker search. No tracked filename matched the inventory's environment/key-file patterns. | No rotation is indicated by this evidence. Any later confirmed credential is revoked/rotated first; publish only location/type, never its value. |
-| P1 | Twelve historical client WASM blobs contain non-fixture home paths, all reachable from main. Representative blob `478142bfdcef88efa12abfee35729ffabd240eb5`, at `apps/symphony-server/client/public/assets/symphony-ui_bg-dxh8833f421cef363a.wasm`. | Current deletion does not remove historical exposure. Prepare the complete affected blob/commit manifest with private values withheld, and check future binary build-path remapping. |
-| P2 | Historical shipped guidance contains a non-fixture home path: blob `04c10c08a560a348e132768de542ca104cbc52f7`, at `crates/symphony/shipped/skills/apply-review/rewrite-brief.md`. | Include in the history/privacy plan; do not copy the personal path into a public task or new guide. |
+| P1 | Twelve historical client WASM blobs contain non-fixture home paths, all reachable from main. Representative blob `478142bfdcef88efa12abfee35729ffabd240eb5`, at `apps/symphony-server/client/public/assets/symphony-ui_bg-dxh8833f421cef363a.wasm`. | This is source-checkout/build-cache path disclosure, not proof of a credential. Current deletion does not remove historical exposure. [Affected refs, consumer pins and a scratch-only cleanup proof](github-history-treatment.md) quantify the privacy/compatibility choice. |
+| P2 | Historical shipped guidance contains a non-fixture home path: blob `04c10c08a560a348e132768de542ca104cbc52f7`, at `crates/symphony/shipped/skills/apply-review/rewrite-brief.md`. | Path/privacy finding, not a confirmed credential. Include in the history choice without copying the personal value into a public task or new guide. |
 | P3 | Current home-prefix matches in 14 files, private IPv4 matches in four, macOS temporary-prefix matches in one and credential-shaped URLs in one are synthetic tests. Inspected cases exercise schedule quoting, navigation/traversal refusals and network/address rejection. | Retain meaningful fixtures; an empty grep is not a goal. |
 | M1 | `symphony.toml:53` names a Homebrew-specific PostgreSQL executable folder; five other files mention that prefix in tests. | Runtime setting is machine-specific, not a secret. Replace the checkout assumption with documented discovery/local override, retaining the pinned PostgreSQL requirement and actionable errors. Test an alternate prefix. |
 | G1 | GitHub reports secret scanning, non-provider patterns, validity checks, push protection and Dependabot security updates disabled. Main reports `protected: false`. | Propose appropriate secret/push protections and advisory/update policy separately. Account for the local land/regenerator contract before protection changes. No setting changed here. |
@@ -121,16 +123,17 @@ Rejected/postponed cards and live asks do not become accepted reference. The reg
 index and owner queue, rather than the sole design home. Moving verdict storage itself would
 change the review format and requires separate design, not a blind Markdown split.
 
-This branch leaves DECISIONS.md and owner-answer work to their existing editors. Coordinate one
-bounded topic at a time, checking links/cards at each final tip. Mark accepted but unimplemented
-intent explicitly; code determines what works now.
+This branch adds only the two coordinated GitHub owner cards to DECISIONS.md, preserving all
+existing content/history. Owner-answer work remains with its existing editor. Coordinate each
+later topic migration separately, checking links/cards at the final tip. Mark accepted but
+unimplemented intent explicitly; code determines what works now.
 
 ## Remediation order
 
 | Step and responsible role | Work | Exit evidence |
 | --- | --- | --- |
 | 1. Owner with audit executor | Triage historical path exposure/containment; revoke any later confirmed credential first. | Sanitized findings/dispositions. No rotation currently indicated by scanner candidates. |
-| 2. Owner's history decision | Choose coordinated rewrite or another explicit publication-history plan after enumerating affected immutable Git pins, release tags, branches, PR refs and forks. | Scratch-clone proof removes identified sensitive blobs/paths, preserves required source/license history and explains consumer migration. No rewrite/force push before a concrete plan is authorized. |
+| 2. Owner's history decision | Choose whether the identified personal-path disclosure warrants a coordinated rewrite, using the [public-ref/pin inventory and scratch proof](github-history-treatment.md). Generic local paths alone do not establish credential exposure. | Scratch proof preserves all register-history blobs and current release trees, while demonstrating changed commit/tag identities and the required consumer migration. Real history/settings remain unchanged; containment coordination belongs to the orchestrator. |
 | 3. Portability executor/settings owner | Resolve M1 via tested configuration/discovery; review build-path remapping and source-map/binary contents; address G1 through repository settings work. | Alternate-prefix tests, sanitized output scan, selected protections read back. Consumer checkouts stay read-only. |
 | 4. Dependency/security reviewers | Inventory actual source/binary/npm distributions, copied assets and notices. Review file reads/uploads, process/shell dispatch, plugins and network writes. | Resolved distribution obligations, triaged advisory findings, focused regression evidence for actual fixes. Metadata inventory is not a full code audit. |
 | 5. Document/media owners | Apply topic migration, reconcile setup, add security/contribution guidance, inspect all 151 raster pictures and SVGs; regenerate private examples from fixtures. | Link/card checks, clean-environment setup evidence, media manifest with every item disposition; stable links and pending answers preserved. |
