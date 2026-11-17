@@ -127,8 +127,7 @@ fn machine_work_projects_every_reservation_and_fences_foreign_path_and_pane_owne
     let local = view.agents.iter().find(|a| a.handle == local).unwrap();
     assert_eq!(local.state, "running_test");
     assert_eq!(local.detail.as_ref().unwrap().phase, "holding");
-    let json: serde_json::Value =
-        serde_json::from_str(&symphony_board::pyjson::dumps_line(&view.json())).unwrap();
+    let json = view.json();
     assert_eq!(
         json["machine_work"]["unassigned"].as_array().unwrap().len(),
         3
@@ -220,8 +219,7 @@ fn machine_work_receiver_snapshot_survives_board_projection_without_foreign_path
         view.machine_work.machines[0].operations[2].task.as_deref(),
         Some("tools/other")
     );
-    let json: serde_json::Value =
-        serde_json::from_str(&symphony_board::pyjson::dumps_line(&view.json())).unwrap();
+    let json = view.json();
     assert_eq!(
         json["machine_work"]["machines"][0]["operations"][0]["task"],
         "tools/actual"

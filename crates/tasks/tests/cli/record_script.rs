@@ -786,6 +786,212 @@ impl Recipes {
 }
 
 #[test]
+fn one_recipe_check_commands_refuse_added_recipes_and_trailing_options_before_execution() {
+    let setup = Setup::new("record-script-one-recipe");
+    let recipes = Recipes::new(&setup);
+    let marker = recipes.tree.join("executed with spaces");
+    let other = recipes.tree.join("other.just");
+    let justfile = r#"marker := env_var("CHECK_MARKER")
+lint-rs:
+    @echo lint >> {{quote(marker)}}
+release:
+    @echo release >> {{quote(marker)}}
+symphony:
+    @echo server >> {{quote(marker)}}
+"#;
+    let vars = [("CHECK_MARKER", marker.to_str().unwrap())];
+    fs::write(recipes.tree.join("justfile"), justfile).unwrap();
+    fs::write(&other, justfile).unwrap();
+    let other = other.to_str().unwrap();
+    let unguarded = recipes.just_with(&["lint-rs", "release"], &vars);
+    assert!(unguarded.status.success(), "{unguarded:?}");
+    assert_eq!(fs::read_to_string(&marker).unwrap(), "lint\nrelease\n");
+    fs::remove_file(&marker).unwrap();
+    for tail in [
+        vec!["release"],
+        vec!["symphony"],
+        vec!["--justfile", other],
+        vec!["-f", other],
+        vec!["--working-directory", "/tmp"],
+        vec!["--shell", "/bin/sh"],
+        vec!["--command", "touch", marker.to_str().unwrap()],
+        vec!["--set", "record", "arbitrary"],
+        vec!["record=arbitrary"],
+        vec!["--no-deps"],
+    ] {
+        let mut args = vec!["--one", "--", "lint-rs"];
+        args.extend_from_slice(&tail);
+        let done = recipes.just_with(&args, &vars);
+        assert!(!done.status.success(), "{args:?}: {done:?}");
+        assert!(!marker.exists(), "{args:?} executed a command: {done:?}");
+    }
+    let done = recipes.just_with(&["--one", "--", "lint-rs"], &vars);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(fs::read_to_string(&marker).unwrap(), "lint\n");
+}
+
+#[test]
+fn one_recipe_test_commands_keep_argument_boundaries_task_commit_and_red_status() {
+    let setup = Setup::new("record-script-one-recipe-records");
+    let recipes = Recipes::new(&setup);
+    let commit = git_says(&recipes.tree, &["rev-parse", "HEAD"]);
+    let log = setup.dir.join("cargo-arguments");
+    executable(
+        &recipes.cargo,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CHECK_ARGS\"\nexit \"$CHECK_EXIT\"\n",
+    );
+    for code in ["0", "7"] {
+        let done = recipes.just_with(
+            &[
+                "--one",
+                "--",
+                "test-rs",
+                "--",
+                "a filter with spaces",
+                "release",
+                "--justfile",
+                "/tmp/other.just",
+            ],
+            &[
+                ("CHECK_ARGS", log.to_str().unwrap()),
+                ("CHECK_EXIT", code),
+                ("TASKS_TASK", "tools/one-recipe"),
+                ("TASKS_SESSION", "fixture-worker"),
+            ],
+        );
+        assert_eq!(done.status.code(), Some(code.parse().unwrap()), "{done:?}");
+        assert_eq!(
+            fs::read_to_string(&log).unwrap(),
+            "test\n--locked\n--\na filter with spaces\nrelease\n--justfile\n/tmp/other.just\n"
+        );
+    }
+    let records = setup.history(2);
+    for (record, code) in records.iter().zip([0, 7]) {
+        assert_eq!(record.task.as_deref(), Some("tools/one-recipe"));
+        assert_eq!(record.handle.as_deref(), Some("fixture-worker"));
+        assert_eq!(record.commit.as_deref(), Some(commit.as_str()));
+        assert_eq!(record.exit_code, Some(code));
+        assert_eq!(record.phase, Phase::Test);
+    }
+}
+
+#[test]
+fn one_recipe_document_checks_keep_fixed_arguments_and_both_records() {
+    let setup = Setup::new("record-script-one-recipe-docs");
+    let recipes = Recipes::new(&setup);
+    let log = setup.dir.join("document-arguments");
+    executable(
+        &recipes.tree.join("tools/rs-bin.sh"),
+        "#!/bin/sh\nprintf '%s|' \"$@\" >> \"$DOC_ARGS\"\nprintf '\\n' >> \"$DOC_ARGS\"\n",
+    );
+    let vars = [("DOC_ARGS", log.to_str().unwrap())];
+    for tail in ["--tidy", "release", "--justfile"] {
+        let done = recipes.just_with(&["--one", "--", "docs-check", tail], &vars);
+        assert!(!done.status.success(), "{tail}: {done:?}");
+        assert!(!log.exists(), "{tail}: a check ran before the refusal");
+    }
+    let done = recipes.just_with(&["--one", "--", "docs-check"], &vars);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "symphony|docs-audit|--check|\nsymphony|status|--lint|\n"
+    );
+    let labels: Vec<_> = setup
+        .history(2)
+        .into_iter()
+        .map(|record| {
+            assert_eq!(record.phase, Phase::Test);
+            assert_eq!(record.exit_code, Some(0));
+            record.label
+        })
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "just symphony-cli docs-audit --check",
+            "just symphony-cli status --lint"
+        ]
+    );
+}
+
+#[test]
+fn the_crates_check_recipe_records_its_task_tip_streams_and_status_or_runs_without_a_recorder() {
+    let setup = Setup::new("record-script-crates-check");
+    let recipes = Recipes::new(&setup);
+    executable(
+        &recipes.tree.join("tools/rs-bin.sh"),
+        "#!/bin/sh\nprintf 'arg=<%s>\\n' \"$@\"\nprintf 'crates diagnostic\\n' >&2\nexit \"${CRATES_EXIT:-0}\"\n",
+    );
+    git(&recipes.tree, &["add", "tools/rs-bin.sh"]);
+    git(&recipes.tree, &["commit", "-q", "-m", "checker stand-in"]);
+    let commit = git_says(&recipes.tree, &["rev-parse", "HEAD"]);
+    let task = "tools/crates-check";
+    let recorder = logging().to_str().unwrap();
+    let log = setup.log.to_str().unwrap();
+    let mut expected = Vec::new();
+    for code in ["0", "5"] {
+        let done = recipes.just(
+            "crates-check",
+            &[
+                ("TASKS_TASK", task),
+                ("CRATES_EXIT", code),
+                ("TASKS_RECORDER", recorder),
+                (LOG_VAR, log),
+            ],
+        );
+        assert_eq!(done.status.code(), Some(code.parse().unwrap()), "{done:?}");
+        assert_eq!(
+            done.stdout,
+            b"arg=<symphony-build>\narg=<crates-check>\narg=<.>\n"
+        );
+        assert!(done.stderr.starts_with(b"crates diagnostic\n"), "{done:?}");
+        expected.push(done);
+    }
+    let logged = setup.logged();
+    assert_eq!(logged.lines().count(), 4, "{logged}");
+    let history = setup.history(2);
+    for (record, code) in history.iter().zip([0, 5]) {
+        assert_eq!(
+            (record.label.as_str(), record.phase, record.task.as_deref()),
+            ("just crates-check", Phase::Test, Some(task))
+        );
+        assert_eq!(record.commit.as_deref(), Some(commit.as_str()));
+        assert_eq!(record.exit_code, Some(code));
+        assert_eq!(pipeline(record), Some("crates"));
+        assert!(record.parent_id.is_none(), "{record:?}");
+    }
+    let lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 2));
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    for line in &lines {
+        assert_eq!(line.commit.as_deref(), Some(commit.as_str()));
+        assert_eq!(line.dirty, Some(false), "{line:?}");
+        assert!(line.step.is_none(), "{line:?}");
+    }
+
+    // Disabled or absent recorder, then no script: the same checker and streams, no record.
+    let missing = setup.dir.join("no recorder");
+    for fallback in ["off", missing.to_str().unwrap(), recorder] {
+        if fallback == recorder {
+            fs::remove_file(recipes.tree.join("tools/record.sh")).unwrap();
+        }
+        for (code, expected) in ["0", "5"].into_iter().zip(&expected) {
+            let done = recipes.just(
+                "crates-check",
+                &[
+                    ("TASKS_RECORDER", fallback),
+                    ("CRATES_EXIT", code),
+                    (LOG_VAR, log),
+                ],
+            );
+            assert_eq!(done.status, expected.status, "{done:?}");
+            assert_eq!(done.stdout, expected.stdout, "{done:?}");
+            assert_eq!(done.stderr, expected.stderr, "{done:?}");
+        }
+    }
+    assert_eq!(setup.logged(), logged, "a fallback ran the recorder");
+}
+
+#[test]
 fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_only_themselves() {
     let setup = Setup::new("record-script-recipe-runs");
     let recipes = Recipes::new(&setup);

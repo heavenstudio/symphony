@@ -7,11 +7,11 @@ use super::attach::{Watch, watch};
 use super::text::{SNAPSHOT_TITLE, columns, event, export_markdown, message_line, roles_text};
 use super::{Clock, Env, probes, shape};
 use crate::health::RESERVE_SECONDS;
-use crate::pyjson::{self, Py};
 use crate::stages;
 use crate::sweep::{self, git::Listed, trigger};
 use crate::sys;
 use crate::{Error, NewSession, NewTask, Session, Store, Task};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -241,7 +241,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let probes = probes::machine(c.env);
             let view = describe(store, &probes, store.now(), p.flag("all"))?;
             if p.flag("json") {
-                c.say(&pyjson::dumps(&view.json()));
+                c.say(&serde_json::to_string_pretty(&view.json()).expect("JSON values serialize"));
                 return Ok(());
             }
             let lines = table(&view);
@@ -583,7 +583,7 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
     if !slug.contains('/') {
         return Err(Stop::Refused(format!(
             "slug {} names no area: a task's slug is area/short-name, such as tools/{slug}",
-            pyjson::repr(&slug)
+            crate::quote::repr(&slug)
         )));
     }
     let body = match p.get("body_file") {
@@ -819,14 +819,14 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let prices = crate::usage::Prices::embedded();
     let tally = crate::usage::Tally::at(&spent, prices);
     if c.parsed.flag("json") {
-        let json = Py::obj(vec![
-            ("task", shape::task(&task)),
-            ("thread", shape::messages(&thread)),
-            ("children", shape::tasks(&children)),
-            ("stages", shape::stages(&stages)),
-            ("tokens", tally.json(&spent, prices)),
-        ]);
-        c.say(&pyjson::dumps(&json));
+        let json = json!({
+            "task": shape::task(&task),
+            "thread": shape::messages(&thread),
+            "children": shape::tasks(&children),
+            "stages": shape::stages(&stages),
+            "tokens": tally.json(&spent, prices),
+        });
+        c.say(&serde_json::to_string_pretty(&json).expect("JSON values serialize"));
         return Ok(());
     }
     c.say(&format!(
@@ -940,11 +940,10 @@ fn who(store: &Store, c: &mut Context) -> Result<(), Stop> {
         .filter(|s| all || s.health.as_str() != "left")
         .collect();
     if c.parsed.flag("json") {
-        let json = Py::obj(vec![(
-            "sessions",
-            Py::List(sessions.iter().map(shape::session).collect()),
-        )]);
-        c.say(&pyjson::dumps(&json));
+        let json = json!({
+            "sessions": Value::Array(sessions.iter().map(shape::session).collect()),
+        });
+        c.say(&serde_json::to_string_pretty(&json).expect("JSON values serialize"));
         return Ok(());
     }
     let mut held: BTreeMap<String, Vec<String>> = BTreeMap::new();

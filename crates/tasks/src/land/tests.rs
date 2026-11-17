@@ -892,7 +892,13 @@ fn a_command_past_its_limit_is_ended_with_its_whole_group() {
         .spawn()
         .unwrap();
     let group = child.id();
-    let (status, ended) = watched(group, Duration::from_millis(300), None, || child.wait());
+    let (status, ended) = watched(
+        group,
+        Duration::from_millis(300),
+        None,
+        &Instant::now,
+        || child.wait(),
+    );
     assert_eq!(ended, Ended::Late);
     // Asked to end, or made to once its grace ran out on a machine too loaded to end it sooner.
     let signal = status.unwrap().signal();
@@ -902,7 +908,7 @@ fn a_command_past_its_limit_is_ended_with_its_whole_group() {
     );
     until_gone(group, "the background sleep went with it");
     let mut quick = sys::command("true").process_group(0).spawn().unwrap();
-    let (status, ended) = watched(quick.id(), PATIENT, None, || quick.wait());
+    let (status, ended) = watched(quick.id(), PATIENT, None, &Instant::now, || quick.wait());
     assert_eq!(ended, Ended::No);
     assert!(status.unwrap().success());
 }
@@ -942,7 +948,7 @@ fn what_a_command_leaves_running_in_its_group_ends_when_it_does() {
         .spawn()
         .unwrap();
     let group = child.id();
-    let (status, ended) = watched(group, PATIENT, None, || child.wait());
+    let (status, ended) = watched(group, PATIENT, None, &Instant::now, || child.wait());
     assert_eq!(ended, Ended::No);
     assert!(status.unwrap().success());
     until_gone(group, "what it left was ended");

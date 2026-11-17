@@ -5,10 +5,10 @@
 
 use super::{Context, Stop};
 use crate::cli::shape;
-use crate::pyjson::{self, Py};
 use crate::stages::stats::{Row, Spread, Summary, Waiting, summarize};
 use crate::stages::{Facts, hours, stages};
 use crate::{Store, sys};
+use serde_json::{Value, json};
 
 /// How far back `stats` looks unless `--days` says.
 const DAYS: i64 = 14;
@@ -52,7 +52,7 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         sys::local_minute(at).chars().take(10).collect()
     });
     if c.parsed.flag("json") {
-        c.say(&pyjson::dumps(&json(&summary)));
+        c.say(&serde_json::to_string_pretty(&json(&summary)).expect("JSON values serialize"));
     } else {
         for line in text(&summary) {
             c.say(&line);
@@ -160,93 +160,78 @@ fn text(s: &Summary) -> Vec<String> {
     lines
 }
 
-fn count(n: usize) -> Py {
-    Py::Int(i64::try_from(n).unwrap_or(i64::MAX))
+fn count(n: usize) -> Value {
+    json!(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
-fn spread_json(s: &Spread) -> Py {
-    Py::obj(vec![
-        ("tasks", count(s.n)),
-        ("median", Py::Float(s.median)),
-        ("p75", Py::Float(s.p75)),
-        ("p90", Py::Float(s.p90)),
-    ])
+fn spread_json(s: &Spread) -> Value {
+    json!({
+        "tasks": count(s.n),
+        "median": s.median,
+        "p75": s.p75,
+        "p90": s.p90,
+    })
 }
 
-fn waiting_json(w: &Waiting) -> Py {
-    Py::obj(vec![
-        ("tasks", count(w.count)),
-        ("median_seconds", Py::opt_float(w.median_seconds)),
-    ])
+fn waiting_json(w: &Waiting) -> Value {
+    json!({
+        "tasks": count(w.count),
+        "median_seconds": w.median_seconds,
+    })
 }
 
 /// The summary as `stats --json` prints it; every duration in seconds.
-fn json(s: &Summary) -> Py {
-    let opt = |spread: &Option<Spread>| spread.as_ref().map_or(Py::Null, spread_json);
-    Py::obj(vec![
-        ("days", Py::Int(s.days)),
-        ("tasks", count(s.tasks)),
-        (
-            "by_status",
-            shape::keyed(s.by_status.iter().map(|(k, n)| (k.clone(), count(*n)))),
+fn json(s: &Summary) -> Value {
+    let opt = |spread: &Option<Spread>| spread.as_ref().map_or(Value::Null, spread_json);
+    json!({
+        "days": s.days,
+        "tasks": count(s.tasks),
+        "by_status": shape::keyed(
+            s.by_status.iter().map(|(k, n)| (k.clone(), count(*n))),
         ),
-        ("lead_seconds", opt(&s.lead)),
-        (
-            "stage_seconds",
-            shape::keyed(
-                (s.per_stage.iter()).map(|(status, held)| (status.clone(), spread_json(held))),
-            ),
+        "lead_seconds": opt(&s.lead),
+        "stage_seconds": shape::keyed(
+            (s.per_stage.iter()).map(|(status, held)| (status.clone(), spread_json(held))),
         ),
-        ("waiting_before_first_claim_seconds", opt(&s.unclaimed)),
-        (
-            "bounces",
-            Py::List(
-                (s.bounces.iter())
-                    .map(|(bounces, tasks)| {
-                        Py::obj(vec![
-                            ("bounces", Py::Int(i64::from(*bounces))),
-                            ("tasks", count(*tasks)),
-                        ])
-                    })
-                    .collect(),
-            ),
+        "waiting_before_first_claim_seconds": opt(&s.unclaimed),
+        "bounces": Value::Array(
+            (s.bounces.iter())
+                .map(|(bounces, tasks)| json!({
+                    "bounces": i64::from(*bounces),
+                    "tasks": count(*tasks),
+                }))
+                .collect(),
         ),
-        (
-            "done_per_day",
-            Py::List(
-                (s.done_per_day.iter())
-                    .map(|(day, done)| Py::obj(vec![("day", Py::str(day)), ("done", count(*done))]))
-                    .collect(),
-            ),
+        "done_per_day": Value::Array(
+            (s.done_per_day.iter())
+                .map(|(day, done)| json!({
+                    "day": day,
+                    "done": count(*done),
+                }))
+                .collect(),
         ),
-        (
-            "slowest",
-            Py::List(
-                (s.slowest.iter())
-                    .map(|sitting| {
-                        Py::obj(vec![
-                            ("slug", Py::str(&sitting.slug)),
-                            ("status", Py::str(&sitting.status)),
-                            ("seconds", Py::Float(sitting.seconds)),
-                        ])
-                    })
-                    .collect(),
-            ),
+        "slowest": Value::Array(
+            (s.slowest.iter())
+                .map(|sitting| json!({
+                    "slug": &sitting.slug,
+                    "status": &sitting.status,
+                    "seconds": sitting.seconds,
+                }))
+                .collect(),
         ),
-        ("blocked", waiting_json(&s.blocked)),
-        ("ready_unstaffed", waiting_json(&s.unstaffed)),
-        (
-            "arms",
-            shape::keyed(s.arms.iter().map(|arm| {
-                let fields = vec![
-                    ("tasks", count(arm.tasks)),
-                    ("done", count(arm.done)),
-                    ("lead_seconds", opt(&arm.lead)),
-                    ("review_seconds", opt(&arm.review)),
-                    ("bounces", Py::Int(i64::from(arm.bounces))),
-                ];
-                (arm.name.clone(), Py::obj(fields))
-            })),
-        ),
-    ])
+        "blocked": waiting_json(&s.blocked),
+        "ready_unstaffed": waiting_json(&s.unstaffed),
+        "arms": shape::keyed(s.arms.iter().map(|arm| {
+            (
+                arm.name.clone(),
+                json!({
+                    "tasks": count(arm.tasks),
+                    "done": count(arm.done),
+                    "lead_seconds": opt(&arm.lead),
+                    "review_seconds": opt(&arm.review),
+                    "bounces": i64::from(arm.bounces),
+                }),
+            )
+        })),
+    })
 }

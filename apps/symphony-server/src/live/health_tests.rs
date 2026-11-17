@@ -108,6 +108,11 @@ fn hub(root: &Path, file: &Path, clock: &Clock) -> Hub {
     let mut hub = Hub::new(root, &root.join("build/client"));
     hub.health = Recorder::writing(file.to_path_buf());
     let clock = clock.clone();
+    let retry = clock.clone();
+    let start = clock.now();
+    let instant = Instant::now();
+    hub.retry_clock =
+        Box::new(move || instant + Duration::from_secs_f64((retry.now() - start).max(0.0)));
     hub.clock = Box::new(move || clock.now());
     hub
 }
@@ -340,6 +345,58 @@ fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_say
 
 const DISPATCH_FAILING: &str = "The task board is unwell: its callback dispatch is failing, so \
                                 agents may not hear from it. Run “just tasks status” to see why.";
+
+#[test]
+fn a_failed_worker_read_keeps_its_backoff_across_reopening_and_success_resets_it() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let fixture = Fixture::empty();
+    let relay = Relay::to(fixture.store.client().addr());
+    let clock = Clock::at(now());
+    let hub = hub(&root, &tree.path("health.json"), &clock);
+    let mut board = Some(through(&relay, &fixture));
+    let attempts = std::cell::Cell::new(0);
+    let mut connect = |_: &Path| {
+        attempts.set(attempts.get() + 1);
+        let client = Client::new(&relay.addr, "sf", fixture.store.client().database())
+            .waiting(test_time::backstop(Duration::from_secs(10)));
+        symphony_board::Store::with(client, Box::new(|| NOW), Box::new(|_| false), HOST)
+            .map_err(|error| error.to_string())
+    };
+    hub.board_tick(&mut board, &mut connect);
+    relay.cut();
+    hub.board_tick(&mut board, &mut connect);
+    assert!(board.is_none());
+    assert_eq!(hub.health.report(clock.now()).dispatch.failed, 1);
+    hub.board_tick(&mut board, &mut connect);
+    assert_eq!(attempts.get(), 0, "read failure defers opening too");
+    clock.pass(1.0);
+    hub.board_tick(&mut board, &mut connect);
+    assert_eq!(attempts.get(), 1);
+    assert_eq!(hub.health.report(clock.now()).dispatch.failed, 2);
+    relay.mend();
+    clock.pass(1.0);
+    hub.board_tick(&mut board, &mut connect);
+    assert!(
+        board.is_none(),
+        "failed opening kept the read's streak: two seconds"
+    );
+    assert_eq!(attempts.get(), 1);
+    clock.pass(1.0);
+    hub.board_tick(&mut board, &mut connect);
+    assert!(board.is_some());
+    relay.cut();
+    hub.board_tick(&mut board, &mut connect);
+    assert!(board.is_none());
+    relay.mend();
+    clock.pass(1.0);
+    hub.board_tick(&mut board, &mut connect);
+    assert!(
+        board.is_some(),
+        "success reset the next failure to one second"
+    );
+    assert_eq!(attempts.get(), 3);
+}
 
 /// The hour a recorder counted: its writes' p90 and its unanswered requests.
 fn hour(p90_ms: Option<f64>, failed: u64) -> Report {

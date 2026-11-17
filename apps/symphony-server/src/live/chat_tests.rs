@@ -1,11 +1,12 @@
 //! Exercise the real hub startup choice with child-local environments and private stores.
 
+use super::Hub;
 use crate::front::Shared;
 use crate::gate::Gate;
 use crate::testing::{Tree, board, git, repository};
 use serde_json::{Value, json};
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use symphony_board::sys::Command;
 
 const CHILD: &str = "SYMPHONY_CHAT_JOURNAL_TEST";
@@ -153,5 +154,54 @@ fn only_the_shared_server_drains_the_chat_journal() {
     } else {
         assert_eq!(queued(), [json!({"text": MESSAGE})]);
         assert_eq!(posted(), json!([]), "a preview posts no journal entry");
+    }
+    if shared_server {
+        const RETRY_MESSAGE: &str = "Owner message saved during a board outage.";
+        symphony::callbacks::publish(&root, RETRY_MESSAGE).unwrap();
+        // The shared clock's journal handoff fails while this scratch board has an older schema.
+        // The queued owner message must survive, even when a repair and new ticks arrive before
+        // the retry's deadline. Dispatch/read success must not reset the chat operation's streak.
+        let mut hub = Hub::new(&root, &root.join("build/client"));
+        *hub.callbacks.get_mut().unwrap() = Some(symphony::callbacks::Flusher::new(&root));
+        let clock = Arc::new(Mutex::new(Instant::now()));
+        let held = clock.clone();
+        hub.retry_clock = Box::new(move || *held.lock().unwrap());
+        store
+            .raw()
+            .row("meta", "schema")
+            .set(json!({"version": symphony_board::SCHEMA - 1}))
+            .unwrap();
+        hub.board_read(&store).unwrap();
+        assert_eq!(queued(), [json!({"text": RETRY_MESSAGE})]);
+        assert_eq!(posted(), json!([{ "text": MESSAGE }]));
+        store
+            .raw()
+            .row("meta", "schema")
+            .set(json!({"version": symphony_board::SCHEMA}))
+            .unwrap();
+        for _ in 0..3 {
+            hub.board_read(&store).unwrap();
+        }
+        assert_eq!(
+            queued(),
+            [json!({"text": RETRY_MESSAGE})],
+            "no false acknowledgement while deferred"
+        );
+        assert_eq!(posted(), json!([{ "text": MESSAGE }]));
+        assert_eq!(
+            hub.health.report(hub.now()).dispatch.ok,
+            4,
+            "chat failure did not defer dispatch"
+        );
+        *clock.lock().unwrap() += Duration::from_secs(1);
+        hub.board_read(&store).unwrap();
+        assert!(
+            queued().is_empty(),
+            "the repaired board accepted the pending message"
+        );
+        assert_eq!(
+            posted(),
+            json!([{ "text": MESSAGE }, { "text": RETRY_MESSAGE }])
+        );
     }
 }

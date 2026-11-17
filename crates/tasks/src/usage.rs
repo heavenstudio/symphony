@@ -15,10 +15,10 @@
 pub mod price;
 pub mod transcript;
 
-use crate::pyjson::Py;
 use crate::rows::UsageRow;
 pub use price::{Cost, Prices};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 /// The tokens of model calls on one model at one speed: what a beat hands the board.
@@ -67,16 +67,16 @@ impl Tokens {
     }
 
     /// The JSON the agents API and `tasks show --json` give.
-    pub fn json(&self) -> Py {
-        let count = |n: u64| Py::Int(i64::try_from(n).unwrap_or(i64::MAX));
-        Py::obj(vec![
-            ("input", count(self.input)),
-            ("cache_write_5m", count(self.cache_write_5m)),
-            ("cache_write_1h", count(self.cache_write_1h)),
-            ("cache_read", count(self.cache_read)),
-            ("output", count(self.output)),
-            ("calls", count(self.calls)),
-        ])
+    pub fn json(&self) -> Value {
+        let count = |n: u64| json!(i64::try_from(n).unwrap_or(i64::MAX));
+        json!({
+            "input": count(self.input),
+            "cache_write_5m": count(self.cache_write_5m),
+            "cache_write_1h": count(self.cache_write_1h),
+            "cache_read": count(self.cache_read),
+            "output": count(self.output),
+            "calls": count(self.calls),
+        })
     }
 }
 
@@ -190,50 +190,50 @@ impl Tally {
 
     /// The JSON `tasks show --json` gives: the sums, and the rows themselves, which carry the model
     /// and speed a price is read by, each beside its cost.
-    pub fn json(&self, rows: &[UsageRow], prices: &Prices) -> Py {
+    pub fn json(&self, rows: &[UsageRow], prices: &Prices) -> Value {
         let cost = |cost: &Cost| cost.json(&prices.read);
         let roles = (self.roles.iter())
             .map(|(role, spend)| {
-                Py::obj(vec![
-                    ("role", Py::str(role)),
-                    ("tokens", spend.tokens.json()),
-                    ("cost", cost(&spend.cost)),
-                ])
+                json!({
+                    "role": role,
+                    "tokens": spend.tokens.json(),
+                    "cost": cost(&spend.cost),
+                })
             })
             .collect();
         let rounds = (self.rounds.iter())
             .map(|(round, spend)| {
-                Py::obj(vec![
-                    ("round", Py::Int(*round)),
-                    ("tokens", spend.tokens.json()),
-                    ("cost", cost(&spend.cost)),
-                ])
+                json!({
+                    "round": *round,
+                    "tokens": spend.tokens.json(),
+                    "cost": cost(&spend.cost),
+                })
             })
             .collect();
         let rows = (rows.iter())
             .map(|row| {
                 let spend = row.spend(prices);
-                Py::obj(vec![
-                    ("handle", Py::str(&row.handle)),
-                    ("slug", Py::str(&row.slug)),
-                    ("role", Py::str(&row.role)),
-                    ("model", Py::str(&row.model)),
-                    ("speed", Py::str(&row.speed)),
-                    ("round", Py::Int(row.round)),
-                    ("tokens", spend.tokens.json()),
-                    ("cost", cost(&spend.cost)),
-                    ("first", Py::Float(row.first)),
-                    ("last", Py::Float(row.last)),
-                ])
+                json!({
+                    "handle": &row.handle,
+                    "slug": &row.slug,
+                    "role": &row.role,
+                    "model": &row.model,
+                    "speed": &row.speed,
+                    "round": row.round,
+                    "tokens": spend.tokens.json(),
+                    "cost": cost(&spend.cost),
+                    "first": row.first,
+                    "last": row.last,
+                })
             })
             .collect();
-        Py::obj(vec![
-            ("total", self.total.tokens.json()),
-            ("cost", cost(&self.total.cost)),
-            ("by_role", Py::List(roles)),
-            ("by_round", Py::List(rounds)),
-            ("rows", Py::List(rows)),
-        ])
+        json!({
+            "total": self.total.tokens.json(),
+            "cost": cost(&self.total.cost),
+            "by_role": Value::Array(roles),
+            "by_round": Value::Array(rounds),
+            "rows": Value::Array(rows),
+        })
     }
 
     /// The lines `tasks show` prints: the tokens, then their estimated cost, each all told, by role
@@ -576,7 +576,8 @@ mod tests {
             on("gpt-6.1-sol", "reviewer", 2, tokens(10, 0, 0, 0, 1)),
         ];
         let prices = prices();
-        let json = crate::pyjson::dumps_line(&Tally::at(&rows, &prices).json(&rows, &prices));
+        let json = serde_json::to_string(&Tally::at(&rows, &prices).json(&rows, &prices))
+            .expect("JSON values serialize");
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["cost"]["dollars"], 1.0);
         assert_eq!(value["cost"]["prices"], "2026-01-02");
@@ -606,8 +607,22 @@ mod tests {
     fn nothing_recorded_says_nothing() {
         assert!(Tally::of(&[]).lines().is_empty());
         assert_eq!(said(&[]), None);
-        let json = crate::pyjson::dumps(&Tally::of(&[]).json(&[], Prices::embedded()));
+        let json = serde_json::to_string_pretty(&Tally::of(&[]).json(&[], Prices::embedded()))
+            .expect("JSON values serialize");
         assert!(json.contains("\"by_role\": []"), "{json}");
+    }
+
+    #[test]
+    fn json_token_counts_keep_the_signed_limit() {
+        let counts = Tokens {
+            input: u64::MAX,
+            output: i64::MAX as u64,
+            ..Tokens::default()
+        }
+        .json();
+        assert_eq!(counts["input"].as_i64(), Some(i64::MAX));
+        assert_eq!(counts["output"].as_i64(), Some(i64::MAX));
+        assert_eq!(counts["calls"].as_u64(), Some(0));
     }
 
     #[test]

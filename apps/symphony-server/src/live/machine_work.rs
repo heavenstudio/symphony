@@ -323,7 +323,13 @@ impl Hub {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .as_mut()
-            && let Err(error) = measured("chat journal", || callbacks.flush(&self.root))
+            && let Some(Err(error)) = self
+                .chat_retry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .run(&self.retry_clock, || {
+                    measured("chat journal", || callbacks.flush(&self.root))
+                })
         {
             eprintln!("CHAT deferred: {error}");
         }
@@ -335,16 +341,23 @@ impl Hub {
         let snapshot = if ahead {
             None
         } else {
-            match measured("callbacks", || store.dispatch_callbacks_snapshot()) {
-                Ok(snapshot) => {
+            match self
+                .dispatch_retry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .run(&self.retry_clock, || {
+                    measured("callbacks", || store.dispatch_callbacks_snapshot())
+                }) {
+                Some(Ok(snapshot)) => {
                     self.health.dispatched(now, Ok(()));
                     snapshot
                 }
-                Err(error) => {
+                Some(Err(error)) => {
                     eprintln!("CALLBACK deferred: {error}");
                     self.health.dispatched(now, Err(&error.to_string()));
                     None
                 }
+                None => None,
             }
         };
         self.tell_health(now);
@@ -356,7 +369,7 @@ impl Hub {
         // Each tick gives the open tasks no orchestrator holds on the board it read, when one that
         // stays could take them ([`symphony_board::Store::give_if_due`]): every project the server
         // serves, whatever starts its sweeps. The give's own write delivers its GIVEN line.
-        let snapshot = match !ahead && store.give_if_due(&snapshot) {
+        let snapshot = match !ahead && self.give(store, &snapshot) {
             true => read()?,
             false => snapshot,
         };
@@ -397,6 +410,28 @@ impl Hub {
             })
             .collect();
         self.update_board(store, snapshot, agents)
+    }
+
+    /// The assignment pass has its own retry: a callback failure never delays a healthy give,
+    /// and successful reads or dispatches never clear a failing give's deadline.
+    pub(super) fn give(
+        &self,
+        store: &symphony_board::Store,
+        board: &symphony_board::Board,
+    ) -> bool {
+        match self
+            .give_retry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .run(&self.retry_clock, || store.try_give_if_due(board))
+        {
+            Some(Ok(given)) => given,
+            Some(Err(error)) => {
+                eprintln!("giving open tasks an orchestrator deferred: {error}");
+                false
+            }
+            None => false,
+        }
     }
 
     pub(crate) fn agent_snapshot(&self) -> Result<symphony_api::Agents, String> {

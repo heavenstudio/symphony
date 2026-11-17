@@ -502,6 +502,7 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
             folder: folder.clone(),
             log,
             interrupts: interrupts.as_ref(),
+            now: &std::time::Instant::now,
             recorder: None,
             named: false,
             out: &mut *out,

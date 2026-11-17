@@ -41,12 +41,12 @@
 mod place;
 
 use crate::health::Health;
-use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
 use crate::usage::{Cost, Prices, Tokens};
 use crate::{Binding, Error, Session, Store, Task};
 pub use place::{Began, PROCESS, PROCESS_SCAN_SECONDS, Process, ProcessScan};
 use place::{Stay, resolve, waited_on};
+use serde_json::{Value, json};
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 mod attribution;
@@ -197,95 +197,87 @@ pub struct View {
     pub agents: Vec<Agent>,
 }
 
-fn ok(asked: bool) -> Py {
-    Py::str(if asked { "ok" } else { "unavailable" })
+fn ok(asked: bool) -> Value {
+    json!(if asked { "ok" } else { "unavailable" })
 }
 
 impl View {
     /// The contract, in its key order.
-    pub fn json(&self) -> Py {
-        Py::obj(vec![
-            ("generated", Py::Float(self.generated)),
-            (
-                "probes",
-                Py::obj(vec![("herdr", ok(self.herdr)), ("slots", ok(self.slots))]),
-            ),
-            (
-                "agents",
-                Py::List(self.agents.iter().map(Agent::json).collect()),
-            ),
-            (
-                "machine_work",
-                super::machine_work::json(&self.machine_work),
-            ),
-        ])
+    pub fn json(&self) -> Value {
+        json!({
+            "generated": self.generated,
+            "probes": {
+                "herdr": ok(self.herdr),
+                "slots": ok(self.slots),
+            },
+            "agents": Value::Array(self.agents.iter().map(Agent::json).collect()),
+            "machine_work": super::machine_work::json(&self.machine_work),
+        })
     }
 }
 
 impl Agent {
-    fn json(&self) -> Py {
+    fn json(&self) -> Value {
         let held = self
             .tasks
             .iter()
             .map(|t| {
-                Py::obj(vec![
-                    ("slug", Py::str(&t.slug)),
-                    ("role", Py::str(&t.role)),
-                    ("status", Py::str(&t.status)),
-                ])
+                json!({
+                    "slug": &t.slug,
+                    "role": &t.role,
+                    "status": &t.status,
+                })
             })
             .collect();
-        let detail = self.detail.as_ref().map_or(Py::Null, |d| {
-            Py::obj(vec![
-                ("recipe", Py::str(&d.recipe)),
-                ("phase", Py::str(&d.phase)),
-                ("since", Py::opt_float(d.since)),
-            ])
+        let detail = self.detail.as_ref().map_or(Value::Null, |d| {
+            json!({
+                "recipe": &d.recipe,
+                "phase": &d.phase,
+                "since": d.since,
+            })
         });
-        let said = self.last_message.as_ref().map_or(Py::Null, |m| {
-            Py::obj(vec![
-                ("slug", Py::str(&m.slug)),
-                ("ts", Py::Float(m.ts)),
-                ("text", Py::str(&m.text)),
-            ])
+        let said = self.last_message.as_ref().map_or(Value::Null, |m| {
+            json!({
+                "slug": &m.slug,
+                "ts": m.ts,
+                "text": &m.text,
+            })
         });
-        let count = |n: usize| Py::Int(i64::try_from(n).unwrap_or(i64::MAX));
-        let slots = self.slots.map_or(Py::Null, |s| {
-            Py::obj(vec![("open", count(s.open)), ("cap", count(s.cap))])
+        let count = |n: usize| json!(i64::try_from(n).unwrap_or(i64::MAX));
+        let slots = self.slots.map_or(Value::Null, |s| {
+            json!({
+                "open": count(s.open),
+                "cap": count(s.cap),
+            })
         });
-        Py::obj(vec![
-            ("handle", Py::str(&self.handle)),
-            ("kind", Py::str(&self.kind)),
-            ("model", Py::str(&self.model)),
-            ("parent", Py::opt_str(self.parent.as_deref())),
-            ("task", Py::opt_str(self.task.as_deref())),
-            ("role", Py::opt_str(self.role.as_deref())),
-            ("tasks", Py::List(held)),
-            ("following", count(self.following)),
-            ("worktree", Py::str(&self.worktree)),
-            ("branch", Py::str(&self.branch)),
-            ("agent", Py::opt_str(self.agent.as_deref())),
-            ("session_id", Py::opt_str(self.session_id.as_deref())),
-            ("pane", Py::opt_str(self.pane.as_deref())),
-            ("callback", Py::opt_str(self.callback.as_deref())),
-            ("chat", Py::Bool(self.chat)),
-            ("state", Py::str(self.state)),
-            ("state_detail", detail),
-            ("health", Py::str(self.health.as_str())),
-            ("last_tool_call", Py::opt_float(self.last_tool_call)),
-            ("last_message", said),
-            ("slots", slots),
-            ("session_url", Py::opt_str(self.session_url.as_deref())),
-            ("in_process", Py::Bool(self.in_process)),
-            (
-                "tokens",
-                self.tokens.as_ref().map_or(Py::Null, Tokens::json),
-            ),
-            (
-                "cost",
-                (self.cost.as_ref()).map_or(Py::Null, |c| c.json(&Prices::embedded().read)),
-            ),
-        ])
+        json!({
+            "handle": &self.handle,
+            "kind": &self.kind,
+            "model": &self.model,
+            "parent": self.parent.as_deref(),
+            "task": self.task.as_deref(),
+            "role": self.role.as_deref(),
+            "tasks": Value::Array(held),
+            "following": count(self.following),
+            "worktree": &self.worktree,
+            "branch": &self.branch,
+            "agent": self.agent.as_deref(),
+            "session_id": self.session_id.as_deref(),
+            "pane": self.pane.as_deref(),
+            "callback": self.callback.as_deref(),
+            "chat": self.chat,
+            "state": self.state,
+            "state_detail": detail,
+            "health": self.health.as_str(),
+            "last_tool_call": self.last_tool_call,
+            "last_message": said,
+            "slots": slots,
+            "session_url": self.session_url.as_deref(),
+            "in_process": self.in_process,
+            "tokens": self.tokens.as_ref().map_or(Value::Null, Tokens::json),
+            "cost": (self.cost.as_ref())
+                .map_or(Value::Null, |c| c.json(&Prices::embedded().read)),
+        })
     }
 }
 

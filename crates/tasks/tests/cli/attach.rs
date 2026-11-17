@@ -191,7 +191,10 @@ fn a_digest_interval_that_is_no_number_is_refused_before_anything_is_written() {
         "✖ TASKS_PULL_SECONDS=soon is not a number of seconds\n"
     );
     let who = run(&e, &["who", "--json", "--all"], "");
-    assert_eq!(who.out, "{\n \"sessions\": []\n}\n");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&who.out).unwrap(),
+        serde_json::json!({"sessions": []}),
+    );
 }
 
 /// Probes that answer nothing and write down each time they are asked, by name.

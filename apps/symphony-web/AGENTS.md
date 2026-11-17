@@ -259,9 +259,10 @@ collapse button's tip as the components' tabs and tooltip sheets write them, the
 being the shared sheet's). The media sheet,
 `src/styles/media.css`, which the shared sheet leaves out, is the media layer's,
 imported by `media-layer.ts`, so home, the documents, a task's page and the chat take it as one
-file under the layer's name. The task board and the agents page have
-no sheet of their own: their rules are the shared sheet's (`src/styles/board.css`),
-whose task card rules the agents page's cards use too. The attach control's sheet
+file under the layer's name. The task board imports its own layout sheet
+(`src/styles/boardwait.css`) through `src/board.tsx`, emitted as `board-<hash>.css` after the
+shared sheet. The agents page has no sheet of its own: its cards use the shared sheet's
+task card rules (`src/styles/board.css`). The attach control's sheet
 (`src/styles/attach.css`) comes inside `src/attach.tsx`, which the first composer to mount puts in
 the page, so no first visit carries a byte of it. The server's own pages inline `board.css`'s
 tokens and `frame.css` from copies in its package (`apps/symphony-server/src/`), which it carries

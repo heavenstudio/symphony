@@ -201,6 +201,19 @@ task its session holds; an orchestrator running one for a task, or a subagent wi
 a session of its own, names it: `TASKS_TASK=SLUG just test-rs …`, with
 `TASKS_SESSION=HANDLE` when it has a handle (docs/MACHINE_WORK.md).
 
+A board-launched Codex executor or reviewer already inherits `TASKS_SESSION`: run its own
+checks as one recipe (`just --one -- test-rs …`, `just --one -- lint-rs`), so the recorder derives
+the task from its held role. Keep `--one --` before the recipe: the first option refuses a second
+recipe before either runs, and the separator ends option parsing. Do not repeat session/task
+assignments on each command. This repository's `.codex/rules/checks.rules` allows its named
+checks to record shared state outside the worktree sandbox; it grants no directory-wide access.
+For both document checks use `just --one -- docs-check`, whose arguments are fixed; the generic
+document CLI also accepts flags that write documents. A check
+run for another task still needs the explicit attribution above and the active approval flow.
+Full sessions register their own callback early with `just tasks callback --as HANDLE`;
+in-process agents read their inbox instead. An orchestrator also reads
+[its project guidance](.agents/skills/task-orchestrator/project.md).
+
 **Evidence, not the suite.** A task's gate is the tests closest to what it changed and
 `just lint-rs`, with the client built for a client change (its distribution never committed),
 and the docs audit for a docs change, posted on its thread as evidence

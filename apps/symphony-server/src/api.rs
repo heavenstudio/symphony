@@ -1454,17 +1454,32 @@ pub(crate) fn project_view(root: &Path) -> symphony_api::ProjectView {
 /// Whether `path` is a page the client draws: its own, one of the project's navigation pages, or
 /// a document or folder page of one of its entrypoints.
 pub(crate) fn client_page(project: &symphony_api::ProjectView, path: &str) -> bool {
+    client_kind(project, path).is_some()
+}
+
+/// The shell's initial kind, after the router decoded the path and removed its project and
+/// worktree prefixes. Keep the canonical pages ahead of project navigation and entrypoints.
+fn client_kind(project: &symphony_api::ProjectView, path: &str) -> Option<&'static str> {
     let page = path.trim_end_matches('/');
-    // `/task` with no slug is the board, as the shell's routes read it.
-    matches!(
-        page,
-        "" | "/tasks" | "/task" | "/agents" | "/queue" | "/reports" | "/runs"
-    ) || project
-        .nav
-        .iter()
-        .any(|nav| nav.href.trim_end_matches('/') == page)
-        || path.starts_with("/task/")
-        || project.is_document_route(path.trim_start_matches('/'))
+    match page {
+        "" if project.is_document_route("") => Some("docs"),
+        "" => Some("review"),
+        "/tasks" | "/task" => Some("board"),
+        "/agents" => Some("agents"),
+        "/queue" => Some("queue"),
+        "/reports" => Some("reports"),
+        "/runs" => Some("runs"),
+        _ if path.starts_with("/task/") => Some("task"),
+        _ if project
+            .nav
+            .iter()
+            .any(|nav| nav.href.trim_end_matches('/') == page)
+            || project.is_document_route(path.trim_start_matches('/')) =>
+        {
+            Some("docs")
+        }
+        _ => None,
+    }
 }
 
 /// Compatibility shell prefixes and version pages redirect to the document view.

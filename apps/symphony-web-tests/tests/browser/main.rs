@@ -371,6 +371,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ),
         ("/docs/look-parity.md", "docs", ".doc-card", None),
     ] {
+        preload::serve_page(&site, path, kind);
         let Some(mut chrome) = chrome() else { return };
         if kind == "board" {
             // The fixture is Ready; the phone now mounts only its selected Review stage.

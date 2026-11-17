@@ -207,13 +207,16 @@ fn the_json_gives_dollars_of_each_kind_the_unpriced_and_the_day_the_prices_were_
         &tokens(250_000, 100_000, 0, 1_000_000, 50_000),
     );
     cost.add(&prices.cost("gpt-x", "fast", &tokens(7, 0, 0, 0, 0)));
-    let json = crate::pyjson::dumps_line(&cost.json(&prices.read));
+    let json = cost.json(&prices.read);
     assert_eq!(
         json,
-        "{\"dollars\": 2.7, \"input\": 1.0, \"cache_write_5m\": 0.5, \"cache_write_1h\": 0.0, \
+        serde_json::from_str::<serde_json::Value>(
+            "{\"dollars\": 2.7, \"input\": 1.0, \"cache_write_5m\": 0.5, \"cache_write_1h\": 0.0, \
          \"cache_read\": 0.2, \"output\": 1.0, \"unpriced\": [{\"model\": \"gpt-x\", \"speed\": \
          \"fast\", \"tokens\": {\"input\": 7, \"cache_write_5m\": 0, \"cache_write_1h\": 0, \
          \"cache_read\": 0, \"output\": 0, \"calls\": 1}}], \"prices\": \"2026-11-16\"}"
+        )
+        .unwrap()
     );
 }
 

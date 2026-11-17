@@ -7,8 +7,32 @@ use serde_json::json;
 use std::path::Path;
 
 impl Hub {
+    /// One due worker attempt, including opening a missing store. A failed read drops that store
+    /// but keeps this operation's streak across reopening; startup and recurring ticks share it.
+    pub(super) fn board_tick(
+        &self,
+        board: &mut Option<symphony_board::Store>,
+        connect: &mut impl FnMut(&Path) -> Result<symphony_board::Store, String>,
+    ) {
+        self.board_retry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .run(&self.retry_clock, || {
+                if board.is_none() {
+                    *board = self.reconnect(connect);
+                }
+                let store = board.as_ref().ok_or(())?;
+                if let Err(error) = super::measured("board tick", || self.board_read(store)) {
+                    self.board_error(error);
+                    *board = None;
+                    return Err(());
+                }
+                Ok(())
+            });
+    }
+
     /// The store for the worker's next board read: `connect`'s, or none once the pages have heard
-    /// why there is none. A tick with no store makes no dispatch pass: the board's health counts it
+    /// why there is none. An opening that fails makes no dispatch pass: the board's health counts it
     /// failed, unless the project has no board ([`symphony_board::board_health::absent`]), which is
     /// not unwell. A board refused because it went back below the schema it was seen at
     /// ([`symphony_board::live::seen`]) is said so on the board's health, until a store opens it;
