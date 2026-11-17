@@ -1332,14 +1332,14 @@ fn upload_bytes(stored: &Path, name: &str) -> Result<Vec<u8>, String> {
 
 /// Of `uploads` ([`saved_uploads`]), those a text of `texts` still names: what the commit shows.
 fn shown_uploads<T: Clone>(uploads: &BTreeMap<String, T>, texts: &[&str]) -> BTreeMap<String, T> {
-    uploads
-        .iter()
-        .filter(|(path, _)| {
-            let link = format!("/{path}");
-            texts.iter().any(|text| text.contains(&link))
-        })
-        .map(|(path, bytes)| (path.clone(), bytes.clone()))
-        .collect()
+    let mut shown = BTreeMap::new();
+    for (path, bytes) in uploads {
+        let link = format!("/{path}");
+        if texts.iter().any(|text| text.contains(&link)) {
+            shown.insert(path.clone(), bytes.clone());
+        }
+    }
+    shown
 }
 
 /// After main gained the upload `path`, the main checkout `root` takes it: its index entry from

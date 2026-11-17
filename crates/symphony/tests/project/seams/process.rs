@@ -1261,3 +1261,27 @@ fn the_cost_of_a_register_read_linked_card_by_card_from_its_process_and_batched(
         );
     }
 }
+
+#[test]
+fn process_command_maps_keep_key_order_and_refuse_the_first_invalid_name() {
+    let root = Path::new("/r");
+    let valid = Project::parse(root, "[plugins]\ncrates = [\"z\", \"a\"]\n[plugins.process]\nz = [\"z\", \"--z\"]\na = [\"./bin/a\", \"--a\"]\n").unwrap();
+    assert_eq!(
+        valid
+            .plugin_processes
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["a", "z"]
+    );
+    assert_eq!(valid.plugin_processes["a"].command, ["/r/bin/a", "--a"]);
+    assert_eq!(valid.plugin_processes["z"].command, ["z", "--z"]);
+    let invalid = Project::parse(
+        root,
+        "[plugins]\ncrates = [\"z\", \"a\"]\n[plugins.process]\nz = []\na = []\n",
+    );
+    assert_eq!(
+        invalid.err().as_deref(),
+        Some("symphony.toml: [plugins.process] a names no program")
+    );
+}
