@@ -44,7 +44,7 @@ pub(in crate::store) fn status_lines() -> Pg<'static> {
 fn page_query(filter: &str) -> Pg<'static> {
     Pg::read(format!(
         "coalesce((SELECT jsonb_agg(coalesce((SELECT jsonb_agg({LINE} ORDER BY m.sid DESC) \
-        FROM (SELECT * FROM message m WHERE m.slug = f.line ->> 'slug' \
+        FROM (SELECT m.* FROM message m WHERE m.slug = f.line ->> 'slug' \
             AND m.sid < (f.line ->> 'sid')::bigint AND {filter} \
             ORDER BY m.sid DESC LIMIT {PAGE}) AS m), '[]') ORDER BY f.at) \
     FROM jsonb_array_elements(v -> 'from') WITH ORDINALITY AS f (line, at)), '[]')"
