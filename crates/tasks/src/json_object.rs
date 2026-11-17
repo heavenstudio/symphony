@@ -1,10 +1,16 @@
-//! Ordered JSON objects share their insertion loop instead of compiling it at every field.
+//! Ordered JSON objects share their insertion loop and scalar conversions across fields.
 //!
 //! Each caller constructs its values once; moving them into the object also avoids serializing
 //! an already constructed `Value` again. The field order and duplicate-key behavior are those of
 //! `serde_json::Map`, as in `json!` objects.
 
 use serde_json::Value;
+
+/// Compile each scalar conversion once per type, including its string or number allocation.
+#[inline(never)]
+pub(crate) fn value(value: impl Into<Value>) -> Value {
+    value.into()
+}
 
 #[inline(never)]
 pub(crate) fn object(fields: Vec<(&str, Value)>) -> Value {
@@ -20,6 +26,29 @@ pub(crate) fn object(fields: Vec<(&str, Value)>) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn shared_scalar_conversions_match_serialization_at_the_numeric_and_optional_edges() {
+        assert_eq!(value(i64::MIN), json!(i64::MIN));
+        assert_eq!(value(u64::MAX), json!(u64::MAX));
+        assert_eq!(value(None::<&str>), json!(null));
+        assert_eq!(value(Some("é\n😀")), json!("é\n😀"));
+        assert_eq!(value(true), json!(true));
+        assert_eq!(value(false), json!(false));
+        for number in [
+            -0.0,
+            1.0,
+            1e16,
+            2.5e-7,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            assert_eq!(value(number).to_string(), json!(number).to_string());
+            assert_eq!(value(Some(number)).to_string(), json!(number).to_string());
+        }
+        assert_eq!(value(None::<f64>), json!(null));
+    }
 
     #[test]
     fn empty_objects_and_fields_match_the_json_macro_including_their_order() {

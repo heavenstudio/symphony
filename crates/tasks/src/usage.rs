@@ -15,7 +15,7 @@
 pub mod price;
 pub mod transcript;
 
-use crate::json_object::object;
+use crate::json_object::{object, value};
 use crate::rows::UsageRow;
 pub use price::{Cost, Prices};
 use serde::{Deserialize, Serialize};
@@ -69,7 +69,7 @@ impl Tokens {
 
     /// The JSON the agents API and `tasks show --json` give.
     pub fn json(&self) -> Value {
-        let count = |n: u64| Value::from(i64::try_from(n).unwrap_or(i64::MAX));
+        let count = |n: u64| value(i64::try_from(n).unwrap_or(i64::MAX));
         object(vec![
             ("input", count(self.input)),
             ("cache_write_5m", count(self.cache_write_5m)),
@@ -196,7 +196,7 @@ impl Tally {
         let roles = (self.roles.iter())
             .map(|(role, spend)| {
                 object(vec![
-                    ("role", Value::from(role.as_str())),
+                    ("role", value(role.as_str())),
                     ("tokens", spend.tokens.json()),
                     ("cost", cost(&spend.cost)),
                 ])
@@ -205,7 +205,7 @@ impl Tally {
         let rounds = (self.rounds.iter())
             .map(|(round, spend)| {
                 object(vec![
-                    ("round", Value::from(*round)),
+                    ("round", value(*round)),
                     ("tokens", spend.tokens.json()),
                     ("cost", cost(&spend.cost)),
                 ])
@@ -215,16 +215,16 @@ impl Tally {
             .map(|row| {
                 let spend = row.spend(prices);
                 object(vec![
-                    ("handle", Value::from(row.handle.as_str())),
-                    ("slug", Value::from(row.slug.as_str())),
-                    ("role", Value::from(row.role.as_str())),
-                    ("model", Value::from(row.model.as_str())),
-                    ("speed", Value::from(row.speed.as_str())),
-                    ("round", Value::from(row.round)),
+                    ("handle", value(row.handle.as_str())),
+                    ("slug", value(row.slug.as_str())),
+                    ("role", value(row.role.as_str())),
+                    ("model", value(row.model.as_str())),
+                    ("speed", value(row.speed.as_str())),
+                    ("round", value(row.round)),
                     ("tokens", spend.tokens.json()),
                     ("cost", cost(&spend.cost)),
-                    ("first", Value::from(row.first)),
-                    ("last", Value::from(row.last)),
+                    ("first", value(row.first)),
+                    ("last", value(row.last)),
                 ])
             })
             .collect();

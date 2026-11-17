@@ -41,7 +41,7 @@
 mod place;
 
 use crate::health::Health;
-use crate::json_object::object;
+use crate::json_object::{object, value};
 use crate::rows::TaskSessionRow;
 use crate::usage::{Cost, Prices, Tokens};
 use crate::{Binding, Error, Session, Store, Task};
@@ -199,14 +199,14 @@ pub struct View {
 }
 
 fn ok(asked: bool) -> Value {
-    Value::from(if asked { "ok" } else { "unavailable" })
+    value(if asked { "ok" } else { "unavailable" })
 }
 
 impl View {
     /// The contract, in its key order.
     pub fn json(&self) -> Value {
         object(vec![
-            ("generated", Value::from(self.generated)),
+            ("generated", value(self.generated)),
             (
                 "probes",
                 object(vec![("herdr", ok(self.herdr)), ("slots", ok(self.slots))]),
@@ -230,54 +230,54 @@ impl Agent {
             .iter()
             .map(|t| {
                 object(vec![
-                    ("slug", Value::from(t.slug.as_str())),
-                    ("role", Value::from(t.role.as_str())),
-                    ("status", Value::from(t.status.as_str())),
+                    ("slug", value(t.slug.as_str())),
+                    ("role", value(t.role.as_str())),
+                    ("status", value(t.status.as_str())),
                 ])
             })
             .collect();
         let detail = self.detail.as_ref().map_or(Value::Null, |d| {
             object(vec![
-                ("recipe", Value::from(d.recipe.as_str())),
-                ("phase", Value::from(d.phase.as_str())),
-                ("since", Value::from(d.since)),
+                ("recipe", value(d.recipe.as_str())),
+                ("phase", value(d.phase.as_str())),
+                ("since", value(d.since)),
             ])
         });
         let said = self.last_message.as_ref().map_or(Value::Null, |m| {
             object(vec![
-                ("slug", Value::from(m.slug.as_str())),
-                ("ts", Value::from(m.ts)),
-                ("text", Value::from(m.text.as_str())),
+                ("slug", value(m.slug.as_str())),
+                ("ts", value(m.ts)),
+                ("text", value(m.text.as_str())),
             ])
         });
-        let count = |n: usize| Value::from(i64::try_from(n).unwrap_or(i64::MAX));
+        let count = |n: usize| value(i64::try_from(n).unwrap_or(i64::MAX));
         let slots = self.slots.map_or(Value::Null, |s| {
             object(vec![("open", count(s.open)), ("cap", count(s.cap))])
         });
         object(vec![
-            ("handle", Value::from(self.handle.as_str())),
-            ("kind", Value::from(self.kind.as_str())),
-            ("model", Value::from(self.model.as_str())),
-            ("parent", Value::from(self.parent.as_deref())),
-            ("task", Value::from(self.task.as_deref())),
-            ("role", Value::from(self.role.as_deref())),
+            ("handle", value(self.handle.as_str())),
+            ("kind", value(self.kind.as_str())),
+            ("model", value(self.model.as_str())),
+            ("parent", value(self.parent.as_deref())),
+            ("task", value(self.task.as_deref())),
+            ("role", value(self.role.as_deref())),
             ("tasks", Value::Array(held)),
             ("following", count(self.following)),
-            ("worktree", Value::from(self.worktree.as_str())),
-            ("branch", Value::from(self.branch.as_str())),
-            ("agent", Value::from(self.agent.as_deref())),
-            ("session_id", Value::from(self.session_id.as_deref())),
-            ("pane", Value::from(self.pane.as_deref())),
-            ("callback", Value::from(self.callback.as_deref())),
-            ("chat", Value::from(self.chat)),
-            ("state", Value::from(self.state)),
+            ("worktree", value(self.worktree.as_str())),
+            ("branch", value(self.branch.as_str())),
+            ("agent", value(self.agent.as_deref())),
+            ("session_id", value(self.session_id.as_deref())),
+            ("pane", value(self.pane.as_deref())),
+            ("callback", value(self.callback.as_deref())),
+            ("chat", value(self.chat)),
+            ("state", value(self.state)),
             ("state_detail", detail),
-            ("health", Value::from(self.health.as_str())),
-            ("last_tool_call", Value::from(self.last_tool_call)),
+            ("health", value(self.health.as_str())),
+            ("last_tool_call", value(self.last_tool_call)),
             ("last_message", said),
             ("slots", slots),
-            ("session_url", Value::from(self.session_url.as_deref())),
-            ("in_process", Value::from(self.in_process)),
+            ("session_url", value(self.session_url.as_deref())),
+            ("in_process", value(self.in_process)),
             (
                 "tokens",
                 self.tokens.as_ref().map_or(Value::Null, Tokens::json),

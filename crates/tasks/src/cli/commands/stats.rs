@@ -5,7 +5,7 @@
 
 use super::{Context, Stop};
 use crate::cli::shape;
-use crate::json_object::object;
+use crate::json_object::{object, value};
 use crate::stages::stats::{Row, Spread, Summary, Waiting, summarize};
 use crate::stages::{Facts, hours, stages};
 use crate::{Store, sys};
@@ -162,22 +162,22 @@ fn text(s: &Summary) -> Vec<String> {
 }
 
 fn count(n: usize) -> Value {
-    Value::from(i64::try_from(n).unwrap_or(i64::MAX))
+    value(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
 fn spread_json(s: &Spread) -> Value {
     object(vec![
         ("tasks", count(s.n)),
-        ("median", Value::from(s.median)),
-        ("p75", Value::from(s.p75)),
-        ("p90", Value::from(s.p90)),
+        ("median", value(s.median)),
+        ("p75", value(s.p75)),
+        ("p90", value(s.p90)),
     ])
 }
 
 fn waiting_json(w: &Waiting) -> Value {
     object(vec![
         ("tasks", count(w.count)),
-        ("median_seconds", Value::from(w.median_seconds)),
+        ("median_seconds", value(w.median_seconds)),
     ])
 }
 
@@ -185,7 +185,7 @@ fn waiting_json(w: &Waiting) -> Value {
 fn json(s: &Summary) -> Value {
     let opt = |spread: &Option<Spread>| spread.as_ref().map_or(Value::Null, spread_json);
     object(vec![
-        ("days", Value::from(s.days)),
+        ("days", value(s.days)),
         ("tasks", count(s.tasks)),
         (
             "by_status",
@@ -205,7 +205,7 @@ fn json(s: &Summary) -> Value {
                 (s.bounces.iter())
                     .map(|(bounces, tasks)| {
                         object(vec![
-                            ("bounces", Value::from(i64::from(*bounces))),
+                            ("bounces", value(i64::from(*bounces))),
                             ("tasks", count(*tasks)),
                         ])
                     })
@@ -217,10 +217,7 @@ fn json(s: &Summary) -> Value {
             Value::Array(
                 (s.done_per_day.iter())
                     .map(|(day, done)| {
-                        object(vec![
-                            ("day", Value::from(day.as_str())),
-                            ("done", count(*done)),
-                        ])
+                        object(vec![("day", value(day.as_str())), ("done", count(*done))])
                     })
                     .collect(),
             ),
@@ -231,9 +228,9 @@ fn json(s: &Summary) -> Value {
                 (s.slowest.iter())
                     .map(|sitting| {
                         object(vec![
-                            ("slug", Value::from(sitting.slug.as_str())),
-                            ("status", Value::from(sitting.status.as_str())),
-                            ("seconds", Value::from(sitting.seconds)),
+                            ("slug", value(sitting.slug.as_str())),
+                            ("status", value(sitting.status.as_str())),
+                            ("seconds", value(sitting.seconds)),
                         ])
                     })
                     .collect(),
@@ -251,7 +248,7 @@ fn json(s: &Summary) -> Value {
                         ("done", count(arm.done)),
                         ("lead_seconds", opt(&arm.lead)),
                         ("review_seconds", opt(&arm.review)),
-                        ("bounces", Value::from(i64::from(arm.bounces))),
+                        ("bounces", value(i64::from(arm.bounces))),
                     ]),
                 )
             })),
