@@ -178,7 +178,7 @@ fn worked(store: &Store) -> String {
         .map(|task| (task.slug.as_str(), task.status.as_str()))
         .collect();
     let sessions: Vec<&str> = (board.sessions.iter())
-        .map(|session| session.handle.as_str())
+        .map(|session| session.row.handle.as_str())
         .collect();
     said.push_str(&format!(
         "{tasks:?} {sessions:?} {}\n",
