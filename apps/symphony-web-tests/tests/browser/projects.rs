@@ -14,6 +14,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 const ALPHA: &str = "[project]\nname = \"Alpha\"\nid = \"alpha\"\n\
                      [theme.tokens]\nprimary = \"#7a2e8f\"\n[theme.layouts]\nhome = \"focus\"\n";
@@ -168,6 +169,48 @@ impl Drop for OneServer {
     }
 }
 
+/// Where the one server the cases that write nothing share answers.
+struct Shared(String);
+
+impl Shared {
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.0)
+    }
+}
+
+/// The shared server and its board, held until the binary's exit ends them.
+static SHARED: Mutex<Option<(OneServer, ScratchBoard)>> = Mutex::new(None);
+
+/// One board and one server of alpha and pantry for every case that writes nothing to either (what
+/// such a case keeps is in its own browser's profile): made by the first that asks, once for this
+/// run of the binary, and ended at its exit, its tests passed or not. A case that writes to the
+/// board, a project's folder or the machine folder starts its own.
+fn shared() -> &'static Shared {
+    static SERVED: OnceLock<Shared> = OnceLock::new();
+    SERVED.get_or_init(|| {
+        let board = ScratchBoard::start();
+        let server = OneServer::start(board.address());
+        let served = Shared(server.base.clone());
+        *SHARED.lock().unwrap() = Some((server, board));
+        // SAFETY: atexit only records a function that takes nothing, to run once at the exit.
+        assert_eq!(
+            unsafe { libc::atexit(end_shared) },
+            0,
+            "the shared server's end is set"
+        );
+        served
+    })
+}
+
+/// At the binary's exit: the shared server is stopped, then its board, and their folders go. A
+/// binary that is killed runs none of this, and each then ends by its own leash (the server on its
+/// test's process, the board on its input's end).
+extern "C" fn end_shared() {
+    if let Ok(mut shared) = SHARED.try_lock() {
+        drop(shared.take());
+    }
+}
+
 /// `folder` made empty and named as the server names it (macOS's `/private/var`).
 fn fresh(folder: &Path) -> PathBuf {
     let _ = std::fs::remove_dir_all(folder);
@@ -271,8 +314,7 @@ fn focused(browser: &mut Chrome) -> Value {
 
 #[test]
 fn a_draft_and_a_theme_one_project_keeps_never_appear_in_another() {
-    let board = ScratchBoard::start();
-    let server = OneServer::start(board.address());
+    let server = shared();
     let Some(mut browser) = chrome() else { return };
     browser.open(&server.url("/alpha/"));
     browser.eval(
@@ -319,8 +361,7 @@ fn a_draft_and_a_theme_one_project_keeps_never_appear_in_another() {
 fn the_top_left_switch_and_picker_work_by_keyboard_on_a_compact_nested_page() {
     use super::components::key;
 
-    let board = ScratchBoard::start();
-    let server = OneServer::start(board.address());
+    let server = shared();
     let Some(mut browser) = chrome() else { return };
     browser.call(
         "Emulation.setDeviceMetricsOverride",
@@ -575,8 +616,7 @@ fn landings(browser: &mut Chrome, base: &str, selector: &str) -> Vec<(String, u6
 
 #[test]
 fn every_header_and_home_link_lands_in_a_project_whose_guide_is_docs_review() {
-    let board = ScratchBoard::start();
-    let server = OneServer::start(board.address());
+    let server = shared();
     let Some(mut browser) = chrome() else { return };
     browser.open(&server.url("/alpha/"));
     assert!(
