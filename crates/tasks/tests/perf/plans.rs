@@ -304,13 +304,22 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
         api("inbox", json!({"handle": orchestrator})),
     ];
     for (args, input) in &commands {
-        let ran = board.run(&relay.addr, args, input);
-        assert_eq!(ran.code, 0, "{args:?}: {}", ran.err);
+        let ran = board.run_unbilled(&relay.addr, args, input);
+        assert!(
+            ran.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
     }
     for call in &calls {
-        let ran = board.run(&relay.addr, &["api"], call);
-        assert_eq!(ran.code, 0, "{call}: {}", ran.err);
-        assert!(ran.out.contains("\"ok\""), "{call}: {}", ran.out);
+        let ran = board.run_unbilled(&relay.addr, &["api"], call);
+        assert!(
+            ran.status.success(),
+            "{call}: {}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        let out = String::from_utf8_lossy(&ran.stdout);
+        assert!(out.contains("\"ok\""), "{call}: {out}");
     }
     // The questions waiting on each person, which the Symphony's hub counts again each time the
     // board's lines or its open tasks moved (`symphony::taskview::questions`) and no api call
@@ -338,30 +347,38 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     // test before this one may have made the waiter: the next give may go to it. Its look is not
     // the check's; the dispatch after it is.
     let joiner = generated::joiner();
-    let looked = board.run(
+    let looked = board.run_unbilled(
         &board.addr,
         &["wait", "--timeout", "0", "--as", &joiner],
         "",
     );
-    assert_eq!(looked.code, 0, "{joiner}'s look: {}", looked.err);
+    assert!(
+        looked.status.success(),
+        "{joiner}'s look: {}",
+        String::from_utf8_lossy(&looked.stderr)
+    );
     let second = unowned(&board, "second");
-    let ran = board.run(&relay.addr, &["dispatch"], "");
-    assert_eq!(
-        ran.code, 0,
+    let ran = board.run_unbilled(&relay.addr, &["dispatch"], "");
+    assert!(
+        ran.status.success(),
         "the dispatch after {joiner}'s look: {}",
-        ran.err
+        String::from_utf8_lossy(&ran.stderr)
     );
     let to_second = gave(&board, &second);
     eprintln!("perf: the give passes gave {first} to {to_first}, then {second} to {to_second}");
     // A take of the role, by a session holding it on no task, of one filed after the last pass,
     // which no pass gives first: its read of the taker for the limit, then the rule's write.
     let taken = unowned(&board, "taken");
-    let took = board.run(
+    let took = board.run_unbilled(
         &relay.addr,
         &["role", &taken, "orchestrator", "--as", &writer],
         "",
     );
-    assert_eq!(took.code, 0, "{writer}'s take of {taken}: {}", took.err);
+    assert!(
+        took.status.success(),
+        "{writer}'s take of {taken}: {}",
+        String::from_utf8_lossy(&took.stderr)
+    );
     // A completed task block exercises the prerequisite read and fenced resume write as well
     // as the candidate scan every dispatch makes. Task 1 is done in the generated history.
     let named = format!("task:{}", generated::slug(1));
