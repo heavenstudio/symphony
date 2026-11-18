@@ -145,8 +145,9 @@ fn a_legacy_mark_never_lands_on_its_orchestrators_approve() {
     approved_by_an_older_board(&r, &orch, &format!("{tip}: fine"));
     let before = head(&r.root, "main");
     let (_, result) = landed(&r, SLUG, &orch);
-    let line =
-        format!("{SLUG}'s approve is {orch}'s, which orchestrated it: a fresh reviewer approves it");
+    let line = format!(
+        "{SLUG}'s approve is {orch}'s, which orchestrated it: a fresh reviewer approves it"
+    );
     assert_refused(&r, &result, &line, &before);
     assert_eq!(store.get(SLUG).unwrap().status, "review");
     assert!(runs(&r).is_empty());

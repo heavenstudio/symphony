@@ -269,10 +269,8 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
     let mut env = r.env(&r.root);
     env.vars.insert("TASKS_ON_LAND".into(), "on".into());
     env.vars.insert("TASKS_REGENERATE".into(), "on".into());
-    env.vars.insert(
-        "TASKS_BIN".into(),
-        stand_in.to_string_lossy().into_owned(),
-    );
+    env.vars
+        .insert("TASKS_BIN".into(), stand_in.to_string_lossy().into_owned());
     env.vars.insert("GIT_DIR".into(), "/nowhere/.git".into());
     env.vars
         .insert("GIT_INDEX_FILE".into(), "/nowhere/index".into());
@@ -1231,10 +1229,7 @@ fn a_check_named_by_a_path_runs_the_merges_own_script_and_one_missing_is_refused
     let lines: Vec<&str> = ran.lines().collect();
     assert_eq!(lines.len(), 3, "{ran}");
     for line in &lines[..2] {
-        assert!(
-            line.ends_with(".git/symphony/tasks/land/worktree"),
-            "{ran}"
-        );
+        assert!(line.ends_with(".git/symphony/tasks/land/worktree"), "{ran}");
     }
     assert_eq!(lines[2], "none", "{ran}");
 
