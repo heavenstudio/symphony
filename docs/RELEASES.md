@@ -804,7 +804,11 @@ Once a release's tag is pushed, the run does this, in order:
   before `current` moved. Nothing here starts, stops, signals or restarts it. A release's server
   follows `current` by its own reload ([the install](#the-install)): the run waits, 5 minutes at
   most, until the machine's server answers as the release, and says which process now answers; or
-  that it still answers as the release before, which its reload tries again
+  that it still answers as the release before, with the last line its reload wrote in the
+  server's log since `current` moved, which names why the release did not take over and when it
+  is tried again. With none since, it quotes the reload's last line before, as a reload that
+  waits to try a release again writes nothing meanwhile; with none in the log's newest part, it
+  says the reload may not be running, never that it is not
   (`just symphony-status` says which answers later). A project's build as the machine's server never
   follows `current`, and the run says so: a stop and a start, the owner's word for the shared
   server, make the release its successor. With none answering, the next start of the one server

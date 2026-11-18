@@ -1881,3 +1881,169 @@ fn a_release_server_that_cannot_watch_its_machine_folder_reads_current_once_a_pe
         "a watcher that cannot watch wakes nothing"
     );
 }
+
+/// A watcher whose backend panics the first [`DEATHS`] times one is made, before the follow that
+/// makes it has waited for anything, as a bug at a follow's start would, and watches nothing after.
+struct Dying;
+
+/// How many times a [`Dying`] watcher panics.
+const DEATHS: usize = 3;
+
+/// How many [`Dying`] watchers were made: one test makes them.
+static MADE: AtomicUsize = AtomicUsize::new(0);
+
+impl notify::Watcher for Dying {
+    fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
+        assert!(
+            MADE.fetch_add(1, Ordering::SeqCst) >= DEATHS,
+            "the watcher's backend is gone"
+        );
+        Ok(Self)
+    }
+
+    fn watch(&mut self, _: &Path, _: notify::RecursiveMode) -> notify::Result<()> {
+        Ok(())
+    }
+
+    fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+        Ok(())
+    }
+
+    fn kind() -> notify::WatcherKind {
+        notify::WatcherKind::NullWatcher
+    }
+}
+
+/// `machine`'s `current` named at the release `name`, as `release::point` moves it.
+fn point(machine: &Path, name: &str) {
+    use symphony::machine::release;
+    let link = machine.join(".current.test");
+    std::os::unix::fs::symlink(Path::new(release::RELEASES).join(name), &link).unwrap();
+    std::fs::rename(&link, machine.join(release::CURRENT)).unwrap();
+}
+
+/// A release's server whose follow of `current` dies, as one that panics does, says so on its
+/// notice, and a follow is started in its place once the supervisor has waited for a wake: one
+/// that dies again at its start, before any wait of its own, is started once a wake and no more,
+/// never in a spin. The follow that lives reads `current` at once, tries the release it names and
+/// says why that one did not take over, and the link named back at this release clears the notice.
+#[test]
+fn a_release_servers_follow_that_dies_is_said_on_the_notice_and_started_again_once_a_wait() {
+    use symphony::machine::release;
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    let clock = Clock::new();
+    let (backstop, waits) = backstop::watched();
+    point(&server.home, "release-2");
+    let follow = server.following::<Dying>(backstop, clock.retry());
+    let died = format!(
+        "Symphony server reload stopped following {}: it panicked: the watcher's backend is gone. \
+         It is started again at its next check; this server is still the release release-1.",
+        server.home.join(release::CURRENT).display()
+    );
+    assert_eq!(server.notice_after(""), died);
+    // Each death is followed by one wait, on a period no test reaches: only a wake starts the next.
+    for death in 1..=DEATHS {
+        waits.begun(death);
+        assert_eq!(MADE.load(Ordering::SeqCst), death, "one start a wait");
+        assert_eq!(server.notice(), died);
+        server.shared.ask_handover();
+    }
+    // The follow that lives reads `current` before any wait of its own.
+    let refused = server.notice_after(&died);
+    assert_eq!(
+        refused,
+        format!(
+            "{FAILED} The release release-2 did not take over: {} holds no manifest. It is tried \
+             again at about {}.",
+            release::folder(&server.home, "release-2").display(),
+            clock.minute(5 * MINUTE)
+        )
+    );
+    assert_eq!(MADE.load(Ordering::SeqCst), DEATHS + 1);
+    waits.begun(DEATHS + 1);
+    point(&server.home, "release-1");
+    server.shared.ask_handover();
+    assert_eq!(
+        server.notice_after(&refused),
+        "",
+        "it follows the link again"
+    );
+    assert!(!server.shared.stopping(), "still serving");
+    server.stop(follow);
+}
+
+/// What a follow says in the log: one line for each reason it hands over to nothing, when that
+/// reason changes and not at each check, and one for each hand-off it begins, with why the
+/// release did not take over. A server that is not following says so where an agent reads it.
+#[test]
+fn a_release_servers_follow_says_each_attempt_and_each_reason_it_makes_none_once() {
+    use symphony::machine::release;
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    let clock = Clock::new();
+    let (backstop, waits) = backstop::watched();
+    let (serve, shared) = (server.serve(), server.shared.clone());
+    let following = super::Follow {
+        machine: server.home.clone(),
+        release: "release-1".into(),
+        sockets: Vec::new(),
+        lease: std::fs::File::open(&server.root).unwrap(),
+    };
+    let link = server.home.join(release::CURRENT);
+    // The moves of `current`, each once the follow waits after the check before it, then its stop.
+    let mover = std::thread::spawn({
+        let (home, shared) = (server.home.clone(), server.shared.clone());
+        move || {
+            waits.begun(1);
+            // A wake with nothing moved: the same reason, not said again.
+            shared.ask_handover();
+            waits.begun(2);
+            for (wait, name) in [(3, "release-1"), (4, "release-2"), (5, "release-1")] {
+                point(&home, name);
+                shared.ask_handover();
+                waits.begun(wait);
+            }
+            shared.stop();
+        }
+    });
+    let retry = clock.retry();
+    let ((), said) = told::during(|| {
+        super::follow::<notify::NullWatcher>(&serve, &following, &shared, backstop, retry);
+    });
+    joined(mover, "the moves of current to end", stall());
+    let named = |name: &str| {
+        format!(
+            "· Symphony reload: {} names {name}, the release this server is: it follows the link",
+            link.display()
+        )
+    };
+    assert_eq!(
+        said,
+        [
+            format!(
+                "· Symphony reload: {} names no release, so the release release-1 hands over to \
+                 none",
+                link.display()
+            ),
+            named("release-1"),
+            "· Symphony reload: current names release-2; handing over to its server".to_string(),
+            format!(
+                "· Symphony reload: {FAILED} The release release-2 did not take over: {} holds no \
+                 manifest. It is tried again at about {}.",
+                release::folder(&server.home, "release-2").display(),
+                clock.minute(5 * MINUTE)
+            ),
+            named("release-1"),
+        ]
+    );
+}
+
+#[test]
+fn a_panic_is_said_by_its_text_when_it_has_one() {
+    let text = |panic: Box<dyn std::any::Any + Send>| super::panicked(panic.as_ref()).to_string();
+    assert_eq!(text(Box::new("a literal")), "a literal");
+    assert_eq!(
+        text(Box::new(String::from("a formatted one"))),
+        "a formatted one"
+    );
+    assert_eq!(text(Box::new(7)), "with no message");
+}
