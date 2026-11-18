@@ -135,11 +135,10 @@ fn empty_cache(r: &Repo, tree: &Path) -> serde_json::Value {
     value
 }
 
-fn trees(r: &Repo, count: usize) -> Vec<PathBuf> {
-    let first = r.detached("clean-0");
+fn extend_trees(r: &Repo, trees: &mut Vec<PathBuf>, count: usize) {
+    let first = trees[0].clone();
     let source = admin(r, &first);
-    let mut trees = vec![first.clone()];
-    for number in 1..count {
+    for number in trees.len()..count {
         let tree = r.dir.join(format!("clean-{number}"));
         let target = admin(r, &tree);
         fs::create_dir_all(tree.join("sim")).unwrap();
@@ -159,7 +158,7 @@ fn trees(r: &Repo, count: usize) -> Vec<PathBuf> {
         trees.push(tree);
     }
     assert_eq!(r.worktrees().len(), count + 1);
-    trees
+    assert_eq!(trees.len(), count);
 }
 
 /// Install a real writer only after the verdict lookup. All candidates reach one mandatory
@@ -213,7 +212,11 @@ fn previously_empty_300_trees_reuse_complete_proofs_and_known_blockers_skip_whol
         return;
     }
     let r = Repo::new();
-    let trees = trees(&r, 300);
+    // Removal refreshes the whole worktree listing per candidate. Sixty exercises the same
+    // cache and guard counts without paying that quadratic cost at the CLI's scale.
+    const REMOVAL_TREES: usize = 60;
+    let mut trees = vec![r.detached("clean-0")];
+    extend_trees(&r, &mut trees, REMOVAL_TREES);
     for pass in 0..2 {
         if pass == 1 {
             for tree in &trees {
@@ -221,14 +224,14 @@ fn previously_empty_300_trees_reuse_complete_proofs_and_known_blockers_skip_whol
             }
         }
         let began = Instant::now();
-        let (lookups, guards) = late_writer_pass(&r, 300);
+        let (lookups, guards) = late_writer_pass(&r, REMOVAL_TREES);
         eprintln!(
-            "WHOLE SWEEP: 300 clean, late writer, pass {pass}: {:?}, lookup {lookups}, first guards {guards}, second guards 0, total {}",
+            "WHOLE SWEEP: {REMOVAL_TREES} clean, late writer, pass {pass}: {:?}, lookup {lookups}, first guards {guards}, second guards 0, total {}",
             began.elapsed(),
             lookups + guards
         );
-        assert_eq!(lookups, if pass == 0 { 300 } else { 0 });
-        assert_eq!(guards, 300);
+        assert_eq!(lookups, if pass == 0 { REMOVAL_TREES } else { 0 });
+        assert_eq!(guards, REMOVAL_TREES);
         for tree in &trees {
             empty_cache(&r, tree);
             assert!(tree.is_dir());
@@ -238,7 +241,13 @@ fn previously_empty_300_trees_reuse_complete_proofs_and_known_blockers_skip_whol
             );
         }
     }
-    // Same clean survivors and actual saved empty proofs, now already known blocked before lookup.
+    // Keep the CLI passes at 300, with both the real cached survivors and fresh uncached trees.
+    // Known blockers must bypass verdict lookup for either kind of clean candidate.
+    extend_trees(&r, &mut trees, 300);
+    for tree in &trees[REMOVAL_TREES..] {
+        assert!(!admin(&r, tree).join("symphony-sweep-verdict.json").exists());
+        fs::write(admin(&r, tree).join("HEAD.lock"), "private writer bytes\n").unwrap();
+    }
     for pass in 0..2 {
         let began = Instant::now();
         let (out, calls) = cli(&r);
@@ -258,14 +267,22 @@ fn previously_empty_300_trees_reuse_complete_proofs_and_known_blockers_skip_whol
                 "private writer bytes\n"
             );
         }
+        for tree in &trees[..REMOVAL_TREES] {
+            empty_cache(&r, tree);
+        }
+        for tree in &trees[REMOVAL_TREES..] {
+            assert!(!admin(&r, tree).join("symphony-sweep-verdict.json").exists());
+        }
     }
     let held_path = r.dir.join("held-removal");
     fs::write(&held_path, "private removal bytes\n").unwrap();
     let held = File::options().write(true).open(&held_path).unwrap();
     held.try_lock().unwrap();
-    for tree in &trees {
+    for (number, tree) in trees.iter().enumerate() {
         fs::remove_file(admin(&r, tree).join("HEAD.lock")).unwrap();
-        fs::remove_file(admin(&r, tree).join("symphony-sweep-remove.lock")).unwrap();
+        if number < REMOVAL_TREES {
+            fs::remove_file(admin(&r, tree).join("symphony-sweep-remove.lock")).unwrap();
+        }
         fs::hard_link(
             &held_path,
             admin(&r, tree).join("symphony-sweep-remove.lock"),
@@ -286,8 +303,13 @@ fn previously_empty_300_trees_reuse_complete_proofs_and_known_blockers_skip_whol
             "{out}"
         );
         for tree in &trees {
-            empty_cache(&r, tree);
             assert!(tree.is_dir());
+        }
+        for tree in &trees[..REMOVAL_TREES] {
+            empty_cache(&r, tree);
+        }
+        for tree in &trees[REMOVAL_TREES..] {
+            assert!(!admin(&r, tree).join("symphony-sweep-verdict.json").exists());
         }
         assert_eq!(
             fs::read_to_string(&held_path).unwrap(),
