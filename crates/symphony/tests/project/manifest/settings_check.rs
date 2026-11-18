@@ -128,6 +128,137 @@ fn it_reads_one_folder_and_refuses_any_other_command_line() {
     }
 }
 
+#[test]
+fn a_local_settings_file_is_judged_with_the_project_file() {
+    let tree = Tree::new();
+    let root = folder(&tree, "lamps");
+    let local = root.join(symphony::project::LOCAL_FILE);
+    let committed = "[agents.models]\nexecutor = \"opus\"\n";
+    // One that holds preferences alone passes, and is said.
+    std::fs::write(
+        &local,
+        "[agents.models]\nexecutor = \"fable\"\n\n[limits]\nmachine_agents = 4\n",
+    )
+    .unwrap();
+    let (code, out, err) = check(&root, committed);
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert_eq!(
+        out,
+        "✔ symphony.toml: every table and key is a setting the Symphony knows, each value of \
+         its type\n✔ symphony.local.toml: every key is a preference a local file may override, \
+         each value of its type\n"
+    );
+    // And the project the Symphony loads takes its model.
+    let project = symphony::project::Project::load(&root).unwrap();
+    assert_eq!(project.agents.models.executor.as_deref(), Some("fable"));
+    assert_eq!(project.agents.models.reviewer, None);
+    for (text, named) in [
+        (
+            "[land]\ncheck = false\n",
+            "[land] check (line 2) is not read from a local file",
+        ),
+        (
+            "[verdicts]\ncheck = [\"true\"]\n",
+            "[verdicts] check (line 2) is not read from a local file",
+        ),
+        (
+            "[board]\non_land = [\"true\"]\n",
+            "[board] on_land (line 2) is not read from a local file",
+        ),
+        (
+            "[limits]\nwip = 3\n",
+            "[limits] wip (line 2) is not a setting the Symphony knows",
+        ),
+        (
+            "[agents.models]\nexecutor = 4\n",
+            "[agents.models] executor (line 2) is 4; not text",
+        ),
+        (
+            "[theme]\n",
+            "[theme] (line 1) is not a setting a local file overrides",
+        ),
+    ] {
+        std::fs::write(&local, text).unwrap();
+        let (code, out, err) = check(&root, committed);
+        assert_eq!((code, out.as_str()), (1, ""), "{text}: {err}");
+        assert!(
+            err.starts_with(&format!("{}: {named}", local.display())),
+            "{text}: {err}"
+        );
+        assert!(
+            err.ends_with("✖ the local settings file is refused.\n"),
+            "{err}"
+        );
+        // Refused, none of it is read: the project loads on the committed settings.
+        let project = symphony::project::Project::load(&root).unwrap();
+        assert_eq!(project.agents.models.executor.as_deref(), Some("opus"));
+    }
+    // Both files refused, both are said.
+    let (code, _, err) = check(&root, "[hooks]\n");
+    assert_eq!(code, 1);
+    assert!(err.contains("✖ the project file is refused.\n"), "{err}");
+    assert!(err.contains("✖ the local settings file is refused"), "{err}");
+}
+
+#[test]
+fn the_running_symphony_reads_the_local_file_again_when_it_changes() {
+    let tree = Tree::new();
+    let root = folder(&tree, "lamps");
+    let local = root.join(symphony::project::LOCAL_FILE);
+    assert_eq!(symphony::project::Project::local_file(&root), local);
+    std::fs::write(root.join(FILE), "[agents.models]\nexecutor = \"opus\"\n").unwrap();
+    let executor = || {
+        symphony::project::Project::of(&root)
+            .agents
+            .models
+            .executor
+            .clone()
+    };
+    assert_eq!(executor().as_deref(), Some("opus"), "no local file");
+    std::fs::write(&local, "[agents.models]\nexecutor = \"fable\"\n").unwrap();
+    assert_eq!(executor().as_deref(), Some("fable"), "it appeared");
+    // Refused, it is left out and the project still loads, on the committed model.
+    std::fs::write(&local, "[land]\ncheck = false\n").unwrap();
+    assert_eq!(executor().as_deref(), Some("opus"));
+    assert_eq!(symphony::project::Project::problem(&root), None);
+    assert!(symphony::project::Project::of(&root).land.check);
+    std::fs::remove_file(&local).unwrap();
+    assert_eq!(executor().as_deref(), Some("opus"), "gone");
+}
+
+#[test]
+fn a_local_settings_file_git_tracks_is_refused() {
+    let tree = Tree::new();
+    let root = folder(&tree, "lamps");
+    let git = |args: &[&str]| {
+        let done = symphony_board::sys::output(
+            symphony_board::sys::git().arg("-C").arg(&root).args(args),
+        )
+        .unwrap();
+        assert!(done.status.success(), "{args:?}");
+    };
+    git(&["init", "-q"]);
+    let local = root.join(symphony::project::LOCAL_FILE);
+    std::fs::write(&local, "[limits]\nlow_volume = 2\n").unwrap();
+    // In a repository and untracked, it passes.
+    assert_eq!(check(&root, "").0, 0);
+    git(&["add", "-f", symphony::project::LOCAL_FILE]);
+    let root = root.canonicalize().unwrap();
+    let (code, out, err) = check(&root, "");
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    assert_eq!(
+        err,
+        format!(
+            "{}: git tracks it, and a local settings file is one machine's alone: remove it \
+             from the index (git rm --cached symphony.local.toml) and ignore it\n✖ the local \
+             settings file is refused.\n",
+            root.join(symphony::project::LOCAL_FILE).display()
+        )
+    );
+    // The lint says the same.
+    assert_eq!(symphony::lint::project_problems(&root).len(), 1);
+}
+
 /// This repository's own project file passes its own check.
 #[test]
 fn this_repositorys_project_file_passes() {

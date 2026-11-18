@@ -220,3 +220,85 @@ fn argument_refusals_name_the_problem_before_reading_any_file() {
         assert!(String::from_utf8(err).unwrap().starts_with(USAGE));
     }
 }
+
+#[test]
+fn local_writes_the_local_file_beside_the_main_project_file_and_never_the_project_file() {
+    let tree = Tree::new();
+    let (main, linked) = repository(&tree.root);
+    std::fs::write(main.join("symphony.toml"), MODELS).unwrap();
+    let local = main.join("symphony.local.toml");
+    let none = BTreeMap::new();
+    // No local file yet: it is made, holding the one table.
+    let line = change_in(&linked.join("docs"), "executor", "fable", &none, true).unwrap();
+    assert_eq!(
+        line,
+        format!("{}: executor model set to \"fable\"", local.display())
+    );
+    assert_eq!(
+        std::fs::read_to_string(&local).unwrap(),
+        "agents.models.executor = \"fable\"\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(main.join("symphony.toml")).unwrap(),
+        MODELS,
+        "the committed file is unchanged"
+    );
+    assert!(!linked.join("symphony.local.toml").exists());
+    // Every reader takes it: the committed executor is "e", the local one holds.
+    let defaults = Defaults::configured(&main).unwrap();
+    assert_eq!(defaults.models.executor.as_deref(), Some("fable"));
+    assert_eq!(defaults.models.reviewer.as_deref(), Some("r"));
+    assert!(
+        change_in(&main, "executor", "fable", &none, true)
+            .unwrap()
+            .contains("already")
+    );
+    // A file with comments keeps them, and `all` sets the four.
+    std::fs::write(&local, "# mine\n[agents.models] # roles\nexecutor = 'x' # e\n").unwrap();
+    change_in(&main, "all", "opus", &none, true).unwrap();
+    let text = std::fs::read_to_string(&local).unwrap();
+    assert!(text.starts_with("# mine\n[agents.models] # roles\n"), "{text}");
+    assert!(text.contains("executor = \"opus\" # e\n"), "{text}");
+    let defaults = Defaults::configured(&main).unwrap();
+    for role in ROLES {
+        assert_eq!(defaults.models.of(role), Some("opus"));
+    }
+}
+
+#[test]
+fn local_refuses_a_local_file_its_readers_would_leave_out_and_names_that_file() {
+    let tree = Tree::new();
+    let (main, _) = repository(&tree.root);
+    let local = main.join("symphony.local.toml");
+    let none = BTreeMap::new();
+    for (before, said) in [
+        (
+            "[land]\ncheck = false\n",
+            "[land] check (line 2) is not read from a local file",
+        ),
+        (
+            "[agents.models]\nexecutor = 2\n",
+            "symphony.local.toml: [agents.models] executor (line 2) is 2; not text",
+        ),
+        ("[agents", "symphony.local.toml: TOML parse error"),
+    ] {
+        std::fs::write(&local, before).unwrap();
+        let problem = change_in(&main, "executor", "m", &none, true).unwrap_err();
+        assert!(problem.contains(said), "{before}: {problem}");
+        assert!(!problem.contains("symphony.toml:"), "{before}: {problem}");
+        assert_eq!(std::fs::read_to_string(&local).unwrap(), before);
+    }
+    // Under an unasked recipe it is confined as the project file's edit is.
+    std::fs::remove_file(&local).unwrap();
+    let env = BTreeMap::from([(symphony_board::confine::MARKER.into(), "1".into())]);
+    assert!(change_in(&main, "executor", "m", &env, true).is_err());
+    assert!(!local.exists());
+}
+
+#[test]
+fn the_local_flag_is_read_anywhere_on_the_line_and_a_value_for_it_is_refused() {
+    let args: Vec<String> = ["executor", "m", "--local=yes"].map(String::from).to_vec();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    assert_eq!(super::main(&args, &BTreeMap::new(), &mut out, &mut err), 2);
+    assert!(String::from_utf8(err).unwrap().starts_with(USAGE));
+}

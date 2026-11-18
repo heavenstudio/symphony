@@ -29,7 +29,8 @@
 //! `allow-duplicate-recipes` itself, which is brought current. Retiring the recipes removes the
 //! stamped copy and that stamped line. The project's `.gitignore` gets a line
 //! for each folder the Symphony fills that it does not ignore yet: the build links' `.target/` and
-//! the artifacts folder. A run refuses a root that is not a folder, or is in no git checkout (the
+//! the artifacts folder; and one for the local settings file (`symphony.local.toml`), which git
+//! never versions. A run refuses a root that is not a folder, or is in no git checkout (the
 //! board lives in the repository's common dir; a git dir is git's own), making nothing. It ends with
 //! what is left for the owner to do ([`steps`]) and what it cannot see from the folder, that Claude
 //! Code must trust it ([`TRUST`]), and warns when the heartbeat has no build to run.
@@ -778,7 +779,8 @@ fn retire_recipes(root: &Path, report: &mut Report) -> io::Result<()> {
     Ok(())
 }
 
-/// Whether a `.gitignore`'s `text` ignores the folder `folder` (project-relative) whole.
+/// Whether a `.gitignore`'s `text` ignores the folder `folder` (project-relative) whole, or the
+/// file of that name.
 fn ignores(text: &str, folder: &str) -> bool {
     text.lines().map(str::trim).any(|line| {
         let line = line.strip_prefix('/').unwrap_or(line);
@@ -791,7 +793,8 @@ fn ignores(text: &str, folder: &str) -> bool {
 }
 
 /// A line in the project's `.gitignore` for each folder the Symphony fills that it does not ignore
-/// yet: the build links' and the artifacts folder `artifacts`.
+/// yet, the build links' and the artifacts folder `artifacts`, and for the local settings file
+/// ([`crate::project::LOCAL_FILE`]), which is one machine's and never versioned.
 fn install_ignores(root: &Path, artifacts: &str, report: &mut Report) -> io::Result<()> {
     let path = root.join(IGNORE);
     if is_link(&path) {
@@ -800,17 +803,18 @@ fn install_ignores(root: &Path, artifacts: &str, report: &mut Report) -> io::Res
     }
     let have = read_optional(&path)?;
     let mut text = have.clone().unwrap_or_default();
-    let missing: Vec<&str> = [TARGET, artifacts]
+    let local = crate::project::LOCAL_FILE;
+    let missing: Vec<String> = [TARGET, artifacts]
         .into_iter()
         .filter(|folder| !ignores(&text, folder))
+        .map(|folder| format!("/{folder}/\n"))
+        .chain((!ignores(&text, local)).then(|| format!("/{local}\n")))
         .collect();
     if !missing.is_empty() {
         if !text.is_empty() && !text.ends_with('\n') {
             text.push('\n');
         }
-        for folder in missing {
-            text.push_str(&format!("/{folder}/\n"));
-        }
+        text.extend(missing);
     }
     let outcome = written(put(&path, &text)?, have.is_some(), None);
     report.push((IGNORE.to_string(), outcome));

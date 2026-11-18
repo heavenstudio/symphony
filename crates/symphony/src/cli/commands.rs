@@ -64,12 +64,14 @@ const OWN: [(&str, &str); 15] = [
 const PLAIN: [(&str, &str, &str); 5] = [
     (
         "model",
-        "usage: symphony model ROLE MODEL",
+        "usage: symphony model ROLE MODEL [--local]",
         "ROLE is orchestrator, executor, reviewer, assessor, or all (all four roles).\n\
          MODEL is any string; use -- before a value beginning with a dash.\n\
          Comments and order are preserved. The main checkout's symphony.toml is\n\
          edited, including from a linked worktree. Checking and landing the edit\n\
-         follow the project's settings-only policy. Resumed agents keep their model.\n",
+         follow the project's settings-only policy. Resumed agents keep their model.\n\
+         --local edits symphony.local.toml beside it instead, which git does not\n\
+         version and which overrides the project file on this machine: nothing lands.\n",
     ),
     (
         "settings-check",

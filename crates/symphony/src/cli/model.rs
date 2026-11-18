@@ -1,15 +1,20 @@
 //! `symphony model ROLE MODEL`: edit the main checkout's role settings in place, preserving
 //! comments and order. Model names are text, never checked against a provider's catalogue.
-//! Checking and landing a settings change follow the project's settings-only policy.
+//! Checking and landing a settings change follow the project's settings-only policy. With
+//! `--local` the edit goes to the local settings file beside it instead
+//! (`symphony_board::local`), which git does not version and nothing lands: made when it is not
+//! there, and never left as its readers would refuse it.
 
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 
 use symphony_board::launch::defaults::ROLES;
+use symphony_board::local;
 use toml::de::DeTable;
 
-const USAGE: &str = "usage: symphony model ROLE MODEL";
+const USAGE: &str = "usage: symphony model ROLE MODEL [--local]";
+const LOCAL: &str = "local";
 
 pub(super) fn main(
     args: &[String],
@@ -17,7 +22,11 @@ pub(super) fn main(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
-    let parsed = match super::parse(args, &[]) {
+    let flags = [super::Flag {
+        name: LOCAL,
+        value: false,
+    }];
+    let parsed = match super::parse(args, &flags) {
         Ok(parsed) => parsed,
         Err(problem) => return super::refuse(err, USAGE, "model", &problem),
     };
@@ -29,7 +38,7 @@ pub(super) fn main(
     }
     let result = std::env::current_dir()
         .map_err(|error| error.to_string())
-        .and_then(|here| change(&here, role, model, env));
+        .and_then(|here| change_in(&here, role, model, env, parsed.flag(LOCAL)));
     match result {
         Ok(line) => {
             let _ = writeln!(out, "{line}");
@@ -42,18 +51,49 @@ pub(super) fn main(
     }
 }
 
+#[cfg(test)]
 fn change(
     here: &Path,
     role: &str,
     model: &str,
     env: &BTreeMap<String, String>,
 ) -> Result<String, String> {
+    change_in(here, role, model, env, false)
+}
+
+/// The edit in the main checkout's project file, or with `local` in the local settings file
+/// beside it, which starts empty when it is not there.
+fn change_in(
+    here: &Path,
+    role: &str,
+    model: &str,
+    env: &BTreeMap<String, String>,
+    local: bool,
+) -> Result<String, String> {
     let (top, _) = symphony_board::git::checkout(here)
         .ok_or_else(|| format!("{} is in no git checkout", here.display()))?;
-    let file = symphony_board::builds::main_of(&top).join(crate::project::FILE);
+    let project = symphony_board::builds::main_of(&top).join(crate::project::FILE);
+    let file = if local {
+        local::path_beside(&project)
+    } else {
+        project
+    };
     super::unasked_inside(&file, env)?;
-    let before = crate::text::read_text(&file).map_err(|e| crate::text::os_error(&e, &file))?;
-    let after = edited(&before, role, model)?;
+    let before = match crate::text::read_text(&file) {
+        Ok(text) => text,
+        Err(e) if local && e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(crate::text::os_error(&e, &file)),
+    };
+    let after = if local {
+        // A file its readers leave out is mended by hand first, each problem named on the line
+        // it stands on, before any edit moves it.
+        local::parse(&file, &before).map_err(|problems| problems.join("\n"))?;
+        // The edit names the project file in what it refuses: here it is the local one.
+        edited(&before, role, model)
+            .map_err(|problem| problem.replacen(crate::project::FILE, local::FILE, 1))?
+    } else {
+        edited(&before, role, model)?
+    };
     if before == after {
         return Ok(format!("{}: {role} already {model:?}", file.display()));
     }
