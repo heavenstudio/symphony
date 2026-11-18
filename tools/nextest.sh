@@ -46,7 +46,11 @@ matches() {
     got="$(sha256 "$1")" || return 1
     [ "$got" = "$(binary_sha256 "$platform")" ] || return 1
     got="$("$1" --version 2>/dev/null)" || return 1
-    [ "${got%%$'\n'*}" = "cargo-nextest $version" ]
+    # Official prebuilt executables add their commit and date after the exact release token.
+    case "${got%%$'\n'*}" in
+    "cargo-nextest $version" | "cargo-nextest $version ("*")") return 0 ;;
+    *) return 1 ;;
+    esac
 }
 
 # Only Git's own linked-worktree metadata authorizes a main-checkout fallback. A bare common

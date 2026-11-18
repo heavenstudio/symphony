@@ -14,7 +14,8 @@ use symphony_board::sys::{Command, Stdio, group_alive, output, wait_output};
 
 const LANES: usize = 9;
 const VERSION: &str = "0.9.152";
-pub(super) const MOCK_TOOL: &str = "#!/bin/sh\nprintf 'cargo-nextest 0.9.152\\n'\n";
+pub(super) const MOCK_TOOL: &str =
+    "#!/bin/sh\nprintf 'cargo-nextest 0.9.152 (fixture 2026-11-13)\\nrelease: 0.9.152\\n'\n";
 
 /// Real launcher and SHA-256 checks over a local archive. Only the pin's fixture bytes and fetch
 /// transport change, so corrupt archives and executable copies can be tested without a network.
@@ -617,6 +618,37 @@ fn setup_fetches_one_verified_archive_without_a_cargo_install_and_reuses_it_offl
         1
     );
     assert!(!lanes.stand.join("built").exists());
+}
+
+#[test]
+fn the_release_token_accepts_upstream_build_metadata_but_no_other_version() {
+    let dir = scratch("nextest-version-output");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/nextest.sh");
+    for (index, (version, valid)) in [
+        ("cargo-nextest 0.9.152", true),
+        (
+            "cargo-nextest 0.9.152 (26ebeda79 2026-11-13)\nrelease: 0.9.152",
+            true,
+        ),
+        ("cargo-nextest 0.9.1521", false),
+        ("cargo-nextest 0.9.152-b.1", false),
+        ("cargo-nextest 0.9.151", false),
+        ("another-tool 0.9.152", false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let probe = dir.join(format!("probe-{index}"));
+        executable(&probe, &format!("#!/bin/sh\nprintf '%s\\n' '{version}'\n"));
+        // Only the hash is mocked here, to isolate the version parser. Other cases exercise real
+        // SHA-256 over cached copies and archives and prove that changed bytes never execute.
+        let done = output(Command::of("bash").args(["-c", "source \"$1\"; platform=universal-apple-darwin; sha256() { binary_sha256 \"$platform\"; }; matches \"$2\"", "fixture"]).arg(&script).arg(&probe)).unwrap();
+        assert_eq!(
+            done.status.code(),
+            Some(if valid { 0 } else { 1 }),
+            "{version}: {done:?}"
+        );
+    }
 }
 
 #[test]
