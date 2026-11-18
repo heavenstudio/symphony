@@ -284,64 +284,75 @@ pub fn reclaim_main(
         let _ = write!(out, "{RECLAIM_HELP}");
         return 0;
     }
-    let folder = match args {
-        [] => Ok(None),
-        [dir, folder] if dir == "--dir" => Ok(Some(env.cwd.join(folder))),
-        _ => Err(RECLAIM_USAGE.to_string()),
-    };
-    enum Reclaimed {
-        Surreal(server::Reclaimed),
-        PostgreSql,
-    }
-    let reclaimed = folder.and_then(|folder| {
-        let common = git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
-        let home = server::Home::in_common(
-            &common,
-            env.read(symphony_env::SURREAL).map(std::path::Path::new),
-        );
-        let home = match folder {
-            Some(folder) => server::Home::new(&folder, home.surreal()),
-            None => home,
-        };
+    let reclaimed = reclaim_home(args, env).and_then(|home| {
         if home.backend().map_err(|e| e.to_string())? == server::Engine::PostgreSql {
             let project = project::find(&env.cwd, None)?;
             home.project_postgresql(&project.place.root)
                 .and_then(|pg| pg.reclaim(DATABASE))
                 .map_err(|e| e.to_string())?;
-            return Ok(Reclaimed::PostgreSql);
+            return Ok(Reclaim::PostgreSql);
         }
         home.reclaim()
-            .map(Reclaimed::Surreal)
+            .map(Reclaim::Surreal)
             .map_err(|e| e.to_string())
     });
     match reclaimed {
-        Ok(Reclaimed::PostgreSql) => {
-            let _ = writeln!(
-                out,
-                "tasks-reclaim: PostgreSQL reclaimed the board's dead space with VACUUM FULL and ANALYZE; its rows and schema were kept"
-            );
-            0
-        }
-        Ok(Reclaimed::Surreal(done)) => {
-            let _ = writeln!(
-                out,
-                "tasks-reclaim: the board's store took {} and takes {}; {} databases carried, each \
-                 exported the same from both stores; their exports are in {}; {}; the board's \
-                 server is pid {} at {}",
-                size(done.before),
-                size(done.after),
-                done.databases.len(),
-                done.exports.display(),
-                old_store_kept(&done.kept),
-                done.running.pid,
-                done.running.addr
-            );
+        Ok(done) => {
+            let _ = writeln!(out, "{}", reclaim_said(&done));
             0
         }
         Err(why) => {
             let _ = writeln!(err, "❌ tasks-reclaim: {why}");
             2
         }
+    }
+}
+
+/// What a reclaim did, by the engine its board home is identified as.
+enum Reclaim {
+    Surreal(server::Reclaimed),
+    PostgreSql,
+}
+
+/// The board home `tasks-reclaim`'s `args` name: with none, the one in the git common dir of
+/// `env`'s working directory; with `--dir FOLDER`, that folder, read from the working directory,
+/// whatever repository it runs in, served by the same `surreal` as that repository's board.
+/// Arguments of no form are refused with the usage before any repository is looked for.
+fn reclaim_home(args: &[String], env: &cli::Env) -> Result<server::Home, String> {
+    let folder = match args {
+        [] => None,
+        [dir, folder] if dir == "--dir" => Some(env.cwd.join(folder)),
+        _ => return Err(RECLAIM_USAGE.to_string()),
+    };
+    let common = git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
+    let home = server::Home::in_common(
+        &common,
+        env.read(symphony_env::SURREAL).map(std::path::Path::new),
+    );
+    Ok(match folder {
+        Some(folder) => server::Home::new(&folder, home.surreal()),
+        None => home,
+    })
+}
+
+/// The line `tasks-reclaim` ends with on success: what `done` did to the board.
+fn reclaim_said(done: &Reclaim) -> String {
+    match done {
+        Reclaim::PostgreSql => "tasks-reclaim: PostgreSQL reclaimed the board's dead space with \
+                                VACUUM FULL and ANALYZE; its rows and schema were kept"
+            .to_string(),
+        Reclaim::Surreal(done) => format!(
+            "tasks-reclaim: the board's store took {} and takes {}; {} databases carried, each \
+             exported the same from both stores; their exports are in {}; {}; the board's \
+             server is pid {} at {}",
+            size(done.before),
+            size(done.after),
+            done.databases.len(),
+            done.exports.display(),
+            old_store_kept(&done.kept),
+            done.running.pid,
+            done.running.addr
+        ),
     }
 }
 
@@ -435,6 +446,174 @@ mod reclaim_tests {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         assert_eq!(reclaim_main(&args, &env, &mut out, &mut err), 2);
         assert!(out.is_empty());
+    }
+
+    /// A folder of this test's own, holding a repository (`repo`, a `.git` folder and nothing
+    /// more, which is all the common dir's reader asks) and a folder that is in none (`bare`).
+    struct Place(std::path::PathBuf);
+
+    impl Place {
+        fn new(name: &str) -> Place {
+            let dir = std::env::temp_dir()
+                .join(format!("reclaim-main-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(dir.join("repo/.git")).unwrap();
+            std::fs::create_dir_all(dir.join("repo/sub")).unwrap();
+            std::fs::create_dir_all(dir.join("bare")).unwrap();
+            Place(dir.canonicalize().unwrap())
+        }
+
+        fn env(&self, cwd: &str, surreal: Option<&str>) -> cli::Env {
+            cli::Env {
+                vars: surreal
+                    .map(|path| (symphony_env::SURREAL.name.to_string(), path.to_string()))
+                    .into_iter()
+                    .collect(),
+                cwd: self.0.join(cwd),
+            }
+        }
+    }
+
+    impl Drop for Place {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn strings(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| arg.to_string()).collect()
+    }
+
+    #[test]
+    fn no_argument_names_the_board_in_the_common_dir_of_the_repository_it_runs_in() {
+        let place = Place::new("repository");
+        let common = place.0.join("repo/.git");
+        for cwd in ["repo", "repo/sub"] {
+            let home = reclaim_home(&[], &place.env(cwd, Some("/named/surreal"))).unwrap();
+            assert_eq!(home.dir(), common.join("symphony/tasks"), "{cwd}");
+            assert_eq!(home.surreal(), std::path::Path::new("/named/surreal"));
+        }
+        // With no binary named, the pinned one beside that common dir.
+        let pinned = server::Home::in_common(&common, None);
+        let home = reclaim_home(&[], &place.env("repo", None)).unwrap();
+        assert_eq!(home.surreal(), pinned.surreal());
+        assert!(home.surreal().starts_with(&common), "{:?}", home.surreal());
+    }
+
+    #[test]
+    fn a_folder_named_wins_over_the_repository_it_runs_in_and_keeps_its_surreal() {
+        let place = Place::new("folder");
+        let common = place.0.join("repo/.git");
+        let elsewhere = place.0.join("bare/board");
+        let absolute = strings(&["--dir", elsewhere.to_str().unwrap()]);
+        let home = reclaim_home(&absolute, &place.env("repo", Some("/named/surreal"))).unwrap();
+        assert_eq!(home.dir(), elsewhere);
+        assert!(!home.dir().starts_with(&common));
+        assert_eq!(home.surreal(), std::path::Path::new("/named/surreal"));
+        // A relative folder is read from the working directory, not from the repository's top.
+        let relative = strings(&["--dir", "copy"]);
+        let home = reclaim_home(&relative, &place.env("repo/sub", None)).unwrap();
+        assert_eq!(home.dir(), place.0.join("repo/sub/copy"));
+        assert_eq!(
+            home.surreal(),
+            server::Home::in_common(&common, None).surreal()
+        );
+        // Selecting a board makes none: nothing was written in either place.
+        assert!(!elsewhere.exists());
+        assert!(!common.join("symphony").exists());
+    }
+
+    #[test]
+    fn a_reclaim_outside_any_repository_is_refused_with_or_without_a_folder() {
+        let place = Place::new("outside");
+        let env = place.env("bare", Some("/named/surreal"));
+        for args in [strings(&[]), strings(&["--dir", "board"])] {
+            let why = reclaim_home(&args, &env).err().expect("no repository");
+            assert_ne!(why, RECLAIM_USAGE, "{args:?}");
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            assert_eq!(reclaim_main(&args, &env, &mut out, &mut err), 2, "{args:?}");
+            assert!(out.is_empty());
+            assert_eq!(
+                String::from_utf8(err).unwrap(),
+                format!("❌ tasks-reclaim: {why}\n")
+            );
+        }
+        assert!(!place.0.join("bare/board").exists());
+        // Arguments of no form are refused before any repository is looked for.
+        assert_eq!(
+            reclaim_home(&strings(&["--dir"]), &env).err().as_deref(),
+            Some(RECLAIM_USAGE)
+        );
+    }
+
+    fn surreal_reclaim(kept: server::Kept) -> Reclaim {
+        Reclaim::Surreal(server::Reclaimed {
+            before: 575_736 * 1024,
+            after: 3 << 20,
+            databases: vec!["symphony/tasks".to_string(), "symphony/other".to_string()],
+            exports: "/board/reclaim/exports".into(),
+            kept,
+            running: server::Running {
+                addr: "127.0.0.1:4242".to_string(),
+                pid: 77,
+                version: "3".to_string(),
+            },
+        })
+    }
+
+    #[test]
+    fn a_surrealdb_reclaim_says_its_sizes_databases_exports_old_store_and_server() {
+        let place = Place::new("said");
+        let old = place.0.join("snapshots/old");
+        std::fs::create_dir_all(old.join("wal")).unwrap();
+        let old_text = old.display();
+        let line = |how: &str, until: &str| {
+            format!(
+                "tasks-reclaim: the board's store took 562.2 MiB and takes 3.0 MiB; 2 databases \
+                 carried, each exported the same from both stores; their exports are in \
+                 /board/reclaim/exports; the old store is kept at {old_text} ({how}): {until} \
+                 (`rm -rf {old_text}`), and the room it takes comes back only then; the board's \
+                 server is pid 77 at 127.0.0.1:4242"
+            )
+        };
+        let empty = "its log is empty, so it is kept among the newest 3 such snapshots, which \
+                     later starts' snapshots prune, unless the owner removes it first";
+        for (kept, how) in [
+            (server::Kept::Cloned(old.clone()), "a copy-on-write clone"),
+            (
+                server::Kept::Copied(old.clone()),
+                "a plain copy, as this volume cannot clone",
+            ),
+            (
+                server::Kept::Already(old.clone()),
+                "a snapshot taken before, which holds it as it was",
+            ),
+        ] {
+            assert_eq!(reclaim_said(&surreal_reclaim(kept)), line(how, empty));
+        }
+        // An empty segment is no log; one with writes keeps the snapshot until the owner removes it.
+        std::fs::write(old.join("wal/0001.wal"), "").unwrap();
+        assert_eq!(
+            reclaim_said(&surreal_reclaim(server::Kept::Cloned(old.clone()))),
+            line("a copy-on-write clone", empty)
+        );
+        std::fs::write(old.join("wal/0001.wal"), "writes").unwrap();
+        assert_eq!(
+            reclaim_said(&surreal_reclaim(server::Kept::Cloned(old.clone()))),
+            line(
+                "a copy-on-write clone",
+                "its write-ahead log holds writes, so it is kept until the owner removes it"
+            )
+        );
+    }
+
+    #[test]
+    fn a_postgresql_reclaim_says_the_vacuum_and_names_no_store_export_or_server() {
+        assert_eq!(
+            reclaim_said(&Reclaim::PostgreSql),
+            "tasks-reclaim: PostgreSQL reclaimed the board's dead space with VACUUM FULL and \
+             ANALYZE; its rows and schema were kept"
+        );
     }
 }
 
