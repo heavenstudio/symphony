@@ -5,6 +5,7 @@ use crate::{Case, env, run};
 use serde_json::{Value, json};
 
 mod assessment;
+mod bound;
 mod contract;
 mod red;
 
@@ -40,6 +41,7 @@ fn a_call_gives_the_stores_result_in_pythons_field_order() {
             "created",
             "created_by",
             "depends",
+            "id",
             "instruction",
             "links",
             "parent",
@@ -50,7 +52,7 @@ fn a_call_gives_the_stores_result_in_pythons_field_order() {
             "title",
             "updated"
         ],
-        "the fields are Python's"
+        "the fields are Python's, and the task's number since minor 1"
     );
     assert_eq!(
         (

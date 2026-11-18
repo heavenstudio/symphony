@@ -5,8 +5,8 @@
 //! tasks and starts every version again. So what a program outside the board keeps of a task (a
 //! mapping, the base of an edit) is a [`Bound`]: the task's number and version with the board's
 //! recovery generation, a text the database makes and replaces in the transaction of every copy
-//! ([`Store::copy`]) and of every rebind ([`Store::rebind`]). A bound write ([`Store::amend_bound`])
-//! checks all three inside its transaction, before anything it writes, and a mismatch is a
+//! ([`Store::copy`]) and of every rebind ([`Store::rebind`]). A bound write ([`Store::amend_bound`],
+//! [`Store::edit_bound`]) checks all three inside its transaction, before anything it writes, and a mismatch is a
 //! refusal, never read again and tried on what the board holds now.
 //!
 //! The generation is a row of the database, so putting the database's files back puts it back
@@ -53,6 +53,21 @@ pub struct BoundTask {
     pub bound: Bound,
     pub title: String,
     pub body: String,
+}
+
+/// What a bound edit ([`Store::edit_bound`]) changes of a task: what is left out stays as it is.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Edit {
+    /// The title it takes, when one is given.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The brief it takes, whole, when one is given.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The documents it is linked to as well; one it already has stays one link.
+    #[serde(default)]
+    pub links: Vec<String>,
 }
 
 /// What names, outside the database's own data, the recovery generation a board is bound to.
@@ -203,16 +218,66 @@ impl Store {
         }
         let fence = self.bound_vars(slug, expected)?;
         let acts = handle != OWNER;
+        let body = || both(sql::amend(acts), pg::amend(acts));
+        self.bound_write(
+            slug,
+            expected,
+            handle,
+            &fence,
+            json!({"title": title, "links": links}),
+            body,
+        )
+    }
+
+    /// A task's title, its brief or both replaced and its links added to, only on the task
+    /// `expected` was read as: [`Store::amend_bound`]'s check, refusal and answer, for an edit
+    /// that may rewrite the brief, which no other write does. A title or a brief that changed is
+    /// a line on the thread naming `handle`; the brief's own words are not kept there. Refused
+    /// before anything is sent when the edit changes nothing or gives an empty title.
+    pub fn edit_bound(
+        &self,
+        slug: &str,
+        expected: &Bound,
+        edit: &Edit,
+        handle: &str,
+    ) -> Result<BoundTask, Error> {
+        let title = edit.title.as_deref().map(str::trim);
+        if title == Some("") {
+            return Err(refused("a task needs a title".into()));
+        }
+        if title.is_none() && edit.body.is_none() && edit.links.is_empty() {
+            return Err(refused(
+                "an edit gives a title, a brief or links: nothing was written".into(),
+            ));
+        }
+        let fence = self.bound_vars(slug, expected)?;
+        let acts = handle != OWNER;
+        let more = json!({
+            "retitle": title.is_some(), "title": title.unwrap_or_default(),
+            "rewrite": edit.body.is_some(), "body": edit.body.as_deref().unwrap_or_default(),
+            "links": edit.links,
+        });
+        let body = || both(sql::edit(acts), pg::edit(acts));
+        self.bound_write(slug, expected, handle, &fence, more, body)
+    }
+
+    /// `body`, a write that starts with the fence, sent with `fence`'s variables and `more`'s as
+    /// `handle`'s act, and its answer read as the task under `expected`'s generation.
+    fn bound_write<'a>(
+        &self,
+        slug: &str,
+        expected: &Bound,
+        handle: &str,
+        fence: &Value,
+        more: Value,
+        body: impl Fn() -> super::statement::Statement<'a>,
+    ) -> Result<BoundTask, Error> {
         let row: Option<Read> = self.retrying(|| {
-            let mut vars = self.acting(
-                handle,
-                (self.clock)(),
-                json!({"title": title, "links": links}),
-            );
+            let mut vars = self.acting(handle, (self.clock)(), more.clone());
             if let (Some(vars), Value::Object(fence)) = (vars.as_object_mut(), fence.clone()) {
                 vars.extend(fence);
             }
-            self.transact(both(sql::amend(acts), pg::amend(acts)), vars)
+            self.transact(body(), vars)
         })?;
         Store::bound_task(slug, row, &expected.generation)
     }

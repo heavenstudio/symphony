@@ -10,7 +10,7 @@ use symphony_board::{Error, NewSession, Opening, Schema, Store};
 
 /// An authority a test holds: what it binds the board to, the call it fails, and the calls made.
 #[derive(Default)]
-struct Memory {
+pub(crate) struct Memory {
     bound: Mutex<Option<String>>,
     fails: Mutex<&'static str>,
     calls: Mutex<Vec<String>>,
@@ -61,7 +61,7 @@ impl Authority for Memory {
 
 /// A board on `backend` seeded with `seed`, a store on it answering to an authority, and the
 /// board bound.
-fn bound_board(backend: Backend, seed: Seed) -> (Fixture, Arc<Memory>, Store) {
+pub(crate) fn bound_board(backend: Backend, seed: Seed) -> (Fixture, Arc<Memory>, Store) {
     let f = Fixture::on(backend, seed);
     let authority = Arc::new(Memory::default());
     let store = f.other().recovering(authority.clone());
@@ -70,14 +70,14 @@ fn bound_board(backend: Backend, seed: Seed) -> (Fixture, Arc<Memory>, Store) {
     (f, authority, store)
 }
 
-fn original() -> Seed {
+pub(crate) fn original() -> Seed {
     Seed::default().task("probe/original", "ready")
 }
 
 /// The title the seed gives the task.
-const TITLE: &str = "Task probe/original";
-const RESTORED: &str = "the board was copied or restored since this was read";
-const STALE: &str = "the task changed since this was read";
+pub(crate) const TITLE: &str = "Task probe/original";
+pub(crate) const RESTORED: &str = "the board was copied or restored since this was read";
+pub(crate) const STALE: &str = "the task changed since this was read";
 
 fn retitle(store: &Store, slug: &str, at: &Bound, title: &str) -> Result<BoundTask, Error> {
     store.amend_bound(slug, at, title, &[], "owner")

@@ -599,63 +599,10 @@ fn a_board_s_asks_held_answered_and_closed_come_through_a_reclaim_and_the_next_w
     );
 }
 
-/// The command with `--dir` rebuilds the board in that folder, never the one of its repository.
-#[test]
-fn tasks_reclaim_with_a_folder_rebuilds_that_board_and_says_what_it_did() {
-    let s = Scratch::new("reclaim-command");
-    let running = s.home().ensure().unwrap();
-    board(&running, "tasks")
-        .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
-        .unwrap();
-    let env = symphony_board::cli::Env {
-        vars: [(
-            "SYMPHONY_SURREAL".to_string(),
-            s.surreal().display().to_string(),
-        )]
-        .into(),
-        cwd: std::env::current_dir().unwrap(),
-    };
-    let args = ["--dir".to_string(), s.dir.display().to_string()];
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = symphony_board::reclaim_main(&args, &env, &mut out, &mut err);
-    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
-    let said = String::from_utf8(out).unwrap();
-    let again = s.home().recorded().unwrap();
-    let exports = s.dir.join("reclaim").join("exports");
-    // The old store, stopped cleanly by the reclaim, holds no log: kept as a snapshot, the first
-    // the reclaim took, among the newest whose log is empty.
-    let snapshots = s.home().snapshots().unwrap();
-    let old = snapshots.last().expect("the old store is kept");
-    assert!(!old.log, "{snapshots:?}");
-    let how = if symphony_board::server::snapshot::clones(&s.home().snapshots_folder()) {
-        "a copy-on-write clone"
-    } else {
-        "a plain copy, as this volume cannot clone"
-    };
-    for part in [
-        "tasks-reclaim: the board's store took ".to_string(),
-        format!("their exports are in {}", exports.display()),
-        format!(
-            "; the old store is kept at {} ({how}): its log is empty, so it is kept among the \
-             newest 3 such snapshots, which later starts' snapshots prune, unless the owner \
-             removes it first (`rm -rf {}`), and the room it takes comes back only then; ",
-            old.path.display(),
-            old.path.display()
-        ),
-        format!(
-            "the board's server is pid {} at {}\n",
-            again.pid, again.addr
-        ),
-    ] {
-        assert!(said.contains(&part), "{said}");
-    }
-    assert_eq!(
-        board(&again, "tasks").get("sim/jump").unwrap().title,
-        "Jump departure"
-    );
-}
-
-/// Without arguments, the board of the repository it runs in: the one in its git common dir.
+/// Without arguments, the board of the repository it runs in: the one in its git common dir. The
+/// command's one whole run, so it reads the line it says; which board its arguments name, a folder
+/// named over the repository's among them, and the line for each engine and each way the old store
+/// is kept are the unit tests' beside `reclaim_main`.
 #[test]
 fn tasks_reclaim_in_a_repository_rebuilds_the_board_in_its_common_dir() {
     let s = Scratch::new("reclaim-repository");
@@ -688,11 +635,34 @@ fn tasks_reclaim_in_a_repository_rebuilds_the_board_in_its_common_dir() {
         .join("symphony/tasks")
         .join("reclaim")
         .join("exports");
-    assert!(
-        said.contains(&format!("their exports are in {}", exports.display())),
-        "{said}"
-    );
     let again = home.recorded().unwrap();
+    // The old store, stopped cleanly by the reclaim, holds no log: kept as a snapshot, the first
+    // the reclaim took, among the newest whose log is empty.
+    let snapshots = home.snapshots().unwrap();
+    let old = snapshots.last().expect("the old store is kept");
+    assert!(!old.log, "{snapshots:?}");
+    let how = if symphony_board::server::snapshot::clones(&home.snapshots_folder()) {
+        "a copy-on-write clone"
+    } else {
+        "a plain copy, as this volume cannot clone"
+    };
+    for part in [
+        "tasks-reclaim: the board's store took ".to_string(),
+        format!("their exports are in {}", exports.display()),
+        format!(
+            "; the old store is kept at {} ({how}): its log is empty, so it is kept among the \
+             newest 3 such snapshots, which later starts' snapshots prune, unless the owner \
+             removes it first (`rm -rf {}`), and the room it takes comes back only then; ",
+            old.path.display(),
+            old.path.display()
+        ),
+        format!(
+            "the board's server is pid {} at {}\n",
+            again.pid, again.addr
+        ),
+    ] {
+        assert!(said.contains(&part), "{said}");
+    }
     assert_eq!(
         board(&again, "tasks").get("sim/jump").unwrap().title,
         "Jump departure"

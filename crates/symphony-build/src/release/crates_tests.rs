@@ -349,6 +349,240 @@ fn a_package_whose_version_the_registry_holds_is_red_once_its_sources_move_and_n
     assert!(bumped.lines[0].starts_with("alpha 1.0.1: not on the registry "));
 }
 
+/// `git ARGS` in the scratch repository `root`, as an author of the test's own.
+fn scratch_git(root: &Path, args: &[&str]) -> String {
+    let named = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+    git_until(root, &[&named[..], args].concat(), bound()).unwrap()
+}
+
+/// [`workspace`] as a repository: one commit on `main`, and the branch `work` checked out on it.
+fn repository(tree: &Tree) -> PathBuf {
+    let root = workspace(tree);
+    tree.write("ws/README.md", "the workspace\n");
+    tree.write(
+        "ws/charlie/NOTES.md",
+        "what charlie carries beside its sources\n",
+    );
+    scratch_git(&root, &["init", "-q", "-b", "main"]);
+    scratch_git(&root, &["add", "-A"]);
+    scratch_git(&root, &["commit", "-q", "-m", "first"]);
+    scratch_git(&root, &["checkout", "-q", "-b", "work"]);
+    root
+}
+
+/// Everything written in `root` committed.
+fn committed(root: &Path) {
+    scratch_git(root, &["add", "-A"]);
+    scratch_git(root, &["commit", "-q", "-m", "work"]);
+}
+
+/// The published packages the checkout at `root` changes since it left `main`, by name.
+fn touched_names(root: &Path) -> Vec<String> {
+    let touched = touched(root, "main", bound()).unwrap().unwrap();
+    touched.into_iter().map(|package| package.name).collect()
+}
+
+#[test]
+fn a_branch_touches_the_published_packages_whose_folder_it_changes() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    // No such branch to compare with, and a folder that is no workspace.
+    assert_eq!(touched(&root, "trunk", bound()), Ok(None));
+    assert!(touched_names(&root).is_empty(), "nothing changed yet");
+    // A file no package holds, and an unpublished member's: none.
+    tree.write("ws/README.md", "the workspace, said again\n");
+    tree.write(
+        "ws/delta/src/lib.rs",
+        "//! delta, changed\npub fn delta() {}\n",
+    );
+    committed(&root);
+    assert!(touched_names(&root).is_empty());
+    // A committed change of one package, and a change of another not committed yet; a file its
+    // package does not carry counts as its sources do.
+    tree.write("ws/bravo/tests/it.rs", "#[test]\nfn it() {}\n");
+    committed(&root);
+    assert_eq!(touched_names(&root), ["bravo"]);
+    tree.write(
+        "ws/alpha/src/lib.rs",
+        "//! alpha, changed\npub fn alpha() {}\n",
+    );
+    assert_eq!(touched_names(&root), ["alpha", "bravo"]);
+    // A file moved out of a package is gone from it, though it is no change where it went.
+    scratch_git(&root, &["stash", "-q"]);
+    scratch_git(&root, &["mv", "charlie/NOTES.md", "NOTES.md"]);
+    assert_eq!(touched_names(&root), ["bravo", "charlie"]);
+    scratch_git(&root, &["mv", "NOTES.md", "charlie/NOTES.md"]);
+    scratch_git(&root, &["stash", "pop", "-q"]);
+    // What main gained since the branch left it is not the branch's.
+    scratch_git(&root, &["stash", "-q"]);
+    scratch_git(&root, &["checkout", "-q", "main"]);
+    tree.write(
+        "ws/charlie/src/lib.rs",
+        "//! charlie, on main\npub fn charlie() {}\n",
+    );
+    committed(&root);
+    assert!(touched_names(&root).is_empty(), "main against itself");
+    scratch_git(&root, &["checkout", "-q", "work"]);
+    assert_eq!(touched_names(&root), ["bravo"]);
+    // The workspace's own manifest, which every packaged manifest inherits from: all of them.
+    let manifest = tree.read("ws/Cargo.toml") + "\n[workspace.package]\nlicense = \"MIT\"\n";
+    tree.write("ws/Cargo.toml", &manifest);
+    assert_eq!(touched_names(&root), ["alpha", "bravo", "charlie"]);
+}
+
+#[test]
+fn the_packages_files_change_are_read_by_folder_from_the_workspaces_root() {
+    let member = |name: &str, manifest: &str| json!({"name": name, "version": "1.0.0", "manifest_path": manifest});
+    let metadata = json!({
+        "workspace_root": "/ws",
+        "packages": [
+            member("deep", "/ws/crates/deep/Cargo.toml"),
+            member("deeper", "/ws/crates/deep-er/Cargo.toml"),
+            member("outside", "/elsewhere/outside/Cargo.toml"),
+        ],
+    });
+    let names = |files: &[&str]| {
+        let changed = changed_by(&metadata, files);
+        changed
+            .into_iter()
+            .map(|package| package.name)
+            .collect::<Vec<_>>()
+    };
+    assert!(names(&[]).is_empty());
+    // A folder is matched whole: `crates/deep-er` is not in `crates/deep`.
+    assert_eq!(names(&["crates/deep-er/src/lib.rs"]), ["deeper"]);
+    assert_eq!(names(&["crates/deep/Cargo.toml", "docs/a.md"]), ["deep"]);
+    // A member's manifest is not the workspace's; the workspace's changes every member, the one
+    // outside its root too.
+    assert_eq!(names(&["Cargo.toml"]), ["deep", "deeper", "outside"]);
+    assert!(names(&["elsewhere/outside/src/lib.rs", "Cargo.lock"]).is_empty());
+    // A package at the root itself holds every file.
+    let rooted = json!({"workspace_root": "/ws", "packages": [member("rooted", "/ws/Cargo.toml")]});
+    assert_eq!(changed_by(&rooted, &["src/lib.rs"]).len(), 1);
+    assert!(changed_by(&json!({}), &["src/lib.rs"]).is_empty());
+}
+
+#[test]
+fn a_branchs_check_reads_only_the_packages_it_changes() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let registry = tree.path("registry");
+    // alpha and bravo published as main holds them.
+    for name in ["alpha", "bravo"] {
+        let published = packaged(&root, name, &tree.path("published"));
+        fs::create_dir_all(registry.join("crates").join(name)).unwrap();
+        let file = format!("crates/{name}/{name}-1.0.0.crate");
+        fs::copy(&published, registry.join(file)).unwrap();
+        listed(&registry, name, &["1.0.0"]);
+    }
+    let folder = Registry::Folder(registry.clone());
+    let reads = Duration::from_secs(60);
+    let target = tree.path("target");
+    let branch = |default: &str| check_branch(&root, default, &folder, &target, reads, later());
+    assert_eq!(branch("trunk"), Ok(Branch::NoBase));
+    // A branch that changes none reads nothing: not the registry, which here cannot be read.
+    let unreadable = Registry::Folder(tree.path("ws/README.md"));
+    let none = check_branch(&root, "main", &unreadable, &target, reads, later());
+    assert_eq!(none, Ok(Branch::Checked(Checked::default())));
+    // bravo's sources moved while its version did not: red for bravo, and alpha is not read.
+    tree.write(
+        "ws/bravo/src/lib.rs",
+        "//! bravo, changed\npub fn bravo() {}\n",
+    );
+    committed(&root);
+    let Ok(Branch::Checked(moved)) = branch("main") else {
+        panic!("{:?}", branch("main"));
+    };
+    assert!(moved.lines.is_empty(), "{:?}", moved.lines);
+    assert_eq!(
+        moved.changed,
+        [Changed {
+            package: "bravo 1.0.0".into(),
+            files: vec!["src/lib.rs changed".into()],
+        }]
+    );
+    // Its version moved with them: green, and charlie, changed too, is the next release's.
+    let manifest = tree
+        .read("ws/bravo/Cargo.toml")
+        .replacen("1.0.0", "1.0.1", 1);
+    tree.write("ws/bravo/Cargo.toml", &manifest);
+    let requires = tree
+        .read("ws/charlie/Cargo.toml")
+        .replace("version = \"1.0.0\" }", "version = \"1.0.1\" }");
+    tree.write("ws/charlie/Cargo.toml", &requires);
+    let Ok(Branch::Checked(bumped)) = branch("main") else {
+        panic!("{:?}", branch("main"));
+    };
+    assert!(bumped.changed.is_empty(), "{:?}", bumped.changed);
+    assert_eq!(bumped.lines.len(), 2, "{:?}", bumped.lines);
+    assert!(bumped.lines[0].starts_with("bravo 1.0.1: not on the registry "));
+    assert!(bumped.lines[1].starts_with("charlie 1.0.0: not on the registry "));
+}
+
+/// The URL of a port of this machine nothing listens on: a registry that gives no answer.
+fn unanswering() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    format!("http://{}", listener.local_addr().unwrap())
+}
+
+#[test]
+fn a_registry_that_gives_no_answer_is_said_of_a_branch_and_an_error_of_the_whole_check() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let target = tree.path("target");
+    tree.write(
+        "ws/bravo/src/lib.rs",
+        "//! bravo, changed\npub fn bravo() {}\n",
+    );
+    tree.write(
+        "ws/alpha/src/lib.rs",
+        "//! alpha, changed\npub fn alpha() {}\n",
+    );
+    // No bound here is one a test reaches: a read ends by what the registry answers, in one try.
+    let reads = Duration::from_secs(60);
+    let gone = Registry::at(unanswering(), 1);
+    let Ok(Branch::Unread { packages, why }) =
+        check_branch(&root, "main", &gone, &target, reads, later())
+    else {
+        panic!("a registry that gives no answer is no error and no check");
+    };
+    assert_eq!(packages, ["alpha 1.0.0", "bravo 1.0.0"]);
+    assert!(why.starts_with("curl http://127.0.0.1:"), "{why}");
+    // The whole check of the same packages, on the same registry: an error, as it fails closed.
+    let all = packages_of(&root);
+    let whole = compared(&root, &gone, &target, &all, bound(), None);
+    assert!(matches!(whole, Err(Unread::NoAnswer(_))), "{whole:?}");
+    // An answer that stands as an error is one for a branch too.
+    let refusing = Server::new(vec![Answer::Says(400, "")]);
+    let registry = Registry::at(refusing.base.clone(), 1);
+    let refused = check_branch(&root, "main", &registry, &target, reads, later());
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|why| why.ends_with(" answered 400")),
+        "{refused:?}"
+    );
+    // A version the registry lists and gives no answer for is said as well, as nothing is known
+    // of it: alpha listed, bravo not, then alpha's download.
+    let listing = Server::new(vec![
+        Answer::Says(200, "{\"name\":\"alpha\",\"vers\":\"1.0.0\"}"),
+        Answer::Says(404, ""),
+        Answer::Nothing,
+    ]);
+    let registry = Registry::at(listing.base.clone(), 1);
+    let unserved = check_branch(&root, "main", &registry, &target, reads, later());
+    assert!(
+        matches!(unserved, Ok(Branch::Unread { .. })),
+        "{unserved:?}"
+    );
+    assert_eq!(listing.heard(), 3);
+}
+
+/// The published packages of the workspace at `root`.
+fn packages_of(root: &Path) -> Vec<Package> {
+    packages(root, bound()).unwrap()
+}
+
 #[test]
 fn a_check_fails_closed_on_a_registry_it_cannot_read_or_a_package_it_cannot_fetch() {
     let tree = Tree::new();
@@ -483,10 +717,18 @@ fn a_read_that_got_no_answer_or_a_servers_error_is_tried_again_and_the_next_answ
     assert_eq!(server.heard(), 2);
 }
 
+/// Why a read that got no answer on its last try says it failed: any other end fails the test.
+fn unanswered(read: Result<Option<Vec<u8>>, Unread>) -> String {
+    match read {
+        Err(Unread::NoAnswer(why)) => why,
+        other => panic!("a read that got no answer: {other:?}"),
+    }
+}
+
 #[test]
 fn a_read_that_fails_each_try_says_the_last_failure_and_its_tries() {
     let server = Server::new(vec![Answer::Nothing, Answer::Nothing, Answer::Nothing]);
-    let failed = fetched_by(reads(3, 60), &server.url(), None, bound()).unwrap_err();
+    let failed = unanswered(fetched_by(reads(3, 60), &server.url(), None, bound()));
     assert!(
         failed.starts_with(&format!("curl {} failed: curl: (52) ", server.url()))
             && failed.ends_with(" (tried 3 times)"),
@@ -496,7 +738,7 @@ fn a_read_that_fails_each_try_says_the_last_failure_and_its_tries() {
 
     // The read the release run met: no answer within a try's time, each time.
     let server = Server::new(vec![Answer::Silent, Answer::Silent]);
-    let failed = fetched_by(reads(2, 1), &server.url(), None, bound()).unwrap_err();
+    let failed = unanswered(fetched_by(reads(2, 1), &server.url(), None, bound()));
     assert!(
         failed.starts_with(&format!("curl {} ", server.url()))
             && failed.ends_with(" (tried 2 times)"),
@@ -516,7 +758,7 @@ fn a_read_is_not_tried_again_after_an_answer_that_stands_its_last_try_its_time_o
     let server = Server::new(vec![Answer::Says(400, ""), Answer::Says(200, "")]);
     assert_eq!(
         fetched_by(reads(3, 60), &server.url(), None, bound()),
-        Err(format!("{} answered 400", server.url()))
+        Err(Unread::Failed(format!("{} answered 400", server.url())))
     );
     assert_eq!(
         server.heard(),
@@ -527,7 +769,7 @@ fn a_read_is_not_tried_again_after_an_answer_that_stands_its_last_try_its_time_o
     let server = Server::new(vec![Answer::Says(503, ""), Answer::Says(200, "")]);
     assert_eq!(
         fetched_by(reads(1, 60), &server.url(), None, bound()),
-        Err(format!("{} answered 503", server.url()))
+        Err(Unread::NoAnswer(format!("{} answered 503", server.url())))
     );
     assert_eq!(server.heard(), 1, "one try is all one try makes");
 
@@ -536,7 +778,12 @@ fn a_read_is_not_tried_again_after_an_answer_that_stands_its_last_try_its_time_o
         pause: Duration::from_secs(600),
         ..reads(3, 60)
     };
-    let failed = fetched_by(paused, &server.url(), None, Bound::until(later())).unwrap_err();
+    let failed = unanswered(fetched_by(
+        paused,
+        &server.url(),
+        None,
+        Bound::until(later()),
+    ));
     assert!(
         failed.starts_with(&format!("curl {} failed: curl: (52) ", server.url()))
             && !failed.contains("tried"),
@@ -546,13 +793,12 @@ fn a_read_is_not_tried_again_after_an_answer_that_stands_its_last_try_its_time_o
 
     let server = Server::new(vec![Answer::Silent, Answer::Says(200, "")]);
     let stop = || true;
-    let failed = fetched_by(
+    let failed = unanswered(fetched_by(
         reads(3, 60),
         &server.url(),
         None,
         Bound::hearing(later(), &stop),
-    )
-    .unwrap_err();
+    ));
     assert!(
         failed.starts_with(&format!("curl {} was stopped after ", server.url()))
             && failed.ends_with(" s: the run was told to stop"),

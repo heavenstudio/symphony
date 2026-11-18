@@ -629,7 +629,9 @@ ordinary write, and in no dump.
   number at that version. A refusal writes nothing, no title, link, line on the thread or act of
   its session, and is never read again and tried on what the board holds now: the caller reads
   the task again. The task as the write left it, with its next token, is that transaction's
-  answer. Every other write, `amend` among them, is as it was.
+  answer. Every other write, `amend` among them, is as it was. `Store::edit_bound` is the same
+  write for an edit that may rewrite the brief as well
+  ([the api's calls](#what-a-program-outside-the-board-keeps)).
 - **A copy.** `tasks-copy` and every `Store::copy` replace the generation in the transaction that
   replaces the rows, so a token read before a copy is refused after it, and one read before a
   copy that failed still holds. A build of a schema before 22 copies without replacing it, which
@@ -1303,9 +1305,48 @@ is a task of its own. The calls a registered project's programs make today are h
 `crates/tasks/tests/cli/api/contract.rs`: each request, and the fields of its answer the caller
 reads with their JSON types, so a change that would break one fails its own task's gate. What the
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
-task. The current API is 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
+task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
 review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes.
+keep their shapes. The current API is 2.1.
+
+### What a program outside the board keeps
+
+Minor 1 of major 2 adds what a program needs to exchange tasks with another system, an issue
+tracker for one, without reading the database. It names no such system: the program is the
+project's own, and nothing here makes a request, keeps a credential or a mapping, or turns one on.
+
+- **`id`**, a field of every task the api answers (`get`, `tasks`, `create` and the rest): the
+  task's number, the order it was made in (`crates/tasks/src/rows.rs`). A retitle keeps it, and a
+  task has no other name to change: no call renames a slug. It names the task only along one
+  history of the board, never by itself across a copy or a restore, which give numbers again
+  ([above](#a-board-that-was-copied-or-restored)): a program keeps it with the generation it was
+  read under, which is the token.
+- **`bound`**, `{"slug": S}`: the task's title and brief and its token, `Store::bound`'s answer,
+  `{"bound": {"compat": 1, "generation": "…", "id": N, "version": N}, "title": "…", "body": "…"}`.
+- **`edit_bound`**, `{"slug": S, "bound": TOKEN, "by": HANDLE}` with any of `"title"`, `"body"`
+  (the brief, whole) and `"links"`, what is left out staying as it is (`Store::edit_bound`): the
+  one call that rewrites a brief. It is `Store::amend_bound`'s write, the fence first in the
+  write's own transaction: refused unless the board holds the token's generation and the task is
+  the one of that number at that version, and a refusal writes nothing, no title, brief, link,
+  line on the thread or act of its session. A changed title and a changed brief are each a line
+  on the thread naming who wrote it; the brief's earlier words are not kept, so a program that
+  must keep them reads them first, with the token. Its answer is `bound`'s, the task as the write
+  left it with the token to write it next. A call that gives none of the three is refused.
+- **`integration_state`**, `{"name": NAME}`: `{"path": "…"}`, the folder the integration NAME
+  keeps its state in, `symphony/integrations/NAME` in the git common dir
+  (`crates/tasks/src/folders.rs`). It is the same from the main checkout and every linked
+  worktree, is in no worktree and so outlives each, and is in no commit. The call reaches no
+  board and makes nothing: the program makes the folder, keeps what it needs there and takes its
+  own lock, and the board never reads, sweeps or copies it, so it is in no dump or snapshot of
+  the board and is backed up with the repository's common dir or not at all. NAME is one to
+  sixty-four lowercase letters, digits and hyphens, a letter or a digit first, never a path.
+
+`bound` and `edit_bound` answer only where the board has a recovery binding: `tasks api` hands
+its store the board home's ([above](#a-board-that-was-copied-or-restored)), so on a board
+`TASKS_SERVER` names, and on one never bound or revoked, both are refused in words that say which,
+and every other call is as it was. What the token does not tell apart is said there too, and the
+api claims no more: a program that finds its token refused reads the task again and reconciles
+what it kept, never writing on the number alone.
 
 ## The agents API
 

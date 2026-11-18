@@ -52,6 +52,7 @@ mod dispatch_commit;
 mod dispatch_holder;
 mod dispatch_later;
 mod done;
+mod edit;
 mod fast_fix;
 mod fields;
 // The adapter contract tests run once in `server`; this adapter uses the same spawn lock.
