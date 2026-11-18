@@ -25,7 +25,6 @@ impl Postgres {
     /// Hold the board stopped. The hold is recorded before shutdown, so a failed stop leaves it
     /// held; the holder repeats this call to finish it. No start succeeds until release.
     pub fn hold(&self, by: &str, why: &str) -> Result<Holding, ServerError> {
-        self.scratch_only()?;
         let _locked = self.home.lock(Doing::Holding)?;
         self.home.allow_postgresql()?;
         let hold = self.home.hold_as(by, why)?;
@@ -51,7 +50,6 @@ impl Postgres {
     /// server or an unreadable status. A clone is preferred, with a plain copy on other volumes.
     /// Snapshots are kept until explicitly removed; a partial copy is never listed as one.
     pub fn snapshot(&self, now: f64) -> Result<PathBuf, ServerError> {
-        self.scratch_only()?;
         let _locked = self.home.lock(Doing::Snapshotting)?;
         self.home.allow_postgresql()?;
         self.stopped()?;
@@ -101,7 +99,6 @@ impl Postgres {
     /// The board is left bound to no recovery generation, revoked before its data is published:
     /// a revoke that fails publishes nothing.
     pub fn restore(&self, snapshot: &Path) -> Result<(), ServerError> {
-        self.scratch_only()?;
         let _locked = self.home.lock(Doing::Snapshotting)?;
         self.home.allow_postgresql()?;
         self.home.unheld()?;
@@ -143,7 +140,6 @@ impl Postgres {
     /// Reclaim the named database's dead space using PostgreSQL's rewrite. It needs temporary
     /// disk room and locks each table exclusively; it changes no board rows or schema version.
     pub fn reclaim(&self, database: &str) -> Result<(), ServerError> {
-        self.scratch_only()?;
         assert!(crate::rpc::plain(database), "a database is a plain name");
         let _locked = self.home.lock(Doing::Reclaiming)?;
         self.home.allow_postgresql()?;

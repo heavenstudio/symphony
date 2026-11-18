@@ -310,6 +310,100 @@ impl Store {
     }
 }
 
+/// The tables a move of the board to another engine carries beside the dump's
+/// ([`Store::carried`]): what the board's commands keep for sessions and programs and no copy
+/// derives, each keyed alike on both engines. `counter` is carried for its task holds alone
+/// ([`HELD`]): its other rows are fences a command reads and moves within itself, and each
+/// engine's own marker.
+pub const CARRIED: [&str; 7] = [
+    "callback_state",
+    "callback_event",
+    "chat_event",
+    "writer",
+    "artifact_ledger",
+    "unanswered_restore",
+    "counter",
+];
+
+/// What begins the id of a task's hold in `counter` (`counter:['hold', SLUG]`).
+const HELD: &str = "hold";
+
+/// A carried row's id as either engine keys it: SurrealDB lists a record's id as its table and
+/// its key, PostgreSQL as the key alone.
+fn key(table: &str, id: &Value) -> Value {
+    match id.as_array().map(Vec::as_slice) {
+        Some([named, key]) if named == table => key.clone(),
+        _ => id.clone(),
+    }
+}
+
+/// Whether `id`, a key of `counter`, is a task's hold.
+fn hold(id: &Value) -> bool {
+    id.get(0).and_then(Value::as_str) == Some(HELD)
+}
+
+impl Store {
+    /// Every row of the tables a move carries beside the dump ([`CARRIED`]), by table, each
+    /// with its key as `id` and in the order of its key as text: what [`Store::carry`] writes
+    /// on the other engine, and what is compared with its reading there.
+    pub fn carried(&self) -> Result<Value, Error> {
+        let raw = self.raw();
+        let mut tables = serde_json::Map::new();
+        for table in CARRIED {
+            let listed = raw.table(table).get()?;
+            let mut rows: Vec<Value> = (listed.as_array().into_iter().flatten())
+                .map(|row| {
+                    let mut row = row.clone();
+                    row["id"] = key(table, &row["id"]);
+                    row.sort_all_objects();
+                    row
+                })
+                .filter(|row| table != "counter" || hold(&row["id"]))
+                .collect();
+            crate::order::sort_by(&mut rows, &|a, b| {
+                a["id"].to_string().cmp(&b["id"].to_string())
+            });
+            tables.insert(table.to_string(), Value::Array(rows));
+        }
+        Ok(Value::Object(tables))
+    }
+
+    /// `carried`, another board's ([`Store::carried`]), written here row by row under its keys,
+    /// replacing what those tables held: the task holds alone of `counter`. A table it does not
+    /// know is refused before anything is written.
+    pub fn carry(&self, carried: &Value) -> Result<(), Error> {
+        let tables = carried.as_object().cloned().unwrap_or_default();
+        if let Some(unknown) = tables.keys().find(|table| !CARRIED.contains(&table.as_str())) {
+            return Err(Error::Refused(format!(
+                "{unknown} is no table a move carries: nothing was written"
+            )));
+        }
+        let raw = self.raw();
+        for (table, rows) in &tables {
+            if table == "counter" {
+                let listed = raw.table(table).get()?;
+                for row in listed.as_array().into_iter().flatten() {
+                    let id = key(table, &row["id"]);
+                    if hold(&id) {
+                        raw.row(table, id).delete()?;
+                    }
+                }
+            } else {
+                raw.table(table).delete()?;
+            }
+            for row in rows.as_array().into_iter().flatten() {
+                let mut fields = row.clone();
+                let id = fields
+                    .as_object_mut()
+                    .and_then(|fields| fields.remove("id"))
+                    .unwrap_or(Value::Null);
+                raw.row(table, id).create(fields)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// `error` with `more` after its words.
 fn said_after(mut error: Error, more: &str) -> Error {
     let (Error::Refused(message) | Error::Db(message)) = &mut error;

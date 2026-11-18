@@ -76,6 +76,7 @@ pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, ChatSeat, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
 pub use cap::STATEMENTS as SLOT_READS;
+pub use copy::CARRIED;
 pub use database::Database;
 pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;

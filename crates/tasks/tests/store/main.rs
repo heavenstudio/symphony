@@ -39,6 +39,7 @@ mod blocked_panes;
 mod blocks;
 mod board;
 mod callbacks;
+mod carried;
 mod cancel;
 mod claim;
 mod closing;
