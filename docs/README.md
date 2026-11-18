@@ -64,6 +64,8 @@ still await implementation; its approval alone does not make it current app beha
   visitor admission, project permissions, foreground lifecycle and readiness; the local gate stays.
 - [Desktop client analysis](analysis/desktop-client.md) — the design and evidence behind the
   Mac app.
+- [The slow tests, reviewed](analysis/slow-tests.md) — a time per test for the release run's six
+  slowest binaries, what each slow test proves, and what is kept, made faster, merged or removed.
 - [Naming inventory and superseded plan](analysis/own-names.md) — historical naming evidence,
   with pointers to the current naming rules and state paths.
 - [History](history/README.md) — retained records and superseded measurements.
