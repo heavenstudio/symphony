@@ -35,6 +35,7 @@ own crates/symphony-build/src/release/record.rs release
 own crates/symphony-build/src/release/refresh.rs release
 own crates/symphony-build/src/release/schedule.rs release
 own docs/CHECKS.md client-check client-lint client-update crates-check semver-check lint-rs release settings-check size-check test-rs verify
+own docs/GITHUB.md test-rs
 own docs/PLUGIN_PROTOCOL.md test-rs
 own docs/PROJECT_FILE.md settings-check
 own docs/RELEASES.md client-update crates-check semver-check lint-rs release test-rs verify
