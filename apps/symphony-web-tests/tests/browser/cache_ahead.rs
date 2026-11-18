@@ -10,8 +10,6 @@
 //! release build, on the private stand-in (`site`), which tells the reads ahead from the page's
 //! own (`Site::read_ahead`).
 
-use std::time::{Duration, Instant};
-
 use serde_json::{Map, Value, json};
 use symphony_api::AHEAD_BYTES;
 
@@ -656,8 +654,7 @@ fn nothing_is_read_ahead_when_the_browser_saves_data_or_its_link_is_3g_or_slower
     let Some(mut chrome) = crate::chrome() else {
         return;
     };
-    // A fast link first: how long its reads ahead took bounds how long the others wait for none.
-    let start = Instant::now();
+    // A fast link first: what it reads ahead, once the browser is idle.
     visit_links(&mut chrome, &site);
     keeps(
         &mut chrome,
@@ -666,18 +663,25 @@ fn nothing_is_read_ahead_when_the_browser_saves_data_or_its_link_is_3g_or_slower
             "document:docs/near.md outline",
         ],
     );
-    let took = start.elapsed();
     let read = site.asked_ahead();
     assert_eq!(
         read.len(),
         3,
         "the task's two reads and the document's: {read:?}"
     );
-    for (save_data, link) in [
-        (true, "4g"),
-        (false, "3g"),
-        (false, "2g"),
-        (false, "slow-2g"),
+    // From here the page's idle callbacks are kept until the test runs them. A read ahead is
+    // asked of the idle browser as the page is marked ready, so a ready page that asked for none
+    // reads nothing ahead; the one a 3g link asks for is its warm-up's, which only a 2g link or a
+    // browser saving data goes without.
+    chrome.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": crate::HOLD_IDLE }),
+    );
+    for (save_data, link, warms) in [
+        (true, "4g", false),
+        (false, "3g", true),
+        (false, "2g", false),
+        (false, "slow-2g", false),
     ] {
         chrome.connection(save_data, link);
         chrome.open("about:blank");
@@ -687,7 +691,20 @@ fn nothing_is_read_ahead_when_the_browser_saves_data_or_its_link_is_3g_or_slower
             chrome.eval("[navigator.connection.saveData, navigator.connection.effectiveType]"),
             json!([save_data, link])
         );
-        chrome.pump((took * 3).max(Duration::from_secs(2)));
+        shows(&mut chrome, crate::READY, "the links page, ready");
+        assert_eq!(
+            chrome.eval(crate::RUN_IDLE),
+            json!(u8::from(warms)),
+            "saveData {save_data} on {link} asks the idle browser for no read ahead"
+        );
+        if warms {
+            // The one callback it asked for was the warm-up's, which goes on to warm.
+            shows(
+                &mut chrome,
+                "document.querySelector('link[rel=prefetch]') !== null",
+                "the warm-up on a 3g link",
+            );
+        }
         assert_eq!(
             site.asked_ahead(),
             read,

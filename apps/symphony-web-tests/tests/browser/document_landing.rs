@@ -584,8 +584,17 @@ impl Reading {
     }
 }
 
+/// Runs the deadline of the page's ghost ([`reader`] holds it) where it still waits, and says how
+/// many timers of its length the page held: its one.
+const SETTLE_DEADLINE: &str =
+    "(() => { const due = [...settleDeadline.values()]; settleDeadline.clear();
+    due.forEach(run => run()); return due.length; })()";
+
 /// A browser of its own for `reading` (a phone's takes touches), whose sections near the screen
-/// are read only once the test lets them come ([`OBSERVE_LATER`]).
+/// are read only once the test lets them come ([`OBSERVE_LATER`]), and whose ghost's deadline
+/// (`Settle`'s, [`symphony_web_tests::SETTLE_MS`]) the test runs ([`SETTLE_DEADLINE`]) in place of
+/// the clock: `window.settleDeadline` holds it. The page sets no other timer of that length here:
+/// the asks' retry and the chat's, as long, follow a read that failed, and none does.
 fn reader(reading: Reading) -> Option<Chrome> {
     let (width, height) = reading.window();
     let mut page = browser(width, height)?;
@@ -599,6 +608,7 @@ fn reader(reading: Reading) -> Option<Chrome> {
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": OBSERVE_LATER }),
     );
+    crate::hold_timers(&mut page, "settleDeadline", symphony_web_tests::SETTLE_MS);
     Some(page)
 }
 
@@ -662,7 +672,8 @@ impl Read {
 
 /// Opens `path` at the element `id`, which the section `key` holds, with every section's read
 /// held: the page's first read is that section's alone and is let go; the sections near it come
-/// near, and their read is held while the reader ends the landing by `reading`, then let go.
+/// near, and their read is held while the page's ghost lifts at its deadline, which the test runs
+/// ([`SETTLE_DEADLINE`]), and the reader ends the landing by `reading`, then let go.
 #[track_caller]
 fn read_while_drawn(
     page: &mut Chrome,
@@ -701,6 +712,12 @@ fn read_while_drawn(
     site.hold_route("/api/section", true);
     page.eval("window.observe()");
     reads_asked(page, site, asked + 2);
+    // The landing is in and the near reads are held: the ghost's deadline passes now.
+    assert_eq!(
+        page.eval(SETTLE_DEADLINE),
+        json!(1),
+        "{id} {reading:?}: the page holds its ghost's deadline, and no other timer of its length"
+    );
     assert!(
         page.wait_for(
             &format!("{element}?.closest('.settle')?.dataset.settled === 'true' && {landed}"),

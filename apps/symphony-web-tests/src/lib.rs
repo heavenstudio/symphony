@@ -17,9 +17,13 @@ pub const TOAST_MS: i32 = 7_000;
 /// asked again, in ms (`RETRY_MS`, the client's `src/asks.tsx` and `src/quick.tsx` alike).
 pub const RETRY_MS: i32 = 3_000;
 
+/// The longest a page stays under its skeleton waiting for its first screen's reads, in ms
+/// (`SETTLE_MS`, the client's `src/viewport.tsx`).
+pub const SETTLE_MS: i32 = 3_000;
+
 #[cfg(test)]
 mod tests {
-    use super::{RETRY_MS, TOAST_MS, WAITING};
+    use super::{RETRY_MS, SETTLE_MS, TOAST_MS, WAITING};
 
     /// The value `source` exports as `export const NAME = …;`, its digits' underscores dropped.
     fn exported(source: &str, name: &str) -> Option<i32> {
@@ -60,6 +64,12 @@ mod tests {
         ] {
             assert_eq!(exported(source, "RETRY_MS"), Some(RETRY_MS), "{file}");
         }
+    }
+
+    #[test]
+    fn a_pages_settle_deadline_is_the_clients() {
+        let viewport = include_str!("../../symphony-web/src/viewport.tsx");
+        assert_eq!(exported(viewport, "SETTLE_MS"), Some(SETTLE_MS));
     }
 
     #[test]
