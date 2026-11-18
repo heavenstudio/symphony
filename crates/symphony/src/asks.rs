@@ -28,6 +28,11 @@ pub const MAX_AGE: f64 = 24.0 * 3600.0;
 /// How long a write waits for another writer's lock.
 const BUSY_TIMEOUT_MS: u32 = 30_000;
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static SQLITE_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The asks file's schema, made if missing by whichever writer opens the file first.
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS asks (
@@ -324,7 +329,10 @@ impl AskStore {
             path: path.to_path_buf(),
             clock,
         };
-        store.run(&format!("PRAGMA journal_mode = WAL;\n{SCHEMA};\n"))?;
+        store.run(&format!(
+            "PRAGMA journal_mode = WAL;\n{SCHEMA};\n{}",
+            crate::callbacks::SCHEMA
+        ))?;
         Ok(store)
     }
 
@@ -334,6 +342,8 @@ impl AskStore {
 
     /// `script` through `sqlite3` on the file: what it printed (JSON arrays), or what it said failed.
     pub(crate) fn run(&self, script: &str) -> Result<String, AskError> {
+        #[cfg(test)]
+        SQLITE_RUNS.with(|runs| runs.set(runs.get() + 1));
         let failed = |problem: std::io::Error| AskError::Store(format!("sqlite3: {problem}"));
         let mut child = symphony_board::sys::spawn_piped(
             command("sqlite3")
