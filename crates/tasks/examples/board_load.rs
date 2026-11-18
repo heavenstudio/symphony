@@ -14,6 +14,11 @@
 //! backend of its own: a separate measurement of bare connection cost, whose command CPU is
 //! `psql`'s. Both modes start and stop a scratch server through `Home`.
 //!
+//! `--seed-memtable-mib N` gives only SurrealDB's initial `--dump` copy a larger memtable when
+//! that atomic transaction cannot fit the board's. It is stopped cleanly before measurement;
+//! the measured restart always uses `Storage::BOARD`. The report names both settings, and the
+//! copy's CPU and memory are outside the workload measurement.
+//!
 //! The server is metered with every process under it ([`tree`]), as PostgreSQL answers from
 //! several: its CPU is each one's own and what the children it reaped took, so a backend that
 //! ended during the run is counted in its parent's ([`tree_cpu`]), as it opened
@@ -49,7 +54,7 @@ use std::time::{Duration, Instant};
 use symphony_board::rows::Dump;
 use symphony_board::rpc::{self, Client};
 use symphony_board::server::postgres::USER;
-use symphony_board::server::{Home, Running, scratch};
+use symphony_board::server::{Home, Running, Storage, scratch};
 use symphony_board::sys;
 use symphony_board::{DATABASE, NAMESPACE, NewSession, NewTask, Opening, Store};
 
@@ -382,6 +387,8 @@ struct Options {
     sessions: usize,
     calls: usize,
     seed: u64,
+    /// SurrealDB's copy transaction alone; the measured restart always uses Storage::BOARD.
+    seed_memtable: Option<u64>,
 }
 
 impl Options {
@@ -423,6 +430,20 @@ impl Options {
             },
             _ => return Err("one of --surreal and --postgresql is required".into()),
         };
+        let seed_memtable = arg(args, "--seed-memtable-mib")
+            .map(|text| {
+                let bytes = text
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|mib| mib.checked_mul(1 << 20))
+                    .filter(|bytes| (Storage::BOARD.memtable..=u64::from(u32::MAX)).contains(bytes))
+                    .ok_or("--seed-memtable-mib must fit SurrealKV's memtable, 256..4095 MiB")?;
+                if !matches!(server, Server::Surreal { .. }) || arg(args, "--dump").is_none() {
+                    return Err("--seed-memtable-mib needs --surreal and --dump");
+                }
+                Ok(bytes)
+            })
+            .transpose()?;
         Ok(Options {
             home,
             server,
@@ -431,7 +452,15 @@ impl Options {
             sessions,
             calls: number(args, "--calls", 40)?,
             seed: number(args, "--seed", 1)? as u64,
+            seed_memtable,
         })
+    }
+
+    fn seed_storage(&self) -> Storage {
+        Storage {
+            memtable: self.seed_memtable.unwrap_or(Storage::BOARD.memtable),
+            ..Storage::BOARD
+        }
     }
 }
 
@@ -897,17 +926,23 @@ fn surreal_run(options: &Options, surreal: &Path, tasks: &Path) -> Result<(), Fa
     };
     // The board is made on one start of the server and measured on the next, as a board's server
     // is found after a restart: what the copy left in its memory is not the run's.
-    let making = home.ensure().map_err(|why| why.to_string())?;
+    let making_home = home.clone().storage(options.seed_storage());
+    let making = making_home.ensure().map_err(|why| why.to_string())?;
     let mut board = json!({"tasks": 0, "messages": 0, "sessions": 0});
-    if let Some(file) = &options.dump {
-        let dump = Dump::from_json(&std::fs::read_to_string(file)?)?;
-        board = json!({"tasks": dump.tasks.len(), "messages": dump.messages.len(),
-            "sessions": dump.sessions.len()});
-        open(&making)?.copy(&dump)?;
-        eprintln!("board_load: copied {board}");
-    }
-    let sessions = set_up(options, open(&making)?)?;
-    home.stop().map_err(|why| why.to_string())?;
+    let seeded = (|| -> Result<_, Failed> {
+        if let Some(file) = &options.dump {
+            let dump = Dump::from_json(&std::fs::read_to_string(file)?)?;
+            board = json!({"tasks": dump.tasks.len(), "messages": dump.messages.len(),
+                "sessions": dump.sessions.len()});
+            open(&making)?.copy(&dump)?;
+            eprintln!("board_load: copied {board}");
+        }
+        set_up(options, open(&making)?)
+    })();
+    let stopped = making_home.stop().map_err(|why| why.to_string());
+    let sessions = seeded?;
+    stopped?;
+    // This is a new Home with the production storage settings, not the seed override.
     let running = home.ensure().map_err(|why| why.to_string())?;
     let measured = board_run(
         options,
@@ -1022,6 +1057,14 @@ fn board_run(
         ("sessions", json!(options.sessions)),
         ("calls", json!(options.calls)),
         ("seed", json!(options.seed)),
+        (
+            "surreal_storage",
+            json!((backend == "SurrealDB").then(|| json!({
+                "seed_memtable_bytes": options.seed_storage().memtable,
+                "measured_memtable_bytes": Storage::BOARD.memtable,
+                "value_log_threshold_bytes": Storage::BOARD.value_log_threshold,
+            }))),
+        ),
         ("sessions_beaten", json!(beaten)),
         ("writes", json!(writes)),
         ("writes_per_second", json!(rounded(writes as f64 / wall))),
@@ -1048,6 +1091,53 @@ mod tests {
 
     fn strings(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| word.to_string()).collect()
+    }
+
+    #[test]
+    fn a_larger_seed_memtable_is_explicit_bounded_and_only_for_a_surreal_dump() {
+        let dir = std::env::temp_dir().join(format!("board-load-seed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.to_str().unwrap();
+        let parse = |extra: &[&str]| {
+            let mut args = strings(&["--home", home, "--surreal", "/surreal", "--tasks", "/tasks"]);
+            args.extend(strings(extra));
+            Options::parse(&args)
+        };
+        assert_eq!(parse(&[]).unwrap().seed_storage(), Storage::BOARD);
+        for (mib, bytes) in [
+            ("256", 256 << 20),
+            ("1024", 1024 << 20),
+            ("4095", 4095 << 20),
+        ] {
+            let options = parse(&["--dump", "/dump", "--seed-memtable-mib", mib]).unwrap();
+            assert_eq!(options.seed_storage().memtable, bytes);
+            assert_eq!(
+                options.seed_storage().value_log_threshold,
+                Storage::BOARD.value_log_threshold
+            );
+        }
+        for invalid in ["0", "255", "4096", "18446744073709551615", "-1", "text"] {
+            assert!(parse(&["--dump", "/dump", "--seed-memtable-mib", invalid]).is_err());
+        }
+        assert!(
+            parse(&["--seed-memtable-mib", "1024"])
+                .unwrap_err()
+                .contains("--dump")
+        );
+        let pg = strings(&[
+            "--home",
+            home,
+            "--postgresql",
+            "/pg",
+            "--tasks",
+            "/tasks",
+            "--dump",
+            "/dump",
+            "--seed-memtable-mib",
+            "1024",
+        ]);
+        assert!(Options::parse(&pg).unwrap_err().contains("--surreal"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
