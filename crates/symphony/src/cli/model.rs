@@ -1,15 +1,58 @@
 //! `symphony model ROLE MODEL`: edit the main checkout's role settings in place, preserving
-//! comments and order. Model names are text, never checked against a provider's catalogue.
+//! comments and order. `all MODEL --agent AGENT --assessor MODEL` also switches the launch agent
+//! and its fallback model, with an explicit assessor override. Recognizable cross-agent names
+//! warn; model names remain arbitrary text.
 //! Checking and landing a settings change follow the project's settings-only policy.
 
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 
-use symphony_board::launch::defaults::ROLES;
+use symphony_board::launch::defaults::{AGENTS, ASSESSOR, ROLES};
 use toml::de::DeTable;
 
-const USAGE: &str = "usage: symphony model ROLE MODEL";
+const USAGE: &str = "usage: symphony model ROLE MODEL [--agent AGENT] [--assessor MODEL]";
+
+struct Edit<'a> {
+    role: &'a str,
+    model: &'a str,
+    agent: Option<&'a str>,
+    assessor: Option<&'a str>,
+}
+
+impl<'a> Edit<'a> {
+    fn parsed(parsed: &'a super::Parsed) -> Result<Self, String> {
+        let [role, model] = parsed.positionals.as_slice() else {
+            return Err("expected ROLE and MODEL".into());
+        };
+        let edit = Self {
+            role,
+            model,
+            agent: parsed.value("--agent"),
+            assessor: parsed.value("--assessor"),
+        };
+        edit.validate()?;
+        Ok(edit)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.role != "all" && !ROLES.contains(&self.role) {
+            return Err(format!("unknown role {:?}", self.role));
+        }
+        if let Some(agent) = self.agent
+            && !AGENTS.contains(&agent)
+        {
+            return Err(format!(
+                "unknown agent {agent:?}; expected {}",
+                AGENTS.join(", ")
+            ));
+        }
+        if self.role != "all" && (self.agent.is_some() || self.assessor.is_some()) {
+            return Err("--agent and --assessor are only available with all".into());
+        }
+        Ok(())
+    }
+}
 
 pub(super) fn main(
     args: &[String],
@@ -17,19 +60,27 @@ pub(super) fn main(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
-    let parsed = match super::parse(args, &[]) {
+    let flags = [
+        super::Flag {
+            name: "--agent",
+            value: true,
+        },
+        super::Flag {
+            name: "--assessor",
+            value: true,
+        },
+    ];
+    let parsed = match super::parse(args, &flags) {
         Ok(parsed) => parsed,
         Err(problem) => return super::refuse(err, USAGE, "model", &problem),
     };
-    let [role, model] = parsed.positionals.as_slice() else {
-        return super::refuse(err, USAGE, "model", "expected ROLE and MODEL");
+    let edit = match Edit::parsed(&parsed) {
+        Ok(edit) => edit,
+        Err(problem) => return super::refuse(err, USAGE, "model", &problem),
     };
-    if role != "all" && !ROLES.contains(&role.as_str()) {
-        return super::refuse(err, USAGE, "model", &format!("unknown role {role:?}"));
-    }
     let result = std::env::current_dir()
         .map_err(|error| error.to_string())
-        .and_then(|here| change(&here, role, model, env));
+        .and_then(|here| change(&here, &edit, env, err));
     match result {
         Ok(line) => {
             let _ = writeln!(out, "{line}");
@@ -44,45 +95,76 @@ pub(super) fn main(
 
 fn change(
     here: &Path,
-    role: &str,
-    model: &str,
+    edit: &Edit<'_>,
     env: &BTreeMap<String, String>,
+    err: &mut dyn Write,
 ) -> Result<String, String> {
     let (top, _) = symphony_board::git::checkout(here)
         .ok_or_else(|| format!("{} is in no git checkout", here.display()))?;
     let file = symphony_board::builds::main_of(&top).join(crate::project::FILE);
     super::unasked_inside(&file, env)?;
     let before = crate::text::read_text(&file).map_err(|e| crate::text::os_error(&e, &file))?;
-    let after = edited(&before, role, model)?;
+    let after = edited(&before, edit)?;
+    let Edit {
+        role,
+        model,
+        agent,
+        assessor,
+    } = edit;
+    let details = format!(
+        "{}{}",
+        agent.map_or_else(String::new, |agent| format!(
+            "; launch agent set to {agent:?}"
+        )),
+        assessor.map_or_else(String::new, |model| format!(
+            "; assessor model set to {model:?}"
+        ))
+    );
     if before == after {
-        return Ok(format!("{}: {role} already {model:?}", file.display()));
+        crate::project::warn_models(&after, &file, err);
+        return Ok(format!(
+            "{}: {role} already {model:?}{details}",
+            file.display()
+        ));
     }
     crate::text::write_whole(&file, &after).map_err(|e| crate::text::os_error(&e, &file))?;
-    Ok(format!("{}: {role} model set to {model:?}", file.display()))
+    crate::project::warn_models(&after, &file, err);
+    Ok(format!(
+        "{}: {role} model set to {model:?}{details}",
+        file.display()
+    ))
 }
 
 /// Replace only a value's source span. A missing key goes into the nearest explicit table;
 /// dotted keys reach the remaining path, including when no agents table exists yet.
-fn edited(text: &str, role: &str, model: &str) -> Result<String, String> {
-    let roles = if role == "all" {
+fn edited(text: &str, edit: &Edit<'_>) -> Result<String, String> {
+    edit.validate()?;
+    let roles = if edit.role == "all" {
         ROLES.as_slice()
-    } else if ROLES.contains(&role) {
-        std::slice::from_ref(&role)
     } else {
-        return Err(format!("unknown role {role:?}"));
+        std::slice::from_ref(&edit.role)
     };
-    // JSON and TOML share these string escapes, but TOML also requires DEL to be escaped.
-    let quoted = serde_json::Value::String(model.into())
-        .to_string()
-        .replace('\u{7f}', "\\u007F");
     let mut text = text.to_string();
+    if let Some(agent) = edit.agent {
+        set(&mut text, &["agents", "launch", "default"], agent)?;
+        set(&mut text, &["agents", "launch", "model"], edit.model)?;
+    }
     for role in roles {
-        set(&mut text, &["agents", "models", role], model, &quoted)?;
+        let model = if *role == ASSESSOR {
+            edit.assessor.unwrap_or(edit.model)
+        } else {
+            edit.model
+        };
+        set(&mut text, &["agents", "models", role], model)?;
     }
     Ok(text)
 }
 
-fn set(text: &mut String, path: &[&str], model: &str, quoted: &str) -> Result<(), String> {
+fn set(text: &mut String, path: &[&str], model: &str) -> Result<(), String> {
+    // JSON and TOML share these string escapes, but TOML also requires DEL to be escaped.
+    let quoted = serde_json::Value::String(model.into())
+        .to_string()
+        .replace('\u{7f}', "\\u007F");
     let parsed = DeTable::parse(text).map_err(|e| format!("symphony.toml: {e}"))?;
     let mut table = parsed.get_ref();
     // (insertion point, path already reached, inline table needs a comma)
@@ -114,7 +196,7 @@ fn set(text: &mut String, path: &[&str], model: &str, quoted: &str) -> Result<()
             }
             // Keep even the original quoting when the value already matches.
             if value.get_ref().as_str() != Some(model) {
-                text.replace_range(value.span(), quoted);
+                text.replace_range(value.span(), &quoted);
             }
             return Ok(());
         }

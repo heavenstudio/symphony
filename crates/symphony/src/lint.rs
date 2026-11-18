@@ -192,7 +192,8 @@ pub fn project_problems(root: &Path) -> Vec<String> {
 /// alone. A table or key the Symphony does not know, a value of the wrong type or a required value
 /// left out is named on `err`, exit 1; a file that loads is said on `out`, exit 0. It judges no
 /// name against a list (a model, an agent's or a recipe's name is any text) and, unlike the lint,
-/// reads no plugin this build holds and no document. More than one folder is exit 2.
+/// reads no plugin this build holds and no document. Recognizable cross-agent model names warn
+/// without changing the exit code. More than one folder is exit 2.
 pub fn settings(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     const USAGE: &str = "usage: symphony settings-check [DIR]";
     let root = match args {
@@ -209,6 +210,10 @@ pub fn settings(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i3
     };
     match crate::project::Project::load(root) {
         Ok(_) => {
+            let file = root.join(crate::project::FILE);
+            if let Ok(text) = std::fs::read_to_string(&file) {
+                crate::project::warn_models(&text, &file, err);
+            }
             let _ = writeln!(
                 out,
                 "✔ {}: every table and key is a setting the Symphony knows, each value of its type",
