@@ -54,11 +54,8 @@ mod dispatch_later;
 mod done;
 mod fast_fix;
 mod fields;
-#[path = "../../../../tools/test-support/script_process_cwd.rs"]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the fixture scripts every crate's tests share start their children as a test likes, and wait by no timer"
-)]
+// The adapter contract tests run once in `server`; this adapter uses the same spawn lock.
+#[path = "../../../../tools/test-support/script_board.rs"]
 mod fixture_script;
 mod gate;
 mod hand_over_outage;
