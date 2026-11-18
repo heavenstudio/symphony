@@ -24,7 +24,7 @@ const HEAD: &str = "usage: symphony-build COMMAND [ARGS]...\n\n\
 const LISTED: &str = "`symphony-build help`";
 
 /// Its commands, in the order its usage names them, each with what it does.
-const COMMANDS: [(&str, &str); 5] = [
+const COMMANDS: [(&str, &str); 6] = [
     (
         "publish-client",
         "publish a built client into the server's embedded copy",
@@ -42,6 +42,10 @@ const COMMANDS: [(&str, &str); 5] = [
         "time each page from its open to synced on a returning browser",
     ),
     (
+        "release-notes",
+        "what a project changes to take each release, or check a branch",
+    ),
+    (
         "release",
         "verify main's tip in full and tag it a release when green",
     ),
@@ -49,7 +53,7 @@ const COMMANDS: [(&str, &str); 5] = [
 
 /// The usage of its commands that read no options of their own, and what their help says after
 /// their line: what `--help` or `-h` anywhere on their command line prints ([`plain_help`]).
-const PLAIN: [(&str, &str, &str); 3] = [
+const PLAIN: [(&str, &str, &str); 4] = [
     (
         "publish-client",
         "usage: symphony-build publish-client STAGE PUBLIC",
@@ -69,6 +73,16 @@ const PLAIN: [(&str, &str, &str); 3] = [
          sources moved while its version did not is red (exit 1). A registry it cannot\n\
          read is exit 2.\n",
     ),
+    (
+        "release-notes",
+        crate::release::consumer::USAGE,
+        "ROOT is the repository (default: the current folder). It prints the notes of\n\
+         every release tagged there, oldest first, as a release's install writes\n\
+         them. With --check it reads the branch checked out there against the\n\
+         default branch: one that changes the board schema, or takes a call out of a\n\
+         consumer-API guard, with no Consumer-Note trailer saying what a project\n\
+         does, or with a trailer that reads as no entry, is red (exit 1).\n",
+    ),
 ];
 
 /// `symphony-build COMMAND ARGS…`, the whole command line without the program name: one of
@@ -86,6 +100,7 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         Some("size-budget") => size_budget::main(rest, out, err),
         Some("crates-check") => crates_check::main(rest, out, err),
         Some("synced") => synced::main(rest, out, err),
+        Some("release-notes") => crate::release::consumer::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => {
             let _ = writeln!(err, "{}", unknown(name));

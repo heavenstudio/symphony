@@ -34,6 +34,7 @@ mod board;
 pub(crate) mod cadence;
 mod candidate;
 mod checks;
+pub(crate) mod consumer;
 pub(crate) mod crates;
 mod failures;
 mod git;
@@ -2051,6 +2052,7 @@ fn night(
         &checked,
         &publishes,
         &held_notes,
+        &consumer::taking(&repo.root, &name, &candidate).unwrap_or_default(),
         &changes,
     );
     if let Err(problem) = git_until(

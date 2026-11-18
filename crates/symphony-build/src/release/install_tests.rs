@@ -557,3 +557,65 @@ fn the_real_build_installs_this_checkouts_release() {
     );
     assert_eq!(release::current(&machine).as_deref(), Some("release-trial"));
 }
+
+/// `git ARGS` in `tree`'s checkout, as an author of the test's own.
+fn checkout_git(tree: &Tree, args: &[&str]) {
+    let named = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+    super::super::git::git(&tree.path("checkout"), &[&named[..], args].concat()).unwrap();
+}
+
+#[test]
+fn an_install_holds_the_notes_of_every_release_up_to_its_own_from_the_checkouts_history() {
+    let tree = Tree::new();
+    checkout(&tree);
+    checkout_git(&tree, &["init", "-q", "-b", "main"]);
+    tree.write(
+        "checkout/crates/tasks/src/schema.rs",
+        "pub const VERSION: i64 = 17;\n",
+    );
+    checkout_git(&tree, &["add", "-A"]);
+    checkout_git(&tree, &["commit", "-q", "-m", "first"]);
+    checkout_git(&tree, &["tag", "-a", "release-2026-11-19", "-m", "one"]);
+    tree.write(
+        "checkout/crates/tasks/src/schema.rs",
+        "pub const VERSION: i64 = 18;\n",
+    );
+    checkout_git(&tree, &["add", "-A"]);
+    let said = "Raise the schema\n\nConsumer-Note: once: run `just symphony-cli init --root .`";
+    checkout_git(&tree, &["commit", "-q", "-m", said]);
+    checkout_git(&tree, &["tag", "-a", TAG, "-m", "two"]);
+    let builder = builder(&tree, &release::BINARIES, (18, 18), 0);
+    let commit = super::super::git::git(&tree.path("checkout"), &["rev-parse", "HEAD"]).unwrap();
+    let installed = run(&tree, &builder, &commit);
+    assert!(installed.ran.green(), "{:?}", installed.ran);
+    // Read as a project reads them: the newest noted release's, with no repository.
+    let (newest, notes) = release::noted(&tree.path("machine")).unwrap();
+    assert_eq!(newest, TAG);
+    let taken = release::notes_between(&notes, Some("release-2026-11-19"), None).unwrap();
+    assert!(
+        taken.starts_with(&format!(
+            "## release-2026-11-20\n\nCommit: {commit}\nFrom release-2026-11-19.\n\nBoard:\n- \
+             Board schema 17 to 18."
+        )) && taken.ends_with("Run once:\n- run `just symphony-cli init --root .`\n"),
+        "{taken}"
+    );
+    assert!(notes.contains("\nThe first release.\n"), "{notes}");
+    // The same list by the commit the project is pinned at.
+    let first = super::super::git::git(&tree.path("checkout"), &["rev-parse", "HEAD~1"]).unwrap();
+    assert_eq!(
+        release::notes_between(&notes, Some(&first[..12]), None).unwrap(),
+        taken
+    );
+}
+
+#[test]
+fn a_checkout_git_cannot_read_is_installed_without_notes_and_its_log_says_so() {
+    let tree = Tree::new();
+    checkout(&tree);
+    let builder = builder(&tree, &release::BINARIES, (18, 18), 0);
+    let installed = run(&tree, &builder, COMMIT);
+    assert!(installed.ran.green(), "{:?}", installed.ran);
+    assert_eq!(release::noted(&tree.path("machine")), None);
+    let log = tree.read("logs/refresh-install.log");
+    assert!(log.contains("no notes.md: git "), "{log}");
+}

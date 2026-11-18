@@ -53,7 +53,7 @@ use super::checks::{Ran, Step};
 use super::git::git;
 use super::group::{Bound, Failed, output_until};
 use super::install::{self, Installed};
-use super::record::{Refresh, THEIRS};
+use super::record::{Refresh, TAKES, THEIRS};
 use symphony::children::command;
 use symphony::machine::{Entry, Registry, release, switch};
 
@@ -414,7 +414,7 @@ impl Judged {
         let id = &self.id;
         let (line, error) = match ended {
             Verdict::Done(said) => (said, None),
-            Verdict::Theirs { why, .. } => (format!("{id}: {THEIRS}: {why}"), None),
+            Verdict::Theirs { why, .. } => (format!("{id}: {THEIRS}: {why} ({TAKES})"), None),
             Verdict::Red(why) => (format!("{id}: red: {why}"), Some(why)),
             Verdict::Move { live, .. } => (
                 format!("{id}: its board is at schema {live}, not moved"),

@@ -498,7 +498,8 @@ fn a_lagging_writer_holds_every_board_and_current_until_it_is_rebuilt() {
             this_writer()
         )) && out.contains(
             " ago); rebuild each at schema 19 and run it once, which records it, then an \
-             orchestrator's `just release --refresh` moves it\n"
+             orchestrator's `just release --refresh` moves it (`just symphony-cli \
+             release-notes` in the project says what taking the release asks of it)\n"
         ),
         "{out}"
     );
@@ -1026,7 +1027,8 @@ fn a_board_not_running_holds_the_release_and_one_from_before_the_writer_record_i
     let own = format!(
         "release: refresh: old: the project's to finish: its board is at schema 17, from before \
          the board recorded who writes it (schema 18), so it is never moved here: `cd {} && just \
-         tasks migrate`, its own, brings it up\n",
+         tasks migrate`, its own, brings it up (`just symphony-cli release-notes` in the project \
+         says what taking the release asks of it)\n",
         old.display()
     );
     assert!(out.contains(&own), "{out}");

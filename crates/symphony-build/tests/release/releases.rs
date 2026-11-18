@@ -105,6 +105,9 @@ fn a_second_release_that_day_is_numbered_and_the_next_day_starts_again() {
              Board schema 16, unchanged since release-2026-11-12.\n\
              Pin 1, unchanged since release-2026-11-12.\n\n\
              Green: verify.\n\n\
+             For a project taking this release (`just symphony-cli release-notes` prints every \
+             release's since the project's own):\n\
+             Nothing a project changes to take it.\n\n\
              Changes on main since release-2026-11-12 (1):\n{} a fix\n",
             &second[..12],
             git(&fixture.main, &["rev-parse", "--short", &second]),
@@ -119,7 +122,14 @@ fn a_second_release_that_day_is_numbered_and_the_next_day_starts_again() {
         "the release before is the day's newest, not its first: {message}"
     );
     assert!(
-        message.contains("Changes on main since release-2026-11-12.2 (1):\n"),
+        message.contains(
+            "since the project's own):\nBoard:\n- Board schema 16 to 17. First rebuild at this \
+             release every program of the project that writes its board"
+        ) && message.contains("`just tasks migrate --leave-behind`"),
+        "what a project does to take it, before the changes: {message}"
+    );
+    assert!(
+        message.contains("\n\nChanges on main since release-2026-11-12.2 (1):\n"),
         "{message}"
     );
 
