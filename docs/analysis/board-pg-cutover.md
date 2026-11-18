@@ -3,7 +3,7 @@
 The procedure that moves a live board from SurrealDB to PostgreSQL: the order, what is copied
 when, how long a board cannot be written, how to go back, and what the two stores measured side
 by side. [What a live move waits for](#the-choice) is decided: the pieces not built yet, a clean
-rehearsal, and the memory peak found and answered. Today PostgreSQL serves only scratch boards
+rehearsal, and the memory peak found and answered, which it now is. Today PostgreSQL serves only scratch boards
 ([POSTGRESQL](../POSTGRESQL.md)), and no command here moves a live one.
 
 ## What the comparison showed
@@ -25,12 +25,15 @@ tasks, 13,067 messages) and one build. The tables, the method and their limits a
 - **Nothing failed on either**, in 14,600 commands across the four cases.
 - **PostgreSQL costs more CPU**: 1.7 times the server's at thirty sessions, 1.9 times at ten,
   2.4 times on an empty board. The `tasks` process, most of the total, costs the same.
-- **PostgreSQL's memory peaks higher and falls back.** It peaked at 626 MiB with ten sessions and
-  1,752 MiB with thirty, where SurrealDB peaked at 327 and 448. After the run it held 53 MiB;
-  SurrealDB kept 392. The move was approved with a target of 512 MiB, backends included: at rest
-  PostgreSQL is far under it, and with ten or more sessions writing back to back it is over it.
-  Nobody has looked for the cause yet. The readings are one run each, sessions back to back,
-  which is the ceiling and not the rate agents write at.
+- **PostgreSQL's memory peaked higher in that run, and no longer does.** It peaked at 626 MiB
+  with ten sessions and 1,752 MiB with thirty, where SurrealDB peaked at 327 and 448, and held
+  53 MiB after the run where SurrealDB kept 392. The move was approved with a target of 512 MiB,
+  backends included. The cause was a read of the whole board answered as one value, which each
+  command's backend built whole and kept until the command ended; the store's long reads now
+  answer a row at a time, and the same work peaks at 377 to 419 MiB with thirty sessions (three
+  runs) and 161 to 165 with ten (two), nothing failing and the CPU where it was
+  ([the measurement](board-store-baseline.md#postgresqls-memory-peak-measured-2026-11-18)).
+  Sessions back to back are the ceiling, not the rate agents write at.
 - **Most commands answer sooner** on PostgreSQL (a beat 23 ms against 36, an `inbox` 74 against
   194, a `show` 45 against 100), and the two heaviest later (`list` 1.0 s against 0.4, `pull` 3.8 s
   against 2.7). Walls are stretched by the machine's load, 75 to 168 that day.
@@ -40,15 +43,17 @@ tasks, 13,067 messages) and one build. The tables, the method and their limits a
   14.8 GiB against SurrealDB's 3.3 GiB, and fell back to 218 MiB where SurrealDB kept 2.0 GiB
   ([the numbers](board-store-baseline.md#paired-board-work-on-it)). One run each on a loaded
   machine, a development build, SurrealDB seeded under a 2 GiB memtable and measured under the
-  shipped one. Nobody has looked for what holds it.
+  shipped one. With the store's long reads answered a row at a time, PostgreSQL peaks at 1.7 to
+  1.8 GiB on a board of that size (two runs, on a ten-times copy of a later export): an eighth of
+  what it was and under SurrealDB's, and still over 512 MiB, since its server opens at 207 MiB
+  there and thirty backends hold about 50 MiB each.
 
 Not measured: a crash's durability, delivery to listening sessions,
 days at rest.
 
 ## What is not ready
 
-Each is needed before a live board moves. None is built by this page, and none waits for the
-memory task of [the choice](#the-choice).
+Each is needed before a live board moves. None is built by this page.
 
 | what | state |
 |---|---|
@@ -132,15 +137,17 @@ prerequisites, and the memory peak.
 
 - **The prerequisites and the rehearsal.** What is not ready above is built, and the rehearsal
   on a copy is clean. They go ahead now.
-- **The memory peak.** One task finds why PostgreSQL's server peaks at 1,752 MiB with thirty
-  sessions, and at 14.8 GiB on a board ten times the size, and brings it under the 512 MiB
-  target, or shows why it cannot be, measured by the same driver on scratch boards. It delays
-  only the last step, the move of a live board.
+- **The memory peak.** PostgreSQL's server peaked at 1,752 MiB with thirty sessions, and at
+  14.8 GiB on a board ten times the size, against the 512 MiB target. It is found and brought
+  under on a board of today's size: 377 to 419 MiB with thirty sessions, by the same driver on
+  scratch boards ([what the comparison showed](#what-the-comparison-showed)). It was no setting,
+  and one connection per command only in that a backend keeps its memory for its command's
+  life: the fix is in what the reads ask the server to build. On a board ten times the size it
+  is 1.7 to 1.8 GiB, over the target and under SurrealDB's 3.3 GiB there.
 
-The target was part of what the store was approved with, the run misses it by more than three
-times, and nobody knows the cause yet: it may be a setting, or it may be what one connection per
-command costs. The cutover is the one step that takes a hold on a live board and a second hold to
-undo. Everything before it is free to do and free to drop.
+The target was part of what the store was approved with. The cutover is the one step that takes
+a hold on a live board and a second hold to undo. Everything before it is free to do and free to
+drop.
 
 The other option, not taken, was to move on the prerequisites alone and accept the measured
 cost.

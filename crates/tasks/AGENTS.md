@@ -372,7 +372,10 @@ of message, delivery, role, session or callback_state (`schema.rs`'s doc lists t
 reads in proportion to what it is asked (`store/unanswered.rs`). The `perf` target plans every such
 statement and every event's; a new statement or a changed condition on those paths runs it (below).
 A transaction over many rows avoids what costs more than linearly on the engine: an index a copy
-inserts into, an event that UPSERTs (`schema.rs`).
+inserts into, an event that UPSERTs (`schema.rs`). On PostgreSQL a read whose list grows with the board
+answers an item a row (`Pg::Listed`, `store/postgres/mod.rs`), never one `jsonb_agg` value: the
+backend builds that value whole, in several times its size, and keeps the memory until its
+command ends ([the measurement](../../docs/analysis/board-store-baseline.md#postgresqls-memory-peak-measured-2026-11-18)).
 
 ### Time in tests
 

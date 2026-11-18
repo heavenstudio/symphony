@@ -424,7 +424,8 @@ Per command, mean CPU of the command's process, and median / 99th percentile wal
 Against the thirty-session run on today's board above, a `list` and a `pull` cost about ten
 times the command's CPU on either engine and a `cycle`'s step five. PostgreSQL's observed peak
 was 14.8 GiB against SurrealDB's 3.3 GiB, and it fell back to 218 MiB where SurrealDB kept
-2.0 GiB; nobody has looked for what holds it. SurrealDB's folder was smaller after the run than
+2.0 GiB; what held it is [found below](#postgresqls-memory-peak-measured-2026-11-18), and
+PostgreSQL's peak there is now 1.7 to 1.8 GiB. SurrealDB's folder was smaller after the run than
 before it. These are single observations under load and not a cap, a rate or a latency
 promise.
 
@@ -433,6 +434,103 @@ The reports, invocations, loads and frozen binaries are under
 probes' output. SHA-256: tasks
 `89e1089d9f2e0e6ab6a0f6557a53c16ba43a5a11049420eacc6156abb8be628b`, board_load
 `ec0ffb7055e1b0431dfdb0786bd6ab15a1aa6d3efae39f91a2e672ce8ebeec01`.
+
+## PostgreSQL's memory peak, measured 2026-11-18
+
+The paired runs above left PostgreSQL's server at 1,752 MiB with thirty sessions and 14.8 GiB on
+the board ten times the size, against the 512 MiB the store was approved with
+([its card](../DECISIONS.md#board-pg-cutover)). The cause is one, and the store's reads no longer
+have it.
+
+**The cause.** A command is one connection, and its backend lives as long. A read of a whole
+board was one statement whose answer was one `jsonb` value: every task, link, role and session
+aggregated by `jsonb_agg` into an object. PostgreSQL builds such a value whole in the backend
+that answers it, several times over (the aggregate's state, the value, its text, the message
+sent): a 3.7 MB answer for this board took the backend from 6 MiB to 62 to 66. The backend then
+keeps that memory: PostgreSQL frees it at the statement's end, where the memory contexts read
+2.2 MiB, but the allocator does not give it back to the system while the process lives (a
+backend that allocated and freed 200 MB once still held 387 MiB). A `pull` reads the board twice
+and each sender's last message, and its backend stood at 111 MiB until the command ended,
+seconds later. So thirty commands at once held thirty boards, and the server gave it all back
+when they ended, which is the 53 MiB it read after each run. It was no setting: `shared_buffers`, `work_mem` and the connection count read as written, and a smaller
+`work_mem` moved a backend by 2 to 3 MiB. It is the price of one connection per command only in
+that the backend, and what it holds, lasts the command.
+
+**What changed.** A read of long lists is sent as a statement for each list, answered an item a
+row, with one more statement for the object's other fields, all in the request's one
+transaction and so of one snapshot (`Pg::Listed`, `crates/tasks/src/store/postgres/mod.rs`); the
+client joins the rows into the same JSON text the one value was. The server sends each row as it
+makes it, so the backend holds a sort's memory (`work_mem`, 4 MiB, then a temporary file) and
+not the board. The whole-board read, every plain list of rows (a thread's messages, each
+sender's last message, the launches, the usage rows, the reviews waiting) and the bound
+sessions are read so. A list read so goes through the index it went through as one value: a
+thread's messages, the messages between two numbers and each sender's last were planned both
+ways and scan alike. A write's read of its one task is still one value.
+
+**Thirty and ten sessions on this board**, by the paired driver, `--seed 1`, forty calls a
+session, from one export of this repository's board read that day (953 tasks, 13,793 messages,
+1,519 sessions; 18,964,211 bytes) and two frozen development builds: main at `97a4d7dc9`, and
+that commit with the change. All memory is `server_memory_mib`, in MiB; the load is the
+one-minute average as the measured run began and ended, on the 16 cores of the Mac above with
+other agents' builds and tests running throughout.
+
+| sessions | build | failed | opened | median | peak | after | samples | RSS peak | server CPU | `tasks` CPU | load |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 30 | main | 0 | 53.2 | 512.0 | 1,627.1 | 54.9 | 31 | 2,295.0 | 56.2 s | 50.0 s | 33 → 53 |
+| 30 | main | 0 | 53.0 | 540.8 | 1,845.7 | 56.6 | 37 | 2,442.1 | 62.8 s | 57.4 s | 61 → 87 |
+| 30 | changed | 0 | 52.4 | 239.2 | 381.0 | 56.2 | 55 | 916.6 | 83.7 s | 65.9 s | 23 → 37 |
+| 30 | changed | 0 | 52.8 | 141.0 | 376.6 | 54.5 | 33 | 844.2 | 54.6 s | 57.3 s | 30 → 44 |
+| 30 | changed | 0 | 53.1 | 138.2 | 418.6 | 56.8 | 37 | 834.8 | 57.3 s | 59.0 s | 39 → 54 |
+| 10 | main | 0 | 53.8 | 354.8 | 600.7 | 55.2 | 36 | 808.5 | 20.0 s | 18.4 s | 34 → 51 |
+| 10 | main | 0 | 53.2 | 348.6 | 605.3 | 54.6 | 36 | 811.8 | 21.3 s | 19.5 s | 41 → 50 |
+| 10 | changed | 0 | 53.0 | 104.2 | 161.3 | 54.3 | 32 | 348.5 | 18.2 s | 18.7 s | 46 → 45 |
+| 10 | changed | 0 | 52.6 | 96.2 | 164.8 | 54.0 | 29 | 325.0 | 17.0 s | 17.5 s | 36 → 39 |
+
+Each run is 3,000 commands and 2,787 writes for thirty sessions, 1,000 and 928 for ten; none
+failed, and every session's beats were found in its board. Two more runs of main at thirty, made
+first while the meter was being set up, peaked at 1,589.9 and 1,719.7 MiB (load 33 → 37 and
+33 → 47); their reports were not kept.
+
+- **Thirty sessions peak at 377 to 419 MiB**, where main peaked at 1,590 to 1,846: under the
+  512 MiB target in each of three runs, and under SurrealDB's 448 of the paired run above.
+- **Ten sessions peak at 161 to 165 MiB**, where main peaked at 601 to 605.
+- **The CPU did not move with it.** The server's is 54.6 to 57.3 s against 56.2 to 62.8, with one
+  run of the change at 83.7 s that the other two do not repeat. The `tasks` processes' is 57.3 to
+  65.9 s against 50.0 to 57.4, within the spread of the runs and leaning higher; a `pull`'s own is
+  708 to 774 ms against 554 to 726.
+- **The peak is the meter's, as before**: a reading in every sixteen commands, so a backend that
+  lived between two readings is not in it, and a run is seconds long.
+
+**On the board ten times the size** (this export with each row made ten times, every copy's
+slugs, handles and numbers its own: 9,530 tasks, 137,930 messages, 15,190 sessions), thirty
+sessions, the same seed and builds:
+
+| build | failed | opened | median | peak | after | samples | RSS peak | server CPU | `tasks` CPU | wall | load |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| main | 0 | 207.7 | 8,346.0 | 14,922.4 | 288.2 | 119 | 14,344.5 | 416.5 s | 439.6 s | 200.1 s | 15 → 69 |
+| changed | 0 | 207.0 | 766.0 | 1,787.2 | 317.4 | 113 | 4,354.1 | 337.4 s | 460.9 s | 109.1 s | 15 → 71 |
+| changed | 0 | 205.6 | 730.8 | 1,727.7 | 315.8 | 103 | 4,188.3 | 359.8 s | 498.7 s | 126.5 s | 25 → 72 |
+
+The peak there is an eighth of what it was, and half of SurrealDB's 3.3 GiB on the fixture of the
+section above; it is not under 512 MiB, and at that size it cannot be by the reads alone: the
+server opens at 207 MiB, its shared buffers full of the board, and thirty backends then hold
+about 50 MiB each. What a backend still holds there, read from one `pull` replayed a statement
+at a time on such a board: 16 to 21 MiB after its first read of the board, whose sorted rows are
+then ten times as many, and 8 more after the lines posted since its last look, which are still
+one value. No setting was changed for it.
+
+To read a backend's own memory, as these were: `footprint -p PID` on macOS, whose `MALLOC_*`
+lines are the backend's allocations, beside an untagged `VM_ALLOCATE` that grows as it reads
+tables; the server's `log_statement = all` with `log_parameter_max_length = -1` gives a
+command's statements to replay one at a time in `psql`, each bound with `\bind`. The reports,
+the scripts that sampled and replayed, and the one that made the ten-times export are among the
+task's artifacts (`perf/board-pg-memory-peak/`). SHA-256: the export
+`27e4e92f45da562f70e8a23d79e4ecd1a0626bd2625b50c225b9bfe43d39b8f3`, the ten-times export
+`5eb82344dc1ec4cd09c13bf7f4ee1f86bd0aa1ce9534e9ea75109ac5ef53ee06`, main's `tasks`
+`873e3b776d8be60f3f56b5f543c2902933259518414b92743fcc12e22ac91bf6` and `board_load`
+`012bf5135d47a0e1d2a4535c5d921767114c5f0772eb2496f24d7f1deb818254`, the change's `tasks`
+`82eee538fbe990b204bc92cc6a40f93acdd2e7e20deaef46740a62d31113163a` and `board_load`
+`45efde74aa929d0a547c7d9ead1d80da146664e2fb15c8c6eea68aa418812549`.
 
 ## PostgreSQL's replacement for the plan checks
 

@@ -1,5 +1,5 @@
 //! Token usage recorded atomically with the beat of its bound session.
-use super::{Pg, rows};
+use super::{Pg, listed};
 
 /// `s_` is the beat's session. Choose one working role and add each usage sample.
 pub(in crate::store) const SPEND: &str = "DECLARE on_ record; slug_ text; role_ text; round_ bigint; x_ jsonb;
@@ -18,16 +18,16 @@ BEGIN
 END;";
 
 pub(in crate::store) fn spent_on() -> Pg<'static> {
-    Pg::read(rows(
+    listed(
         "u",
         "usage u WHERE slug IN (SELECT jsonb_array_elements_text(v -> 'slugs'))",
         "u.handle, u.slug, u.role, u.model, u.speed, u.round",
-    ))
+    )
 }
 pub(in crate::store) fn spent_by() -> Pg<'static> {
-    Pg::read(rows(
+    listed(
         "u",
         "usage u WHERE handle IN (SELECT jsonb_array_elements_text(v -> 'handles'))",
         "u.id",
-    ))
+    )
 }
