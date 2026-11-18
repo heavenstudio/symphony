@@ -7,8 +7,9 @@ fail-fast = false
 test-threads = 6
 status-level = "pass"
 final-status-level = "fail"
-# A per-case stall backstop. Slow cases report once a minute before termination.
-slow-timeout = { period = "60s", terminate-after = 10, grace-period = "10s" }
+# Stall backstop: 3 * ceil(131.95s), the slowest loaded ordinary binary upper bound.
+# The measurements and loads are in docs/CHECKS.md, "The tests side by side".
+slow-timeout = { period = "132s", terminate-after = 3, grace-period = "10s" }
 
 [test-groups.chrome]
 max-threads = 2
@@ -30,3 +31,5 @@ test-group = 'database'
 filter = 'package(=symphony-server) & binary(=standalone)'
 priority = -100
 threads-required = "num-test-threads"
+# 3 * ceil(869.16s), the completed standalone binary at load 124.30/142.61/111.32.
+slow-timeout = { period = "870s", terminate-after = 3, grace-period = "10s" }

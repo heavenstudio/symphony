@@ -17,6 +17,8 @@ const CARGO: &str = r#"#!/bin/bash
 if [ "$1" = nextest ] && [ "$2" = list ]; then
     printf '%s\n' "$*" >>"$STAND/built"
     if [ -n "${FAIL_BUILD:-}" ]; then exit "$FAIL_BUILD"; fi
+    mkdir -p "$CARGO_TARGET_DIR/debug" || exit 2
+    cp "$STAND/stall-reporter" "$CARGO_TARGET_DIR/debug/symphony-build" || exit 2
     cat "$METADATA"
     exit 0
 fi
@@ -106,6 +108,10 @@ impl Lanes {
         let stand = dir.join("stand");
         executable(&stand.join("cargo"), CARGO);
         executable(
+            &stand.join("stall-reporter"),
+            "#!/bin/sh\nprintf '<%s>\\n' \"$@\" >\"$STAND/reporter-args\"\nif [ -n \"${FAIL_REPORTER:-}\" ]; then cat >/dev/null; echo 'test-stalls: error: fixture reporter failed' >&2; exit 2; fi\ncat\n",
+        );
+        executable(
             &stand.join("bin/getconf"),
             "#!/bin/sh\nprintf '%s\\n' \"${PROCESSORS-32}\"\n",
         );
@@ -160,6 +166,7 @@ impl Lanes {
             .env_remove("SAY")
             .env_remove("SAY_STATUS")
             .env_remove("FAIL_BUILD")
+            .env_remove("FAIL_REPORTER")
             .env_remove("HOLD")
             .envs(vars.iter().copied())
             .stdin(Stdio::null());
@@ -536,6 +543,30 @@ fn native_batch_slots_keep_the_processor_bound_and_fallback_when_no_number_is_av
             LANES
         );
     }
+}
+
+#[test]
+fn a_stall_reporter_failure_is_red_even_when_nextest_passes() {
+    let lanes = Lanes::new("nextest-reporter-red");
+    let done = lanes.run(&[], &[("FAIL_REPORTER", "1")]);
+    assert_eq!(done.status.code(), Some(2), "{done:?}");
+    let log = fs::read_to_string(lanes.logs().join("nextest.log")).unwrap();
+    assert!(
+        log.contains("test-stalls: error: fixture reporter failed"),
+        "{log}"
+    );
+    let args = fs::read_to_string(lanes.stand.join("reporter-args")).unwrap();
+    assert_eq!(
+        args,
+        format!(
+            "<test-stalls>\n<{}>\n",
+            lanes.root.join(".config/nextest.toml").display()
+        )
+    );
+    assert_eq!(
+        fs::read_dir(lanes.stand.join("started")).unwrap().count(),
+        LANES
+    );
 }
 
 #[test]

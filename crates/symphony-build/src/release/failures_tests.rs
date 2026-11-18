@@ -967,6 +967,55 @@ fn nextest_names_each_failure_and_timeout_with_the_panics_own_location() {
 }
 
 #[test]
+fn an_annotated_timeout_says_stall_limit_and_observed_load_without_changing_its_rerun() {
+    let fixture = include_str!("fixtures/tests-nextest-red.log");
+    for (context, recorded) in [
+        (
+            serde_json::json!({"limit_seconds":2610,"load":"124.30, 142.61, 111.32 on 16 processors"}),
+            true,
+        ),
+        (serde_json::json!({"limit_seconds":0,"load":"123"}), false),
+        (serde_json::json!({"limit_seconds":-1,"load":"123"}), false),
+        (serde_json::json!({"limit_seconds":2610,"load":""}), false),
+        (
+            serde_json::json!({"limit_seconds":"2610","load":"123"}),
+            false,
+        ),
+    ] {
+        let text = fixture
+            .lines()
+            .map(|line| {
+                let Ok(mut event) = serde_json::from_str::<serde_json::Value>(line) else {
+                    return line.to_string();
+                };
+                if event.get("reason").and_then(|v| v.as_str()) == Some("time limit exceeded") {
+                    event["symphony-stall"] = context.clone();
+                }
+                event.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let quoted = read_in(&text).quoted().unwrap();
+        assert_eq!(quoted.contains("taken as a stall:"), recorded, "{quoted}");
+        if recorded {
+            assert!(
+                quoted.contains("limit 2610s; load 124.30, 142.61, 111.32 on 16 processors"),
+                "{quoted}"
+            );
+        }
+        let tree = Tree::new();
+        let log = rerun::read(&tree.write("log", &text));
+        assert_eq!(
+            rerun::arguments(&log.targets),
+            [
+                "-p runner-fixture --lib -- fails --exact",
+                "-p runner-fixture --lib -- timeout --exact"
+            ]
+        );
+    }
+}
+
+#[test]
 fn nextest_escaped_test_output_is_read_only_for_its_own_panic() {
     let start = r#"{"type":"suite","event":"started","nextest":{"crate":"p","test_binary":"case","kind":"test"}}"#;
     let failed = serde_json::json!({"type":"test", "event":"failed", "name":"p::case$own",

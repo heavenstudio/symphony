@@ -749,6 +749,10 @@ impl Recipes {
             &tree.join("tools/.nextest/0.9.152/bin/cargo-nextest"),
             "#!/bin/sh\necho cargo-nextest 0.9.152\n",
         );
+        executable(
+            &tree.join(".target/debug/symphony-build"),
+            "#!/bin/sh\ncat\n",
+        );
         executable(&tree.join("tools/client-check.sh"), CLIENT_CHECK);
         executable(&tree.join("apps/symphony-web/check.sh"), CLIENT_LINT);
         executable(&tree.join("apps/symphony-web/build.sh"), CLIENT_BUILD);
@@ -758,7 +762,7 @@ impl Recipes {
             "#!/bin/sh\nif [ -n \"${FAIL_SEMVER:-}\" ]; then echo 'semver stand-in: breaking API'; exit 6; fi\nexit 0\n",
         );
         fs::write(tree.join("Cargo.toml"), "[workspace]\nmembers=[]\n").unwrap();
-        fs::write(tree.join(".gitignore"), "/build/\n").unwrap();
+        fs::write(tree.join(".gitignore"), "/build/\n/.target/\n").unwrap();
         git(&tree, &["init", "-q", "-b", "main"]);
         git(&tree, &["add", "-A"]);
         git(&tree, &["commit", "-q", "-m", "base"]);
@@ -795,6 +799,7 @@ impl Recipes {
             .current_dir(&self.tree)
             .env_remove(STEPS_VAR)
             .env("CARGO", &self.cargo)
+            .env("CARGO_TARGET_DIR", self.tree.join(".target"))
             .env("TASKS_WORK", &self.work)
             .env(RUNS_VAR, &self.runs)
             .env("TASKS_RECORDER", RECORDER)

@@ -383,7 +383,36 @@ inside an event, so a command a fixture prints is no failure of the release run.
 
 The standalone target compiles a copied workspace: its cases run after the other nextest cases
 and reserve the entire nextest pool. The shared Cargo batches below still run independently;
-this reservation controls nextest's own child servers and work, without widening its timeout.
+this reservation controls nextest's own child servers and work.
+
+Every terminating timeout in the release profile is a stall backstop, not a cost budget. Its
+deadline is three times the ceiling, in seconds, of the slowest completed loaded measurement
+available for its scope. A complete Cargo binary's time is a conservative upper bound for any
+one of its cases. These are the measurements that derive `.config/nextest.toml`:
+
+| Scope | Loaded measurement | Associated load, 1/5/15 minutes | Source | Backstop |
+| --- | --- | --- | --- | --- |
+| Ordinary nextest cases | 131.95 s, whole `after_lifecycle` binary | 124.30 / 142.61 / 111.32 | Release `2026-11-18T0825-74490`, commit `7f1842c6051b` | 3 × ceil(131.95) = **396 s** |
+| Standalone target | 869.16 s, whole binary, completed | 124.30 / 142.61 / 111.32 | Same release's tests log | 3 × ceil(869.16) = **2,610 s** |
+| Ordinary-case cross-check | 118.725 s, semver's real checker case | Step sampled up to 151.29 / 108.97 / 97.70 | Task run `82f06742130c0cff7b6ff249c74444db`, commit `3f534895` | Covered by the 396 s default |
+| Standalone cross-check | 304.09 s, case alone | Run sample 159.54 / 118.83 / 117.52 | Focused Cargo rerun of `3f534895` | Covered by the 2,610 s override |
+| Superseded standalone limit | Killed at 600.025 s; completion time unknown | Loaded task run above | Task run `82f06742130c0cff7b6ff249c74444db` | Censored evidence, not a completed timing or a valid backstop |
+
+Release load samples are those the tests step recorded when it ended; task samples are from
+the running checks, not a claim of constant load. The loaded release's completed 869.16 s
+measurement also exceeds the censored 600.025 s observation, so no completion time is inferred
+from the killed run. The original task baseline was an earlier, dirty source over `284fafb7`:
+1,615 s at sampled load roughly 45–84, 7,940 passed and 16 ignored including four doctests.
+It remains historical evidence, not a same-source or quiet-machine performance comparison.
+
+The periods in the config are those measured ceilings, with termination after three periods.
+The ten-second termination grace begins after the case is already failed as a stall; it is
+cleanup time, not a passing allowance or test budget. The repository-only `test-stalls` stream
+annotator reads the actual release profile and adds the reached limit and the load at the event
+to each nextest timeout. The red reader says `taken as a stall`, its limit and that load, and
+keeps the same exact rerun command. All other output passes unchanged. A reporter failure makes
+the step red, and no retry changes a timeout into a pass. Raw historical nextest logs remain
+readable, with no invented limit or load where none was recorded.
 
 The suites with shared fixtures retain one libtest process: the board's `perf`, `sweep`, `cli`,
 `server`, `store` and `launch`; the app's `after_commit`, `after_publication`, `after_worktrees`,

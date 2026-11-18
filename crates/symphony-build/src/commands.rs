@@ -10,6 +10,7 @@ mod crates_check;
 mod exec_test;
 mod size_budget;
 mod synced;
+pub(crate) mod test_stalls;
 
 /// Its name, as its usage and its refusals say it.
 const NAME: &str = "symphony-build";
@@ -25,7 +26,7 @@ const HEAD: &str = "usage: symphony-build COMMAND [ARGS]...\n\n\
 const LISTED: &str = "`symphony-build help`";
 
 /// Its commands, in the order its usage names them, each with what it does.
-const COMMANDS: [(&str, &str); 6] = [
+const COMMANDS: [(&str, &str); 7] = [
     (
         "publish-client",
         "publish a built client into the server's embedded copy",
@@ -45,6 +46,10 @@ const COMMANDS: [(&str, &str); 6] = [
     (
         "exec-test-binary",
         "run a shared library test image with Cargo's environment",
+    ),
+    (
+        "test-stalls",
+        "annotate nextest stalls with their backstop and load",
     ),
     (
         "release",
@@ -92,6 +97,7 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         Some("crates-check") => crates_check::main(rest, out, err),
         Some("synced") => synced::main(rest, out, err),
         Some("exec-test-binary") => exec_test::main(rest, out, err),
+        Some("test-stalls") => test_stalls::main(rest, &mut std::io::stdin().lock(), out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => {
             let _ = writeln!(err, "{}", unknown(name));

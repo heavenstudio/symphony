@@ -154,7 +154,8 @@ lane() {
             --test-threads "${RUST_TEST_THREADS:-6}" --color never \
             --message-format libtest-json-plus --message-format-version 0.1 \
             --failure-output never --success-output never -E "$filter" \
-            </dev/null >>"$logs/${names[$1]}.log" 2>&1
+            </dev/null 2>&1 | "$debug/symphony-build" test-stalls "$root/.config/nextest.toml" \
+            >>"$logs/${names[$1]}.log" 2>>"$logs/${names[$1]}.log"
     elif [ "${names[$1]}" = libraries ]; then
         tools/cargo.sh "${run[@]}" --config "$library_runner" --lib </dev/null >>"$logs/${names[$1]}.log" 2>&1
     else

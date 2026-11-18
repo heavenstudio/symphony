@@ -45,6 +45,7 @@ const WIDTH: usize = 240;
 struct Test {
     name: String,
     timed_out: bool,
+    stall: Option<String>,
     panic: Option<String>,
     /// Whether the panic is its own thread's, the one libtest names for it, which no panic of a
     /// thread it started replaces.
@@ -148,6 +149,7 @@ impl Reading {
                         let mut test = nextest_test(&failure.name, &failure.output);
                         test.name = label;
                         test.timed_out = failure.timed_out;
+                        test.stall = failure.stall.clone();
                         self.tests.push(test);
                         self.nextest_failures.push(failure);
                     }
@@ -169,6 +171,7 @@ impl Reading {
                 self.tests.push(Test {
                     name,
                     timed_out: false,
+                    stall: None,
                     panic: None,
                     own: false,
                 });
@@ -327,6 +330,7 @@ fn nextest_test(name: &str, output: &str) -> Test {
         tests: vec![Test {
             name: name.to_string(),
             timed_out: false,
+            stall: None,
             panic: None,
             own: false,
         }],
@@ -572,6 +576,11 @@ impl Failures {
                 "FAILED"
             };
             said.push(cut(&format!("test {} ... {status}", test.name)));
+            if test.timed_out
+                && let Some(stall) = &test.stall
+            {
+                said.push(format!("    {}", cut(stall)));
+            }
             if let Some(panic) = &test.panic {
                 said.push(format!("    {}", cut(panic)));
             }

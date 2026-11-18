@@ -10,6 +10,7 @@ pub(super) struct Failure {
     pub(super) suite: String,
     pub(super) name: String,
     pub(super) timed_out: bool,
+    pub(super) stall: Option<String>,
     pub(super) output: String,
 }
 
@@ -63,6 +64,11 @@ impl Reader {
                 name: name.to_string(),
                 timed_out: value.get("reason").and_then(|v| v.as_str())
                     == Some("time limit exceeded"),
+                stall: value.get("symphony-stall").and_then(|stall| {
+                    let seconds = stall.get("limit_seconds")?.as_u64().filter(|s| *s > 0)?;
+                    let load = stall.get("load")?.as_str().filter(|s| !s.is_empty())?;
+                    Some(format!("taken as a stall: limit {seconds}s; load {load}"))
+                }),
                 output: value
                     .get("stdout")
                     .and_then(|v| v.as_str())
@@ -122,7 +128,23 @@ mod tests {
                 .output()
                 .expect("the pinned nextest is installed: just nextest-setup");
         assert_eq!(done.status.code(), Some(100), "{done:?}");
-        let log = tree.write("run.log", &String::from_utf8(done.stdout).unwrap());
+        let backstop = tree.write(
+            "backstop.toml",
+            "[profile.release]\nslow-timeout={period='1s',terminate-after=1}\n",
+        );
+        let (mut annotated, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(
+            crate::commands::test_stalls::main(
+                &[backstop.display().to_string()],
+                &mut done.stdout.as_slice(),
+                &mut annotated,
+                &mut err,
+            ),
+            0,
+            "{}",
+            String::from_utf8_lossy(&err)
+        );
+        let log = tree.write("run.log", &String::from_utf8(annotated).unwrap());
         let quoted = super::super::failures::read(&log).quoted().unwrap();
         assert!(
             quoted.contains("test runner-fixture::runner_fixture fails ... FAILED"),
@@ -131,6 +153,10 @@ mod tests {
         assert!(quoted.contains("fixture failure"), "{quoted}");
         assert!(
             quoted.contains("test runner-fixture::runner_fixture timeout ... TIMED OUT"),
+            "{quoted}"
+        );
+        assert!(
+            quoted.contains("taken as a stall: limit 1s; load "),
             "{quoted}"
         );
         let rerun = super::super::rerun::read(&log);
@@ -167,6 +193,7 @@ mod tests {
                     suite: "p::case".into(),
                     name: "edge::case".into(),
                     timed_out: false,
+                    stall: None,
                     output: String::new(),
                 }))
             );
