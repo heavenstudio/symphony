@@ -341,6 +341,7 @@ fn pinned(common: &Path) -> PathBuf {
         .join("surreal")
 }
 
+#[inline(never)]
 fn io(what: &str, path: &Path) -> impl Fn(std::io::Error) -> ServerError {
     let said = format!("{what} {}", path.display());
     move |problem| ServerError::Io(format!("{said}: {problem}"))
