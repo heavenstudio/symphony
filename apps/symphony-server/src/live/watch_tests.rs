@@ -293,3 +293,48 @@ fn shared_watch_root_sort_preserves_all_equal_length_refs_and_reports_cpu_cost()
         actual.len() * std::mem::size_of::<usize>()
     );
 }
+
+#[test]
+fn native_tree_maps_match_listing_on_startup_addition_and_removal() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let compare = |hub: &Hub| {
+        let expected: BTreeMap<_, _> = branches::trees(&root)
+            .into_iter()
+            .map(|t| (t.id(), t.path))
+            .collect();
+        assert_eq!(*hub.trees.read().unwrap(), expected);
+        for (id, path) in expected {
+            assert_eq!(hub.tree(&id), Some(path));
+        }
+    };
+    let hub = Hub::new(&root, &root.join("build/client"));
+    compare(&hub);
+    let branch = tree.path("branch-z");
+    crate::testing::git(
+        &root,
+        &["worktree", "add", "-b", "tools/z", branch.to_str().unwrap()],
+    );
+    let second = tree.path("branch-a");
+    crate::testing::git(
+        &root,
+        &["worktree", "add", "-b", "tools/a", second.to_str().unwrap()],
+    );
+    let started = Hub::new(&root, &root.join("build/client"));
+    compare(&started);
+    hub.refresh_docs(None).unwrap();
+    compare(&hub);
+    assert_eq!(
+        hub.trees
+            .read()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["tools~a", "tools~z"]
+    );
+    crate::testing::git(&root, &["worktree", "remove", branch.to_str().unwrap()]);
+    hub.refresh_docs(None).unwrap();
+    compare(&hub);
+    assert!(hub.tree("tools~z").is_none());
+}

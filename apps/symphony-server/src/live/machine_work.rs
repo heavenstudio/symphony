@@ -470,13 +470,14 @@ impl Hub {
         let Some(agents) = agents.as_ref() else {
             return std::collections::BTreeMap::new();
         };
-        handles
-            .into_iter()
-            .filter_map(|handle| {
-                let agent = agents.agents.iter().find(|a| a.handle == handle)?;
-                Some((handle.to_string(), agent.go.clone()?))
-            })
-            .collect()
+        let mut sessions = std::collections::BTreeMap::new();
+        for (handle, go) in handles.into_iter().filter_map(|handle| {
+            let agent = agents.agents.iter().find(|a| a.handle == handle)?;
+            Some((handle.to_string(), agent.go.clone()?))
+        }) {
+            sessions.insert(handle, go);
+        }
+        sessions
     }
 
     /// Where `handle`'s Go to session control goes now, or why there is nowhere: the agents

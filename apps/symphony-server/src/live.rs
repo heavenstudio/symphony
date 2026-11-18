@@ -355,12 +355,13 @@ impl Hub {
             initial_board: watch::Sender::new(true),
             initial_start: Mutex::new(None),
             invalid: RwLock::new(BTreeMap::new()),
-            trees: RwLock::new(
-                measured("hub branch trees", || branches::trees(root))
-                    .into_iter()
-                    .map(|t| (t.id(), t.path))
-                    .collect(),
-            ),
+            trees: RwLock::new({
+                let mut trees = BTreeMap::new();
+                for tree in measured("hub branch trees", || branches::trees(root)) {
+                    trees.insert(tree.id(), tree.path);
+                }
+                trees
+            }),
             tasks: Mutex::new(TaskState {
                 last: None,
                 raw: None,
@@ -945,7 +946,10 @@ impl Hub {
         self.listed
             .store(listing.is_some(), std::sync::atomic::Ordering::SeqCst);
         let listing = listing.unwrap_or_default();
-        let trees = listing.iter().map(|t| (t.id(), t.path.clone())).collect();
+        let mut trees = BTreeMap::new();
+        for tree in &listing {
+            trees.insert(tree.id(), tree.path.clone());
+        }
         let previous = std::mem::replace(
             &mut *self.trees.write().unwrap_or_else(|e| e.into_inner()),
             trees,
