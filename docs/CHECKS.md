@@ -492,7 +492,10 @@ plugin's calls through the protocol's JSON (installed with the plugins,
 from its process needs only the host's side of the protocol). The same test of `symphony` holds
 the JSON Schema validator out of it, which would add a fifth to its size: a schema check is a
 library call a consumer's code makes (`symphony::schema::validate`), and `symphony serve` answers
-`validate` as a function it lacks.
+`validate` as a function it lacks. And it holds the board's migration out of it, with both
+databases' schema texts: `symphony` opens a board only to read, by the reader's entry
+(`Store::read_as`, `Store::reading`), which names no migration, where an opening by the rule
+(`Store::opening`) links it for the writer it may be handed.
 
 On macOS every binary of the three packages links with `-no_exported_symbols` (each package's
 `build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it. A
