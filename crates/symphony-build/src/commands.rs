@@ -277,6 +277,7 @@ mod tests {
                 "crates-check",
                 "synced",
                 "exec-test-binary",
+                "test-stalls",
                 "release",
             ]
         );
