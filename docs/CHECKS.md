@@ -381,6 +381,10 @@ its status lines and libtest-json-plus 0.1 events: the release readers use the e
 failed or timed-out case and the exact Cargo command that reruns it alone. Captured output stays
 inside an event, so a command a fixture prints is no failure of the release run.
 
+The standalone target compiles a copied workspace: its cases run after the other nextest cases
+and reserve the entire nextest pool. The shared Cargo batches below still run independently;
+this reservation controls nextest's own child servers and work, without widening its timeout.
+
 The suites with shared fixtures retain one libtest process: the board's `perf`, `sweep`, `cli`,
 `server`, `store` and `launch`; the app's `after_commit`, `after_publication`, `after_worktrees`,
 `hooks`, `picks` and `project`; the server's `after_http`; the build package's `release`; and the

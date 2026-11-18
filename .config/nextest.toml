@@ -23,3 +23,10 @@ test-group = 'chrome'
 [[profile.release.overrides]]
 filter = 'package(symphony-board) | binary(release) | binary(after_lifecycle) | binary(after_reload)'
 test-group = 'database'
+
+# The standalone target compiles a copied workspace. Run it after the other nextest cases,
+# reserving their whole pool, so a legitimate build does not compete with their child servers.
+[[profile.release.overrides]]
+filter = 'package(=symphony-server) & binary(=standalone)'
+priority = -100
+threads-required = "num-test-threads"
