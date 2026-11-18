@@ -183,11 +183,17 @@ fn the_same_work_is_answered_alike_on_hosted_16_hosted_18_and_the_local_board() 
     };
     let local = worked(&Fixture::on(Backend::PostgreSql, seed()).store);
     assert!(local.contains("ecole: [\"sim/jump@"), "{local}");
+    let mut generations = Vec::new();
     for major in MAJORS {
         let project = cluster::cluster(major).project();
         let store = opened(&project, &Opening::write().migrating()).unwrap();
         store.copy(&seed().dump).unwrap();
         assert_eq!(worked(&store), local, "PostgreSQL {major}");
+        // The copy gave the board a recovery generation of its own, as on any board.
+        let generation = store.recovery_generation().unwrap();
+        assert!(generation.is_some(), "PostgreSQL {major}");
+        assert!(!generations.contains(&generation), "PostgreSQL {major}");
+        generations.push(generation);
     }
 }
 

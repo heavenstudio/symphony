@@ -424,8 +424,11 @@ Not built, each still this design's and none claimed by the adapter:
 
 - a command's reach of a hosted board: the library opens one, and the board's commands and
   the server still reach the machine's own board;
-- the project identity and recovery generation bound into the board's record, and the control
-  record outside the database that a restore cannot lower;
+- the project's identity bound into the board's record, and a hosted deployment's durable
+  place for the recovery authority: the board's recovery generation and the writes bound to it
+  ([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)) are the board's own and a hosted
+  board has them as any, but the authority that says which generation a board is bound to is
+  handed to a store by its caller, and nothing here keeps one outside a container;
 - a refusal of a schema whose definitions differ at the same version (a digest);
 - reconnection with backoff: a request makes one connection attempt within its deadline and
   is refused, and the next request tries again;

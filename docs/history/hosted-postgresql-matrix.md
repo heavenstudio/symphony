@@ -50,9 +50,11 @@ Reported, and neither skipped in a test nor relaxed:
   board has those rows yet, so nothing of them ran on a hosted connection. What the adapter
   gives them is proved alone: a request is one transaction, its connection is returned before
   the caller does anything else, and nothing is sent twice.
-- **Recovery**: export, an older backup's restore and its drill, the project identity and the
-  recovery generation in the board's record, and the control record outside the database. None
-  is built here; export and restore are the lifecycle's.
+- **Recovery**: export, an older backup's restore and its drill, the project's identity in the
+  board's record, and a durable place for a hosted deployment's recovery authority. None is
+  built here; export and restore are the lifecycle's. A hosted board does take the recovery
+  generation a copy gives any board (the paired test reads it), and nothing more of recovery
+  ran on one.
 - **A commit that committed and whose answer was lost**: the two commit cells end a commit the
   server then rolls back. That the client says "not known" for both, sends nothing again and
   drops the connection is proved; a commit that took effect behind a lost answer needs a fault
