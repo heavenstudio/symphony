@@ -609,7 +609,9 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                             }
                         });
                         let total = view.agents.len();
-                        view.agents.sort_by(|a, b| a.handle.cmp(&b.handle));
+                        symphony_board::order::sort_by(&mut view.agents, &|a, b| {
+                            a.handle.cmp(&b.handle)
+                        });
                         if let Some(after) = &agent_after {
                             view.agents.retain(|a| a.handle > *after);
                         }

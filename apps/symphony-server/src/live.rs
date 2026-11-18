@@ -2247,9 +2247,9 @@ fn documents(
 }
 
 fn sort_activity(activity: &mut Activity) {
-    activity
-        .items
-        .sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
+    symphony_board::order::sort_by(&mut activity.items, &|a, b| {
+        (&b.ts, &b.id).cmp(&(&a.ts, &a.id))
+    });
     activity.items.truncate(40);
 }
 
