@@ -156,3 +156,22 @@ fn invalid_arguments_and_protocols_never_open_the_selected_connection() {
         );
     }
 }
+
+#[test]
+fn a_connect_only_entry_names_no_integration_state_and_reaches_no_board_for_it() {
+    let mut input =
+        Cursor::new(json!({"method": "integration_state", "args": {"name": "github"}}).to_string());
+    let mut out = Vec::new();
+    let connections = Cell::new(0);
+    let connect = || {
+        connections.set(connections.get() + 1);
+        Err("never reached".into())
+    };
+    assert_eq!(api::run(&mut input, &mut out, connect), 0);
+    let answer: Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(
+        answer,
+        json!({"error": "integration_state: this entry was given no folder to find the project from"})
+    );
+    assert_eq!(connections.get(), 0);
+}
