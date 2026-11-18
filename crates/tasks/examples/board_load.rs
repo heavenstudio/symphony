@@ -500,6 +500,7 @@ impl Runner {
         [
             ("PATH", path.to_string()),
             ("HOME", folder.clone()),
+            ("SYMPHONY_MACHINE_DIR", format!("{folder}/machine")),
             ("TASKS_SERVER", server.to_string()),
             ("TASKS_DATABASE", database.to_string()),
             ("TASKS_DISPATCH", "inline".to_string()),
@@ -1485,6 +1486,7 @@ Shared_Clean:      12000 kB
                 "HERDR_BIN",
                 "HOME",
                 "PATH",
+                "SYMPHONY_MACHINE_DIR",
                 "TASKS_DATABASE",
                 "TASKS_DISPATCH",
                 "TASKS_PS_TABLE",
@@ -1498,6 +1500,7 @@ Shared_Clean:      12000 kB
         assert_eq!(vars["TASKS_SWEEP"], "off");
         assert_eq!(vars["TASKS_PS_TABLE"], "/tmp/run/ps");
         assert_eq!(vars["HOME"], "/tmp/run");
+        assert_eq!(vars["SYMPHONY_MACHINE_DIR"], "/tmp/run/machine");
         assert_eq!(vars["PATH"], "/bin");
     }
 
