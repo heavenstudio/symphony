@@ -174,34 +174,35 @@ impl Board {
             &sys::hostname(),
         )
         .unwrap();
-        let (wall, copied) = (quiet.bill(|| {
-            let began = Instant::now();
-            let rows = if cleanup_worker {
-                Dump {
-                    tasks: (0..3)
-                        .map(|id| TaskRow {
-                            id: id + 1,
-                            slug: format!("cleanup/task-{id}"),
-                            title: "A cleanup worker's task".into(),
-                            status: "ready".into(),
-                            created_by: "owner".into(),
-                            ..TaskRow::default()
-                        })
-                        .collect(),
-                    ..Dump::default()
-                }
-            } else {
-                dump()
+        if cleanup_worker {
+            // Cleanup checks no cost, and this copy can be too small for a coarse CPU meter.
+            let rows = Dump {
+                tasks: (0..3)
+                    .map(|id| TaskRow {
+                        id: id + 1,
+                        slug: format!("cleanup/task-{id}"),
+                        title: "A cleanup worker's task".into(),
+                        status: "ready".into(),
+                        created_by: "owner".into(),
+                        ..TaskRow::default()
+                    })
+                    .collect(),
+                ..Dump::default()
             };
             store.copy(&rows).unwrap();
-            began.elapsed()
-        }))
-        .unwrap_or_else(|why| panic!("perf: {why}"));
-        // Seconds of the server's work, which any meter reads: one reading none reads another
-        // process, and every bound a test of the board states would hold at none.
-        cpu::worked("the board's copy, on its server", copied)
+        } else {
+            let (wall, copied) = (quiet.bill(|| {
+                let began = Instant::now();
+                store.copy(&dump()).unwrap();
+                began.elapsed()
+            }))
             .unwrap_or_else(|why| panic!("perf: {why}"));
-        eprintln!("perf: the board copied in {wall:.1?}, {copied:.1?} of its server's CPU");
+            // Seconds of the server's work, which any meter reads: one reading none reads another
+            // process, and every bound a test of the board states would hold at none.
+            cpu::worked("the board's copy, on its server", copied)
+                .unwrap_or_else(|why| panic!("perf: {why}"));
+            eprintln!("perf: the board copied in {wall:.1?}, {copied:.1?} of its server's CPU");
+        }
         let copied = store
             .client()
             .query(COPIED, json!({}))
