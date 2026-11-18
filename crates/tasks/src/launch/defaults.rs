@@ -167,16 +167,52 @@ fn board_model(agent: &str) -> &'static str {
 }
 
 impl Defaults {
-    /// The `[agents] launch` of the manifest at `root`: the board's own when the file, the table or
-    /// a key is missing. A file that does not parse, or a `default` that is no agent a launch
-    /// starts, is an error naming the file.
+    /// The `[agents] launch` of the manifest at `root`, with the local file beside it over it
+    /// ([`crate::local`]): the board's own when the file, the table or a key is missing. A file
+    /// that does not parse, or a `default` that is no agent a launch starts, is an error naming
+    /// the file.
     pub fn configured(root: &Path) -> Result<Defaults, String> {
         let path = root.join(MANIFEST);
-        match std::fs::read_to_string(&path) {
+        let committed = match std::fs::read_to_string(&path) {
             Ok(text) => Self::parse(&path.display().to_string(), &text),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Defaults::default()),
             Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+        }?;
+        // A local file that is refused is read by nobody, and said where the limits are read
+        // ([`crate::limits::read_at`]), on every command.
+        Ok(match crate::local::beside(&path) {
+            Ok(Some(local)) => committed.over(&local),
+            _ => committed,
+        })
+    }
+
+    /// These, the committed settings, with what the local file `local` writes in their place
+    /// ([`crate::local::Local::over`]); a value it writes empty is none, as in the project file.
+    pub fn over(mut self, local: &crate::local::Local) -> Defaults {
+        let mut agent = self.agent.map(String::from);
+        let models = &mut self.models;
+        local.over(
+            [&mut agent, &mut self.model, &mut self.effort],
+            [
+                &mut models.orchestrator,
+                &mut models.executor,
+                &mut models.reviewer,
+                &mut models.assessor,
+            ],
+        );
+        // The local file's agent is one of [`AGENTS`], as its reader checked.
+        self.agent = given(agent).and_then(|named| AGENTS.into_iter().find(|a| *a == named));
+        for value in [
+            &mut self.model,
+            &mut self.effort,
+            &mut models.orchestrator,
+            &mut models.executor,
+            &mut models.reviewer,
+            &mut models.assessor,
+        ] {
+            *value = given(value.take());
         }
+        self
     }
 
     /// `text`, the manifest at `path`, as [`Defaults::configured`] reads it.

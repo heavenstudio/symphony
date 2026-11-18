@@ -55,6 +55,7 @@ pub mod land;
 pub mod launch;
 pub mod limits;
 pub mod live;
+pub mod local;
 mod maps;
 pub mod on_land;
 pub mod on_review;

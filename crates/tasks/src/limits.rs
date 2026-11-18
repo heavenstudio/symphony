@@ -25,6 +25,9 @@
 //! default (the alarm's thresholds all take theirs, as one): a broken project file must not stop
 //! the board, nor the landing that mends it. A key the table does not know is left out here and
 //! named by `tasks limits`; the Symphony's reading of the file refuses it by name and line.
+//!
+//! The local file beside it (`symphony.local.toml`, [`crate::local`]) is read after it: a
+//! `[limits]` key it writes holds in the committed one's place, named with that file and its line.
 
 use crate::alarm::{self, Thresholds};
 use crate::cli::Env;
@@ -54,6 +57,22 @@ pub const LOW: &str = "low_volume";
 pub const MACHINE_AGENTS: &str = "machine_agents";
 /// The low-volume threshold unless the project names another: 4 open slots.
 pub const LOW_VOLUME: usize = 4;
+/// Each key of `[limits]`, the least it may be, and what one below it is told.
+pub(crate) const LEAST: [(&str, i64, &str); 4] = [
+    (SLOTS, 1, "an orchestrator needs at least one slot"),
+    (TASKS, 1, "an orchestrator holds at least one task"),
+    (LOW, 0, "it is at least 0"),
+    (MACHINE_AGENTS, 1, "a machine runs at least one agent"),
+];
+
+/// The least `key` of [`LEAST`] may be, and what one below it is told.
+fn least(key: &str) -> (i64, &'static str) {
+    let (_, least, below) = LEAST
+        .iter()
+        .find(|(known, _, _)| *known == key)
+        .expect("a key of [limits]");
+    (*least, below)
+}
 
 /// What a store holds its starts and its PULL digests to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,7 +103,9 @@ impl Default for Limits {
 }
 
 /// Where a setting in force was written: its table and key as the file spells them
-/// (`[limits] low_volume`), and its line when that can be found.
+/// (`[limits] low_volume`), the local file's name before them when that file wrote it
+/// (`symphony.local.toml [limits] low_volume`, [`crate::local`]), and its line there when that can
+/// be found.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Written {
     pub at: String,
@@ -101,7 +122,7 @@ impl Written {
     }
 
     /// `[limits] low_volume (line 3)`: the setting as a problem with it names it.
-    fn named(&self) -> String {
+    pub(crate) fn named(&self) -> String {
         match self.line {
             Some(line) => format!("{} (line {line})", self.at),
             None => self.at.clone(),
@@ -122,10 +143,10 @@ pub struct Read {
     pub unknown: Vec<String>,
 }
 
-/// The file at `path`, as [`parse`] reads it: no file is every default, and one that cannot be read
-/// every default too, said.
+/// The file at `path`, as [`parse`] reads it, with the local file beside it over it
+/// ([`over`]): no file is every default, and one that cannot be read every default too, said.
 pub fn read_at(path: &Path) -> Read {
-    match std::fs::read_to_string(path) {
+    let read = match std::fs::read_to_string(path) {
         Ok(text) => parse(&path.display().to_string(), &text),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Read::default(),
         Err(error) => Read {
@@ -135,7 +156,34 @@ pub fn read_at(path: &Path) -> Read {
             )],
             ..Read::default()
         },
+    };
+    over(read, crate::local::beside(path))
+}
+
+/// `read`, the committed limits, with those `local` writes in their place, each named by the
+/// local file and its line ([`crate::local`]); a local file that is refused is said and none of it
+/// read.
+pub fn over(mut read: Read, local: Result<Option<crate::local::Local>, Vec<String>>) -> Read {
+    let local = match local {
+        Ok(Some(local)) => local,
+        Ok(None) => return read,
+        Err(problems) => {
+            read.problems
+                .extend(problems.iter().map(|p| crate::local::left_out(p)));
+            return read;
+        }
+    };
+    for (key, most) in &local.limits {
+        match *key {
+            SLOTS => read.limits.orchestrator_slots = Some(*most),
+            TASKS => read.limits.orchestrator_tasks = *most,
+            LOW => read.limits.low_volume = *most,
+            _ => read.limits.machine_agents = Some(*most),
+        }
+        let at = local.written(&format!("[{TABLE}] {key}"), &[TABLE], key);
+        read.written.insert(key, at);
     }
+    read
 }
 
 /// `text`, the project file at `path`: the limits it writes over their defaults. Only `[limits]`
@@ -180,8 +228,9 @@ pub fn parse(path: &str, text: &str) -> Read {
     // The cap: `[limits]`'s, else `[board]`'s, where an older build reads it.
     let slots = |table: &str, value: &Value| {
         let at = setting(table, SLOTS);
-        whole(value, 1).map(|cap| (cap, at.clone())).map_err(|why| {
-            let why = why.unwrap_or("an orchestrator needs at least one slot");
+        let (least, below) = least(SLOTS);
+        whole(value, least).map(|cap| (cap, at.clone())).map_err(|why| {
+            let why = why.unwrap_or(below);
             format!(
                 "{path}: {} is {}; {why}; no cap on an orchestrator's open tasks applies",
                 at.named(),
@@ -217,7 +266,8 @@ pub fn parse(path: &str, text: &str) -> Read {
     }
     if let Some(value) = limits.get(TASKS) {
         let at = setting(TABLE, TASKS);
-        match whole(value, 1) {
+        let (least, below) = least(TASKS);
+        match whole(value, least) {
             Ok(most) => {
                 read.limits.orchestrator_tasks = most;
                 read.written.insert(TASKS, at);
@@ -226,13 +276,14 @@ pub fn parse(path: &str, text: &str) -> Read {
                 "{path}: {} is {}; {}; it takes its default, {ORCHESTRATOR_TASKS}",
                 at.named(),
                 shown(value),
-                why.unwrap_or("an orchestrator holds at least one task")
+                why.unwrap_or(below)
             )),
         }
     }
     if let Some(value) = limits.get(LOW) {
         let at = setting(TABLE, LOW);
-        match whole(value, 0) {
+        let (least, below) = least(LOW);
+        match whole(value, least) {
             Ok(low) => {
                 read.limits.low_volume = low;
                 read.written.insert(LOW, at);
@@ -241,13 +292,14 @@ pub fn parse(path: &str, text: &str) -> Read {
                 "{path}: {} is {}; {}; it takes its default, {LOW_VOLUME}",
                 at.named(),
                 shown(value),
-                why.unwrap_or("it is at least 0")
+                why.unwrap_or(below)
             )),
         }
     }
     if let Some(value) = limits.get(MACHINE_AGENTS) {
         let at = setting(TABLE, MACHINE_AGENTS);
-        match whole(value, 1) {
+        let (least, below) = least(MACHINE_AGENTS);
+        match whole(value, least) {
             Ok(most) => {
                 read.limits.machine_agents = Some(most);
                 read.written.insert(MACHINE_AGENTS, at);
@@ -256,7 +308,7 @@ pub fn parse(path: &str, text: &str) -> Read {
                 "{path}: {} is {}; {}; no limit on the agents this machine runs applies",
                 at.named(),
                 shown(value),
-                why.unwrap_or("a machine runs at least one agent")
+                why.unwrap_or(below)
             )),
         }
     }
@@ -304,7 +356,7 @@ pub fn parse(path: &str, text: &str) -> Read {
 
 /// `value` as a whole number of at least `least`; else why not: `None` for one below it (its
 /// setting says what it is at least), else what it is.
-fn whole(value: &Value, least: i64) -> Result<usize, Option<&'static str>> {
+pub(crate) fn whole(value: &Value, least: i64) -> Result<usize, Option<&'static str>> {
     match value {
         Value::Integer(n) if *n >= least => {
             usize::try_from(*n).map_err(|_| Some("past what it can be"))
@@ -315,7 +367,7 @@ fn whole(value: &Value, least: i64) -> Result<usize, Option<&'static str>> {
 }
 
 /// `value` as the file writes it: a number or a boolean as it is, text in quotes, else its kind.
-fn shown(value: &Value) -> String {
+pub(crate) fn shown(value: &Value) -> String {
     match value {
         Value::Integer(n) => n.to_string(),
         Value::Float(f) => f.to_string(),
@@ -367,21 +419,22 @@ impl Stamp {
     }
 }
 
-/// The limits of a project file, read again whenever its length or time changes: a store that
+/// The limits of a project file and the local file beside it ([`crate::local`]), read again
+/// whenever the length or time of either changes: a store that
 /// holds them ([`crate::Store::watching`]) is held to the file as it is now, so a change reaches a
 /// store kept open (the Symphony server's) at its next read, with no restart. What is wrong with a
 /// version of the file read again is said on stderr, once.
 #[derive(Debug)]
 pub struct Watched {
     path: PathBuf,
-    last: Mutex<(Stamp, Read)>,
+    last: Mutex<([Stamp; 2], Read)>,
 }
 
 impl Watched {
     /// The file at `path`, read now: the watch and what it read, whose problems are the caller's to
     /// say.
     pub fn new(path: PathBuf) -> (Arc<Watched>, Read) {
-        let stamp = Stamp::of(&path);
+        let stamp = Self::stamps(&path);
         let read = read_at(&path);
         let watched = Watched {
             path,
@@ -390,14 +443,19 @@ impl Watched {
         (Arc::new(watched), read)
     }
 
-    /// The file it watches.
+    /// The project file and the local file beside it, as they are now.
+    fn stamps(path: &Path) -> [Stamp; 2] {
+        [Stamp::of(path), Stamp::of(&crate::local::path_beside(path))]
+    }
+
+    /// The project file it watches, with the local file beside it.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// The file as it is now, read again when it changed since the last look.
+    /// The files as they are now, read again when either changed since the last look.
     pub fn read(&self) -> Read {
-        let stamp = Stamp::of(&self.path);
+        let stamp = Self::stamps(&self.path);
         let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
         if last.0 != stamp {
             let read = read_at(&self.path);
