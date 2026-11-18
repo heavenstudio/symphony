@@ -67,7 +67,7 @@ fn has_digest(source: &str, expected: &str) -> bool {
     expected.len() == digest.len() * 2
         && digest
             .iter()
-            .zip(expected.as_bytes().chunks_exact(2))
+            .zip(expected.as_bytes().as_chunks::<2>().0)
             .all(|(&byte, digits)| {
                 digits[0] == HEX[usize::from(byte >> 4)] && digits[1] == HEX[usize::from(byte & 15)]
             })
