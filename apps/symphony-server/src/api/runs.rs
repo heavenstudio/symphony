@@ -546,7 +546,7 @@ fn page_once(index: &Index, runs: &Path, filters: &Filters, now: f64) -> (RunsPa
         .into_values()
         .filter(|found| filters.take(&found.key))
         .collect();
-    taken.sort_by(|a, b| {
+    symphony_board::order::sort_by(&mut taken, &|a, b| {
         b.key
             .queued
             .total_cmp(&a.key.queued)
@@ -614,7 +614,7 @@ fn under<S: Step>(run: &str, steps: &[impl std::ops::Deref<Target = S>]) -> Vec<
             .map(|step| &**step)
             .filter(|step| step.parent() == Some(parent))
             .collect();
-        found.sort_by(|a, b| {
+        symphony_board::order::sort_by(&mut found, &|a, b| {
             a.queued()
                 .total_cmp(&b.queued())
                 .then_with(|| a.id().cmp(b.id()))

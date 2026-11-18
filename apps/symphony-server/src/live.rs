@@ -1968,7 +1968,7 @@ fn tree_inputs(root: &Path) -> Vec<(String, RecursiveMode)> {
     let project = symphony::project::Project::of(root);
     let mut folders: Vec<String> = Vec::new();
     let mut by_depth: Vec<&String> = project.entrypoints.iter().map(|e| &e.folder).collect();
-    by_depth.sort_by_key(|folder| folder.len());
+    symphony_board::order::sort_by_key(&mut by_depth, &|folder| folder.len());
     for folder in by_depth {
         // A folder inside one already watched recursively is watched with it.
         if !folders

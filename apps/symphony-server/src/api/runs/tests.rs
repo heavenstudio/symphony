@@ -985,3 +985,142 @@ async fn a_project_that_keeps_no_runs_where_the_server_reads_says_so() {
         "the recorder writes no capitals"
     );
 }
+
+#[test]
+fn equal_queued_roots_match_the_original_full_sequence_before_pagination() {
+    let tree = Tree::new();
+    let runs = tree.path("runs");
+    let mut lines: Vec<_> = (0..RUNS_PAGE + 3)
+        .rev()
+        .map(|index| start(&format!("{index:x}"), "verify", TODAY + 20.0))
+        .collect();
+    write_day(&runs, TODAY, &lines, "");
+    lines.sort_by(|a, b| {
+        b.queued
+            .total_cmp(&a.queued)
+            .then_with(|| a.run.cmp(&b.run))
+    });
+    lines.truncate(RUNS_PAGE);
+    let found = page(&Index::default(), &runs, &Filters::default(), NOW);
+    assert_eq!(found.runs, lines);
+    assert!(found.more);
+    let before = page(
+        &Index::default(),
+        &runs,
+        &Filters {
+            before: Some(TODAY + 20.0),
+            ..Filters::default()
+        },
+        NOW,
+    );
+    assert_eq!(
+        before.runs, lines,
+        "the documented before boundary includes equal timestamps"
+    );
+    assert!(before.more);
+    let earlier = page(
+        &Index::default(),
+        &runs,
+        &Filters {
+            before: Some(TODAY + 19.0),
+            ..Filters::default()
+        },
+        NOW,
+    );
+    assert!(earlier.runs.is_empty());
+    assert!(!earlier.more);
+}
+
+#[test]
+fn run_children_keep_depth_first_time_id_order_and_first_equal_duplicate() {
+    let late = step_of(start("b", "verify", TODAY + 2.0), "a", "late");
+    let duplicate = RunLine {
+        label: "duplicate payload".into(),
+        ..late.clone()
+    };
+    let early = step_of(start("c", "verify", TODAY + 1.0), "a", "early");
+    let equal = step_of(start("d", "verify", TODAY + 1.0), "a", "same time");
+    let nested = step_of(start("e", "verify", TODAY), "c", "nested");
+    let cycle = step_of(start("a", "verify", TODAY), "e", "cycle");
+    let unrelated = step_of(start("f", "verify", TODAY), "f", "unrelated cycle");
+    let steps: Vec<_> = [
+        late.clone(),
+        early.clone(),
+        duplicate,
+        equal.clone(),
+        nested.clone(),
+        cycle,
+        unrelated,
+    ]
+    .into_iter()
+    .map(Arc::new)
+    .collect();
+    assert_eq!(under(&id("a"), &steps), [early, nested, equal, late]);
+    let empty: Vec<Arc<RunLine>> = Vec::new();
+    assert!(under(&id("a"), &empty).is_empty());
+}
+
+#[test]
+fn shared_found_order_matches_all_fields_and_reports_comparison_cpu_cost() {
+    let mut rows: Vec<_> = (0..512)
+        .rev()
+        .map(|index| Found {
+            run: Arc::from(id(&format!("{index:x}"))),
+            day: index % 3,
+            key: Key {
+                parent: None,
+                queued: TODAY + f64::from(u32::try_from(index % 17).unwrap()),
+                end: None,
+                pipeline: Arc::from("verify"),
+                task: Some(Arc::from("tools/task")),
+                branch: Some(Arc::from("main")),
+                at: u64::try_from(index).unwrap(),
+                len: 17,
+            },
+        })
+        .collect();
+    let mut expected = rows.clone();
+    let by = |a: &Found, b: &Found| {
+        b.key
+            .queued
+            .total_cmp(&a.key.queued)
+            .then_with(|| a.run.cmp(&b.run))
+    };
+    let (_, old_cpu) = test_time::cpu::spent(|| expected.sort_by(by));
+    let calls = std::cell::Cell::new(0);
+    let (_, new_cpu) = test_time::cpu::spent(|| {
+        symphony_board::order::sort_by(&mut rows, &|a, b| {
+            calls.set(calls.get() + 1);
+            by(a, b)
+        })
+    });
+    let fields = |rows: &[Found]| {
+        rows.iter()
+            .map(|row| {
+                (
+                    row.run.clone(),
+                    row.day,
+                    (
+                        row.key.parent.clone(),
+                        row.key.queued.to_bits(),
+                        row.key.end,
+                        row.key.pipeline.clone(),
+                        row.key.task.clone(),
+                        row.key.branch.clone(),
+                        row.key.at,
+                        row.key.len,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(fields(&rows), fields(&expected));
+    assert!(calls.get() < rows.len() * 64);
+    eprintln!(
+        "Found report sort: n={}, payload_bytes={}, position_bytes={}, comparisons={}, old_thread_cpu={old_cpu:?}, shared_thread_cpu={new_cpu:?}; additional usize-sort scratch, no payload clones inside helper",
+        rows.len(),
+        std::mem::size_of::<Found>(),
+        rows.len() * std::mem::size_of::<usize>(),
+        calls.get()
+    );
+}
