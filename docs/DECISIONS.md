@@ -9,18 +9,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### Releases
 
-- [ ] **release-run-reruns-alone** — Since last night the release run was red eight times and released nothing. Two of those runs were red only in tests that pass when run by themselves, and 11 such tests were deleted to get past them, each costing a round of about an hour. Should the run itself run each failed test again alone before it calls the release red? A: as today; the run is red, an agent reruns the test, deletes it if it passes alone, and the run starts again. B: the run reruns each failed test alone, up to 12. One that fails again is red, as today. One that passes alone does not hold the release: the run says both results, and files one task to find out why and then fix, rewrite or delete the test. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#B. The run reruns each failure alone]]
-  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
-
-    **What B would have done.** A release at about 22:40 last night (run 2026-11-17T2211-98626, red in one test that passed alone), and that candidate never dropped. Failing that, one at about 10:00 today (run 2026-11-18T0931-12491, two such tests).
-
-    **What B changes.** Today a test that fails beside the others and passes alone is deleted before the release. Under B the release is tagged with that test still there, and its task follows. Nothing is run less: the test runs twice.
-
-    **Why B.** Passing alone does not prove load. Three of the 11 deleted tests failed on one line (`idle=1` for `idle=0`) that turned out the next morning to be the tests reading this machine's own terminals, which was fixed with nothing deleted. Under B they would have been looked at, not removed.
-
-    **It also settles the candidate's limit of three red reruns:** a rerun red only in tests that pass alone would no longer count, so neither of yesterday's candidates would have been dropped.
-
-    **Earlier verdicts checked.** **release-candidate-process** (A) holds a commit and reruns what was red; it does not say what makes a rerun red. Your rule that a test red on load is discarded says what happens to the test, and B keeps it; it does not say whether the run or an agent makes the run alone.
 - [ ] **release-main-judged-in-steps** — The full run looks at main once every 20 landed tasks, and not at all while a release candidate is being fixed. Yesterday's two first runs covered 36 and 55 landed tasks each: one found 20 real failures at once, the other a size overrun that took 8 hours 46 minutes to trace through 257 commits. Should main also be checked in small steps, after each land and never holding one? A: as today. B: after a land, in the background, a round checks main's newest tip, running only the checks the landed changes can reach; ten lands during a round are one next round; a red is a task naming the one to five lands it can come from; it also runs while a candidate is open. The full run before a release stays. Recommended: B, built once the release can run on GitHub, since on this machine it adds load. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#C. Main judged in smaller steps]]
   [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
 
@@ -70,11 +58,21 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ## Waiting on an agent
 
-### Hosted boards
+### Releases
 
-### Hosted ingress
+- [x] **release-run-reruns-alone** — Since last night the release run was red eight times and released nothing. Two of those runs were red only in tests that pass when run by themselves, and 11 such tests were deleted to get past them, each costing a round of about an hour. Should the run itself run each failed test again alone before it calls the release red? A: as today; the run is red, an agent reruns the test, deletes it if it passes alone, and the run starts again. B: the run reruns each failed test alone, up to 12. One that fails again is red, as today. One that passes alone does not hold the release: the run says both results, and files one task to find out why and then fix, rewrite or delete the test. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#B. The run reruns each failure alone]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
 
-### Execution
+    **What B would have done.** A release at about 22:40 last night (run 2026-11-17T2211-98626, red in one test that passed alone), and that candidate never dropped. Failing that, one at about 10:00 today (run 2026-11-18T0931-12491, two such tests).
+
+    **What B changes.** Today a test that fails beside the others and passes alone is deleted before the release. Under B the release is tagged with that test still there, and its task follows. Nothing is run less: the test runs twice.
+
+    **Why B.** Passing alone does not prove load. Three of the 11 deleted tests failed on one line (`idle=1` for `idle=0`) that turned out the next morning to be the tests reading this machine's own terminals, which was fixed with nothing deleted. Under B they would have been looked at, not removed.
+
+    **It also settles the candidate's limit of three red reruns:** a rerun red only in tests that pass alone would no longer count, so neither of yesterday's candidates would have been dropped.
+
+    **Earlier verdicts checked.** **release-candidate-process** (A) holds a commit and reruns what was red; it does not say what makes a rerun red. Your rule that a test red on load is discarded says what happens to the test, and B keeps it; it does not say whether the run or an agent makes the run alone.
+  [2026-11-18 12:47] owner · approved — B
 
 ### Board
 
@@ -366,7 +364,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-17 20:59] agent — Your “Yes” approves the common execution boundary and durable attempt record. I will schedule its implementation while preserving local terminals and leaving provider clients, credentials and file storage with each project. This does not authorize live provider sessions or deployment.
   [2026-11-17 20:59] agent — Recovered the exact callback reply supplied by its writer after a concurrent save omitted it; original owner verdict retained.
   [2026-11-17 20:59] agent · resolved
-
 - [r] **hosted-ingress-boundary** — A hosted Symphony needs to check who is visiting and which project they may use. Its current localhost access trusts the machine, so pointing an authenticated proxy at it does not establish those permissions. Where should the hosted checks live? A: a separate gateway that checks every request and forwards to a private local server. B: an explicit hosted adapter in the server that passes verified visitor and project permissions to its handlers. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/hosted-ingress#Two ways to put the proxy in front]]
   [2026-11-17 19:46] agent — A keeps most core routing, but must duplicate project/action checks and isolate the private listener; rewriting Host and Origin alone is unsafe. B adds an admission/actor seam and hosted lifecycle/readiness, with one routing policy. Both preserve local defaults. No runtime implementation, timing or deployment validation is claimed.
 
@@ -377,7 +374,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-17 20:59] agent — Your “B” selects an explicit hosted adapter in the server, passing verified visitor identity and project permissions to its handlers. Implementation will preserve the local mode and prove the hosted authorization boundary. This decision does not itself deploy or expose the server.
   [2026-11-17 20:59] agent — Recovered the exact callback reply supplied by its writer after a concurrent save omitted it; original owner verdict retained.
   [2026-11-17 20:59] agent · resolved
-
 - [r] **hosted-postgresql-versions** — The proposed hosted connection needs a declared PostgreSQL server target. The consuming deployment reports PostgreSQL 16; Symphony's local launcher requires 18 and uses a locale setup unavailable on 16. Which target should the hosted implementation prove? A: external 16 and 18, with the same SQL/privilege, search, failure and recovery assertions on both; local startup stays at 18 or later. B: external 18 only; the platform must separately approve and complete an upgrade before hosting this board. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/hosted-postgresql#PostgreSQL 16 and 18 validation matrix]]
   [2026-11-17 19:42] agent — Proposed by `tools/hosted-postgresql`, independently of **hosted-postgresql-database-boundary**. A adds a supported-major validation lane and possible bounded SQL/locale work; B avoids that compatibility lane but requires platform work whose cost and timing are unverified. Neither major has been tested by this design task. Documented SQL availability is not a compatibility pass. A failure is fixed in the code or keeps that major unsupported; local requirements and assertions are not relaxed. No platform upgrade is authorized here.
 
@@ -386,7 +382,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-17 20:59] agent — Your “A” sets external PostgreSQL 16 and 18 as implementation and validation targets, with the same SQL, privilege, search, failure and recovery assertions on both. Local startup remains PostgreSQL 18 or later. A failing compatibility case must be fixed or remain unsupported; this is not yet a runtime compatibility result.
   [2026-11-17 20:59] agent — Recovered the exact callback reply supplied by its writer after a concurrent save omitted it; original owner verdict retained.
   [2026-11-17 20:59] agent · resolved
-
 
 ### Hosted boards
 
@@ -439,7 +434,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-17 20:44] owner · approved — B
   [2026-11-17 20:54] agent — Your “B” selects project-owned approval ledgers supplying exact, versioned attestations to Symphony. Admission must refuse unavailable, stale or revoked authority and recheck current inputs and authorized people before dispatch. Symphony will not own the human approval ledger; the analysis and implementation handoff will be aligned to B while preserving the existing stamps and project landing policy.
   [2026-11-17 20:54] agent · resolved
-
 - [r] **project-workflow-shape** — A project could give its board extra steps, such as Implement then Validate, while a project with no settings keeps today's flow. How much can it replace? A: names and column order only; the steps and permissions stay fixed. B: extra preparation and work steps, each tied to today's lifecycle, with rules for who moves between them; one ready stage, one review and the existing completion rules remain. C: any state graph, including several review or delivery stages, with new rules for staffing, recovery and completion. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/project-workflow#The workflow choice]]
   [2026-11-17 10:34] agent — Posted for `tools/studio/project-workflow`. This is a design only; no project changes its flow before implementation.
 
@@ -539,7 +533,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-17 19:18] agent · resolved
   [2026-11-17 20:45] agent · resolved
   [2026-11-17 20:54] agent · resolved
-
 - [r] **components-draw-when-data-arrives** — Each part of a page (a task's thread, its gates, a chart) would draw the moment its own data arrives, the copy from this device first, and redraw itself when newer data comes, with no part waiting for a slower one. Several pages do this already, each in its own hand-written way; Reports, the queue and home still arrive whole, and most pages start their reads one step later than they need to. How should a part get its data? A: one small piece of our own code that every page uses; each part asks the server for its own data, and the live channel tells a part when it has newer data to fetch. Reports' charts arrive in three groups. Nothing more to download. B: the same, built on the TanStack Query library: 10 kB more on each first visit, for features we already have or do not use. C: the same, but the data itself travels on the live channel, the streaming you described, in place of separate requests: a new protocol, and an unchanged part can no longer be answered with nothing. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/components-draw-when-their-data-arrives#The choice]]
   [2026-11-15 12:16] agent — Posted for the board task `app/components-draw-when-their-data-arrives`, from your words: "each component should be able to render itself once the data it needs is available".
 
