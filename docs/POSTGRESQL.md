@@ -2,7 +2,8 @@
 
 PostgreSQL boards run only in scratch homes: temporary folders or a checkout's artifacts folder.
 The machine server and the board commands use the same home selection. Live activation and a
-migration command are not enabled; the cutover procedure needs its own owner decision.
+migration command are not enabled: a live board moves by
+[the cutover procedure](analysis/board-pg-cutover.md), once what it waits for is there.
 
 ## The board home owns its engine
 

@@ -141,6 +141,11 @@ impl Client {
         self
     }
 
+    /// How long this client waits on the server ([`Client::waiting`]).
+    pub fn wait(&self) -> Duration {
+        self.timeout
+    }
+
     /// A client of its own, with no connection yet, of the same database.
     pub fn another(&self) -> Client {
         Client::new(&self.socket, &self.database).waiting(self.timeout)

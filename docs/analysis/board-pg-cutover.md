@@ -1,9 +1,10 @@
 # The board's cutover to PostgreSQL, and the way back
 
-The procedure that would move a live board from SurrealDB to PostgreSQL, for the owner to judge
-before anything live moves: the order, what is copied when, how long a board cannot be written,
-how to go back, and what the two stores measured side by side. It is a proposal. Today PostgreSQL
-serves only scratch boards ([POSTGRESQL](../POSTGRESQL.md)), and no command here moves a live one.
+The procedure that moves a live board from SurrealDB to PostgreSQL: the order, what is copied
+when, how long a board cannot be written, how to go back, and what the two stores measured side
+by side. [What a live move waits for](#the-choice) is decided: the pieces not built yet, a clean
+rehearsal, and the memory peak found and answered. Today PostgreSQL serves only scratch boards
+([POSTGRESQL](../POSTGRESQL.md)), and no command here moves a live one.
 
 ## What the comparison showed
 
@@ -33,24 +34,33 @@ tasks, 13,067 messages) and one build. The tables, the method and their limits a
 - **Most commands answer sooner** on PostgreSQL (a beat 23 ms against 36, an `inbox` 74 against
   194, a `show` 45 against 100), and the two heaviest later (`list` 1.0 s against 0.4, `pull` 3.8 s
   against 2.7). Walls are stretched by the machine's load, 75 to 168 that day.
+- **On a board ten times the size the memory gap is wider.** Measured since, by
+  `tools/board-copy-at-ten-times`, on a generated board of 9,310 tasks and 130,670 messages with
+  the same thirty sessions and 3,000 commands, none failing: PostgreSQL's server peaked at
+  14.8 GiB against SurrealDB's 3.3 GiB, and fell back to 218 MiB where SurrealDB kept 2.0 GiB
+  ([the numbers](board-store-baseline.md#paired-board-work-on-it)). One run each on a loaded
+  machine, a development build, SurrealDB seeded under a 2 GiB memtable and measured under the
+  shipped one. Nobody has looked for what holds it.
 
-Not measured: a board ten times this size, a crash's durability, delivery to listening sessions,
+Not measured: a crash's durability, delivery to listening sessions,
 days at rest.
 
 ## What is not ready
 
-Each is needed before a live board moves. None is built by this page.
+Each is needed before a live board moves. None is built by this page, and none waits for the
+memory task of [the choice](#the-choice).
 
 | what | state |
 |---|---|
 | The live-board guard covers PostgreSQL's tables and finds a PostgreSQL board | landed with the lifecycle |
 | Holds, stopped-cluster snapshots, reclaim and the schema fence on PostgreSQL | landed, proved on scratch boards |
-| A copy does not let an old task number or version be taken for a new one | `tools/board-recovery-generation`, in progress. The cutover is itself such a copy |
-| PostgreSQL starting for a board that is not a scratch one | not built: it is refused by design until this is answered |
+| A copy does not let an old task number or version be taken for a new one | landed with `tools/board-recovery-generation`, board schema 22: every copy of a whole board replaces its [recovery generation](../TASKS.md#a-board-that-was-copied-or-restored), and a write naming a task read before the copy is refused. The cutover is itself such a copy |
+| PostgreSQL starting for a board that is not a scratch one | not built: it is refused by design |
 | The cutover command: hold, export, copy, compare, switch, with each failure leaving the board as it was | not built |
 | Restoring a PostgreSQL snapshot over the board it was taken from | not built: a snapshot restores into a new scratch home only |
 | The release refresh on a PostgreSQL board: its snapshot before a schema move is SurrealDB's export | not built |
-| A copy of a board ten times today's size | fails on both engines under shipped settings (`tools/board-copy-at-ten-times`). Today's boards copy; this bounds growth, not the cutover |
+| A copy of a board ten times today's size | measured by `tools/board-copy-at-ten-times`, landed. PostgreSQL takes it in 78.5 to 141.8 s of the 270 s its server gives a copy, the time going with the machine's load, and a quiet machine reaches the 270 s at about 32 times today's board; SurrealDB refuses it in one line under the shipped 256 MiB memtable and takes it in 68.1 s under 2 GiB, which no shipped setting gives ([the numbers](board-store-baseline.md#a-board-ten-times-the-size-measured-2026-11-18)). Today's boards copy on both; this bounds growth, and the way back for a board that has grown, not the first move |
+| A PostgreSQL copy reported failed does not replace the board | landed with the same task: the server ends a copy at 270 s, thirty short of its caller's 300, with the board as it was. A copy whose commit and answer take those last thirty seconds still can |
 
 ## The order
 
@@ -93,9 +103,10 @@ of its own, and each board moves by itself.
 Nothing is deleted. The export and the old store are kept until the owner says otherwise.
 
 **How long the board cannot be written:** steps 1 to 6. It has not been timed. The copy of
-today's export into PostgreSQL ran in every paired run without meeting its 300-second limit, so
-the copy itself is under five minutes; the rehearsal gives the real figure, for the whole of it,
-before any live board is held.
+today's export into PostgreSQL ran in every paired run without meeting its limit, then the 300 s
+its caller waits and since 270 s at the server
+([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)), so the copy itself is under five
+minutes; the rehearsal gives the real figure, for the whole of it, before any live board is held.
 
 ## The way back
 
@@ -116,17 +127,20 @@ before any live board is held.
 
 ## The choice
 
-The procedure is the same either way. The choice is what the live move waits for.
+What the live move waits for, chosen on [its card](../DECISIONS.md#board-pg-cutover): the
+prerequisites, and the memory peak.
 
-- **A: the prerequisites alone.** Once what is not ready is built and the rehearsal is clean, the
-  boards move in the order above. The measured cost is accepted: more server CPU, and a memory
-  peak over the 512 MiB target while ten or more sessions write at once.
-- **B: the prerequisites, and the memory peak.** As A, and the live move also waits for one task:
-  find why PostgreSQL peaks at 1,752 MiB with thirty sessions and bring it under the target, or
-  show why it cannot be, measured by the same driver. The prerequisites and the rehearsal go
-  ahead meanwhile, so B delays only the last step.
+- **The prerequisites and the rehearsal.** What is not ready above is built, and the rehearsal
+  on a copy is clean. They go ahead now.
+- **The memory peak.** One task finds why PostgreSQL's server peaks at 1,752 MiB with thirty
+  sessions, and at 14.8 GiB on a board ten times the size, and brings it under the 512 MiB
+  target, or shows why it cannot be, measured by the same driver on scratch boards. It delays
+  only the last step, the move of a live board.
 
-B is recommended. The target was part of what was approved, the run misses it by more than three
+The target was part of what the store was approved with, the run misses it by more than three
 times, and nobody knows the cause yet: it may be a setting, or it may be what one connection per
 command costs. The cutover is the one step that takes a hold on a live board and a second hold to
 undo. Everything before it is free to do and free to drop.
+
+The other option, not taken, was to move on the prerequisites alone and accept the measured
+cost.

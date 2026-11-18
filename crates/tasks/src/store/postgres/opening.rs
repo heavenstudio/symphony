@@ -85,12 +85,12 @@ mod tests {
     #[test]
     fn a_migration_names_the_version_it_moves_from_and_to_as_numbers_alone() {
         let made = super::migration("CREATE TABLE t ();", None, 19, None);
-        assert!(!made.contains("pg_class"), "{made}");
+        assert!(!made.contains("pg_proc"), "{made}");
         assert!(made.contains("IS DISTINCT FROM NULL THEN"), "{made}");
         assert!(made.contains("VALUES ('\"schema\"', 19)"), "{made}");
         let moved = super::migration("", Some(19), 20, Some("another's"));
         assert!(
-            !moved.contains("pg_class"),
+            !moved.contains("pg_proc"),
             "a board there is moved: {moved}"
         );
         assert!(moved.contains("IS DISTINCT FROM 19 THEN"), "{moved}");
@@ -102,7 +102,7 @@ mod tests {
         let alone = super::migration("CREATE TABLE t ();", None, 19, Some("another's, 100%"));
         let (stale, foreign) = (
             alone.find("RAISE EXCEPTION 'stale'").unwrap(),
-            alone.find("FROM pg_class").unwrap(),
+            alone.find("FROM pg_proc").unwrap(),
         );
         assert!(stale < foreign && foreign < alone.find("CREATE TABLE t").unwrap());
         assert!(

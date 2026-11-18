@@ -173,6 +173,16 @@ impl Board {
         }
     }
 
+    /// How long a PostgreSQL board's client waits for a request's answer; none on SurrealDB.
+    pub(super) fn postgresql_wait(&self) -> Option<std::time::Duration> {
+        match self {
+            Board::Local(Database::SurrealDb(_)) => None,
+            Board::Local(Database::PostgreSql(client)) => Some(client.wait()),
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(client) => Some(client.wait()),
+        }
+    }
+
     /// The [`Database`] of a board that is in one. A hosted board has none: it is reached by its
     /// pool, and no socket or address of it is ever given out.
     pub(super) fn local(&self) -> &Database {

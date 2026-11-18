@@ -636,6 +636,19 @@ ordinary write, and in no dump.
   replaces the rows, so a token read before a copy is refused after it, and one read before a
   copy that failed still holds. A build of a schema before 22 copies without replacing it, which
   is why the generation came with a schema step: such a build is refused the board.
+  A copy that cannot finish leaves the board as it was and says why in one line. On PostgreSQL
+  the copy is one request, which the server itself ends thirty seconds short of the wait of the
+  program that sent it (270 s of the client's 300), saying the rows of each table it had copied
+  and the table it was at: left to run past its caller's wait it would replace the board after
+  the caller was told it failed, which only a copy whose commit and answer take those thirty
+  seconds still can. On SurrealDB the copy stages its rows and swaps them in in one
+  transaction, which must fit the memtable of the server it runs on: one the server does not
+  commit is said with the rows and bytes it staged and the setting
+  (`SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`, 256 MiB on a server the board starts), and what it
+  staged is removed a table at a time, or by the next copy before it stages. So a copy made
+  while another stages takes the other's staging, and the other is refused at its swap, which
+  first counts each staging table against the rows it sent: the later copy is the one kept. How large a board each takes is measured in
+  [the store's baseline](analysis/board-store-baseline.md#a-board-ten-times-the-size-measured-2026-11-18).
 
 The generation is a row of the database, so putting the database's files back puts it back too.
 What tells that apart is the board's **recovery binding**, outside the database's data: the
@@ -1309,7 +1322,8 @@ project's own, and nothing here makes a request, keeps a credential or a mapping
   task has no other name to change: no call renames a slug. It names the task only along one
   history of the board, never by itself across a copy or a restore, which give numbers again
   ([above](#a-board-that-was-copied-or-restored)): a program keeps it with the generation it was
-  read under, which is the token.
+  read under, which is the token. `just tasks show`, `list` and `search` print that same record
+  under `--json` (`crates/tasks/src/cli/shape.rs`), so each task there carries its `id` too.
 - **`bound`**, `{"slug": S}`: the task's title and brief and its token, `Store::bound`'s answer,
   `{"bound": {"compat": 1, "generation": "…", "id": N, "version": N}, "title": "…", "body": "…"}`.
 - **`edit_bound`**, `{"slug": S, "bound": TOKEN, "by": HANDLE}` with any of `"title"`, `"body"`

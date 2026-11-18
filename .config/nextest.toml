@@ -1,0 +1,35 @@
+# tools/nextest.sh also checks the exact version before any build or test starts.
+nextest-version = "0.9.152"
+
+[profile.release]
+retries = 0
+fail-fast = false
+test-threads = 6
+status-level = "pass"
+final-status-level = "fail"
+# Stall backstop: 3 * ceil(131.95s), the slowest loaded ordinary binary upper bound.
+# The measurements and loads are in docs/CHECKS.md, "The tests side by side".
+slow-timeout = { period = "132s", terminate-after = 3, grace-period = "10s" }
+
+[test-groups.chrome]
+max-threads = 2
+
+[test-groups.database]
+max-threads = 2
+
+[[profile.release.overrides]]
+filter = 'binary(browser) | package(symphony-chrome)'
+test-group = 'chrome'
+
+[[profile.release.overrides]]
+filter = 'package(symphony-board) | binary(release) | binary(after_lifecycle) | binary(after_reload)'
+test-group = 'database'
+
+# The standalone target compiles a copied workspace. Run it after the other nextest cases,
+# reserving their whole pool, so a legitimate build does not compete with their child servers.
+[[profile.release.overrides]]
+filter = 'package(=symphony-server) & binary(=standalone)'
+priority = -100
+threads-required = "num-test-threads"
+# 3 * ceil(869.16s), the completed standalone binary at load 124.30/142.61/111.32.
+slow-timeout = { period = "870s", terminate-after = 3, grace-period = "10s" }

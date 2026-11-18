@@ -354,6 +354,11 @@ impl Client {
         self
     }
 
+    /// How long each request is waited for once it has its connection.
+    pub fn wait(&self) -> Duration {
+        self.timeout
+    }
+
     /// A client of its own of the same board, on the same pool.
     pub fn another(&self) -> Client {
         Client {
