@@ -227,8 +227,9 @@ sources. A resumed agent keeps the model it started on.
 
 With `--local`, alone or with the other two, the same edit goes to
 [the local settings file](#the-local-settings-file) instead, which overrides these on one machine
-and lands nothing. That file alone does not say which agent its models go with, so its edit warns
-of no cross-agent name.
+and lands nothing. The warning is judged on the settings in force, the local file's over the
+project file's, by the model command and the settings check alike: it names the file, key and line
+that supply the model, and the file that names the agent when it is the other one.
 
 | Key | Default | What it sets |
 | --- | --- | --- |

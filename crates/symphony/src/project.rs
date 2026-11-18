@@ -383,7 +383,7 @@ impl Project {
     }
 
     /// What the local settings file of the project at `root` writes, as the board reads it.
-    fn local(root: &Path) -> Result<Option<symphony_board::local::Local>, Vec<String>> {
+    pub(crate) fn local(root: &Path) -> Result<Option<symphony_board::local::Local>, Vec<String>> {
         symphony_board::local::beside(&symphony_board::builds::main_of(root).join(FILE))
     }
 

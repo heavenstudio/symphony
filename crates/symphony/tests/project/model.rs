@@ -357,3 +357,124 @@ fn local_composes_with_agent_and_assessor_and_a_dashed_model_after_the_delimiter
     assert!(err.contains("only available with all"), "{err}");
     assert_eq!(std::fs::read_to_string(&local).unwrap(), before);
 }
+
+/// What the settings check says of the project at `root`: (code, stderr).
+fn checked(root: &Path) -> (i32, String) {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = symphony::lint::settings(&[root.to_str().unwrap().to_string()], &mut out, &mut err);
+    (code, String::from_utf8(err).unwrap())
+}
+
+#[test]
+fn a_cross_agent_warning_judges_the_settings_in_force_and_names_the_file_supplying_each() {
+    let tree = Tree::new();
+    let (main, linked) = layouts::repository(&tree.root);
+    let machine = tree.path("machine");
+    let file = main.join("symphony.toml");
+    let local = main.join(symphony::project::LOCAL_FILE);
+    let committed =
+        "[agents]\nlaunch = { default = 'codex' }\n[agents.models]\nexecutor = 'gpt-6.1-sol'\n";
+    std::fs::write(&file, committed).unwrap();
+    assert_eq!(checked(&main), (0, String::new()), "committed alone agrees");
+
+    // A local model alone: codex, the committed agent, would now start on fable.
+    let model_only = format!(
+        "warning: {}: [agents.models] executor (line 1) model \"fable\" names claude, but [agents.launch] default is \"codex\" in {}\n",
+        local.display(),
+        file.display()
+    );
+    for again in [false, true] {
+        let (code, out, err) = model(
+            &linked.join("docs"),
+            &machine,
+            &["executor", "fable", "--local"],
+        );
+        assert_eq!(code, 0, "{out}: {err}");
+        assert_eq!(out.contains("already"), again, "{out}");
+        assert_eq!(err, model_only, "an edit and a no-op warn alike");
+    }
+    // The settings check says the same, and refuses nothing.
+    assert_eq!(checked(&main), (0, model_only.clone()));
+    // A linked worktree's check reads its own project file with the main checkout's local file
+    // over it: its file names no agent, so the board's own is in force and no file is named.
+    assert_eq!(
+        checked(&linked),
+        (
+            0,
+            format!(
+                "warning: {}: [agents.models] executor (line 1) model \"fable\" names claude, but [agents.launch] default is \"codex\"\n",
+                local.display()
+            )
+        )
+    );
+
+    // The local agent alone: the committed model is now the other agent's.
+    std::fs::write(&local, "[agents.launch]\ndefault = \"claude\"\n").unwrap();
+    let agent_only = format!(
+        "warning: {}: [agents.models] executor (line 4) model \"gpt-6.1-sol\" names codex, but [agents.launch] default is \"claude\" in {}\n",
+        file.display(),
+        local.display()
+    );
+    assert_eq!(checked(&main), (0, agent_only.clone()));
+    // An edit of the project file is judged with the local file over it, a no-op too.
+    let (code, _, err) = model(&main, &machine, &["executor", "gpt-6.1-sol"]);
+    assert_eq!((code, err.as_str()), (0, agent_only.as_str()));
+
+    // Overridden back into agreement: the local agent with a local model of its own.
+    let (code, _, err) = model(&main, &machine, &["executor", "fable", "--local"]);
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert_eq!(checked(&main), (0, String::new()));
+    // And a committed pairing that disagrees, set right by the local agent alone.
+    std::fs::write(
+        &file,
+        "[agents]\nlaunch = { default = 'codex' }\n[agents.models]\nexecutor = 'fable'\n",
+    )
+    .unwrap();
+    std::fs::write(&local, "[agents.launch]\ndefault = \"claude\"\n").unwrap();
+    assert_eq!(checked(&main), (0, String::new()));
+    std::fs::remove_file(&local).unwrap();
+    assert!(checked(&main).1.contains("names claude"), "committed alone");
+
+    // The combined flags: the local file names agent and models together, so nothing is warned
+    // of, though the committed file still pairs codex with its own.
+    std::fs::write(&file, committed).unwrap();
+    let args = [
+        "all",
+        "fable",
+        "--agent",
+        "claude",
+        "--assessor",
+        "haiku",
+        "--local",
+    ];
+    for _ in 0..2 {
+        let (code, _, err) = model(&main, &machine, &args);
+        assert_eq!((code, err.as_str()), (0, ""));
+    }
+    // A local launch model of the other agent is named by its own key and line, in the one file.
+    std::fs::write(
+        &local,
+        "[agents.launch]\ndefault = \"claude\"\nmodel = \"gpt-6.1-sol\"\n\n[agents.models]\nexecutor = \"anything-at-all\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        checked(&main),
+        (
+            0,
+            format!(
+                "warning: {}: [agents.launch] model (line 3) model \"gpt-6.1-sol\" names codex, but [agents.launch] default is \"claude\"\n",
+                local.display()
+            )
+        ),
+        "any other text is taken unjudged, and the committed executor it overrides is not named"
+    );
+    // A local file that is refused is read by nobody: the committed pairing alone is judged.
+    std::fs::write(
+        &local,
+        "[agents.models]\nexecutor = \"fable\"\n\n[land]\ncheck = false\n",
+    )
+    .unwrap();
+    let (code, err) = checked(&main);
+    assert_eq!(code, 1);
+    assert!(!err.contains("warning:"), "{err}");
+}

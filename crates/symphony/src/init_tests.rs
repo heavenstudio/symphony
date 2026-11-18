@@ -439,6 +439,52 @@ fn the_ignore_file_gains_only_the_folders_it_does_not_ignore_yet() {
 }
 
 #[test]
+fn git_ignores_the_local_settings_file_after_init_whatever_folder_rule_names_it() {
+    for have in [
+        "",
+        // A folder's rule of the file's name ignores no regular file: the file's own line is added.
+        "/symphony.local.toml/\n",
+        "/symphony.local.toml/*\n",
+        "symphony.local.toml/**\n",
+        "symphony.local.toml\n",
+        "/symphony.local.toml\n",
+    ] {
+        let tree = Tree::new();
+        let git = |args: &[&str]| {
+            symphony_board::sys::output(
+                symphony_board::sys::git()
+                    .arg("-C")
+                    .arg(&tree.root)
+                    .args(args),
+            )
+            .unwrap()
+            .status
+            .success()
+        };
+        assert!(git(&["init", "-q"]));
+        if !have.is_empty() {
+            tree.write(".gitignore", have);
+        }
+        init(&tree.root, &kit(vec![])).unwrap();
+        let first = tree.read(".gitignore");
+        // Run again, it is current and adds no second line.
+        let report = init(&tree.root, &kit(vec![])).unwrap();
+        assert_eq!(outcome(&report, ".gitignore"), "current", "{have:?}");
+        assert_eq!(tree.read(".gitignore"), first, "{have:?}");
+        let lines = first
+            .lines()
+            .filter(|line| line.trim_start_matches('/') == "symphony.local.toml")
+            .count();
+        assert_eq!(lines, 1, "{have:?}: {first}");
+        tree.write("symphony.local.toml", "[limits]\nlow_volume = 2\n");
+        assert!(
+            git(&["check-ignore", "--quiet", "symphony.local.toml"]),
+            "{have:?}: git does not ignore the regular file under\n{first}"
+        );
+    }
+}
+
+#[test]
 fn the_artifacts_folder_ignored_is_the_one_the_project_names() {
     let tree = Tree::new();
     tree.write(

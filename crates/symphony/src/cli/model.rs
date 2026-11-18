@@ -1,7 +1,7 @@
 //! `symphony model ROLE MODEL`: edit the main checkout's role settings in place, preserving
 //! comments and order. `all MODEL --agent AGENT --assessor MODEL` also switches the launch agent
 //! and its fallback model, with an explicit assessor override. Recognizable cross-agent names
-//! warn; model names remain arbitrary text.
+//! warn, judged on the settings in force; model names remain arbitrary text.
 //! Checking and landing a settings change follow the project's settings-only policy. With
 //! `--local` the same edit goes to the local settings file beside the project file instead
 //! (`symphony_board::local`), which git does not version and nothing lands: made when it is not
@@ -119,7 +119,7 @@ fn change(
     let file = if edit.local {
         local::path_beside(&project)
     } else {
-        project
+        project.clone()
     };
     super::unasked_inside(&file, env)?;
     let before = match crate::text::read_text(&file) {
@@ -153,11 +153,16 @@ fn change(
             "; assessor model set to {model:?}"
         ))
     );
-    // The local file alone does not say which agent its models go with (the project file may),
-    // so a cross-agent name is warned of in the project file's edit only.
+    // A cross-agent name is warned of in the settings in force once the edit is made: the local
+    // file's over the project file's, whichever of the two was edited.
     let warn = |err: &mut dyn Write| {
-        if !edit.local {
-            crate::project::warn_models(&after, &file, err);
+        if edit.local {
+            let committed = crate::text::read_text(&project).unwrap_or_default();
+            let over = local::parse(&file, &after).ok();
+            crate::project::warn_models(&committed, &project, over.as_ref(), err);
+        } else {
+            let over = local::beside(&project).ok().flatten();
+            crate::project::warn_models(&after, &project, over.as_ref(), err);
         }
     };
     if before == after {

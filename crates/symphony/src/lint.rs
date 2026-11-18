@@ -196,7 +196,8 @@ pub fn project_problems(root: &Path) -> Vec<String> {
 /// left out is named on `err`, exit 1; a file that loads is said on `out`, exit 0. It judges no
 /// name against a list (a model, an agent's or a recipe's name is any text) and, unlike the lint,
 /// reads no plugin this build holds and no document. Recognizable cross-agent model names warn
-/// without changing the exit code. The local settings file beside the main checkout's project
+/// without changing the exit code, judged on the settings in force, the local file's over the
+/// project file's. The local settings file beside the main checkout's project
 /// file is judged with it ([`crate::project::Project::local_problems`]): a setting it may not
 /// hold, a value the board cannot read, or the file tracked by git, is exit 1. More than one
 /// folder is exit 2.
@@ -220,10 +221,12 @@ pub fn settings(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i3
         let _ = writeln!(err, "{problem}");
         let _ = writeln!(err, "✖ the project file is refused.");
     } else {
+        // The settings in force: the local file's over the project file's, unless it is refused,
+        // when none of it is read.
         let file = root.join(crate::project::FILE);
-        if let Ok(text) = std::fs::read_to_string(&file) {
-            crate::project::warn_models(&text, &file, err);
-        }
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        let over = crate::project::Project::local(root).ok().flatten();
+        crate::project::warn_models(&text, &file, over.as_ref(), err);
     }
     for problem in &local {
         let _ = writeln!(err, "{problem}");

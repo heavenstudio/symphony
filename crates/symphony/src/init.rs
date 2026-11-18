@@ -779,8 +779,7 @@ fn retire_recipes(root: &Path, report: &mut Report) -> io::Result<()> {
     Ok(())
 }
 
-/// Whether a `.gitignore`'s `text` ignores the folder `folder` (project-relative) whole, or the
-/// file of that name.
+/// Whether a `.gitignore`'s `text` ignores the folder `folder` (project-relative) whole.
 fn ignores(text: &str, folder: &str) -> bool {
     text.lines().map(str::trim).any(|line| {
         let line = line.strip_prefix('/').unwrap_or(line);
@@ -790,6 +789,15 @@ fn ignores(text: &str, folder: &str) -> bool {
             .unwrap_or(line);
         line == folder
     })
+}
+
+/// Whether a `.gitignore`'s `text` ignores the regular file `name` at the project's root: a line
+/// that is its name, anchored or not. A folder's rule of that name (`name/`, `name/*`) ignores no
+/// file, so it does not count.
+fn ignores_file(text: &str, name: &str) -> bool {
+    text.lines()
+        .map(str::trim)
+        .any(|line| line.strip_prefix('/').unwrap_or(line) == name)
 }
 
 /// A line in the project's `.gitignore` for each folder the Symphony fills that it does not ignore
@@ -808,7 +816,7 @@ fn install_ignores(root: &Path, artifacts: &str, report: &mut Report) -> io::Res
         .into_iter()
         .filter(|folder| !ignores(&text, folder))
         .map(|folder| format!("/{folder}/\n"))
-        .chain((!ignores(&text, local)).then(|| format!("/{local}\n")))
+        .chain((!ignores_file(&text, local)).then(|| format!("/{local}\n")))
         .collect();
     if !missing.is_empty() {
         if !text.is_empty() && !text.ends_with('\n') {
