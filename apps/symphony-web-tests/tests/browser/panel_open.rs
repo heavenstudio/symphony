@@ -405,8 +405,6 @@ const PREFETCHING: &str = "document.querySelector('link[rel=prefetch]') !== null
 #[test]
 fn a_page_warms_on_a_fast_link_and_never_when_it_saves_data_or_is_on_2g() {
     let panel = module(dist(), "panel");
-    // The fast link first: how long its warm-up took bounds how long the others wait for none.
-    let mut took = Duration::ZERO;
     for (save_data, link, warms) in [
         (false, "4g", true),
         (true, "4g", false),
@@ -416,18 +414,41 @@ fn a_page_warms_on_a_fast_link_and_never_when_it_saves_data_or_is_on_2g() {
         let site = site();
         let Some(mut browser) = chrome() else { return };
         browser.connection(save_data, link);
+        // The page's idle callbacks are kept until the test runs them: a ready page has asked
+        // for every one it will, so one that asked for none never warms.
+        browser.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": super::HOLD_IDLE }),
+        );
         browser.open(&site.url("/"));
         wait_for_board(&mut browser);
-        let shown = std::time::Instant::now();
+        assert!(
+            browser.wait_for(super::READY, SHOWN),
+            "saveData {save_data} on {link}: the page is ready"
+        );
+        let idle = browser.eval("idle.length").as_u64().unwrap_or(u64::MAX);
+        assert_eq!(
+            browser.eval(PREFETCHING),
+            json!(false),
+            "saveData {save_data} on {link} warms nothing before the browser is idle"
+        );
         if warms {
+            assert!(
+                idle > 0,
+                "a {link} link that keeps its data asks the idle browser for its warm-up"
+            );
+            browser.eval(super::RUN_IDLE);
             assert!(
                 browser.wait_for(PREFETCHING, SHOWN),
                 "a {link} link that keeps its data warms the chat"
             );
-            took = shown.elapsed();
             assert_eq!(asked(&mut browser, &site, &panel.script, 1), 1);
         } else {
-            browser.pump((took * 3).max(Duration::from_secs(2)));
+            assert_eq!(
+                idle, 0,
+                "saveData {save_data} on {link} asks the idle browser for nothing, a warm-up among it"
+            );
+            browser.eval(super::RUN_IDLE);
             assert_eq!(
                 browser.eval(PREFETCHING),
                 json!(false),

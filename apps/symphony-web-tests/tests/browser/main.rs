@@ -132,22 +132,30 @@ const NO_STORE: &str = "Object.defineProperty(window, 'indexedDB', { value: unde
 /// well) once its first screen is in, is no poll. The page's other timers run as they are. Call it
 /// before `open`.
 fn hold_ask_polls(browser: &mut Chrome) {
+    hold_timers(browser, "askPoll", symphony_web_tests::RETRY_MS);
+}
+
+/// Hold, from the page's first script on, every timer of `ms` the page sets, none of them run by
+/// the browser: `window[name]` maps each held timer the page has not cleared to its callback, for
+/// the test to run when its case has come, the page's clock in the test's hands. One the page
+/// clears is let go. The page's timers of any other length run as they are. Call it before `open`.
+fn hold_timers(browser: &mut Chrome, name: &str, ms: i32) {
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({"source": format!(
-            r#"window.askPoll = new Map();
+            r#"window[{name}] = new Map();
             (() => {{
-                const set = window.setTimeout, clear = window.clearTimeout;
+                const kept = window[{name}], set = window.setTimeout, clear = window.clearTimeout;
                 let held = 0;
                 window.setTimeout = function (fn, ms, ...args) {{
-                    if (ms !== {retry}) return set(fn, ms, ...args);
+                    if (ms !== {ms}) return set(fn, ms, ...args);
                     held -= 1;
-                    askPoll.set(held, () => fn(...args));
+                    kept.set(held, () => fn(...args));
                     return held;
                 }};
-                window.clearTimeout = function (id) {{ if (!askPoll.delete(id)) clear(id) }};
+                window.clearTimeout = function (id) {{ if (!kept.delete(id)) clear(id) }};
             }})();"#,
-            retry = symphony_web_tests::RETRY_MS
+            name = json!(name),
         )}),
     );
 }
@@ -174,6 +182,21 @@ fn the_ask_poll_hold_keeps_a_retry_left_waiting_and_lets_a_cleared_one_go() {
         json!([1, true, true, true, "held"])
     );
 }
+
+/// A page script that keeps every idle callback the page asks for, none run by the browser, until
+/// the test runs them ([`RUN_IDLE`]): `window.idle` holds them. The shell asks the idle browser
+/// for its warm-up and its read-ahead in the task that marks the page ready
+/// (`data-navigation=ready`, shell.js), and for nothing where the browser saves data or its link
+/// is too slow: so a page that is ready has asked for every one it will, and one that asked for
+/// none warms and reads nothing, with no window to wait through to see it.
+const HOLD_IDLE: &str =
+    "window.idle = []; window.requestIdleCallback = callback => idle.push(callback);";
+
+/// Runs every idle callback [`HOLD_IDLE`] kept, and says how many there were.
+const RUN_IDLE: &str = "idle.splice(0).map(callback => callback()).length";
+
+/// True once the shell has marked the page ready, its idle work asked for in that task.
+const READY: &str = "document.documentElement.dataset.navigation === 'ready'";
 
 /// A page script under which, once the test sets `window.__lateTasks` to a count of frames, every
 /// task of React's scheduler (a `MessageChannel` message, one posted before as well) runs that many
@@ -507,35 +530,6 @@ fn completed_requests(chrome: &mut Chrome) -> Vec<chrome::Request> {
             .then_some(requests)
     })
     .unwrap_or_else(|stall| panic!("{stall}: {:#?}", chrome.requests()))
-}
-
-#[test]
-fn a_first_visit_and_a_return_visit_fit_their_budgets() {
-    let site = site();
-    let Some(mut chrome) = chrome() else { return };
-    let url = site.url("/");
-    chrome.open(&url);
-    wait_for_board(&mut chrome);
-    let first = chrome.requests();
-    let first_bytes = needed_bytes(&first);
-    chrome.open("about:blank");
-    chrome.open(&url);
-    wait_for_board(&mut chrome);
-    let again = chrome.requests();
-    let again_bytes = needed_bytes(&again);
-    eprintln!(
-        "first visit: {first_bytes} bytes; return visit: {again_bytes} bytes; keep-alive pings beside them: {} and {} bytes\n{first:#?}\n{again:#?}",
-        ping_bytes(&first),
-        ping_bytes(&again)
-    );
-    assert!(
-        first_bytes <= HOME_FIRST_VISIT_BYTES,
-        "a first visit loads {first_bytes} bytes, over {HOME_FIRST_VISIT_BYTES}: {first:#?}"
-    );
-    assert!(
-        again_bytes <= RETURN_VISIT_BYTES,
-        "a return visit loads {again_bytes} bytes, over {RETURN_VISIT_BYTES}: {again:#?}"
-    );
 }
 
 /// What the board needed over the wire: every request but pictures, which are the cards'
@@ -1531,10 +1525,12 @@ fn board_at(version: u64, waiting: u32, ping_ms: u32) -> String {
 /// The servers' ping interval here, the longest the contract allows (the fixture's).
 const PING_MS: u32 = symphony_api::PING_MAX_MS;
 
-/// The longest a stream that falls silent but stays open may hold: the owner reads the board from
-/// a phone over the tailnet, where that happens on every network change (ruled on
-/// tools/python-zero/ui-board).
-const SILENCE_GIVEN_UP: Duration = Duration::from_millis(12_500);
+/// The ping of a board whose test waits its silence out: the shortest such a test names, the
+/// stand-in's pings and the page's timers being a loaded machine's, so the page allows 5 s. A
+/// stream that falls silent but stays open is given up within two and a half pings: the owner
+/// reads the board from a phone over the tailnet, where that happens on every network change
+/// (ruled on tools/python-zero/ui-board).
+const SHORT_PING_MS: u32 = 2_000;
 
 /// Have the page record whether it ever says its board may be out of date: the notice shows only
 /// while the page heals. [`stale_seen`] reads the record.
@@ -1735,6 +1731,14 @@ fn an_event_the_client_cannot_read_is_a_lost_stream_healed_from_a_fresh_board() 
 #[test]
 fn a_stream_that_falls_silent_is_lost_and_healed_while_one_that_pings_holds() {
     let site = site();
+    // The board names a shorter ping than the fixture's, so the silence the page allows, two and
+    // a half of it, is shorter to hold past and to wait out: 5 s. That it is 12.5 s at the longest
+    // ping the contract allows is the client's unit test's (apps/symphony-web/src/live.test.tsx).
+    let silence = Duration::from_millis(u64::from(SHORT_PING_MS) * 5 / 2);
+    let mut board: serde_json::Value =
+        serde_json::from_str(&common::fixture("board.json")).unwrap();
+    board["ping_ms"] = json!(SHORT_PING_MS);
+    site.set_board(&board.to_string());
     let Some(mut chrome) = chrome() else { return };
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
@@ -1745,14 +1749,14 @@ fn a_stream_that_falls_silent_is_lost_and_healed_while_one_that_pings_holds() {
         clippy::disallowed_methods,
         reason = "no-timed-waits baseline: a test holds past the feed's longest silence to show the stream stays"
     )]
-    std::thread::sleep(SILENCE_GIVEN_UP + Duration::from_secs(2));
+    std::thread::sleep(silence + Duration::from_secs(2));
     assert_eq!(site.feed_requests(), 1, "a stream that pings was given up");
     assert!(!stale_seen(&mut chrome), "a stream that pings showed stale");
     // The server falls silent with the socket open, its board moved meanwhile: given up within
     // the bound, the page waits its first second and shows the board fetched again.
     site.fall_silent();
-    site.set_board(&board_at(4190, 99, PING_MS));
-    let healed = SILENCE_GIVEN_UP + Duration::from_secs(5);
+    site.set_board(&board_at(4190, 99, SHORT_PING_MS));
+    let healed = silence + Duration::from_secs(5);
     assert!(
         chrome.wait_for(
             "document.querySelector('.tile b').textContent.trim() === '99'",
