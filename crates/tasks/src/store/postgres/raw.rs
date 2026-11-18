@@ -92,6 +92,7 @@ fn assigned(
     table: &str,
     fields: &Map<String, Value>,
     base: &dyn Fn(&str) -> String,
+    id: Option<&str>,
 ) -> Vec<(String, String)> {
     let typed = columns(table);
     let mut set: Vec<(String, String)> = Vec::new();
@@ -103,7 +104,12 @@ fn assigned(
         };
         let slot = set.iter().position(|(name, _)| *name == column);
         let was = slot.map_or_else(|| base(&column), |slot| set[slot].1.clone());
-        let value = if inner.is_empty() {
+        let value = if let Some(id) = id.filter(|_| table == "task" && column == "fields") {
+            format!(
+                "board_fields({id}, {was}, {}, v -> 's{at}', (v ->> 'board_written')::json -> 's{at}')",
+                array(inner)
+            )
+        } else if inner.is_empty() {
             let kind = typed.and_then(|table| table.columns.iter().find(|c| c.name == column));
             cast(kind.map(|c| c.kind), &format!("s{at}"))
         } else {
@@ -120,6 +126,31 @@ fn assigned(
         }
     }
     set
+}
+
+/// Whether a raw task assignment changes its document as SurrealDB compares it: numeric
+/// equality alone is a no-op there. Evaluate this with the pure setter, before `board_fields`
+/// records any explicit replacement. A change to another column makes all assignments land.
+fn changed(table: &str, fields: &Map<String, Value>) -> Option<String> {
+    if table != "task"
+        || !fields
+            .keys()
+            .any(|field| field == "fields" || field.starts_with("fields."))
+    {
+        return None;
+    }
+    let next = assigned(table, fields, &|column| format!("t.{column}"), None);
+    let before = next
+        .iter()
+        .map(|(column, _)| format!("t.{column}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let after = next
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("({before}) IS DISTINCT FROM ({after})"))
 }
 
 /// The row whole, its id left out, or null; a table's rows whole, ids and all, by id.
@@ -192,14 +223,22 @@ pub(in crate::store) fn count(rows: &Rows) -> Pg<'static> {
 /// `fields` set on the rows there are: a row that is not there is not made.
 pub(in crate::store) fn set(rows: &Rows, fields: &Map<String, Value>) -> Pg<'static> {
     let table = name(rows);
-    let set: Vec<String> = assigned(table, fields, &|column| format!("t.{column}"))
+    let set: Vec<String> = assigned(table, fields, &|column| format!("t.{column}"), Some("t.id"))
         .into_iter()
         .map(|(column, value)| format!("{column} = {value}"))
         .collect();
+    let mut condition = condition(rows);
+    if let Some(changed) = changed(table, fields) {
+        condition.push_str(if condition.is_empty() {
+            " WHERE "
+        } else {
+            " AND "
+        });
+        condition.push_str(&changed);
+    }
     Pg::script(format!(
-        "UPDATE {table} AS t SET {}{};",
-        set.join(", "),
-        condition(rows)
+        "UPDATE {table} AS t SET {}{condition};",
+        set.join(", ")
     ))
 }
 
@@ -227,10 +266,15 @@ pub(in crate::store) fn add(rows: &Rows, field: &str) -> Pg<'static> {
                 ("doc", &path[..])
             };
             let inner = array(inner);
+            let setter = if table == "task" && column == "fields" {
+                "board_fields(t.id, "
+            } else {
+                "board_set("
+            };
             (
                 column.to_string(),
                 format!(
-                    "board_set(t.{column}, {inner}, to_jsonb(coalesce((t.{column} #>> {inner})::numeric, 0) \
+                    "{setter}t.{column}, {inner}, to_jsonb(coalesce((t.{column} #>> {inner})::numeric, 0) \
                      + (v ->> 'by')::numeric))"
                 ),
             )
@@ -245,7 +289,7 @@ pub(in crate::store) fn add(rows: &Rows, field: &str) -> Pg<'static> {
 /// The one row made with `fields`, or, when `upsert`, changed where it is there.
 fn made(rows: &Rows, fields: &Map<String, Value>, upsert: bool) -> Pg<'static> {
     let table = name(rows);
-    let new = assigned(table, fields, &|_| "NULL".into());
+    let new = assigned(table, fields, &|_| "NULL".into(), None);
     let mut columns = vec!["id".to_string()];
     let mut values = vec!["v -> 'id'".to_string()];
     for (column, value) in new {
@@ -262,10 +306,11 @@ fn made(rows: &Rows, fields: &Map<String, Value>, upsert: bool) -> Pg<'static> {
         values.join(", ")
     );
     if upsert {
-        let changed: Vec<String> = assigned(table, fields, &|column| format!("t.{column}"))
-            .into_iter()
-            .map(|(column, value)| format!("{column} = {value}"))
-            .collect();
+        let changed: Vec<String> =
+            assigned(table, fields, &|column| format!("t.{column}"), Some("t.id"))
+                .into_iter()
+                .map(|(column, value)| format!("{column} = {value}"))
+                .collect();
         if changed.is_empty() {
             sql.push_str(" ON CONFLICT (id) DO NOTHING");
         } else {
@@ -273,6 +318,9 @@ fn made(rows: &Rows, fields: &Map<String, Value>, upsert: bool) -> Pg<'static> {
                 " ON CONFLICT (id) DO UPDATE SET {}",
                 changed.join(", ")
             ));
+            if let Some(changed) = self::changed(table, fields) {
+                sql.push_str(&format!(" WHERE {changed}"));
+            }
         }
     }
     sql.push(';');
@@ -327,7 +375,10 @@ mod tests {
                 &object(json!({"title": "x", "priority": 1, "fields._board.red": null}))
             )),
             "UPDATE task AS t SET title = (v ->> 's0'), priority = (v ->> 's1')::bigint, \
-             fields = board_set(t.fields, '{_board,red}', v -> 's2') WHERE t.id = v -> 'id';"
+             fields = board_fields(t.id, t.fields, '{_board,red}', v -> 's2', \
+             (v ->> 'board_written')::json -> 's2') WHERE t.id = v -> 'id' \
+             AND (t.title, t.priority, t.fields) IS DISTINCT FROM ((v ->> 's0'), \
+             (v ->> 's1')::bigint, board_set(t.fields, '{_board,red}', v -> 's2'));"
         );
         assert_eq!(
             text(add(&one, "updated")),
