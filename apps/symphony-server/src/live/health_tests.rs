@@ -222,7 +222,8 @@ fn a_board_ahead_of_this_build_is_read_with_nothing_written_and_said_on_every_pa
         super::health::read_only(schema),
         format!(
             "The task board is at schema {schema}, ahead of this Symphony's {}: it is read, and \
-             nothing is written to it from here, until a Symphony at schema {schema} serves it.",
+             nothing is written to it from here, until a Symphony at schema {schema} serves it. A \
+             verdict or a message saved now is kept, and reaches no agent until then.",
             symphony_board::SCHEMA
         )
     );
