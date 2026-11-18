@@ -218,13 +218,14 @@ $board$"
 }
 
 /// The statement every write starts with: it raises the refusal (`board_schema_*`,
-/// [`crate::schema::guard_vars`]) unless the board is at this store's version.
+/// [`crate::schema::guard_vars`]) unless the board is at this store's version. The shared row
+/// lock meets a migration's version update, including from an older repeatable-read snapshot.
 pub(in crate::store) const GUARD: &str = "DO $guard$
 DECLARE
     v jsonb := current_setting('board.vars')::jsonb;
     found_ bigint;
 BEGIN
-    SELECT version INTO found_ FROM meta WHERE id = '\"schema\"';
+    SELECT version INTO found_ FROM meta WHERE id = '\"schema\"' FOR SHARE;
     IF found_ IS DISTINCT FROM (v ->> 'board_schema')::bigint THEN
         RAISE EXCEPTION '%', (v ->> 'board_schema_before') || coalesce(found_::text, 'NONE')
             || (v ->> 'board_schema_after');
@@ -287,10 +288,13 @@ INSERT INTO message (id, sid, slug, sender, recipient, kind, text, ts)
     )
 }
 
-/// A row read as SurrealDB gives it, `row` a table's row or a query's: its unset fields left out,
-/// and its id.
+/// A row read as SurrealDB gives it, `row` a table's row or a query's: its unset columns and id
+/// left out. JSON values within a column keep their nulls.
 pub(in crate::store) fn row(row: &str) -> String {
-    format!("(jsonb_strip_nulls(to_jsonb({row})) - 'id')")
+    format!(
+        "(SELECT coalesce(jsonb_object_agg(key, value), '{{}}'::jsonb) \
+         FROM jsonb_each(to_jsonb({row}) - 'id') WHERE value <> 'null'::jsonb)"
+    )
 }
 
 /// The rows of `from` read as [`row`] reads one, in `order`, as a list: `alias` names a row.

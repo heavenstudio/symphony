@@ -336,7 +336,7 @@ impl Hub {
         if !ahead {
             self.keep_asks(store);
         }
-        self.health.reading(store.client().queries());
+        self.health.reading(store.database().queries());
         let now = self.now();
         let snapshot = if ahead {
             None

@@ -247,6 +247,10 @@ of itself, which holds only what is live: its server is stopped meanwhile and
 started again on the new store. The old store is kept as a snapshot, and the
 line it ends with says where and until when.
 
+For a scratch home identified as PostgreSQL, run VACUUM FULL and ANALYZE on
+the board database instead: no export or swap, with an exclusive lock per
+table and temporary disk room for its rewrite.
+
 options:
   -h, --help        show this help message and exit
   --version         say the version and exit
@@ -262,6 +266,7 @@ environment:
 /// `--dir FOLDER`, the store of a board folder of that shape elsewhere, a copy to rehearse on. Either
 /// way served by the pinned `surreal` beside that common dir, or `SYMPHONY_SURREAL`'s. What it did
 /// goes to `out`, a refusal to `err`; the exit code is returned.
+/// A scratch PostgreSQL home instead reclaims its board database by VACUUM FULL and ANALYZE.
 pub fn reclaim_main(
     args: &[String],
     env: &cli::Env,
@@ -282,6 +287,10 @@ pub fn reclaim_main(
         [dir, folder] if dir == "--dir" => Ok(Some(env.cwd.join(folder))),
         _ => Err(RECLAIM_USAGE.to_string()),
     };
+    enum Reclaimed {
+        Surreal(server::Reclaimed),
+        PostgreSql,
+    }
     let reclaimed = folder.and_then(|folder| {
         let common = git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
         let home = server::Home::in_common(
@@ -292,10 +301,26 @@ pub fn reclaim_main(
             Some(folder) => server::Home::new(&folder, home.surreal()),
             None => home,
         };
-        home.reclaim().map_err(|e| e.to_string())
+        if home.backend().map_err(|e| e.to_string())? == server::Engine::PostgreSql {
+            let project = project::find(&env.cwd, None)?;
+            home.project_postgresql(&project.place.root)
+                .and_then(|pg| pg.reclaim(DATABASE))
+                .map_err(|e| e.to_string())?;
+            return Ok(Reclaimed::PostgreSql);
+        }
+        home.reclaim()
+            .map(Reclaimed::Surreal)
+            .map_err(|e| e.to_string())
     });
     match reclaimed {
-        Ok(done) => {
+        Ok(Reclaimed::PostgreSql) => {
+            let _ = writeln!(
+                out,
+                "tasks-reclaim: PostgreSQL reclaimed the board's dead space with VACUUM FULL and ANALYZE; its rows and schema were kept"
+            );
+            0
+        }
+        Ok(Reclaimed::Surreal(done)) => {
             let _ = writeln!(
                 out,
                 "tasks-reclaim: the board's store took {} and takes {}; {} databases carried, each \

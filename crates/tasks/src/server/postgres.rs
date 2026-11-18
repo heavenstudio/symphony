@@ -1,8 +1,8 @@
 //! The board's PostgreSQL, beside its SurrealDB ([`Postgres`]): the machine's own, installed by its
 //! package manager, from the folder of programs the project file names (`[board] postgresql`,
-//! [`programs`]; [its card](../../../../docs/DECISIONS.md#postgresql-binary-source)). No board reads
-//! from it yet: it serves only a board kept in a scratch place, whose server ends with the process
-//! that started it, and nothing on a live board's path starts one.
+//! [`programs`]; [its card](../../../../docs/DECISIONS.md#postgresql-binary-source)). It serves
+//! only a board kept in a scratch place, whose server ends with the process that started it;
+//! [`Home::board_server`] selects it by the home's durable engine identity. No live home starts it.
 //!
 //! Its data is `postgresql/` in the board's folder, made by `initdb` at the first start in a folder
 //! beside it and renamed into place, so an `initdb` cut short never leaves a half-made one where a
@@ -28,6 +28,9 @@ use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
+mod lifecycle;
+pub use lifecycle::Holding;
+
 /// The project file's `[board]` key naming the folder of the machine's PostgreSQL programs.
 pub const KEY: &str = "postgresql";
 /// The oldest major release the board starts: the one it was tried on, which has the builtin
@@ -36,7 +39,7 @@ pub const OLDEST_MAJOR: u32 = 18;
 /// The superuser `initdb` makes, whom a connection over the socket names.
 pub const USER: &str = "postgres";
 /// In the board's folder: the server's data and its log.
-const DATA: &str = "postgresql";
+pub(crate) const DATA: &str = "postgresql";
 const LOG: &str = "postgresql.log";
 /// Where the socket folders are, each named for the data it serves ([`socket_folder`]).
 const SOCKETS: &str = "/tmp";
@@ -171,19 +174,10 @@ impl Postgres {
     /// running, never signalled, and the caller told so: it is replaying its log, or stuck, and
     /// ends with this process. Under the starters' lock.
     pub fn ensure(&self) -> Result<Serving, ServerError> {
-        if !self
-            .home
-            .supervised
-            .unwrap_or_else(|| scratch(&self.home.dir))
-        {
-            return Err(ServerError::Io(format!(
-                "the board at {} is not in a scratch place: PostgreSQL serves only a board under \
-                 the temporary folder or a checkout's artifacts/, whose server ends with the \
-                 process that started it",
-                self.home.dir.display()
-            )));
-        }
+        self.scratch_only()?;
         let _starters = self.home.lock(Doing::Starting)?;
+        self.home.allow_postgresql()?;
+        self.home.unheld()?;
         let version = self.version()?;
         if let Some(serving) = self.running(&version)? {
             return Ok(serving);
@@ -198,6 +192,22 @@ impl Postgres {
             data.display()
         ));
         self.start(version)
+    }
+
+    pub(super) fn scratch_only(&self) -> Result<(), ServerError> {
+        if !self
+            .home
+            .supervised
+            .unwrap_or_else(|| scratch(&self.home.dir))
+        {
+            return Err(ServerError::Io(format!(
+                "the board at {} is not in a scratch place: PostgreSQL serves only a board under \
+                 the temporary folder or a checkout's artifacts/, whose server ends with the \
+                 process that started it",
+                self.home.dir.display()
+            )));
+        }
+        Ok(())
     }
 
     /// The data made by `initdb` when it is not there (it holds no `PG_VERSION`), in a folder
@@ -377,7 +387,22 @@ impl Postgres {
     /// stopping by then is left to finish, the caller told so, and never sent a second signal.
     /// Under the starters' lock.
     pub fn stop(&self) -> Result<Option<Serving>, ServerError> {
+        self.scratch_only()?;
         let _starters = self.home.lock(Doing::Stopping)?;
+        self.home.allow_postgresql()?;
+        self.home.unheld()?;
+        self.stop_held()
+    }
+
+    /// The selected scratch server already running, without starting it.
+    pub fn current(&self) -> Result<Option<Serving>, ServerError> {
+        self.scratch_only()?;
+        self.home.allow_postgresql()?;
+        self.running(&self.version()?)
+    }
+
+    /// Stop under the caller's starters' lock, also while that caller holds the board stopped.
+    fn stop_held(&self) -> Result<Option<Serving>, ServerError> {
         let Some(record) = self.recorded() else {
             self.socket_removed();
             return Ok(None);

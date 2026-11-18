@@ -10,6 +10,8 @@
   the existing gate boundary, and migration that preserves the default flow.
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
 - [Task board](TASKS.md) — the board, sessions, roles and agent communication.
+- [PostgreSQL board lifecycle](POSTGRESQL.md) — scratch engine identity, server selection,
+  holds, snapshots, recovery and space reclamation.
 - [Checks](CHECKS.md) — what a task in this repository proves before review, and the release run's
   full verification.
 - [Releases](RELEASES.md) — how a release is cut by the release run or out of cycle, named and

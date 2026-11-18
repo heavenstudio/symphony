@@ -160,6 +160,11 @@ impl Client {
         self
     }
 
+    /// Preserve a caller's request bound when adapting an address to another database engine.
+    pub(crate) fn wait_limit(&self) -> Duration {
+        self.timeout
+    }
+
     pub fn addr(&self) -> &str {
         &self.addr
     }

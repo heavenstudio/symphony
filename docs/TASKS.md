@@ -58,11 +58,15 @@ listening there, from any folder), moves forward only by a build its default
 branch says is its own, by what that branch commits: never what a checkout
 holds, nor the branch the main checkout has out. The default branch is
 `[project] default_branch` in the main checkout's `symphony.toml`, else `main`.
+For a scratch PostgreSQL home's durable engine selection, holds, snapshots and recovery, see
+[PostgreSQL board lifecycle](POSTGRESQL.md). PostgreSQL activation on a live board is not enabled.
+
 Where it commits the board's schema source (`crates/tasks/src/schema.rs`, as this
 repository does), that is any command of a build of that very file, byte for
 byte, wherever it was built: main's build moves the board at its first command
 once a schema lands, and only such a build makes the board when it is not made
-yet. Where it commits none (a consuming project, which pins a build), it is only
+yet. A PostgreSQL board also checks `crates/tasks/src/store/postgres/schema.rs` from the same
+default-branch commit. Where it commits none (a consuming project, which pins a build), it is only
 `just tasks migrate` run in the main checkout, which says whether it made the
 board, moved it from one version to the next, or found nothing to move; there
 any writer makes a board not made yet. A repository with no main checkout (a

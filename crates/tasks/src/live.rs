@@ -43,6 +43,10 @@ pub mod seen;
 /// Where a repository that commits the board's own source keeps its schema: this repository's.
 pub const SOURCE: &str = "crates/tasks/src/schema.rs";
 
+/// The PostgreSQL definitions a build moving a live PostgreSQL board must also match.
+pub const POSTGRES_SOURCE: &str = "crates/tasks/src/store/postgres/schema.rs";
+const OWN_POSTGRES_DIGEST: &str = env!("BOARD_POSTGRES_SCHEMA_SHA256");
+
 /// The SHA-256 of this build's schema source, byte for byte, as `build.rs` read it: a committed
 /// source is this build's when its digest is this one, and no build carries the source itself.
 const OWN_DIGEST: &str = env!("BOARD_SCHEMA_SHA256");
@@ -53,11 +57,15 @@ const OWN_SOURCE: &str = include_str!("schema.rs");
 
 /// Whether `source` is this build's schema source, byte for byte ([`OWN_DIGEST`]).
 fn is_own(source: &str) -> bool {
+    has_digest(source, OWN_DIGEST)
+}
+
+fn has_digest(source: &str, expected: &str) -> bool {
     use sha2::{Digest as _, Sha256};
     let digest: String = (Sha256::digest(source.as_bytes()).iter())
         .map(|byte| format!("{byte:02x}"))
         .collect();
-    digest == OWN_DIGEST
+    digest == expected
 }
 
 /// What Cargo sets for every process it runs, tests and examples included: the package's folder.
@@ -173,19 +181,22 @@ pub enum Served {
     Unknown,
 }
 
-/// Who serves `addr` (`HOST:PORT`) on this machine: the process `lsof` finds listening there, by
-/// the command line `ps` prints for it ([`server::board_served`]).
+/// Who serves `addr` (`HOST:PORT` or `postgresql:SOCKET_FOLDER`) on this machine: the process
+/// `lsof` finds there, by the command line `ps` prints for it ([`server::board_served`]).
 pub fn served(addr: &str) -> Served {
-    let (Some((host, _)), Some(port)) = (addr.rsplit_once(':'), port_of(addr)) else {
-        return Served::Unknown;
-    };
-    let listening = crate::sys::output(crate::sys::command("lsof").args([
-        "-nP",
-        "-w",
-        &format!("-iTCP@{host}:{port}"),
-        "-sTCP:LISTEN",
-        "-Fp",
-    ]));
+    let mut command = crate::sys::command("lsof");
+    command.args(["-nP", "-w", "-Fp"]);
+    if let Some(socket) = addr.strip_prefix("postgresql:") {
+        command
+            .arg("--")
+            .arg(Path::new(socket).join(server::postgres::SOCKET_FILE));
+    } else {
+        let (Some((host, _)), Some(port)) = (addr.rsplit_once(':'), port_of(addr)) else {
+            return Served::Unknown;
+        };
+        command.args([&format!("-iTCP@{host}:{port}"), "-sTCP:LISTEN"]);
+    }
+    let listening = crate::sys::output(&mut command);
     let Ok(listening) = listening else {
         return Served::Unknown;
     };
@@ -242,9 +253,20 @@ pub fn named_server(
 /// be told apart from, as the launcher reads it), else none.
 fn named_by_record(addr: &str, cwd: &Path, machine: Option<&Path>) -> Option<Live> {
     let common = git::read(cwd)?;
-    recorded(&common)
-        .names(port_of(addr), false)
-        .then(|| live(&common, named(&common, machine)))
+    names_address(&common, addr, false).then(|| live(&common, named(&common, machine)))
+}
+
+/// PostgreSQL's socket is derived from the canonical board data path, not a TCP port or the
+/// SurrealDB record. Following links also recognizes `/private/tmp` on macOS.
+fn names_address(common: &Path, addr: &str, strict: bool) -> bool {
+    if let Some(socket) = addr.strip_prefix("postgresql:") {
+        let expected = server::postgres::socket_folder(
+            &common.join(server::FOLDER).join(server::postgres::DATA),
+        );
+        let resolved = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        return resolved(Path::new(socket)) == resolved(&expected);
+    }
+    recorded(common).names(port_of(addr), strict)
 }
 
 /// The live board a client of `addr` and `database` reaches, whoever made the client and wherever:
@@ -267,9 +289,8 @@ pub fn find(
 /// The board of `cwd`'s repository, or of a project the machine's registry lists, whose record
 /// names the port of `addr`.
 fn found_by_record(addr: &str, cwd: Option<&Path>, machine: Option<&Path>) -> Option<Live> {
-    let port = port_of(addr);
     if let Some(common) = cwd.and_then(git::read)
-        && recorded(&common).names(port, false)
+        && names_address(&common, addr, false)
     {
         return Some(live(&common, named(&common, machine)));
     }
@@ -279,9 +300,7 @@ fn found_by_record(addr: &str, cwd: Option<&Path>, machine: Option<&Path>) -> Op
         .into_iter()
         .find_map(|(id, root)| {
             let common = git::read(&root)?;
-            recorded(&common)
-                .names(port, true)
-                .then(|| live(&common, id))
+            names_address(&common, addr, true).then(|| live(&common, id))
         })
 }
 
@@ -410,7 +429,7 @@ fn cargo_refusal_by(served: Served, addr: &str, cargo: &[Cargo]) -> Option<Strin
     }
     cargo.iter().find_map(|one| {
         let common = git::read(&one.dir)?;
-        if !recorded(&common).names(port_of(addr), false) {
+        if !names_address(&common, addr, false) {
             return None;
         }
         let board = self::live(&common, named(&common, None));
@@ -446,6 +465,49 @@ pub fn may_move(
 ) -> Result<(), String> {
     let committed = committed(&live.common, default_branch(live.main()).as_deref());
     judged(live, &committed, this_build, migrating, found, own, scratch)
+}
+
+/// [`may_move`] for PostgreSQL: this repository's common version source and its PostgreSQL
+/// definitions must both be the ones the default branch commits. A consuming project that
+/// commits neither keeps the ordinary migration rule.
+pub fn may_move_postgresql(
+    live: &Live,
+    this_build: bool,
+    migrating: bool,
+    found: Option<i64>,
+    own: i64,
+    scratch: &str,
+) -> Result<(), String> {
+    let named = default_branch(live.main());
+    let branch = named.as_deref().unwrap_or(MAIN);
+    // Resolve the branch once: both schema blobs must come from the same commit even if a land
+    // moves the branch while this command reads them.
+    let (source, postgres) = match source_on_files(
+        &live.common,
+        branch,
+        named.is_some(),
+        &[SOURCE, POSTGRES_SOURCE],
+    ) {
+        Ok(mut sources) => (sources.remove(0), sources.remove(0)),
+        Err(why) => (Source::Unreadable(why.clone()), Source::Unreadable(why)),
+    };
+    let common = Committed {
+        branch: branch.into(),
+        source,
+    };
+    judged(live, &common, this_build, migrating, found, own, scratch)?;
+    if matches!(common.source, Source::Nothing) {
+        return Ok(());
+    }
+    match postgres {
+        Source::Text(source) if has_digest(&source, OWN_POSTGRES_DIGEST) => Ok(()),
+        _ => Err(format!(
+            "the {} board's PostgreSQL schema source its default branch `{}` commits \
+             ({POSTGRES_SOURCE}) is not this build's: nothing was written; a newer schema is \
+             tried on a scratch board ({scratch})",
+            live.project, common.branch
+        )),
+    }
 }
 
 /// [`may_move`]'s verdict on `live`, whose default branch commits `committed`.
@@ -567,6 +629,15 @@ pub fn committed(common: &Path, named: Option<&str>) -> Committed {
 /// [`committed`]'s reading of `branch`, which the project names when `named`: why it cannot be
 /// read, when it cannot.
 fn source_on(common: &Path, branch: &str, named: bool) -> Result<Source, String> {
+    source_on_files(common, branch, named, &[SOURCE]).map(|mut sources| sources.remove(0))
+}
+
+fn source_on_files(
+    common: &Path,
+    branch: &str,
+    named: bool,
+    sources: &[&str],
+) -> Result<Vec<Source>, String> {
     let git = |args: &[&str]| {
         crate::sys::output(crate::sys::git().arg("--git-dir").arg(common).args(args))
             .map_err(|error| format!("git could not run: {error}"))
@@ -596,7 +667,7 @@ fn source_on(common: &Path, branch: &str, named: bool) -> Result<Source, String>
         // No commit there: no such branch, or a ref that names none.
         let exists = git(&["show-ref", "--exists", &reference])?;
         return match exists.status.code() {
-            Some(2) if !named => Ok(Source::Nothing),
+            Some(2) if !named => Ok(vec![Source::Nothing; sources.len()]),
             Some(2) => Err(format!(
                 "there is no branch `{branch}`, which `[project] default_branch` names"
             )),
@@ -608,26 +679,31 @@ fn source_on(common: &Path, branch: &str, named: bool) -> Result<Source, String>
         return Err(said(&tip));
     }
     let tip = String::from_utf8_lossy(&tip.stdout).trim().to_string();
-    let found = git(&[
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        &format!("{tip}:{SOURCE}"),
-    ])?;
-    if found.status.code() == Some(1) {
-        return Ok(Source::Nothing);
-    }
-    if !found.status.success() {
-        return Err(said(&found));
-    }
-    let blob = String::from_utf8_lossy(&found.stdout).trim().to_string();
-    let read = git(&["cat-file", "blob", &blob])?;
-    if !read.status.success() {
-        return Err(said(&read));
-    }
-    String::from_utf8(read.stdout)
-        .map(Source::Text)
-        .map_err(|_| format!("{SOURCE} on `{branch}` is not UTF-8 text"))
+    sources
+        .iter()
+        .map(|source| {
+            let found = git(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{tip}:{source}"),
+            ])?;
+            if found.status.code() == Some(1) {
+                return Ok(Source::Nothing);
+            }
+            if !found.status.success() {
+                return Err(said(&found));
+            }
+            let blob = String::from_utf8_lossy(&found.stdout).trim().to_string();
+            let read = git(&["cat-file", "blob", &blob])?;
+            if !read.status.success() {
+                return Err(said(&read));
+            }
+            String::from_utf8(read.stdout)
+                .map(Source::Text)
+                .map_err(|_| format!("{source} on `{branch}` is not UTF-8 text"))
+        })
+        .collect()
 }
 
 #[cfg(test)]

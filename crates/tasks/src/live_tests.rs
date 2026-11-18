@@ -86,6 +86,73 @@ fn a_port_is_read_as_the_boards_client_reads_it() {
 }
 
 #[test]
+fn a_postgresql_socket_names_its_repository_and_refuses_its_cargo_process() {
+    let scratch = Scratch::new("postgres-socket");
+    let (main, common) = scratch.repository("alpha");
+    let worktree = scratch.worktree(&common, "topic");
+    let socket = server::postgres::socket_folder(&common.join(server::FOLDER).join("postgresql"));
+    fs::write(common.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    let data = common.join(server::FOLDER).join("postgresql");
+    assert_eq!(
+        server::board_served(&format!("/pg/bin/postgres -D {}", data.display())),
+        Some(common.clone())
+    );
+    assert_eq!(
+        server::board_served(&format!("/pg/bin/not-postgres -D {}", data.display())),
+        None
+    );
+    assert_eq!(
+        server::board_served("/pg/bin/postgres -D /tmp/private-cluster"),
+        None
+    );
+    let addr = format!("postgresql:{}", socket.display());
+    for cwd in [&main, &worktree] {
+        let found = named_server(&addr, DATABASE, cwd, None).unwrap();
+        assert_eq!(found.common, common);
+        assert_eq!(find(&addr, DATABASE, Some(cwd), None), Some(found));
+        assert!(cargo_refusal_of(None, &addr, DATABASE, &[Cargo::own(cwd)]).is_some());
+        assert_eq!(named_server(&addr, "scratch", cwd, None), None);
+    }
+    assert_eq!(
+        find("postgresql:/tmp/another", DATABASE, Some(&main), None),
+        None
+    );
+}
+
+#[test]
+fn a_postgresql_schema_move_requires_its_own_committed_definitions_too() {
+    let scratch = Scratch::new("postgres-source");
+    let main = scratch.0.join("alpha");
+    fs::create_dir_all(&main).unwrap();
+    git(&main, &["init", "-q", "-b", "main"]);
+    holds(&main, OWN_SOURCE);
+    let pg = main.join(POSTGRES_SOURCE);
+    fs::create_dir_all(pg.parent().unwrap()).unwrap();
+    let own = include_str!("store/postgres/schema.rs");
+    fs::write(&pg, own).unwrap();
+    git(&main, &["add", "-A"]);
+    git(&main, &["commit", "-qm", "schema"]);
+    let live = Live {
+        project: "alpha".into(),
+        common: main.join(".git"),
+    };
+    assert_eq!(
+        may_move_postgresql(&live, true, false, Some(1), 2, SCRATCH_FLAG),
+        Ok(())
+    );
+    fs::write(&pg, format!("{own}\n")).unwrap();
+    // An uncommitted change is irrelevant.
+    assert_eq!(
+        may_move_postgresql(&live, true, false, Some(1), 2, SCRATCH_FLAG),
+        Ok(())
+    );
+    git(&main, &["commit", "-qam", "changed definitions"]);
+    let why = may_move_postgresql(&live, true, true, Some(1), 2, SCRATCH_FLAG).unwrap_err();
+    assert!(why.contains(POSTGRES_SOURCE), "{why}");
+    assert!(why.contains("nothing was written"), "{why}");
+}
+
+#[test]
 fn a_record_names_its_port_none_without_one_and_any_when_it_names_none_it_can_be_told_by() {
     let scratch = Scratch::new("record");
     let (_, common) = scratch.repository("repo");

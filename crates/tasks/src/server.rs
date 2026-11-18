@@ -33,7 +33,8 @@
 //! ends when the process that started it ends, however it ends.
 //!
 //! Beside SurrealDB, the board's PostgreSQL ([`postgres`]) starts and stops for a board in a
-//! scratch place alone, under the same starters' lock; no live board reads from it yet.
+//! scratch place alone, under the same starters' lock. The home's durable engine identity selects
+//! what repository discovery and the machine server read ([`Home::board_server`]).
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
@@ -71,6 +72,8 @@ use snapshot::Before;
 pub use snapshot::{Kept, Snapshot, Taken};
 use starters::{Doing, Starters};
 pub use storage::Storage;
+mod backend;
+pub use backend::Engine;
 use storage::store;
 
 /// The SurrealDB the board runs on: `tools/surreal.sh`'s `VERSION`, which fetches it.
@@ -544,6 +547,7 @@ impl Home {
     /// is. The record goes only once nothing it may name runs; while that cannot be told (a `ps`
     /// that fails), the caller is refused and nothing is adopted or started.
     pub fn ensure(&self) -> Result<Running, ServerError> {
+        self.require_surreal()?;
         self.unheld()?;
         if let Some(running) = self.recorded()
             && !older(&running.version)
@@ -559,6 +563,7 @@ impl Home {
             self.apart_under_way()?;
         }
         let starters = self.lock(Doing::Starting)?;
+        self.require_surreal()?;
         self.unheld()?;
         if let Some(left) = self.left_replay_through()? {
             if self.apart {
@@ -705,7 +710,9 @@ impl Home {
     /// anything. One still starting is waited for first, never signalled before it answers
     /// ([`Home::stop_one`]). Refused while the board is held, which stopped it already.
     pub fn stop(&self) -> Result<Option<Running>, ServerError> {
+        self.require_surreal()?;
         let _held = self.lock(Doing::Stopping)?;
+        self.require_surreal()?;
         self.unheld()?;
         let Some(running) = self.recorded() else {
             return Ok(None);
@@ -1256,6 +1263,18 @@ fn server_on(command: &str, surreal: &Path, data: &str) -> Option<String> {
 /// `HEAD`). None for any other command line: a server on other data or in memory,
 /// any other program, and a scratch board's supervisor shell, whose last argument is its log.
 pub fn board_served(command: &str) -> Option<PathBuf> {
+    if let Some((program, data)) = command.rsplit_once(" -D ")
+        && Path::new(program)
+            .file_name()
+            .is_some_and(|name| name == "postgres")
+    {
+        let data = Path::new(data);
+        if data.file_name()? != postgres::DATA {
+            return None;
+        }
+        let common = common_of(data.parent()?)?;
+        return common.join("HEAD").is_file().then(|| common.to_path_buf());
+    }
     let at = command.rfind(" surrealkv://")?;
     let data = &command[at + 1..];
     let path = Path::new(data.strip_prefix("surrealkv://")?);

@@ -245,6 +245,74 @@ fn postgres(release: &str, serving: &str) -> String {
 const INITDB: &str = "mkdir -p \"$2\" && echo 18 > \"$2/PG_VERSION\"";
 
 #[test]
+fn a_postgresql_snapshot_and_recovery_copy_plainly_when_the_volume_cannot_clone() {
+    use crate::server::snapshot::CLONE_FAILS;
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            CLONE_FAILS.set(None);
+        }
+    }
+    let source = StandIn::new("copy-fallback", &[("pg_ctl", "exit 3")]);
+    fs::create_dir_all(source.pg.data().join("pg_tblspc")).unwrap();
+    fs::write(source.pg.data().join("PG_VERSION"), "18").unwrap();
+    fs::write(source.pg.data().join("kept"), "whole cluster").unwrap();
+    fs::write(source.pg.data().join("postmaster.pid"), "an ended server").unwrap();
+    CLONE_FAILS.set(Some("this volume cannot clone"));
+    let _reset = Reset;
+    let snapshot = source.pg.snapshot(1.0).unwrap();
+    assert_eq!(
+        fs::read_to_string(snapshot.join("kept")).unwrap(),
+        "whole cluster"
+    );
+    let target = StandIn::new(
+        "restore-fallback",
+        &[
+            ("pg_ctl", "exit 3"),
+            ("postgres", "echo 'postgres (PostgreSQL) 18.7'"),
+        ],
+    );
+    target.pg.restore(&snapshot).unwrap();
+    assert_eq!(
+        fs::read_to_string(target.pg.data().join("kept")).unwrap(),
+        "whole cluster"
+    );
+    assert!(!target.pg.data().join("postmaster.pid").exists());
+    assert!(
+        snapshot.join("postmaster.pid").exists(),
+        "the snapshot is unchanged"
+    );
+}
+
+#[test]
+fn recovery_never_removes_a_source_that_is_also_its_copy_work_folder() {
+    let target = StandIn::new(
+        "restore-overlap",
+        &[
+            ("pg_ctl", "exit 3"),
+            ("postgres", "echo 'postgres (PostgreSQL) 18.7'"),
+        ],
+    );
+    let source = target.pg.home.dir.join("postgresql.restoring");
+    fs::create_dir_all(source.join("pg_tblspc")).unwrap();
+    fs::write(source.join("PG_VERSION"), "18").unwrap();
+    fs::write(source.join("kept"), "source evidence").unwrap();
+    assert!(
+        target
+            .pg
+            .restore(&source)
+            .unwrap_err()
+            .to_string()
+            .contains("overlap")
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("kept")).unwrap(),
+        "source evidence"
+    );
+    assert!(!target.pg.data().exists());
+}
+
+#[test]
 fn a_release_older_than_the_oldest_or_none_is_refused_naming_it() {
     let old = StandIn::new("old", &[("postgres", &postgres("17.2", "exit 1"))]);
     let refused = old.refused();

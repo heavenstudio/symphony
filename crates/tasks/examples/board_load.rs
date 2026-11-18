@@ -8,11 +8,11 @@
 //!     cargo run -p symphony-board --example board_load -- --home DIR --postgresql PROGRAMS \
 //!         [--sessions 30] [--calls 40]
 //!
-//! `--postgresql` measures the board's PostgreSQL bare, from the folder of the machine's programs
-//! (`[board] postgresql`), as `Home` starts it for a scratch board: no board runs on it yet, so a
-//! session's call is one connection of `psql`'s running `select 1`, each served by a backend
-//! process of its own, and the report is the server's opening and what those connections cost (a
-//! command's CPU there is `psql`'s).
+//! `--postgresql` names the folder of the machine's programs (`[board] postgresql`). With
+//! `--tasks`, it runs the same board work and accepts the same export as SurrealDB. Without
+//! `--tasks`, a session's call is one connection of `psql`'s running `select 1`, each served by a
+//! backend of its own: a separate measurement of bare connection cost, whose command CPU is
+//! `psql`'s. Both modes start and stop a scratch server through `Home`.
 //!
 //! The server is metered with every process under it ([`tree`]), as PostgreSQL answers from
 //! several: its CPU is each one's own and what the children it reaped took, so a backend that
@@ -51,7 +51,7 @@ use symphony_board::rpc::{self, Client};
 use symphony_board::server::postgres::USER;
 use symphony_board::server::{Home, Running, scratch};
 use symphony_board::sys;
-use symphony_board::{DATABASE, NAMESPACE, NewSession, NewTask, Store};
+use symphony_board::{DATABASE, NAMESPACE, NewSession, NewTask, Opening, Store};
 
 type Failed = Box<dyn std::error::Error>;
 
@@ -362,8 +362,14 @@ fn number(args: &[String], name: &str, default: usize) -> Result<usize, String> 
 /// programs.
 #[derive(Debug, PartialEq)]
 enum Server {
-    Surreal { surreal: PathBuf, tasks: PathBuf },
-    Postgresql(PathBuf),
+    Surreal {
+        surreal: PathBuf,
+        tasks: PathBuf,
+    },
+    Postgresql {
+        programs: PathBuf,
+        tasks: Option<PathBuf>,
+    },
 }
 
 /// What the command line asks for.
@@ -408,13 +414,13 @@ impl Options {
                 surreal: surreal.into(),
                 tasks: needed("--tasks")?.into(),
             },
-            (None, Some(_)) if arg(args, "--dump").is_some() => {
-                return Err(
-                    "--dump with --postgresql: no board runs on PostgreSQL yet, so it runs bare"
-                        .into(),
-                );
+            (None, Some(_)) if arg(args, "--dump").is_some() && arg(args, "--tasks").is_none() => {
+                return Err("--dump with --postgresql needs --tasks to run the board".into());
             }
-            (None, Some(programs)) => Server::Postgresql(programs.into()),
+            (None, Some(programs)) => Server::Postgresql {
+                programs: programs.into(),
+                tasks: arg(args, "--tasks").map(PathBuf::from),
+            },
             _ => return Err("one of --surreal and --postgresql is required".into()),
         };
         Ok(Options {
@@ -812,7 +818,14 @@ fn main() -> Result<(), Failed> {
     let options = Options::parse(&args)?;
     match &options.server {
         Server::Surreal { surreal, tasks } => surreal_run(&options, surreal, tasks),
-        Server::Postgresql(programs) => postgresql_run(&options, programs),
+        Server::Postgresql {
+            programs,
+            tasks: None,
+        } => postgresql_run(&options, programs),
+        Server::Postgresql {
+            programs,
+            tasks: Some(tasks),
+        } => postgresql_board_run(&options, programs, tasks),
     }
 }
 
@@ -894,7 +907,79 @@ fn surreal_run(options: &Options, surreal: &Path, tasks: &Path) -> Result<(), Fa
     let sessions = set_up(options, open(&making)?)?;
     home.stop().map_err(|why| why.to_string())?;
     let running = home.ensure().map_err(|why| why.to_string())?;
-    let store = || open(&running);
+    let measured = board_run(
+        options,
+        tasks,
+        &running,
+        open(&running)?,
+        board,
+        sessions,
+        "SurrealDB",
+    );
+    let stopped = home.stop().map_err(|why| why.to_string());
+    measured?;
+    stopped?;
+    Ok(())
+}
+
+/// The same board work over PostgreSQL, using the same `tasks` binary and export as SurrealDB.
+fn postgresql_board_run(options: &Options, programs: &Path, tasks: &Path) -> Result<(), Failed> {
+    let pg = Home::new(&options.home.join("board"), Path::new("/no/surreal")).postgresql(programs);
+    let open = || -> Result<Store, Failed> {
+        Ok(Store::opening_on(
+            symphony_board::pg::Client::new(&pg.socket(), &options.database).into(),
+            Box::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64()
+            }),
+            Box::new(sys::pid_alive),
+            &sys::hostname(),
+            &Opening::write(),
+        )?)
+    };
+    pg.ensure().map_err(|why| why.to_string())?;
+    let store = open()?;
+    let mut board = json!({"tasks": 0, "messages": 0, "sessions": 0});
+    if let Some(file) = &options.dump {
+        let dump = Dump::from_json(&std::fs::read_to_string(file)?)?;
+        board = json!({"tasks": dump.tasks.len(), "messages": dump.messages.len(), "sessions": dump.sessions.len()});
+        store.copy(&dump)?;
+        eprintln!("board_load: copied {board}");
+    }
+    let sessions = set_up(options, store)?;
+    pg.stop().map_err(|why| why.to_string())?;
+    let serving = pg.ensure().map_err(|why| why.to_string())?;
+    let running = Running {
+        pid: serving.pid,
+        addr: format!("postgresql:{}", serving.socket.display()),
+        version: serving.version,
+    };
+    let measured = board_run(
+        options,
+        tasks,
+        &running,
+        open()?,
+        board,
+        sessions,
+        "PostgreSQL",
+    );
+    let stopped = pg.stop().map_err(|why| why.to_string());
+    measured?;
+    stopped?;
+    Ok(())
+}
+
+fn board_run(
+    options: &Options,
+    tasks: &Path,
+    running: &Running,
+    store: Store,
+    board: Value,
+    sessions: Vec<Session>,
+    backend: &str,
+) -> Result<(), Failed> {
     let folder = options.home.join("run");
     std::fs::create_dir_all(&folder)?;
     std::fs::write(folder.join("ps"), "")?;
@@ -911,12 +996,17 @@ fn surreal_run(options: &Options, surreal: &Path, tasks: &Path) -> Result<(), Fa
     let handles: Vec<&str> = (sessions.iter())
         .map(|session| session.handle.as_str())
         .collect();
-    let seen_before = last_seen(&store()?)?;
-    let (ran, wall, mut report) = measure(running.pid, home.dir(), sessions.len(), |n, ended| {
-        let plan = schedule(options.seed, n, options.calls);
-        work(&runner, &sessions[n], &plan, ended)
-    })?;
-    let beaten = beaten(&seen_before, &last_seen(&store()?)?, &handles);
+    let seen_before = last_seen(&store)?;
+    let (ran, wall, mut report) = measure(
+        running.pid,
+        &options.home.join("board"),
+        sessions.len(),
+        |n, ended| {
+            let plan = schedule(options.seed, n, options.calls);
+            work(&runner, &sessions[n], &plan, ended)
+        },
+    )?;
+    let beaten = beaten(&seen_before, &last_seen(&store)?, &handles);
     let writes = (ran.iter())
         .filter(|one| one.failed.is_none() && one.kind.writes())
         .count();
@@ -924,7 +1014,7 @@ fn surreal_run(options: &Options, surreal: &Path, tasks: &Path) -> Result<(), Fa
     for (field, value) in [
         (
             "server",
-            json!({"store": "SurrealDB", "version": running.version}),
+            json!({"store": backend, "version": running.version}),
         ),
         ("board", board),
         ("sessions", json!(options.sessions)),
@@ -938,7 +1028,6 @@ fn surreal_run(options: &Options, surreal: &Path, tasks: &Path) -> Result<(), Fa
         report[field] = value;
     }
     println!("{}", serde_json::to_string_pretty(&report)?);
-    home.stop().map_err(|why| why.to_string())?;
     if options.calls > 0 && beaten < options.sessions {
         let missed = options.sessions - beaten;
         return Err(format!(
@@ -1030,7 +1119,7 @@ mod tests {
     }
 
     #[test]
-    fn the_postgresql_options_need_its_programs_and_no_board() {
+    fn the_postgresql_options_select_bare_connections_or_the_board_work() {
         let made = std::env::temp_dir().join(format!("board-load-pg-{}", std::process::id()));
         std::fs::create_dir_all(&made).unwrap();
         let home = made.to_str().unwrap();
@@ -1040,13 +1129,36 @@ mod tests {
             Options::parse(&args)
         };
         let bare = parsed(&["--postgresql", "/pg/bin", "--calls", "3"]).unwrap();
-        assert_eq!(bare.server, Server::Postgresql("/pg/bin".into()));
+        assert_eq!(
+            bare.server,
+            Server::Postgresql {
+                programs: "/pg/bin".into(),
+                tasks: None
+            }
+        );
         assert_eq!((bare.sessions, bare.calls), (30, 3));
         assert!(
             parsed(&["--postgresql", "/pg/bin", "--dump", "/d.json"])
                 .unwrap_err()
-                .contains("no board runs on PostgreSQL yet")
+                .contains("needs --tasks")
         );
+        let board = parsed(&[
+            "--postgresql",
+            "/pg/bin",
+            "--tasks",
+            "/tasks",
+            "--dump",
+            "/d.json",
+        ])
+        .unwrap();
+        assert_eq!(
+            board.server,
+            Server::Postgresql {
+                programs: "/pg/bin".into(),
+                tasks: Some("/tasks".into())
+            }
+        );
+        assert_eq!(board.dump, Some("/d.json".into()));
         assert_eq!(
             parsed(&[
                 "--postgresql",

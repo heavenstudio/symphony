@@ -23,6 +23,28 @@ fn again(db: &Database) -> Database {
     db.another()
 }
 
+#[test]
+fn a_postgresql_write_with_a_snapshot_before_a_migration_cannot_commit_after_it() {
+    let db = board(Backend::PostgreSql);
+    let Database::PostgreSql(writer) = again(&db) else {
+        unreachable!()
+    };
+    writer
+        .simple("BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT version FROM meta;")
+        .unwrap();
+    opened(again(&db), &Opening::write().at(newer())).unwrap();
+    let writer = Store::unchecked_on(
+        writer.into(),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        HOST,
+        &Opening::write(),
+    );
+    let why = refused(writer.create(&NewTask::new("late/snapshot", "An old snapshot", "owner")));
+    assert!(why.starts_with("this board is at schema"), "{why}");
+    assert!(!Raw::of(&db).row("task", "late/snapshot").exists().unwrap());
+}
+
 /// The version `meta:schema` records.
 fn version(db: &Database) -> Option<i64> {
     let found = Raw::of(db).row("meta", "schema").field("version");

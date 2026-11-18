@@ -31,6 +31,7 @@ mod limits;
 mod main_only;
 mod monitor;
 mod output;
+mod pg_lifecycle;
 mod priority;
 mod probes;
 mod project;

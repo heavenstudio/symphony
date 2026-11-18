@@ -225,9 +225,11 @@ tools/rs-bin.sh tasks-copy --board --out > "$DUMP"      # a read; the main check
     --tasks "$PWD/.target/debug/tasks" --dump "$DUMP" --sessions 30 --calls 40 --seed 1
 ```
 
-The board's PostgreSQL bare, its opening and a connection's cost, is
-`--postgresql DIR`, `DIR` the folder of PostgreSQL's programs that `[board] postgresql` names,
-in place of `--surreal`, `--tasks` and `--dump`.
+For the same board work on PostgreSQL, replace `--surreal BIN` with `--postgresql DIR`, the
+folder of programs `[board] postgresql` names, and keep the same `--tasks`, `--dump`, seed,
+sessions and calls. Without `--tasks` or `--dump`, `--postgresql DIR` instead measures the bare
+server's opening and one `psql` connection running `select 1` per call; that is a different
+workload and not a board comparison.
 
 `$SCRATCH` is under the temporary folder or a checkout's `artifacts/`, a new one for each run:
 the board stays in it, and a second run there would start from the first's rows. The report is

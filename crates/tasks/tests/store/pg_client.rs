@@ -41,6 +41,31 @@ fn a_database_not_there_is_known_by_its_code_and_making_it_twice_is_making_it_on
 }
 
 #[test]
+fn concurrent_database_makers_all_reach_the_same_database() {
+    let client = postgresql();
+    let start = std::sync::Barrier::new(8);
+    std::thread::scope(|scope| {
+        let makers: Vec<_> = (0..8)
+            .map(|_| {
+                let client = client.another();
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    client.make_database().unwrap();
+                    assert_eq!(
+                        value(&client.request(&[Step::bare("SELECT 1")]).unwrap(), 0),
+                        Some("1")
+                    );
+                })
+            })
+            .collect();
+        for maker in makers {
+            maker.join().unwrap();
+        }
+    });
+}
+
+#[test]
 fn a_parameter_is_one_jsonb_and_a_null_column_is_none() {
     let client = postgresql();
     client.make_database().unwrap();
