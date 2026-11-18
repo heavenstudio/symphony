@@ -143,7 +143,7 @@ tasks, one on each board, and both clones.
    freshly fetched `origin/main`: `git apply --index FILE`, then a commit whose message is
    written there, anew.
 6. **Prove the branch is clean** ([below](#export-evidence)), and run the upstream's own checks
-   for the change: its closest tests and `just lint-rs`, which includes the hook that refuses a
+   for the change: its closest tests and its lint, which includes the hook that refuses a
    consuming project's name in any tracked file.
 7. **Review and land it as any upstream task**, under the upstream's rules, by a reviewer who
    did not write it.
@@ -176,7 +176,7 @@ In the upstream clone, with **X** the export branch:
 | Check | Command | Must answer |
 | --- | --- | --- |
 | One remote | `git remote` | `origin` alone |
-| Cut from upstream's tip | `git merge-base origin/main X` | The tip of `origin/main` just fetched |
+| Cut from upstream's tip | `git merge-base origin/main X` | The freshly fetched tip of `origin/main` |
 | Only the export's commits | `git rev-list --count origin/main..X` | The number of commits written in step 5 |
 | No merge | `git rev-list --count --merges origin/main..X` | `0` |
 
