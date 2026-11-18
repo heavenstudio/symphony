@@ -156,7 +156,9 @@ consumer-owned landing gates meet the new pin, and releases run this repository'
   and name the two left exhaustive (`crates/symphony-plugin/tests/vocabulary.rs`), and
   `crates/symphony-api/tests/vocabulary_drawn.rs` holds every kind to an arm in each match of
   this workspace, in the compiler's place. Serialization compatibility and arbitrary type changes
-  still need the package tests, typed consumer guards and review.
+  still need the package tests, typed consumer guards and review. Review also checks that a new
+  vocabulary variant moves the kit's minor: the tool allows an addition to a non-exhaustive enum
+  even in a patch, while this project's contract requires a minor.
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,

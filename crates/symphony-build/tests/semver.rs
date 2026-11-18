@@ -311,6 +311,14 @@ fn real_checker_requires_the_right_version_move_and_leaves_type_changes_to_compi
             "Summary",
         ),
         (
+            "additive_patch",
+            "1.0.1",
+            "pub struct Request; impl Request { pub fn new(value: u8) -> Self { Self } }\n\
+             #[non_exhaustive] pub enum Word { First, Second }\n",
+            true,
+            "no semver update required",
+        ),
+        (
             "types",
             "1.0.1",
             "pub struct Request; impl Request { pub fn new(value: &str) -> Self { Self } }\n\

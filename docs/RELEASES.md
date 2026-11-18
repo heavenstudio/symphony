@@ -183,7 +183,8 @@ access and the dependencies of both versions are required. The caches avoid repe
 offline release verification is not supported. A registry lookup or baseline build that fails is
 red. No vendored rustdoc snapshot needs updating at each publication. The checker does not
 compare arbitrary argument, return or field types, serialization behaviour or the two-release
-consumer migration rule: the typed guards and review still hold those
+consumer migration rule. It also permits a new non-exhaustive enum variant in a patch; this
+project requires a minor for a vocabulary addition. The typed guards and review still hold these
 ([consumer API changes](CHECKS.md#consumer-api-changes)).
 
 **How a bump cascades.** A package names a published sibling at exactly the version the sibling is
