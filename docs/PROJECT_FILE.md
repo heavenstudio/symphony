@@ -35,11 +35,62 @@ file that loads is exit 0. It judges no name against a list: a model, an agent o
 text, so a model nobody has heard of passes. Unlike the lint it reads no document and asks no
 build which plugins it holds.
 
+[The local settings file](#the-local-settings-file) is judged with it: a setting it may not hold,
+a value the board cannot read there, or the file tracked by git, is named on stderr, exit 1.
+
 A change of the values a project file gives settings the Symphony already reads lands on this
 check green at its tip, recorded as a test run, with no reviewer
 ([TASKS](TASKS.md#needed-stamps)). This repository records it with `just settings-check`; a
 project records it through its own build wrapper
 ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)).
+
+## The local settings file
+
+`symphony.local.toml`, beside the main checkout's `symphony.toml`, holds one machine's or one
+person's preferences. Git does not version it: `symphony init` adds it to the project's
+`.gitignore`, and the settings check and the lint refuse one git tracks. It is read after the
+project file: a key it writes holds in the committed one's place, a key it leaves out keeps the
+committed one, and with no such file the project file is read alone. A linked worktree has none of
+its own and reads the main checkout's, as it reads the main checkout's project file for these
+settings.
+
+```toml
+# symphony.local.toml
+[agents.models]
+executor = "fable"
+
+[limits]
+machine_agents = 4
+```
+
+It holds preferences alone, in the same tables, keys and types as the project file:
+
+- `[agents.launch]`: the agent a launch starts, its model and its effort;
+- `[agents.models]`: the model each role runs on;
+- `[limits]`: every key of it.
+
+A setting that holds a command or a program the Symphony runs, or that decides what lands, is never
+read from it and is refused there by name: `[project]`'s `cargo` and `default_branch`, and all of
+`[plugins]`, `[verdicts]`, `[land]`, `[releases]` and `[stamps]`, and `[board]`'s `on_review`,
+`on_land`, `machine_work_reader`, `postgresql` and `assessments`. A file no commit records must
+not change the landing gate or run a command: that would be a way around review that leaves no
+trace. Every other table or key (the rest of `[project]`, `[board]` and `[agents]`, `[theme]`,
+`[[entrypoints]]`, `[workflow]`, or a name misspelt) is refused by name too, as no setting a local
+file overrides.
+
+Whatever is wrong with it is said with the file and the line: a refused setting, a key of one of
+its three tables the Symphony does not know, a value of the wrong type or below its least, an agent
+a launch does not start, or text that is no TOML. None of the file is then read and the committed
+settings hold, so a broken local file stops neither the board nor a launch: every board command
+says it on stderr, as it says a limit it cannot read, and the settings check exits 1 on it.
+
+One reader reads it (`crates/tasks/src/local.rs`), which the board's limits and launches, the
+Symphony's load of the project and the settings check all take, so each takes the same override;
+a board or a server kept open reads both files again when the length or time of either changes,
+with no restart. `just tasks limits` names the file under the project file and, for each setting it
+overrides, the file and the line (`symphony.local.toml [limits] machine_agents, line 6`).
+`just symphony-cli model ROLE MODEL --local` writes a role's model there instead of in the project
+file, making the file when it is not there; nothing is landed for it.
 
 ## `[workflow]`
 
@@ -162,7 +213,9 @@ limits` prints what holds and where it came from.
 `all` sets all four. It preserves comments and order, adds missing keys, accepts any string
 as the model and refuses unknown roles. It reports the edit; checking and landing follow the
 project's settings-only policy. `just tasks limits` prints the resulting models and their sources.
-A resumed agent keeps the model it started on.
+A resumed agent keeps the model it started on. With `--local` it edits
+[the local settings file](#the-local-settings-file) instead, which overrides these on one machine
+and lands nothing.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
@@ -256,7 +309,8 @@ enforces it, and zero is advice too.
 ## `[limits]`
 
 Read by the board itself ([TASKS](TASKS.md#limits-and-models)); a value it cannot read takes its
-default and is said on stderr.
+default and is said on stderr. [The local settings file](#the-local-settings-file) overrides each
+key on one machine.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
