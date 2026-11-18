@@ -11,7 +11,11 @@ explicit actions. Disabling it leaves local tasks, reviews and landing available
 The [delivery decision](../DECISIONS.md#github-outbound-pr-delivery) directs enabled PR mode to
 the requirements in [[task:inbox/change-just-land-and-review-commands-to]]: stamped/code work
 lands through `gh` PR squash merge, with the required local evidence represented and enforced
-on GitHub. Checks remain local; there is no per-PR hosted CI. Simple document-only local delivery
+on GitHub. GitHub performs the merge and local state reconciles afterward, with no local merge
+pushed in its place; an import from a configured upstream is the one delivery merged with its
+ancestry kept instead of squashed
+([delivery operations](github-pr-landing.md#delivery-operations),
+[the workflow](../UPSTREAM_DOWNSTREAM.md)). Checks remain local; there is no per-PR hosted CI. Simple document-only local delivery
 is an optional constrained exception for that concept to specify. These are design requirements,
 not changes to today's production landing command.
 
@@ -100,7 +104,7 @@ attachments or linked private URLs automatically.
 | Public local description | Curated export may differ from the execution brief. Preview before first publication; later edits use the same conflict rule. |
 | Labels/assignees | Write only configured adapter-owned labels; preserve all others. Priority mapping is explicit. GitHub assignees are not agent handles. |
 | Workflow, roles, dependencies, stamps | Symphony owns these. Remote close/reopen becomes a triage request, never automatic local completion, cancellation or revival. |
-| Delivery | A proved configured land can close its linked issue when that task's policy asks. In enabled PR mode that includes the canonical remote squash result and local reconciliation. Cancellation has a separate explanation and is never recorded as delivery. |
+| Delivery | A proved configured land can close its linked issue when that task's policy asks. In enabled PR mode that includes the canonical remote merge result and local reconciliation. Cancellation has a separate explanation and is never recorded as delivery. |
 | Comments | Selected remote discussion becomes attributed keyed notes. Export only messages explicitly marked public, excluding private owner notes, logs, screenshots, callback addresses and attachments. |
 | Contributor PR | Link and show head SHA/state. New commits invalidate evidence for the previous SHA. GitHub review does not automatically become a local verdict. |
 
@@ -181,7 +185,8 @@ block merge. A remote label, comment or unauthenticated success claim is not a l
 The landing concept defines the trusted reporter, waiver authority and enforcement boundary;
 this adapter does not invent another gate engine or run hosted checks.
 
-The landing command performs the enabled `gh` squash merge, records its resulting remote commit
+The landing command performs the enabled `gh` merge (squash for a task, a merge commit for an
+upstream import, each verified by its receipt's topology), records its resulting remote commit
 and reconciles local state. Journal the attempt before dispatch and recover its canonical result
 after a lost response; a successful PR-close call is not proof of merge. Squash provenance must
 retain the reviewed PR head and its evidence even though the resulting main commit differs.
@@ -207,7 +212,7 @@ or changes visibility/protections. Importing an external PR never checks out or 
    previews, malicious content, and credentials/paths in diagnostics.
 5. Add status/actions plugin and PR tracking, then implement the settled enabled PR direction
    with its landing/evidence prerequisite. Test stale heads, remote divergence, review fixes,
-   missing/waived stamps, squash provenance, constrained document delivery and crash recovery
+   missing/waived stamps, squash provenance, import topology and wrong-method merges, constrained document delivery and crash recovery
    after remote success but before acknowledgment.
 
 The [delivery card](../DECISIONS.md#github-outbound-pr-delivery) records the referral to the

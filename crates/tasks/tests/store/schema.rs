@@ -18,6 +18,11 @@ fn opened(db: Database, how: &Opening) -> Result<Store, Error> {
     Store::opening_on(db, Box::new(|| NOW), Box::new(|_| false), HOST, how)
 }
 
+/// The store a program that only reads boards opens on `db` by `how` ([`Store::reading_on`]).
+fn read(db: Database, how: &Opening) -> Result<Store, Error> {
+    Store::reading_on(db, Box::new(|| NOW), Box::new(|_| false), HOST, how)
+}
+
 /// Another client of `db`'s database, which has made no request yet.
 fn again(db: &Database) -> Database {
     db.another()
@@ -152,6 +157,57 @@ on_both! {
         let reader = opened(again(&read), &Opening::read()).unwrap();
         assert_eq!(reader.board().unwrap().tasks.len(), 0);
         assert_eq!(version(&read), Some(Schema::this_build().version()));
+    }
+
+    fn the_readers_entry_reads_by_the_rule_and_never_makes_or_moves_a_board_whatever_it_is_handed(
+        backend: Backend
+    ) {
+        // Handed a writer's opening, it reads still: a board not made yet is refused, not made.
+        let db = backend.database();
+        for how in [Opening::read(), Opening::write(), Opening::write().migrating()] {
+            let why = refused(read(again(&db), &how.clone().of(Some("alpha"))).map(drop));
+            assert_eq!(
+                why,
+                "the alpha board is not made yet, and a reader never makes a board: nothing was \
+                 read or written; `just tasks list` in alpha makes it",
+                "{how:?}"
+            );
+        }
+        let unmade = fails(&db);
+        assert!(unmade.contains("does not exist"), "{unmade}");
+        // An older board it refuses as a reader does, and leaves as the older build left it.
+        let before = Schema::this_build().before();
+        let older = opened(again(&db), &Opening::write().at(before.clone())).unwrap();
+        older
+            .create(&NewTask::new("old/one", "Made by the older build", "owner"))
+            .unwrap();
+        let held = tables(&db);
+        for how in [Opening::read(), Opening::write()] {
+            let why = refused(read(again(&db), &how).map(drop));
+            assert!(
+                why.starts_with(&format!(
+                    "this board is at schema {}, behind this build's {}, and a reader never \
+                     moves a board forward",
+                    before.version(),
+                    Schema::this_build().version()
+                )),
+                "{why}"
+            );
+        }
+        assert_eq!(version(&db), Some(before.version()));
+        assert_eq!(tables(&db), held);
+        // A board at its version opens with the one read, as by `opening_on`, and one a version
+        // ahead is read.
+        opened(again(&db), &Opening::write()).unwrap();
+        for how in [Opening::read(), Opening::write()] {
+            let store = read(again(&db), &how).unwrap();
+            assert_eq!(store.database().requests(), 1, "{how:?}");
+            assert_eq!(store.get("old/one").unwrap().title, "Made by the older build");
+        }
+        opened(again(&db), &Opening::write().at(newer())).unwrap();
+        let ahead = read(again(&db), &Opening::write()).unwrap();
+        assert_eq!(ahead.board().unwrap().tasks.len(), 1);
+        assert_eq!(version(&db), Some(newer().version()));
     }
 
     fn a_reader_of_a_newer_build_never_moves_an_older_board_forward_but_refuses_it(
