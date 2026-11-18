@@ -745,7 +745,7 @@ impl Store {
         vars: Value,
         slug: &str,
     ) -> Result<Task, Failure> {
-        self.written_statement(body.into(), vars, slug)
+        self.written_statement(body.into(), vars, slug, true)
     }
 
     #[track_caller]
@@ -754,6 +754,7 @@ impl Store {
         body: Statement,
         mut vars: Value,
         slug: &str,
+        deliver: bool,
     ) -> Result<Task, Failure> {
         let which = Which::Slug(slug);
         let (read, more) = reading(&which, Sessions::Shown);
@@ -773,12 +774,14 @@ impl Store {
         };
         // Include recipient presence in the write's existing result instead of a separate read.
         let snap: Snapshot = self.transact_dispatch(written, vars, false)?;
-        let refresh = snap
-            .tasks
-            .iter()
-            .any(|t| matches!(t.row.status.as_str(), "done" | "blocked"))
+        // The deferred owner filing leaves both delivery and block recovery to the server clock.
+        let refresh = deliver
+            && snap
+                .tasks
+                .iter()
+                .any(|t| matches!(t.row.status.as_str(), "done" | "blocked"))
             && self.resume_after_write();
-        if snap.has_callbacks {
+        if deliver && snap.has_callbacks {
             self.after_write();
         }
         let view = View::new(self, snap);

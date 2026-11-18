@@ -2731,6 +2731,12 @@ assessor = "haiku"
 - **A change holds at once.** Every command reads the file as it stands, and a store kept open
   (the Symphony's server keeps its reader and its data worker's) reads it again at its next
   read whenever the file's length or time changed: no restart.
+- **The local file.** `symphony.local.toml` beside the main checkout's project file, which git
+  does not version, is read after it: a key of `[limits]`, `[agents] launch` or
+  `[agents.models]` it writes holds on this machine in the committed one's place, and `just
+  tasks limits` names that file and its line for it. It holds no other setting, and one that is
+  refused is said on stderr and read by nobody, the committed settings holding
+  ([PROJECT_FILE](PROJECT_FILE.md#the-local-settings-file), `crates/tasks/src/local.rs`).
 - **A value the board cannot read** is said on stderr with its line and takes its default
   (`⚠ PATH: [limits] low_volume (line 3) is -1; it is at least 0; it takes its default, 4`): a
   broken project file must not stop the board, nor the landing that mends it. A load of the

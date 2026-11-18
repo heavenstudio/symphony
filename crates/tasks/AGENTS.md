@@ -124,7 +124,9 @@ the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), 
 ([TASKS](../../docs/TASKS.md#slots)); `orchestration.rs` with `store/work/given.rs` one orchestrator
 per task, and the limit on the open tasks one holds
 ([TASKS](../../docs/TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)); `limits.rs` the project's `[limits]` and the alarm's thresholds, read again when the file
-changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `alarm.rs` and `alarm/` the pipeline
+changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `local.rs` the one reader of the local settings
+file over them and over a launch's agent and models
+([PROJECT_FILE](../../docs/PROJECT_FILE.md#the-local-settings-file)); `alarm.rs` and `alarm/` the pipeline
 alarm, `cli/pull/pipeline.rs` as PULL says it ([TASKS](../../docs/TASKS.md#the-pipeline-alarm));
 `store/work/moves.rs` a move that names where it goes from; `health.rs` a session's health, derived
 and never stored; `stages.rs` where a task's time went
@@ -406,7 +408,9 @@ steer the rest with:
 - `TASKS_REAP_STATE`, where the idle sweep keeps what it saw;
 - `HC_BIN` and `HERDR_APP_BIN`, a fake hc and window: the crate's `fake-hc`, its terminals, the
   window's layout and what it shows in the JSON file `FAKE_HC_STATE` names, each call a line of
-  `FAKE_HC_LOG`, the calls `FAKE_HC_FAIL` names refused;
+  `FAKE_HC_LOG`, the calls `FAKE_HC_FAIL` names refused; a test that names none is given
+  `/usr/bin/false` by the test runs (`just test-rs`, `tools/test-lanes.sh`), so no case reads this
+  machine's terminals, where one named as a fixture's session would be taken for its pane;
 - `TASKS_PS_TABLE`, a file of `ps -axo pid=,ppid=,command=` lines read in place of `ps`, so no case
   reads this machine's process table; read only with a `TASKS_DATABASE` other than the live one;
 - `TASKS_SWEEP=on`, `TASKS_ON_REVIEW=on`, `TASKS_ON_LAND=on` and `TASKS_REGENERATE=on`, without

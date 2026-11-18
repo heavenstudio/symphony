@@ -51,6 +51,11 @@
 # its case's clock, are the build's own: SYMPHONY_TEST_TASKS_BINARY names its `tasks`,
 # SYMPHONY_TEST_BINARIES the folder of its binaries, unless the caller names them.
 #
+# No test reads this machine's terminals: the lanes are given an hc that answers
+# nothing (HC_BIN=/usr/bin/false), as on a machine with none, unless the caller names one, so a
+# terminal here named as a fixture's session is never taken for its pane. A test that names a
+# stand-in of its own keeps it.
+#
 # `--list` prints each lane that would run, its name and then its targets as cargo takes them, and
 # runs nothing but `cargo metadata`. Bash 3.2 (macOS's /bin/bash) runs it.
 set -uo pipefail
@@ -159,6 +164,9 @@ tools/cargo.sh "${run[@]}" --no-run
 built=$?
 if [ -n "$interrupted" ]; then exit "$interrupted"; fi
 if [ "$built" -ne 0 ]; then exit "$built"; fi
+
+# No hc of this machine for the tests, unless the caller names one.
+export HC_BIN="${HC_BIN:-/usr/bin/false}"
 
 # The build's binaries, for the tests that would build their own.
 debug="${CARGO_TARGET_DIR:-$root/.target}"

@@ -146,7 +146,7 @@ fn open(
                 .ok()
                 .filter(|n| n.is_finite())
                 .ok_or_else(|| format!("TASKS_NOW={text} is not a time in seconds"))?;
-            symphony_board::Store::opening_on(
+            symphony_board::Store::reading_on(
                 client,
                 Box::new(move || now),
                 Box::new(symphony_board::sys::pid_alive),
@@ -154,7 +154,7 @@ fn open(
                 &how,
             )
         }
-        None => symphony_board::Store::opening_on(
+        None => symphony_board::Store::reading_on(
             client,
             Box::new(|| {
                 std::time::SystemTime::now()

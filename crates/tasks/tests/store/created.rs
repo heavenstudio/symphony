@@ -29,6 +29,42 @@ fn shape(task: &Task) -> serde_json::Value {
 }
 
 on_both! {
+    fn an_owner_task_acknowledges_its_commit_before_optional_orchestration(backend: Backend) {
+        let f = board(backend);
+        let orchestrator = f.session("orchestrator");
+        let sender = f.session("worker");
+        f.store.take_role("tools/base", &orchestrator, "orchestrator").unwrap();
+        f.advance(symphony_board::health::LIVE_SECONDS + 1.0);
+        f.store.touch(&orchestrator).unwrap();
+        let listener = crate::callbacks::Listener::new(f.store.database().database());
+        f.store.callback(&orchestrator, Some(&format!("uds:{}", listener.path.display())), false, false).unwrap();
+        listener.drain(&f, &sender, &orchestrator);
+        let fast = f.other().dispatching_by(Box::new(|| panic!("acknowledgement must not wait for delivery")));
+        let new = NewTask::new("tools/queued-owner", "Queued owner task", "owner");
+        let log = fast.database().queries();
+        let before = log.within(&(i64::MIN..=i64::MAX));
+        let made = fast.persist_owner_task(&new, "queued-receipt").unwrap();
+        let after = log.within(&(i64::MIN..=i64::MAX));
+        assert_eq!(after.0.count - before.0.count, 1, "acknowledge with only the creation transaction");
+        assert_eq!(made.fields["_symphony"]["owner_save"], "queued-receipt");
+        assert!(made.roles.is_empty(), "optional give has not run");
+        assert_eq!(f.store.owner_saved("queued-receipt").unwrap(), ["tools/queued-owner"]);
+        assert_eq!(f.store.thread(&new.slug).unwrap().len(), 1);
+        assert!(matches!(f.store.persist_owner_task(&new, "other-receipt"), Err(symphony_board::Error::Refused(_))));
+        let resumed = f.other();
+        let board = resumed.board().unwrap();
+        assert!(resumed.give_if_due(&board), "a later process recovers the give");
+        let task = f.store.get(&new.slug).unwrap();
+        assert!(task.roles.iter().any(|r|r.handle == orchestrator && r.role == "orchestrator"));
+        assert!(!f.store.give_if_due(&f.store.board().unwrap()), "delivery is not repeated");
+        assert_eq!(f.store.thread(&new.slug).unwrap().len(), 2);
+        resumed.dispatch_callbacks().unwrap();
+        let lines = listener.drain(&f, &sender, &orchestrator);
+        assert_eq!(lines.iter().filter(|line|line.starts_with("GIVEN ") && line.contains(&new.slug)).count(), 1, "{lines:?}");
+        let immediate = f.store.create_owner_task(&NewTask::new("tools/immediate-owner", "Immediate owner task", "owner"), "immediate-receipt").unwrap();
+        assert!(immediate.roles.iter().any(|r| r.handle == orchestrator && r.role == "orchestrator"), "the existing public method still gives before returning");
+    }
+
     fn a_task_is_made_with_its_links_waits_reservation_and_line(backend: Backend) {
         let f = board(backend);
         let worker = f.session("worker");

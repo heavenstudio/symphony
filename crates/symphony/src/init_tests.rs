@@ -64,7 +64,10 @@ fn a_fresh_project_gets_every_file_stamped_and_linked() {
     }
     assert_eq!(tree.read("justfile"), JUSTFILE);
     assert!(imports(JUSTFILE));
-    assert_eq!(tree.read(".gitignore"), "/.target/\n/artifacts/\n");
+    assert_eq!(
+        tree.read(".gitignore"),
+        "/.target/\n/artifacts/\n/symphony.local.toml\n"
+    );
 }
 
 #[test]
@@ -387,18 +390,33 @@ fn a_justfile_imports_the_recipes_by_any_spelling_just_reads() {
 #[test]
 fn the_ignore_file_gains_only_the_folders_it_does_not_ignore_yet() {
     for (have, want) in [
-        ("", "/.target/\n/artifacts/\n"),
-        ("node_modules", "node_modules\n/.target/\n/artifacts/\n"),
+        ("", "/.target/\n/artifacts/\n/symphony.local.toml\n"),
+        (
+            "node_modules",
+            "node_modules\n/.target/\n/artifacts/\n/symphony.local.toml\n",
+        ),
         (
             "artifacts/*\n!artifacts/.keep\n",
-            "artifacts/*\n!artifacts/.keep\n/.target/\n",
+            "artifacts/*\n!artifacts/.keep\n/.target/\n/symphony.local.toml\n",
         ),
-        ("/.target/\nartifacts/**\n", "/.target/\nartifacts/**\n"),
-        (".target\n/artifacts\n", ".target\n/artifacts\n"),
+        (
+            "/.target/\nartifacts/**\n",
+            "/.target/\nartifacts/**\n/symphony.local.toml\n",
+        ),
+        // The local settings file ignored already, however the line spells it, gains no line.
+        (
+            ".target\n/artifacts\nsymphony.local.toml\n",
+            ".target\n/artifacts\nsymphony.local.toml\n",
+        ),
+        (
+            "/.target/\n/artifacts/\n/symphony.local.toml\n",
+            "/.target/\n/artifacts/\n/symphony.local.toml\n",
+        ),
         // A folder of the same name deeper down, or a file beside it, is not the folder.
         (
-            "docs/artifacts/\n.target.bak\n",
-            "docs/artifacts/\n.target.bak\n/.target/\n/artifacts/\n",
+            "docs/artifacts/\n.target.bak\nsymphony.local.toml.bak\n",
+            "docs/artifacts/\n.target.bak\nsymphony.local.toml.bak\n/.target/\n/artifacts/\n\
+             /symphony.local.toml\n",
         ),
     ] {
         let tree = Tree::new();
@@ -413,6 +431,56 @@ fn the_ignore_file_gains_only_the_folders_it_does_not_ignore_yet() {
             (false, false) => "updated",
         };
         assert_eq!(outcome(&report, ".gitignore"), said, "{have:?}");
+        // Run again, it adds no line twice.
+        let report = init(&tree.root, &kit(vec![])).unwrap();
+        assert_eq!(tree.read(".gitignore"), want, "{have:?}, again");
+        assert_eq!(outcome(&report, ".gitignore"), "current", "{have:?}");
+    }
+}
+
+#[test]
+fn git_ignores_the_local_settings_file_after_init_whatever_folder_rule_names_it() {
+    for have in [
+        "",
+        // A folder's rule of the file's name ignores no regular file: the file's own line is added.
+        "/symphony.local.toml/\n",
+        "/symphony.local.toml/*\n",
+        "symphony.local.toml/**\n",
+        "symphony.local.toml\n",
+        "/symphony.local.toml\n",
+    ] {
+        let tree = Tree::new();
+        let git = |args: &[&str]| {
+            symphony_board::sys::output(
+                symphony_board::sys::git()
+                    .arg("-C")
+                    .arg(&tree.root)
+                    .args(args),
+            )
+            .unwrap()
+            .status
+            .success()
+        };
+        assert!(git(&["init", "-q"]));
+        if !have.is_empty() {
+            tree.write(".gitignore", have);
+        }
+        init(&tree.root, &kit(vec![])).unwrap();
+        let first = tree.read(".gitignore");
+        // Run again, it is current and adds no second line.
+        let report = init(&tree.root, &kit(vec![])).unwrap();
+        assert_eq!(outcome(&report, ".gitignore"), "current", "{have:?}");
+        assert_eq!(tree.read(".gitignore"), first, "{have:?}");
+        let lines = first
+            .lines()
+            .filter(|line| line.trim_start_matches('/') == "symphony.local.toml")
+            .count();
+        assert_eq!(lines, 1, "{have:?}: {first}");
+        tree.write("symphony.local.toml", "[limits]\nlow_volume = 2\n");
+        assert!(
+            git(&["check-ignore", "--quiet", "symphony.local.toml"]),
+            "{have:?}: git does not ignore the regular file under\n{first}"
+        );
     }
 }
 
@@ -424,12 +492,18 @@ fn the_artifacts_folder_ignored_is_the_one_the_project_names() {
         "[project]\nid = \"lamps\"\nartifacts = \"out/pictures\"\n",
     );
     init(&tree.root, &kit(vec![])).unwrap();
-    assert_eq!(tree.read(".gitignore"), "/.target/\n/out/pictures/\n");
+    assert_eq!(
+        tree.read(".gitignore"),
+        "/.target/\n/out/pictures/\n/symphony.local.toml\n"
+    );
     // A project file that does not load leaves the default folder.
     let tree = Tree::new();
     tree.write("symphony.toml", "[project\n");
     init(&tree.root, &kit(vec![])).unwrap();
-    assert_eq!(tree.read(".gitignore"), "/.target/\n/artifacts/\n");
+    assert_eq!(
+        tree.read(".gitignore"),
+        "/.target/\n/artifacts/\n/symphony.local.toml\n"
+    );
 }
 
 #[test]

@@ -13,6 +13,11 @@
 //! misspelt one would change what is served or built. An unknown renderer, a path outside the
 //! project (an entrypoint's folder leading out of it through a link too), and an entrypoint or a
 //! file of one on a route another answers are refused by name, so no file is hidden.
+//!
+//! Beside the main checkout's file, `symphony.local.toml` holds one machine's preferences, which
+//! git does not version: the launch's agent, its model and effort, each role's model and the
+//! limits, read after the project file by the board's one reader of it (`symphony_board::local`),
+//! which this load takes too.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -21,6 +26,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 mod board;
 mod file;
+mod model_warnings;
 mod theme;
 pub mod workflow;
 
@@ -28,10 +34,14 @@ pub use crate::entrypoint::Entrypoint;
 use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::{Board, WipGuidance};
 use file::{File, FileEntrypoint};
+pub(crate) use model_warnings::warn as warn_models;
 pub use theme::Theme;
 
 /// The project file at a project's root.
 pub const FILE: &str = "symphony.toml";
+/// The local settings file beside the main checkout's project file, which git does not version
+/// and whose preferences hold over the committed ones (`symphony_board::local`).
+pub use symphony_board::local::FILE as LOCAL_FILE;
 
 /// How long after a load a plugin's process refused ([`Project::of`]) it is read again: the pause
 /// after which that process is started again, so each read again may start it.
@@ -346,18 +356,77 @@ impl Project {
     }
 
     /// The project at `root`: its `symphony.toml` over the defaults, or the plain project without
-    /// one. A file that does not parse, names a key or value the Symphony does not know, or leaves
+    /// one, with what its local settings file writes over that (`symphony_board::local`: the
+    /// launch's agent, model and effort and each role's model). A file that does not parse, names a key or value the Symphony does not know, or leaves
     /// an entrypoint a file on a route another answers is an error naming the file and what is
     /// wrong.
     pub fn load(root: &Path) -> Result<Project, String> {
-        let project = match Self::read(root)? {
+        let mut project = match Self::read(root)? {
             Some(text) => Self::parse(root, &text)?,
             None => Self::plain(root),
         };
         project
             .check_files(root, &mut Vec::new())
             .map_err(|e| format!("{FILE}: {e}"))?;
+        // A local file that is refused leaves the committed settings, as the board reads them:
+        // what is wrong with it is [`Project::local_problems`]' to say.
+        if let Ok(Some(local)) = Self::local(root) {
+            project.over(&local);
+        }
         Ok(project)
+    }
+
+    /// The local settings file of the project at `root` ([`LOCAL_FILE`]): beside the project file
+    /// of its main checkout, which a linked worktree reads too, having none of its own.
+    pub fn local_file(root: &Path) -> PathBuf {
+        symphony_board::local::path_beside(&symphony_board::builds::main_of(root).join(FILE))
+    }
+
+    /// What the local settings file of the project at `root` writes, as the board reads it.
+    pub(crate) fn local(root: &Path) -> Result<Option<symphony_board::local::Local>, Vec<String>> {
+        symphony_board::local::beside(&symphony_board::builds::main_of(root).join(FILE))
+    }
+
+    /// The launch's agent, model and effort and the roles' models `local` writes, over the
+    /// committed ones: the one merge the board's readers make too
+    /// (`symphony_board::local::Local::over`).
+    fn over(&mut self, local: &symphony_board::local::Local) {
+        let (launch, models) = (&mut self.agents.launch, &mut self.agents.models);
+        local.over(
+            [&mut launch.default, &mut launch.model, &mut launch.effort],
+            [
+                &mut models.orchestrator,
+                &mut models.executor,
+                &mut models.reviewer,
+                &mut models.assessor,
+            ],
+        );
+    }
+
+    /// What is wrong with the local settings file of the project at `root`: each setting it may
+    /// not hold or the Symphony cannot read, by name and line, as the board says it and then reads
+    /// none of the file; and the file being tracked by git, which is to version none of it. None
+    /// with no such file. What the settings check and the lint refuse.
+    pub fn local_problems(root: &Path) -> Vec<String> {
+        let mut problems = Self::local(root).err().unwrap_or_default();
+        let file = Self::local_file(root);
+        let tracked = file.parent().is_some_and(|folder| {
+            symphony_board::sys::output(crate::children::git().arg("-C").arg(folder).args([
+                "ls-files",
+                "--error-unmatch",
+                "--",
+                LOCAL_FILE,
+            ]))
+            .is_ok_and(|done| done.status.success())
+        });
+        if tracked {
+            problems.push(format!(
+                "{}: git tracks it, and a local settings file is one machine's alone: remove it \
+                 from the index (git rm --cached {LOCAL_FILE}) and ignore it",
+                file.display()
+            ));
+        }
+        problems
     }
 
     /// The file at `root` as written, `None` when there is none.
@@ -412,8 +481,8 @@ impl Project {
         Ok((project, unknown))
     }
 
-    /// The project at `root` as [`Project::load`] reads it, cached until its file changes, or an
-    /// entry appears, goes or is replaced in a folder whose entries the load looked at: an
+    /// The project at `root` as [`Project::load`] reads it, cached until its file or its local
+    /// settings file ([`Project::local_file`]) changes, or an entry appears, goes or is replaced in a folder whose entries the load looked at: an
     /// entrypoint's folder, or one where a file of an entrypoint would meet another route, or any
     /// folder under that. A table or key this build does not know is left out and reported once
     /// per version on stderr, the rest read as written, so a file a newer Symphony wrote keeps its
@@ -494,7 +563,7 @@ impl Project {
             let stamp = Stamp::of(&path);
             (path, stamp)
         };
-        let mut stamps = vec![stamped(root.join(FILE))];
+        let mut stamps = vec![stamped(root.join(FILE)), stamped(Self::local_file(root))];
         let loaded = Self::read_known(root).and_then(|(project, unknown)| {
             let mut read = Vec::new();
             let checked = project.check_files(root, &mut read);
@@ -506,9 +575,18 @@ impl Project {
                 .map_err(|e| format!("{FILE}: {e}"))
         });
         let (project, problem, again) = match loaded {
-            Ok((project, unknown)) => {
+            Ok((mut project, unknown)) => {
                 if let Some(refusal) = File::refusal(&unknown) {
                     eprintln!("{}: {refusal}; left out, the rest read", root.display());
+                }
+                match Self::local(root) {
+                    Ok(Some(local)) => project.over(&local),
+                    Ok(None) => {}
+                    Err(problems) => {
+                        for problem in &problems {
+                            eprintln!("{}", symphony_board::local::left_out(problem));
+                        }
+                    }
                 }
                 (project, None, None)
             }

@@ -91,6 +91,71 @@ fn a_refresh_for_no_file_of_mains_renders_none_of_its_documents_and_one_for_any_
 }
 
 #[test]
+fn the_local_settings_file_appearing_changing_or_going_is_an_edit_to_the_projects_settings() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let hub = following(&tree, &root);
+    let read = |hub: &Hub| {
+        let dirty = std::mem::take(&mut *hub.dirty.lock().unwrap());
+        hub.refresh_docs(Some(&dirty)).unwrap();
+    };
+    let local = symphony::project::Project::local_file(&root);
+    assert_eq!(local, root.join(symphony::project::LOCAL_FILE));
+    let reviewer = || {
+        symphony::project::Project::of(&root)
+            .agents
+            .models
+            .reviewer
+            .clone()
+    };
+    hub.tell_project();
+    read(&hub);
+    assert!(
+        kept_says(&hub, "", "docs/OTHER.md", "The first words."),
+        "no local file, and none before: no render is asked for"
+    );
+    assert_eq!(reviewer(), None);
+
+    // Each step edits a document where no event tells the hub, then the local file alone: only a
+    // render the settings' edit asked for reads the document's new words.
+    for (case, text, model) in [
+        (
+            "it appeared",
+            Some("[agents.models]\nreviewer = \"fable\"\n"),
+            Some("fable"),
+        ),
+        (
+            "it changed",
+            Some("[agents.models]\nreviewer = \"opus-next\"\n"),
+            Some("opus-next"),
+        ),
+        // Refused, none of it is read; the project still loads, and says nothing of itself.
+        ("it is refused", Some("[land]\ncheck = false\n"), None),
+        ("it is gone", None, None),
+    ] {
+        let words = format!("Words once {case}.");
+        tree.write("main/docs/OTHER.md", &format!("# Other\n\n{words}\n"));
+        match text {
+            Some(text) => std::fs::write(&local, text).unwrap(),
+            None => std::fs::remove_file(&local).unwrap(),
+        }
+        hub.tell_project();
+        read(&hub);
+        assert!(kept_says(&hub, "", "docs/OTHER.md", &words), "{case}");
+        assert_eq!(reviewer().as_deref(), model, "{case}");
+        assert_eq!(symphony::project::Project::problem(&root), None, "{case}");
+        // Left as it is, the next tick asks for nothing.
+        tree.write("main/docs/OTHER.md", "# Other\n\nUnread words.\n");
+        hub.tell_project();
+        read(&hub);
+        assert!(
+            kept_says(&hub, "", "docs/OTHER.md", &words),
+            "{case}, again"
+        );
+    }
+}
+
+#[test]
 fn an_edit_to_the_projects_settings_loading_or_not_renders_mains_documents_again() {
     let tree = Tree::new();
     let root = repository(&tree);
