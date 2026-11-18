@@ -180,6 +180,8 @@ struct Host<'r> {
     before: RefCell<Vec<Hook<'r>>>,
     /// The head `publish` says the pull request is at, in place of the one pushed.
     says_head: Option<String>,
+    /// Fields laid over a verb's answer, whatever the host did.
+    says: RefCell<Vec<(&'static str, Value)>>,
 }
 
 impl<'r> Host<'r> {
@@ -193,6 +195,7 @@ impl<'r> Host<'r> {
             lost: RefCell::default(),
             before: RefCell::default(),
             says_head: None,
+            says: RefCell::default(),
         }
     }
 
@@ -208,6 +211,12 @@ impl<'r> Host<'r> {
 
     fn before(self, verb: &'static str, act: impl FnOnce() + 'r) -> Self {
         self.before.borrow_mut().push((verb, Box::new(act)));
+        self
+    }
+
+    /// From now on `verb`'s answer says `fields` over what the host did.
+    fn saying(self, verb: &'static str, fields: Value) -> Self {
+        self.says.borrow_mut().push((verb, fields));
         self
     }
 
@@ -305,6 +314,12 @@ impl Transport for Host<'_> {
             "landed" => json!({"state": "noted", "said": "its issue is closed"}),
             other => panic!("no verb {other}"),
         };
+        let mut answer = answer;
+        for (_, fields) in self.says.borrow().iter().filter(|(at, _)| *at == verb) {
+            for (field, value) in fields.as_object().unwrap() {
+                answer[field] = value.clone();
+            }
+        }
         match lost {
             Some(verb) => Err(format!("{verb}: no answer")),
             None => Ok(answer),
@@ -974,6 +989,155 @@ fn a_commit_that_is_not_the_squash_of_the_head_is_held_and_closes_nothing() {
             1
         );
     }
+}
+
+// -- a remote that cannot be read, and an answer git does not bear out ----------------------------
+
+#[test]
+fn with_no_remote_to_deliver_to_nothing_is_asked() {
+    let r = Repo::new();
+    project_file(&r, DELIVERS);
+    let (people, ..) = ready(&r, SLUG);
+    let bare = r.dir.join("nowhere.git");
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    assert_eq!(
+        result.unwrap_err(),
+        "[land] delivery is set and there is no origin remote: a delivery by pull request has a \
+         remote to deliver to"
+    );
+    assert!(host.verbs().is_empty());
+    assert!(landings(&r, SLUG).is_empty());
+}
+
+#[test]
+fn a_remote_that_cannot_be_fetched_after_the_merge_proves_nothing_until_it_can() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let local = head(&r.root, "main");
+    let away = r.dir.join("away.git");
+    // The host merges, and the remote is gone before the commit can be fetched.
+    let host = Host::new(&r, &bare).before("result", || fs::rename(&bare, &away).unwrap());
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(
+        line.starts_with(&format!(
+            "the merge of {SLUG} by pull request #3 was asked for and its result is not known ("
+        )),
+        "{line}"
+    );
+    assert!(line.contains("nothing is merged here"), "{line}");
+    assert_eq!(head(&r.root, "main"), local, "nothing moved here");
+    assert!(landings(&r, SLUG).is_empty() && Receipt::read(&lands(&r), SLUG).is_none());
+    assert_eq!(
+        Journal::read(&lands(&r), SLUG).unwrap().stage,
+        Stage::MergeRequested
+    );
+    // Still gone: the same, and no second merge is asked for.
+    landed(&r, SLUG, &people.orch, &host).1.unwrap_err();
+    assert_eq!(
+        host.verbs().iter().filter(|verb| *verb == "merge").count(),
+        1
+    );
+    // Back: the commit is fetched, proved and followed.
+    fs::rename(&away, &bare).unwrap();
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    result.unwrap();
+    assert_eq!(head(&r.root, "main"), head(&bare, "main"));
+    assert_eq!(Receipt::read(&lands(&r), SLUG).unwrap().head, tip);
+    assert_eq!(
+        host.verbs().iter().filter(|verb| *verb == "merge").count(),
+        1
+    );
+    assert_eq!(landings(&r, SLUG).len(), 1);
+}
+
+#[test]
+fn an_answer_git_does_not_bear_out_closes_nothing() {
+    let unknown = "9".repeat(40);
+    for (says, said, held) in [
+        // A commit the remote does not give: not proved yet, and not held against anyone.
+        (
+            json!({"sha": unknown}),
+            "does not give the commit 9999999",
+            false,
+        ),
+        (json!({"sha": null}), "merged, with no commit named", false),
+        (json!({"state": "stale"}), "its result is not known", false),
+        // A commit that is there and is not on the default branch: the head itself.
+        (json!({"sha": "HEAD"}), "is not on origin/main", true),
+        (
+            json!({"head": "1".repeat(40)}),
+            "was merged at 1111111, not the head",
+            true,
+        ),
+        (
+            json!({"repository": 8}),
+            "answers for repository 8 and base \"main\", not the ones bound",
+            true,
+        ),
+        (
+            json!({"base": "other"}),
+            "answers for repository 7 and base \"other\"",
+            true,
+        ),
+    ] {
+        let (r, bare) = delivering();
+        let local = head(&r.root, "main");
+        let (people, _, tip) = ready(&r, SLUG);
+        let says = if says["sha"] == "HEAD" {
+            json!({"sha": tip})
+        } else {
+            says
+        };
+        let host = Host::new(&r, &bare).saying("result", says);
+        let (_, result) = landed(&r, SLUG, &people.orch, &host);
+        let line = result.unwrap_err();
+        assert!(line.contains(said), "{line}");
+        assert_eq!(
+            line.starts_with("the delivery of sim/jump is held for reconciliation: "),
+            held,
+            "{line}"
+        );
+        assert_eq!(
+            head(&r.root, "main"),
+            local,
+            "the checkout follows nothing unproved"
+        );
+        assert!(landings(&r, SLUG).is_empty(), "nothing is closed");
+        assert!(Receipt::read(&lands(&r), SLUG).is_none());
+        assert_eq!(
+            host.verbs().iter().filter(|verb| *verb == "landed").count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn a_merge_given_no_usable_answer_whose_pull_request_is_still_open_is_asked_again_by_the_next_land()
+{
+    let (r, bare) = delivering();
+    let before = head(&bare, "main");
+    let (people, ..) = ready(&r, SLUG);
+    // The program gives no usable answer to the merge, and reads the pull request as open.
+    let host = Host::new(&r, &bare)
+        .saying(
+            "merge",
+            json!({"state": "unavailable", "why": "the host is away"}),
+        )
+        .saying("result", json!({"state": "open", "sha": null}));
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    assert_eq!(
+        result.unwrap_err(),
+        format!("pull request #3 of {SLUG} is still open: nothing merged")
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    assert_eq!(
+        Journal::read(&lands(&r), SLUG).unwrap().stage,
+        Stage::Eligible
+    );
+    let post = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+    assert_eq!(post.recipient.as_deref(), Some("@orchestrator"));
 }
 
 // -- a checkout that cannot follow -----------------------------------------------------------------

@@ -310,6 +310,9 @@ impl Inner {
     }
 
     fn answer(&mut self, method: &str, path: &str, body: Option<&str>) -> Response {
+        if (method, path) == ("POST", "/graphql") {
+            return self.ready(body);
+        }
         let (path, query) = path.split_once('?').unwrap_or((path, ""));
         let root = format!("/repos/{}/{}", self.owner, self.name);
         let Some(rest) = path.strip_prefix(&root) else {
@@ -380,6 +383,30 @@ impl Inner {
         }
     }
 
+    /// The one mutation a delivery makes: a draft pull request marked ready, named by its node.
+    fn ready(&mut self, body: Option<&str>) -> Response {
+        let sent: Value = serde_json::from_str(body.unwrap_or_default()).unwrap_or(Value::Null);
+        let marks = (sent["query"].as_str()).is_some_and(|query| {
+            query.contains("markPullRequestReadyForReview(input: {pullRequestId: $id})")
+        });
+        let found = (self.pulls.iter_mut())
+            .find(|pull| marks && pull["node_id"] == sent["variables"]["id"]);
+        match found {
+            Some(pull) => {
+                pull["draft"] = json!(false);
+                answer(
+                    200,
+                    &json!({"data": {"markPullRequestReadyForReview":
+                    {"pullRequest": {"isDraft": false}}}}),
+                )
+            }
+            None => answer(
+                200,
+                &json!({"data": null, "errors": [{"message": "Could not resolve"}]}),
+            ),
+        }
+    }
+
     /// A delivery's calls: a branch's pull requests, their merge and a commit's checks.
     fn delivery(&mut self, method: &str, parts: &[&str], query: &str, sent: &Value) -> Response {
         match (method, parts) {
@@ -409,6 +436,7 @@ impl Inner {
                 let repo = json!({"id": self.id});
                 self.pulls.push(json!({
                     "number": number, "state": "open", "merged": false,
+                    "node_id": format!("PR_node{number}"), "draft": sent["draft"] == json!(true),
                     "title": sent["title"], "body": sent["body"],
                     "html_url": format!("https://github.com/{}/{}/pull/{number}", self.owner, self.name),
                     "head": {"ref": branch, "sha": head, "repo": repo},
@@ -436,6 +464,9 @@ impl Inner {
                 if pull["head"]["sha"] != sent["sha"] {
                     return answer(409, &json!({"message": "Head branch was modified"}));
                 }
+                if pull["draft"] == json!(true) {
+                    return answer(405, &json!({"message": "Pull Request is still a draft"}));
+                }
                 if pull["mergeable_state"] != json!("clean") {
                     return answer(405, &json!({"message": "Pull Request is not mergeable"}));
                 }
@@ -456,31 +487,33 @@ impl Inner {
                     .collect();
                 answer(200, &json!({"total_count": runs.len(), "check_runs": runs}))
             }
-            ("POST", ["check-runs"]) | ("PATCH", ["check-runs", _]) => {
-                if self.acting == 0 {
-                    let said = "You must authenticate via a GitHub App.";
-                    return answer(403, &json!({"message": said}));
-                }
-                let mut run = sent.clone();
-                run["app"] = json!({"id": self.acting});
-                if let ["check-runs", id] = parts {
-                    let Some(old) = (self.checks.iter_mut()).find(|run| {
-                        id.parse().ok() == run["id"].as_i64()
-                            && run["app"]["id"] == json!(self.acting)
-                    }) else {
-                        return answer(404, &json!({"message": "Not Found"}));
-                    };
-                    run["id"] = old["id"].clone();
-                    *old = run.clone();
-                    return answer(200, &run);
-                }
-                self.made += 1;
-                run["id"] = json!(800 + self.made);
-                self.checks.push(run.clone());
-                answer(201, &run)
-            }
+            ("POST", ["check-runs"]) | ("PATCH", ["check-runs", _]) => self.written(parts, sent),
             _ => answer(404, &json!({"message": "Not Found"})),
         }
+    }
+
+    /// A check written or rewritten, which GitHub takes from an App alone.
+    fn written(&mut self, parts: &[&str], sent: &Value) -> Response {
+        if self.acting == 0 {
+            let said = "You must authenticate via a GitHub App.";
+            return answer(403, &json!({"message": said}));
+        }
+        let mut run = sent.clone();
+        run["app"] = json!({"id": self.acting});
+        if let ["check-runs", id] = parts {
+            let Some(old) = (self.checks.iter_mut()).find(|run| {
+                id.parse().ok() == run["id"].as_i64() && run["app"]["id"] == json!(self.acting)
+            }) else {
+                return answer(404, &json!({"message": "Not Found"}));
+            };
+            run["id"] = old["id"].clone();
+            *old = run.clone();
+            return answer(200, &run);
+        }
+        self.made += 1;
+        run["id"] = json!(800 + self.made);
+        self.checks.push(run.clone());
+        answer(201, &run)
     }
 
     fn find(&self, number: &str) -> Option<Value> {

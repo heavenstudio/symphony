@@ -248,6 +248,10 @@ fn publish_pushes_the_head_opens_one_pull_request_and_writes_each_check_once() {
     let pulls = d.rig.github.pulls();
     assert_eq!(pulls.len(), 1);
     assert_eq!(pulls[0]["title"], SLUG);
+    assert_eq!(
+        pulls[0]["draft"], true,
+        "a draft until its merge is asked for"
+    );
     assert_eq!(pulls[0]["body"], "The Symphony task `sim/jump`.");
     assert_eq!(
         (&pulls[0]["head"]["ref"], &pulls[0]["base"]["ref"]),
@@ -552,6 +556,13 @@ fn a_merge_is_one_squash_of_the_head_asked_once() {
         ),
         (&json!(HEAD), &json!("squash"), &json!(SLUG))
     );
+    // Marked ready just before, by the one mutation, naming the pull request by its node.
+    let ready: Vec<Value> = (d.rig.github.asked().into_iter())
+        .filter(|(method, path, _)| method == "POST" && path == "/graphql")
+        .map(|(.., body)| serde_json::from_str(&body.unwrap()).unwrap())
+        .collect();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0]["variables"], json!({"id": "PR_node100"}));
     // Asked again it reads that it is merged and asks for no second merge.
     assert_eq!(d.merge(100), json!({"state": "merged", "sha": squash}));
     assert_eq!(
@@ -751,4 +762,71 @@ fn the_command_takes_one_verb_and_a_request_that_reads() {
         "{\"state\":\"refused\",\"why\":\"no verb \\\"rebase\\\"\"}\n"
     );
     assert_eq!(d.rig.github.asked().len(), 0);
+}
+
+#[test]
+fn a_draft_stays_one_until_its_merge_and_a_mark_that_fails_merges_nothing() {
+    // The answer to the mark is lost: nothing merged, and the next run reads the pull request.
+    let d = Delivery::new("deliver-draft", "");
+    d.publish(&snapshot(HEAD, "met", "r1"));
+    assert_eq!(
+        d.publish(&snapshot(HEAD, "met", "r1"))["state"],
+        "published"
+    );
+    assert_eq!(
+        d.rig.github.pulls()[0]["draft"],
+        true,
+        "publishing again leaves it a draft"
+    );
+    d.rig.github.fault("POST", "/graphql", Fault::LoseAnswer);
+    let answer = d.merge(100);
+    assert_eq!(answer["state"], "unavailable", "{answer}");
+    assert!(
+        answer["why"]
+            .as_str()
+            .unwrap()
+            .contains("nothing was merged"),
+        "{answer}"
+    );
+    assert_eq!(
+        d.writes()
+            .iter()
+            .filter(|write| write.starts_with("PUT "))
+            .count(),
+        0
+    );
+    // It was marked: the next merge finds it ready and marks nothing twice.
+    assert_eq!(d.merge(100)["state"], "merged");
+    assert_eq!(
+        d.writes()
+            .iter()
+            .filter(|write| *write == "POST /graphql")
+            .count(),
+        1
+    );
+    // A token that may not mark it: refused by kind, still a draft, nothing merged.
+    let d = Delivery::new("deliver-draft-refused", "");
+    d.publish(&snapshot(HEAD, "met", "r1"));
+    d.rig
+        .github
+        .fault("POST", "/graphql", Fault::Status(403, Vec::new()));
+    let answer = d.merge(100);
+    assert_eq!(
+        (&answer["state"], &answer["kind"]),
+        (&json!("refused"), &json!("permission"))
+    );
+    assert_eq!(
+        answer["why"],
+        "GitHub left pull request #100 a draft (403): "
+    );
+    let pull = d.rig.github.pulls().remove(0);
+    assert_eq!(
+        (&pull["draft"], &pull["merged"]),
+        (&json!(true), &json!(false))
+    );
+    let journal: Vec<String> = (d.rig.journal().iter())
+        .map(|entry| format!("{} {:?}", entry.kind, entry.event))
+        .collect();
+    assert!(journal.contains(&"ready Failed".to_string()), "{journal:?}");
+    d.assert_no_token();
 }

@@ -6,14 +6,15 @@
 //!
 //! - `publish` pushes the head to the branch named as the task, never forced and only to an
 //!   `origin` that names the repository the settings do; finds the pull request of that branch
-//!   before it makes one; and writes one check for the assessment, one for each stamp and
+//!   before it opens one, as a draft; and writes one check for the assessment, one for each stamp and
 //!   `symphony/eligible`, with the checks' own token, then reads them back as written by the one
 //!   App the settings name. A check that stands is found by its name and what it says, so a
 //!   second run writes none; `symphony/eligible` is written last when it passes and first when
 //!   it fails, so it never passes over a stamp not yet written.
 //! - `merge` asks GitHub once to squash the bound pull request at the head it is given
 //!   (`sha`, which GitHub refuses a merge of any other head by), after reading that it is not
-//!   merged already.
+//!   merged already. The pull request is opened as a draft and stays one until then: this verb
+//!   marks it ready, by the one GraphQL mutation GitHub has for that, just before it asks.
 //! - `result` reads the bound pull request and writes nothing.
 //! - `landed` records the commit, and closes the task's mapped issue where `close_issues` says.
 //!
@@ -410,7 +411,11 @@ impl Run<'_> {
                 };
                 let id = crate::digest(&["pull", slug, base]);
                 self.journal(Event::Intent, "pull", slug, &id, Value::Null);
-                let sent = json!({"title": title, "body": body, "head": slug, "base": base});
+                // A draft: nothing merges it, by anyone, until this program marks it ready at
+                // the merge the land asks for.
+                let sent = json!({
+                    "title": title, "body": body, "head": slug, "base": base, "draft": true,
+                });
                 match host.send("POST", host.path("/pulls"), Some(&sent))? {
                     Ok((201, made)) => made,
                     Ok((status, said)) => {
@@ -618,6 +623,45 @@ impl Run<'_> {
         Ok((pull, now))
     }
 
+    /// The draft pull request `pull` marked ready for review, which GitHub's REST API has no
+    /// call for: one GraphQL mutation naming it by its node.
+    fn ready(&self, host: &Host<'_>, slug: &str, pull: &Pull, now: &Value) -> Result<(), Stopped> {
+        let node = now["node_id"].as_str().unwrap_or_default();
+        let id = crate::digest(&["ready", slug, node]);
+        let sent = json!({
+            "query": "mutation($id: ID!) { markPullRequestReadyForReview(input: \
+                      {pullRequestId: $id}) { pullRequest { isDraft } } }",
+            "variables": {"id": node},
+        });
+        self.journal(Event::Intent, "ready", slug, &id, json!(pull.number));
+        let made = host.send("POST", "/graphql".into(), Some(&sent))?;
+        match made {
+            Ok((200, said)) if said["errors"].is_null() => {
+                self.journal(Event::Ack, "ready", slug, &id, json!(pull.number));
+                Ok(())
+            }
+            Ok((status, said)) => {
+                self.journal(Event::Failed, "ready", slug, &id, json!(status));
+                let why = clean_title(said["errors"][0]["message"].as_str().unwrap_or_default());
+                Err(json!({
+                    "state": "refused", "kind": "permission",
+                    "why": format!(
+                        "GitHub left pull request #{} a draft ({status}): {why}",
+                        pull.number
+                    ),
+                }))
+            }
+            Err(Lost(why)) => {
+                self.journal(Event::Unknown, "ready", slug, &id, json!(why));
+                Err(unavailable(format!(
+                    "whether pull request #{} was marked ready is not known ({why}): nothing was \
+                     merged, and the next run reads it first",
+                    pull.number
+                )))
+            }
+        }
+    }
+
     fn merge(&mut self, request: &Value) -> Result<Value, Stopped> {
         let (slug, head) = (text(request, "slug"), text(request, "head"));
         if !commit(&head) || request["method"] != json!("squash") {
@@ -648,6 +692,9 @@ impl Run<'_> {
                     short(&head)
                 ),
             ));
+        }
+        if now["draft"] == json!(true) {
+            self.ready(&host, &slug, &pull, &now)?;
         }
         let title = match self.state.drafts.get(&slug) {
             Some(draft) => format!("{slug}: {}", draft.title),

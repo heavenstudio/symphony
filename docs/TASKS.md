@@ -2484,9 +2484,11 @@ One limit holds by design: evidence withdrawn after the last reading and before 
 a request already made does not recall it. The receipt names the revision that was read.
 
 What else writes the default branch lands nothing there while the key is set, each refused by
-name: the regenerator, and a save of a document from the app. A release candidate is not
-advanced over a squash, which its reader does not see as a landing, and the sweep keeps the
-worktree and branch of a squashed head, which it finds in no history.
+name: the regenerator, and a save of a document from the app. The release cadence refuses to
+count the landings of a line whose tip sets the key, since a squash is no merge of the land's: no
+release run is due by landings there and no release candidate is advanced, each saying so
+([RELEASES](RELEASES.md#the-cadence)). The sweep keeps the worktree and branch of a squashed
+head, which it finds in no history.
 
 ### A delivery whose host is gone
 

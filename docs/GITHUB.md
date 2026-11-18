@@ -196,14 +196,15 @@ evidence, and it reads no board for it.
 
 - **`publish`** pushes the head to the branch named as the task, never forced, and only when
   `origin` is the settings' repository on GitHub.com. It finds the open pull request of that
-  branch into the default branch before it opens one, then writes the evidence as checks on the
+  branch into the default branch before it opens one, as a draft, which nobody merges, then writes the evidence as checks on the
   head: `symphony/assessment`, `symphony/NAME` for each stamp (success where it stands, neutral
   where the assessment waived it, failure where it is missing) and `symphony/eligible`. That last
   one is what a branch's protection requires, from the App `checks_app_id` names. It is written
   last when it passes and first when it fails, so it never passes over a stamp not yet written,
   and the checks are read back as that App's before `published` is answered.
-- **`merge`** asks GitHub once for a squash of the bound pull request at the head it is given,
-  which GitHub refuses for any other head. A pull request already merged is answered as merged,
+- **`merge`** marks the draft ready and asks GitHub once for a squash of the bound pull request at
+  the head it is given, which GitHub refuses for any other head. A mark that fails or whose answer
+  is lost merges nothing. A pull request already merged is answered as merged,
   with no second request.
 - **`result`** reads the bound pull request: open, merged with its commit, or closed.
 - **`landed`** keeps the commit, and closes the task's mapped issue where `close_issues` says.
@@ -217,6 +218,14 @@ Every write is journaled before it is made and looked for before it is made agai
 request by its branch, a check by its name, its conclusion and the evidence's revision, a merge
 by the pull request's own state. A lost answer is answered `unavailable` or `unknown`, and the
 next run finds what was made. Evidence of another revision rewrites the checks of that head.
+
+Every request is GitHub's REST API made by `curl`, as the exchange's are, and the one thing REST
+has no call for, marking a draft ready, is a single GraphQL mutation by the same `curl`. The `gh`
+CLI is not used or needed. The adapter is no GitHub App and holds no App's key: it cannot mint or
+renew an installation token, so `checks_token_file` holds one made outside it, which GitHub
+expires within the hour. A token that expired is answered 401, `unavailable`, and nothing merges
+until the file holds a current one. Keeping it current is the operator's, by whatever they run
+for it; nothing here does.
 
 Protecting the default branch (the required check, its App, squash alone, no bypass) is the
 repository owner's act on GitHub. The adapter edits no protection, rule or visibility, and
