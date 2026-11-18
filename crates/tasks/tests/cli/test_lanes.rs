@@ -190,6 +190,10 @@ impl Lanes {
         );
         let mut vars = vars.to_vec();
         vars.push(("HOLD", hold.to_str().unwrap()));
+        let logs = vars
+            .iter()
+            .find(|(name, _)| *name == "SYMPHONY_TEST_LANE_LOGS")
+            .map_or_else(|| self.logs(), |(_, path)| PathBuf::from(path));
         let mut child = self
             .command(&[], &vars)
             .process_group(0)
@@ -205,9 +209,13 @@ impl Lanes {
                 .count()
         };
         test_time::until_true(
-            "every lane held",
+            "every lane held and its streamed output reached the live log",
             test_time::backstop(Duration::from_secs(120)),
-            || held() == LANES,
+            || {
+                held() == LANES
+                    && fs::read_to_string(logs.join("nextest.log"))
+                        .is_ok_and(|text| text.starts_with("running "))
+            },
         )
         .unwrap();
         let group = i32::try_from(child.id()).unwrap();
@@ -496,7 +504,8 @@ fn signals_end_all_batches_and_leave_their_named_live_logs() {
         ] {
             let log = logs.join(format!("{name}.log"));
             assert!(said.contains(&log.display().to_string()), "{said}");
-            assert!(fs::read_to_string(log).unwrap().starts_with("running "));
+            let text = fs::read_to_string(&log).unwrap();
+            assert!(text.starts_with("running "), "{}: {text:?}", log.display());
         }
     }
 }
