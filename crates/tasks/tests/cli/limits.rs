@@ -304,3 +304,83 @@ fn outside_a_repository_every_limit_is_its_default() {
         ]
     );
 }
+
+#[test]
+fn a_local_settings_file_overrides_the_committed_settings_and_limits_names_it() {
+    let committed = "[agents]\nlaunch = { default = \"claude\" }\n\n[agents.models]\nexecutor = \"opus\"\n\n[limits]\nlow_volume = 3\n";
+    let (c, root) = in_project("limits-local", committed);
+    let local = file(&root).with_file_name("symphony.local.toml");
+    let orch = c.register("orchestrator");
+    // A store opened before the local file is there, and kept, as the Symphony's server keeps its.
+    let store = c.store();
+    assert_eq!(store.limits().low_volume, 3);
+    fs::write(
+        &local,
+        "[agents.models]\nexecutor = \"fable\"\n\n[limits]\nlow_volume = 1\norchestrator_slots = 2\n",
+    )
+    .unwrap();
+    assert_eq!(store.limits().low_volume, 1, "with no restart");
+    assert_eq!(store.slots(), Some(2));
+    let ran = c.run_as(&orch, &["limits"], "");
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""));
+    let lines: Vec<&str> = ran.out.lines().collect();
+    assert_eq!(
+        lines[..5],
+        [
+            format!("LIMITS from {}", file(&root).display()),
+            format!(
+                "LOCAL  over it {}, which git does not version",
+                local.display()
+            ),
+            "orchestrator_slots       2       symphony.local.toml [limits] orchestrator_slots, line 6".into(),
+            "orchestrator_tasks       16      default".into(),
+            "low_volume               1       symphony.local.toml [limits] low_volume, line 5".into(),
+        ]
+    );
+    assert!(
+        lines.contains(
+            &"executor                 fable   symphony.local.toml [agents.models] executor, line 2"
+        ),
+        "{}",
+        ran.out
+    );
+    // Its model's line deleted, the committed model is back at the next command.
+    fs::write(&local, "[limits]\nlow_volume = 1\n").unwrap();
+    let ran = c.run_as(&orch, &["limits"], "");
+    assert!(
+        ran.out
+            .contains("\nexecutor                 opus    [agents.models] executor, line 5\n"),
+        "{}",
+        ran.out
+    );
+    assert_eq!(store.slots(), None, "and the cap it wrote is gone");
+    // A setting that decides what lands is refused by name, and none of the file is read: the
+    // board runs on the committed values.
+    fs::write(
+        &local,
+        "[limits]\nlow_volume = 1\n\n[land]\ncheck = false\n",
+    )
+    .unwrap();
+    let ran = c.run_as(&orch, &["limits"], "");
+    assert_eq!(ran.code, 0, "{}", ran.err);
+    assert_eq!(
+        ran.err,
+        format!(
+            "⚠ {}: [land] check (line 5) is not read from a local file: it holds a command or a program the Symphony runs, or decides what lands, and a file no commit records must not change that; it stays in symphony.toml; none of symphony.local.toml is read, the committed settings hold\n",
+            local.display()
+        )
+    );
+    assert!(
+        ran.out
+            .contains("\nlow_volume               3       [limits] low_volume, line 8\n"),
+        "{}",
+        ran.out
+    );
+    assert!(!ran.out.contains("LOCAL"), "{}", ran.out);
+    assert_eq!(store.limits().low_volume, 3);
+    assert_eq!(
+        fs::read_to_string(root.join("symphony.toml")).unwrap(),
+        committed,
+        "the committed file is never written"
+    );
+}

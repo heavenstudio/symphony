@@ -143,7 +143,7 @@ fn open(
                 .ok()
                 .filter(|n| n.is_finite())
                 .ok_or_else(|| format!("TASKS_NOW={text} is not a time in seconds"))?;
-            symphony_board::Store::opening(
+            symphony_board::Store::reading(
                 client,
                 Box::new(move || now),
                 Box::new(symphony_board::sys::pid_alive),
@@ -151,7 +151,7 @@ fn open(
                 &how,
             )
         }
-        None => symphony_board::Store::open_as(client, &how),
+        None => symphony_board::Store::read_as(client, &how),
     }
     .map_err(|e| e.to_string())?;
     // The cap the command line holds starts to, which the agents view and the PULL digest show.

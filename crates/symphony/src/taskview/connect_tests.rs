@@ -6,12 +6,14 @@
 use std::path::{Path, PathBuf};
 
 /// What opens a board, or opens one to write, as the board crate spells it.
-const OPENS: [&str; 10] = [
+const OPENS: [&str; 12] = [
     "Opening::write",
     "Access::Write",
     "Store::open(",
     "Store::open_as(",
     "Store::opening(",
+    "Store::read_as(",
+    "Store::reading(",
     "Store::with(",
     "Store::unchecked",
     "cli::connect(",
@@ -22,7 +24,7 @@ const OPENS: [&str; 10] = [
 /// The one source that opens a board, and the openings it may make: by the opening it is handed,
 /// which is `Opening::read()`.
 const READER: &str = "taskview/connect.rs";
-const READS: [&str; 2] = ["Store::open_as(", "Store::opening("];
+const READS: [&str; 2] = ["Store::read_as(", "Store::reading("];
 
 /// Whether `path` is a test's source, which opens boards as it likes: a `tests.rs` or `*_tests.rs`,
 /// or anything in a `tests` or `testing` folder or a `testing.rs`.

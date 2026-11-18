@@ -22,7 +22,12 @@ pub(in crate::save) struct Receipt {
     terminal: Option<Value>,
 }
 
-struct Claim {
+enum Claim {
+    InFlight,
+    Held(Prepared),
+}
+
+struct Prepared {
     file: Lease,
     fresh: bool,
     preparation_error: Option<String>,
@@ -61,18 +66,47 @@ fn preflight_failure(
     error
 }
 
-fn lock(file: File, path: &Path) -> Result<Lease, Failure> {
-    file.try_lock().map_err(|error| failure(path, error))?;
-    Ok(Lease(file))
+fn lock(file: File, path: &Path) -> Result<Option<Lease>, Failure> {
+    match file.try_lock() {
+        Ok(()) => Ok(Some(Lease(file))),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(error) => Err(failure(path, error)),
+    }
 }
 
-fn existing(root: &Path, identity: &str, path: &Path) -> Result<Option<Claim>, Failure> {
+fn different_text() -> Failure {
+    "this task save identity belongs to different text; check the original save"
+        .to_string()
+        .into()
+}
+
+fn existing(
+    root: &Path,
+    identity: &str,
+    path: &Path,
+    fingerprint: &str,
+) -> Result<Option<Claim>, Failure> {
     match OpenOptions::new().read(true).write(true).open(path) {
-        Ok(file) => Ok(Some(Claim {
-            file: lock(file, path)?,
-            fresh: false,
-            preparation_error: None,
-        })),
+        Ok(mut file) => {
+            // Publication exposes the complete immutable header. Read it through a separate
+            // descriptor while its publisher works, so changed text/scope still refuses at once.
+            let mut header = [0; 64];
+            match file.read_exact(&mut header) {
+                Ok(()) if header != *fingerprint.as_bytes() => return Err(different_text()),
+                Err(error) if error.kind() != std::io::ErrorKind::UnexpectedEof => {
+                    return Err(failure(path, error));
+                }
+                _ => {}
+            }
+            Ok(Some(match lock(file, path)? {
+                Some(file) => Claim::Held(Prepared {
+                    file,
+                    fresh: false,
+                    preparation_error: None,
+                }),
+                None => Claim::InFlight,
+            }))
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) if path.is_dir() => Err(preflight_failure(root, identity, path, error)),
         Err(error) => Err(failure(path, error)),
@@ -101,22 +135,11 @@ fn claim(root: &Path, identity: &str, path: &Path, fingerprint: &str) -> Result<
     let directory = path.parent().expect("a receipt path includes its folder");
     std::fs::create_dir_all(directory)
         .map_err(|error| preflight_failure(root, identity, directory, error))?;
-    if let Some(claim) = existing(root, identity, path)? {
+    if let Some(claim) = existing(root, identity, path, fingerprint)? {
         return Ok(claim);
     }
-    // Publication is serialized only while preparing files; database work holds its own identity lock.
-    let guard_path = directory.join(".publish");
-    let guard = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(&guard_path)
-        .map_err(|error| preflight_failure(root, identity, &guard_path, error))?;
-    let _guard = lock(guard, &guard_path)?;
-    if let Some(claim) = existing(root, identity, path)? {
-        return Ok(claim);
-    }
+    // Each publisher prepares and locks its own complete file. The hard link publishes only
+    // if this identity is absent; a racing loser uses the winner's locked, synced header.
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let part = directory.join(format!(
         ".{identity}-{}-{}",
@@ -130,7 +153,8 @@ fn claim(root: &Path, identity: &str, path: &Path, fingerprint: &str) -> Result<
             .write(true)
             .open(&part)
             .map_err(|error| preflight_failure(root, identity, &part, error))?;
-        let mut file = lock(file, &part)?;
+        let mut file = lock(file, &part)?
+            .ok_or_else(|| failure(&part, "the private receipt is unexpectedly locked"))?;
         let preparation_error = file
             .0
             .write_all(fingerprint.as_bytes())
@@ -147,14 +171,15 @@ fn claim(root: &Path, identity: &str, path: &Path, fingerprint: &str) -> Result<
         match std::fs::hard_link(&part, path) {
             Ok(()) => {
                 sync_directories(root, directory)?;
-                Ok(Claim {
+                Ok(Claim::Held(Prepared {
                     file,
                     fresh: preparation_error.is_none(),
                     preparation_error,
-                })
+                }))
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                existing(root, identity, path)?.ok_or_else(|| failure(path, "receipt disappeared"))
+                existing(root, identity, path, fingerprint)?
+                    .ok_or_else(|| failure(path, "receipt disappeared"))
             }
             Err(error) => Err(preflight_failure(root, identity, path, error)),
         }
@@ -179,12 +204,13 @@ fn canonical(value: &Value) -> Value {
 
 impl Receipt {
     /// Publish a synced fingerprint under its lock; short receipts never initialize again.
+    /// None while another save holds this identity.
     pub(in crate::save) fn open(
         root: &Path,
         identity: &str,
         scope: &str,
         payload: &Value,
-    ) -> Result<Self, Failure> {
+    ) -> Result<Option<Self>, Failure> {
         let path = root
             .join("artifacts/symphony-quick-tasks/.receipts")
             .join(identity);
@@ -192,11 +218,14 @@ impl Receipt {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        let Claim {
+        let Claim::Held(Prepared {
             mut file,
             fresh,
             preparation_error,
-        } = claim(root, identity, &path, &fingerprint)?;
+        }) = claim(root, identity, &path, &fingerprint)?
+        else {
+            return Ok(None);
+        };
         file.0
             .seek(SeekFrom::Start(0))
             .map_err(|error| failure(&path, error))?;
@@ -217,24 +246,22 @@ impl Receipt {
             ));
         }
         if bytes[..64] != *fingerprint.as_bytes() {
-            return Err(
-                "this task save identity belongs to different text; check the original save"
-                    .to_string()
-                    .into(),
-            );
+            return Err(different_text());
         }
         let terminal = if bytes.len() == 64 {
             None
         } else {
             serde_json::from_slice(&bytes[64..]).ok()
         };
-        // A replay can read bytes whose writer could not confirm their durability.
-        file.0.sync_all().map_err(|error| failure(&path, error))?;
-        sync_directories(
-            root,
-            path.parent().expect("a receipt path includes its folder"),
-        )?;
-        Ok(Self {
+        if !fresh {
+            // A replay can read bytes whose writer could not confirm their durability.
+            file.0.sync_all().map_err(|error| failure(&path, error))?;
+            sync_directories(
+                root,
+                path.parent().expect("a receipt path includes its folder"),
+            )?;
+        }
+        Ok(Some(Self {
             file,
             path,
             root: root.into(),
@@ -242,7 +269,7 @@ impl Receipt {
             fingerprint,
             fresh,
             terminal,
-        })
+        }))
     }
 
     /// A completed save or refusal is replayed without reusing its typed text.
@@ -302,6 +329,151 @@ mod tests {
     fn open(root: &Path, payload: &Value) -> Receipt {
         Receipt::open(root, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", payload)
             .unwrap_or_else(|error| panic!("{}", error.error))
+            .expect("receipt is not held")
+    }
+
+    #[test]
+    fn an_in_flight_save_reports_progress_refuses_rebinding_and_then_confirms() {
+        let tree = Tree::new();
+        let payload = json!({"request":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","title":"Task"});
+        let mut receipt = open(&tree.root, &payload);
+        let saves = crate::save::Saves::start(&tree.root);
+        let pending = saves
+            .post("", "/api/quick-task", &payload)
+            .unwrap_or_else(|e| panic!("{}", e.error));
+        assert_eq!(
+            pending,
+            super::super::pending("This task is being saved; checking for confirmation…")
+        );
+        for (scope, payload) in [
+            ("other", payload.clone()),
+            ("", json!({"request":payload["request"],"title":"Other"})),
+        ] {
+            let error = Receipt::open(
+                &tree.root,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                scope,
+                &payload,
+            )
+            .err()
+            .expect("identity cannot be rebound while locked");
+            assert_eq!(error.status, 400);
+            assert!(error.error.contains("different text"), "{}", error.error);
+        }
+        receipt
+            .finish(Ok(json!({"slug":"inbox/task"})))
+            .unwrap_or_else(|e| panic!("{}", e.error));
+        drop(receipt);
+        assert_eq!(
+            saves.post("", "/api/quick-task", &payload).ok(),
+            Some(json!({"slug":"inbox/task"}))
+        );
+        saves.close();
+    }
+
+    #[test]
+    fn distinct_identities_publish_while_another_identity_and_a_publication_lock_are_held() {
+        let tree = Tree::new();
+        let payload = json!({"title":"Task"});
+        let first = open(&tree.root, &payload);
+        let guard = File::create(first.path.parent().unwrap().join(".publish")).unwrap();
+        guard.lock().unwrap();
+        let second = Receipt::open(&tree.root, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "", &payload)
+            .unwrap_or_else(|e| panic!("{}", e.error))
+            .expect("another identity is independent");
+        assert!(second.fresh);
+        assert!(second.completed().is_none());
+        guard.unlock().unwrap();
+    }
+
+    #[test]
+    fn simultaneous_publishers_expose_one_complete_locked_receipt() {
+        let tree = Tree::new();
+        let payload = json!({"title":"Task"});
+        let barrier = std::sync::Barrier::new(8);
+        let results = std::thread::scope(|scope| {
+            let (reported, results) = std::sync::mpsc::channel();
+            let mut releases = Vec::new();
+            for _ in 0..8 {
+                let (release, released) = std::sync::mpsc::channel();
+                releases.push(release);
+                let reported = reported.clone();
+                let (barrier, root, payload) = (&barrier, &tree.root, &payload);
+                scope.spawn(move || {
+                    barrier.wait();
+                    let receipt =
+                        Receipt::open(root, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", payload);
+                    reported
+                        .send(
+                            receipt
+                                .as_ref()
+                                .map(|r| r.as_ref().is_some_and(|r| r.fresh))
+                                .map_err(|e| e.error.clone()),
+                        )
+                        .unwrap();
+                    // Hold the winning lease until every publisher has reported its result.
+                    let _ = released.recv();
+                    drop(receipt);
+                });
+            }
+            let results: Vec<_> = (0..8)
+                .map(|_| {
+                    results
+                        .recv_timeout(test_time::backstop(std::time::Duration::from_secs(10)))
+                        .unwrap_or_else(|e| {
+                            panic!("publisher stalled: {e}; load={:?}", test_time::load())
+                        })
+                })
+                .collect();
+            for release in releases {
+                release.send(()).unwrap();
+            }
+            results
+        });
+        let results: Vec<_> = results.into_iter().map(|r| r.unwrap()).collect();
+        assert_eq!(results.iter().filter(|won| **won).count(), 1);
+        let receipt = open(&tree.root, &payload);
+        assert!(!receipt.fresh);
+        assert!(receipt.completed().is_none());
+        let files: Vec<_> = std::fs::read_dir(receipt.path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(files, ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]);
+    }
+
+    #[test]
+    fn interrupted_private_files_are_ignored_and_partial_outcomes_stay_recoverable() {
+        let tree = Tree::new();
+        let directory = tree.root.join("artifacts/symphony-quick-tasks/.receipts");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join(".aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-interrupted"),
+            "short",
+        )
+        .unwrap();
+        let payload = json!({"title":"Task"});
+        let receipt = open(&tree.root, &payload);
+        assert!(receipt.fresh);
+        let path = receipt.path.clone();
+        drop(receipt);
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(br#"{"slug":"inbox/"#).unwrap();
+        file.sync_all().unwrap();
+        let mut repeated = open(&tree.root, &payload);
+        assert!(!repeated.fresh);
+        assert!(
+            repeated.completed().is_none(),
+            "partial JSON cannot confirm a save"
+        );
+        repeated
+            .finish(Ok(json!({"slug":"inbox/recovered"})))
+            .unwrap_or_else(|e| panic!("{}", e.error));
+        drop(repeated);
+        assert_eq!(
+            open(&tree.root, &payload).completed().unwrap().ok(),
+            Some(json!({"slug":"inbox/recovered"}))
+        );
     }
 
     #[test]

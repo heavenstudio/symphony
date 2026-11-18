@@ -157,19 +157,30 @@ fn a_land_waits_for_another_past_its_timeout_naming_it_and_lands_once_it_ends() 
     held.write_all(b"the land of sim/fall (pid 4242)").unwrap();
     let before = head(&r.root, "main");
     let said = Arc::new(Mutex::new(Vec::new()));
+    // The land's clock, an hour past its timeout once it waits: its wait reads no clock, and each
+    // of its own commands counts its second from the hour it starts in, so none can run past it
+    // however long a loaded machine takes over it.
+    let began = Instant::now();
+    let past = AtomicBool::new(false);
+    let clock = || {
+        let hours = u64::from(past.load(Ordering::SeqCst));
+        began + Duration::from_secs(3600 * hours)
+    };
     let line = std::thread::scope(|scope| {
         let other = r.board.other();
         let env = r.env(&r.root);
         let shared = Shared(Arc::clone(&said));
         let orch = people.orch.clone();
+        let clock = &clock;
         let waiting = scope.spawn(move || {
             let mut out = shared;
-            land(&other, &env, SLUG, &orch, None, &mut out).map_err(refusal)
+            land_with_clock(&other, &env, SLUG, &orch, None, &mut out, clock).map_err(refusal)
         });
         wait_for(|| {
             String::from_utf8_lossy(&said.lock().unwrap())
                 .contains("waiting for the land of sim/fall (pid 4242) to finish")
         });
+        past.store(true, Ordering::SeqCst);
         // Past the land's timeout, which bounds its check and not its wait, it waits on.
         #[expect(
             clippy::disallowed_methods,

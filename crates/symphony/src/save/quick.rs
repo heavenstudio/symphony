@@ -33,7 +33,13 @@ impl Saves {
                 .into());
             }
             let identity = quick_task::identity(payload)?;
-            let mut receipt = quick_task::Receipt::open(&self.root, &identity, scope, payload)?;
+            let Some(mut receipt) =
+                quick_task::Receipt::open(&self.root, &identity, scope, payload)?
+            else {
+                return Ok(quick_task::pending(
+                    "This task is being saved; checking for confirmation…",
+                ));
+            };
             if let Some(result) = receipt.completed() {
                 return result;
             }

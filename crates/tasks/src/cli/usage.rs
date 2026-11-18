@@ -504,7 +504,9 @@ thresholds; [agents.models] names the model of the orchestrator, executor,
 reviewer and assessor (the smallest its agent offers unwritten: Claude's
 haiku). A key of [limits] this build does not know is listed, left out. An
 edit to the file holds from the next command, and on a running server from
-its next read.
+its next read. symphony.local.toml beside it, which git does not version,
+is read after it: a key of [agents] launch, [agents.models] or [limits] it
+writes holds in the committed one's place, named with that file and its line.
 
 options:
   -h, --help  show this help message and exit

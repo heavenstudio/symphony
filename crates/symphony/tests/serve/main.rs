@@ -272,7 +272,10 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
         ),
         ("blocks", "usage: symphony blocks [--root ROOT]"),
         ("settings-check", "usage: symphony settings-check [DIR]"),
-        ("model", "usage: symphony model ROLE MODEL"),
+        (
+            "model",
+            "usage: symphony model ROLE MODEL [--agent AGENT] [--assessor MODEL] [--local]",
+        ),
         (
             "triage",
             "usage: symphony triage [-h] [--root ROOT] {stats,queue} [n]",
