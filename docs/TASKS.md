@@ -609,6 +609,63 @@ every server started is one of your own, on a clone, on a port of your own.
 The first recovery done this way, with that day's numbers, is in
 [history](history/board-went-back-2026-11-12.md).
 
+### A board that was copied or restored
+
+A task's number and version name it along one history of the board only. A copy of the whole
+board from an older dump keeps the numbers the dump held, gives the ones made since to other
+tasks, and starts every version again; so does putting a database's files back. What a program
+outside the board keeps of a task to write it again later, a mapping to an issue elsewhere or the
+base of an edit, is therefore bound to the board's **recovery generation**
+(`crates/tasks/src/store/recovery.rs`): a text the database makes, in the record
+`recovery:board`, replaced in the transaction of every copy of the whole board and never by an
+ordinary write, and in no dump.
+
+- **The token.** `Store::bound` reads a task's title and brief with its token, in one statement:
+  `{"compat": 1, "generation": "…", "id": N, "version": N}`, the format's version, the board's
+  generation, and the task's number and version.
+- **The bound write.** `Store::amend_bound` retitles and links a task as `Store::amend` does, but
+  only the task its token names: in the write's own transaction, before anything is written, it
+  is refused unless the board holds the token's generation and the task is the one of that
+  number at that version. A refusal writes nothing, no title, link, line on the thread or act of
+  its session, and is never read again and tried on what the board holds now: the caller reads
+  the task again. The task as the write left it, with its next token, is that transaction's
+  answer. Every other write, `amend` among them, is as it was.
+- **A copy.** `tasks-copy` and every `Store::copy` replace the generation in the transaction that
+  replaces the rows, so a token read before a copy is refused after it, and one read before a
+  copy that failed still holds. A build of a schema before 22 copies without replacing it, which
+  is why the generation came with a schema step: such a build is refused the board.
+
+The generation is a row of the database, so putting the database's files back puts it back too.
+What tells that apart is the board's **recovery binding**, outside the database's data: the
+generation the board is bound to, in `symphony/tasks/recovery/DATABASE.json` in the git common
+dir, a file for each database of the board's server, published whole and removed to revoke. A
+bound read or write is refused unless the binding names the generation the database holds, so a
+board never bound, one revoked and one whose binding and database disagree all refuse. `just tasks
+recovery` says which it is, `just tasks recovery revoke` binds the board to none, and `just tasks
+recovery rebind` revokes, replaces the generation in one transaction and only then binds the
+board to the new one. A rebind never adopts the generation it found, so one cut short anywhere
+leaves the board refusing, and is run again. `revoke` and `rebind` change the project's own board
+only from its main checkout; a scratch database (`--database NAME`) has a file of its own.
+
+**Putting a database's files back**, from a snapshot or a recovered clone
+([above](#a-board-that-went-back)), is in this order: `just tasks recovery revoke` first, before
+the restored data is in place and served; the swap, under the hold; then, once the board is the
+one to keep, `just tasks recovery rebind`. A copy made by a store that holds no binding (a
+scratch program's, `tasks-copy`) leaves the binding naming the generation before it, which
+refuses until a rebind. A PostgreSQL restore into a new board
+([POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)) revokes that board's bindings itself
+before its data is in place.
+
+The binding is this machine's file. A store is handed its authority and finds none by itself
+(`Store::recovering`, the `recovery::Authority` trait): a board reached by `TASKS_SERVER` alone
+has no folder here and so none, and a board several machines write needs an authority they all
+read, which its deployer supplies. With none, every bound read and write is refused in words
+that say so.
+
+Two things are not told apart, and nothing here claims to: files put back without the revoke
+where no copy came between, which hold the generation the binding still names; and a database
+and its binding both put back to an older pair that agree.
+
 ## Sessions
 
 Every agent that works from the board has a **handle** (`amber-heron`), a
