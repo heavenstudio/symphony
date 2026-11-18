@@ -1324,7 +1324,8 @@ project's own, and nothing here makes a request, keeps a credential or a mapping
   task has no other name to change: no call renames a slug. It names the task only along one
   history of the board, never by itself across a copy or a restore, which give numbers again
   ([above](#a-board-that-was-copied-or-restored)): a program keeps it with the generation it was
-  read under, which is the token.
+  read under, which is the token. `just tasks show`, `list` and `search` print that same record
+  under `--json` (`crates/tasks/src/cli/shape.rs`), so each task there carries its `id` too.
 - **`bound`**, `{"slug": S}`: the task's title and brief and its token, `Store::bound`'s answer,
   `{"bound": {"compat": 1, "generation": "…", "id": N, "version": N}, "title": "…", "body": "…"}`.
 - **`edit_bound`**, `{"slug": S, "bound": TOKEN, "by": HANDLE}` with any of `"title"`, `"body"`
