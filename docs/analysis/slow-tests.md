@@ -1,9 +1,9 @@
 # The slow tests, reviewed
 
 What the slowest test binaries of the release run spend their time on, what each slow test or
-group proves that no other does, and whether it is kept, made faster, merged or removed. The owner
-asked for it on 2026-11-18: "a review of the slow tests to see if they truly add value, if they can
-be made faster or merged into other tests". This page changes no test. Each batch of changes it
+group proves that no other does, and whether it is kept, made faster, merged or removed. The ask
+and its words are on the thread of the board task `tests/slow-tests-reviewed`. This page changes
+no test. Each batch of changes it
 proposes is a board task named in [the ranking](#the-ranking), and each fact about a test names
 the test, so a reader can check it.
 
@@ -22,8 +22,8 @@ binaries were reviewed: `sweep`, `perf`, `browser`, the board's `server`, `relea
   six test threads (`tools/cargo.sh` sets `RUST_TEST_THREADS` to 6), on 16 cores, and these tests'
   work is mostly child processes: git, `lsof`, `ps`, the `tasks` binary, SurrealDB servers, Chrome.
   A process a test no longer starts is saved twice, once for itself and once for every test beside
-  it. [The lanes](#what-the-lanes-do-to-each-other) says what follows for the two tasks that
-  reshape the lanes.
+  it. [The lanes](#what-the-lanes-do-to-each-other) says what follows for the task that gives
+  the run one scheduler.
 - **Few tests are worthless.** Of 1,078 tests, 11 are proposed for removal, each with the test
   that already proves the same thing named beside it, and about 25 for a merge into another.
   The suite's slowness is not redundancy.
@@ -93,11 +93,13 @@ and every lane is a `cargo test` with six threads. Forty-eight test threads, and
 each starts, share 16 cores. The three binaries measured alone ran 2.4 to 4.8 times faster than in
 the release run.
 
-Two tasks already reshape the lanes: `tools/test-lanes-split-slow-lanes` rebalances them and
-`tools/nextest-runs-the-tests` gives the run one scheduler. What this review adds for both:
+`tools/nextest-runs-the-tests` gives the run one scheduler over every binary, and is the open
+task that reshapes the lanes; `tools/test-lanes-split-slow-lanes`, which would have rebalanced
+the hand-made lanes, was cancelled in its favour. What this review adds for it:
 
-- A lane's length is not a property of its tests alone. Splitting a long lane into two that run
-  side by side adds load to every other lane; the three ratios above are what that costs.
+- A lane's length is not a property of its tests alone. A long lane split into two that run side
+  by side adds load to every other; the three ratios above are what that costs, and why the
+  rebalance alone would not have shortened the step by what it moved.
 - One scheduler over every binary, sized to the cores, is where the contention ends. Under
   nextest the per-process fixtures named above are made once per test, not once per binary, so
   `sweep`'s template (six git commands) is cheap, and `perf`'s board (57 s alone) and the store
@@ -106,7 +108,7 @@ Two tasks already reshape the lanes: `tools/test-lanes-split-slow-lanes` rebalan
 - `perf` is the lane load hurts most, since it waits for its server to go quiet before and after
   every command it bills. It is the one to run when little else does.
 
-No task is filed for this: both tasks are open, and the note is on their threads.
+No task is filed for this: the nextest task is open, and the note is on its thread.
 
 ## sweep
 
@@ -664,7 +666,7 @@ at the same load.
 - **`cli`, `store`, `launch`, `launcher` and `child_guard`** of the board (997 s of the `board`
   lane, 2,380 tests): `cli` took 423 s for 667 tests and `store` 322 s for 1,349, each test cheap and the sum
   long. They were not among the six named, and the `board` lane stays the step's longest until
-  they are read or the lane is split.
+  they are read or one scheduler runs them beside the rest.
 - **`after_worktrees`** (168 s, 61 tests), and `after_commit` and `after_publication`, which the
   run's log shows run again a test a process (4 to 24 s each) beside their whole runs.
 - **Every test of `polish`, `restored` and `look_parity`** in `browser`, read by their neighbours
