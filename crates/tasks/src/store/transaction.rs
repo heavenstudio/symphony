@@ -234,7 +234,16 @@ pub(super) fn on_postgres(
             let lists: Vec<(&str, Vec<&str>)> = (lists.iter())
                 .map(|(key, at)| (*key, column(at).unwrap_or_default()))
                 .collect();
-            let rest = rest.and_then(|at| answers.get(at)?.value());
+            let rest = match rest {
+                Some(at) => Some(answers.get(*at).and_then(pg::Answer::value).ok_or_else(
+                    || {
+                        DbError::Failed(
+                            "PostgreSQL answered a read's lists without its fields".into(),
+                        )
+                    },
+                )?),
+                None => None,
+            };
             postgres::joined(&lists, rest).into()
         }
     };

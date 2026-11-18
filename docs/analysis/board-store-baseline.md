@@ -492,11 +492,13 @@ first while the meter was being set up, peaked at 1,589.9 and 1,719.7 MiB (load 
 33 → 47); their reports were not kept.
 
 - **Thirty sessions peak at 377 to 419 MiB**, where main peaked at 1,590 to 1,846: under the
-  512 MiB target in each of three runs, and under SurrealDB's 448 of the paired run above.
+  512 MiB target in each of three runs. SurrealDB was not run that day: its 448 MiB is the
+  paired run's above, on another export, build and load.
 - **Ten sessions peak at 161 to 165 MiB**, where main peaked at 601 to 605.
-- **The CPU did not move with it.** The server's is 54.6 to 57.3 s against 56.2 to 62.8, with one
+- **The CPU is not shown equal.** The server's is 54.6 to 57.3 s against 56.2 to 62.8, with one
   run of the change at 83.7 s that the other two do not repeat. The `tasks` processes' is 57.3 to
-  65.9 s against 50.0 to 57.4, within the spread of the runs and leaning higher; a `pull`'s own is
+  65.9 s against 50.0 to 57.4, leaning higher: two runs of main and three of the change under
+  loads of 23 to 87 cannot say by how much; a `pull`'s own is
   708 to 774 ms against 554 to 726.
 - **The peak is the meter's, as before**: a reading in every sixteen commands, so a backend that
   lived between two readings is not in it, and a run is seconds long.
@@ -511,8 +513,9 @@ sessions, the same seed and builds:
 | changed | 0 | 207.0 | 766.0 | 1,787.2 | 317.4 | 113 | 4,354.1 | 337.4 s | 460.9 s | 109.1 s | 15 → 71 |
 | changed | 0 | 205.6 | 730.8 | 1,727.7 | 315.8 | 103 | 4,188.3 | 359.8 s | 498.7 s | 126.5 s | 25 → 72 |
 
-The peak there is an eighth of what it was, and half of SurrealDB's 3.3 GiB on the fixture of the
-section above; it is not under 512 MiB, and at that size it cannot be by the reads alone: the
+The peak there is an eighth of what it was. SurrealDB was not run on this copy; its 3.3 GiB is
+the figure of the section above's fixture, another board, and no paired comparison. It is not
+under 512 MiB, and at that size it cannot be by the reads alone: the
 server opens at 207 MiB, its shared buffers full of the board, and thirty backends then hold
 about 50 MiB each. What a backend still holds there, read from one `pull` replayed a statement
 at a time on such a board: 16 to 21 MiB after its first read of the board, whose sorted rows are

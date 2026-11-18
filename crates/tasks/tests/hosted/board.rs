@@ -171,6 +171,23 @@ fn worked(store: &Store) -> String {
             .collect();
         said.push_str(&format!("{thread:?}\n"));
     }
+    // The whole board, read as a statement for each of its lists in one transaction
+    // (`Pg::Listed`): every task and session in the board's order.
+    let board = store.board().unwrap();
+    let tasks: Vec<(&str, &str)> = (board.tasks.iter())
+        .map(|task| (task.slug.as_str(), task.status.as_str()))
+        .collect();
+    let sessions: Vec<&str> = (board.sessions.iter())
+        .map(|session| session.handle.as_str())
+        .collect();
+    said.push_str(&format!(
+        "{tasks:?} {sessions:?} {}\n",
+        board.latest_message
+    ));
+    let inbox: Vec<String> = (store.inbox("amber-heron").unwrap().into_iter())
+        .map(|message| message.text)
+        .collect();
+    said.push_str(&format!("{inbox:?}\n"));
     said
 }
 
@@ -183,6 +200,10 @@ fn the_same_work_is_answered_alike_on_hosted_16_hosted_18_and_the_local_board() 
     };
     let local = worked(&Fixture::on(Backend::PostgreSql, seed()).store);
     assert!(local.contains("ecole: [\"sim/jump@"), "{local}");
+    assert!(
+        local.contains("(\"sim/jump\", \"in_progress\")") && local.contains("\"amber-heron\""),
+        "{local}"
+    );
     let mut generations = Vec::new();
     for major in MAJORS {
         let project = cluster::cluster(major).project();

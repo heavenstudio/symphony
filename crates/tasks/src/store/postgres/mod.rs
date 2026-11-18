@@ -350,13 +350,18 @@ pub(in crate::store) fn joined(lists: &[(&str, Vec<&str>)], rest: Option<&str>) 
             .first()
             .map_or_else(|| "[]".into(), |(_, items)| list(items));
     };
-    let mut text = String::from("{");
-    for (key, items) in lists {
-        text.push_str(&format!("\"{key}\":{},", list(items)));
-    }
-    // The other fields, after their object's opening brace.
-    text.push_str(rest.strip_prefix('{').unwrap_or(rest));
-    text
+    let keyed: Vec<String> = (lists.iter())
+        .map(|(key, items)| format!("\"{key}\":{}", list(items)))
+        .collect();
+    // The other fields, after their object's opening brace: none of them is an object that
+    // closes at once, which takes no comma before it.
+    let fields = rest.trim_start().strip_prefix('{').unwrap_or(rest);
+    let between = if keyed.is_empty() || fields.trim_start().starts_with('}') {
+        ""
+    } else {
+        ","
+    };
+    format!("{{{}{between}{fields}", keyed.join(","))
 }
 
 /// The rows of `from` read as [`row`] reads one, in `order`, as a list an item a row: [`rows`]
@@ -723,6 +728,13 @@ mod tests {
             joined(&[("tasks", vec!["1"])], Some(r#"{"a": []}"#)),
             r#"{"tasks":[1],"a": []}"#
         );
+        // An object of no other fields, and one of no lists, are still one object.
+        assert_eq!(
+            joined(&[("tasks", vec![]), ("roles", vec!["2"])], Some("{}")),
+            r#"{"tasks":[],"roles":[2]}"#
+        );
+        assert_eq!(joined(&[], Some(r#"{"a": 1}"#)), r#"{"a": 1}"#);
+        assert_eq!(joined(&[], Some("{}")), "{}");
     }
 
     /// `rule`'s block, which a rule's write is.
