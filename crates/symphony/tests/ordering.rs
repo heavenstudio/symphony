@@ -287,3 +287,71 @@ fn shared_report_sorts_match_full_payloads_and_disclose_their_cost() {
             .then_with(|| a.slug.cmp(&b.slug))
     });
 }
+
+#[test]
+fn cold_presentation_sorts_preserve_full_ties_and_report_cost() {
+    fn compare<T: Clone + std::fmt::Debug + PartialEq>(
+        label: &str,
+        rows: Vec<T>,
+        order: impl Fn(&T, &T) -> std::cmp::Ordering,
+    ) {
+        for count in [0, 1, rows.len()] {
+            let mut old = rows[..count].to_vec();
+            let mut shared = old.clone();
+            let (_, old_time) = test_time::cpu::spent(|| old.sort_by(&order));
+            let (_, shared_time) =
+                test_time::cpu::spent(|| symphony_board::order::sort_by(&mut shared, &order));
+            assert_eq!(shared, old, "{label}");
+            eprintln!(
+                "{label} rows={count}: old={old_time:?} shared={shared_time:?}, positions={} bytes",
+                count * std::mem::size_of::<usize>()
+            );
+        }
+    }
+    let names = ["Alpha", "alpha", "Ä", "ä", "İ", "i\u{307}", "東京"];
+    compare(
+        "folder/media lowercase",
+        (0..512)
+            .map(|i| (names[i % names.len()].to_string(), i))
+            .collect(),
+        |a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()),
+    );
+    compare(
+        "branch names",
+        (0..512)
+            .map(|i| symphony::branches::Tree {
+                branch: format!("branch-{}", i % 17),
+                path: format!("/tree/{i}").into(),
+            })
+            .collect(),
+        |a, b| a.branch.cmp(&b.branch),
+    );
+    let rank = |name: &str| match name {
+        "settings" => 0,
+        "rules" => 1,
+        _ => 2,
+    };
+    compare(
+        "instruction labels",
+        (0..512)
+            .map(|i| ["settings", "rules", "skill z", "skill A", "skill É"][i % 5].to_string())
+            .collect(),
+        |a, b| (rank(a), a).cmp(&(rank(b), b)),
+    );
+    compare(
+        "decision dates",
+        (0..512)
+            .map(|i| {
+                (
+                    if i % 3 == 0 {
+                        String::new()
+                    } else {
+                        format!("2026-09-{:02}", i % 28 + 1)
+                    },
+                    i,
+                )
+            })
+            .collect(),
+        |a, b| b.0.cmp(&a.0),
+    );
+}
