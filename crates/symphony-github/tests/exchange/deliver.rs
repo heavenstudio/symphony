@@ -121,6 +121,7 @@ impl Delivery {
             repository: vec![self.rig.dir.0.join("repository")],
         };
         let mut out = Vec::new();
+        let _alone = crate::no_start();
         let code = deliver::run(&ctx, &self.remote, verb, &file, &mut out).unwrap();
         assert_eq!(code, 0);
         let out = String::from_utf8(out).unwrap();
