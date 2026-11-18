@@ -120,6 +120,10 @@ pub(in crate::store) enum Pg<'a> {
     Script(Cow<'a, str>, Option<Cow<'a, str>>),
     /// Statements that take no variables, sent as one simple query: a migration's.
     Simple(Cow<'a, str>),
+    /// A PL/pgSQL block over `v` answering its own `board_answer`, which the server ends once it
+    /// has run this many milliseconds (`statement_timeout`, for its transaction alone): a block
+    /// that may outlast its caller's wait, and must not commit after the caller gave up on it.
+    Within(u64, Cow<'a, str>),
 }
 
 impl<'a> Pg<'a> {
@@ -161,7 +165,7 @@ pub(in crate::store) enum Request {
 /// which answers nothing), where every statement after it reads them.
 pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request> {
     let mut steps = Vec::new();
-    let set = guarded || matches!(statement, Pg::Script(..));
+    let set = guarded || matches!(statement, Pg::Script(..) | Pg::Within(..));
     if set {
         steps.push((VARS.to_string(), true));
     }
@@ -173,6 +177,11 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
         Pg::Nothing => return None,
         Pg::Simple(sql) => return Some(Request::Simple(sql.to_string())),
         Pg::Read(expression) => steps.push((answered(expression, from), !set)),
+        Pg::Within(millis, block) => {
+            steps.push((within(*millis), false));
+            steps.push((script(block), false));
+            steps.push((ANSWER.to_string(), false));
+        }
         Pg::Script(block, then) => {
             steps.push((script(block), false));
             match then {
@@ -188,6 +197,13 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
 /// The variables, set for the transaction, where every later statement reads them ([`SET`]): a
 /// row of no columns is all it answers.
 const VARS: &str = "SELECT FROM set_config('board.vars', $1::text, true)";
+
+/// The statement that bounds the one after it: the server cancels a statement of this
+/// transaction that runs longer than `millis`, and its transaction with it. The server times
+/// each statement of a request from its own start, so the bound is the next block's.
+fn within(millis: u64) -> String {
+    format!("SELECT FROM set_config('statement_timeout', '{millis}', true)")
+}
 
 /// The variables as a statement binds them, its `$1`: a read sent alone.
 const BOUND: &str = "$1::jsonb";
@@ -374,6 +390,20 @@ mod tests {
         assert_eq!(steps.len(), 3);
         assert_eq!(binding(&steps), [0], "a guarded read binds them once too");
         assert!(steps[2].0.contains(SET), "{}", steps[2].0);
+        let Some(Request::Steps { steps, answer }) =
+            request(&Pg::Within(270_000, "NULL;".into()), true)
+        else {
+            panic!("a bounded block is steps");
+        };
+        assert_eq!(steps.len(), 5);
+        assert_eq!(binding(&steps), [0]);
+        assert_eq!(
+            steps[2].0,
+            "SELECT FROM set_config('statement_timeout', '270000', true)",
+            "the bound is set after the guard and right before the block it bounds"
+        );
+        assert!(steps[3].0.contains("\nNULL;\n"), "{}", steps[3].0);
+        assert_eq!((steps[4].0.as_str(), answer), (ANSWER, 4));
         assert_eq!(request(&Pg::Nothing, true), None);
         assert_eq!(
             request(&Pg::Simple("CREATE TABLE t ();".into()), false),

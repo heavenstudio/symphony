@@ -934,8 +934,9 @@ fn surreal_run(options: &Options, surreal: &Path, tasks: &Path) -> Result<(), Fa
             let dump = Dump::from_json(&std::fs::read_to_string(file)?)?;
             board = json!({"tasks": dump.tasks.len(), "messages": dump.messages.len(),
                 "sessions": dump.sessions.len()});
+            let began = Instant::now();
             open(&making)?.copy(&dump)?;
-            eprintln!("board_load: copied {board}");
+            eprintln!("board_load: copied {board} in {:.1} s", began.elapsed().as_secs_f64());
         }
         set_up(options, open(&making)?)
     })();
@@ -982,8 +983,9 @@ fn postgresql_board_run(options: &Options, programs: &Path, tasks: &Path) -> Res
     if let Some(file) = &options.dump {
         let dump = Dump::from_json(&std::fs::read_to_string(file)?)?;
         board = json!({"tasks": dump.tasks.len(), "messages": dump.messages.len(), "sessions": dump.sessions.len()});
+        let began = Instant::now();
         store.copy(&dump)?;
-        eprintln!("board_load: copied {board}");
+        eprintln!("board_load: copied {board} in {:.1} s", began.elapsed().as_secs_f64());
     }
     let sessions = set_up(options, store)?;
     pg.stop().map_err(|why| why.to_string())?;

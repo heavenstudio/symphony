@@ -9,7 +9,8 @@ use symphony_board::rows::{
     SessionRow, TaskRow, TaskSessionRow, UsageRow,
 };
 use symphony_board::sys::{self, Command};
-use symphony_board::{Error, Store, cli, copy_main};
+use std::time::Duration;
+use symphony_board::{Database, Error, Store, cli, copy_main};
 
 /// One row of every table, each optional column both set and not, in key order.
 pub fn everything() -> Dump {
@@ -473,6 +474,174 @@ on_both! {
     }
 }
 
+/// A board whose senders each said several things: posts in turn on two threads, one number on
+/// both threads (a copy takes one `sid` on two), a verdict, and the board's own lines after a
+/// sender's last word, which are nobody's word, one sender having no other.
+fn many_words() -> Dump {
+    let mut seed = Seed::default()
+        .session("amber-heron")
+        .session("brisk-finch")
+        .task("sim/a", "ready")
+        .task("sim/b", "ready");
+    let line = |id: i64, slug: &str, sender: &str, kind: &str| MessageRow {
+        id,
+        slug: slug.into(),
+        sender: sender.into(),
+        kind: kind.into(),
+        text: format!("{kind} {id} on {slug}"),
+        ts: NOW + id as f64,
+        ..Default::default()
+    };
+    let mut messages: Vec<MessageRow> = (1..=40)
+        .map(|id| {
+            let slug = if id % 3 == 0 { "sim/b" } else { "sim/a" };
+            let sender = if id % 2 == 0 { "amber-heron" } else { "brisk-finch" };
+            line(id, slug, sender, "msg")
+        })
+        .collect();
+    messages.extend([
+        // The greatest number twice: the word is the one on the greater slug.
+        line(50, "sim/a", "amber-heron", "msg"),
+        line(50, "sim/b", "amber-heron", "msg"),
+        line(51, "sim/a", "amber-heron", "system"),
+        line(52, "sim/a", "brisk-finch", "verdict"),
+        line(53, "sim/b", "brisk-finch", "system"),
+        line(54, "sim/b", "board", "system"),
+    ]);
+    messages.sort_by(|a, b| (a.id, &a.slug).cmp(&(b.id, &b.slug)));
+    seed.dump.messages = messages;
+    seed.dump
+}
+
+/// Each sender's last word on the board, as `said` holds it: its row there by the sender, read
+/// as it is, and no row for anyone else.
+fn said(f: &Fixture, senders: &[&str]) -> Vec<serde_json::Value> {
+    let raw = f.store.raw();
+    assert_eq!(raw.table("said").count().unwrap(), senders.len() as u64);
+    (senders.iter())
+        .map(|sender| raw.row("said", serde_json::json!([sender])).get().unwrap())
+        .collect()
+}
+
+on_both! {
+    fn a_copy_leaves_each_senders_last_word_as_its_messages_one_by_one_would(backend: Backend) {
+        let f = Fixture::on(backend, Seed { dump: many_words() });
+        let word = |sid: i64, slug: &str| serde_json::json!({"sid": sid, "slug": slug});
+        assert_eq!(
+            said(&f, &["amber-heron", "brisk-finch"]),
+            [word(50, "sim/b"), word(52, "sim/a")],
+            "the greatest number, then the greater slug, of its posts and verdicts alone"
+        );
+        let last = f.store.last_messages().unwrap();
+        assert_eq!(last["amber-heron"].text, "msg 50 on sim/b");
+        assert_eq!(last["brisk-finch"].text, "verdict 52 on sim/a");
+        // The words are kept from then on as every post keeps them.
+        f.store.say("sim/a", "amber-heron", "after the copy", None).unwrap();
+        assert_eq!(said(&f, &["amber-heron", "brisk-finch"])[0], word(55, "sim/a"));
+        // A copy refused at its last message leaves every word where it was, and they are kept
+        // after it as before.
+        let mut bad = many_words();
+        bad.messages.last_mut().unwrap().kind = "shout".into();
+        bad.messages.retain(|m| m.sender != "brisk-finch");
+        assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
+        assert_eq!(
+            said(&f, &["amber-heron", "brisk-finch"]),
+            [word(55, "sim/a"), word(52, "sim/a")]
+        );
+        f.store.say("sim/b", "brisk-finch", "after the refusal", None).unwrap();
+        assert_eq!(said(&f, &["amber-heron", "brisk-finch"])[1], word(56, "sim/b"));
+        // A board copied with fewer senders holds no word of the ones it lost.
+        let mut fewer = many_words();
+        fewer.messages.retain(|m| m.sender != "brisk-finch");
+        f.store.copy(&fewer).unwrap();
+        assert_eq!(said(&f, &["amber-heron"]), [word(50, "sim/b")]);
+    }
+}
+
+/// The PostgreSQL client of `f`'s board, for a statement of the test's own.
+fn postgresql_of(f: &Fixture) -> symphony_board::pg::Client {
+    match f.other_database() {
+        Database::PostgreSql(client) => client,
+        Database::SurrealDb(_) => panic!("this board is on SurrealDB"),
+    }
+}
+
+/// A copy the server ends (as its limit ends one, here by a trigger that raises the same
+/// condition at the deliveries) is rolled back whole and says in one line how far it was.
+#[test]
+fn a_postgresql_copy_the_server_ends_says_the_rows_it_reached_and_leaves_the_board() {
+    let f = Fixture::on(Backend::PostgreSql, Seed { dump: many_words() });
+    let client = postgresql_of(&f);
+    client
+        .simple(
+            "CREATE FUNCTION fixture_ended() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN RAISE EXCEPTION USING ERRCODE = 'query_canceled', \
+                 MESSAGE = 'canceling statement due to statement timeout'; END $$; \
+             CREATE TRIGGER fixture_ended BEFORE INSERT ON delivery \
+             FOR EACH STATEMENT EXECUTE FUNCTION fixture_ended();",
+        )
+        .unwrap();
+    let generation = f.store.recovery_generation().unwrap();
+    let words = said(&f, &["amber-heron", "brisk-finch"]);
+    match f.store.copy(&everything()) {
+        Err(Error::Db(why)) => assert_eq!(
+            why,
+            "the copy did not finish in 270 s and was ended, the board left as it was: it had \
+             copied 2 of task, 2 of link, 2 of session, 2 of role, 2 of message and was at the \
+             1 of delivery"
+        ),
+        other => panic!("expected the copy ended, got {other:?}"),
+    }
+    assert_eq!(f.store.dump().unwrap(), many_words());
+    assert_eq!(said(&f, &["amber-heron", "brisk-finch"]), words);
+    assert_eq!(f.store.recovery_generation().unwrap(), generation);
+    // The board takes a copy as before once nothing ends it.
+    client.simple("DROP TRIGGER fixture_ended ON delivery").unwrap();
+    f.store.copy(&everything()).unwrap();
+    assert_eq!(f.store.dump().unwrap(), everything());
+    assert_ne!(f.store.recovery_generation().unwrap(), generation);
+}
+
+/// A copy that outlasts its caller's wait is ended by the server before the caller stops
+/// waiting, so it never replaces the board after the caller was told it failed. The copy is held
+/// at its first insert by a lock the test holds, for as long as the test holds it; once the lock
+/// is let go and no backend is at work, the board is the one it was.
+#[test]
+fn a_postgresql_copy_that_outlasts_its_callers_wait_never_replaces_the_board() {
+    let f = Fixture::on(Backend::PostgreSql, Seed { dump: everything() });
+    let holder = postgresql_of(&f);
+    holder
+        .simple(
+            "CREATE FUNCTION fixture_held() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN PERFORM pg_advisory_xact_lock(7); RETURN NULL; END $$; \
+             CREATE TRIGGER fixture_held BEFORE INSERT ON task \
+             FOR EACH STATEMENT EXECUTE FUNCTION fixture_held(); \
+             SELECT pg_advisory_lock(7);",
+        )
+        .unwrap();
+    let impatient = Store::opening_on(
+        postgresql_of(&f).waiting(Duration::from_secs(4)).into(),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        "this-host",
+        &symphony_board::Opening::write(),
+    )
+    .unwrap();
+    let generation = f.store.recovery_generation().unwrap();
+    assert!(matches!(impatient.copy(&many_words()), Err(Error::Db(_))));
+    holder.simple("SELECT pg_advisory_unlock(7)").unwrap();
+    let at_work = "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
+                   AND pid <> pg_backend_pid() AND state <> 'idle'";
+    test_time::wait::until_true(
+        "every other backend of the board's database at rest",
+        test_time::backstop(Duration::from_secs(30)),
+        || holder.simple(at_work).unwrap()[0].value() == Some("0"),
+    )
+    .unwrap();
+    assert_eq!(f.store.dump().unwrap(), everything());
+    assert_eq!(f.store.recovery_generation().unwrap(), generation);
+}
+
 /// A board bigger than the server takes in one request (4 MiB): 1200 messages of 4 KiB each.
 fn a_big_board() -> Dump {
     let mut seed = Seed::default()
@@ -600,6 +769,34 @@ fn on_postgresql_a_big_board_is_copied_in_one_request_and_refused_whole() {
     bad.tasks[0].title = "Not this one".into();
     assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
     assert_eq!(f.store.dump().unwrap(), a_big_board());
+}
+
+/// What a copy that ended before its cleanup left staged, or one whose cleanup failed, is
+/// cleared by the next copy before it stages, whether that copy is kept or refused.
+#[test]
+fn a_copy_clears_the_staging_an_earlier_copy_left() {
+    let f = Fixture::new(Seed { dump: everything() });
+    let leave = || {
+        (f.store.client())
+            .query(
+                "DEFINE TABLE copy_00000000deadbeef_task SCHEMALESS; \
+                 DEFINE TABLE copy_00000000deadbeef_message SCHEMALESS; \
+                 INSERT INTO copy_00000000deadbeef_message [{ row: { text: 'left' } }];",
+                serde_json::json!({}),
+            )
+            .unwrap();
+        assert_eq!(tables(&f).len(), BOARD_TABLES.len() + 2);
+    };
+    leave();
+    f.store.copy(&many_words()).unwrap();
+    assert_eq!(tables(&f), BOARD_TABLES);
+    assert_eq!(f.store.dump().unwrap(), many_words());
+    leave();
+    let mut bad = everything();
+    bad.messages[0].kind = "shout".into();
+    assert!(matches!(f.store.copy(&bad), Err(Error::Db(_))));
+    assert_eq!(tables(&f), BOARD_TABLES);
+    assert_eq!(f.store.dump().unwrap(), many_words());
 }
 
 #[test]

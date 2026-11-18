@@ -5,17 +5,21 @@ use super::postgres::{self, Pg};
 use super::statement::both;
 use super::surreal::copy as sql;
 use super::transaction::Run;
+use super::database::Database;
 use super::{Error, Store, values};
 use crate::cbor;
 use crate::rows::Dump;
+use crate::server::Storage;
 use serde_json::{Value, json};
-use std::fmt::Write as _;
 use std::hash::{BuildHasher, RandomState};
+use std::time::Duration;
 
 impl Store {
-    /// Remove every copy's staging table (`copy_…`): what a copy killed while it staged leaves. Only for
-    /// a caller that knows no copy runs meanwhile. A board on PostgreSQL has none: its copy is one
-    /// request ([`postgres::copy`]).
+    /// Remove every copy's staging table (`copy_…`): what a copy killed while it staged leaves, or
+    /// one whose cleanup failed. Every copy starts with it, so a copy made while another stages
+    /// takes the other's staging away and the other's swap fails, the board left to the later
+    /// copy: two copies of one board at once were never both kept. A board on PostgreSQL has
+    /// none: its copy is one request ([`postgres::copy`]).
     pub fn remove_staging(&self) -> Result<(), Error> {
         if self.db.is_postgresql() {
             return Ok(());
@@ -25,7 +29,20 @@ impl Store {
             table.starts_with("copy_")
                 && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         });
-        self.staging_write(&sql::remove_tables(staged), json!({}))
+        self.remove_each(staged)
+    }
+
+    /// Each of `tables` removed if it is there, a transaction each: one transaction must fit the
+    /// server's memtable, and the staging of a copy that did not fit it would not either. Every
+    /// table is tried; the first failure is the answer.
+    fn remove_each<'a>(&self, tables: impl Iterator<Item = &'a str>) -> Result<(), Error> {
+        let mut failed = Ok(());
+        for table in tables {
+            let removed =
+                self.staging_write(&sql::remove_tables(std::iter::once(table)), json!({}));
+            failed = failed.and(removed);
+        }
+        failed
     }
 
     /// Make the board `dump`, replacing whatever was there. The rows go up in requests the server takes
@@ -125,30 +142,37 @@ impl Store {
         let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);
         let last_ask = dump.asks.iter().map(|a| a.id).max().unwrap_or(0);
         let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
-        if self.db.is_postgresql() {
-            let generation = self.copy_in_one(&tables, last, last_ts, last_task, last_ask)?;
+        if let Database::PostgreSql(client) = &self.db {
+            let limit = copy_limit(client.wait());
+            let generation =
+                self.copy_in_one(&tables, last, last_ts, last_task, last_ask, limit)?;
             return self.copied(&generation);
         }
+        self.remove_staging().map_err(|error| {
+            said_after(error, "; staging left by an earlier copy could not be removed")
+        })?;
         let staging = format!(
             "copy_{:016x}",
             RandomState::new().hash_one(std::process::id())
         );
         let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
-        let copied = self.stage(&staging, &tables).and_then(|()| {
+        let copied = self.stage(&staging, &tables).and_then(|staged| {
             let swap = sql::swap(&staging, &names);
             let vars = json!({
                 "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
             });
             self.retrying(|| self.transact::<String>(&swap, vars.clone()))
+                .map_err(|error| uncommitted(error, staged, &tables))
         });
-        let generation = copied
-            .map_err(|error| self.cleanup_staging(&sql::remove_staged(&staging, &names), error))?;
+        let generation =
+            copied.map_err(|error| self.cleanup_staging(&staging, &names, error))?;
         self.copied(&generation)
     }
 
     /// On PostgreSQL, `tables` (each a table and its rows) into the emptied board in one guarded
     /// transaction, with the counters the dump's rows end at: the copy of a board one request
-    /// takes ([`postgres::copy`]). Its answer is the recovery generation it made.
+    /// takes ([`postgres::copy`]), which the server ends at `limit`. Its answer is the recovery
+    /// generation it made.
     fn copy_in_one(
         &self,
         tables: &[(&str, Vec<Value>)],
@@ -156,6 +180,7 @@ impl Store {
         last_ts: Option<f64>,
         last_task: i64,
         last_ask: i64,
+        limit: Duration,
     ) -> Result<String, Error> {
         let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
         let mut vars = json!({
@@ -186,17 +211,21 @@ impl Store {
                 })
                 .collect(),
         );
-        let copy = || both(sql::NOTHING_COPIED, postgres::copy::copy(&names));
+        vars["copy_limit"] = json!(format!("{:.0} s", limit.as_secs_f64()));
+        let millis = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX);
+        let copy = || both(sql::NOTHING_COPIED, postgres::copy::copy(&names, millis));
         self.retrying(|| self.run_transaction(copy(), vars.clone(), Run::Staging))
     }
 
     /// Every row of `tables` into schemaless tables named `{staging}_{table}`, each request at most
     /// `CHUNK_BYTES`: a board is bigger than the server takes in one. The copy's one transaction then
     /// moves them in. Each request starts with the schema guard in its transaction, so a migration
-    /// between requests refuses the next batch before it writes.
-    pub(super) fn stage(&self, staging: &str, tables: &[(&str, Vec<Value>)]) -> Result<(), Error> {
+    /// between requests refuses the next batch before it writes. Its answer is the bytes it staged,
+    /// the rows as they are sent.
+    pub(super) fn stage(&self, staging: &str, tables: &[(&str, Vec<Value>)]) -> Result<u64, Error> {
         let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
         self.staging_write(&sql::define_staged(staging, &names), json!({}))?;
+        let mut staged = 0;
         for (table, rows) in tables {
             let insert = sql::insert_staged(staging, table);
             let (mut chunk, mut bytes) = (Vec::new(), 0);
@@ -208,12 +237,13 @@ impl Store {
                 }
                 chunk.push(json!({"row": row}));
                 bytes += size;
+                staged += size as u64;
             }
             if !chunk.is_empty() {
                 self.staging_write(&insert, json!({"rows": chunk}))?;
             }
         }
-        Ok(())
+        Ok(staged)
     }
 
     /// Staging has no callback work, but each mutation must be fenced in its own transaction.
@@ -223,15 +253,16 @@ impl Store {
             .map(|_| ())
     }
 
-    /// Keep the original failure and report cleanup's failure too. A newer writer owns any staging
-    /// left after a migration; this store may not remove it. `remove` is the staging request that
-    /// removes what was staged.
-    pub(super) fn cleanup_staging(&self, remove: &str, mut error: Error) -> Error {
-        if let Err(cleanup) = self.staging_write(remove, json!({})) {
-            let (Error::Refused(message) | Error::Db(message)) = &mut error;
-            let _ = write!(message, "; staging cleanup failed: {cleanup}");
+    /// Keep the original failure and report cleanup's failure too, in the same line. A newer
+    /// writer owns any staging left after a migration; this store may not remove it. What was
+    /// staged is removed a table at a time ([`Store::remove_each`]); what could not be is cleared
+    /// by the next copy, before it stages.
+    pub(super) fn cleanup_staging(&self, staging: &str, tables: &[&str], error: Error) -> Error {
+        let staged: Vec<String> = sql::staged(staging, tables);
+        match self.remove_each(staged.iter().map(String::as_str)) {
+            Ok(()) => error,
+            Err(cleanup) => said_after(error, &format!("; staging cleanup failed: {cleanup}")),
         }
-        error
     }
 
     /// Every row of the board, in the shape the copy reads, each table in the order of its key: what a
@@ -273,6 +304,50 @@ impl Store {
     }
 }
 
+/// `error` with `more` after its words.
+fn said_after(mut error: Error, more: &str) -> Error {
+    let (Error::Refused(message) | Error::Db(message)) = &mut error;
+    message.push_str(more);
+    error
+}
+
+/// What SurrealDB answers for every statement of a transaction it did not commit, when none of
+/// them said why: the commit itself failed.
+const UNCOMMITTED: &str = "The query was not executed due to a failed transaction";
+
+/// `error`, the swap's, said for what it is when the server gave no reason of a statement's: the
+/// copy's one transaction was not committed, which is how SurrealKV ends one that does not fit
+/// its memtable ([`Storage`]), so the line names the rows and the bytes the copy `staged`, the
+/// setting and what the board's server runs under. The board is as it was either way; any other
+/// refusal keeps its own words.
+fn uncommitted(error: Error, staged: u64, tables: &[(&str, Vec<Value>)]) -> Error {
+    if !matches!(&error, Error::Db(said) if said == UNCOMMITTED) {
+        return error;
+    }
+    let rows: Vec<String> = (tables.iter())
+        .filter(|(_, rows)| !rows.is_empty())
+        .map(|(table, rows)| format!("{} of {table}", rows.len()))
+        .collect();
+    Error::Db(format!(
+        "the server did not commit the copy's one transaction, and the board is as it was: the \
+         copy staged {} of rows ({}), and a transaction must fit the memtable of the server it \
+         runs on, which lays one out in several times its rows' bytes \
+         (SURREAL_SURREALKV_MAX_MEMTABLE_SIZE, {} on a server the board starts): copy it into a \
+         server started with a larger memtable",
+        crate::size(staged),
+        rows.join(", "),
+        crate::size(Storage::BOARD.memtable),
+    ))
+}
+
+/// How long the server gives a copy that is one request, of a client that waits `wait` for it:
+/// thirty seconds short of the wait, or half of a wait under a minute, so the server's own word
+/// that it ended the copy reaches the caller before the caller stops waiting. No copy is ended
+/// after its caller gave up, which is when one could still commit.
+fn copy_limit(wait: Duration) -> Duration {
+    wait - (wait / 2).min(Duration::from_secs(30))
+}
+
 /// The most a copy sends in one request: the server takes 4 MiB (`SURREAL_HTTP_MAX_RPC_BODY_SIZE`).
 pub(super) const CHUNK_BYTES: usize = 1 << 20;
 
@@ -301,6 +376,46 @@ fn restore_numbers(current: &mut Value, original: &Value, normalized: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_copy_is_ended_thirty_seconds_before_its_callers_wait_or_at_half_a_short_one() {
+        let seconds = |wait: u64| copy_limit(Duration::from_secs(wait)).as_secs_f64();
+        assert_eq!(seconds(300), 270.0);
+        assert_eq!(seconds(60), 30.0);
+        assert_eq!(seconds(4), 2.0);
+        assert_eq!(seconds(0), 0.0);
+        assert_eq!(copy_limit(Duration::from_millis(500)), Duration::from_millis(250));
+    }
+
+    #[test]
+    fn a_swap_the_server_did_not_commit_says_the_rows_and_bytes_staged_and_the_setting() {
+        let tables = [
+            ("task", vec![json!({}); 3]),
+            ("link", vec![]),
+            ("message", vec![json!({}); 40]),
+        ];
+        let Error::Db(said) = uncommitted(Error::Db(UNCOMMITTED.into()), 300 << 20, &tables)
+        else {
+            panic!("a failure of the database's");
+        };
+        assert_eq!(
+            said,
+            "the server did not commit the copy's one transaction, and the board is as it was: \
+             the copy staged 300.0 MiB of rows (3 of task, 40 of message), and a transaction must \
+             fit the memtable of the server it runs on, which lays one out in several times its \
+             rows' bytes (SURREAL_SURREALKV_MAX_MEMTABLE_SIZE, 256.0 MiB on a server the board \
+             starts): copy it into a server started with a larger memtable"
+        );
+        assert!(!said.contains('\n'));
+        // A refusal that says why keeps its words, whoever's it is.
+        for kept in [
+            Error::Db("Found 'shout' for field `kind`".into()),
+            Error::Refused("the board moved to schema 23".into()),
+        ] {
+            let was = format!("{kept:?}");
+            assert_eq!(format!("{:?}", uncommitted(kept, 1, &tables)), was);
+        }
+    }
 
     #[test]
     fn number_restoration_preserves_edits_and_walks_arrays_and_objects() {

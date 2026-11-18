@@ -51,13 +51,11 @@ pub(in crate::store) fn insert_staged(staging: &str, table: &str) -> String {
     staging_request(&format!("INSERT INTO {staging}_{table} $rows RETURN NONE;"))
 }
 
-/// Every staging table of `tables` removed, each if it is there.
-pub(in crate::store) fn remove_staged(staging: &str, tables: &[&str]) -> String {
-    let remove: String = tables
-        .iter()
-        .map(|table| format!("REMOVE TABLE IF EXISTS {staging}_{table};"))
-        .collect();
-    staging_request(&remove)
+/// The names of `tables`' staging tables.
+pub(in crate::store) fn staged(staging: &str, tables: &[&str]) -> Vec<String> {
+    (tables.iter())
+        .map(|table| format!("{staging}_{table}"))
+        .collect()
 }
 
 /// The copy's one transaction: each of `tables` emptied and filled from its staging table, which
