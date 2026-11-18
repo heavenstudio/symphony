@@ -8,7 +8,7 @@ use symphony_board::pg::Step;
 use symphony_board::pg::hosted::Counts;
 use symphony_board::rpc::DbError;
 
-const READY: Duration = Duration::from_secs(60);
+const READY: Duration = test_time::backstop(Duration::from_secs(10));
 
 fn table(project: &Project) {
     let client = project.client("web");

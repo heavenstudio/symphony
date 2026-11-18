@@ -52,7 +52,7 @@ static NAMES: AtomicUsize = AtomicUsize::new(0);
 
 /// Both majors a hosted board is proved on.
 pub const MAJORS: [u32; 2] = [16, 18];
-const READY: Duration = Duration::from_secs(60);
+const READY: Duration = test_time::backstop(Duration::from_secs(10));
 
 /// The folder of `major`'s programs.
 fn programs(major: u32) -> PathBuf {
@@ -433,12 +433,18 @@ pub fn escaped(text: &str) -> String {
 /// The settings every test starts from: a budget of `web` (two processes of three), `worker`
 /// (one of two) and maintenance, with `more` keys before the budget.
 pub fn settings(more: &str) -> Settings {
+    budgeted(more, 1)
+}
+
+/// [`settings`], the budget's maintenance connections `maintenance`.
+pub fn budgeted(more: &str, maintenance: u32) -> Settings {
     toml::from_str(&format!(
         "url_env = \"URL\"\nca_file_env = \"CA\"\nclass_env = \"CLASS\"\n{more}\n\
-         [budget]\nrole_connection_cap = 12\nmaintenance = 1\nheadroom = 2\n\
+         [budget]\nrole_connection_cap = {}\nmaintenance = {maintenance}\nheadroom = 2\n\
          [budget.classes]\nweb = {{ processes = 2, pool_max = 3 }}\n\
          worker = {{ processes = 1, pool_max = 2 }}\n\
-         solo = {{ processes = 1, pool_max = 1 }}\n"
+         solo = {{ processes = 1, pool_max = 1 }}\n",
+        11 + maintenance
     ))
     .unwrap()
 }

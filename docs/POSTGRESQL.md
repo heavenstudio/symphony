@@ -117,7 +117,7 @@ committed nothing and says so; one lost after it says the outcome is not known, 
 reads the board before deciding. A conflict the server reports is decided again by the store,
 as on any board.
 
-**Capacity.** A process keeps one pool for a board, of its class's `pool_max`, with a bounded
+**Capacity.** A process keeps one pool for a board and class, of that class's `pool_max`, with a bounded
 line; a request past the line or its wait is refused, never given a connection outside the
 pool. The budget in the settings is the deployment's: every class's processes times its pool,
 with the maintenance connections, the role's other users and headroom, within the role's cap,

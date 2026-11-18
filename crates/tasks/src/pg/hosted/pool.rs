@@ -306,7 +306,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, mpsc};
 
-    const LONG: Duration = Duration::from_secs(60);
+    const LONG: Duration = test_time::backstop(Duration::from_secs(10));
     const NONE: Duration = Duration::ZERO;
 
     /// Connections that are numbers, each made, closed and refused as the test says.

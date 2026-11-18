@@ -34,7 +34,7 @@ were met. Every cell below is the same test run against both majors, in
 | JSONB and paired store semantics | pass | pass | `board.rs` `the_same_work_is_answered_alike_on_hosted_16_hosted_18_and_the_local_board`; `transactions.rs` `a_request_is_one_repeatable_read_transaction_with_variables_of_its_own` |
 | Text search and order | pass | pass | `analyzer.rs` `every_code_points_terms_on_16_are_18s_alone_and_inside_a_word`, `a_boards_search_reads_the_same_words_on_16_and_18`; hits and scores in the paired test above |
 | Protocol and transaction state | pass | pass | `transactions.rs`, all ten |
-| Schema concurrency and fencing | pass | pass | `board.rs` `two_migrations_at_once_make_the_board_once`, `a_writer_behind_holds_the_migration_and_a_board_moved_on_refuses_it`; `transactions.rs` `a_write_that_met_anothers_since_its_snapshot_is_a_conflict_to_decide_again` |
+| Schema concurrency and fencing | pass | pass | `board.rs` `two_migrations_at_once_make_the_board_once`, `two_processes_migrations_at_once_make_the_board_once_and_neither_is_refused`, `a_migration_runs_as_the_maintenance_class_alone_and_each_class_has_its_own_pool`, `a_writer_behind_holds_the_migration_and_a_board_moved_on_refuses_it`; `transactions.rs` `a_write_that_met_anothers_since_its_snapshot_is_a_conflict_to_decide_again` |
 | TLS and login | pass | pass | `refusals.rs`, all eight; `capacity.rs` `a_rotated_secret_is_read_again_and_the_connections_made_with_the_old_one_are_retired` |
 | Topology and capacity | pass | pass | `capacity.rs` `a_pool_lends_its_share_and_refuses_the_line_past_its_length_and_its_wait`, `the_deployments_budget_is_counted_in_the_database_across_processes_and_by_class`, `the_servers_cap_for_the_login_is_a_refusal_of_capacity`, each counting the server's own sessions |
 | Restart, drop and outage | pass | pass | `transactions.rs` `a_connection_lost_before_its_commit_committed_nothing_and_is_not_sent_again`, `an_idle_connection_the_server_ended_is_replaced_for_the_next_request`; `capacity.rs` `a_request_given_up_on_is_cancelled_uncommitted_and_its_connection_is_not_lent_again`, `a_commit_that_is_not_answered_is_unknown_and_is_never_sent_again`, `a_session_the_server_ends_at_the_commit_is_unknown_and_is_never_sent_again` |
@@ -91,5 +91,5 @@ every code point in five places (1,112,063 code points, the two results' MD5 the
 `c654be222e69edfc973d6cc36a1e5ba3`); the test compares every code point in three places and
 every pair of ASCII characters at each run.
 
-The whole hosted target, 41 tests on both majors with its eight servers started and stopped,
+The whole hosted target, 43 tests on both majors with its eight servers started and stopped,
 took 36 seconds.

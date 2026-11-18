@@ -323,7 +323,7 @@ impl Store {
         if how.migrating && !how.leave_behind {
             self.none_left_behind(how, found)?;
         }
-        self.migrate(&how.schema, found, defined)?;
+        self.migrate(&how.schema, found, defined, None)?;
         if let Some(board) = &board {
             live::seen::record(board, how.schema.version(), self.now());
         }
@@ -351,23 +351,26 @@ impl Store {
                  migration alone does: nothing was written"
             ))));
         }
-        if found.is_none() {
-            let foreign = self.request(
-                both(sql::opening::POSTGRESQL_ALONE, postgres::opening::FOREIGN),
-                json!({}),
-            )?;
-            if foreign.last().and_then(Value::as_i64) != Some(0) {
-                return Err(Failure::Stop(Error::Refused(format!(
-                    "{board} is hosted in a database that holds tables or functions and no \
-                     board's record of its schema: it is not taken for an empty one, and \
-                     nothing was written"
-                ))));
-            }
+        if let Board::Hosted(client) = &self.db
+            && client.class() != crate::pg::external::MAINTENANCE
+        {
+            return Err(Failure::Stop(Error::Refused(format!(
+                "{board} is hosted, and its migration runs as the class {} of its budget, \
+                 not {}: nothing was written",
+                crate::pg::external::MAINTENANCE,
+                client.class()
+            ))));
         }
         if !how.leave_behind {
             self.none_left_behind(how, found)?;
         }
-        self.migrate(&how.schema, found, true)?;
+        // Made only where nothing of another's is, which the migration judges itself, under
+        // its lock: a board another migration made a moment ago is a board, read again.
+        let empty = format!(
+            "{board} is hosted in a database that holds tables or functions and no board's \
+             record of its schema: it is not taken for an empty one, and nothing was written"
+        );
+        self.migrate(&how.schema, found, true, Some(&empty))?;
         self.record_writer(&how.program, &how.schema, how.access, &Line::Held(None));
         Ok(())
     }
@@ -514,7 +517,13 @@ impl Store {
     /// the version's steps and its record in one transaction that first checks the board is still
     /// at `found`, so a migration that fails or loses to another's leaves the board as it was, and
     /// one another open finished first is read again rather than run twice.
-    fn migrate(&self, schema: &Schema, found: Option<i64>, defined: bool) -> Result<(), Failure> {
+    fn migrate(
+        &self,
+        schema: &Schema,
+        found: Option<i64>,
+        defined: bool,
+        empty: Option<&str>,
+    ) -> Result<(), Failure> {
         if !defined {
             self.define()?;
         }
@@ -524,6 +533,7 @@ impl Store {
             &format!("{}\n{}", self.defined()?, schema.postgres_steps()),
             found,
             schema.version(),
+            empty,
         );
         self.run_transaction::<Value>(
             both(steps, Pg::Simple(postgres_steps.into())),

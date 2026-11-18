@@ -3,7 +3,7 @@
 //! `hosted-postgresql` feature; the socket client ([`super::Client`]) and a local board are as
 //! they are without it.
 //!
-//! A [`Client`] is a handle on its process's one pool for that database ([`pool`]): every client
+//! A [`Client`] is a handle on its process's one pool for that database and class ([`pool`]): every client
 //! of the same endpoint, database and login shares it, so another client, a bounded read, a
 //! callback and a health read make no pool of their own. The pool is the class's share of the
 //! deployment's budget ([`super::external`]): `pool_max` connections here, and each connection
@@ -260,10 +260,16 @@ struct Shared {
     pool: pool::Pool<Hosting>,
     log: Arc<crate::board_health::QueryLog>,
     label: String,
+    class: String,
 }
 
-/// Every pool of this process, by its identity: one per endpoint, database and login.
-static POOLS: Mutex<Vec<(String, Weak<Shared>)>> = Mutex::new(Vec::new());
+/// Every pool of this process, by its identity and its class: one per endpoint, database, login
+/// and class of the budget, so a connect is never handed the pool, the share or the slots of a
+/// class it did not name.
+static POOLS: Mutex<Vec<Pooled>> = Mutex::new(Vec::new());
+
+/// A pool of this process, with the identity and the class it is found by.
+type Pooled = ((String, String), Weak<Shared>);
 
 /// A hosted board's database, through its process's pool ([`self`]).
 pub struct Client {
@@ -311,9 +317,10 @@ impl Client {
         };
         let mut pools = POOLS.lock().unwrap_or_else(PoisonError::into_inner);
         pools.retain(|(_, pool)| pool.strong_count() > 0);
+        let key = (target.identity.clone(), class.clone());
         if let Some(shared) = pools
             .iter()
-            .find(|(identity, _)| *identity == target.identity)
+            .find(|(of, _)| *of == key)
             .and_then(|(_, pool)| pool.upgrade())
         {
             return Ok(client(shared));
@@ -327,7 +334,7 @@ impl Client {
                     settings: settings.clone(),
                     env,
                     share,
-                    identity: target.identity.clone(),
+                    identity: target.identity,
                     generation: Mutex::new(target.generation),
                     driver: Driver::start()?,
                 },
@@ -335,8 +342,9 @@ impl Client {
                 line,
             ),
             label,
+            class,
         });
-        pools.push((target.identity, Arc::downgrade(&shared)));
+        pools.push((key, Arc::downgrade(&shared)));
         Ok(client(shared))
     }
 
@@ -369,6 +377,11 @@ impl Client {
 
     /// What names this board in an address, a log and a command: a fingerprint of its endpoint,
     /// database and login, none of which it says.
+    /// The class of the budget this client's pool is the share of.
+    pub fn class(&self) -> &str {
+        &self.shared.class
+    }
+
     pub fn label(&self) -> &str {
         &self.shared.label
     }
@@ -548,9 +561,7 @@ mod tests {
 
     #[test]
     fn clients_of_one_board_share_its_pool_and_another_board_has_its_own() {
-        let dir =
-            std::env::temp_dir().join(format!("symphony-hosted-pools-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = secret::tests::temp("pools");
         let settings = secret::tests::settings("");
         let at = |url: &str| Client::connect(&settings, secret::tests::env(&dir, &[("URL", url)]));
         let first = at("postgresql://board:one@db.invalid/board_a").unwrap();
@@ -563,6 +574,23 @@ mod tests {
             &first.bounded(Duration::from_secs(1)).shared
         ));
         assert!(!Arc::ptr_eq(&first.shared, &other.shared));
+        // Another class of the same board has a pool, a share and slots of its own.
+        let maintenance = Client::connect(
+            &settings,
+            secret::tests::env(
+                &dir,
+                &[
+                    ("URL", "postgresql://board:one@db.invalid/board_a"),
+                    ("CLASS", crate::pg::external::MAINTENANCE),
+                ],
+            ),
+        )
+        .unwrap();
+        assert!(!Arc::ptr_eq(&first.shared, &maintenance.shared));
+        assert_eq!(maintenance.class(), crate::pg::external::MAINTENANCE);
+        assert_eq!(first.class(), rotated.class());
+        assert_ne!(first.class(), maintenance.class());
+        assert_eq!(first.label(), maintenance.label());
         assert_eq!(first.label(), rotated.label());
         assert!(first.label().starts_with("postgresql-hosted:"));
         let shown = format!("{first:?} {}", first.label());
@@ -582,9 +610,7 @@ mod tests {
 
     #[test]
     fn a_process_of_no_class_or_an_unknown_one_connects_to_nothing() {
-        let dir =
-            std::env::temp_dir().join(format!("symphony-hosted-class-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = secret::tests::temp("class");
         let settings = secret::tests::settings("");
         let url = ("URL", "postgresql://board:one@db.invalid/board_c");
         for (class, why) in [("", "is not set"), ("cron", "the budget does not have")] {
@@ -603,8 +629,7 @@ mod tests {
 
     #[test]
     fn an_unreachable_board_fails_by_its_kind_within_its_wait_and_is_not_tried_again() {
-        let dir = std::env::temp_dir().join(format!("symphony-hosted-down-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = secret::tests::temp("down");
         // A port nothing listens on: bound, then let go.
         let port = {
             let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

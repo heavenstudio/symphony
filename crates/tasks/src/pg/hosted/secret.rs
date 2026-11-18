@@ -258,13 +258,30 @@ pub(super) mod tests {
         Box::new(move |name| held.get(name).cloned())
     }
 
-    fn temp(name: &str) -> std::path::PathBuf {
+    /// A folder of a test's own, removed when the test ends.
+    pub(in crate::pg::hosted) struct Temp(std::path::PathBuf);
+
+    impl std::ops::Deref for Temp {
+        type Target = std::path::Path;
+
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    pub(in crate::pg::hosted) fn temp(name: &str) -> Temp {
         let dir = std::env::temp_dir().join(format!(
             "symphony-hosted-secret-{name}-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        Temp(dir)
     }
 
     const URL: &str = "postgresql://board:s3cr%40t-word@db.example:6543/project_board";

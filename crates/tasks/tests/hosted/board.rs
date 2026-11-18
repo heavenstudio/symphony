@@ -275,6 +275,96 @@ fn two_migrations_at_once_make_the_board_once() {
 }
 
 #[test]
+fn two_processes_migrations_at_once_make_the_board_once_and_neither_is_refused() {
+    // Two pools, as two processes of the deployment have, so neither waits for the other's
+    // connection: the one that read no board and then finds the other's tables decides again.
+    for major in MAJORS {
+        for _ in 0..2 {
+            let project = cluster::cluster(major).project();
+            let start = std::sync::Barrier::new(2);
+            let both: Vec<Result<Store, Error>> = std::thread::scope(|scope| {
+                let running: Vec<_> = ["localhost", "127.0.0.1"]
+                    .map(|host| {
+                        let (project, start) = (&project, &start);
+                        scope.spawn(move || {
+                            let client = Client::connect(
+                                &cluster::budgeted("", 2),
+                                project.environment_at(host, "maintenance"),
+                            )
+                            .unwrap();
+                            start.wait();
+                            Store::opening_hosted(
+                                client,
+                                Box::new(|| NOW),
+                                Box::new(|_| false),
+                                HOST,
+                                &Opening::write().migrating(),
+                            )
+                        })
+                    })
+                    .into_iter()
+                    .collect();
+                running.into_iter().map(|one| one.join().unwrap()).collect()
+            });
+            for one in &both {
+                assert!(one.is_ok(), "PostgreSQL {major}: {:?}", one.as_ref().err());
+            }
+            assert_eq!(
+                project.cluster.value(
+                    &project.name,
+                    "SELECT count(*) FROM meta WHERE id = '\"schema\"'"
+                ),
+                "1"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_migration_runs_as_the_maintenance_class_alone_and_each_class_has_its_own_pool() {
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        let as_web = Store::opening_hosted(
+            project.client("web"),
+            Box::new(|| NOW),
+            Box::new(|_| false),
+            HOST,
+            &Opening::write().migrating(),
+        );
+        let why = refused(as_web);
+        assert!(
+            why.contains("its migration runs as the class maintenance of its budget, not web")
+                && why.ends_with("nothing was written"),
+            "PostgreSQL {major}: {why}"
+        );
+        assert_eq!(objects(&project), "0", "PostgreSQL {major}");
+        opened(&project, &Opening::write().migrating()).unwrap();
+        // The web client asked after the maintenance one is the web class's pool of three,
+        // not the maintenance pool of one it would have been handed by the board's name alone.
+        let (web, maintenance) = (project.client("web"), project.client("maintenance"));
+        assert_eq!((web.class(), maintenance.class()), ("web", "maintenance"));
+        let idle = |client: &Client| client.counts().idle;
+        assert_eq!(Project::value(&web, "SELECT 1"), "1");
+        assert_eq!(
+            (idle(&web), idle(&maintenance)),
+            (1, 0),
+            "PostgreSQL {major}"
+        );
+        assert_eq!(Project::value(&maintenance, "SELECT 1"), "1");
+        assert_eq!(
+            (idle(&web), idle(&maintenance)),
+            (1, 1),
+            "PostgreSQL {major}"
+        );
+        assert_eq!(
+            project.cluster.sessions(&project.name),
+            2,
+            "PostgreSQL {major}"
+        );
+    }
+}
+
+#[test]
 fn one_projects_login_reaches_no_other_projects_board() {
     for major in MAJORS {
         let cluster = cluster::cluster(major);

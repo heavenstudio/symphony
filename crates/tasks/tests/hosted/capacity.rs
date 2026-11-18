@@ -8,7 +8,7 @@ use std::time::Duration;
 use symphony_board::pg::Step;
 use symphony_board::pg::hosted::{Client, Counts};
 
-const READY: Duration = Duration::from_secs(60);
+const READY: Duration = test_time::backstop(Duration::from_secs(10));
 /// The advisory lock the operator holds while a test's requests wait on it.
 const HELD: &str = "4243";
 
@@ -48,7 +48,14 @@ fn a_pool_lends_its_share_and_refuses_the_line_past_its_length_and_its_wait() {
     for major in MAJORS {
         let project = cluster::cluster(major).project();
         table(&project);
+        // Two clients of the one pool: one waits for a connection as long as it takes, the
+        // other a second, so which refusal a borrower is given never depends on who was first.
         let client = Client::connect(
+            &settings("acquire_timeout_seconds = 3600\nqueue_max = 1"),
+            project.environment("solo"),
+        )
+        .unwrap();
+        let hasty = Client::connect(
             &settings("acquire_timeout_seconds = 1\nqueue_max = 1"),
             project.environment("solo"),
         )
@@ -79,11 +86,6 @@ fn a_pool_lends_its_share_and_refuses_the_line_past_its_length_and_its_wait() {
                 third.contains("as many requests wait as the pool's line holds"),
                 "PostgreSQL {major}: {third}"
             );
-            let late = refused(second.join().unwrap());
-            assert!(
-                late.contains("none came free within the wait for one"),
-                "PostgreSQL {major}: {late}"
-            );
             assert_eq!(
                 project.cluster.sessions(&project.name),
                 1,
@@ -93,8 +95,31 @@ fn a_pool_lends_its_share_and_refuses_the_line_past_its_length_and_its_wait() {
                 .simple(&format!("SELECT pg_advisory_unlock({HELD})"))
                 .unwrap();
             first.join().unwrap().unwrap();
+            // The second was lent the connection the first returned.
+            second.join().unwrap().unwrap();
         });
         assert_eq!(n(&project), "1");
+        // With the line empty, a borrower that waits its second out is told so: the deadline
+        // is its own, and nothing else is in the line to race it.
+        operator
+            .simple(&format!("SELECT pg_advisory_lock({HELD})"))
+            .unwrap();
+        std::thread::scope(|scope| {
+            let holder = scope.spawn(|| client.request(&held()));
+            until("the holder to wait on the lock", || {
+                waiting(&project) == "1"
+            });
+            let late = refused(hasty.request(&[Step::bare("SELECT 1")]));
+            assert!(
+                late.contains("none came free within the wait for one"),
+                "PostgreSQL {major}: {late}"
+            );
+            operator
+                .simple(&format!("SELECT pg_advisory_unlock({HELD})"))
+                .unwrap();
+            holder.join().unwrap().unwrap();
+        });
+        assert_eq!(n(&project), "2");
         assert_eq!(
             client.counts(),
             Counts {
@@ -153,14 +178,31 @@ fn a_commit_that_is_not_answered_is_unknown_and_is_never_sent_again() {
         let project = cluster::cluster(major).project();
         table(&project);
         at_commit(&project, &format!("PERFORM pg_advisory_xact_lock({HELD})"));
-        let client = project.client("web").bounded(Duration::from_millis(500));
         let operator = project.cluster.operator(&project.name);
         operator
             .simple(&format!("SELECT pg_advisory_lock({HELD})"))
             .unwrap();
-        let unknown = refused(
-            client.request(&[Step::bare("UPDATE t SET n = n + 1"), Step::bare("SELECT 1")]),
-        );
+        // The deadline is the whole request's, and only the commit waits on the lock. A
+        // machine too loaded to reach the commit within it ends the request before the commit
+        // was sent, which commits nothing and is another answer (the test above); the request
+        // is then made again with twice the time, until one reaches its commit. What is
+        // asserted is of that one alone, so no load decides the result.
+        let mut within = Duration::from_millis(500);
+        let (client, unknown) = loop {
+            let client = project.client("web").bounded(within);
+            let said = refused(
+                client.request(&[Step::bare("UPDATE t SET n = n + 1"), Step::bare("SELECT 1")]),
+            );
+            assert_eq!(client.requests(), 1, "sent once, whatever became of it");
+            if !said.contains("nothing of the request was committed") {
+                break (client, said);
+            }
+            assert!(within < READY, "PostgreSQL {major}: {said}");
+            until("the session given up on to end", || {
+                project.cluster.sessions(&project.name) == 0
+            });
+            within *= 2;
+        };
         assert!(
             unknown.contains("the server did not answer the commit in time")
                 && unknown.contains("whether the request was committed is not known"),
