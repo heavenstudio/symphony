@@ -111,6 +111,10 @@ impl MemBoard {
         self.inner().unbound = true;
     }
 
+    pub(crate) fn bind(&self) {
+        self.inner().unbound = false;
+    }
+
     pub(crate) fn fault(&self, call: &'static str, fault: Fault) {
         self.inner().faults.push((call, fault));
     }

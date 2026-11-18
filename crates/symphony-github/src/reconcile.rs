@@ -967,6 +967,38 @@ fn written(action: &Action) -> String {
     }
 }
 
+/// The markers of the publications dispatched whose result is still not known, under whichever
+/// preview: one whose answer never arrived, or whose run ended after its intent. Only an
+/// acknowledgment or a skip settles one. A later attempt that failed before it could look (the
+/// board or the token file not reachable) says nothing of the earlier dispatch, so it never
+/// clears it: the next run still looks among every issue before it creates anything.
+fn unsettled_publications(entries: &[Entry]) -> BTreeSet<&str> {
+    let mut pending = BTreeSet::new();
+    let mut open = BTreeSet::new();
+    for entry in entries.iter().filter(|entry| entry.kind == "publish") {
+        let op = entry.op.as_str();
+        match entry.event {
+            Event::Intent => {
+                open.insert(op);
+            }
+            Event::Unknown => {
+                open.remove(op);
+                pending.insert(op);
+            }
+            Event::Failed => {
+                open.remove(op);
+            }
+            Event::Ack | Event::Skipped => {
+                open.remove(op);
+                pending.remove(op);
+            }
+            Event::Applied => {}
+        }
+    }
+    pending.extend(open);
+    pending
+}
+
 /// `symphony-github reconcile --preview DIGEST --as BY`: apply the preview of that digest, at
 /// most `limit` operations of it.
 ///
@@ -1029,13 +1061,7 @@ pub fn apply(
     for entry in entries.iter().filter(|entry| entry.preview == digest) {
         last.insert(&entry.op, entry);
     }
-    // A publication is one operation in every preview, named by its marker: one dispatched
-    // under an earlier preview whose result never arrived is not known to be unmade, so it is
-    // looked for among every issue before anything is created under this one.
-    let mut dispatched: BTreeMap<&str, Event> = BTreeMap::new();
-    for entry in entries.iter().filter(|entry| entry.kind == "publish") {
-        dispatched.insert(&entry.op, entry.event);
-    }
+    let pending = unsettled_publications(&entries);
     let mut run = Run {
         ctx,
         loaded: &loaded,
@@ -1055,12 +1081,8 @@ pub fn apply(
             }
             Some((Event::Skipped, _)) => continue,
             Some((Event::Intent | Event::Unknown, _)) => true,
-            Some(_) => false,
-            None => matches!(
-                dispatched.get(op.as_str()),
-                Some(Event::Intent | Event::Unknown)
-            ),
-        };
+            _ => false,
+        } || pending.contains(op.as_str());
         if done >= limit {
             remaining += 1;
             continue;

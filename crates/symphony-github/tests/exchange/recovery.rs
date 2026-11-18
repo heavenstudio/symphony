@@ -1024,3 +1024,62 @@ fn a_note_is_not_written_on_the_task_a_restored_board_holds_under_the_slug() {
     assert_eq!(rig.board.notes(), []);
     assert_eq!(rig.board.task(&slug).unwrap().body, "Unrelated.");
 }
+
+#[test]
+fn a_run_that_fails_before_it_can_look_does_not_forget_a_lost_answer() {
+    let rig = Rig::new("lost-create-then-failed", EXCHANGE);
+    rig.board.file("tools/a", "A", "brief");
+    draft(&rig, "tools/a", "Public", "Body.");
+    let digest = rig.preview().digest().unwrap();
+    rig.github
+        .fault("POST", "/repos/o/n/issues", Fault::LoseAnswer);
+    assert_eq!(rig.reconcile(&digest).code, 1);
+    assert_eq!(rig.github.issues().len(), 1, "GitHub made the issue");
+
+    // The next run ends before any issue is listed: the board gives no token.
+    rig.board.unbind();
+    let asked = rig.github.asked().len();
+    let failed = rig.reconcile(&digest);
+    assert_eq!(failed.code, 1);
+    assert_eq!(
+        rig.github.asked().len(),
+        asked,
+        "nothing was asked of GitHub"
+    );
+    assert_eq!(rig.journal().last().unwrap().event, Event::Failed);
+
+    // Put right, the third run still looks for the issue before it creates anything.
+    rig.board.bind();
+    rig.reconcile(&digest).ok();
+    assert_eq!(rig.github.issues().len(), 1, "no second public issue");
+    let creates = rig
+        .github
+        .asked()
+        .iter()
+        .filter(|(method, ..)| method == "POST")
+        .count();
+    assert_eq!(creates, 1);
+    assert_eq!(rig.state().mappings["tools/a"].issue_number, 1);
+
+    // The same across previews: lost, failed, then another preview's reconcile.
+    let rig = Rig::new("lost-create-failed-new-preview", EXCHANGE);
+    rig.board.file("tools/a", "A", "brief");
+    draft(&rig, "tools/a", "Public", "Body.");
+    let first = rig.preview().digest().unwrap();
+    rig.github
+        .fault("POST", "/repos/o/n/issues", Fault::LoseAnswer);
+    assert_eq!(rig.reconcile(&first).code, 1);
+    rig.board.unbind();
+    assert_eq!(rig.reconcile(&first).code, 1);
+    rig.board.bind();
+    rig.github.page_size(1);
+    for n in 0..25 {
+        rig.github.open(&format!("Later {n}"), "Text.", &[]);
+    }
+    draft(&rig, "tools/a", "Public", "Body, revised.");
+    let second = rig.preview().digest().unwrap();
+    assert_ne!(first, second);
+    rig.reconcile(&second).ok();
+    assert_eq!(rig.github.issues().len(), 26, "no second public issue");
+    assert_eq!(rig.state().mappings["tools/a"].issue_number, 1);
+}
