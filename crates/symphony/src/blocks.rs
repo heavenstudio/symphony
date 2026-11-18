@@ -1188,6 +1188,7 @@ fn count(
 
 #[cfg(test)]
 mod ordering_tests {
+    use crate::test_tree::Tree;
     #[test]
     fn census_pairs_keep_complete_count_and_label_order_and_report_cost() {
         for count in [0, 1, 32, 512] {
@@ -1207,5 +1208,33 @@ mod ordering_tests {
                 count * std::mem::size_of::<usize>()
             );
         }
+    }
+    #[test]
+    fn census_keeps_every_deterministic_output_byte_with_count_and_label_ties() {
+        let tree = Tree::new();
+        tree.write("docs/CENSUS.md", "# Census\n\n<div class=\"z\"><p>Alpha</p></div>\n\n<section><p>Beta</p></section>\n\n<div class=\"a\"><p>Gamma</p></div>\n\n<div class=\"z\"><p>Delta</p></div>\n\n<aside><p>Epsilon</p></aside>\n\n<section><p>Zeta</p></section>\n");
+        let mut out = Vec::new();
+        super::census(&tree.root, &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        let (stable, elapsed) = out.rsplit_once("elapsed: ").unwrap();
+        // Golden captured with the unchanged native release census before the substitution.
+        assert_eq!(
+            stable,
+            "documents: 1\nblock.container: 6\nblock.heading: 1\nblock.paragraph: 6\nspan.text: 7\nraw-container: 2 div {\"class\":\"z\"}\nraw-container: 2 section {}\nraw-container: 1 aside {}\nraw-container: 1 div {\"class\":\"a\"}\nremaining-container: 2 div {\"class\":\"z\"}\nremaining-container: 2 section {}\nremaining-container: 1 aside {}\nremaining-container: 1 div {\"class\":\"a\"}\nUnknown: 0 {}\n"
+        );
+        let seconds: f64 = elapsed
+            .strip_suffix("s; no panic\n")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(seconds.is_finite() && seconds >= 0.0);
+        let empty = Tree::new();
+        let mut out = Vec::new();
+        super::census(&empty.root, &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(
+            out.rsplit_once("elapsed: ").unwrap().0,
+            "documents: 0\nUnknown: 0 {}\n"
+        );
     }
 }
