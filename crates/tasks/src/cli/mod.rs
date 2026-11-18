@@ -216,11 +216,14 @@ fn run(
         return recovery::run(&args[1..], env, out, err);
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
+    // The api's store answers to the board home's recovery authority, so its bound calls are
+    // taken; every other command makes none.
+    let bound = || board().map(|store| recovery::recovering(store, env));
     if args.len() == 1 && args[0] == "api" {
-        return api::run_in(input, out, board, Some(env));
+        return api::run_in(input, out, bound, Some(env));
     }
     if args.len() == 2 && args[0] == "api" && args[1] == "--lines" {
-        return api::serve_in(&mut std::io::BufReader::new(input), out, board, Some(env));
+        return api::serve_in(&mut std::io::BufReader::new(input), out, bound, Some(env));
     }
     // Every line the parse suggests begins with the command that reaches this board, however its
     // server and database were chosen, so typed again in any shell it reaches the same board.
