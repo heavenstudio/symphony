@@ -9,14 +9,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### Releases
 
-- [ ] **release-main-judged-in-steps** — The full run looks at main once every 20 landed tasks, and not at all while a release candidate is being fixed. Yesterday's two first runs covered 36 and 55 landed tasks each: one found 20 real failures at once, the other a size overrun that took 8 hours 46 minutes to trace through 257 commits. Should main also be checked in small steps, after each land and never holding one? A: as today. B: after a land, in the background, a round checks main's newest tip, running only the checks the landed changes can reach; ten lands during a round are one next round; a red is a task naming the one to five lands it can come from; it also runs while a candidate is open. The full run before a release stays. Recommended: B, built once the release can run on GitHub, since on this machine it adds load. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#C. Main judged in smaller steps]]
-  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
-
-    **Nothing waits on it.** No land is held and nothing queues: the round starts after the land, as the client's rebuild does today.
-
-    **Its cost** is machine time: at yesterday evening's 12 lands an hour a round would run most of the time. On a hosted runner that costs this machine nothing; here it would make the load worse, hence the order.
-
-    **Earlier verdicts checked.** **release-main-while-candidate-open** (A) says no run of main's tip while a candidate is open; B here changes that, so this is a new card and not a question on that one. Its option C was the full run taking turns with the candidate's reruns in one checkout; B here is a partial round apart from them. **land-tests-changed-packages** (rejected) refuses anything a land waits on or queues behind; B runs after the land and holds none.
 - [ ] **release-accepts-task-runs** — A pasted proposal (Buildmark) suggests accepting a signed record of a run already made in place of running it again. A task already records its lint, docs check and tests at its tip. Should the release run skip a step when a task's recorded run of that same step, on the same inputs, was green? A: no; the release accepts only a green of a release run, its own or a hosted one. B: yes, for the lint, the docs check and the client check. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#E. Runs accepted in place of running again]]
   [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
 
@@ -60,6 +52,15 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### Releases
 
+- [-] **release-main-judged-in-steps** — The full run looks at main once every 20 landed tasks, and not at all while a release candidate is being fixed. Yesterday's two first runs covered 36 and 55 landed tasks each: one found 20 real failures at once, the other a size overrun that took 8 hours 46 minutes to trace through 257 commits. Should main also be checked in small steps, after each land and never holding one? A: as today. B: after a land, in the background, a round checks main's newest tip, running only the checks the landed changes can reach; ten lands during a round are one next round; a red is a task naming the one to five lands it can come from; it also runs while a candidate is open. The full run before a release stays. Recommended: B, built once the release can run on GitHub, since on this machine it adds load. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#C. Main judged in smaller steps]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
+
+    **Nothing waits on it.** No land is held and nothing queues: the round starts after the land, as the client's rebuild does today.
+
+    **Its cost** is machine time: at yesterday evening's 12 lands an hour a round would run most of the time. On a hosted runner that costs this machine nothing; here it would make the load worse, hence the order.
+
+    **Earlier verdicts checked.** **release-main-while-candidate-open** (A) says no run of main's tip while a candidate is open; B here changes that, so this is a new card and not a question on that one. Its option C was the full run taking turns with the candidate's reruns in one checkout; B here is a partial round apart from them. **land-tests-changed-packages** (rejected) refuses anything a land waits on or queues behind; B runs after the land and holds none.
+  [2026-11-18 12:49] owner · rejected — No. This will lead to the issue of having a million running ones. It should run one based somewhat on how long it takes to run it anyway. If takes one hour to run, maybe one running every say 30 minutes could be reasonable (in Github) but not locally due to load. The current approach based on number of tasks is mostly a control for that, so the machine isn't always under load.
 - [x] **release-run-reruns-alone** — Since last night the release run was red eight times and released nothing. Two of those runs were red only in tests that pass when run by themselves, and 11 such tests were deleted to get past them, each costing a round of about an hour. Should the run itself run each failed test again alone before it calls the release red? A: as today; the run is red, an agent reruns the test, deletes it if it passes alone, and the run starts again. B: the run reruns each failed test alone, up to 12. One that fails again is red, as today. One that passes alone does not hold the release: the run says both results, and files one task to find out why and then fix, rewrite or delete the test. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#B. The run reruns each failure alone]]
   [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
 

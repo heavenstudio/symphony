@@ -179,13 +179,47 @@ fn untouched(root: &Path) -> (String, String, String, Vec<(PathBuf, Vec<u8>)>) {
     )
 }
 
+/// A project's board whose SurrealDB server its test started, stopped when the test ends, however
+/// it ends: cleanly, through [`Home::stop`], so no later run's `lsof` reads it and none lives until
+/// the binary exits. A stop that fails fails the test, unless it is failing already.
+struct Board(Home);
+
+impl Board {
+    /// The board in the project `project`'s common dir, its server started.
+    fn started(project: &Path) -> (Board, Running) {
+        let home = Home::in_common(&project.join(".git"), Some(&super::board::surreal()));
+        let board = Board(home.supervised(true));
+        let running = board.ensure().unwrap();
+        (board, running)
+    }
+}
+
+impl std::ops::Deref for Board {
+    type Target = Home;
+
+    fn deref(&self) -> &Home {
+        &self.0
+    }
+}
+
+impl Drop for Board {
+    fn drop(&mut self) {
+        if let Err(problem) = self.0.stop()
+            && !std::thread::panicking()
+        {
+            panic!(
+                "the board's server in {}: {problem}",
+                self.0.dir().display()
+            );
+        }
+    }
+}
+
 /// The project's board, its server started on the data in its common dir, made by the build of
-/// schema `schema` with a task on it, its one writer this test on the host `this-host`: its home,
-/// the server that runs it and a client of it.
-fn board_at(project: &Path, schema: i64) -> (Home, Running, Client) {
-    let common = project.join(".git");
-    let board = Home::in_common(&common, Some(&super::board::surreal())).supervised(true);
-    let running = board.ensure().unwrap();
+/// schema `schema` with a task on it, its one writer this test on the host `this-host`: its board,
+/// which stops that server when it is dropped, the server that runs it and a client of it.
+fn board_at(project: &Path, schema: i64) -> (Board, Running, Client) {
+    let (board, running) = Board::started(project);
     let client = Client::new(&running.addr, "sf", "tasks");
     older_board(Client::new(&running.addr, "sf", "tasks"), schema, NOW)
         .create(&NewTask::new(
@@ -605,7 +639,7 @@ fn every_snapshot_comes_first_and_a_move_that_fails_partway_is_finished_by_the_r
             ("gamma", &gamma, &[]),
         ],
     );
-    let boards: Vec<Home> = [&alpha, &beta, &gamma]
+    let boards: Vec<Board> = [&alpha, &beta, &gamma]
         .into_iter()
         .map(|project| {
             let (board, _, client) = board_at(project, 18);
@@ -734,14 +768,11 @@ fn what_cannot_be_judged_is_left_out_and_every_board_that_holds_the_release_is_n
     );
     // fresh's database runs and holds no board yet; alpha has two writers behind, beta one, and
     // gamma's last was seen over a week ago.
-    Home::in_common(&fresh.join(".git"), Some(&super::board::surreal()))
-        .supervised(true)
-        .ensure()
-        .unwrap();
-    let (_, _, alpha_client) = board_at(&alpha, 18);
+    let _fresh_board = Board::started(&fresh);
+    let (_alpha_board, _, alpha_client) = board_at(&alpha, 18);
     let gate = Path::new("/work/alpha/.target/debug/gate-review");
     writes(&alpha_client, "gate-review", gate, 18);
-    board_at(&beta, 18);
+    let _beta_board = board_at(&beta, 18);
     let (gamma_board, _, gamma_client) = board_at(&gamma, 18);
     aged(&gamma_client, 8.0 * DAY);
     let builder = builder(&fixture, 19);
