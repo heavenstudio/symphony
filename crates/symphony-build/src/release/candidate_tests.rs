@@ -68,6 +68,7 @@ fn run(id: &str, commit: &str, checks: Vec<Ran>) -> Run {
         refreshed: None,
         published: None,
         rerun: None,
+        slept: 0.0,
     }
 }
 

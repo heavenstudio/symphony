@@ -4,7 +4,6 @@
 //! runs, and the regenerator does), and the push to a scratch bare remote.
 
 use crate::children::Child as _;
-use crate::common::GONE;
 use crate::{Repo, dead_pid, git, write};
 use std::fs;
 use std::io::Write;
@@ -241,24 +240,10 @@ fn an_approved_branch_lands_as_one_merge_commit_checked_and_the_task_closes() {
 fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
     let r = Repo::new();
     let heard = r.dir.join("heard");
-    let hook = format!("echo \"$@\" > '{}'; echo \"counted $1\"", heard.display());
-    manifest(
-        &r,
-        &format!(
-            "\n[board]\non_land = [\"sh\", \"-c\", {}, \"hook\"]\n",
-            toml_string(&hook)
-        ),
-    );
-    // A test's board starts none unless told: the first land starts nothing.
-    branch(&r, "sim/quiet", "sim/quiet.gd", "extends Node\n");
-    let people = approved(&r, "sim/quiet", "good");
-    let (said, result) = landed(&r, "sim/quiet", &people.orch);
-    result.unwrap();
-    assert!(!said.contains("on_land"), "{said}");
-    assert!(!r.root.join(".git/symphony/tasks/on-land.log").exists());
-
-    // With a generator, so the land starts the regenerator, and git's repository variables in its
-    // caller's environment, which the command never sees.
+    // That a test's board starts none unless told is the switch's own test
+    // (`on_land::tests::only_the_repositorys_own_board_starts_the_command_unless_told`). Here it is
+    // told, with a generator, so the land starts the regenerator, and git's repository variables
+    // in its caller's environment, which the command never sees.
     let hook = format!(
         "echo \"$@\" > '{}'; echo \"${{GIT_DIR:-none}} ${{GIT_INDEX_FILE:-none}}\" >> '{}'; \
          echo \"counted $1\"",
@@ -273,13 +258,19 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
             toml_string(&hook)
         ),
     );
+    // The regenerator the land starts is a stand-in that ends at once: nothing here reads what a
+    // regenerator makes, which is `land::regenerate`'s.
+    use std::os::unix::fs::PermissionsExt;
+    let stand_in = r.dir.join("regenerator");
+    write(&r.dir, "regenerator", "#!/bin/sh\nexit 0\n");
+    fs::set_permissions(&stand_in, fs::Permissions::from_mode(0o755)).unwrap();
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
     let mut env = r.env(&r.root);
     env.vars.insert("TASKS_ON_LAND".into(), "on".into());
     env.vars.insert("TASKS_REGENERATE".into(), "on".into());
     env.vars
-        .insert("TASKS_BIN".into(), env!("CARGO_BIN_EXE_tasks").into());
+        .insert("TASKS_BIN".into(), stand_in.to_string_lossy().into_owned());
     env.vars.insert("GIT_DIR".into(), "/nowhere/.git".into());
     env.vars
         .insert("GIT_INDEX_FILE".into(), "/nowhere/index".into());
@@ -333,100 +324,32 @@ fn a_landing_starts_the_projects_on_land_command_with_its_slug_and_merge() {
 }
 
 #[test]
-fn an_approval_naming_no_commit_lands_by_time_and_says_so_on_the_thread() {
-    let r = Repo::new();
-    manifest(&r, "");
-    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let people = approved(&r, SLUG, "good");
-    let (said, result) = landed(&r, SLUG, &people.orch);
-    let line = result.unwrap();
-    assert!(said.contains("before every commit to its tip"), "{said}");
-    let landed = line.strip_suffix("; not pushed: no origin remote").unwrap();
-    assert_eq!(
-        last(&r, SLUG),
-        format!(
-            "{landed}; judged by time, the approval naming no commit of the branch: its 1 commit \
-             is older than the approval; not pushed: no origin remote"
-        )
-    );
-}
-
-#[test]
-fn the_land_sweeps_the_tasks_finished_worktrees() {
-    let r = Repo::new();
-    manifest(&r, "");
-    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let people = approved(&r, SLUG, "good");
-    let store = &r.board.store;
-    store
-        .record_launch(&NewLaunch {
-            worktree: wt.to_string_lossy().into_owned(),
-            pane: "w1:p1".into(),
-            ..NewLaunch::new(SLUG, &people.exe, "executor")
-        })
-        .unwrap();
-    store
-        .close_task_session(SLUG, &people.exe, "idle", "just tasks restore")
-        .unwrap();
-    // The sweep is started detached, as work finishing starts one, here by this build.
-    let mut env = r.env(&r.root);
-    env.vars.insert("TASKS_SWEEP".into(), "on".into());
-    env.vars
-        .insert("TASKS_BIN".into(), env!("CARGO_BIN_EXE_tasks").into());
-    let mut out = Vec::new();
-    let line = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
-    let said = String::from_utf8(out).unwrap();
-    assert!(
-        line.starts_with(&format!("landed {SLUG} on main at ")),
-        "{line}"
-    );
-    assert!(
-        said.contains(&format!(
-            "land {SLUG}: its finished worktrees are swept in the background (its log \
-             symphony/tasks/sweep.log)"
-        )),
-        "{said}"
-    );
-    // The sweep writes its lines once it has swept, after the worktree is gone.
-    let log = r.root.join(".git/symphony/tasks/sweep.log");
-    let why = format!("] the land of {SLUG}\n");
-    wait_for(|| fs::read_to_string(&log).is_ok_and(|text| text.contains(&why)));
-    let text = fs::read_to_string(&log).unwrap();
-    assert!(!wt.exists(), "{text}");
-    r.assert_removed(&wt, &text);
-}
-
-#[test]
 fn the_lands_sweep_removes_its_in_process_executors_worktree_and_says_what_it_freed() {
     // A Claude Code subagent has no launch record. Its session names its own `agent-ID` worktree by
-    // its agent id; once it left, its roles are released, and the worktree is on the task's branch.
-    for left in [false, true] {
-        let r = Repo::new();
-        manifest(&r, "");
-        let agent = "a5a6262f496f70d23";
-        let wt = r.add(&format!("agent-{agent}"), Some(SLUG), "main");
-        write(&wt, "sim/jump.gd", "extends Node\n");
-        git(&wt, &["add", "-A"]);
-        git(&wt, &["commit", "-qm", "work on sim/jump"]);
-        write(&wt, ".target/debug/deps/libjump.rlib", "compiled\n");
-        let people = approved(&r, SLUG, "good");
-        let store = &r.board.store;
-        assert!(store.bind_agent(agent, &people.exe, false).unwrap());
-        if left {
-            store.leave(&people.exe).unwrap();
-        } else {
-            r.board.advance(GONE);
-        }
-        let held = size::shown(size::bytes(&wt));
-        let (_, _, swept) = landed_and_swept(&r, SLUG, &people.orch);
-        r.assert_removed(&wt, &swept);
-        for line in [
-            format!("; {held})"),
-            format!("deleted branch {SLUG} (merged into main, its worktree removed)"),
-            format!("; freed {held}"),
-        ] {
-            assert!(swept.contains(&line), "{left}: {line}\n{swept}");
-        }
+    // its agent id; it left, so its roles are released, and the worktree is on the task's branch.
+    // One that is gone and holds its role still is the sweep's own
+    // `causes::the_lands_pass_removes_its_subagents_worktree_and_names_the_bytes`.
+    let r = Repo::new();
+    manifest(&r, "");
+    let agent = "a5a6262f496f70d23";
+    let wt = r.add(&format!("agent-{agent}"), Some(SLUG), "main");
+    write(&wt, "sim/jump.gd", "extends Node\n");
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", "work on sim/jump"]);
+    write(&wt, ".target/debug/deps/libjump.rlib", "compiled\n");
+    let people = approved(&r, SLUG, "good");
+    let store = &r.board.store;
+    assert!(store.bind_agent(agent, &people.exe, false).unwrap());
+    store.leave(&people.exe).unwrap();
+    let held = size::shown(size::bytes(&wt));
+    let (_, _, swept) = landed_and_swept(&r, SLUG, &people.orch);
+    r.assert_removed(&wt, &swept);
+    for line in [
+        format!("; {held})"),
+        format!("deleted branch {SLUG} (merged into main, its worktree removed)"),
+        format!("; freed {held}"),
+    ] {
+        assert!(swept.contains(&line), "{line}\n{swept}");
     }
 }
 
@@ -450,7 +373,11 @@ fn the_lands_sweep_says_in_its_log_the_evidence_set_aside_past_its_cap() {
         .close_task_session(SLUG, &people.exe, "idle", "just tasks restore")
         .unwrap();
     // The land says it starts the sweep; the sweep says in its log what it set aside.
-    let (said, _, logged) = landed_and_swept(&r, SLUG, &people.orch);
+    let (said, line, logged) = landed_and_swept(&r, SLUG, &people.orch);
+    assert!(
+        line.starts_with(&format!("landed {SLUG} on main at ")),
+        "{line}"
+    );
     assert!(!said.contains("set aside"), "{said}");
     r.assert_removed(&wt, &logged);
     let swept = r.root.join("artifacts/swept");
@@ -481,8 +408,9 @@ fn the_lands_sweep_says_in_its_log_the_evidence_set_aside_past_its_cap() {
 fn the_command_line_lands_and_refuses_with_one_line() {
     let r = Repo::new();
     manifest(&r, "");
-    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let people = judged(&r, SLUG, "changes", "not yet");
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let first = head(&wt, "HEAD");
+    let people = judged(&r, SLUG, "changes", &format!("{first}: it jumps twice"));
     let args = |slug: &str| -> Vec<String> {
         ["land", slug, "--as", &people.orch]
             .iter()
@@ -535,14 +463,22 @@ fn the_command_line_lands_and_refuses_with_one_line() {
     );
     assert_eq!(head(&r.root, "main"), before);
 
+    // A later round goes to the same reviewer, as the skills say: its own earlier changes leave it
+    // a fresh reviewer, and its approve of the fixed tip lands the task.
+    write(&wt, "sim/jump.gd", "extends Node # once\n");
+    git(&wt, &["commit", "-qam", "jump once"]);
+    let fixed = head(&wt, "HEAD");
     r.board.store.move_to(SLUG, "review", &people.exe).unwrap();
     r.board
         .store
-        .verdict(SLUG, &people.rev, "approve", "now")
+        .verdict(SLUG, &people.rev, "approve", &format!("{fixed}: once"))
         .unwrap();
     let (code, out, err) = run(&args(SLUG));
     assert_eq!(code, 0, "{err}");
     let merge = head(&r.root, "main");
+    let by = format!("land {SLUG}: approved by {} at ", people.rev);
+    assert!(out.starts_with(&by), "{out}");
+    assert_eq!(head(&r.root, "main^2"), fixed);
     assert!(
         out.ends_with(&format!(
             "landed {SLUG} on main at {}; not pushed: no origin remote\n",
@@ -559,11 +495,21 @@ fn a_land_from_a_linked_worktree_lands_on_the_main_checkout() {
     let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     // Read before the land, whose sweep removes the landed worktree and deletes its branch.
     let tip = head(&wt, "HEAD");
+    // An approval naming no commit lands by time, and says so on the thread.
     let people = approved(&r, SLUG, "good");
-    let (_, result) = land_from(&r, &wt, SLUG, &people.orch);
-    result.unwrap();
+    let (said, result) = land_from(&r, &wt, SLUG, &people.orch);
+    let line = result.unwrap();
     assert_eq!(head(&r.root, "HEAD"), head(&r.root, "main"));
     assert_eq!(head(&r.root, "main^2"), tip);
+    assert!(said.contains("before every commit to its tip"), "{said}");
+    let landed = line.strip_suffix("; not pushed: no origin remote").unwrap();
+    assert_eq!(
+        last(&r, SLUG),
+        format!(
+            "{landed}; judged by time, the approval naming no commit of the branch: its 1 commit \
+             is older than the approval; not pushed: no origin remote"
+        )
+    );
 }
 
 #[test]
@@ -578,32 +524,6 @@ fn the_land_worktree_goes_in_the_projects_worktrees_folder_when_it_names_one() {
     let ran = fs::read_to_string(&runs).unwrap();
     assert_eq!(ran.trim(), r.dir.join("wt/land").to_string_lossy());
     assert!(!r.dir.join("wt/land").exists());
-}
-
-#[test]
-fn the_check_runs_without_the_callers_repository_variables() {
-    let r = Repo::new();
-    let seen = r.dir.join("seen");
-    let check = format!(
-        "git rev-parse --show-toplevel >> '{0}' && echo \"${{GIT_DIR:-none}}\" >> '{0}'",
-        seen.display()
-    );
-    checked_by(&r, &check);
-    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let people = approved(&r, SLUG, "good");
-    let mut env = r.env(&r.root);
-    env.vars.insert("GIT_DIR".into(), "/nowhere/.git".into());
-    env.vars
-        .insert("GIT_INDEX_FILE".into(), "/nowhere/index".into());
-    let mut out = Vec::new();
-    land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
-    let seen = fs::read_to_string(&seen).unwrap();
-    let lines: Vec<&str> = seen.lines().collect();
-    assert_eq!(lines[1], "none");
-    assert!(
-        lines[0].ends_with(".git/symphony/tasks/land/worktree"),
-        "{seen}"
-    );
 }
 
 #[test]
@@ -849,15 +769,19 @@ fn a_main_checkout_on_another_branch_is_refused() {
     assert_refused(&r, &result, &line, &before);
 }
 
+/// A conflict is refused naming its files, and the way out of that refused land: its executor
+/// merges main into the branch and resolves it there, sends the task back to review, its reviewer
+/// approves the new tip naming it, and it lands.
 #[test]
-fn a_conflict_is_refused_naming_its_files_and_never_resolved() {
+fn a_conflict_fixed_on_the_branch_and_approved_again_lands() {
     let r = Repo::new();
     manifest(&r, "");
-    branch(&r, SLUG, "sim/world.gd", "extends Node\n");
-    let people = approved(&r, SLUG, "good");
+    let wt = branch(&r, SLUG, "sim/world.gd", "extends Node\n");
+    let people = approved(&r, SLUG, &format!("{} is good", head(&wt, "HEAD")));
     write(&r.root, "sim/world.gd", "extends Object\n");
     git(&r.root, &["commit", "-qam", "main moved its way"]);
     let before = head(&r.root, "main");
+    // The conflict is refused naming its files, never resolved, and no check runs.
     let (_, result) = landed(&r, SLUG, &people.orch);
     let line = format!(
         "{SLUG} conflicts with main at {}: sim/world.gd",
@@ -875,21 +799,6 @@ fn a_conflict_is_refused_naming_its_files_and_never_resolved() {
     );
     assert_eq!(told.recipient.as_deref(), Some("@executor"));
     assert!(runs(&r).is_empty());
-}
-
-/// The way out of a refused land: its executor merges main into the branch and resolves it there,
-/// sends the task back to review, its reviewer approves the new tip naming it, and it lands.
-#[test]
-fn a_conflict_fixed_on_the_branch_and_approved_again_lands() {
-    let r = Repo::new();
-    manifest(&r, "");
-    let wt = branch(&r, SLUG, "sim/world.gd", "extends Node\n");
-    let people = approved(&r, SLUG, &format!("{} is good", head(&wt, "HEAD")));
-    write(&r.root, "sim/world.gd", "extends Object\n");
-    git(&r.root, &["commit", "-qam", "main moved its way"]);
-    let before = head(&r.root, "main");
-    landed(&r, SLUG, &people.orch).1.unwrap_err();
-    assert_eq!(head(&r.root, "main"), before);
     // Approved still: the land asks the executor, which merges main and resolves on the branch.
     let store = &r.board.store;
     assert_eq!(store.get(SLUG).unwrap().status, "done");
@@ -1292,7 +1201,11 @@ fn a_check_named_by_a_path_runs_the_merges_own_script_and_one_missing_is_refused
     write(
         &r.root,
         "tools/check.sh",
-        &format!("#!/bin/sh\npwd -P > '{}'\n", r.dir.join("ran").display()),
+        &format!(
+            "#!/bin/sh\npwd -P > '{0}'\ngit rev-parse --show-toplevel >> '{0}' && echo \
+             \"${{GIT_DIR:-none}}\" >> '{0}'\n",
+            r.dir.join("ran").display()
+        ),
     );
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(
@@ -1304,12 +1217,21 @@ fn a_check_named_by_a_path_runs_the_merges_own_script_and_one_missing_is_refused
     project_file(&r, "[verdicts]\ncheck = [\"tools/check.sh\"]\n");
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
     let people = approved(&r, SLUG, "good");
-    landed(&r, SLUG, &people.orch).1.unwrap();
+    // Git's repository variables in its caller's environment, which the check never sees: its git
+    // reads the land's worktree.
+    let mut env = r.env(&r.root);
+    env.vars.insert("GIT_DIR".into(), "/nowhere/.git".into());
+    env.vars
+        .insert("GIT_INDEX_FILE".into(), "/nowhere/index".into());
+    let mut out = Vec::new();
+    land(&r.board.store, &env, SLUG, &people.orch, None, &mut out).unwrap();
     let ran = fs::read_to_string(r.dir.join("ran")).unwrap();
-    assert!(
-        ran.trim().ends_with(".git/symphony/tasks/land/worktree"),
-        "{ran}"
-    );
+    let lines: Vec<&str> = ran.lines().collect();
+    assert_eq!(lines.len(), 3, "{ran}");
+    for line in &lines[..2] {
+        assert!(line.ends_with(".git/symphony/tasks/land/worktree"), "{ran}");
+    }
+    assert_eq!(lines[2], "none", "{ran}");
 
     project_file(&r, "[verdicts]\ncheck = [\"no-such-check-anywhere\"]\n");
     branch(&r, "sim/fall", "sim/fall.gd", "extends Node\n");
@@ -1581,39 +1503,14 @@ fn pushed_elsewhere(r: &Repo, bare: &Path, file: &str, text: &str) -> String {
 }
 
 #[test]
-fn a_land_pushes_main_alone_to_origin() {
-    let r = Repo::new();
-    manifest(&r, "");
-    let bare = remote(&r);
-    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    git(&r.root, &["tag", "v1"]);
-    let people = approved(&r, SLUG, "good");
-    let line = landed(&r, SLUG, &people.orch).1.unwrap();
-    let merge = head(&r.root, "main");
-    assert_eq!(
-        line,
-        format!(
-            "landed {SLUG} on main at {}; pushed to origin",
-            &merge[..12]
-        )
-    );
-    assert_eq!(head(&bare, "main"), merge);
-    assert_eq!(
-        git(&bare, &["for-each-ref", "--format=%(refname)"]),
-        "refs/heads/main",
-        "no other branch and no tag"
-    );
-    assert_eq!(head(&r.root, "origin/main"), merge);
-}
-
-#[test]
 fn a_landing_line_names_the_tokens_its_task_took_by_role_and_round_and_their_cost() {
     use symphony_board::Beat;
     use symphony_board::usage::{Prices, Spent, Tokens, price};
     let r = Repo::new();
     manifest(&r, "");
-    remote(&r);
+    let bare = remote(&r);
     branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    git(&r.root, &["tag", "v1"]);
     let store = &r.board.store;
     let (orch, exe, rev) = (
         r.board.session("orchestrator"),
@@ -1674,6 +1571,14 @@ fn a_landing_line_names_the_tokens_its_task_took_by_role_and_round_and_their_cos
         said.last().is_some_and(|last| last.starts_with(tokens)),
         "{said:?}"
     );
+    // The push is main's alone: the remote holds it at the merge, and nothing else.
+    assert_eq!(head(&bare, "main"), merge);
+    assert_eq!(
+        git(&bare, &["for-each-ref", "--format=%(refname)"]),
+        "refs/heads/main",
+        "no other branch and no tag"
+    );
+    assert_eq!(head(&r.root, "origin/main"), merge);
 }
 
 #[test]

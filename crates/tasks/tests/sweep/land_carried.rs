@@ -7,9 +7,16 @@
 //! rules), a merge that changes a path that did not conflict, a document among them, and a merge
 //! with no green run are each refused as before; and the refusal of a conflict says to merge once
 //! and land again only where the approve names the tip.
+//!
+//! Whether an approve stands at a tip is one answer, [`covered`]'s, read from the repository alone,
+//! and whatever it refuses the land sends back to the task's reviewer by one path. So one refusal
+//! is tried through the land, on a board, with what the land then does
+//! ([`a_merge_that_settles_code_goes_back_to_its_reviewer_naming_it`]), and each other where it is
+//! decided: on that answer over a repository ([`answer`]), with no board, approve or check.
 
 use super::stamps::{green, landed_by, told};
 use super::*;
+use symphony_board::land::{Approval, covered};
 
 const DOC: &str = "docs/DECISIONS.md";
 
@@ -30,6 +37,14 @@ fn fix_and_review() -> String {
 /// the worktree, the tip and its people, the approve naming the tip.
 fn approved_on(r: &Repo, doc: &str, code: &str) -> (PathBuf, String, People) {
     manifest(r, "");
+    let (wt, tip) = branched(r, doc, code);
+    let people = approved(r, SLUG, &format!("{tip}: read it"));
+    (wt, tip, people)
+}
+
+/// A repository whose main holds the document `doc`, and `SLUG`'s branch changing it and `code`:
+/// the worktree and the tip, on no board.
+fn branched(r: &Repo, doc: &str, code: &str) -> (PathBuf, String) {
     write(&r.root, doc, "# Decisions\n\nA card.\n");
     write(&r.root, "sim/world.gd", "extends Node\n");
     git(&r.root, &["add", "-A"]);
@@ -40,8 +55,29 @@ fn approved_on(r: &Repo, doc: &str, code: &str) -> (PathBuf, String, People) {
     git(&wt, &["add", "-A"]);
     git(&wt, &["commit", "-qm", &format!("work on {SLUG}")]);
     let tip = head(&wt, "HEAD");
-    let people = approved(r, SLUG, &format!("{tip}: read it"));
-    (wt, tip, people)
+    (wt, tip)
+}
+
+/// [`branched`] with the document [`DOC`].
+fn branch_read(r: &Repo, code: &str) -> (PathBuf, String) {
+    branched(r, DOC, code)
+}
+
+/// What the land's own rule ([`covered`]) answers of `SLUG`'s tip in `wt` over main as it is, under
+/// an approve naming `approved`: the repository alone is read. An answer that refuses starts with
+/// `line`; what the land does with a refusal is
+/// [`a_merge_that_settles_code_goes_back_to_its_reviewer_naming_it`]'s.
+#[track_caller]
+fn assert_unread(r: &Repo, wt: &Path, approved: &str, line: &str) {
+    let approval = Approval {
+        by: "a-reviewer".into(),
+        at: 0.0,
+        text: format!("{approved}: read it"),
+        review_from: None,
+    };
+    let (base, tip) = (head(&r.root, "main"), head(wt, "HEAD"));
+    let refused = covered(&r.root, SLUG, &base, &tip, &approval).unwrap_err();
+    assert!(refused.starts_with(line), "{refused}");
 }
 
 /// Main moves `file` to `text` its own way: its new tip.
@@ -226,68 +262,58 @@ fn a_merge_of_main_that_met_no_conflict_lands_on_the_approve_too() {
 #[test]
 fn a_commit_beyond_the_merge_goes_back_to_its_reviewer() {
     let r = Repo::new();
-    let (wt, tip, people) = approved_branch(&r, "sim/jump.gd");
-    let moved = main_moves(&r, DOC, "# Decisions\n\nA card, answered on main.\n");
+    let (wt, tip) = branch_read(&r, "sim/jump.gd");
+    main_moves(&r, DOC, "# Decisions\n\nA card, answered on main.\n");
     assert!(!merging(&wt, "main"));
     settled(&wt, &[(DOC, "# Decisions\n\nBoth.\n")]);
     write(&wt, "sim/jump.gd", "extends Node3D\n");
     git(&wt, &["commit", "-qam", "one more thing"]);
-    let late = head(&wt, "HEAD");
-    green(&r, SLUG, &late);
-    let (_, result) = landed_by(&r, SLUG, &people.orch);
     let line = format!("{SLUG} has 3 commits after the approved {}: ", &tip[..7]);
-    assert_sent_back(&r, result, &line, &moved);
+    assert_unread(&r, &wt, &tip, &line);
 }
 
 /// A merge made on a commit after the approved one carries that commit unread.
 #[test]
 fn a_merge_whose_first_parent_is_not_the_approved_commit_goes_back_to_its_reviewer() {
     let r = Repo::new();
-    let (wt, tip, people) = approved_branch(&r, "sim/jump.gd");
-    let moved = main_moves(&r, DOC, "# Decisions\n\nA card, answered on main.\n");
+    let (wt, tip) = branch_read(&r, "sim/jump.gd");
+    main_moves(&r, DOC, "# Decisions\n\nA card, answered on main.\n");
     write(&wt, "sim/jump.gd", "extends Node3D\n");
     git(&wt, &["commit", "-qam", "one more thing"]);
     assert!(!merging(&wt, "main"));
-    let merge = settled(&wt, &[(DOC, "# Decisions\n\nBoth.\n")]);
-    green(&r, SLUG, &merge);
-    let (_, result) = landed_by(&r, SLUG, &people.orch);
+    settled(&wt, &[(DOC, "# Decisions\n\nBoth.\n")]);
     let line = format!("{SLUG} has 3 commits after the approved {}: ", &tip[..7]);
-    assert_sent_back(&r, result, &line, &moved);
+    assert_unread(&r, &wt, &tip, &line);
 }
 
 /// The approved commit merged into main's, main first, is no merge made on the approved commit.
 #[test]
 fn a_merge_made_on_mains_commit_goes_back_to_its_reviewer() {
     let r = Repo::new();
-    let (wt, tip, people) = approved_branch(&r, "sim/jump.gd");
-    let moved = main_moves(&r, "sim/other.gd", "extends Object\n");
+    let (wt, tip) = branch_read(&r, "sim/jump.gd");
+    main_moves(&r, "sim/other.gd", "extends Object\n");
     git(&wt, &["checkout", "-q", "--detach", "main"]);
     assert!(merging(&wt, &tip));
     let merge = settled(&wt, &[]);
     git(&wt, &["checkout", "-q", "-B", SLUG, &merge]);
     assert_eq!(head(&wt, "HEAD^2"), tip);
-    green(&r, SLUG, &merge);
-    let (_, result) = landed_by(&r, SLUG, &people.orch);
     let line = format!("{SLUG} has 2 commits after the approved {}: ", &tip[..7]);
-    assert_sent_back(&r, result, &line, &moved);
+    assert_unread(&r, &wt, &tip, &line);
 }
 
 /// A merge of a branch main does not hold brings commits no land read.
 #[test]
 fn a_merge_of_a_commit_main_does_not_hold_goes_back_to_its_reviewer() {
     let r = Repo::new();
-    let (wt, tip, people) = approved_branch(&r, "sim/jump.gd");
-    let before = head(&r.root, "main");
+    let (wt, tip) = branch_read(&r, "sim/jump.gd");
     let other = r.add("other", Some("sim/other"), "main");
     write(&other, "sim/other.gd", "extends Object\n");
     git(&other, &["add", "-A"]);
     git(&other, &["commit", "-qm", "work nobody landed"]);
     assert!(merging(&wt, "sim/other"));
-    let merge = settled(&wt, &[]);
-    green(&r, SLUG, &merge);
-    let (_, result) = landed_by(&r, SLUG, &people.orch);
+    settled(&wt, &[]);
     let line = format!("{SLUG} has 2 commits after the approved {}: ", &tip[..7]);
-    assert_sent_back(&r, result, &line, &before);
+    assert_unread(&r, &wt, &tip, &line);
 }
 
 /// A conflict in code is settled by code nobody read: the land's refusal keeps its words, and
@@ -344,8 +370,8 @@ fn a_conflict_in_a_document_and_in_code_is_the_reviewers_still() {
 #[test]
 fn a_merge_that_changes_code_beside_the_documents_it_settles_goes_back_to_its_reviewer() {
     let r = Repo::new();
-    let (wt, _, people) = approved_branch(&r, "sim/jump.gd");
-    let moved = main_moves(&r, DOC, "# Decisions\n\nA card, answered on main.\n");
+    let (wt, tip) = branch_read(&r, "sim/jump.gd");
+    main_moves(&r, DOC, "# Decisions\n\nA card, answered on main.\n");
     assert!(!merging(&wt, "main"));
     let merge = settled(
         &wt,
@@ -354,15 +380,13 @@ fn a_merge_that_changes_code_beside_the_documents_it_settles_goes_back_to_its_re
             ("sim/jump.gd", "extends Node3D\n"),
         ],
     );
-    green(&r, SLUG, &merge);
-    let (_, result) = landed_by(&r, SLUG, &people.orch);
     let line = format!(
         "{SLUG}'s tip {} is one merge over its approved commit, but that merge changes \
          sim/jump.gd where the two did not conflict: an approve stands over a merge that settles \
          conflicts in documents alone",
         &merge[..7]
     );
-    assert_sent_back(&r, result, &line, &moved);
+    assert_unread(&r, &wt, &tip, &line);
 }
 
 /// A conflict git leaves no marker for: main deleted a code file the branch changed. The merge
@@ -371,29 +395,26 @@ fn a_merge_that_changes_code_beside_the_documents_it_settles_goes_back_to_its_re
 #[test]
 fn a_merge_that_keeps_code_main_deleted_goes_back_to_its_reviewer() {
     let r = Repo::new();
-    let (wt, _, people) = approved_branch(&r, "sim/world.gd");
+    let (wt, tip) = branch_read(&r, "sim/world.gd");
     fs::remove_file(r.root.join("sim/world.gd")).unwrap();
     git(&r.root, &["add", "-A"]);
     git(&r.root, &["commit", "-qm", "main deleted the world"]);
-    let moved = head(&r.root, "main");
     assert!(!merging(&wt, "main"), "a change meets a deletion");
     let merge = settled(&wt, &[("sim/world.gd", "extends Node2D\n")]);
-    green(&r, SLUG, &merge);
-    let (_, result) = landed_by(&r, SLUG, &people.orch);
     let line = format!(
         "{SLUG}'s tip {} is one merge over its approved commit, but that merge settles a \
          conflict in sim/world.gd, no document",
         &merge[..7]
     );
-    assert_sent_back(&r, result, &line, &moved);
+    assert_unread(&r, &wt, &tip, &line);
 }
 
 /// A document edited in the merge where nothing conflicted is text nobody read, as code is.
 #[test]
 fn a_merge_that_edits_a_document_that_did_not_conflict_goes_back_to_its_reviewer() {
     let r = Repo::new();
-    let (wt, _, people) = approved_branch(&r, "sim/jump.gd");
-    let moved = main_moves(&r, DOC, "# Decisions\n\nA card, answered on main.\n");
+    let (wt, tip) = branch_read(&r, "sim/jump.gd");
+    main_moves(&r, DOC, "# Decisions\n\nA card, answered on main.\n");
     assert!(!merging(&wt, "main"));
     let merge = settled(
         &wt,
@@ -402,39 +423,37 @@ fn a_merge_that_edits_a_document_that_did_not_conflict_goes_back_to_its_reviewer
             ("docs/OTHER.md", "# Another page\n"),
         ],
     );
-    green(&r, SLUG, &merge);
-    let (_, result) = landed_by(&r, SLUG, &people.orch);
     let line = format!(
         "{SLUG}'s tip {} is one merge over its approved commit, but that merge changes \
          docs/OTHER.md where the two did not conflict",
         &merge[..7]
     );
-    assert_sent_back(&r, result, &line, &moved);
+    assert_unread(&r, &wt, &tip, &line);
 }
 
 /// A guide, the rules and a skill instruct every agent: a conflict there keeps its reviewer, in
-/// the refusal's words and when the merge that settles it is landed.
+/// the refusal's words and when the merge that settles it is landed. A skill here; which paths
+/// instruct agents is one rule's (`land::carried::tests::a_document_is_a_markdown_file_by_its_extension`).
 #[test]
 fn a_conflict_in_the_rules_or_a_skill_is_the_reviewers_still() {
-    for doc in ["RULES.md", "shipped/skills/work/SKILL.md"] {
-        let r = Repo::new();
-        let (wt, _, people) = approved_on(&r, doc, "sim/jump.gd");
-        let moved = main_moves(&r, doc, "# Decisions\n\nA card, answered on main.\n");
-        landed_by(&r, SLUG, &people.orch).1.unwrap_err();
-        let (text, to) = told(&r, SLUG);
-        assert!(text.ends_with(&fix_and_review()), "{text}");
-        assert_eq!(to.as_deref(), Some("@executor"));
-        assert!(!merging(&wt, "main"));
-        let merge = settled(&wt, &[(doc, "# Decisions\n\nBoth.\n")]);
-        green(&r, SLUG, &merge);
-        let (_, result) = landed_by(&r, SLUG, &people.orch);
-        let line = format!(
-            "{SLUG}'s tip {} is one merge over its approved commit, but that merge settles a \
-             conflict in {doc}, no document",
-            &merge[..7]
-        );
-        assert_sent_back(&r, result, &line, &moved);
-    }
+    let doc = "shipped/skills/work/SKILL.md";
+    let r = Repo::new();
+    let (wt, _, people) = approved_on(&r, doc, "sim/jump.gd");
+    let moved = main_moves(&r, doc, "# Decisions\n\nA card, answered on main.\n");
+    landed_by(&r, SLUG, &people.orch).1.unwrap_err();
+    let (text, to) = told(&r, SLUG);
+    assert!(text.ends_with(&fix_and_review()), "{text}");
+    assert_eq!(to.as_deref(), Some("@executor"));
+    assert!(!merging(&wt, "main"));
+    let merge = settled(&wt, &[(doc, "# Decisions\n\nBoth.\n")]);
+    green(&r, SLUG, &merge);
+    let (_, result) = landed_by(&r, SLUG, &people.orch);
+    let line = format!(
+        "{SLUG}'s tip {} is one merge over its approved commit, but that merge settles a \
+         conflict in {doc}, no document",
+        &merge[..7]
+    );
+    assert_sent_back(&r, result, &line, &moved);
 }
 
 /// An approve naming no commit stands over no merge, so the refusal of its conflict, in a

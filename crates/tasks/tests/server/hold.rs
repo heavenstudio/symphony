@@ -12,6 +12,7 @@ use serde_json::json;
 use std::convert::Infallible;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use symphony_board::port;
 use symphony_board::rpc::{Client, healthy};
@@ -37,6 +38,41 @@ fn logged(dir: &Path) -> u64 {
             .map(|meta| meta.len())
             .sum()
     })
+}
+
+/// Ten MiB of rows: more than the small memtable used by the replay cases.
+pub(super) const REPLAY_ROWS: u64 = 5000;
+
+/// A written-and-killed store's log, built once and copied before any replay. The case keeps all
+/// its own start, replay, kill and row-count assertions; only its unrelated setup is shared.
+pub(super) fn replay_into(s: &Scratch) {
+    static SEED: OnceLock<PathBuf> = OnceLock::new();
+    let seed = SEED.get_or_init(|| {
+        let setup = Scratch::new("replay-seed-setup");
+        let running = setup.home().storage(Storage::BOARD).ensure().unwrap();
+        let client = Client::new(&running.addr, "sf", "replay");
+        for batch in 0..REPLAY_ROWS / 100 {
+            client
+                .define_then(
+                    &format!(
+                        "FOR $n IN 0..100 {{ CREATE row CONTENT {{ batch: {batch}, n: $n, text: \
+                         string::repeat('x', 2000) }} }};"
+                    ),
+                    json!({}),
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            client
+                .query("RETURN count(SELECT id FROM row);", json!({}))
+                .unwrap(),
+            vec![json!(REPLAY_ROWS)]
+        );
+        signal(running.pid, "KILL");
+        assert!(gone(running.pid));
+        crate::stores::keep(&setup, "replay-seed")
+    });
+    crate::stores::clone_data(seed, &s.dir.join("data"));
 }
 
 #[test]
@@ -442,32 +478,12 @@ fn a_log_written_under_a_larger_memtable_is_replayed_whole_and_survives_a_kill_a
         memtable: 4 << 20,
         ..Storage::BOARD
     };
-    let first = s.home().storage(Storage::BOARD).ensure().unwrap();
-    let client = Client::new(&first.addr, "sf", "replay");
-    for batch in 0..50 {
-        client
-            .define_then(
-                &format!(
-                    "FOR $n IN 0..100 {{ CREATE row CONTENT {{ batch: {batch}, n: $n, text: \
-                     string::repeat('x', 2000) }} }};"
-                ),
-                json!({}),
-            )
-            .unwrap();
-    }
-    let count = |running: &Running| {
-        Client::new(&running.addr, "sf", "replay")
-            .query("RETURN count(SELECT id FROM row);", json!({}))
-            .unwrap()
-    };
-    assert_eq!(count(&first), vec![json!(5000)]);
-    signal(first.pid, "KILL");
-    assert!(gone(first.pid));
+    replay_into(&s);
     let log = logged(&s.dir);
     assert!(log > small.memtable, "the log holds {log} bytes");
 
     let second = s.home().storage(small).ensure().unwrap();
-    assert_eq!(count(&second), vec![json!(5000)]);
+    assert_eq!(rows(&second.addr), vec![json!(REPLAY_ROWS)]);
     assert!(
         logged(&s.dir) < log / 4,
         "the replay emptied the log: {} bytes",
@@ -477,8 +493,8 @@ fn a_log_written_under_a_larger_memtable_is_replayed_whole_and_survives_a_kill_a
     assert!(gone(second.pid));
     let third = s.home().storage(small).ensure().unwrap();
     assert_eq!(
-        count(&third),
-        vec![json!(5000)],
+        rows(&third.addr),
+        vec![json!(REPLAY_ROWS)],
         "rows were lost to the kill"
     );
     assert!(healthy(&third.addr));
@@ -576,26 +592,14 @@ fn a_store_that_went_back_keeps_its_unapplied_segment_in_a_clone_before_the_repl
         memtable: 4 << 20,
         ..Storage::BOARD
     };
-    let first = s.home().storage(Storage::BOARD).ensure().unwrap();
-    let client = Client::new(&first.addr, "sf", "replay");
-    for batch in 0..50 {
-        client
-            .define_then(
-                &format!(
-                    "FOR $n IN 0..100 {{ CREATE row CONTENT {{ batch: {batch}, n: $n, text: \
-                     string::repeat('x', 2000) }} }};"
-                ),
-                json!({}),
-            )
-            .unwrap();
-    }
-    assert_eq!(rows(&first.addr), vec![json!(5000)]);
-    signal(first.pid, "KILL");
-    assert!(gone(first.pid));
-    std::fs::remove_file(s.dir.join("server.json")).unwrap();
+    replay_into(&s);
 
     let (older, addr) = Older::start(&s, small.memtable);
-    assert_eq!(rows(&addr), vec![json!(5000)], "the older start read all");
+    assert_eq!(
+        rows(&addr),
+        vec![json!(REPLAY_ROWS)],
+        "the older start read all"
+    );
     older.kill();
     let segment = s.dir.join("data/wal/00000000000000000000.wal");
     let unapplied = std::fs::read(&segment).unwrap();
@@ -634,7 +638,7 @@ fn a_store_that_went_back_keeps_its_unapplied_segment_in_a_clone_before_the_repl
     assert!(!segment.exists(), "the replay kept the segment itself");
     let read = rows(&started.addr)[0].as_u64().unwrap();
     assert!(
-        read < 5000,
+        read < REPLAY_ROWS,
         "the store did not go back: it reads {read} rows"
     );
     let said = told.lines();

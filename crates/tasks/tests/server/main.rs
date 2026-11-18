@@ -42,4 +42,5 @@ mod snapshot;
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
 mod store;
+mod stores;
 mod surreal_lock;

@@ -276,6 +276,8 @@ fn a_land_killed_outright_leaves_its_check_and_the_next_refuses_while_anything_w
     assert_eq!(left(&r), (false, false));
 }
 
+/// A land hung up while it pushes, past main: what it leaves, a full sweep meanwhile keeping the
+/// branch its record names, and the run again that finishes it.
 #[test]
 fn a_land_stopped_after_main_moved_is_finished_by_a_run_again_pushing_what_it_checked() {
     let r = Repo::new();
@@ -334,6 +336,19 @@ fn a_land_stopped_after_main_moved_is_finished_by_a_run_again_pushing_what_it_ch
         format!("land {SLUG}: merged {tip} as {merge}, checked at {merge}; moving main there")
     );
     assert_eq!(runs(&r).len(), 1);
+    assert!(Record::read(&r.root.join(".git/symphony/tasks/land"), SLUG).is_some());
+    // A full pass, as any done, move or verdict starts, once the window has passed: the worktree,
+    // merged and clean, goes; its branch, which the land's record names, stays.
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    assert!(
+        said.contains(&format!(
+            "kept branch {SLUG}: a land's record of its merge names it, and `just land {SLUG}` run \
+             again finishes that land from it"
+        )),
+        "{said}"
+    );
+    assert_eq!(head(&r.root, SLUG), tip, "{said}");
     // A commit on main by hand meanwhile, which no check passed on.
     write(&r.root, "notes.md", "later\n");
     git(&r.root, &["add", "notes.md"]);
@@ -374,76 +389,6 @@ fn a_land_stopped_after_main_moved_is_finished_by_a_run_again_pushing_what_it_ch
         )),
         "{again}"
     );
-}
-
-#[test]
-fn a_full_sweep_after_a_land_stopped_past_main_keeps_its_branch_and_the_land_finishes() {
-    let r = Repo::new();
-    manifest(&r, "");
-    let bare = remote(&r);
-    // An origin whose push never answers, until the test says.
-    let pushing = r.dir.join("push.pid");
-    write(
-        &r.dir,
-        "receive-pack",
-        &format!(
-            "#!/bin/sh\necho $$ > '{}'\nexec sleep 60\n",
-            pushing.display()
-        ),
-    );
-    let receive = r.dir.join("receive-pack");
-    let chmod = Command::of("chmod")
-        .arg("+x")
-        .arg(&receive)
-        .status_locked()
-        .unwrap();
-    assert!(chmod.success());
-    git(
-        &r.root,
-        &[
-            "config",
-            "remote.origin.receivepack",
-            &receive.to_string_lossy(),
-        ],
-    );
-    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let tip = head(&wt, "HEAD");
-    let people = approved(&r, SLUG, &format!("{tip}: good"));
-    let mut land = started(&r, &people.orch);
-    let push = pid_in(&pushing);
-    send(land.id(), libc::SIGHUP, true);
-    assert_eq!(ended(&mut land).signal(), Some(libc::SIGHUP));
-    assert!(gone(push), "the push {push} was ended");
-    let merge = head(&r.root, "main");
-    assert_eq!(head(&r.root, "main^2"), tip);
-    assert!(Record::read(&r.root.join(".git/symphony/tasks/land"), SLUG).is_some());
-    // A full pass, as any done, move or verdict starts, once the window has passed: the worktree,
-    // merged and clean, goes; its branch, which the land's record names, stays.
-    let said = r.sweep();
-    r.assert_removed(&wt, &said);
-    assert!(
-        said.contains(&format!(
-            "kept branch {SLUG}: a land's record of its merge names it, and `just land {SLUG}` run \
-             again finishes that land from it"
-        )),
-        "{said}"
-    );
-    assert_eq!(head(&r.root, SLUG), tip, "{said}");
-    // Run again, it finishes: the push of what it checked, the landed line, the close.
-    git(&r.root, &["config", "--unset", "remote.origin.receivepack"]);
-    let line = landed(&r, SLUG, &people.orch).1.unwrap();
-    assert_eq!(
-        line,
-        format!(
-            "landed {SLUG} on main at {}, finishing a land interrupted after its merge; pushed \
-             to origin",
-            &merge[..12]
-        )
-    );
-    assert_eq!(head(&bare, "main"), merge);
-    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
-    assert_eq!(last(&r, SLUG), line);
-    assert!(!Record::path(&r.root.join(".git/symphony/tasks/land"), SLUG).exists());
 }
 
 // -- whose a group or a worktree an earlier land left is -------------------------------------------

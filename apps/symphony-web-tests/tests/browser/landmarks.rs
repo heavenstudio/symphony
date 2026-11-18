@@ -369,6 +369,14 @@ fn visit(site: &Site, browser: &mut Chrome, page: &Page) -> Vec<Region> {
 /// The site, with the board, the queue and the first task shaped as the live ones, and a fresh
 /// browser at `width` on it.
 fn browser_at(width: layout_shift::Width) -> Option<(Site, Chrome)> {
+    let mut browser = chrome()?;
+    Some((site_at(&mut browser, width), browser))
+}
+
+/// The site of [`browser_at`], and `browser` at `width` for it: a page as a launch leaves it (a
+/// fresh browser's, or a fresh context's), which draws at that width, records its shifts and
+/// keeps no store.
+fn site_at(browser: &mut Chrome, width: layout_shift::Width) -> Site {
     let site = layout_shift::site(
         "docs/PROBE.md",
         &layout_shift::document_sections(),
@@ -377,7 +385,6 @@ fn browser_at(width: layout_shift::Width) -> Option<(Site, Chrome)> {
     site.set_json("/api/task-board", &board());
     site.set_json("/api/queue", &queue());
     board_cards(&site);
-    let mut browser = chrome()?;
     browser.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
@@ -396,7 +403,7 @@ fn browser_at(width: layout_shift::Width) -> Option<(Site, Chrome)> {
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": NO_SCROLLBARS }),
     );
-    Some((site, browser))
+    site
 }
 
 /// A page script that takes every scrollbar out of layout, so each region is as wide as the
@@ -473,18 +480,17 @@ const ALL_TASK: [&str; 5] = ["head", "gates", "timeline", "brief", "thread"];
 /// the next visit every part.
 #[test]
 fn a_task_draws_its_head_where_its_ghost_did_and_on_the_next_visit_every_part() {
+    let Some(mut browser) = chrome() else { return };
     for width in [layout_shift::PHONE, layout_shift::WIDE] {
-        let Some((site, mut browser)) = browser_at(width) else {
-            return;
-        };
+        // A browser that drew none is a context of its own, on a site of its own.
+        browser.fresh_context();
+        let site = site_at(&mut browser, width);
         skeleton_loading(&site);
         let loading_guessed = visit(&site, &mut browser, &LOADING);
         board_cards(&site);
         let gates_alike = visit(&site, &mut browser, &GATES);
-        drop(browser);
-        let Some((site, mut browser)) = browser_at(width) else {
-            return;
-        };
+        browser.fresh_context();
+        let site = site_at(&mut browser, width);
         let gates_guessed = visit(&site, &mut browser, &GATES);
         skeleton_loading(&site);
         let loading_alike = visit(&site, &mut browser, &LOADING);

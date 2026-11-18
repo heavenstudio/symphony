@@ -62,6 +62,7 @@ pub(crate) struct Run {
     /// The remote's main as fetched.
     pub(crate) tip: String,
     pub(crate) started_at: f64,
+    /// When it ended, by the wall clock: a sleep of the machine under it is counted.
     pub(crate) ended_at: f64,
     /// `green`, `red`, `unchanged` (the candidate was released already), `error` (it stopped
     /// short) or [`INTERRUPTED`] (it ended without recording itself, and a later run recorded it).
@@ -100,6 +101,10 @@ pub(crate) struct Run {
     /// The release candidate it reran, when it was a rerun of one ([`super::candidate`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) rerun: Option<Rerun>,
+    /// How long the machine slept under it, in seconds: what the wall clock counted of it past
+    /// the clock that stops in sleep ([`super::span`]). Left out of a run that did not sleep.
+    #[serde(default, skip_serializing_if = "super::span::none")]
+    pub(crate) slept: f64,
 }
 
 /// A rerun of the release candidate: the commit first judged, the round it is (2 for the first
@@ -411,6 +416,7 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         refreshed: None,
         published: None,
         rerun: None,
+        slept: 0.0,
     });
     run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
     let doing = match holder.and_then(|holder| holder.check.as_ref()) {
@@ -542,7 +548,8 @@ pub(crate) fn local(seconds: f64) -> String {
     stamp_at(seconds as libc::time_t)
 }
 
-/// One line on `run`: its result, when, how long ago, its commit and what was red or tagged.
+/// One line on `run`: its result, when, how long ago, its commit, how long the machine slept under
+/// it when it did, and what was red or tagged.
 fn line(run: &Run, now: f64) -> String {
     let mut said = format!(
         "{}, {} ({}), on {}",
@@ -551,6 +558,9 @@ fn line(run: &Run, now: f64) -> String {
         age(now, run.started_at),
         short(&run.commit)
     );
+    if let Some(slept) = super::span::said(run.slept) {
+        said.push_str(&format!("; the machine slept {slept} under it"));
+    }
     if let Some(rerun) = &run.rerun {
         said.push_str(&format!(
             " (round {} of the release candidate first judged at {}{})",
@@ -765,6 +775,7 @@ mod tests {
             refreshed: None,
             published: None,
             rerun: None,
+            slept: 0.0,
         }
     }
 
@@ -931,6 +942,31 @@ mod tests {
         assert!(lines[2].starts_with("last green: "), "{said}");
         assert!(lines[2].ends_with("(27 h ago), on green0000000"), "{said}");
         assert_eq!(lines.len(), 3, "{said}");
+    }
+
+    #[test]
+    fn a_run_the_machine_slept_under_says_for_how_long_in_its_record_and_the_status() {
+        let mut slept = run("slept", "release", "red", NOW - 3600.0);
+        slept.checks = vec![red_check("verify")];
+        slept.slept = 1589.0;
+        let said = status(std::slice::from_ref(&slept), &[], NOW);
+        let last = said.lines().nth(1).unwrap();
+        assert!(
+            last.contains(
+                "(1 h ago), on slept0000000; the machine slept 26 min under it; red: verify (exit 101)"
+            ),
+            "{said}"
+        );
+        let text = serde_json::to_string(&slept).unwrap();
+        assert!(text.contains("\"slept\":1589.0"), "{text}");
+        assert_eq!(serde_json::from_str::<Run>(&text).unwrap(), slept);
+
+        // One that did not sleep says nothing new, and a record written before reads as awake.
+        let awake = run("awake", "release", "red", NOW - 3600.0);
+        assert!(!status(std::slice::from_ref(&awake), &[], NOW).contains("slept"));
+        let text = serde_json::to_string(&awake).unwrap();
+        assert!(!text.contains("slept"), "{text}");
+        assert_eq!(serde_json::from_str::<Run>(&text).unwrap().slept, 0.0);
     }
 
     #[test]
