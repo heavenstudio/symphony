@@ -473,6 +473,8 @@ mod tests {
             published: None,
             rerun: None,
             slept: 0.0,
+            inputs: None,
+            environment: None,
         }
     }
 

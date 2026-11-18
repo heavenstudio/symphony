@@ -246,6 +246,13 @@ and the board count the cards live:
 | Rejected and replaced | it is rejected and an agent has answered, usually with a replacement card |
 | Resolved | it is `[r]`, or it is approved and the owner's last line is a plain approval with no comment |
 
+A card waiting on an agent leaves that group by an agent's plain line under it, and
+by nothing else: a task filed for its work is named in that line. Until then its
+row in the queue says the ask the board holds for it ([TASKS](TASKS.md)), as
+`just tasks asks` does: how long it has waited, late past ten minutes, and who
+holds it, nobody said as that, so an ask no one took reads as late and not as work
+under way.
+
 A plain approval, first time or after an agent's answer, is **resolvable**;
 the next review pass marks it `[r]` with a dated `agent · resolved` line
 (`just symphony-status --tidy`). Any new comment from the owner reopens a card,

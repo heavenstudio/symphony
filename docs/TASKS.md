@@ -170,7 +170,9 @@ when the migrate reads it, and every refresh's migrate would refuse. Meanwhile a
 behind its board reads on, and every write it sends is refused: the owner's saves and chat, with
 the asks they open, wait in its journal, which it tries again each tick until a server that can
 write hands them over, while its other writes (the owner's message on a task, a priority, a field,
-a cancel, an ask it would close) are refused until it has reloaded. A server two schemas behind
+a cancel, an ask it would close) are refused until it has reloaded. Every page of the project
+says so in the server's notice, and that a verdict or a message saved meanwhile is kept and
+reaches no agent until then. A server two schemas behind
 reads nothing of its board.
 
 The record arrives with schema 18, a raise of its own, and a build below it keeps no line, so the

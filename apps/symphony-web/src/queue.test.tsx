@@ -1,7 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AskLine,
   active,
+  askLate,
+  askLine,
   CategoryChips,
   changed,
   checkQueue,
@@ -9,6 +12,8 @@ import {
   chosenTopic,
   counts,
   keepRows,
+  minutes,
+  QueueGroup,
   QueuePage,
   queueCategory,
   readQueue,
@@ -18,7 +23,8 @@ import {
 } from "./queue";
 import { TaskTag } from "./task-tag";
 import { asking, CASES, memoryStorage, reply, server } from "./testing";
-import type { Card } from "./wire";
+import { AtOnce } from "./viewport";
+import type { Card, QueueItem } from "./wire";
 
 /** A card of `doc`, its slug `slug`. */
 function card(doc: string, slug = "s"): Card {
@@ -170,6 +176,8 @@ describe("the queue read", () => {
     const queue = readQueue(CASES.samples.queue);
     expect(queue?.waiting.map((one) => one.slug)).toEqual(["lamp-colour", "s"]);
     expect(queue?.agent[0]?.branch).toBe("app/lamps");
+    expect(queue?.agent.map((one) => one.ask?.holder ?? null)).toEqual([null, null, "umber-stoat"]);
+    expect(queue?.agent[1]?.ask).toEqual({ id: 3, asked: 1000 });
     expect(readQueue(CASES.samples.emptyQueue)).toEqual(CASES.samples.emptyQueue);
   });
 
@@ -200,6 +208,20 @@ describe("the queue read", () => {
         agent: [{ href: "", path: "", slug: "", title: "", kind: "", text: "", branch: 2 }],
       },
     ],
+    ...[
+      ["an item's ask without when it was said", { id: 3 }],
+      ["an item's ask numbered by a word", { id: "3", asked: 1 }],
+      ["an item's ask held by a number", { id: 3, asked: 1, holder: 7 }],
+      ["an item's ask held since a word", { id: 3, asked: 1, holder: "a", held: "now" }],
+      ["an item's ask that is a word", "ask 3"],
+    ].map(([name, ask]): [unknown, unknown] => [
+      name,
+      {
+        waiting: [],
+        spot_check: [],
+        agent: [{ href: "", path: "", slug: "", title: "", kind: "", text: "", ask }],
+      },
+    ]),
     [
       "an item without its text",
       {
@@ -210,6 +232,74 @@ describe("the queue read", () => {
     ],
   ])("is none for %s", (_, value) => {
     expect(readQueue(value)).toBeNull();
+  });
+});
+
+describe("a card's ask", () => {
+  it.each([
+    [0, "0 min"],
+    [59, "0 min"],
+    [-5, "0 min"],
+    [14 * 60 + 30, "14 min"],
+    [3600, "1 h"],
+    [72 * 60, "1 h 12 min"],
+    [74 * 3600 + 31 * 60, "74 h 31 min"],
+  ])("ages %i s as %j, as just tasks asks does", (seconds, said) => {
+    expect(minutes(seconds)).toBe(said);
+  });
+
+  it("is late from ten minutes, and not a second before", () => {
+    expect(askLate(1000, 1599)).toBe(false);
+    expect(askLate(1000, 1600)).toBe(true);
+  });
+
+  it("says its age and that nobody holds it, late once it is", () => {
+    expect(askLine({ id: 3, asked: 1000 }, 1000 + 240)).toBe("4 min · held by nobody");
+    expect(askLine({ id: 3, asked: 1000, holder: null, held: null }, 1000 + 74 * 3600)).toBe(
+      "74 h, late · held by nobody",
+    );
+  });
+
+  it("names its holder, and for how long once the board says since when", () => {
+    const ask = { id: 3, asked: 1000, holder: "umber-stoat", held: 1120 };
+    expect(askLine(ask, 1000 + 14 * 60)).toBe("14 min, late · held by umber-stoat for 12 min");
+    expect(askLine({ ...ask, held: null }, 1060)).toBe("1 min · held by umber-stoat");
+  });
+
+  it("draws as a line of its row that says whether it is late", () => {
+    expect(renderToStaticMarkup(<AskLine ask={{ id: 3, asked: 1000 }} now={1060} />)).toBe(
+      '<p class="queue-ask muted" data-ask="3" data-late="false">1 min · held by nobody</p>',
+    );
+    expect(renderToStaticMarkup(<AskLine ask={{ id: 3, asked: 1000 }} now={1600} />)).toContain(
+      'data-late="true">10 min, late · held by nobody',
+    );
+  });
+
+  it("is on the row of the card it is about, and on no other", () => {
+    const item = (slug: string, ask?: QueueItem["ask"]): QueueItem => ({
+      href: `/docs/A.md#${slug}`,
+      path: "docs/A.md",
+      slug,
+      title: slug,
+      kind: "approved",
+      text: "B",
+      ...(ask === undefined ? {} : { ask }),
+    });
+    const markup = renderToStaticMarkup(
+      <AtOnce.Provider value={true}>
+        <QueueGroup
+          id="agent"
+          title="Waiting on the agent"
+          items={[item("held", { id: 4, asked: 1000 }), item("unasked"), item("null", null)]}
+          empty="none"
+          now={1000 + 3600}
+        />
+      </AtOnce.Provider>,
+    );
+    expect(markup.match(/class="queue-ask muted"/g)).toHaveLength(1);
+    expect(markup).toMatch(
+      /data-card="docs\/A\.md#held".*?<p class="muted">B<\/p><p class="queue-ask muted" data-ask="4" data-late="true">1 h, late · held by nobody<\/p>/,
+    );
   });
 });
 

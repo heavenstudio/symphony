@@ -1172,7 +1172,12 @@ fn a_cold_release_target_is_provisioned_before_tests_and_a_setup_red_starts_no_t
         let steps = listed(&recipes.tree.join("build/verify"));
         let names: Vec<_> = steps.iter().map(|step| (step.0.as_str(), step.1)).collect();
         if fails {
-            assert_eq!(names, [("nextest-setup", 2)]);
+            assert_eq!(
+                names,
+                [("nextest-setup", 2), ("tests", -1)],
+                "the tests are listed as not run, never left out: a rerun must know of them"
+            );
+            assert!(steps[1].2.ends_with("nextest-setup.log"), "{steps:?}");
             assert!(
                 !recipes.tree.join("build/verify/tests.log").exists(),
                 "tests log: {:?}; verify: {done:?}",
@@ -1341,6 +1346,23 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_check
 /// command, its seconds a whole number and the machine's load as it ended its last field: the load
 /// averages over 1, 5 and 15 minutes and the processors.
 fn listed(folder: &Path) -> Vec<(String, i32, PathBuf, String)> {
+    let (steps, _) = listed_with_parts(folder);
+    steps
+}
+
+/// The lanes of its tests a verify listed in `folder`, each `tests/LANE`, after the step they are
+/// parts of: its name and exit status.
+fn lanes(folder: &Path) -> Vec<(String, i32)> {
+    let (_, parts) = listed_with_parts(folder);
+    (parts.into_iter())
+        .map(|(name, code, _, _)| (name, code))
+        .collect()
+}
+
+type Listed = Vec<(String, i32, PathBuf, String)>;
+
+/// [`listed`], and the parts of a step listed after it (`STEP/PART`), each line of the one shape.
+fn listed_with_parts(folder: &Path) -> (Listed, Listed) {
     let text = fs::read_to_string(folder.join("steps.tsv")).unwrap();
     text.lines()
         .map(|line| {
@@ -1356,12 +1378,17 @@ fn listed(folder: &Path) -> Vec<(String, i32, PathBuf, String)> {
             );
             (
                 fields[0].to_string(),
-                fields[1].parse().unwrap(),
+                // A step listed as not run (`-`) reads as -1 here.
+                if fields[1] == "-" {
+                    -1
+                } else {
+                    fields[1].parse().unwrap()
+                },
                 PathBuf::from(fields[3]),
                 fields[4].to_string(),
             )
         })
-        .collect()
+        .partition(|step| !step.0.contains('/'))
 }
 
 /// The client a tests step's log says it was handed, its real path; `unset` for none.
@@ -1616,6 +1643,79 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
         "{unknown:?}"
     );
     assert_eq!(listed(&tree.join("build/verify")).len(), 3, "as it was");
+    // Each lane that ran is listed after the tests step, as a part of it.
+    assert_eq!(
+        lanes(&tree.join("build/verify")),
+        [
+            ("tests/nextest".to_string(), 0),
+            ("tests/doc".to_string(), 0)
+        ]
+    );
+
+    // A lane named as `tests/LANE` runs alone, after the runner's setup, and is the one listed.
+    let one = recipes.just_with(&["verify", "tests/doc"], &[("EXPECT_SERIAL", "")]);
+    assert!(one.status.success(), "{one:?}");
+    let steps = listed(&tree.join("build/verify"));
+    let names: Vec<&str> = steps.iter().map(|step| step.0.as_str()).collect();
+    assert_eq!(names, ["nextest-setup", "tests"]);
+    assert_eq!(steps[1].3, "tools/test-lanes.sh doc");
+    assert_eq!(
+        lanes(&tree.join("build/verify")),
+        [("tests/doc".to_string(), 0)]
+    );
+    // The step named beside one of its lanes runs whole.
+    let whole = recipes.just_with(&["verify", "tests/doc", "tests"], &[]);
+    assert!(whole.status.success(), "{whole:?}");
+    assert_eq!(
+        listed(&tree.join("build/verify"))[1].3,
+        "tools/test-lanes.sh"
+    );
+    assert_eq!(lanes(&tree.join("build/verify")).len(), 2);
+    // A lane it does not know is the tests step's red, and none is listed.
+    let unknown = recipes.just_with(&["verify", "tests/nothing"], &[]);
+    assert_eq!(unknown.status.code(), Some(1), "{unknown:?}");
+    assert_eq!(lanes(&tree.join("build/verify")), []);
+    let log = fs::read_to_string(tree.join("build/verify/tests.log")).unwrap();
+    assert!(
+        log.contains("test-lanes: no lane nothing; the lanes are build fixture nextest "),
+        "{log}"
+    );
+
+    // What each step and lane reads is said, and nothing runs.
+    let before = fs::read_to_string(tree.join("build/verify/steps.tsv")).unwrap();
+    let said = output(
+        Command::of("bash")
+            .args(["tools/verify.sh", "justfile", "--inputs"])
+            .current_dir(tree)
+            .stdin(Stdio::null()),
+    )
+    .unwrap();
+    assert!(said.status.success(), "{said:?}");
+    let said = String::from_utf8(said.stdout).unwrap();
+    for line in [
+        "lint\ttree\t\n",
+        "client-check\tpath\tapps/symphony-web\n",
+        "size-check\tpackage\tsymphony-server\n",
+        "nextest-setup\t\t\n",
+        "tests/hooks\ttree\t\n",
+        "tests/perf\ttest\tperf\n",
+        "tests/browser\tpackage\tsymphony-server\n",
+        "tests/browser\tpath\tapps/symphony-web\n",
+    ] {
+        assert!(said.contains(line), "{line:?} in:\n{said}");
+    }
+    assert!(
+        said.lines().all(|line| line.split('\t').count() == 3),
+        "{said}"
+    );
+    assert!(
+        !said.contains("\ntests\t"),
+        "the tests step reads by its lanes:\n{said}"
+    );
+    assert_eq!(
+        fs::read_to_string(tree.join("build/verify/steps.tsv")).unwrap(),
+        before
+    );
 }
 
 #[test]

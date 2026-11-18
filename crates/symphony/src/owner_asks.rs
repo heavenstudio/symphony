@@ -134,18 +134,8 @@ fn read_card(ask: &Ask, reading: &Reading) -> Read {
         return Read::Unsure;
     }
     let shown = page(tree, path);
-    let since = (ask.asked / 60.0).floor() * 60.0 - LINE_SLACK;
     let held_at = |page: &str| reading.held.get(&(page.to_string(), card.to_string()));
-    let carries = |page: &str| {
-        held_at(page)
-            .copied()
-            .flatten()
-            .is_some_and(|at| at >= since)
-    };
-    let on = |page: &str| match tree {
-        None => page == path || crate::dashboard::document_path(page) == path,
-        Some(_) => page == shown || (page == path && carries(page)),
-    };
+    let on = |page: &str| on_page(ask, path, card, page, &reading.held);
     if reading
         .agent
         .iter()
@@ -172,6 +162,49 @@ fn read_card(ask: &Ask, reading: &Reading) -> Read {
             "main's copy of card {card} does not carry the owner's line"
         ))),
         None => Read::Gone(gone(&format!("main's {path} has no card {card}"))),
+    }
+}
+
+/// Whether the card `card` of the document `path` that `ask` is about is the one `page` holds:
+/// main's ask on main's page or on the page of a branch that proposes the card again; a branch's on
+/// that branch's own page, or on main's once its copy carries the owner's line.
+fn on_page(ask: &Ask, path: &str, card: &str, page: &str, held: &crate::dashboard::Held) -> bool {
+    let Some(branch) = ask.tree.as_deref() else {
+        return page == path || crate::dashboard::document_path(page) == path;
+    };
+    let since = (ask.asked / 60.0).floor() * 60.0 - LINE_SLACK;
+    page == self::page(Some(branch), path)
+        || (page == path
+            && held
+                .get(&(page.to_string(), card.to_string()))
+                .copied()
+                .flatten()
+                .is_some_and(|at| at >= since))
+}
+
+/// Tell each card of the agent queue the owner's open ask it is on the board, the oldest when
+/// several are about it: how long it has waited and who holds it, from the ask itself. A comment's
+/// row, and a card no open ask is about, is told none.
+pub fn note(agent: &mut [QueueItem], open: &[Ask], held: &crate::dashboard::Held) {
+    for item in agent.iter_mut() {
+        item.ask = open
+            .iter()
+            .filter(|ask| ask.open && matches!(ask.kind.as_str(), "verdict" | "message"))
+            .filter(|ask| {
+                !is_comment(item)
+                    && ask.card.as_deref() == Some(item.slug.as_str())
+                    && ask
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| on_page(ask, path, &item.slug, &item.path, held))
+            })
+            .min_by(|a, b| a.asked.total_cmp(&b.asked).then(a.id.cmp(&b.id)))
+            .map(|ask| symphony_api::QueueAsk {
+                id: ask.id,
+                asked: ask.asked.floor() as i64,
+                holder: ask.holder.clone(),
+                held: ask.held.map(|held| held.floor() as i64),
+            });
     }
 }
 

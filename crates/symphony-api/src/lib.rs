@@ -443,6 +443,32 @@ pub struct QueueItem {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// The owner's open ask a card waiting on an agent is on the board; none for a comment, a card
+    /// to spot-check, a card no ask is open for, and until the board is read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<QueueAsk>,
+}
+
+/// How long an open ask waits before it shows as late, in seconds: the board's own bound, which
+/// `just tasks asks` says by.
+pub const ASK_LATE_SECONDS: u32 = 600;
+
+/// The owner's open ask on the board, as the row of the card it is about says it: how long it has
+/// waited and who holds it, the board's own record and never a reading of a task's text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct QueueAsk {
+    /// Its number on the board: `ask N`.
+    pub id: i64,
+    /// When the owner said it, in whole seconds since the epoch: its age runs from here, and past
+    /// [`ASK_LATE_SECONDS`] it is late.
+    pub asked: i64,
+    /// The session that holds it; none is nobody.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
+    /// Since when its holder holds it, in whole seconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

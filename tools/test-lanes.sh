@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# [--list]: the release tests step. One nextest build and scheduler over the workspace, with
-# Cargo only for doctests and the suites whose process-wide fixture must stay shared.
+# [--list | --inputs | LANE...]: the release tests step. One nextest build and scheduler over the
+# workspace, with Cargo only for doctests and the suites whose process-wide fixture must stay shared.
+# Named LANEs run alone (`build`, `fixture`, `nextest`, a shared target, `libraries`, `doc`), as a
+# release candidate's rerun asks for the lanes whose inputs a fix changed (docs/RELEASES.md, "The
+# rerun"); the one build and the client are made whatever the lanes. Each lane that ran is listed
+# in lanes.tsv beside the logs as it is told: its name, exit status and seconds, tab-separated.
+# `--inputs` says what each lane reads ([`reads`]) and runs nothing.
 # The client's build test runs before scheduling because it writes the build folder. Browser
 # tests receive one published client, and tests receive the build's tasks and other binaries.
 # Every concurrent batch keeps a live log in SYMPHONY_TEST_LANE_LOGS (else build/test-lanes).
@@ -14,12 +19,21 @@ set -uo pipefail
 root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$root" || exit 2
 list=''
+inputs=''
+only=()
+usage() {
+    printf 'usage: tools/test-lanes.sh [--list | --inputs | LANE...]\n' >&2
+    exit 2
+}
 case "$#:${1:-}" in
     0:) ;;
     1:--list) list=1 ;;
+    1:--inputs) inputs=1 ;;
     *)
-        printf 'usage: tools/test-lanes.sh [--list]\n' >&2
-        exit 2
+        for arg in "$@"; do
+            case "$arg" in -*) usage ;; esac
+        done
+        only=("$@")
         ;;
 esac
 
@@ -38,8 +52,67 @@ done
 for package in "${shared_libraries[@]}"; do
     filter="$filter & not (kind(lib) & package(=$package))"
 done
-names=(nextest)
-picks=("$filter")
+
+# Every lane by name, in the order it runs.
+every=(build fixture nextest "${shared_tests[@]}" libraries doc)
+for lane in "${only[@]-}"; do
+    [ -n "$lane" ] || continue
+    case " ${every[*]} " in
+        *" $lane "*) ;;
+        *)
+            printf 'test-lanes: no lane %s; the lanes are %s\n' "$lane" "${every[*]}" >&2
+            exit 2
+            ;;
+    esac
+done
+# NAME: whether the lane NAME runs: every lane, or the ones named.
+wanted() {
+    [ "${#only[@]}" -eq 0 ] && return 0
+    case " ${only[*]} " in *" $1 "*) return 0 ;; esac
+    return 1
+}
+
+# NAME: what the lane NAME reads, a line each, for the digest a release candidate's rerun carries
+# its green by (tools/check-inputs.sh): `test TARGET` and `package NAME` are derived, the folders
+# of the packages that target or package builds with, from `cargo metadata`; `path PATH` is a path
+# its tests read outside those; `tree` is the whole tree, which is never narrower than the commit.
+# Every lane reads the tree outside apps/ and crates/ besides, which that script adds. A lane
+# whose tests run another package's binary names that package; one that cannot be bounded says
+# `tree`.
+reads() {
+    case "$1" in
+        build) printf 'test build\npackage symphony-server\npath apps/symphony-web\n' ;;
+        fixture) printf 'package symphony-build\n' ;;
+        # Every other target of the workspace, and every doctest: the workspace.
+        nextest | doc) printf 'tree\n' ;;
+        # It reads every tracked file.
+        hooks) printf 'tree\n' ;;
+        # The server's binary over the client built from its sources.
+        browser) printf 'test browser\npackage symphony-server\npath apps/symphony-web\n' ;;
+        after_http) printf 'test after_http\npath apps/symphony-web\n' ;;
+        # Its tests of this script read a log the release readers keep as a fixture.
+        cli) printf 'test cli\npath crates/symphony-build/src/release/fixtures\n' ;;
+        libraries)
+            printf 'package %s\n' "${shared_libraries[@]}"
+            printf 'path apps/symphony-web\n'
+            ;;
+        *) printf 'test %s\n' "$1" ;;
+    esac
+}
+if [ -n "$inputs" ]; then
+    for lane in "${every[@]}"; do
+        reads "$lane" | while IFS= read -r line; do
+            printf '%s\t%s\t%s\n' "$lane" "${line%% *}" "$([ "$line" = tree ] || printf '%s' "${line#* }")"
+        done
+    done
+    exit 0
+fi
+names=()
+picks=()
+if wanted nextest; then
+    names+=(nextest)
+    picks+=("$filter")
+fi
 run=(test --config 'profile.dev.build-override.debug="line-tables-only"' --workspace --locked
     --no-fail-fast)
 if [ -n "$list" ]; then
@@ -67,6 +140,15 @@ trap 'interrupted=130' INT
 trap 'interrupted=143' TERM
 trap 'interrupted=129' HUP
 
+# NAME CODE SECONDS: the lane NAME, as it ended, listed.
+listed() {
+    printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$logs/lanes.tsv"
+}
+if ! : >"$logs/lanes.tsv"; then
+    printf 'test-lanes: cannot write %s\n' "$logs/lanes.tsv" >&2
+    exit 2
+fi
+
 tools/nextest.sh list --config 'profile.dev.build-override.debug="line-tables-only"' \
     --workspace --locked --list-type binaries-only --message-format json >"$logs/binaries.json"
 built=$?
@@ -89,21 +171,25 @@ fi
 # Cargo's feature graph and build-override exactly the same as nextest's one build.
 first=0
 failed=()
-if jq -e '."rust-binaries"[] | select(."binary-name" == "build" and .kind == "test")' \
+if wanted build && jq -e '."rust-binaries"[] | select(."binary-name" == "build" and .kind == "test")' \
     "$logs/binaries.json" >/dev/null; then
+    began="$SECONDS"
     tools/cargo.sh "${run[@]}" --test build
     first=$?
     if [ -n "$interrupted" ]; then exit "$interrupted"; fi
+    listed build "$first" "$((SECONDS - began))"
     if [ "$first" -ne 0 ]; then failed+=('    `--workspace --test build`'); fi
 fi
 # This live tool regression is explicitly ignored in ordinary focused Cargo tests. The release
 # owns it here, by its exact name, after provisioning; absence is a real failure, never a skip.
 # Keep the workspace feature graph, profile and environment of the one build, before any readers.
-if jq -e '."rust-binaries" | to_entries[] | select(.key == "symphony-build" and .value.kind == "lib")' \
+if wanted fixture && jq -e '."rust-binaries" | to_entries[] | select(.key == "symphony-build" and .value.kind == "lib")' \
     "$logs/binaries.json" >/dev/null; then
+    began="$SECONDS"
     tools/cargo.sh "${run[@]}" --lib -- --ignored --exact "$live_fixture"
     fixture_code=$?
     if [ -n "$interrupted" ]; then exit "$interrupted"; fi
+    listed fixture "$fixture_code" "$((SECONDS - began))"
     if [ "$fixture_code" -ne 0 ]; then
         if [ "$first" -eq 0 ]; then first="$fixture_code"; fi
         printf 'error: the explicit runner fixture is red (exit %s), to rerun pass `-p symphony-build --lib -- --ignored %s --exact`\n' \
@@ -126,14 +212,14 @@ if ! jq --argjson shared "$shared_json" '."rust-binaries" | to_entries
         shared: (.key as $id | $shared | index($id) != null)})' \
     "$logs/binaries.json" >"$logs/shared-libraries.json"; then exit 2; fi
 for target in "${shared_tests[@]}"; do
-    if jq -e --arg name "$target" '."rust-binaries"[]
+    if wanted "$target" && jq -e --arg name "$target" '."rust-binaries"[]
         | select(."binary-name" == $name and .kind == "test")' "$logs/binaries.json" >/dev/null; then
         names+=("$target")
         picks+=("--test $target")
     fi
 done
 library_runner=''
-if jq -e 'any(.[]; .shared)' "$logs/shared-libraries.json" >/dev/null; then
+if wanted libraries && jq -e 'any(.[]; .shared)' "$logs/shared-libraries.json" >/dev/null; then
     host="$(jq -er '."rust-build-meta".platforms.host.platform.triple' "$logs/binaries.json")" || exit 2
     runner="$(jq -cn --arg helper "$debug/symphony-build" --arg map "$logs/shared-libraries.json" \
         '[$helper, "exec-test-binary", $map]')" || exit 2
@@ -141,13 +227,17 @@ if jq -e 'any(.[]; .shared)' "$logs/shared-libraries.json" >/dev/null; then
     names+=(libraries)
     picks+=(--lib)
 fi
-names+=(doc)
-picks+=(--doc)
+if wanted doc; then
+    names+=(doc)
+    picks+=(--doc)
+fi
 started=()
-for i in "${!names[@]}"; do
-    rm -f "$logs/${names[i]}.log" "$logs/${names[i]}.status"
-    started+=("$i")
-done
+if [ "${#names[@]}" -gt 0 ]; then
+    for i in "${!names[@]}"; do
+        rm -f "$logs/${names[i]}.log" "$logs/${names[i]}.status" "$logs/${names[i]}.seconds"
+        started+=("$i")
+    done
+fi
 
 processors="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
 case "$processors" in
@@ -162,11 +252,12 @@ case "$processors" in
 esac
 if [ "$at_once" -lt 1 ]; then at_once=1; fi
 
-# I: the lane I, its output in its log and its exit status in NAME.status, which a signal that ends
-# it leaves unwritten.
+# I: the lane I, its output in its log, its exit status in NAME.status, which a signal that ends
+# it leaves unwritten, and the seconds it took in NAME.seconds.
 lane() {
+    local began="$SECONDS" code
     # shellcheck disable=SC2086 # the lane's targets, each a word
-    if [ "$1" -eq 0 ]; then
+    if [ "${names[$1]}" = nextest ]; then
         NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 tools/nextest.sh run --profile release \
             --binaries-metadata "$logs/binaries.json" --no-fail-fast --retries 0 \
             --test-threads "${RUST_TEST_THREADS:-6}" --color never \
@@ -179,7 +270,9 @@ lane() {
     else
         tools/cargo.sh "${run[@]}" ${picks[$1]} </dev/null >>"$logs/${names[$1]}.log" 2>&1
     fi
-    printf '%s\n' "$?" >|"$logs/${names[$1]}.status"
+    code=$?
+    printf '%s\n' "$((SECONDS - began))" >|"$logs/${names[$1]}.seconds"
+    printf '%s\n' "$code" >|"$logs/${names[$1]}.status"
 }
 
 # A slot: each batch no slot has taken, in the exceptions' listed order, each in a shell of its
@@ -228,8 +321,14 @@ for i in "${started[@]-}"; do
         code="$(cat "$logs/$name.status")"
         told=1
     fi
-    rm -f "$logs/$name.status"
-    if [ "$code" = 0 ]; then continue; fi
+    took=0
+    if [ -f "$logs/$name.seconds" ]; then took="$(cat "$logs/$name.seconds")"; fi
+    case "$took" in '' | *[!0-9]*) took=0 ;; esac
+    rm -f "$logs/$name.status" "$logs/$name.seconds"
+    if [ "$code" = 0 ]; then
+        listed "$name" 0 "$took"
+        continue
+    fi
     # A lane the interrupt cut short, or never let start, failed in nothing of its own.
     if [ -z "$told" ] && [ -n "$interrupted" ]; then continue; fi
     case "$code" in
@@ -247,6 +346,7 @@ for i in "${started[@]-}"; do
             code=1
             ;;
     esac
+    listed "$name" "$code" "$took"
     if [ "$first" -eq 0 ]; then first="$code"; fi
     if [ "$name" = nextest ]; then
         printf 'test-lanes: nextest ended red (exit %s); case events name test failures, other errors remain in its log\n' "$code"

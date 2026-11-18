@@ -178,6 +178,9 @@ pub(crate) struct Hub {
     callbacks: Mutex<Option<symphony::callbacks::Flusher>>,
     /// The shared server's part in the owner's asks; none on a private server, which leaves them alone.
     owner_asks: Mutex<Option<owner_asks::Kept>>,
+    /// The owner's open asks as the board last gave them, which the agent queue's cards are told
+    /// ([`Hub::note_asks`]); none until the board is read.
+    queue_asks: Mutex<Arc<Vec<symphony_board::Ask>>>,
     /// The shared server's hourly roll-up of the project into its day files ([`reports::Rollup`]);
     /// none on a private server, which writes none.
     pub(crate) reports: Mutex<Option<reports::Rollup>>,
@@ -390,6 +393,7 @@ impl Hub {
             warmed_watches: Mutex::new(BTreeMap::new()),
             callbacks: Mutex::new(None),
             owner_asks: Mutex::new(None),
+            queue_asks: Mutex::default(),
             reports: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
@@ -1327,6 +1331,9 @@ impl Hub {
         let activity = Activity {
             items: snapshot.activity,
         };
+        // Each card waiting on an agent says the ask the board last gave for it.
+        let asks = Arc::clone(&self.queue_asks.lock().unwrap_or_else(|e| e.into_inner()));
+        symphony::owner_asks::note(&mut snapshot.queue.agent, &asks, &snapshot.held);
         if let Some(page) = pages.get_mut(scope) {
             // Keep board activity until the next board read combines it with document activity.
             let mut combined = activity;

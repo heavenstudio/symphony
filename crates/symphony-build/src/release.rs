@@ -11,8 +11,9 @@
 //! cycle for a commit already on the remote's main and past the newest release. A run of main's
 //! tip red in a check holds that commit as the release candidate ([`candidate`]) while its reds
 //! are fixed: until each is answered
-//! no run checks main's tip, and then the candidate is rerun, with what its fixes changed, and
-//! released or held again. Each run is recorded in the git common dir ([`record`]), which
+//! no run checks main's tip, and then the candidate is rerun, with what its fixes changed (each
+//! step and lane whose inputs, as the tree tells them, are not the ones it was green on:
+//! [`inputs`]), and released or held again. Each run is recorded in the git common dir ([`record`]), which
 //! `--status` reads; `--schedule` prints the entry that runs it each day ([`schedule`]), which the
 //! owner installs.
 //!
@@ -40,6 +41,7 @@ mod failures;
 mod git;
 mod gone;
 mod group;
+mod inputs;
 mod install;
 mod nextest;
 mod notes;
@@ -974,6 +976,8 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         published: None,
         rerun: None,
         slept: 0.0,
+        inputs: None,
+        environment: None,
     };
     // HUP, INT and TERM stop the run, its check's group and its git, and let it say so and release
     // the lock; a signal this process was started ignoring stays ignored.
@@ -1963,35 +1967,63 @@ fn night(
     fs::create_dir_all(&logs).map_err(|e| Stop::Error(symphony::text::os_error(&e, &logs)))?;
     record::so_far(&logs, record);
     let log = |step: &Step| logs.join(format!("{}.log", board::key(&step.name)));
+    // What the tree says its checks read, and what they run on: a green this run finds is
+    // recorded with both, and a rerun carries one only on the same of each ([`inputs`]). A first
+    // run carries nothing, and says nothing of either.
+    record.environment = Some(inputs::Environment::now(&repo.root, until));
+    record.inputs = inputs::ask(&place.checkout, until);
+    record::so_far(&logs, record);
+    let environment = record.environment.as_ref().map(inputs::Environment::said);
+    let same = |commit: &str| candidate::same_tree(&repo.root, commit, &candidate);
+    let told = record.inputs.clone();
+    let tip = candidate::Tip {
+        same: &same,
+        inputs: told.as_ref(),
+        environment: environment.as_deref(),
+    };
+    if let Some(held) = held {
+        for said in held.uncarried(&tip) {
+            let _ = writeln!(out, "release: {said}");
+        }
+    }
     let mut carried: Vec<record::Carried> = Vec::new();
     for step in &options.checks {
         told_to_stop(until, &format!("before `{}` started", step.name))?;
-        let planned = match held {
-            Some(held) => {
-                let same = |commit: &str| candidate::same_tree(&repo.root, commit, &candidate);
-                let (planned, kept) = held.plan(&step.name, &same);
-                carried.extend(kept);
-                planned
-            }
-            None => candidate::Planned::Whole,
+        let (planned, kept) = match held {
+            Some(held) => held.plan(&step.name, &tip),
+            None => (candidate::Planned::Whole, Vec::new()),
         };
+        // How the greens it keeps are kept: all from a commit of this tree, as a rerun always
+        // carried, or some by their inputs' digest.
+        let by_tree = kept.iter().all(|kept| kept.digest.is_none());
+        carried.extend(kept);
         let only;
         let step = match &planned {
             candidate::Planned::Whole => step,
             candidate::Planned::Carried => {
                 let _ = writeln!(
                     out,
-                    "release: `{}` carried green: the commit it was green on holds this tree",
-                    step.name
+                    "release: `{}` carried green: {}",
+                    step.name,
+                    if by_tree {
+                        "the commit it was green on holds this tree"
+                    } else {
+                        "its inputs are as they were when it was green"
+                    }
                 );
                 continue;
             }
             candidate::Planned::Steps(names) => {
                 let _ = writeln!(
                     out,
-                    "release: `{}` reruns {}, the rest carried green from this tree",
+                    "release: `{}` reruns {}, the rest carried green {}",
                     step.name,
-                    names.join(", ")
+                    names.join(", "),
+                    if by_tree {
+                        "from this tree"
+                    } else {
+                        "on the inputs they were green on"
+                    }
                 );
                 only = step.only(names);
                 &only
@@ -2054,7 +2086,12 @@ fn night(
     let ran = |name: &str| record.checks.iter().any(|ran| ran.name == name);
     let checked: Vec<String> = (options.checks.iter())
         .map(|step| step.name.clone())
-        .filter(|name| ran(name) || carried.iter().any(|kept| kept.name == *name))
+        .filter(|name| {
+            // Carried whole, by its own green or by each step and part it listed.
+            let under = format!("{name}/");
+            let kept = |kept: &record::Carried| kept.name == *name || kept.name.starts_with(&under);
+            ran(name) || carried.iter().any(kept)
+        })
         .collect();
     let held_notes = held.map(|held| held.notes(&carried)).unwrap_or_default();
     // What it publishes on crates.io once pushed: each package whose version crates.io lacks now.
@@ -2836,6 +2873,8 @@ mod tests {
             published: None,
             rerun: None,
             slept: 0.0,
+            inputs: None,
+            environment: None,
         }
     }
 
