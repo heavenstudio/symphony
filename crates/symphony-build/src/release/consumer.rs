@@ -3,7 +3,9 @@
 //! file every branch edits:
 //!
 //! - **Derived**, read from git at the two releases' commits and never written by hand
-//!   ([`derived`]): the board schema and the pin, the tools the repository pins ([`TOOLS`]), the
+//!   ([`derived`]): the line that names the release in a project's manifest and the package
+//!   versions its lock takes ([`LOCK`]), the board schema and the pin, the settings keys
+//!   ([`SETTINGS`]), the tools the repository pins ([`TOOLS`]), the
 //!   files `symphony init` rewrites ([`SHIPPED`]) and the consumer-API guards that changed
 //!   ([`GUARDS`]).
 //! - **Entries**, said by the landing that changes what a consumer must do: a trailer of one of
@@ -101,9 +103,31 @@ fn settings(text: &str) -> std::collections::BTreeSet<String> {
     keys
 }
 
+/// The lock file, which names each workspace package with its version and no source.
+const LOCK: &str = "Cargo.lock";
+
+/// The version of each package the lock file `text` names with no source: the workspace's own.
+fn packages(text: &str) -> std::collections::BTreeMap<String, String> {
+    let value = |line: &str, key: &str| {
+        let value = line.strip_prefix(key)?.trim_start().strip_prefix('=')?;
+        Some(value.trim().trim_matches('"').to_string())
+    };
+    let mut found = std::collections::BTreeMap::new();
+    for block in text.split("[[package]]").skip(1) {
+        let field = |key: &str| block.lines().find_map(|line| value(line, key));
+        if let (Some(name), Some(version), None) =
+            (field("name"), field("version"), field("source"))
+        {
+            found.insert(name, version);
+        }
+    }
+    found
+}
+
 /// What an entry is about, in the order the notes say them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Section {
+    Manifest,
     Board,
     Api,
     Settings,
@@ -113,7 +137,8 @@ pub(crate) enum Section {
 }
 
 impl Section {
-    const ALL: [Section; 6] = [
+    const ALL: [Section; 7] = [
+        Section::Manifest,
         Section::Board,
         Section::Api,
         Section::Settings,
@@ -125,6 +150,7 @@ impl Section {
     /// The word a trailer names it by.
     fn word(self) -> &'static str {
         match self {
+            Section::Manifest => "manifest",
             Section::Board => "board",
             Section::Api => "api",
             Section::Settings => "settings",
@@ -137,6 +163,7 @@ impl Section {
     /// Its heading in the notes.
     fn title(self) -> &'static str {
         match self {
+            Section::Manifest => "Cargo.toml and Cargo.lock",
             Section::Board => "Board",
             Section::Api => "Public Rust items a consumer calls",
             Section::Settings => "symphony.toml",
@@ -288,6 +315,8 @@ pub(crate) struct Derived {
     pub(crate) pin: (Option<i64>, Option<i64>),
     /// Each tool whose pin changed: its name, the version before and now.
     pub(crate) tools: Vec<(String, String, String)>,
+    /// Each package of the workspace whose version changed: its name, the version before and now.
+    pub(crate) packages: Vec<(String, String, String)>,
     /// The keys the settings reference lists anew, and those it lists no more, each `[table] key`.
     pub(crate) settings: (Vec<String>, Vec<String>),
     /// The files `symphony init` rewrites that changed, by their path among the shipped ones.
@@ -337,6 +366,15 @@ pub(crate) fn derived(root: &Path, before: Option<&str>, commit: &str) -> Derive
         {
             derived.tools.push((name.to_string(), was, now));
         }
+    }
+    let locked = |at: &str| held(root, at, LOCK).map(|text| packages(&text));
+    if let (Some(was), Some(now)) = (locked(before), locked(commit)) {
+        derived.packages = (now.into_iter())
+            .filter_map(|(name, now)| {
+                let was = was.get(&name).filter(|was| **was != now)?.clone();
+                Some((name, was, now))
+            })
+            .collect();
     }
     let listed = |at: &str| held(root, at, SETTINGS).map(|text| settings(&text));
     if let (Some(was), Some(now)) = (listed(before), listed(commit)) {
@@ -469,14 +507,19 @@ fn said(history: &[Notes], at: usize, entry: &Entry) -> String {
 /// a board").
 fn schema_steps(was: i64, now: i64) -> String {
     format!(
-        "Board schema {was} to {now}. First rebuild at this release every program of the project \
-         that writes its board (a `tasks` or `agent-send` it links, a program of its own that \
-         opens the board through the board's crate) and run each once, which records it. Then \
-         `just tasks migrate` in the project's main checkout moves the board: it names each \
-         writer seen in the last week that is still behind and moves nothing (exit 2) until each \
-         is rebuilt and has run. `just tasks migrate --leave-behind` moves it all the same, and \
-         each writer left behind is refused the board until it is rebuilt. Until the move, a \
-         build at schema {now} is refused the board at {was}."
+        "Board schema {was} to {now}. A board is moved only by a build at schema {now}: take this \
+         release first, so the project's own `tasks` is at {now}. Rebuild at this release every \
+         program of the project that writes its board (a `tasks` or `agent-send` it links, a \
+         program of its own that opens the board through the board's crate) and run each once, \
+         which records it. Then `just tasks migrate` in the project's main checkout moves the \
+         board. It first names each writer seen in the last week that is still behind, with its \
+         path, and moves nothing (exit 2): that refusal is the one list of the board's writers. \
+         Rebuild and run each it names; one that cannot be rebuilt where it was (a build folder \
+         that is gone, a path named by a hash) is left behind with `just tasks migrate \
+         --leave-behind`, which moves the board all the same, and a writer left behind is refused \
+         the board until it is rebuilt. Until the move, a build at schema {now} is refused the \
+         board at {was}; after it, a server still on a build at {was} reads the board and its \
+         writes are refused until it runs a build at {now}."
     )
 }
 
@@ -489,6 +532,24 @@ pub(crate) fn section(history: &[Notes], at: usize) -> Vec<String> {
     for section in Section::ALL {
         let mut said: Vec<String> = Vec::new();
         match section {
+            Section::Manifest if notes.previous.is_some() => {
+                said.push(format!(
+                    "Name this release in each of the project's Symphony dependency lines, `tag \
+                     = \"{}\"`, or `rev = \"{}\"` where the project pins a commit, and let \
+                     Cargo.lock follow: a build run with `--locked` refuses until the lock is \
+                     updated.",
+                    notes.release, notes.commit
+                ));
+                if !derived.packages.is_empty() {
+                    let moved: Vec<String> = (derived.packages.iter())
+                        .map(|(name, was, now)| format!("{name} {was} to {now}"))
+                        .collect();
+                    said.push(format!(
+                        "Versions that move in Cargo.lock: {}.",
+                        moved.join(", ")
+                    ));
+                }
+            }
             Section::Board => {
                 if let (Some(was), Some(now)) = derived.schema
                     && was != now
@@ -556,8 +617,11 @@ pub(crate) fn section(history: &[Notes], at: usize) -> Vec<String> {
         lines.push("Said without a section:".into());
         lines.extend(notes.unread.iter().map(|said| format!("- {said}")));
     }
-    if lines.is_empty() {
-        lines.push("Nothing a project changes to take it.".into());
+    // The line that names the release is every release's: alone, it is the whole move.
+    match (notes.previous.is_some(), lines.len()) {
+        (false, 0) => lines.push("Nothing a project changes to take it.".into()),
+        (true, 2) => lines.push("Nothing else changes for a project.".into()),
+        _ => {}
     }
     lines
 }

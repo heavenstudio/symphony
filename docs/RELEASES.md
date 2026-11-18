@@ -43,7 +43,8 @@ nothing, and who writes each:
 
 | Section | Derived from git at the two releases' commits | Said by a landing |
 | --- | --- | --- |
-| Board | the schema's move (`crates/tasks/src/schema.rs`) with the steps the [writer rule](TASKS.md#who-writes-a-board) asks (rebuild each writer, `just tasks migrate`, `--leave-behind`), and the pin's | `board`: what the move changes for a project |
+| Cargo.toml and Cargo.lock | the line that names the release, as a tag or as the full commit for a project that pins one, the lock following it, and each workspace package whose version moves in `Cargo.lock` | `manifest`: any other line a project's manifest changes |
+| Board | the schema's move (`crates/tasks/src/schema.rs`) with the steps the [writer rule](TASKS.md#who-writes-a-board) asks (the project's own build at the new schema first, each writer rebuilt and run, `just tasks migrate`, whose refusal is the one list of the writers, `--leave-behind` for a writer that cannot be rebuilt where it was, and a server's writes refused until it runs the new schema), and the pin's | `board`: what the move changes for a project |
 | Public Rust items a consumer calls | the [consumer-API guards](CHECKS.md#consumer-api-changes) that changed | `api`: `OLD => NEW` for a replacement shipped beside the old item, `removed OLD => NEW` for a removal |
 | symphony.toml | the keys [PROJECT_FILE](PROJECT_FILE.md)'s tables list anew, and those they list no more | `settings`: what a project writes instead, a file or a command's arguments |
 | Installed recipes, skills, hooks and rules | the files under `crates/symphony/shipped/` that changed, which `symphony init` rewrites | `init` |

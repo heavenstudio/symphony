@@ -107,7 +107,12 @@ fn a_second_release_that_day_is_numbered_and_the_next_day_starts_again() {
              Green: verify.\n\n\
              For a project taking this release (`just symphony-cli release-notes` prints every \
              release's since the project's own):\n\
-             Nothing a project changes to take it.\n\n\
+             Cargo.toml and Cargo.lock:\n\
+             - Name this release in each of the project's Symphony dependency lines, `tag = \
+             \"release-2026-11-12.2\"`, or `rev = \"{second}\"` where the project pins a commit, \
+             and let Cargo.lock follow: a build run with `--locked` refuses until the lock is \
+             updated.\n\
+             Nothing else changes for a project.\n\n\
              Changes on main since release-2026-11-12 (1):\n{} a fix\n",
             &second[..12],
             git(&fixture.main, &["rev-parse", "--short", &second]),
@@ -123,8 +128,8 @@ fn a_second_release_that_day_is_numbered_and_the_next_day_starts_again() {
     );
     assert!(
         message.contains(
-            "since the project's own):\nBoard:\n- Board schema 16 to 17. First rebuild at this \
-             release every program of the project that writes its board"
+            "updated.\nBoard:\n- Board schema 16 to 17. A board is moved only by a build at \
+             schema 17: take this release first"
         ) && message.contains("`just tasks migrate --leave-behind`"),
         "what a project does to take it, before the changes: {message}"
     );

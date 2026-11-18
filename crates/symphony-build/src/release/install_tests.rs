@@ -594,9 +594,11 @@ fn an_install_holds_the_notes_of_every_release_up_to_its_own_from_the_checkouts_
     let taken = release::notes_between(&notes, Some("release-2026-11-19"), None).unwrap();
     assert!(
         taken.starts_with(&format!(
-            "## release-2026-11-20\n\nCommit: {commit}\nFrom release-2026-11-19.\n\nBoard:\n- \
-             Board schema 17 to 18."
-        )) && taken.ends_with("Run once:\n- run `just symphony-cli init --root .`\n"),
+            "## release-2026-11-20\n\nCommit: {commit}\nFrom release-2026-11-19.\n\nCargo.toml and \
+             Cargo.lock:\n- Name this release in each of the project's Symphony dependency lines, \
+             `tag = \"release-2026-11-20\"`, or `rev = \"{commit}\"`"
+        )) && taken.contains("\nBoard:\n- Board schema 17 to 18. ")
+            && taken.ends_with("Run once:\n- run `just symphony-cli init --root .`\n"),
         "{taken}"
     );
     assert!(notes.contains("\nThe first release.\n"), "{notes}");

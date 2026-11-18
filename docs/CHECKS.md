@@ -92,6 +92,8 @@ what git cannot derive is said by the landing that causes it. A branch owes an e
 of one of its commits (`Consumer-Note: SECTION: TEXT`), when a project that takes the release
 must change or run something because of it:
 
+- `manifest`: a project's `Cargo.toml` changes more than the line that names the release (a
+  package renamed, a feature a project must name).
 - `board`: it moves the board schema: what the move changes for a project beyond the migrate.
 - `api`: it ships a replacement beside a public item a consumer calls (`OLD => NEW`), or removes
   or changes one (`removed OLD => NEW`), the two steps of the rule above.

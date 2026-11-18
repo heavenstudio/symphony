@@ -30,6 +30,7 @@ impl Scratch {
         scratch.write("rust-toolchain.toml", "[toolchain]\nchannel = \"1.98.0\"\n");
         scratch.write("tools/surreal.sh", "#!/bin/sh\nVERSION=3.3.0\n");
         scratch.write("apps/symphony-web/.node-version", "24.1.0\n");
+        scratch.write(LOCK, &lock("0.1.0"));
         scratch.write(
             SETTINGS,
             "# The project file\n\n## `[board]`\n\n| Key | Default |\n| --- | --- |\n| `guide` | \
@@ -79,6 +80,25 @@ impl Scratch {
     }
 }
 
+/// A lock file naming two workspace packages, one at `version`, and one fetched package.
+fn lock(version: &str) -> String {
+    format!(
+        "version = 4\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \
+         \"registry+https://example.com\"\n\n[[package]]\nname = \"symphony-app\"\nversion = \
+         \"{version}\"\ndependencies = [\n \"serde\",\n]\n\n[[package]]\nname = \
+         \"symphony-args\"\nversion = \"1.0.0\"\n"
+    )
+}
+
+/// The line every release after the first says first: how a project names it.
+fn named(release: &str, commit: &str) -> String {
+    format!(
+        "- Name this release in each of the project's Symphony dependency lines, `tag = \
+         \"{release}\"`, or `rev = \"{commit}\"` where the project pins a commit, and let \
+         Cargo.lock follow: a build run with `--locked` refuses until the lock is updated."
+    )
+}
+
 fn entry(value: &str) -> Entry {
     parse(value).unwrap_or_else(|why| panic!("{value}: {why}"))
 }
@@ -105,6 +125,7 @@ fn a_trailer_names_its_section_and_says_its_text() {
         }
     );
     for (section, word) in [
+        (Section::Manifest, "manifest"),
         (Section::Board, "board"),
         (Section::Api, "api"),
         (Section::Settings, "settings"),
@@ -180,7 +201,7 @@ fn a_trailer_that_reads_as_no_entry_says_why() {
         ("", "names no section"),
         (
             "apis: a => b",
-            "\"apis\" is no section: one of board, api, settings, init, tools, once",
+            "\"apis\" is no section: one of manifest, board, api, settings, init, tools, once",
         ),
         ("board:   ", "the board entry says nothing"),
         ("api: => new", "leaves out an item"),
@@ -295,9 +316,15 @@ fn a_releases_section_says_what_git_derived_and_each_entry_under_its_heading() {
             "settings: `[agents] launch` is read",
             "tools: PostgreSQL 18 or later for the board's server tests",
             "api: none: the guard was only rewrapped",
+            "manifest: the library's line names `package = \"symphony-app\"`",
         ],
     );
+    taken.commit = "c0ffee".into();
     taken.derived = Derived {
+        packages: vec![
+            ("symphony-app".into(), "0.1.0".into(), "0.2.0".into()),
+            ("symphony-board".into(), "0.1.0".into(), "0.2.0".into()),
+        ],
         schema: (Some(20), Some(21)),
         pin: (Some(1), Some(2)),
         tools: vec![("Rust toolchain".into(), "1.98.0".into(), "1.99.0".into())],
@@ -309,17 +336,40 @@ fn a_releases_section_says_what_git_derived_and_each_entry_under_its_heading() {
         guards: vec![GUARD.into()],
     };
     let said = section(&[taken], 0);
-    assert_eq!(said[0], "Board:");
-    assert!(
-        said[1].starts_with("- Board schema 20 to 21. First rebuild at this release every program")
-            && said[1].contains("`just tasks migrate` in the project's main checkout")
-            && said[1].contains("`just tasks migrate --leave-behind`"),
-        "{}",
-        said[1]
-    );
-    assert!(said[2].starts_with("- Pin 1 to 2: "), "{}", said[2]);
     assert_eq!(
-        said[3..],
+        said[..5],
+        [
+            "Cargo.toml and Cargo.lock:".to_string(),
+            named("release-2026-11-18", "c0ffee"),
+            "- Versions that move in Cargo.lock: symphony-app 0.1.0 to 0.2.0, symphony-board \
+             0.1.0 to 0.2.0."
+                .to_string(),
+            "- the library's line names `package = \"symphony-app\"`".to_string(),
+            "Board:".to_string(),
+        ]
+    );
+    let steps = &said[5];
+    assert!(
+        steps.starts_with(
+            "- Board schema 20 to 21. A board is moved only by a build at schema 21: take this \
+             release first, so the project's own `tasks` is at 21. Rebuild at this release every \
+             program of the project that writes its board"
+        ),
+        "{steps}"
+    );
+    for step in [
+        "Then `just tasks migrate` in the project's main checkout moves the board.",
+        "moves nothing (exit 2): that refusal is the one list of the board's writers.",
+        "a path named by a hash) is left behind with `just tasks migrate --leave-behind`",
+        "a build at schema 21 is refused the board at 20;",
+        "a server still on a build at 20 reads the board and its writes are refused until it \
+         runs a build at 21.",
+    ] {
+        assert!(steps.contains(step), "{step}: {steps}");
+    }
+    assert!(said[6].starts_with("- Pin 1 to 2: "), "{}", said[6]);
+    assert_eq!(
+        said[7..],
         [
             "- schema 21 adds the writers' table",
             "Public Rust items a consumer calls:",
@@ -349,6 +399,15 @@ fn a_release_that_asks_nothing_says_so_and_an_unchanged_schema_is_not_said() {
     same.derived.pin = (None, Some(1));
     assert_eq!(
         section(&[same], 0),
+        [
+            "Cargo.toml and Cargo.lock:".to_string(),
+            named("release-2026-11-18", ""),
+            "Nothing else changes for a project.".to_string(),
+        ]
+    );
+    // The first release is moved to from none.
+    assert_eq!(
+        section(&[notes("release-2026-11-17", None, &[])], 0),
         ["Nothing a project changes to take it."]
     );
     let mut unread = notes("release-2026-11-18", None, &[]);
@@ -380,7 +439,7 @@ fn a_replacement_and_its_later_removal_read_as_move_before_that_release() {
         ),
     ];
     assert_eq!(
-        section(&history, 1),
+        section(&history, 1)[2..],
         [
             "Public Rust items a consumer calls:",
             "- `Store::opening_on` is replaced by `Store::reading_on`; both work in this release. \
@@ -389,7 +448,7 @@ fn a_replacement_and_its_later_removal_read_as_move_before_that_release() {
         ]
     );
     assert_eq!(
-        section(&history, 3),
+        section(&history, 3)[2..],
         [
             "Public Rust items a consumer calls:",
             "- `Store::opening_on` is removed: call `Store::reading_on`. `Store::reading_on` has \
@@ -414,8 +473,9 @@ fn a_replacement_and_its_later_removal_read_as_move_before_that_release() {
         document.contains("## release-2026-11-17\n\nCommit: \nThe first release.\n\nNothing a")
     );
     assert!(
-        document
-            .contains("## release-2026-11-19\n\nCommit: \nFrom release-2026-11-18.\n\nNothing a")
+        document.contains(
+            "## release-2026-11-19\n\nCommit: \nFrom release-2026-11-18.\n\nCargo.toml and"
+        )
     );
 }
 
@@ -610,6 +670,7 @@ fn the_notes_of_two_releases_come_from_git_and_the_commits_between_them() {
         repo.write(SCHEMA_FILE, "pub const VERSION: i64 = 21;\n");
         repo.write("crates/symphony/shipped/symphony.just", "tasks:\nland:\n");
         repo.write("rust-toolchain.toml", "[toolchain]\nchannel = \"1.99.0\"\n");
+        repo.write(LOCK, &lock("0.2.0"));
         repo.write(
             SETTINGS,
             "## `[board]`\n\n| `guide` | none |\n| `postgresql` | none |\n",
@@ -654,6 +715,7 @@ fn the_notes_of_two_releases_come_from_git_and_the_commits_between_them() {
         Derived {
             schema: (Some(20), Some(21)),
             pin: (Some(1), Some(1)),
+            packages: vec![("symphony-app".into(), "0.1.0".into(), "0.2.0".into())],
             tools: vec![("Rust toolchain".into(), "1.98.0".into(), "1.99.0".into())],
             settings: (
                 vec!["[board] postgresql".into()],
@@ -679,37 +741,35 @@ fn the_notes_of_two_releases_come_from_git_and_the_commits_between_them() {
     assert_eq!(
         &document[from..],
         format!(
-            "## release-2026-11-18\n\nCommit: {second}\nFrom release-2026-11-17.\n\nBoard:\n- \
-             Board schema 20 to 21. First rebuild at this release every program of the project \
-             that writes its board (a `tasks` or `agent-send` it links, a program of its own \
-             that opens the board through the board's crate) and run each once, which records \
-             it. Then `just tasks migrate` in the project's main checkout moves the board: it \
-             names each writer seen in the last week that is still behind and moves nothing \
-             (exit 2) until each is rebuilt and has run. `just tasks migrate --leave-behind` \
-             moves it all the same, and each writer left behind is refused the board until it is \
-             rebuilt. Until the move, a build at schema 21 is refused the board at 20.\n- schema \
-             21 adds the writers' table\nPublic Rust items a consumer calls:\n- \
-             `Store::opening_on` is replaced by `Store::reading_on`; both work in this release. \
-             Move to `Store::reading_on` before release-2026-11-19, which removes \
-             `Store::opening_on`.\nsymphony.toml:\n- Keys read anew (docs/PROJECT_FILE.md says \
-             each): `[board] postgresql`.\n- Keys no longer read, which `just symphony-cli \
-             settings-check` refuses as unknown: `[board] installation`.\n- \
-             `symphony.local.toml` is read (added after this release was cut, by the commit \
-             {late} that release-2026-11-19 holds: not in its tag's message)\nInstalled recipes, \
-             skills, hooks and rules:\n- `just symphony-cli init --root .` in the project \
-             rewrites: symphony.just.\nTools:\n- Rust toolchain 1.98.0 to 1.99.0.\n\n## \
-             release-2026-11-19\n\nCommit: {tip}\nFrom release-2026-11-18.\n\nPublic Rust items \
-             a consumer calls:\n- `Store::opening_on` is removed: call `Store::reading_on`. \
+            "## release-2026-11-18\n\nCommit: {second}\nFrom release-2026-11-17.\n\nCargo.toml \
+             and Cargo.lock:\n{}\n- Versions that move in Cargo.lock: symphony-app 0.1.0 to \
+             0.2.0.\nBoard:\n- {}\n- schema 21 adds the writers' table\nPublic Rust items a \
+             consumer calls:\n- `Store::opening_on` is replaced by `Store::reading_on`; both work \
+             in this release. Move to `Store::reading_on` before release-2026-11-19, which \
+             removes `Store::opening_on`.\nsymphony.toml:\n- Keys read anew \
+             (docs/PROJECT_FILE.md says each): `[board] postgresql`.\n- Keys no longer read, \
+             which `just symphony-cli settings-check` refuses as unknown: `[board] \
+             installation`.\n- `symphony.local.toml` is read (added after this release was cut, \
+             by the commit {late} that release-2026-11-19 holds: not in its tag's \
+             message)\nInstalled recipes, skills, hooks and rules:\n- `just symphony-cli init \
+             --root .` in the project rewrites: symphony.just.\nTools:\n- Rust toolchain 1.98.0 \
+             to 1.99.0.\n\n## release-2026-11-19\n\nCommit: {tip}\nFrom \
+             release-2026-11-18.\n\nCargo.toml and Cargo.lock:\n{}\nPublic Rust items a \
+             consumer calls:\n- `Store::opening_on` is removed: call `Store::reading_on`. \
              `Store::reading_on` has been there since release-2026-11-18.\n- The calls a \
-             consumer's code is held to changed in: crates/tasks/tests/consumer_api.rs.\n"
+             consumer's code is held to changed in: crates/tasks/tests/consumer_api.rs.\n",
+            named("release-2026-11-18", &second),
+            schema_steps(20, 21),
+            named("release-2026-11-19", &tip),
         )
     );
 
     // The tag's message says the release's own section, under its line.
     let taking = taking(&repo.root, "release-2026-11-19", &tip).unwrap();
     assert_eq!(taking[0], TAKING);
-    assert_eq!(taking[1], "Public Rust items a consumer calls:");
-    assert_eq!(taking.len(), 4, "{taking:?}");
+    assert_eq!(taking[1], "Cargo.toml and Cargo.lock:");
+    assert_eq!(taking[3], "Public Rust items a consumer calls:");
+    assert_eq!(taking.len(), 6, "{taking:?}");
 
     // Once it is tagged, the same notes: the tag is not read twice.
     repo.release("release-2026-11-19");
@@ -776,7 +836,12 @@ fn the_command_prints_every_releases_notes_and_checks_a_branch() {
     assert!(
         out.contains("\nRun once:\n- run it (added after this release was cut, by the commit ")
             && out.contains("that unreleased holds: not in its tag's message)\n\n## unreleased\n")
-            && out.ends_with("From release-2026-11-17.\n\nBoard:\n- Board schema 20 to 21. First rebuild at this release every program of the project that writes its board (a `tasks` or `agent-send` it links, a program of its own that opens the board through the board's crate) and run each once, which records it. Then `just tasks migrate` in the project's main checkout moves the board: it names each writer seen in the last week that is still behind and moves nothing (exit 2) until each is rebuilt and has run. `just tasks migrate --leave-behind` moves it all the same, and each writer left behind is refused the board until it is rebuilt. Until the move, a build at schema 21 is refused the board at 20.\n- a table\n"),
+            && out.ends_with(&format!(
+                "From release-2026-11-17.\n\nCargo.toml and Cargo.lock:\n{}\nBoard:\n- {}\n- a \
+                 table\n",
+                named("unreleased", &repo.git(&["rev-parse", "HEAD"])),
+                schema_steps(20, 21)
+            )),
         "{out}"
     );
     for (args, why) in [
@@ -790,4 +855,64 @@ fn the_command_prints_every_releases_notes_and_checks_a_branch() {
     let (code, _, err) = run(&[&tree.path("nowhere").to_string_lossy()]);
     assert_eq!(code, 2);
     assert!(err.starts_with("symphony-build release-notes: "), "{err}");
+}
+
+#[test]
+fn a_landed_trailer_that_reads_as_no_entry_is_said_as_written_and_a_checkout_with_no_default_branch_is_not_checked()
+ {
+    let tree = Tree::new();
+    let repo = Scratch::new(&tree);
+    repo.release("release-2026-11-17");
+    repo.land("tools/unread", |repo| {
+        repo.commit("Say it badly\n\nConsumer-Note: a project runs the migrate\nConsumer-Note: once: run it");
+    });
+    let tip = repo.git(&["rev-parse", "HEAD"]);
+    let history = history(
+        &repo.root,
+        &through(&repo.root, "release-2026-11-18", &tip).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(history[1].unread, ["a project runs the migrate"]);
+    assert_eq!(
+        section(&history, 1)[2..],
+        [
+            "Run once:",
+            "- run it",
+            "Said without a section:",
+            "- a project runs the migrate"
+        ]
+    );
+
+    // A checkout whose default branch is not there: said, and green.
+    repo.git(&["checkout", "-q", "-b", "only"]);
+    repo.git(&["branch", "-q", "-D", "main"]);
+    let args = [
+        "--check".to_string(),
+        repo.root.to_string_lossy().into_owned(),
+    ];
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    assert_eq!(main(&args, &mut out, &mut err), 0);
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "release-notes: this checkout has no main to compare with: nothing checked\n"
+    );
+    assert!(err.is_empty());
+}
+
+#[test]
+fn the_lock_names_each_workspace_package_with_its_version_and_no_source() {
+    let found: Vec<(String, String)> = packages(&lock("0.2.0")).into_iter().collect();
+    assert_eq!(
+        found,
+        [
+            ("symphony-app".to_string(), "0.2.0".to_string()),
+            ("symphony-args".to_string(), "1.0.0".to_string()),
+        ]
+    );
+    assert!(packages("version = 4\n").is_empty());
+    // This repository's lock reads so: a change of its shape would silence every release's notes.
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let own = packages(&std::fs::read_to_string(workspace.join(LOCK)).unwrap());
+    assert!(own.contains_key("symphony-app") && own.contains_key("symphony-board"));
+    assert!(!own.contains_key("serde"));
 }
