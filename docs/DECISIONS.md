@@ -9,14 +9,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### Releases
 
-- [ ] **release-accepts-task-runs** — A pasted proposal (Buildmark) suggests accepting a signed record of a run already made in place of running it again. A task already records its lint, docs check and tests at its tip. Should the release run skip a step when a task's recorded run of that same step, on the same inputs, was green? A: no; the release accepts only a green of a release run, its own or a hosted one. B: yes, for the lint, the docs check and the client check. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#E. Runs accepted in place of running again]]
-  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
-
-    **B saves** one to four minutes of a run of 21 to 54: the long step, the tests, is never one task's run. **B costs** letting the run of a task's own executor stand for the release's.
-
-    **The rest of the proposal** is answered in the analysis: tasks here already land on recorded runs with no server running them again, and its signature and outside verifier only matter once a second machine runs, which the hosted run brings with GitHub's own.
-
-    **Earlier verdicts checked.** **needed-stamps** decides what a land needs, not what a release accepts. **release-candidate-process** (A) carries a green of the release run's own across commits; it says nothing of a task's runs.
 - [ ] **release-run-on-github** — As you asked, the release's checks could run on GitHub's machines once the GitHub plugin is in, so a busy or sleeping laptop no longer decides a release. A project without the plugin keeps today's local run unchanged. Is this the design? One workflow, started only by `just release` for one commit, runs that commit's own checks on GitHub's macOS runners. `just release` waits, reads the result, files any red here, and on green tags and refreshes from this machine as today. No secret goes to GitHub. If GitHub does not answer, the run checks locally and says so. Approve, or comment with what to change. [[analysis/release-pipeline#The hosted run on GitHub]]
   [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
 
@@ -52,6 +44,15 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### Releases
 
+- [-] **release-accepts-task-runs** — A pasted proposal (Buildmark) suggests accepting a signed record of a run already made in place of running it again. A task already records its lint, docs check and tests at its tip. Should the release run skip a step when a task's recorded run of that same step, on the same inputs, was green? A: no; the release accepts only a green of a release run, its own or a hosted one. B: yes, for the lint, the docs check and the client check. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#E. Runs accepted in place of running again]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
+
+    **B saves** one to four minutes of a run of 21 to 54: the long step, the tests, is never one task's run. **B costs** letting the run of a task's own executor stand for the release's.
+
+    **The rest of the proposal** is answered in the analysis: tasks here already land on recorded runs with no server running them again, and its signature and outside verifier only matter once a second machine runs, which the hosted run brings with GitHub's own.
+
+    **Earlier verdicts checked.** **needed-stamps** decides what a land needs, not what a release accepts. **release-candidate-process** (A) carries a green of the release run's own across commits; it says nothing of a task's runs.
+  [2026-11-18 12:51] owner · rejected — If it doesn't save enough time there's not much purpose to it. 1 to 4 against 21 to 54 saves nothing. Unless this could be applied to the more demanding aspects like the tests in a way that more drastically reduces load.
 - [-] **release-main-judged-in-steps** — The full run looks at main once every 20 landed tasks, and not at all while a release candidate is being fixed. Yesterday's two first runs covered 36 and 55 landed tasks each: one found 20 real failures at once, the other a size overrun that took 8 hours 46 minutes to trace through 257 commits. Should main also be checked in small steps, after each land and never holding one? A: as today. B: after a land, in the background, a round checks main's newest tip, running only the checks the landed changes can reach; ten lands during a round are one next round; a red is a task naming the one to five lands it can come from; it also runs while a candidate is open. The full run before a release stays. Recommended: B, built once the release can run on GitHub, since on this machine it adds load. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#C. Main judged in smaller steps]]
   [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
 
