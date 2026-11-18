@@ -314,3 +314,59 @@ fn a_release_of_a_commit_before_a_red_leaves_that_red_open() {
         "{out}"
     );
 }
+
+#[test]
+fn a_run_the_machine_slept_under_counts_the_sleep_and_says_it_in_its_record_status_and_red() {
+    let fixture = Fixture::new();
+    fixture.land("red", Some("planted"), "a change that turns the check red");
+    // The tests' sleep: 26 min 29 s under each span the run times.
+    let slept = [("SYMPHONY_RELEASE_SLEPT", "1589")];
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &slept);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("release: the machine slept 26 min under this run, which its time counts"),
+        "{out}"
+    );
+    let run = fixture.runs().last().unwrap().clone();
+    // The two clocks are read one after the other, so the sleep is the tests' to within what the
+    // run takes for the wall clock's own correction (5 s), which only a stall reaches.
+    let recorded = run["slept"].as_f64().unwrap();
+    assert!((recorded - 1589.0).abs() < 5.0, "{run}");
+    let took = run["ended_at"].as_f64().unwrap() - run["started_at"].as_f64().unwrap();
+    assert!(took >= 1584.0, "the run's time counts the sleep: {run}");
+    let check = run["checks"][0]["seconds"].as_f64().unwrap();
+    assert!(
+        check >= 1584.0 && check <= took + 5.0,
+        "the check's seconds count the sleep, within the run's: {run}"
+    );
+    let reds = fixture.reds();
+    let body = &reds["tests/release-red-verify"].body;
+    let at = |said: &str| {
+        body.find(said)
+            .unwrap_or_else(|| panic!("{said:?} in:\n{body}"))
+    };
+    assert!(
+        at("Load average when it ended: ") < at("\nThe machine slept 26 min under this run"),
+        "{body}"
+    );
+    let (_, status, _) = fixture.release_at(NOW + 60.0, &["--status"]);
+    assert!(
+        status.contains("; the machine slept 26 min under it; red: verify (exit 1)"),
+        "{status}"
+    );
+
+    // A run the machine stayed awake under says nothing of a sleep, anywhere.
+    let awake = Fixture::new();
+    awake.land("red", Some("planted"), "a change that turns the check red");
+    let out = awake.night(NOW, 1);
+    assert!(!out.contains("slept"), "{out}");
+    let run = awake.runs().last().unwrap().clone();
+    assert!(run.get("slept").is_none(), "{run}");
+    assert!(
+        !awake.reds()["tests/release-red-verify"]
+            .body
+            .contains("slept")
+    );
+    let (_, status, _) = awake.release_at(NOW + 60.0, &["--status"]);
+    assert!(!status.contains("slept"), "{status}");
+}

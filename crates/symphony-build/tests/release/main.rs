@@ -242,6 +242,7 @@ impl Fixture {
             .env_remove("SYMPHONY_RELEASE_DRIVER")
             .env_remove("SYMPHONY_RELEASE_RELOAD_SECONDS")
             .env_remove("SYMPHONY_RELEASE_REGENERATOR_SECONDS")
+            .env_remove("SYMPHONY_RELEASE_SLEPT")
             .envs(identity())
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .env("SYMPHONY_RELEASE_NOW", now.to_string())
