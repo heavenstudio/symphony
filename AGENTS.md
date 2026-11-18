@@ -5,7 +5,9 @@ The app's workspace owns its server, its web client and its Mac app under `apps/
 `apps/symphony-web-tests`; the Mac app, `apps/symphony-desktop`, a thin shell over each
 server's own pages, `publish = false`, whose window crates no other package links), and the review
 library, its own build and release commands (`crates/symphony-build`), wire types, task board,
-working-directory scanner, headless Chrome driver and the tests' CPU meters and waits
+working-directory scanner, headless Chrome driver, the optional GitHub issue exchange
+(`crates/symphony-github`, a program of its own no other package builds with,
+[GITHUB](docs/GITHUB.md)) and the tests' CPU meters and waits
 (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`) under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.

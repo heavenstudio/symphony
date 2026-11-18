@@ -1,7 +1,9 @@
 # Optional GitHub integration
 
 This proposal exchanges selected tasks with GitHub issues and publishes work as pull requests.
-None of it is implemented or enabled. The companion [public-readiness audit](public-readiness.md)
+Its manual issue exchange is built, turned off unless a project commits its settings
+([GITHUB](../GITHUB.md)); the pull requests, the presentation plugin and the rest are not, and
+nothing is enabled. The companion [public-readiness audit](public-readiness.md)
 concerns repository exposure independently of integration adoption.
 
 Recommend one optional GitHub adapter with independently enabled issue and PR capabilities. It
