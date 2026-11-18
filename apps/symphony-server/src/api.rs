@@ -524,10 +524,13 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 })
                 .await
                 {
-                    Ok(Ok(hits)) => hits
-                        .into_iter()
-                        .map(|hit| (hit.slug, hit.score))
-                        .collect::<std::collections::BTreeMap<_, _>>(),
+                    Ok(Ok(hits)) => {
+                        let mut scores = std::collections::BTreeMap::new();
+                        for hit in hits {
+                            scores.insert(hit.slug, hit.score);
+                        }
+                        scores
+                    }
                     Ok(Err(why)) => {
                         let (status, said) = unavailable(&why, "");
                         return Some(error(status, said));
