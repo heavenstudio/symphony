@@ -33,6 +33,7 @@ pub(in crate::store) mod pane_watch;
 pub(in crate::store) mod pool;
 pub(in crate::store) mod raw;
 pub(in crate::store) mod reading;
+pub(in crate::store) mod recovery;
 pub(in crate::store) mod report_lines;
 pub(in crate::store) mod resume;
 pub(in crate::store) mod schema;

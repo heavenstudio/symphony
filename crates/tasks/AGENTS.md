@@ -58,7 +58,10 @@ status lines the alarm replays, `stamp.rs` what tells a task and its thread from
 read before, in one small read, `copy.rs` the whole-board copy, `opening.rs` how a store opens by
 the schema rule, `transaction.rs` the schema guard every write starts with, `writers.rs` the line
 each program that opens a board to write keeps, which `tasks migrate` reads before it moves one
-([TASKS](../../docs/TASKS.md#who-writes-a-board)). `lib.rs`'s doc states
+([TASKS](../../docs/TASKS.md#who-writes-a-board)), `recovery.rs` the recovery generation, the
+token and the writes bound to it and the authority a store is handed, with `server/recovery.rs`
+the board home's file of it and `cli/recovery.rs` `tasks recovery`
+([TASKS](../../docs/TASKS.md#a-board-that-was-copied-or-restored)). `lib.rs`'s doc states
 the rule of every write. `store/surreal/` is every statement the store sends, a module beside each
 store module, `store/postgres/` its PostgreSQL twin of each one written so far and the board's
 tables there, `store/statement.rs` the pair a call names, `store/database.rs` the database a board
@@ -260,6 +263,18 @@ fenced on the task versions and the lost holders' last beats it read (`given::FE
 what a reader derived (`Store::record_fixed`) moves no task version, so it never fences a concurrent
 move as stale. A plain `Store::create` gives no orchestrator: a new way to file goes through
 `Store::give_filed`, as the command line's and the API's `create` do.
+
+### A copy replaces the recovery generation
+
+Whatever replaces a board's rows whole replaces `recovery:board` in the same transaction, and
+whatever puts a database's files in place revokes the home's bindings first
+(`Home::revoke_recoveries`): a copy that kept the generation would hand the numbers and versions
+it gives again to tokens read before it. A write bound to a token starts with the fence
+(`surreal/recovery.rs`'s `FENCED` and its twin, their variables from `Store::bound_vars`), before
+anything it writes, writes the task's own row, and refuses a mismatch rather than read again. A
+store finds no authority by itself: it is handed one (`Store::recovering`), and a rebind never
+adopts the generation it found (`store/recovery.rs`; `tests/store/recovery.rs`, and the restore
+in `tests/server/postgres.rs`).
 
 ### The store's statements live in one place
 

@@ -17,6 +17,7 @@ mod migrate;
 pub mod probes;
 pub mod pull;
 pub(crate) mod recorder;
+pub mod recovery;
 mod schema;
 mod search;
 mod shape;
@@ -208,6 +209,11 @@ fn run(
     // stopped never starts it.
     if args.first().is_some_and(|arg| arg == database::COMMAND) {
         return database::run(&args[1..], env, out, err);
+    }
+    // Before the board's argument table too: its revoke opens no board, as it comes before
+    // restored data is served.
+    if args.first().is_some_and(|arg| arg == recovery::COMMAND) {
+        return recovery::run(&args[1..], env, out, err);
     }
     let board = || connect(env).map(|store| detaching(store, env, program));
     if args.len() == 1 && args[0] == "api" {

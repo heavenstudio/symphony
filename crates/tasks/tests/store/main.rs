@@ -91,6 +91,7 @@ mod quiet_callbacks;
 mod raw;
 mod raw_fence;
 mod realistic;
+mod recovery;
 mod red;
 mod relay;
 mod reports;

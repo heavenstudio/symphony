@@ -293,7 +293,12 @@ recovery fences/revokes the old database access as well as draining revisions, s
 old process cannot learn a new generation. The lifecycle task's local rollback guard is reused
 where applicable, but its checkout file cannot serve as this record in an ephemeral container.
 The future hosted implementation includes this small control-record interface and scratch
-recovery tests. A provider restore alone is not a safe automatic rollback.
+recovery tests. A provider restore alone is not a safe automatic rollback. The board's side of
+that interface is its recovery authority
+([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)): a store is handed the generation
+the control record names and refuses every bound write where the database holds another or the
+record names none. The generation it names is the database's own text, replaced at each copy and
+rebind, and a board home's file of it on one machine is not this record.
 
 If a post-switch rollback is needed, freeze again and reconcile writes made since switching;
 changing the endpoint to an older snapshot silently loses those writes and is refused. Local
