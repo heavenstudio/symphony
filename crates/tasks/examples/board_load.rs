@@ -506,7 +506,8 @@ impl Runner {
             ("TASKS_DISPATCH", "inline".to_string()),
             ("TASKS_SWEEP", "off".to_string()),
             ("TASKS_PS_TABLE", format!("{folder}/ps")),
-            ("HERDR_BIN", "/usr/bin/false".to_string()),
+            ("HC_BIN", "/usr/bin/false".to_string()),
+            ("HERDR_APP_BIN", "/usr/bin/false".to_string()),
         ]
         .into_iter()
         .map(|(name, value)| (name.to_string(), value))
@@ -1483,7 +1484,8 @@ Shared_Clean:      12000 kB
         assert_eq!(
             names,
             [
-                "HERDR_BIN",
+                "HC_BIN",
+                "HERDR_APP_BIN",
                 "HOME",
                 "PATH",
                 "SYMPHONY_MACHINE_DIR",
@@ -1499,6 +1501,8 @@ Shared_Clean:      12000 kB
         assert_eq!(vars["TASKS_DISPATCH"], "inline");
         assert_eq!(vars["TASKS_SWEEP"], "off");
         assert_eq!(vars["TASKS_PS_TABLE"], "/tmp/run/ps");
+        assert_eq!(vars["HC_BIN"], "/usr/bin/false");
+        assert_eq!(vars["HERDR_APP_BIN"], "/usr/bin/false");
         assert_eq!(vars["HOME"], "/tmp/run");
         assert_eq!(vars["SYMPHONY_MACHINE_DIR"], "/tmp/run/machine");
         assert_eq!(vars["PATH"], "/bin");

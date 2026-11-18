@@ -233,9 +233,7 @@ fn a_machine_hub_starts_its_selected_postgresql_board_and_keeps_its_reader_read_
     let tree = Tree::new();
     let project = Project::made_by(&tree, "pg", |root| {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let programs = symphony_board::server::postgres::programs(&workspace)
-            .unwrap()
-            .unwrap();
+        let programs = symphony_board::server::postgres::discover_programs(&workspace).unwrap();
         std::fs::write(
             root.join("symphony.toml"),
             format!(

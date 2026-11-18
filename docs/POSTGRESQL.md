@@ -18,7 +18,9 @@ keeps it. The PostgreSQL cluster is `postgresql/`; a retained SurrealDB store be
 active home's `data/` before that home can identify itself as PostgreSQL.
 
 `Home::board_server` selects the engine for repository discovery, including the machine server's
-board reader. `[board] postgresql` names the machine's programs, never the selected engine. A
+board reader. `[board] postgresql` names the machine's programs, never the selected engine; absent
+that override, the first executable `postgres` on `PATH` supplies the folder. Discovery validates
+PostgreSQL 18 or later and its same-folder companion tools before starting anything. A
 PostgreSQL server listens on its private Unix socket alone and ends with the process that started
 it. A command uses one connection for its lifetime; there is no pool.
 
@@ -43,6 +45,9 @@ It refuses an existing target cluster and a running source, and starts neither s
 The next start writes the target's own socket settings and lets PostgreSQL recover its WAL. The
 snapshot is unchanged. This is rehearsal and inspection, not an in-place rollback or acceptance
 of an older live schema; the highest-seen schema record remains outside the database.
+The identity selects an engine only. It contains no recovery generation, and this physical copy
+does not rotate task tokens or revoke already-open clients. A managed restore/rebind fence is a
+separate prerequisite for live recovery.
 
 ## Free space and versions
 
@@ -58,5 +63,12 @@ migration as a serialization conflict before it can write after that migration. 
 check fingerprints both the common schema source and the PostgreSQL definitions from the same
 default-branch commit. The live board is identified by its PostgreSQL socket as well as by its
 repository, preserving the refusal of tests and examples that reach their own live board.
+
+On a writer program's first opening and its hourly inventory refresh, ended PostgreSQL backends'
+marker counters are folded into one retained `['board']` counter in the same transaction. The
+sum stays unchanged, active backends keep their own counters, and subsequent commits still raise
+the marker. Readers do no compaction. A conflict or failed inventory write rolls the complete
+refresh back; a later due opening can try again. This uses the existing counter table and adds no
+schema version.
 
 Measurements and their limits belong to [the store comparison](analysis/board-store-baseline.md).

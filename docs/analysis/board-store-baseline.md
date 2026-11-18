@@ -200,6 +200,29 @@ number comes from something two writes do not both move. The thirty-session run 
 tools/board-pg-lifecycle reads its retries for the writes that post against the first row, and
 those for the writes that post none against the second.
 
+## PostgreSQL's replacement for the plan checks
+
+The SurrealDB `perf` target's plan parser remains specific to SurrealQL. Its PostgreSQL
+replacement is a separate scratch run using PostgreSQL 18's
+[`auto_explain`](https://www.postgresql.org/docs/18/auto-explain.html), with nested statements
+enabled. It observes statements inside the PL/pgSQL blocks and trigger functions as well as the
+outer request, which an `EXPLAIN` of the outer `DO` alone cannot cover.
+
+After copying the board, run `ANALYZE` and enable `auto_explain.log_min_duration = 0`,
+`auto_explain.log_nested_statements = on`, `auto_explain.log_format = json`,
+`auto_explain.log_analyze = on`, `auto_explain.log_timing = off` and
+`auto_explain.sample_rate = 1` on the owned scratch server. Exercise the per-write,
+per-recipient and per-tick cases the current `perf` plan check names, retaining each nested plan
+and its actual row/loop counts. Check selective message, delivery, role, session and
+callback-state lookups against the rows requested and their indexes at both export and ten-times
+scale; distinguish intended whole-board reads. A sequential scan on a tiny table is a legitimate
+planner choice, so forcing `enable_seqscan = off` or rejecting every sequential scan would not
+prove the production plan.
+
+This names the replacement method; it does not claim the existing SurrealDB parser accepts
+PostgreSQL plans or that every dispatch path has already been audited. Instrumented plan runs
+are separate from the CPU and memory comparison: explaining every statement changes its cost.
+
 ## What this does not measure
 
 - **A board ten times this size.** Every run is this board or an empty one.
@@ -219,7 +242,7 @@ those for the writes that post none against the second.
 From a checkout, with a dump of the board and a scratch folder that exists:
 
 ```sh
-tools/cargo.sh build -p symphony-board --bin tasks --example board_load
+tools/record.sh build 'tasks and board_load for paired scratch smoke runs' tools/cargo.sh build -p symphony-board --bin tasks --example board_load
 tools/rs-bin.sh tasks-copy --board --out > "$DUMP"      # a read; the main checkout's build
 .target/debug/examples/board_load --home "$SCRATCH" --surreal "$(bash tools/surreal.sh)" \
     --tasks "$PWD/.target/debug/tasks" --dump "$DUMP" --sessions 30 --calls 40 --seed 1
