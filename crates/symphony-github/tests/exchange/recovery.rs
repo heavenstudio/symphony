@@ -1083,3 +1083,83 @@ fn a_run_that_fails_before_it_can_look_does_not_forget_a_lost_answer() {
     assert_eq!(rig.github.issues().len(), 26, "no second public issue");
     assert_eq!(rig.state().mappings["tools/a"].issue_number, 1);
 }
+
+#[test]
+fn a_run_killed_after_its_intent_is_not_forgotten_by_a_run_that_fails_next() {
+    let rig = Rig::new("killed-then-failed", EXCHANGE);
+    rig.board.file("tools/a", "A", "brief");
+    draft(&rig, "tools/a", "Public", "Body.");
+    let digest = rig.preview().digest().unwrap();
+    rig.github
+        .fault("POST", "/repos/o/n/issues", Fault::LoseAnswer);
+    assert_eq!(rig.reconcile(&digest).code, 1);
+    assert_eq!(rig.github.issues().len(), 1, "GitHub made the issue");
+    // Killed before any word followed the intent: the journal ends at it.
+    let journal = rig.dir.0.join("state/journal.jsonl");
+    let kept = std::fs::read_to_string(&journal).unwrap();
+    let mut lines: Vec<&str> = kept.lines().collect();
+    assert!(lines.pop().unwrap().contains("unknown"));
+    std::fs::write(&journal, format!("{}\n", lines.join("\n"))).unwrap();
+    assert_eq!(rig.journal().last().unwrap().event, Event::Intent);
+
+    // The next run fails before it can look, and writes its own intent and failure.
+    rig.board.unbind();
+    assert_eq!(rig.reconcile(&digest).code, 1);
+    assert_eq!(rig.journal().last().unwrap().event, Event::Failed);
+
+    rig.board.bind();
+    rig.reconcile(&digest).ok();
+    assert_eq!(rig.github.issues().len(), 1, "no second public issue");
+    let creates = rig
+        .github
+        .asked()
+        .iter()
+        .filter(|(method, ..)| method == "POST")
+        .count();
+    assert_eq!(creates, 1);
+    assert_eq!(rig.state().mappings["tools/a"].issue_number, 1);
+}
+
+#[test]
+fn duplicates_that_stopped_a_publication_stop_it_under_the_next_preview_too() {
+    let rig = Rig::new("duplicates-new-preview", EXCHANGE);
+    // More issues than two previews list, so neither listing reaches the ones made after
+    // them.
+    rig.github.page_size(1);
+    for n in 0..50 {
+        rig.github.open(&format!("Old {n}"), "Text.", &[]);
+    }
+    rig.board.file("tools/a", "A", "brief");
+    draft(&rig, "tools/a", "Public", "Body.");
+    let first = rig.preview().digest().unwrap();
+    rig.github
+        .fault("POST", "/repos/o/n/issues", Fault::LoseAnswer);
+    assert_eq!(rig.reconcile(&first).code, 1);
+    // A second issue carries the marker before the run is made again.
+    let planted = with_marker("Another's.", &marker_for(77, "tools/a"));
+    rig.github.open("Planted", &planted, &[]);
+    let stopped = rig.reconcile(&first).ok();
+    assert!(
+        stopped.out.contains("2 issues carry its marker"),
+        "{}",
+        stopped.out
+    );
+
+    draft(&rig, "tools/a", "Public", "Body, revised.");
+    let second = rig.preview().digest().unwrap();
+    assert_ne!(first, second);
+    let again = rig.reconcile(&second).ok();
+    assert!(
+        again.out.contains("2 issues carry its marker"),
+        "{}",
+        again.out
+    );
+    let creates = rig
+        .github
+        .asked()
+        .iter()
+        .filter(|(method, ..)| method == "POST")
+        .count();
+    assert_eq!(creates, 1, "no third issue");
+    assert!(rig.state().mappings.is_empty());
+}

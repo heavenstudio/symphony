@@ -967,28 +967,34 @@ fn written(action: &Action) -> String {
     }
 }
 
-/// The markers of the publications dispatched whose result is still not known, under whichever
-/// preview: one whose answer never arrived, or whose run ended after its intent. Only an
-/// acknowledgment or a skip settles one. A later attempt that failed before it could look (the
-/// board or the token file not reachable) says nothing of the earlier dispatch, so it never
-/// clears it: the next run still looks among every issue before it creates anything.
+/// The markers of the publications that may have made an issue no mapping holds, under
+/// whichever preview they were dispatched. Only an acknowledgment, which maps the issue,
+/// settles one. An answer that never arrived and an intent with no word after it (a run
+/// killed) may each have made the issue. A skip leaves issues that carry the marker unmapped,
+/// or made none. A failure says only that its own attempt sent nothing: it closes that
+/// attempt's intent and clears nothing said before it. So whatever follows, the next run looks
+/// among every issue before it creates anything.
 fn unsettled_publications(entries: &[Entry]) -> BTreeSet<&str> {
     let mut pending = BTreeSet::new();
     let mut open = BTreeSet::new();
     for entry in entries.iter().filter(|entry| entry.kind == "publish") {
         let op = entry.op.as_str();
         match entry.event {
+            // An earlier intent that got no word is not known unmade: it stays pending
+            // whatever this newer attempt comes to.
             Event::Intent => {
-                open.insert(op);
+                if !open.insert(op) {
+                    pending.insert(op);
+                }
             }
-            Event::Unknown => {
+            Event::Unknown | Event::Skipped => {
                 open.remove(op);
                 pending.insert(op);
             }
             Event::Failed => {
                 open.remove(op);
             }
-            Event::Ack | Event::Skipped => {
+            Event::Ack => {
                 open.remove(op);
                 pending.remove(op);
             }
