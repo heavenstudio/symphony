@@ -33,8 +33,15 @@ tasks, 13,067 messages) and one build. The tables, the method and their limits a
 - **Most commands answer sooner** on PostgreSQL (a beat 23 ms against 36, an `inbox` 74 against
   194, a `show` 45 against 100), and the two heaviest later (`list` 1.0 s against 0.4, `pull` 3.8 s
   against 2.7). Walls are stretched by the machine's load, 75 to 168 that day.
+- **On a board ten times the size the memory gap is wider.** Measured since, by
+  `tools/board-copy-at-ten-times`, on a generated board of 9,310 tasks and 130,670 messages with
+  the same thirty sessions and 3,000 commands, none failing: PostgreSQL's server peaked at
+  14.8 GiB against SurrealDB's 3.3 GiB, and fell back to 218 MiB where SurrealDB kept 2.0 GiB
+  ([the numbers](board-store-baseline.md#paired-board-work-on-it)). One run each on a loaded
+  machine, a development build, SurrealDB seeded under a 2 GiB memtable and measured under the
+  shipped one. Nobody has looked for what holds it.
 
-Not measured: a board ten times this size, a crash's durability, delivery to listening sessions,
+Not measured: a crash's durability, delivery to listening sessions,
 days at rest.
 
 ## What is not ready
@@ -45,12 +52,13 @@ Each is needed before a live board moves. None is built by this page.
 |---|---|
 | The live-board guard covers PostgreSQL's tables and finds a PostgreSQL board | landed with the lifecycle |
 | Holds, stopped-cluster snapshots, reclaim and the schema fence on PostgreSQL | landed, proved on scratch boards |
-| A copy does not let an old task number or version be taken for a new one | `tools/board-recovery-generation`, in progress. The cutover is itself such a copy |
+| A copy does not let an old task number or version be taken for a new one | landed with `tools/board-recovery-generation`, board schema 22: every copy of a whole board replaces its [recovery generation](../TASKS.md#a-board-that-was-copied-or-restored), and a write naming a task read before the copy is refused. The cutover is itself such a copy |
 | PostgreSQL starting for a board that is not a scratch one | not built: it is refused by design until this is answered |
 | The cutover command: hold, export, copy, compare, switch, with each failure leaving the board as it was | not built |
 | Restoring a PostgreSQL snapshot over the board it was taken from | not built: a snapshot restores into a new scratch home only |
 | The release refresh on a PostgreSQL board: its snapshot before a schema move is SurrealDB's export | not built |
-| A copy of a board ten times today's size | fails on both engines under shipped settings (`tools/board-copy-at-ten-times`). Today's boards copy; this bounds growth, not the cutover |
+| A copy of a board ten times today's size | measured by `tools/board-copy-at-ten-times`, landed. PostgreSQL takes it in 78.5 to 141.8 s of the 270 s its server gives a copy, the time going with the machine's load, and a quiet machine reaches the 270 s at about 32 times today's board; SurrealDB refuses it in one line under the shipped 256 MiB memtable and takes it in 68.1 s under 2 GiB, which no shipped setting gives ([the numbers](board-store-baseline.md#a-board-ten-times-the-size-measured-2026-11-18)). Today's boards copy on both; this bounds growth, and the way back for a board that has grown, not the first move |
+| A PostgreSQL copy reported failed does not replace the board | landed with the same task: the server ends a copy at 270 s, thirty short of its caller's 300, with the board as it was. A copy whose commit and answer take those last thirty seconds still can |
 
 ## The order
 
@@ -93,9 +101,10 @@ of its own, and each board moves by itself.
 Nothing is deleted. The export and the old store are kept until the owner says otherwise.
 
 **How long the board cannot be written:** steps 1 to 6. It has not been timed. The copy of
-today's export into PostgreSQL ran in every paired run without meeting its 300-second limit, so
-the copy itself is under five minutes; the rehearsal gives the real figure, for the whole of it,
-before any live board is held.
+today's export into PostgreSQL ran in every paired run without meeting its limit, then the 300 s
+its caller waits and since 270 s at the server
+([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)), so the copy itself is under five
+minutes; the rehearsal gives the real figure, for the whole of it, before any live board is held.
 
 ## The way back
 

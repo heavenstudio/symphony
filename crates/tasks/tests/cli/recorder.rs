@@ -2512,6 +2512,97 @@ fn a_run_whose_recorder_died_is_ended_incomplete_by_the_next_recorders_sweep() {
     assert!(started.wait().unwrap().success());
 }
 
+/// The command lines the runners themselves refuse, run through the recorder: each is recorded
+/// refused with the runner's `error:` line, its end still the red its exit says, and a command
+/// that failed, timed out or was stopped saying the same words is not. Cargo's is what
+/// `tools/board-pg-lifecycle` and `tests/idle-count-discards-restored` typed on 2026-11-18: test
+/// names after the first with no `--`.
+#[test]
+fn a_command_line_its_runner_refuses_is_recorded_refused_and_a_command_that_failed_is_not() {
+    let case = Case::new();
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let nextest = output(Command::of(&cargo).args(["nextest", "--version"]))
+        .is_ok_and(|said| said.status.success());
+    let justfile = "one ARG:\n    @echo {{ARG}}\n";
+    let usage = "error: unexpected argument '";
+    // What each script's record says of a refusal: the start of its line, or none.
+    let cases: Vec<(String, Option<&str>)> = vec![
+        (format!("'{cargo}' test own_names owner_words"), Some(usage)),
+        (format!("'{cargo}' test --no-such-option"), Some(usage)),
+        (format!("'{cargo}' clippy --no-such-option"), Some(usage)),
+        (
+            format!("'{cargo}' nextest run --no-such-option"),
+            // Without nextest Cargo names no such command, which is none of the refusals read.
+            nextest.then_some(usage),
+        ),
+        ("just --no-such-option".into(), Some(usage)),
+        (
+            "just no-such-recipe".into(),
+            Some("error: justfile does not contain recipe `no-such-recipe`"),
+        ),
+        (
+            "just on".into(),
+            Some("error: justfile does not contain recipe `on`"),
+        ),
+        ("just one".into(), Some("error: recipe `one` got 0 ")),
+        // A recipe that ran and failed, and a runner with nothing to run.
+        ("just one a; exit 1".into(), None),
+        ("cd / && just --justfile /no/such/justfile one".into(), None),
+        // The same words from a command that built something first, went on, or did not end red.
+        (
+            format!("echo '   Compiling c v0.1.0 (/wt/c)'; '{cargo}' test a b"),
+            None,
+        ),
+        (
+            format!("'{cargo}' test a b; echo 'test t ... FAILED' >&2; exit 101"),
+            None,
+        ),
+        (format!("'{cargo}' test a b; exit 124"), None),
+        (format!("'{cargo}' test a b; kill -TERM $$"), None),
+        (format!("'{cargo}' test a b; exit 0"), None),
+        (
+            "echo 'assertion `left == right` failed' >&2; exit 1".into(),
+            None,
+        ),
+        ("exit 1".into(), None),
+    ];
+    for (n, (script, expected)) in cases.iter().enumerate() {
+        let folders = Folders::new(&format!("recorder-refused-{n}"));
+        let repo = repository(&folders.dir.join("repo"));
+        fs::write(repo.join("justfile"), justfile).unwrap();
+        let runs = folders.dir.join("runs");
+        let done = output(
+            pipeline_command(
+                &case,
+                &folders,
+                (&repo, &runs),
+                ("test", "just test-rs"),
+                script,
+            )
+            .stdin(Stdio::null()),
+        )
+        .unwrap();
+        let record = folders.once(Step::Finished);
+        let said = format!("{script}: {done:?}");
+        assert_eq!(record.exit_code, done.status.code(), "{said}");
+        let refused = record.run.as_ref().unwrap().refused.as_deref();
+        match expected {
+            Some(start) => {
+                assert!(
+                    refused.is_some_and(|line| line.starts_with(start)),
+                    "{said}"
+                );
+                assert_eq!(read::refused(&record), refused);
+                assert!(read::red(&record).is_some(), "{said}");
+                // Its line in the day files ends as its exit says: the refusal is the record's.
+                let lines = day_lines(&folders.work, &runs, 1);
+                assert_eq!(lines[1].end, Some(End::Red), "{said}");
+            }
+            None => assert_eq!(refused, None, "{said}"),
+        }
+    }
+}
+
 /// A shell function a run's script calls as `upto TEXT`: once its own log (`$SYMPHONY_RUNS`, its
 /// operation `$TASKS_RUN_PARENT`) holds TEXT, so what it writes next is read after it; a backstop
 /// only a stall reaches lets it go on.

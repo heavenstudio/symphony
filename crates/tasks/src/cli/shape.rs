@@ -67,6 +67,7 @@ pub fn task(t: &Task) -> Value {
         ("depends", Value::from(t.depends.as_slice())),
         ("roles", Value::Array(t.roles.iter().map(role).collect())),
         ("instruction", Value::from(t.instruction)),
+        ("id", Value::from(t.id)),
     ])
 }
 

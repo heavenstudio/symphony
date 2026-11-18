@@ -24,6 +24,9 @@ the evidence behind decisions are under [Design and history](#design-and-history
 - [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
   public repository into a private copy with its ancestry kept, the export of selected reusable
   changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.
+- [GitHub issue exchange](GITHUB.md) — the optional `symphony-github` adapter, turned off
+  unless the default branch commits its settings: its settings and token file, its commands, what
+  a reconcile writes, what it keeps, and what pauses it.
 - [Machine build and test work](MACHINE_WORK.md) — observed build/test phases, the board's build
   and test recorder (`tasks run`), and advisory machine targets.
 - [Runs](RUNS.md) — the day files of a project's runs and their steps: the line each writes,

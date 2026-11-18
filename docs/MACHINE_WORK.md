@@ -196,7 +196,7 @@ it is for; the record is written once that is known. The board's schema is uncha
 | `queued_at`, `started_at`, `ended_at`, `beat_at` | seconds since the epoch |
 | `exit_code`, `signal` | how COMMAND ended; neither when that is not known |
 | `reason` | why it ended without a status, or never started, else empty |
-| `run` | for a run or a step only, else left out: its `pipeline`, `step`, `trigger`, `project`, `tree`, `dirty`, `rerun_of` and, once finished, `cpu_s` and `cpu_partial`, as its line in the day files says them ([RUNS](RUNS.md)), and `runs`, the absolute path of the day files' folder its lines go to |
+| `run` | for a run or a step only, else left out: its `pipeline`, `step`, `trigger`, `project`, `tree`, `dirty`, `rerun_of` and, once finished, `cpu_s` and `cpu_partial`, as its line in the day files says them ([RUNS](RUNS.md)), `runs`, the absolute path of the day files' folder its lines go to, and, once finished, `refused`, the line its runner refused its command line with, left out of a run that built or ran something ([below](#a-command-its-runner-refused)) |
 | `reading` | on macOS, where the recorder watches COMMAND's processes, the latest reading of them it wrote with a beat, else left out: `at`, when it read them (seconds since the epoch), `cpu_s`, the most CPU seconds any reading so far found they had taken, `partial`, whether a reading so far knew it missed some (as `cpu_partial` says), and `processes`, how many it read then, COMMAND's and each under it; a finished record keeps the last |
 
 **For which task.** The first of these that answers. Unless a task is named, the
@@ -246,6 +246,39 @@ subagent working in the main checkout, where no branch wins and it shares its
 parent's Claude Code session, names itself with `TASKS_SESSION`. A board that
 does not answer records the session given and no task: nothing is guessed. The task
 a record names is the recorder's binding; the Symphony never rewrites it.
+
+### A command its runner refused
+
+A command line its runner refuses before it reads the tree (test names typed after the first
+with no `--`, an option it does not have, a recipe the justfile does not hold) builds and runs
+nothing, so it says nothing about the commit it was typed at. As a run or a step ends red (an
+exit that is no timeout's and no signal's), its recorder reads its log once, as it reads its tests
+([RUNS](RUNS.md#tests)), and keeps the refusal's `error:` line, 240 characters at most, as
+`refused` in the run's record (`crates/tasks/src/runs/refused.rs`). The readers of the recorded
+runs at a tip, the `tests` stamp's, the land's, the task page's and `just tasks runs`, then pass
+it over: it is no run of its command there, neither a red nor a green
+([TASKS](TASKS.md#the-default-landing)).
+
+It is told by the runner's own words, never by how long the run took or by its exit code: a test
+that fails at once is a red. The log, 64 KiB at most, ends in one of:
+
+- clap's usage error, as `cargo test`, `cargo build`, `cargo clippy`, `cargo nextest run` and
+  `just` say it: `error: …`, any `  tip: …` lines, `Usage: …`,
+  `For more information, try '--help'.`;
+- just's `error: justfile does not contain recipe …`, alone or with its `Did you mean …?`;
+- just's `error: recipe … got N arguments but takes M`, with its `usage:` and the recipe's line;
+
+and no line of it says work was done: a status line of Cargo's or nextest's (`Compiling`,
+`Finished`, `Running`, `FAIL`, a word ending at the twelfth column), or libtest's
+`running N tests` or `test result:`. So a compile error, a failing test, a test binary given an
+option it does not take (it was built first) and a command that said such a block and went on are
+reds. So is a run that keeps no log (its caller at a terminal), one a sweep finished for a
+recorder that died, and a refusal that reads the tree (Cargo's `no test target named`, a package
+it does not find). A command that did its work in words none of these lines knows, then ended on
+a refused runner's block, reads as refused: the one case the log cannot tell.
+
+The run's line in the day files keeps the `end` its exit says, `red`
+([RUNS](RUNS.md#a-line)): the Runs page and the roll-up count it as a red run.
 
 **Nested runs.** COMMAND receives `TASKS_RUN_PARENT`, its operation's ID; a recorder
 it starts records that as its `parent_id`. A run's or a step's COMMAND also receives

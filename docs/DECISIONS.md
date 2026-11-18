@@ -36,7 +36,13 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     One run each, sessions back to back: a ceiling, not the usual rate. No improvement in CPU is claimed.
 
-    **Not built yet, needed under either:** the cutover command itself, PostgreSQL starting for a board that is not a scratch one, restoring a PostgreSQL snapshot over its own board, the release's snapshot before a schema move, and the copy's guard against reused task numbers (`tools/board-recovery-generation`, in progress). A board ten times today's size cannot be copied on either store yet (`tools/board-copy-at-ten-times`); today's boards can.
+    **A second memory figure, measured since,** on a generated board ten times today's size (9,310 tasks, 130,670 messages), the same thirty sessions and 3,000 commands, nothing failed: PostgreSQL's server peaked at 14.8 GiB against SurrealDB's 3.3 GiB, and afterwards held 218 MiB against 2.0 GiB. One run each on a loaded machine, and nobody has looked for the cause ([[analysis/board-store-baseline#Paired board work on it]], from the board task `tools/board-copy-at-ten-times`).
+
+    **Not built yet, needed under either:** the cutover command itself, PostgreSQL starting for a board that is not a scratch one, restoring a PostgreSQL snapshot over its own board, and the release's snapshot before a schema move.
+
+    **Built since this card was posted.** The copy's guard against reused task numbers (`tools/board-recovery-generation`, landed, board schema 22): every copy of a whole board, the cutover's among them, gives the board a new recovery generation, and a write that names a task read before the copy is refused ([[TASKS#A board that was copied or restored]]).
+
+    **A board ten times today's size** was measured by `tools/board-copy-at-ten-times`, landed ([[analysis/board-store-baseline#A board ten times the size, measured 2026-11-18]]). PostgreSQL copied it in 78.5 to 141.8 s over four runs, the time going with the machine's load. Its server now ends a copy at 270 s with the board as it was, which a quiet machine reaches at about 32 times today's board and a loaded one sooner. Before that limit a copy reported failed could still replace the board; now only one whose commit and answer take the last thirty seconds can. SurrealDB refuses the same copy in one line under the 256 MiB memtable its server ships with, the board as it was, and copied it in 68.1 s under 2 GiB, which no shipped setting gives. Today's boards copy on both, so this bounds growth and the way back for a board that has grown, not the first move.
 
     **Why B.** The memory target was part of what you approved, the run misses it by more than three times, and nobody knows why yet: a setting, or the price of one connection per command. B delays only the last step: the missing pieces and the rehearsal go ahead meanwhile.
 

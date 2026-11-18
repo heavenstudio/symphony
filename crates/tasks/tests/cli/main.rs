@@ -38,6 +38,7 @@ mod project;
 mod pull;
 mod record_script;
 mod recorder;
+mod recovery;
 mod runs;
 mod scratch_folder;
 mod search;

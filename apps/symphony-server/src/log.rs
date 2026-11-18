@@ -1,4 +1,11 @@
 //! Timestamp the shared server's complete output, including inherited subprocess output.
+//!
+//! Each stream is a socket the server's own descriptor and every child's write to, read by a
+//! forwarder that dates each line into the stream's destination. A forwarder ends only with the
+//! capture ([`Log::finish`]): a socket that ends under it (a child shut down the one it inherited,
+//! a read failed) would leave every later write to that stream failing, and `eprintln!` panics
+//! the thread that makes one, so the forwarder puts a new socket in the stream's place and says
+//! so ([`recapture`]).
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -76,6 +83,53 @@ fn duplicate(fd: i32) -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(copy) })
 }
 
+/// How long a forwarder's read waits for output before it looks at the stop.
+const LOOK: Duration = Duration::from_millis(100);
+
+/// The process's `stream` (1 or 2) written into a new socket: the end a forwarder reads.
+fn capture(stream: i32) -> io::Result<UnixStream> {
+    let (reader, writer) = UnixStream::pair()?;
+    reader.set_read_timeout(Some(LOOK))?;
+    redirect(writer.as_raw_fd(), stream)?;
+    Ok(reader)
+}
+
+/// What a forwarder does once the socket it read has ended.
+enum Next<R> {
+    /// The stream is captured again: read this.
+    Again(R),
+    /// The stream could not be captured again and writes to its destination itself, undated.
+    Direct(String),
+    /// The capture is over: there is nothing to read.
+    Over,
+}
+
+/// The capture of the process's `stream` (1 or 2) taken again after its socket ended, while the
+/// capture is active. One that ended again `at_once`, before anything was read of it, or that
+/// cannot be made, gives the stream its own destination back instead: undated lines, and no
+/// failing write.
+fn recapture(stream: i32, at_once: bool) -> Next<UnixStream> {
+    let original = ORIGINAL_OUTPUT.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(saved) = original.as_ref() else {
+        return Next::Over;
+    };
+    let why = if at_once {
+        "its new capture ended at once".to_string()
+    } else {
+        match capture(stream) {
+            Ok(reader) => return Next::Again(reader),
+            Err(error) => format!("it could not be captured again: {error}"),
+        }
+    };
+    let index = usize::from(stream == 2);
+    match redirect(saved[index], stream) {
+        Ok(()) => Next::Direct(why),
+        Err(error) => Next::Direct(format!(
+            "{why}, and its destination did not take it: {error}"
+        )),
+    }
+}
+
 fn redirect(from: i32, to: i32) -> io::Result<()> {
     // SAFETY: both descriptors are open; dup2 atomically replaces only the destination.
     if unsafe { libc::dup2(from, to) } < 0 {
@@ -101,23 +155,30 @@ impl Log {
         let err = File::from(duplicate(2)?);
         let out_report = File::from(duplicate(2)?);
         let err_report = File::from(duplicate(2)?);
-        let (out_reader, out_writer) = UnixStream::pair()?;
-        let (err_reader, err_writer) = UnixStream::pair()?;
-        out_reader.set_read_timeout(Some(Duration::from_millis(100)))?;
-        err_reader.set_read_timeout(Some(Duration::from_millis(100)))?;
-        redirect(out_writer.as_raw_fd(), 1)?;
-        if let Err(error) = redirect(err_writer.as_raw_fd(), 2) {
-            redirect(saved[0].as_raw_fd(), 1)?;
-            return Err(error);
-        }
+        let out_reader = capture(1)?;
+        let err_reader = match capture(2) {
+            Ok(reader) => reader,
+            Err(error) => {
+                redirect(saved[0].as_raw_fd(), 1)?;
+                return Err(error);
+            }
+        };
         *original = Some([saved[0].as_raw_fd(), saved[1].as_raw_fd()]);
         drop(original);
         let control = Arc::new(Control::default());
         let out_control = control.clone();
         let err_control = control.clone();
         let readers = [
-            std::thread::spawn(move || forward(out_reader, out, out_report, &out_control)),
-            std::thread::spawn(move || forward(err_reader, err, err_report, &err_control)),
+            std::thread::spawn(move || {
+                forward(out_reader, out, out_report, &out_control, |at_once| {
+                    recapture(1, at_once)
+                })
+            }),
+            std::thread::spawn(move || {
+                forward(err_reader, err, err_report, &err_control, |at_once| {
+                    recapture(2, at_once)
+                })
+            }),
         ];
         Ok(Self {
             saved,
@@ -177,23 +238,31 @@ fn line(out: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
     out.write_all(&record)
 }
 
-fn forward(
-    mut input: impl Read,
+/// Date each line read from `input` into `out`, until the capture's stop. An `input` that ends
+/// before it (its end, or a read that fails) is not the forwarder's end: what was read of a line is
+/// written, `again` gives the input to read next (whether the one before ended at once, with
+/// nothing read of it), and `report` says what ended and what reads now.
+fn forward<R: Read>(
+    mut input: R,
     mut out: impl Write,
     mut report: impl Write,
     control: &Control,
+    mut again: impl FnMut(bool) -> Next<R>,
 ) -> io::Result<()> {
     let mut pending = Vec::new();
     let mut buffer = [0; 8192];
+    // Whether this input has given nothing yet, not even a wait.
+    let mut at_once = false;
     loop {
         // The stop as it stood when this read began. [`Log::finish`] stores it after the server's
         // last write, so only a read begun once it was seen has found every line written before
         // it: one that timed out first, its thread then held off the CPU past the stop, would end
         // the drain with the last lines, the stopped line among them, still unread.
         let stopped = control.stopping.load(Ordering::Acquire);
-        match input.read(&mut buffer) {
-            Ok(0) => break,
+        let ended = match input.read(&mut buffer) {
+            Ok(0) => "it ended".to_string(),
             Ok(n) => {
+                at_once = false;
                 // Search each byte once, even when a subprocess prints one very long line.
                 for part in buffer[..n].split_inclusive(|b| *b == b'\n') {
                     if let Some(tail) = part.strip_suffix(b"\n") {
@@ -204,8 +273,9 @@ fn forward(
                         pending.extend_from_slice(part);
                     }
                 }
+                continue;
             }
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
             Err(e)
                 if matches!(
                     e.kind(),
@@ -215,9 +285,30 @@ fn forward(
                 if stopped {
                     break;
                 }
+                at_once = false;
+                continue;
             }
-            Err(e) => return Err(e),
+            Err(e) => format!("its read failed: {e}"),
+        };
+        if stopped || control.stopping.load(Ordering::Acquire) {
+            break;
         }
+        if !pending.is_empty() {
+            control.record(&mut out, &mut report, &pending);
+            pending.clear();
+        }
+        let (next, now) = match again(at_once) {
+            Next::Again(next) => (Some(next), "captured again".to_string()),
+            Next::Direct(why) => (None, format!("{why}: its lines go on undated")),
+            Next::Over => break,
+        };
+        let said = format!("server log capture: {ended}; {now}");
+        let _ = line(&mut report, said.as_bytes());
+        let Some(next) = next else {
+            break;
+        };
+        input = next;
+        at_once = true;
     }
     if !pending.is_empty() {
         control.record(&mut out, &mut report, &pending);
@@ -232,6 +323,11 @@ mod tests {
 
     /// Each wait here is on its event; only a stall reaches this wall-clock backstop.
     const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(5));
+
+    /// The capture of a test whose input's end is its own: nothing is read after it.
+    fn over<R>(_at_once: bool) -> Next<R> {
+        Next::Over
+    }
 
     /// What a wait that ran out says: `what` stalled, and the machine's load then.
     fn stalled(what: &str) -> String {
@@ -287,7 +383,8 @@ mod tests {
             bytes: reports.clone(),
             failed: None,
         };
-        let reader = std::thread::spawn(move || forward(input, out, report, &Control::default()));
+        let reader =
+            std::thread::spawn(move || forward(input, out, report, &Control::default(), over));
         for message in [b"dropped one\n".as_slice(), b"dropped two\n".as_slice()] {
             writer.write_all(message).unwrap();
             failures.recv_timeout(BACKSTOP).unwrap_or_else(|_| {
@@ -382,6 +479,201 @@ mod tests {
         std::fs::remove_dir(home).unwrap();
     }
 
+    /// What `text`'s dated lines say, without their dates.
+    fn bodies(text: &[u8]) -> Vec<String> {
+        String::from_utf8_lossy(text)
+            .lines()
+            .map(|line| {
+                assert_eq!(line.get(24..27), Some("Z] "), "{line}");
+                line[27..].to_string()
+            })
+            .collect()
+    }
+
+    /// An input that gives `parts` in turn and then fails as `end` says, or ends.
+    struct Ending {
+        parts: Vec<&'static [u8]>,
+        end: Option<io::ErrorKind>,
+    }
+
+    impl Read for Ending {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.parts.is_empty() {
+                return self.end.map_or(Ok(0), |kind| Err(kind.into()));
+            }
+            let part = self.parts.remove(0);
+            buffer[..part.len()].copy_from_slice(part);
+            Ok(part.len())
+        }
+    }
+
+    /// The socket a stream is captured by ends under its forwarder. The forwarder reads the capture taken in its place, having written the line
+    /// the end cut short, and says so once for each end; a read that fails is such an end too.
+    #[test]
+    fn a_capture_that_ends_before_the_stop_is_taken_again_and_said() {
+        let mut next = vec![
+            Ending {
+                parts: vec![b"second\n"],
+                end: Some(io::ErrorKind::ConnectionReset),
+            },
+            Ending {
+                parts: vec![b"third\n"],
+                end: None,
+            },
+        ];
+        let mut asked = Vec::new();
+        let (mut out, mut report) = (Vec::new(), Vec::new());
+        forward(
+            Ending {
+                parts: vec![b"first\ncut ", b"short"],
+                end: None,
+            },
+            &mut out,
+            &mut report,
+            &Control::default(),
+            |at_once| {
+                asked.push(at_once);
+                if next.is_empty() {
+                    Next::Over
+                } else {
+                    Next::Again(next.remove(0))
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(bodies(&out), ["first", "cut short", "second", "third"]);
+        assert_eq!(asked, [false, false, false], "each gave a line first");
+        assert_eq!(
+            bodies(&report),
+            [
+                "server log capture: it ended; captured again",
+                "server log capture: its read failed: connection reset; captured again"
+            ]
+        );
+    }
+
+    /// A capture taken again that ends with nothing read of it is said to its taker, which gives
+    /// the stream its destination back: the forwarder says that and ends, never a spin.
+    #[test]
+    fn a_capture_that_ends_at_once_again_is_said_to_its_taker_and_ends_the_forwarder_when_direct() {
+        let mut asked = Vec::new();
+        let (mut out, mut report) = (Vec::new(), Vec::new());
+        let ended = || Ending {
+            parts: Vec::new(),
+            end: None,
+        };
+        forward(
+            ended(),
+            &mut out,
+            &mut report,
+            &Control::default(),
+            |at_once| {
+                asked.push(at_once);
+                if at_once {
+                    Next::Direct("its new capture ended at once".into())
+                } else {
+                    Next::Again(ended())
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(asked, [false, true]);
+        assert!(out.is_empty());
+        assert_eq!(
+            bodies(&report),
+            [
+                "server log capture: it ended; captured again",
+                "server log capture: it ended; its new capture ended at once: its lines go on \
+                 undated"
+            ]
+        );
+    }
+
+    /// Once the capture is stopping, an input's end is the forwarder's: nothing is taken again.
+    #[test]
+    fn a_capture_that_ends_at_its_stop_is_not_taken_again() {
+        let control = Control {
+            stopping: AtomicBool::new(true),
+            ..Control::default()
+        };
+        let (mut out, mut report) = (Vec::new(), Vec::new());
+        forward(
+            Ending {
+                parts: vec![b"last"],
+                end: Some(io::ErrorKind::ConnectionReset),
+            },
+            &mut out,
+            &mut report,
+            &control,
+            |_| -> Next<Ending> { panic!("asked for another capture at the stop") },
+        )
+        .unwrap();
+        assert_eq!(bodies(&out), ["last"]);
+        assert!(report.is_empty());
+    }
+
+    /// The stream's own descriptor, in an owned test process (as the test above): a child that
+    /// shuts down the socket it inherited as its stderr ends it for every writer. The forwarder
+    /// puts a new socket in the stream's place, so the server's next line is dated into the log
+    /// and the `eprintln!` that writes it does not panic its thread; the other stream is as it was.
+    #[test]
+    fn a_stream_whose_socket_a_child_shut_down_is_captured_again() {
+        const CHILD: &str = "SYMPHONY_LOG_SHUT_HOME";
+        const TEST: &str = "log::tests::a_stream_whose_socket_a_child_shut_down_is_captured_again";
+        if let Some(home) = std::env::var_os(CHILD) {
+            let home = std::path::PathBuf::from(home);
+            let original = [duplicate(1).unwrap(), duplicate(2).unwrap()];
+            let out = File::create(home.join("stdout.log")).unwrap();
+            let err = File::create(home.join("stderr.log")).unwrap();
+            redirect(out.as_raw_fd(), 1).unwrap();
+            redirect(err.as_raw_fd(), 2).unwrap();
+            let log = Log::start().unwrap();
+            eprintln!("before the shutdown");
+            // As a child does to the socket it inherited: the one socket, whoever holds it.
+            // SAFETY: shutdown only changes the state of the socket descriptor 2 names.
+            assert_eq!(unsafe { libc::shutdown(2, libc::SHUT_WR) }, 0);
+            // Said once the new socket is in the stream's place.
+            test_time::until_true("stderr to be captured again", BACKSTOP, || {
+                std::fs::read_to_string(home.join("stderr.log"))
+                    .is_ok_and(|log| log.contains("captured again"))
+            })
+            .unwrap_or_else(|stall| panic!("{stall}"));
+            eprintln!("after the shutdown");
+            println!("the other stream");
+            io::stdout().flush().unwrap();
+            log.finish().unwrap();
+            redirect(original[0].as_raw_fd(), 1).unwrap();
+            redirect(original[1].as_raw_fd(), 2).unwrap();
+            return;
+        }
+        let home = std::env::temp_dir().join(format!("symphony-log-shut-{}", std::process::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        let child = symphony_board::sys::output(
+            symphony_board::sys::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST, "--nocapture"])
+                .env(CHILD, &home),
+        )
+        .unwrap();
+        let read = |stream: &str| std::fs::read(home.join(format!("{stream}.log"))).unwrap();
+        let (out, err) = (read("stdout"), read("stderr"));
+        std::fs::remove_dir_all(&home).unwrap();
+        assert!(
+            child.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&child.stderr),
+            String::from_utf8_lossy(&err)
+        );
+        assert_eq!(
+            bodies(&err),
+            [
+                "before the shutdown",
+                "server log capture: it ended; captured again",
+                "after the shutdown"
+            ]
+        );
+        assert_eq!(bodies(&out), ["the other stream"]);
+    }
+
     #[test]
     fn multiline_fragmented_output_and_an_unterminated_tail_all_get_dated() {
         let path = std::env::temp_dir().join(format!("symphony-log-{}", std::process::id()));
@@ -396,6 +688,7 @@ mod tests {
             File::create(&path).unwrap(),
             io::sink(),
             &Control::default(),
+            over,
         )
         .unwrap();
         sender.join().unwrap();
@@ -429,6 +722,7 @@ mod tests {
                     stopping: AtomicBool::new(true),
                     ..Control::default()
                 },
+                over,
             ))
             .unwrap();
         });
@@ -484,7 +778,7 @@ mod tests {
             timed_out: false,
         };
         let mut out = Vec::new();
-        forward(late, &mut out, io::sink(), &control).unwrap();
+        forward(late, &mut out, io::sink(), &control, over).unwrap();
         let text = String::from_utf8(out).unwrap();
         let bodies: Vec<_> = text.lines().map(|line| &line[27..]).collect();
         assert_eq!(bodies, ["Symphony server stopped"], "{text}");

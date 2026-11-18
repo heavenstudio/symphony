@@ -64,8 +64,16 @@ fn work(r: &Repo) -> PathBuf {
 static RUNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
 /// A run of `label` for `slug` at `commit`, kept in the work folder as the recorder keeps one that
-/// finished with `exit`, after every run kept before it.
-fn ran(r: &Repo, slug: &str, commit: &str, label: &str, phase: Phase, exit: i32) {
+/// finished with `exit`, after every run kept before it; `refused` is the line its log said its
+/// runner refused it with, when it did.
+fn kept(
+    r: &Repo,
+    slug: &str,
+    commit: &str,
+    (label, phase): (&str, Phase),
+    exit: i32,
+    refused: Option<&str>,
+) {
     let n = RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let started = 1000.0 + f64::from(n);
     let record = Record {
@@ -91,10 +99,18 @@ fn ran(r: &Repo, slug: &str, commit: &str, label: &str, phase: Phase, exit: i32)
         exit_code: Some(exit),
         signal: None,
         reason: String::new(),
-        run: None,
+        run: refused.map(|line| {
+            let said = serde_json::json!({"pipeline": "test", "trigger": "amber", "refused": line});
+            serde_json::from_value(said).unwrap()
+        }),
         reading: None,
     };
     recorded::keep(&work(r), &record).unwrap();
+}
+
+/// A run of `label` for `slug` at `commit` that finished with `exit`, a test or a build.
+fn ran(r: &Repo, slug: &str, commit: &str, label: &str, phase: Phase, exit: i32) {
+    kept(r, slug, commit, (label, phase), exit, None);
 }
 
 /// The task's tests green at `tip`.
@@ -520,9 +536,9 @@ fn a_stray_red_run_is_named_and_cleared_by_the_same_command_green_at_the_tip() {
     let line = format!(
         "{SLUG} lacks at its tip {at} what it needs: tests (red at {at}: `{stray}` (exit 101); \
          the newest run of each command at the tip is what counts, so running that command again, \
-         green, at {at} clears it; one that cannot pass (a mistyped command) is cleared only by a \
-         new commit, where the stamps the task needs are given again), which its executor gives \
-         at that tip"
+         green, at {at} clears it; one that cannot pass (a command that names what is not \
+         there) is cleared only by a new commit, where the stamps the task needs are given \
+         again), which its executor gives at that tip"
     );
     assert_refused(&r, &result, &line, &before);
     let (text, to) = told(&r, SLUG);
@@ -533,6 +549,46 @@ fn a_stray_red_run_is_named_and_cleared_by_the_same_command_green_at_the_tip() {
     ran(&r, SLUG, &before, stray, Phase::Test, 0);
     assert!(landed_by(&r, SLUG, &staff.orch).1.is_err());
     ran(&r, SLUG, &tip, stray, Phase::Test, 0);
+    let (_, result) = landed_by(&r, SLUG, &staff.orch);
+    assert_landed(&r, SLUG, &tip, result);
+}
+
+/// A command its runner refused at the tip (Cargo's usage error for test names typed without
+/// `--`, exit 1, as `tools/board-pg-lifecycle` met at 22fc65d3 on 2026-11-18) refuses no land
+/// whose other runs there are green. A failing test, a compile error and a timeout beside it each
+/// still do, and so does the same exit with no refusal read in its log.
+#[test]
+fn a_command_its_runner_refused_at_the_tip_does_not_refuse_the_land_and_a_real_red_still_does() {
+    let typed = "just test-rs -p symphony-app --test hooks own_names owner_words named_recipes";
+    let usage = "error: unexpected argument 'owner_words' found";
+    let r = Repo::new();
+    manifest(&r, "");
+    let (staff, tip) = in_review(&r, SLUG, &[("sim/jump.gd", "extends Node\n")]);
+    assess(&r, SLUG, &staff.assessor, &["tests"], &tip);
+    green(&r, SLUG, &tip);
+    kept(&r, SLUG, &tip, (typed, Phase::Test), 1, Some(usage));
+    let (before, at) = (head(&r.root, "main"), &tip[..7]);
+    for (label, exit, why) in [
+        ("cargo test -p sim --test jump", 101, "a failing test"),
+        ("cargo build -p sim", 101, "a compile error"),
+        ("timeout 60 cargo test -p sim", 124, "a timeout"),
+        (typed, 1, "the same exit, with no refusal read"),
+    ] {
+        ran(&r, SLUG, &tip, label, Phase::Test, exit);
+        let line = landed_by(&r, SLUG, &staff.orch).1.expect_err(why);
+        assert!(
+            line.starts_with(&format!(
+                "{SLUG} lacks at its tip {at} what it needs: tests (red at {at}: `{label}` (exit \
+                 {exit}); "
+            )),
+            "{why}: {line}"
+        );
+        assert_eq!(head(&r.root, "main"), before, "{why}");
+        // The same command green there clears it, and the next red stands alone.
+        ran(&r, SLUG, &tip, label, Phase::Test, 0);
+    }
+    // Refused once more, after its green: still no run of the command, and the task lands.
+    kept(&r, SLUG, &tip, (typed, Phase::Test), 1, Some(usage));
     let (_, result) = landed_by(&r, SLUG, &staff.orch);
     assert_landed(&r, SLUG, &tip, result);
 }

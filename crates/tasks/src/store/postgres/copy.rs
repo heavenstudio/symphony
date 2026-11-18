@@ -1,7 +1,10 @@
 //! The copy of a whole board on PostgreSQL (`store/copy.rs`): the dump's rows into the emptied
 //! board in one transaction, and the board read back in the dump's shape ([`DUMP`]). A board's
 //! dump is one request here, the largest a board holds being far below what one takes, so a copy
-//! stages nothing: one cut short leaves the board as it was, and is made again whole.
+//! stages nothing: one cut short leaves the board as it was, and is made again whole. What it
+//! costs is its messages' terms, counted a row at a time by the search's trigger and written to
+//! their index: time in proportion to the text, most of a copy's
+//! ([the numbers](../../../../../docs/analysis/board-store-baseline.md)).
 //!
 //! `copied_fields` keeps imported fields as text beside their task: jsonb cannot preserve a JSON
 //! number's spelling or distinguish an exponent float from an integer. The dump gives both that
@@ -17,27 +20,56 @@ use std::fmt::Write as _;
 
 /// The copy's one transaction: each of `tables` emptied and filled from `v -> table`, its rows as
 /// the dump gives them with their ids, each sender's last word made again by the messages'
-/// trigger, and the counters set to `last` and `last_ts` (messages), `last_task` and `last_ask`.
-pub(in crate::store) fn copy(tables: &[&str]) -> Pg<'static> {
-    let mut block = String::from("DELETE FROM said;\n");
+/// trigger, the counters set to `last` and `last_ts` (messages), `last_task` and `last_ask`, and
+/// the board's recovery generation replaced ([`super::recovery::ROTATE`]), which is its answer.
+///
+/// The server ends it once it has run `millis`, which the store sets short of its client's wait
+/// (`Store::copy`): the request is sent whole, its end with it, so a copy its caller stopped
+/// waiting for would otherwise run on and replace the board after the caller was told it failed.
+/// Ended, it is rolled back whole and says so in one line (`v ->> 'copy_limit'` the time it was
+/// given, in words), with the rows of each table it had copied and the table it was at.
+pub(in crate::store) fn copy(tables: &[&str], millis: u64) -> Pg<'static> {
+    let mut block = String::from(
+        "DECLARE
+    copied_ text := '';
+    at_ text;
+    rows_ bigint;
+BEGIN
+DELETE FROM said;\n",
+    );
     for table in tables {
         let _ = writeln!(
             block,
-            "DELETE FROM {table};
-INSERT INTO {table} SELECT r.* FROM jsonb_populate_recordset(NULL::{table}, v -> '{table}') AS r;"
+            "at_ := '{table}';
+DELETE FROM {table};
+INSERT INTO {table} SELECT r.* FROM jsonb_populate_recordset(NULL::{table}, v -> '{table}') AS r;
+GET DIAGNOSTICS rows_ = ROW_COUNT;
+copied_ := copied_ || ' ' || rows_ || ' of {table},';"
         );
     }
     block.push_str(
-        "DELETE FROM copied_fields;
+        "at_ := NULL;
+DELETE FROM copied_fields;
 INSERT INTO copied_fields SELECT r.* FROM jsonb_populate_recordset(NULL::copied_fields, v -> 'copied_fields') AS r;
 INSERT INTO counter (id, last, ts) VALUES ('\"message\"', (v ->> 'last')::bigint, (v ->> 'last_ts')::double precision)
     ON CONFLICT (id) DO UPDATE SET last = EXCLUDED.last, ts = EXCLUDED.ts;
 INSERT INTO counter (id, last) VALUES ('\"task\"', (v ->> 'last_task')::bigint)
     ON CONFLICT (id) DO UPDATE SET last = EXCLUDED.last;
 INSERT INTO counter (id, last) VALUES ('\"ask\"', (v ->> 'last_ask')::bigint)
-    ON CONFLICT (id) DO UPDATE SET last = EXCLUDED.last;",
+    ON CONFLICT (id) DO UPDATE SET last = EXCLUDED.last;\n",
     );
-    Pg::script(block)
+    block.push_str(super::recovery::ROTATE);
+    block.push_str(
+        "\nboard_answer := (SELECT to_jsonb(generation) FROM recovery WHERE id = '\"board\"');
+EXCEPTION WHEN query_canceled THEN
+    RAISE EXCEPTION '%', 'the copy did not finish in ' || (v ->> 'copy_limit')
+        || ' and was ended, the board left as it was: it had copied'
+        || CASE WHEN copied_ = '' THEN ' no table' ELSE rtrim(copied_, ',') END
+        || coalesce(' and was at the ' || jsonb_array_length(v -> at_) || ' of ' || at_,
+            ' and was at its counters');
+END;",
+    );
+    Pg::Within(millis, block.into())
 }
 
 /// Every table of the dump: its name in the dump, its table, and the order of its key.

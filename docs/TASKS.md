@@ -609,6 +609,78 @@ every server started is one of your own, on a clone, on a port of your own.
 The first recovery done this way, with that day's numbers, is in
 [history](history/board-went-back-2026-11-12.md).
 
+### A board that was copied or restored
+
+A task's number and version name it along one history of the board only. A copy of the whole
+board from an older dump keeps the numbers the dump held, gives the ones made since to other
+tasks, and starts every version again; so does putting a database's files back. What a program
+outside the board keeps of a task to write it again later, a mapping to an issue elsewhere or the
+base of an edit, is therefore bound to the board's **recovery generation**
+(`crates/tasks/src/store/recovery.rs`): a text the database makes, in the record
+`recovery:board`, replaced in the transaction of every copy of the whole board and never by an
+ordinary write, and in no dump.
+
+- **The token.** `Store::bound` reads a task's title and brief with its token, in one statement:
+  `{"compat": 1, "generation": "…", "id": N, "version": N}`, the format's version, the board's
+  generation, and the task's number and version.
+- **The bound write.** `Store::amend_bound` retitles and links a task as `Store::amend` does, but
+  only the task its token names: in the write's own transaction, before anything is written, it
+  is refused unless the board holds the token's generation and the task is the one of that
+  number at that version. A refusal writes nothing, no title, link, line on the thread or act of
+  its session, and is never read again and tried on what the board holds now: the caller reads
+  the task again. The task as the write left it, with its next token, is that transaction's
+  answer. Every other write, `amend` among them, is as it was. `Store::edit_bound` is the same
+  write for an edit that may rewrite the brief as well
+  ([the api's calls](#what-a-program-outside-the-board-keeps)).
+- **A copy.** `tasks-copy` and every `Store::copy` replace the generation in the transaction that
+  replaces the rows, so a token read before a copy is refused after it, and one read before a
+  copy that failed still holds. A build of a schema before 22 copies without replacing it, which
+  is why the generation came with a schema step: such a build is refused the board.
+  A copy that cannot finish leaves the board as it was and says why in one line. On PostgreSQL
+  the copy is one request, which the server itself ends thirty seconds short of the wait of the
+  program that sent it (270 s of the client's 300), saying the rows of each table it had copied
+  and the table it was at: left to run past its caller's wait it would replace the board after
+  the caller was told it failed, which only a copy whose commit and answer take those thirty
+  seconds still can. On SurrealDB the copy stages its rows and swaps them in in one
+  transaction, which must fit the memtable of the server it runs on: one the server does not
+  commit is said with the rows and bytes it staged and the setting
+  (`SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`, 256 MiB on a server the board starts), and what it
+  staged is removed a table at a time, or by the next copy before it stages. So a copy made
+  while another stages takes the other's staging, and the other is refused at its swap, which
+  first counts each staging table against the rows it sent: the later copy is the one kept. How large a board each takes is measured in
+  [the store's baseline](analysis/board-store-baseline.md#a-board-ten-times-the-size-measured-2026-11-18).
+
+The generation is a row of the database, so putting the database's files back puts it back too.
+What tells that apart is the board's **recovery binding**, outside the database's data: the
+generation the board is bound to, in `symphony/tasks/recovery/DATABASE.json` in the git common
+dir, a file for each database of the board's server, published whole and removed to revoke. A
+bound read or write is refused unless the binding names the generation the database holds, so a
+board never bound, one revoked and one whose binding and database disagree all refuse. `just tasks
+recovery` says which it is, `just tasks recovery revoke` binds the board to none, and `just tasks
+recovery rebind` revokes, replaces the generation in one transaction and only then binds the
+board to the new one. A rebind never adopts the generation it found, so one cut short anywhere
+leaves the board refusing, and is run again. `revoke` and `rebind` change the project's own board
+only from its main checkout; a scratch database (`--database NAME`) has a file of its own.
+
+**Putting a database's files back**, from a snapshot or a recovered clone
+([above](#a-board-that-went-back)), is in this order: `just tasks recovery revoke` first, before
+the restored data is in place and served; the swap, under the hold; then, once the board is the
+one to keep, `just tasks recovery rebind`. A copy made by a store that holds no binding (a
+scratch program's, `tasks-copy`) leaves the binding naming the generation before it, which
+refuses until a rebind. A PostgreSQL restore into a new board
+([POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)) revokes that board's bindings itself
+before its data is in place.
+
+The binding is this machine's file. A store is handed its authority and finds none by itself
+(`Store::recovering`, the `recovery::Authority` trait): a board reached by `TASKS_SERVER` alone
+has no folder here and so none, and a board several machines write needs an authority they all
+read, which its deployer supplies. With none, every bound read and write is refused in words
+that say so.
+
+Two things are not told apart, and nothing here claims to: files put back without the revoke
+where no copy came between, which hold the generation the binding still names; and a database
+and its binding both put back to an older pair that agree.
+
 ## Sessions
 
 Every agent that works from the board has a **handle** (`amber-heron`), a
@@ -1235,9 +1307,48 @@ is a task of its own. The calls a registered project's programs make today are h
 `crates/tasks/tests/cli/api/contract.rs`: each request, and the fields of its answer the caller
 reads with their JSON types, so a change that would break one fails its own task's gate. What the
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
-task. The current API is 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
+task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
 review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes.
+keep their shapes. The current API is 2.1.
+
+### What a program outside the board keeps
+
+Minor 1 of major 2 adds what a program needs to exchange tasks with another system, an issue
+tracker for one, without reading the database. It names no such system: the program is the
+project's own, and nothing here makes a request, keeps a credential or a mapping, or turns one on.
+
+- **`id`**, a field of every task the api answers (`get`, `tasks`, `create` and the rest): the
+  task's number, the order it was made in (`crates/tasks/src/rows.rs`). A retitle keeps it, and a
+  task has no other name to change: no call renames a slug. It names the task only along one
+  history of the board, never by itself across a copy or a restore, which give numbers again
+  ([above](#a-board-that-was-copied-or-restored)): a program keeps it with the generation it was
+  read under, which is the token.
+- **`bound`**, `{"slug": S}`: the task's title and brief and its token, `Store::bound`'s answer,
+  `{"bound": {"compat": 1, "generation": "…", "id": N, "version": N}, "title": "…", "body": "…"}`.
+- **`edit_bound`**, `{"slug": S, "bound": TOKEN, "by": HANDLE}` with any of `"title"`, `"body"`
+  (the brief, whole) and `"links"`, what is left out staying as it is (`Store::edit_bound`): the
+  one call that rewrites a brief. It is `Store::amend_bound`'s write, the fence first in the
+  write's own transaction: refused unless the board holds the token's generation and the task is
+  the one of that number at that version, and a refusal writes nothing, no title, brief, link,
+  line on the thread or act of its session. A changed title and a changed brief are each a line
+  on the thread naming who wrote it; the brief's earlier words are not kept, so a program that
+  must keep them reads them first, with the token. Its answer is `bound`'s, the task as the write
+  left it with the token to write it next. A call that gives none of the three is refused.
+- **`integration_state`**, `{"name": NAME}`: `{"path": "…"}`, the folder the integration NAME
+  keeps its state in, `symphony/integrations/NAME` in the git common dir
+  (`crates/tasks/src/folders.rs`). It is the same from the main checkout and every linked
+  worktree, is in no worktree and so outlives each, and is in no commit. The call reaches no
+  board and makes nothing: the program makes the folder, keeps what it needs there and takes its
+  own lock, and the board never reads, sweeps or copies it, so it is in no dump or snapshot of
+  the board and is backed up with the repository's common dir or not at all. NAME is one to
+  sixty-four lowercase letters, digits and hyphens, a letter or a digit first, never a path.
+
+`bound` and `edit_bound` answer only where the board has a recovery binding: `tasks api` hands
+its store the board home's ([above](#a-board-that-was-copied-or-restored)), so on a board
+`TASKS_SERVER` names, and on one never bound or revoked, both are refused in words that say which,
+and every other call is as it was. What the token does not tell apart is said there too, and the
+api claims no more: a program that finds its token refused reads the task again and reconciles
+what it kept, never writing on the number alone.
 
 ## The agents API
 
@@ -1875,9 +1986,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   review or blocked (its executor's move to review says the work is ready, and the landing
   closes it with no verdict) or done by an approve standing; in progress or ready it is
   refused to `@executor`, to move it to review. Each other stamp is read at the tip: `tests`
-  the task's recorded runs there (each command's newest run, so a red run of a command is
-  cleared by running it again green at the tip, and one that cannot pass only by a new
-  commit), `pictures` a post naming the tip with a picture, `owner` the owner's approve of the
+  the task's recorded runs there, by [what clears what](#what-clears-a-red-run), `pictures` a post naming the tip with a picture, `owner` the owner's approve of the
   tip. A missing one refuses, naming each and who gives it: `tests` or `pictures` to
   `@executor`, at that tip; `review`, or an assessment of another tip, to `@orchestrator`, to
   start an assessor or staff a fresh reviewer; one waiting on `owner` alone, to
@@ -2286,6 +2395,25 @@ work for you: your own reservation first, then priority, then a red task
 ([Slots](#slots)) before other work of its priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).
 
+### What clears a red run
+
+The `tests` stamp reads, of each build and test command the task ran at the tip, its newest run
+there (`crates/tasks/src/stamps/read.rs`), a command being its recorded label, the recipe and
+its arguments as typed:
+
+| At the tip | What it is | What clears it |
+| --- | --- | --- |
+| a command's newest run red (a failing test, a compile error, a timeout, a kill) | a red: the stamp does not stand | the same command, typed the same, run again green at the tip |
+| a red run of a command that cannot pass at this commit (it names a test target or a package that is not there) | a red | a new commit only, where each stamp the task needs is given again |
+| a run its runner refused before it built or ran anything (a usage error of Cargo, nextest or just, a recipe the justfile does not hold) | no run of its command: no red and no green | nothing to clear; a red of that command before it there still stands, and so does a green |
+| a run of the command at another commit | not the tip's | nothing at the tip is changed by it |
+| a run still going or queued | not yet either | its end |
+
+A green run of another command never clears a red, and a refused run never stands for a test: the
+stamp still needs one test run green at the tip. Nobody marks a real red as not counting, and the
+land takes no waiver: a refusal is what the run's own log says, read by its recorder as it ended
+([MACHINE_WORK](MACHINE_WORK.md#a-command-its-runner-refused)).
+
 ### The regenerator
 
 What a project's `[land] generators` make (this repository's client distribution) is
@@ -2577,7 +2705,8 @@ landing](#the-default-landing)).
   stamp reads it (`crates/tasks/src/cli/commands/runs.rs`): `TIP`; `RUNS`, a row for each build
   and test command the task and the work under it ran there, its newest run's result (`green`,
   `red`, `running`, `queued`), when, how long, who, why it is red, and how many runs of it came
-  before there; `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
+  before there; `REFUSED`, when there are any, a row for each run there its runner refused, with
+  the refusal's line ([what clears what](#what-clears-a-red-run)); `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
   project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
   anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of
   them the tip's. It is what a reviewer reads in place of building again (RULES.md

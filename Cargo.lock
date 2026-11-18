@@ -4062,7 +4062,7 @@ version = "1.0.0"
 
 [[package]]
 name = "symphony-blocks"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4139,15 +4139,27 @@ dependencies = [
 
 [[package]]
 name = "symphony-docs"
-version = "1.0.0"
+version = "1.0.1"
 
 [[package]]
 name = "symphony-env"
 version = "1.0.0"
 
 [[package]]
+name = "symphony-github"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "symphony-board",
+ "symphony-env",
+ "toml 1.1.7+spec-1.1.0",
+]
+
+[[package]]
 name = "symphony-plugin"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",

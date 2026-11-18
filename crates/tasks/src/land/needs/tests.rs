@@ -275,8 +275,8 @@ fn a_stray_red_run_is_named_with_what_clears_it_and_a_green_rerun_of_it_does() {
             detail: "red at 4be91c2: `cargo test -p x --test typo` (exit 101), `cargo build -p x` \
                      (exit 1); the newest run of each command at the tip is what counts, so \
                      running that command again, green, at 4be91c2 clears it; one that cannot \
-                     pass (a mistyped command) is cleared only by a new commit, where the stamps \
-                     the task needs are given again"
+                     pass (a command that names what is not there) is cleared only by a new \
+                     commit, where the stamps the task needs are given again"
                 .into()
         }]
     );
