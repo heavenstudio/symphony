@@ -408,6 +408,8 @@ fn alone(ran: &Ran, night: &Night<'_>) -> String {
                 .map(|step| {
                     let said = if step.green() {
                         "green".to_string()
+                    } else if super::steps::not_run(step) {
+                        step.ended()
                     } else {
                         format!("{}, a task of its own", step.ended())
                     };
@@ -877,7 +879,8 @@ fn of_check(board: &dyn Reds, night: &Night<'_>, ran: &Ran) -> Vec<Result<Option
         }
     };
     let mut held = Vec::new();
-    for step in &ran.steps {
+    // A step listed as not run is no red of its own: its task, if one is open, hears nothing.
+    for step in (ran.steps.iter()).filter(|step| !super::steps::not_run(step)) {
         let near = open.as_deref().map(|slug| beside(slug, &ran.name));
         let red = red_of(step, night, near.as_deref());
         let act = as_red(

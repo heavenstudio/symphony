@@ -18,9 +18,11 @@
 //! is dropped); or by its task cancelled with no landing, its fix made outside this repository (one
 //! done otherwise is approved, and waits for its land). Once every
 //! red is answered, its tip is rerun ([`Candidate::plan`]): each check or step that was red or did
-//! not run, and each whose inputs changed. Until the stamps give a step inputs of its own, a step's
-//! inputs are the whole tree, so a step keeps its green only from a commit whose tree is the tip's.
-//! It is dropped at its bounds ([`Bounds`]), and main's tip is run at once.
+//! not run, and each whose inputs changed. A step's inputs are what the tree itself says they are
+//! ([`super::inputs`]): a step, or a part of one (a lane of the tests), keeps its green from a run
+//! of this candidate whose digest of its inputs is the tip's, or whose commit holds the tip's tree,
+//! on the environment the rerun runs on; one whose inputs the tree does not tell keeps it only
+//! from the same tree. It is dropped at its bounds ([`Bounds`]), and main's tip is run at once.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -33,6 +35,7 @@ use super::board::{self, Reds};
 use super::cadence::{self, Hold};
 use super::checks::Ran;
 use super::git::{commit, git, is_ancestor, short};
+use super::inputs::Inputs;
 use super::record::{Carried, Held, Run, age, local};
 use super::steps;
 use symphony::taskcli::CliBoard;
@@ -135,19 +138,72 @@ pub(crate) struct Standing {
     pub(crate) steps: Vec<StepStanding>,
 }
 
-/// A step a check listed: its name (`CHECK/STEP`) and the commit it was last green on.
+/// A step a check listed: its name (`CHECK/STEP`), the commit it was last green on, and each part
+/// it listed (`CHECK/STEP/PART`, a lane of the tests) the same way. A step green in a rerun that
+/// ran some of its parts alone stands green by those parts, never of itself: it was not run whole
+/// there, and what the rerun carried keeps the commit and run it was green on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StepStanding {
     pub(crate) name: String,
     #[serde(default)]
     pub(crate) green: Option<On>,
+    /// Whether it was last red beyond the parts it listed: red, and none of them red.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) beyond: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) parts: Vec<StepStanding>,
 }
 
-/// Green on `commit` in the run `run`.
+/// Green on `commit` in the run `run`: with the digest of its inputs there, when the tree told
+/// one, and the environment that run ran on ([`super::inputs`]).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct On {
     pub(crate) commit: String,
     pub(crate) run: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) environment: Option<String>,
+}
+
+/// What a rerun judges a standing green against: whether a commit's tree is the tip's, what the
+/// tip's tree tells of its checks' inputs, and the environment the rerun runs on.
+#[derive(Clone, Copy)]
+pub(crate) struct Tip<'a> {
+    pub(crate) same: &'a dyn Fn(&str) -> bool,
+    pub(crate) inputs: Option<&'a Inputs>,
+    pub(crate) environment: Option<&'a str>,
+}
+
+impl Tip<'_> {
+    /// The green `on` of `name` as the rerun carries it, when it does: green on the rerun's
+    /// environment, and on a commit whose tree is the tip's, or on inputs whose digest is the
+    /// one the tip tells for `name`.
+    fn kept(&self, name: &str, on: Option<&On>) -> Option<Carried> {
+        let on = on.filter(|on| on.environment.as_deref() == self.environment)?;
+        let carried = |digest: Option<String>| Carried {
+            name: name.to_string(),
+            commit: on.commit.clone(),
+            run: on.run.clone(),
+            digest,
+        };
+        if (self.same)(&on.commit) {
+            return Some(carried(None));
+        }
+        let told = self.inputs.and_then(|inputs| inputs.of(name))?;
+        (on.digest.as_deref() == Some(told)).then(|| carried(on.digest.clone()))
+    }
+
+    /// The names the tip tells inputs for directly under `parent`, that `known` does not hold: a
+    /// step or part no run of the candidate listed, which a rerun of some of them runs too.
+    fn unlisted(&self, parent: &str, known: &[StepStanding]) -> Vec<String> {
+        let Some(inputs) = self.inputs else {
+            return Vec::new();
+        };
+        (inputs.under(parent).into_iter())
+            .filter(|name| !known.iter().any(|step| step.name == *name))
+            .collect()
+    }
 }
 
 /// An advance: the red's task whose land made it, from which tip to which, and its land's merge.
@@ -296,7 +352,7 @@ impl Candidate {
     pub(crate) fn decided(&mut self, run: &Run) {
         self.rounds += 1;
         for ran in run.checks.iter().filter(|ran| holds(ran)) {
-            self.stand(ran, &run.commit, &run.id);
+            self.stand(ran, run);
         }
         let reds = (run.checks.iter())
             .filter(|ran| holds(ran))
@@ -326,12 +382,21 @@ impl Candidate {
         }
     }
 
-    /// The check `ran`, run on `commit` in the run `run`, standing as it ended; a step it did not
-    /// list this time keeps what it had.
-    fn stand(&mut self, ran: &Ran, commit: &str, run: &str) {
-        let on = || On {
-            commit: commit.to_string(),
-            run: run.to_string(),
+    /// The check `ran` of the run `run`, standing as it ended, each green with the digest the run
+    /// was told for it and the environment it ran on; a step or part it did not list this time
+    /// keeps what it had.
+    fn stand(&mut self, ran: &Ran, run: &Run) {
+        let environment = run
+            .environment
+            .as_ref()
+            .map(|environment| environment.said());
+        let on = |name: &str| On {
+            commit: run.commit.clone(),
+            run: run.id.clone(),
+            digest: (run.inputs.as_ref())
+                .and_then(|inputs| inputs.of(name))
+                .map(str::to_string),
+            environment: environment.clone(),
         };
         let index = match self.standing.iter().position(|s| s.name == ran.name) {
             Some(index) => index,
@@ -345,19 +410,17 @@ impl Candidate {
                 self.standing.len() - 1
             }
         };
+        // What this run kept green of it instead of running it: a check or step it ran in part
+        // is green by its parts, each on the commit and run it was green on.
+        let carried = run.rerun.as_ref().map(|rerun| rerun.carried.as_slice());
+        let in_part = |name: &str| {
+            let under = format!("{name}/");
+            carried.is_some_and(|carried| carried.iter().any(|c| c.name.starts_with(&under)))
+        };
         let standing = &mut self.standing[index];
-        standing.green = ran.green().then(on);
+        standing.green = (ran.green() && !in_part(&ran.name)).then(|| on(&ran.name));
         standing.beyond = steps::beyond(ran);
-        for step in &ran.steps {
-            let green = step.green().then(on);
-            match standing.steps.iter_mut().find(|s| s.name == step.name) {
-                Some(known) => known.green = green,
-                None => standing.steps.push(StepStanding {
-                    name: step.name.clone(),
-                    green,
-                }),
-            }
-        }
+        stand_each(&mut standing.steps, &ran.steps, &on, &in_part);
     }
 
     /// After a red rerun: dropped at `now` once it has had as many red reruns as `bounds` allow.
@@ -440,43 +503,127 @@ impl Candidate {
     }
 
     /// How the rerun runs the check `name`: whole, some of its steps, or not at all, with what it
-    /// carries green; `same` says whether a commit's tree is the tip's. A check with no standing,
-    /// one that lists no steps, and one last red beyond its steps run whole; one green on a commit
-    /// whose tree is the tip's is carried whole; else the steps that were red, did not run or were
-    /// green on another tree run, and the rest are carried, unless that is all or none of them,
-    /// and the check runs whole.
-    pub(crate) fn plan(&self, name: &str, same: &dyn Fn(&str) -> bool) -> (Planned, Vec<Carried>) {
+    /// carries green, each judged against `tip` ([`Tip::kept`]). A check with no standing, one
+    /// that lists no steps, and one last red beyond its steps run whole; one whose own green is
+    /// kept is carried whole. Else each step whose green is kept is carried, and each other runs:
+    /// whole, or, when it listed parts and its red is theirs, by the parts that are not kept
+    /// (`STEP/PART`), the rest of them carried. A step or part the tip tells inputs for that no
+    /// run of the candidate listed runs too, a step told only by its parts among them (the tests
+    /// step a run red in the runner's setup never listed), so nothing a run never reached is
+    /// passed over. With nothing kept the check runs whole; with nothing to run it is carried, by
+    /// its own green or by each step and part kept.
+    pub(crate) fn plan(&self, name: &str, tip: &Tip<'_>) -> (Planned, Vec<Carried>) {
+        let whole = (Planned::Whole, Vec::new());
         let Some(standing) = self.standing.iter().find(|s| s.name == name) else {
-            return (Planned::Whole, Vec::new());
+            return whole;
         };
-        let carried = |name: &str, on: &On| Carried {
-            name: name.to_string(),
-            commit: on.commit.clone(),
-            run: on.run.clone(),
-        };
-        if let Some(on) = standing.green.as_ref().filter(|on| same(&on.commit)) {
-            return (Planned::Carried, vec![carried(name, on)]);
+        if let Some(kept) = tip.kept(name, standing.green.as_ref()) {
+            return (Planned::Carried, vec![kept]);
         }
         if standing.steps.is_empty() || standing.beyond {
-            return (Planned::Whole, Vec::new());
-        }
-        let kept = |step: &&StepStanding| step.green.as_ref().is_some_and(|on| same(&on.commit));
-        let (keep, run): (Vec<&StepStanding>, Vec<&StepStanding>) =
-            standing.steps.iter().partition(kept);
-        if keep.is_empty() || run.is_empty() {
-            return (Planned::Whole, Vec::new());
+            return whole;
         }
         let prefix = format!("{name}/");
-        let names = (run.iter())
-            .map(|step| {
-                let name = step.name.strip_prefix(&prefix).unwrap_or(&step.name);
-                name.to_string()
-            })
-            .collect();
-        let carried = (keep.iter())
-            .filter_map(|step| Some(carried(&step.name, step.green.as_ref()?)))
-            .collect();
-        (Planned::Steps(names), carried)
+        let said = |full: &str| full.strip_prefix(&prefix).unwrap_or(full).to_string();
+        let mut carried: Vec<Carried> = Vec::new();
+        let mut run: Vec<String> = Vec::new();
+        for step in &standing.steps {
+            if let Some(kept) = tip.kept(&step.name, step.green.as_ref()) {
+                carried.push(kept);
+                continue;
+            }
+            // It is judged by its parts when it listed some, unless it was red beyond them: a red
+            // none of them holds is its own, and it runs whole.
+            let theirs = !step.parts.is_empty() && !step.beyond;
+            let mut kept: Vec<Carried> = Vec::new();
+            let mut parts: Vec<String> = Vec::new();
+            if theirs {
+                for part in &step.parts {
+                    match tip.kept(&part.name, part.green.as_ref()) {
+                        Some(part) => kept.push(part),
+                        None => parts.push(said(&part.name)),
+                    }
+                }
+                parts.extend(
+                    tip.unlisted(&step.name, &step.parts)
+                        .iter()
+                        .map(|n| said(n)),
+                );
+            }
+            if kept.is_empty() {
+                run.push(said(&step.name));
+            } else {
+                carried.extend(kept);
+                run.extend(parts);
+            }
+        }
+        run.extend(tip.unlisted(name, &standing.steps).iter().map(|n| said(n)));
+        if carried.is_empty() {
+            return whole;
+        }
+        // Nothing to run: every step it listed is kept, so none was red, and its red was not
+        // beyond them. It was green, whole or by its steps, and is carried by them.
+        if run.is_empty() {
+            return (Planned::Carried, carried);
+        }
+        (Planned::Steps(run), carried)
+    }
+
+    /// Why the rerun judged against `tip` carries less than a reader may expect, a line each, for
+    /// its output: the tip's tree tells no inputs, or could not; a green stands on another
+    /// environment; a green that has a digest has none at the tip.
+    pub(crate) fn uncarried(&self, tip: &Tip<'_>) -> Vec<String> {
+        let mut said: Vec<String> = Vec::new();
+        let only = "a green is carried only from a commit of this tree";
+        match tip.inputs {
+            None => said.push(format!(
+                "this tree has no {}, so no step's inputs are told: {only}",
+                super::inputs::SCRIPT
+            )),
+            Some(Inputs {
+                error: Some(why), ..
+            }) => said.push(format!("no step's inputs can be told ({why}): {only}")),
+            Some(_) => {}
+        }
+        let mut greens: Vec<(&str, &On)> = Vec::new();
+        for standing in &self.standing {
+            greens.extend(
+                standing
+                    .green
+                    .as_ref()
+                    .map(|on| (standing.name.as_str(), on)),
+            );
+            for step in &standing.steps {
+                greens.extend(step.green.as_ref().map(|on| (step.name.as_str(), on)));
+                for part in &step.parts {
+                    greens.extend(part.green.as_ref().map(|on| (part.name.as_str(), on)));
+                }
+            }
+        }
+        let elsewhere = (greens.iter())
+            .filter(|(_, on)| on.environment.as_deref() != tip.environment)
+            .count();
+        if elsewhere > 0 {
+            said.push(format!(
+                "{elsewhere} green{} of the candidate stood on another environment than this \
+                 one ({}): none of them is carried",
+                if elsewhere == 1 { "" } else { "s" },
+                tip.environment.unwrap_or("unknown")
+            ));
+        }
+        if let Some(inputs) = tip.inputs.filter(|inputs| inputs.error.is_none()) {
+            let unnamed: Vec<&str> = (greens.iter())
+                .filter(|(name, on)| on.digest.is_some() && inputs.of(name).is_none())
+                .map(|(name, _)| *name)
+                .collect();
+            if !unnamed.is_empty() {
+                said.push(format!(
+                    "this tree tells no inputs for {}: {only}",
+                    unnamed.join(", ")
+                ));
+            }
+        }
+        said
     }
 
     /// What `--status` says of it at `now`: open, its tip and first commit, its age and round, each
@@ -577,14 +724,32 @@ impl Candidate {
                 lines.push(format!("- {task} ({}): {how}", red.name));
             }
         }
-        if !carried.is_empty() {
+        let (by_inputs, by_tree): (Vec<&Carried>, Vec<&Carried>) =
+            carried.iter().partition(|kept| kept.digest.is_some());
+        if !by_tree.is_empty() {
             lines.push("Carried green from a commit whose tree is this one's:".into());
-            for kept in carried {
+            for kept in by_tree {
                 lines.push(format!(
                     "- {}: green on {} in the run {}",
                     kept.name,
                     short(&kept.commit),
                     kept.run
+                ));
+            }
+        }
+        if !by_inputs.is_empty() {
+            lines.push(
+                "Carried green from a run of this candidate, not run on this commit: its \
+                 inputs' digest is the one it was green on:"
+                    .into(),
+            );
+            for kept in by_inputs {
+                lines.push(format!(
+                    "- {}: green on {} in the run {}, inputs {}",
+                    kept.name,
+                    short(&kept.commit),
+                    kept.run,
+                    kept.digest.as_deref().unwrap_or_default()
                 ));
             }
         }
@@ -599,8 +764,39 @@ pub(crate) enum Planned {
     Whole,
     /// Its command followed by these steps' names, as `just verify STEP...` takes them.
     Steps(Vec<String>),
-    /// Not at all: green on a commit whose tree is the tip's.
+    /// Not at all: green on a commit whose tree is the tip's, or on these same inputs.
     Carried,
+}
+
+/// Each of `listed`, standing in `known` as it ended, its green as `on` says it for its name; one
+/// not listed keeps what it had, and so do the parts of one that listed none this time. One the
+/// run ran `in_part`, some of its parts carried, stands green by its parts alone.
+fn stand_each(
+    known: &mut Vec<StepStanding>,
+    listed: &[Ran],
+    on: &dyn Fn(&str) -> On,
+    in_part: &dyn Fn(&str) -> bool,
+) {
+    for step in listed {
+        let green = (step.green() && !in_part(&step.name)).then(|| on(&step.name));
+        let index = match known.iter().position(|s| s.name == step.name) {
+            Some(index) => index,
+            None => {
+                known.push(StepStanding {
+                    name: step.name.clone(),
+                    green: None,
+                    beyond: false,
+                    parts: Vec::new(),
+                });
+                known.len() - 1
+            }
+        };
+        known[index].green = green;
+        stand_each(&mut known[index].parts, &step.steps, on, in_part);
+        // Red while no part it listed is, of a step that has parts: its red is its own.
+        known[index].beyond =
+            !step.green() && !known[index].parts.is_empty() && step.steps.iter().all(Ran::green);
+    }
 }
 
 impl Red {

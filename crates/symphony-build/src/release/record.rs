@@ -105,6 +105,14 @@ pub(crate) struct Run {
     /// the clock that stops in sleep ([`super::span`]). Left out of a run that did not sleep.
     #[serde(default, skip_serializing_if = "super::span::none")]
     pub(crate) slept: f64,
+    /// What the tree it checked told of its checks' inputs, asked before the checks
+    /// ([`super::inputs`]); none for a tree that tells none, or a run that reached no check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) inputs: Option<super::inputs::Inputs>,
+    /// The system, Chrome and PostgreSQL its checks ran on, which no tree pins; none for a run
+    /// that reached no check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) environment: Option<super::inputs::Environment>,
 }
 
 /// A rerun of the release candidate: the commit first judged, the round it is (2 for the first
@@ -117,13 +125,16 @@ pub(crate) struct Rerun {
     pub(crate) carried: Vec<Carried>,
 }
 
-/// A check or step a rerun kept green: its name and the commit and run it was green on, whose
-/// tree is the rerun's.
+/// A check, step or part of a step a rerun kept green: its name and the commit and run it was
+/// green on. With no digest that commit's tree is the rerun's; with one, the digest of its inputs
+/// there is the one the rerun's tree tells ([`super::inputs`]), and it was not run on this commit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Carried {
     pub(crate) name: String,
     pub(crate) commit: String,
     pub(crate) run: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) digest: Option<String>,
 }
 
 /// What a refresh step ends as when its project finishes it (writers of its board to rebuild, a
@@ -417,6 +428,8 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         published: None,
         rerun: None,
         slept: 0.0,
+        inputs: None,
+        environment: None,
     });
     run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
     let doing = match holder.and_then(|holder| holder.check.as_ref()) {
@@ -776,6 +789,8 @@ mod tests {
             published: None,
             rerun: None,
             slept: 0.0,
+            inputs: None,
+            environment: None,
         }
     }
 

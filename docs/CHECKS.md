@@ -388,7 +388,13 @@ of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
 beside it lists with each step's exit status, seconds and command and the load average it ended
 under (over 1, 5 and 15 minutes, with the processor count). Its own output says each step as it
 starts and ends, with the last lines of a red one, and at its end each step with its log, then the
-red ones. `just verify STEP...` runs those steps alone, in that order. An interrupt (Ctrl-C) stops
+red ones. `just verify STEP...` runs those steps alone, in that order; `tests/LANE` in place of
+`tests` runs that lane of the tests alone, which is how a release candidate's rerun runs what a
+fix changed and carries the green of the rest ([RELEASES](RELEASES.md#a-steps-inputs)). What each
+step reads is said beside it in `tools/verify.sh` (`reads`), and a step that reads a path outside
+the packages it names, or outside the root's other entries, says so there. The tests a red
+`nextest-setup` keeps from starting are listed all the same, their status `-`: not run, no red of
+their own, and run by the next rerun. An interrupt (Ctrl-C) stops
 it once the step running ends: it runs none after it, says where it stopped and exits 130. The tests serve the client
 the client check built in the same verify (`SYMPHONY_UI_DIST`), and the check's folder
 (`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
@@ -494,7 +500,13 @@ Every server, store and browser still takes its own folder and a port the system
 
 Nextest and the Cargo batches keep live logs in `tests-lanes/` beside the step's log
 (`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), with the binary metadata beside
-them. The step names each log before scheduling. At most half the processors online run batches
+them, and `lanes.tsv` there lists each lane that ran with its exit status and seconds, which the
+verify lists after the tests step as its parts (`tests/LANE`): the step's red stays one red and
+one task. `tools/test-lanes.sh LANE...` runs those lanes alone, over the one build. What each lane
+reads is said beside the lanes (`reads`: its test target's packages, derived, another package
+whose binary its tests run, a path outside them, or the whole tree), and a new lane, or a test
+that starts reading a file outside its packages, says so there
+([RELEASES](RELEASES.md#a-steps-inputs)). The step names each log before scheduling. At most half the processors online run batches
 at once (at least one); each batch's output follows whole in the step's log once they all end.
 Signals reach the foreground batches, which are waited for before the runner exits, and a forced
 stop leaves their live output at the named paths. Native failures retain Cargo's target lists;

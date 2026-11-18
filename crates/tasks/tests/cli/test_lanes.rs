@@ -482,10 +482,159 @@ fn listing_needs_no_install_or_build_and_bad_arguments_run_nothing() {
         "{said}"
     );
     assert!(said.ends_with("doc --doc\n"), "{said}");
-    for args in [&["unknown"][..], &["--list", "--list"]] {
+    for args in [
+        &["--list", "--list"][..],
+        &["--unknown"],
+        &["doc", "--list"],
+    ] {
         let done = lanes.run(args, &[]);
         assert_eq!(done.status.code(), Some(2), "{done:?}");
-        assert_eq!(done.stderr, b"usage: tools/test-lanes.sh [--list]\n");
+        assert_eq!(
+            done.stderr,
+            b"usage: tools/test-lanes.sh [--list | --inputs | LANE...]\n"
+        );
+    }
+    let done = lanes.run(&["doc", "unknown"], &[]);
+    assert_eq!(done.status.code(), Some(2), "{done:?}");
+    assert!(
+        String::from_utf8_lossy(&done.stderr)
+            .starts_with("test-lanes: no lane unknown; the lanes are build fixture nextest perf "),
+        "{done:?}"
+    );
+    assert!(!lanes.stand.join("built").exists());
+}
+
+/// The lanes a run listed in its `lanes.tsv`, each its name and exit status, its seconds a whole
+/// number.
+fn listed(lanes: &Lanes) -> Vec<(String, i32)> {
+    let text = fs::read_to_string(lanes.logs().join("lanes.tsv")).unwrap();
+    text.lines()
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(fields.len(), 3, "{line:?}");
+            assert!(fields[2].parse::<u64>().is_ok(), "{line:?}");
+            (fields[0].to_string(), fields[1].parse().unwrap())
+        })
+        .collect()
+}
+
+#[test]
+fn every_lane_that_ran_is_listed_with_how_it_ended_and_named_lanes_run_alone() {
+    let lanes = Lanes::new("nextest-lanes-listed");
+    let done = lanes.run(&[], &[("FAIL", "sweep")]);
+    assert_eq!(done.status.code(), Some(101), "{done:?}");
+    let all = listed(&lanes);
+    let names: Vec<&str> = all.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "build",
+            "fixture",
+            "nextest",
+            "perf",
+            "sweep",
+            "cli",
+            "server",
+            "store",
+            "launch",
+            "libraries",
+            "doc"
+        ]
+    );
+    for (name, code) in &all {
+        assert_eq!(*code, if name == "sweep" { 101 } else { 0 }, "{name}");
+    }
+
+    // Named lanes run alone, over the one build and the client; the rest neither run nor are
+    // listed, so a list is of this run alone.
+    fs::remove_dir_all(lanes.stand.join("started")).unwrap();
+    fs::remove_file(lanes.stand.join("runner-fixture-args")).unwrap();
+    let done = lanes.run(&["sweep", "doc"], &[("EXPECT_SERIAL", "")]);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        listed(&lanes),
+        [("sweep".to_string(), 0), ("doc".to_string(), 0)]
+    );
+    let mut started: Vec<String> = (fs::read_dir(lanes.stand.join("started")).unwrap())
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    started.sort();
+    assert_eq!(started, ["doc", "sweep"]);
+    assert!(!lanes.stand.join("runner-fixture-args").exists());
+    assert_eq!(
+        fs::read_to_string(lanes.stand.join("built"))
+            .unwrap()
+            .lines()
+            .count(),
+        2,
+        "each run builds once"
+    );
+
+    // The lanes that run before the scheduler are named the same way.
+    fs::remove_dir_all(lanes.stand.join("started")).unwrap();
+    let done = lanes.run(&["build", "fixture"], &[("FAIL_LIVE_FIXTURE", "7")]);
+    assert_eq!(done.status.code(), Some(7), "{done:?}");
+    assert_eq!(
+        listed(&lanes),
+        [("build".to_string(), 0), ("fixture".to_string(), 7)]
+    );
+    assert!(
+        !lanes.stand.join("started").exists(),
+        "no scheduled lane ran"
+    );
+}
+
+#[test]
+fn what_each_lane_reads_is_said_without_an_install_or_a_build() {
+    let lanes = Lanes::new("nextest-inputs");
+    let done = lanes.run(&["--inputs"], &[]);
+    assert!(done.status.success(), "{done:?}");
+    let said = String::from_utf8(done.stdout).unwrap();
+    assert!(
+        said.lines().all(|line| line.split('\t').count() == 3),
+        "{said}"
+    );
+    // Every lane a run can list says what it reads: one left out could never be carried.
+    let named: std::collections::BTreeSet<&str> = said
+        .lines()
+        .map(|line| line.split('\t').next().unwrap())
+        .collect();
+    for lane in [
+        "build",
+        "fixture",
+        "nextest",
+        "perf",
+        "sweep",
+        "cli",
+        "server",
+        "store",
+        "launch",
+        "release",
+        "after_commit",
+        "after_publication",
+        "after_worktrees",
+        "hooks",
+        "picks",
+        "project",
+        "after_http",
+        "browser",
+        "libraries",
+        "doc",
+    ] {
+        assert!(named.contains(lane), "{lane} in:\n{said}");
+    }
+    for line in [
+        "nextest\ttree\t\n",
+        "hooks\ttree\t\n",
+        "doc\ttree\t\n",
+        "perf\ttest\tperf\n",
+        "fixture\tpackage\tsymphony-build\n",
+        "browser\ttest\tbrowser\n",
+        "browser\tpackage\tsymphony-server\n",
+        "browser\tpath\tapps/symphony-web\n",
+        "libraries\tpackage\tsymphony-board\n",
+    ] {
+        assert!(said.contains(line), "{line:?} in:\n{said}");
     }
     assert!(!lanes.stand.join("built").exists());
 }
