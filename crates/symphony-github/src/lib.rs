@@ -5,7 +5,8 @@
 //! through `curl` ([`transport`]), and keeps what it must remember in the folder the board names
 //! for it ([`state`]). Nothing here is linked into the board, the library or the server, and
 //! nothing runs it but an operator: `preview` shows what a reconcile would do, and `reconcile`
-//! does the preview it is handed by digest ([`reconcile`]).
+//! does the preview it is handed by digest ([`reconcile`]). `deliver` answers a land delivered by
+//! a pull request (`[land] delivery`, [`deliver`]), which the land runs and no one else.
 
 #![forbid(unsafe_code)]
 
@@ -13,6 +14,7 @@ pub mod board;
 pub mod cli;
 pub mod config;
 pub mod credential;
+pub mod deliver;
 pub mod github;
 pub mod plan;
 pub mod reconcile;

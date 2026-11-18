@@ -411,11 +411,8 @@ pub fn preview(ctx: &Context<'_>, rebind: bool, out: &mut dyn Write) -> Outcome 
         tokens: &tokens,
         published: &published,
     });
-    if config.pull_requests != crate::config::PullRequests::Off {
-        notices.push(format!(
-            "pull_requests is {}: this build tracks and publishes no pull request",
-            config.pull_requests.word()
-        ));
+    if config.pull_requests == crate::config::PullRequests::Track {
+        notices.push("pull_requests is track: this build tracks no pull request".into());
     }
     let newest = issues.iter().map(|issue| &issue.updated_at).max().cloned();
     let next_cursor = if stable {

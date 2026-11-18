@@ -1,6 +1,7 @@
 //! A GitHub repository held in memory, answering the calls the exchange makes as GitHub does:
 //! the repository, its issues listed by update and paged, one issue, its creation and edit, and
-//! its comments. A test sets it up, plants a fault on a coming request, and reads what it was
+//! its comments, and for a delivery its pull requests, their merge and a commit's checks. A test
+//! sets it up, plants a fault on a coming request, and reads what it was
 //! asked. It answers as a [`Transport`] directly, and `http.rs` serves it to a real `curl`.
 
 use serde_json::{Value, json};
@@ -33,6 +34,14 @@ struct Inner {
     /// Issues that are updated, so moved to the end, as page `0` of a listing is served.
     shift_after_first_page: Vec<i64>,
     asked: Vec<(String, String, Option<String>)>,
+    /// The branches pushed, each at its head.
+    branches: BTreeMap<String, String>,
+    pulls: Vec<Value>,
+    checks: Vec<Value>,
+    /// The GitHub App the request being answered is made as; 0 is a person's token.
+    acting: i64,
+    /// The number the next pull request or check is given.
+    made: i64,
 }
 
 pub(crate) struct Fake(Mutex<Inner>);
@@ -61,6 +70,11 @@ impl Fake {
             faults: Vec::new(),
             shift_after_first_page: Vec::new(),
             asked: Vec::new(),
+            branches: BTreeMap::new(),
+            pulls: Vec::new(),
+            checks: Vec::new(),
+            acting: 0,
+            made: 100,
         }))
     }
 
@@ -157,9 +171,72 @@ impl Fake {
             .count()
     }
 
+    /// A branch pushed there, as `git push` leaves it: its pull request follows it.
+    pub(crate) fn push(&self, branch: &str, head: &str) {
+        let mut inner = self.inner();
+        inner.branches.insert(branch.into(), head.into());
+        for pull in &mut inner.pulls {
+            if pull["head"]["ref"] == json!(branch) && pull["state"] == json!("open") {
+                pull["head"]["sha"] = json!(head);
+            }
+        }
+    }
+
+    pub(crate) fn pulls(&self) -> Vec<Value> {
+        self.inner().pulls.clone()
+    }
+
+    /// Pull request `number` changed there, field by field.
+    pub(crate) fn set_pull(&self, number: i64, fields: &Value) {
+        let mut inner = self.inner();
+        let pull = (inner.pulls.iter_mut())
+            .find(|pull| pull["number"] == json!(number))
+            .expect("a pull request of that number");
+        for (field, value) in fields.as_object().unwrap() {
+            pull[field] = value.clone();
+        }
+    }
+
+    /// The checks on `head`: each one's name, conclusion and the App that wrote it.
+    pub(crate) fn checks(&self, head: &str) -> Vec<(String, String, i64)> {
+        (self.inner().checks.iter())
+            .filter(|run| run["head_sha"] == json!(head))
+            .map(|run| {
+                (
+                    run["name"].as_str().unwrap().to_string(),
+                    run["conclusion"].as_str().unwrap().to_string(),
+                    run["app"]["id"].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    /// A check another App wrote on `head`.
+    pub(crate) fn foreign_check(&self, head: &str, name: &str, app: i64) {
+        let mut inner = self.inner();
+        inner.made += 1;
+        let id = 700 + inner.made;
+        inner.checks.push(json!({
+            "id": id, "name": name, "head_sha": head, "status": "completed",
+            "conclusion": "success", "external_id": "", "app": {"id": app},
+        }));
+    }
+
     /// The answer to a request, and whether it is to be lost on the way back.
     pub(crate) fn handle(&self, method: &str, path: &str, body: Option<&str>) -> (Response, bool) {
+        self.handle_as(0, method, path, body)
+    }
+
+    /// The same, the request made as the GitHub App `app`.
+    pub(crate) fn handle_as(
+        &self,
+        app: i64,
+        method: &str,
+        path: &str,
+        body: Option<&str>,
+    ) -> (Response, bool) {
         let mut inner = self.inner();
+        inner.acting = app;
         inner
             .asked
             .push((method.into(), path.into(), body.map(str::to_string)));
@@ -272,7 +349,12 @@ impl Inner {
                     return answer(404, &json!({"message": "Not Found"}));
                 };
                 let number = found["number"].as_i64().unwrap_or_default();
-                self.update(number, sent["title"].as_str(), sent["body"].as_str(), None);
+                self.update(
+                    number,
+                    sent["title"].as_str(),
+                    sent["body"].as_str(),
+                    sent["state"].as_str(),
+                );
                 answer(200, &self.find(&number.to_string()).unwrap_or(Value::Null))
             }
             ("GET", ["issues", number, "comments"]) => {
@@ -293,6 +375,109 @@ impl Inner {
                     })
                     .unwrap_or_default();
                 answer(200, &json!(comments))
+            }
+            _ => self.delivery(method, &parts, query, &sent),
+        }
+    }
+
+    /// A delivery's calls: a branch's pull requests, their merge and a commit's checks.
+    fn delivery(&mut self, method: &str, parts: &[&str], query: &str, sent: &Value) -> Response {
+        match (method, parts) {
+            ("GET", ["pulls"]) => {
+                let value = |name: &str| {
+                    (query.split('&')).find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))
+                };
+                let head = value("head")
+                    .and_then(|head| head.split_once(':'))
+                    .map(|(_, r)| r);
+                let listed: Vec<Value> = (self.pulls.iter())
+                    .filter(|pull| {
+                        pull["state"] == json!("open")
+                            && Some(pull["head"]["ref"].as_str().unwrap_or_default()) == head
+                            && pull["base"]["ref"].as_str() == value("base")
+                    })
+                    .cloned()
+                    .collect();
+                answer(200, &json!(listed))
+            }
+            ("POST", ["pulls"]) => {
+                let branch = sent["head"].as_str().unwrap_or_default();
+                let Some(head) = self.branches.get(branch).cloned() else {
+                    return answer(422, &json!({"message": "Validation Failed: no such head"}));
+                };
+                let number = 100 + i64::try_from(self.pulls.len()).unwrap();
+                let repo = json!({"id": self.id});
+                self.pulls.push(json!({
+                    "number": number, "state": "open", "merged": false,
+                    "title": sent["title"], "body": sent["body"],
+                    "html_url": format!("https://github.com/{}/{}/pull/{number}", self.owner, self.name),
+                    "head": {"ref": branch, "sha": head, "repo": repo},
+                    "base": {"ref": sent["base"], "repo": repo},
+                    "merge_commit_sha": null, "mergeable_state": "clean",
+                }));
+                answer(201, self.pulls.last().unwrap())
+            }
+            ("GET", ["pulls", number]) => {
+                match self
+                    .pulls
+                    .iter()
+                    .find(|pull| number.parse().ok() == pull["number"].as_i64())
+                {
+                    Some(pull) => answer(200, pull),
+                    None => answer(404, &json!({"message": "Not Found"})),
+                }
+            }
+            ("PUT", ["pulls", number, "merge"]) => {
+                let Some(pull) = (self.pulls.iter_mut())
+                    .find(|pull| number.parse().ok() == pull["number"].as_i64())
+                else {
+                    return answer(404, &json!({"message": "Not Found"}));
+                };
+                if pull["head"]["sha"] != sent["sha"] {
+                    return answer(409, &json!({"message": "Head branch was modified"}));
+                }
+                if pull["mergeable_state"] != json!("clean") {
+                    return answer(405, &json!({"message": "Pull Request is not mergeable"}));
+                }
+                let squash = "5".repeat(40);
+                pull["state"] = json!("closed");
+                pull["merged"] = json!(true);
+                pull["merge_commit_sha"] = json!(squash);
+                pull["merged_as"] = sent.clone();
+                answer(
+                    200,
+                    &json!({"merged": true, "sha": squash, "message": "merged"}),
+                )
+            }
+            ("GET", ["commits", head, "check-runs"]) => {
+                let runs: Vec<Value> = (self.checks.iter())
+                    .filter(|run| run["head_sha"] == json!(head))
+                    .cloned()
+                    .collect();
+                answer(200, &json!({"total_count": runs.len(), "check_runs": runs}))
+            }
+            ("POST", ["check-runs"]) | ("PATCH", ["check-runs", _]) => {
+                if self.acting == 0 {
+                    let said = "You must authenticate via a GitHub App.";
+                    return answer(403, &json!({"message": said}));
+                }
+                let mut run = sent.clone();
+                run["app"] = json!({"id": self.acting});
+                if let ["check-runs", id] = parts {
+                    let Some(old) = (self.checks.iter_mut()).find(|run| {
+                        id.parse().ok() == run["id"].as_i64()
+                            && run["app"]["id"] == json!(self.acting)
+                    }) else {
+                        return answer(404, &json!({"message": "Not Found"}));
+                    };
+                    run["id"] = old["id"].clone();
+                    *old = run.clone();
+                    return answer(200, &run);
+                }
+                self.made += 1;
+                run["id"] = json!(800 + self.made);
+                self.checks.push(run.clone());
+                answer(201, &run)
             }
             _ => answer(404, &json!({"message": "Not Found"})),
         }

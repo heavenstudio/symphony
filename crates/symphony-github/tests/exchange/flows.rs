@@ -416,17 +416,14 @@ fn each_capability_is_selected_alone() {
     let rig = Rig::new("issues-off", "pull_requests = \"track\"");
     rig.github.open("Selected", "text", &["symphony"]);
     let said = rig.sync();
-    assert!(
-        said.contains("this build tracks and publishes no pull request"),
-        "{said}"
-    );
+    assert!(said.contains("this build tracks no pull request"), "{said}");
     assert_eq!(rig.board.slugs(), Vec::<String>::new());
     assert_eq!(rig.github.writes(), 0);
     let status = rig.run(&["status"]).ok();
     assert!(
         status
             .out
-            .contains("pull requests: track (this build tracks and publishes none)")
+            .contains("pull requests: track (this build tracks none)")
     );
 }
 
