@@ -473,6 +473,48 @@ fn a_new_root_subscription_has_no_history_or_subtask_role_pushes_but_keeps_futur
 }
 
 on_both! {
+fn an_unreviewed_task_returning_is_new_even_when_its_status_never_changes(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
+    let orch = f.session("orchestrator");
+    let exe = f.session("worker");
+    let rev = f.session("reviewer");
+    let o = listen_orchestrator(&f, &orch, EMPTY_PULL);
+    f.task("tools/review-gap");
+    o.drain(&f, &exe, &orch);
+    f.store.claim("tools/review-gap", &exe).unwrap();
+    assert!(o.drain(&f, &exe, &orch).is_empty());
+    f.store.move_to("tools/review-gap", "review", &exe).unwrap();
+    let row = "review_unreviewed p2 tools/review-gap — Jump departure";
+    assert_eq!(
+        o.drain(&f, &exe, &orch),
+        [
+            "PULL ready_unstaffed=0 (was 1) review_unreviewed=1 (was 0)",
+            row,
+            "resolved ready_unstaffed tools/review-gap",
+        ]
+    );
+    f.store
+        .take_role("tools/review-gap", &rev, "reviewer")
+        .unwrap();
+    assert!(
+        o.drain(&f, &exe, &orch).is_empty(),
+        "staffing a gap only removes an entry"
+    );
+    f.store
+        .release("tools/review-gap", &rev, Some("reviewer"))
+        .unwrap();
+    assert_eq!(f.store.get("tools/review-gap").unwrap().status, "review");
+    // The counts are as the last PULL said them: only the row it gained back.
+    assert_eq!(o.drain(&f, &exe, &orch), ["PULL counts unchanged", row]);
+    f.store.dispatch_callbacks().unwrap();
+    assert!(
+        o.drain(&f, &exe, &orch).is_empty(),
+        "the return pushes once"
+    );
+}
+}
+
+on_both! {
 fn a_reviewer_receives_the_verdict_or_its_status_without_duplicates(backend: Backend) {
     for by_owner in [false, true] {
         // Imported boards can carry named senders too. A verdict still needs a registered
