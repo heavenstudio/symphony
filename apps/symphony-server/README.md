@@ -132,10 +132,27 @@ A release's server builds nothing and watches no source: it watches the machine 
 `current` link moving, reads where the link points as it starts, at each move and once a period
 (`backstop.rs`, for an event lost), and when it names another release, hands its sockets to that
 release's server, by its own folder's path, as a reload below hands them. A release not installed
-whole, or whose server does not become ready, leaves the running one serving, said on the notice
-and tried again on the waits below; `current` pointed back at the running release clears the
-notice. A starter's request to hand over is refused, said in the log. The release a server is, and
-the client it serves, are read once, as it starts.
+whole, or whose server does not become ready, leaves the running one serving, said in the log and
+on the notice and tried again on the waits below; `current` pointed back at the running release
+clears the notice. A starter's request to hand over is refused, said in the log. The release a
+server is, and the client it serves, are read once, as it starts.
+
+A server that is not following says so in its log (`server.log` in the machine folder), each line
+starting `· Symphony reload:`: one for each hand-off it begins, one for each release that did not
+take over, with why and when it is tried again, and one for each reason it begins none (`current`
+naming the release it is, or none), said when that reason changes. The follow ends only with the
+server: one that ends before, a bug, is said in the log and on the notice and started again once
+its supervisor has waited for the next wake or period, so no release waits on a restart by hand
+and a follow that dies at every start costs one line a wait. The refresh of a release quotes the
+last of those lines when the server did not follow `current` within its wait
+([RELEASES](../../docs/RELEASES.md#the-refresh)). The reload writes its lines without
+`eprintln!`, which panics its thread once stderr cannot be written.
+
+The log dates each line of the server's two streams, and of the children that inherit them,
+through a socket for each (`src/log.rs`). A socket that ends under its forwarder, as when a child
+shuts down the one it inherited, is replaced by a new one in the stream's place, said in the log
+(`server log capture: … captured again`); were it left, every later write to that stream would
+fail, and each thread that writes one by `eprintln!` would die of it.
 
 A project's build as the shared server watches main's server sources and transitive local crate
 sources. It builds through the command main's `[project] cargo` names (when unset,

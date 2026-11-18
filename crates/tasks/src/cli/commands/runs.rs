@@ -3,6 +3,8 @@
 //! command the task ran there with its newest result and the runs before it there, the `tests`
 //! stamp as its reader reads it, the project's `[verdicts] check` (the task page's check gate) with
 //! its newest run at the tip or none, and the task's runs at other commits, which are not the tip's.
+//! A command its runner refused there before building or running anything is named apart, with the
+//! refusal's line: no run of the command, so no red and no green (`stamps::read::refused`).
 //! The tip is the task's branch's in the main checkout, else the commit `--tip` names there.
 //!
 //! It reads what the land and the task page read: the recorder's runs (`recorded::runs`), the task
@@ -108,7 +110,8 @@ pub(super) struct Shown<'a> {
 /// The lines `runs` prints: `TIP`, then `RUNS`, each command the task ran at the tip a row (its
 /// newest run's state, phase, command, when, how long, who, and why it is red, whose it is when work
 /// under the task ran it, how many runs of it came before there), `TESTS`, the `tests` stamp as its
-/// reader reads it, `CHECK`, the `[verdicts] check` at the tip as its gate reads it (none when the
+/// reader reads it (after `REFUSED`, the commands a runner refused at the tip, each with the
+/// refusal's line, when there are any), `CHECK`, the `[verdicts] check` at the tip as its gate reads it (none when the
 /// project names none), and `ELSEWHERE`, the task's runs at other commits (none when there are
 /// none).
 pub(super) fn lines(shown: &Shown<'_>) -> Vec<String> {
@@ -127,6 +130,16 @@ pub(super) fn lines(shown: &Shown<'_>) -> Vec<String> {
         lines.push(format!("RUNS at {at}, each command's newest run there:"));
         let rows: Vec<Vec<String>> = (found.commands.iter())
             .map(|command| row(shown.slug, command))
+            .collect();
+        lines.extend(columns(&rows).into_iter().map(|row| format!("  {row}")));
+    }
+    if !found.refused.is_empty() {
+        lines.push(format!(
+            "REFUSED at {at}, each by its runner before it built or ran anything: no red and no \
+             green there"
+        ));
+        let rows: Vec<Vec<String>> = (found.refused.iter())
+            .map(|run| refused_row(shown.slug, run))
             .collect();
         lines.extend(columns(&rows).into_iter().map(|row| format!("  {row}")));
     }
@@ -173,6 +186,14 @@ fn state(run: &Record) -> &'static str {
     }
 }
 
+/// `run`'s phase as a word.
+fn phase(run: &Record) -> &'static str {
+    match run.phase {
+        recorded::Phase::Build => "build",
+        recorded::Phase::Test => "test",
+    }
+}
+
 /// The row of `command`, run for the task `slug` or work under it.
 fn row(slug: &str, command: &read::Command<'_>) -> Vec<String> {
     let run = command.newest;
@@ -191,16 +212,29 @@ fn row(slug: &str, command: &read::Command<'_>) -> Vec<String> {
             .count();
         notes.push(format!("{} earlier here, {reds} red", command.before.len()));
     }
-    let phase = match run.phase {
-        recorded::Phase::Build => "build",
-        recorded::Phase::Test => "test",
-    };
     vec![
         state(run).into(),
-        phase.into(),
+        phase(run).into(),
         run.label.clone(),
         local_minute(when(run)),
         took,
+        run.handle.clone().unwrap_or_else(|| "-".into()),
+        notes.join("; "),
+    ]
+}
+
+/// The row of `run`, which its runner refused: its phase, command, when, who and the refusal's
+/// line, and whose it is when work under the task `slug` ran it.
+fn refused_row(slug: &str, run: &Record) -> Vec<String> {
+    let mut notes = vec![read::refused(run).unwrap_or_default().to_string()];
+    if let Some(task) = run.task.as_deref().filter(|task| *task != slug) {
+        notes.push(format!("for {task}"));
+    }
+    vec![
+        "refused".into(),
+        phase(run).into(),
+        run.label.clone(),
+        local_minute(when(run)),
         run.handle.clone().unwrap_or_else(|| "-".into()),
         notes.join("; "),
     ]

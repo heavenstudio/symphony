@@ -25,7 +25,7 @@ types cross.
 
 The kit's crates depend on no other workspace crate but each other, and build wherever Rust's
 standard library does: only a file's stamp, which tells `read_text` a file changed, reads more of it
-on Unix (its device, inode and change time). They carry one version, 1.0.0 now, and are made to be
+on Unix (its device, inode and change time). They carry one version, 1.0.1 now, and are made to be
 published on crates.io ([RELEASES](RELEASES.md#packages-on-cratesio)), so they export what a plugin
 uses, and beside it the file's stamp (`text::FileStamp`, its fields private), which `read_text` and
 the library's board cache share, and no more: the text rules only the library uses (a one-sided

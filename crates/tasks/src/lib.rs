@@ -88,6 +88,7 @@ pub mod waits_on;
 pub mod assessment_publication;
 pub use health::Health;
 pub use schema::{Access, Schema};
+pub use store::recovery;
 pub use store::{
     ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
     Callback, ChatSeat, CoveredLine, Database, Error, Filed, Given, HandOff, Held, KINDS,

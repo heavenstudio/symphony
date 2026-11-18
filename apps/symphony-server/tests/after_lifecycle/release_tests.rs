@@ -224,6 +224,11 @@ fn the_release_server_follows_current_and_one_that_does_not_start_leaves_it_serv
     let port = repo.port();
     let first = repo.check_server();
     assert_eq!(first.release.as_deref(), Some("release-1"));
+    // A follow that has nothing to hand over to says so in the log, once.
+    logged(
+        &repo,
+        "names release-1, the release this server is: it follows the link",
+    );
     // A release whose server ends before it is ready: the running one keeps serving, and says why.
     installed(&repo, "release-2", "second", Some("#!/bin/sh\nexit 3\n"));
     let log = logged(&repo, "The release release-2 did not take over");

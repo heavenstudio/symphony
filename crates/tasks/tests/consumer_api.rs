@@ -44,6 +44,7 @@ use symphony_board::land::Generator;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::Hc;
 use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
+use symphony_board::recovery;
 use symphony_board::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow, TaskSessionRow};
 use symphony_board::rpc::{Client, DbError};
 use symphony_board::sweep::git::{DISPOSABLE, Listed};
@@ -103,6 +104,57 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Store, &str, &Beat) -> Result<Option<String>> = Store::agent_beat;
     let _: fn(&Store, &Dump) -> Result<()> = Store::copy;
     let _: fn(&Store) -> Result<Dump> = Store::dump;
+    // The writes bound to a recovery generation, beside `Store::amend` and `Store::copy`, which
+    // keep their shapes: the token as a program keeps it, by its fields and as JSON, and the
+    // authority a deployer implements.
+    let _: fn(&Store, &str, &str, &[String], &str) -> Result<Task> = Store::amend;
+    let _: fn(Store, std::sync::Arc<dyn recovery::Authority>) -> Store = Store::recovering;
+    let _: fn(&Store, &str) -> Result<recovery::BoundTask> = Store::bound;
+    let _: fn(
+        &Store,
+        &str,
+        &recovery::Bound,
+        &str,
+        &[String],
+        &str,
+    ) -> Result<recovery::BoundTask> = Store::amend_bound;
+    let _: fn(&Store) -> Result<String> = Store::rebind;
+    let _: fn(&Store) -> Result<Option<String>> = Store::recovery_generation;
+    let _ = |read: recovery::BoundTask| {
+        let recovery::BoundTask { bound, title, body } = read;
+        let recovery::Bound {
+            compat,
+            generation,
+            id,
+            version,
+        } = bound.clone();
+        let kept = serde_json::to_string(&bound).unwrap();
+        let again: recovery::Bound = serde_json::from_str(&kept).unwrap();
+        (
+            compat == recovery::COMPAT,
+            generation,
+            id,
+            version,
+            title,
+            body,
+            again == bound,
+        )
+    };
+    struct Deployers;
+    impl recovery::Authority for Deployers {
+        fn bound(&self) -> std::result::Result<Option<String>, String> {
+            Ok(None)
+        }
+        fn revoke(&self) -> std::result::Result<(), String> {
+            Ok(())
+        }
+        fn publish(&self, _generation: &str) -> std::result::Result<(), String> {
+            Ok(())
+        }
+    }
+    let _: std::sync::Arc<dyn recovery::Authority> = std::sync::Arc::new(Deployers);
+    let _: fn(&server::Home, &str) -> server::FileAuthority = server::Home::recovery;
+    let _: fn(Store, &Env) -> Store = cli::recovery::recovering;
     let _: fn(Store, Option<usize>) -> Store = Store::capping;
     let _: fn(&Store, &str) -> Result<Vec<String>> = Store::ancestors;
     let _: fn(&Store, &str, Option<&str>, bool, bool) -> Result<()> = Store::callback;

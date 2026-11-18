@@ -279,7 +279,9 @@ with), `SIGALRM`, `SIGXCPU` or `SIGVTALRM` is `timed_out`; `SIGHUP`, `SIGINT`,
 `SIGQUIT`, `SIGKILL`, `SIGPIPE` or `SIGTERM` is `interrupted`; an exit of 129 to 159
 is read as a shell reports a command signal N ended (128 + N); any other exit or
 signal is `red`; a command that never started, or whose end is not known, is
-`incomplete`.
+`incomplete`. A command its runner refused before it built or ran anything ends `red` here as
+its exit says; that it never ran is its record's `refused` in the work folder, which the stamps'
+readers go by ([MACHINE_WORK](MACHINE_WORK.md#a-command-its-runner-refused)).
 
 An end line of the workspace tests of a verify, a step, recorded on macOS, two of its
 suites shown:

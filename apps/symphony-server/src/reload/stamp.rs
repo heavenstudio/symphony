@@ -230,7 +230,9 @@ fn stamped_source(home: &Path, _lease: &File) -> Option<String> {
     }
     let restamped = Installed { image, ..installed };
     if let Err(why) = write_stamp(home, &restamped) {
-        eprintln!("· Symphony: could not record the installed image in its stamp: {why}");
+        crate::front::tell(format_args!(
+            "· Symphony: could not record the installed image in its stamp: {why}"
+        ));
     }
     Some(restamped.source)
 }
