@@ -7,8 +7,10 @@ use std::io::Write;
 use std::path::Path;
 
 mod crates_check;
+mod exec_test;
 mod size_budget;
 mod synced;
+pub(crate) mod test_stalls;
 
 /// Its name, as its usage and its refusals say it.
 const NAME: &str = "symphony-build";
@@ -24,7 +26,7 @@ const HEAD: &str = "usage: symphony-build COMMAND [ARGS]...\n\n\
 const LISTED: &str = "`symphony-build help`";
 
 /// Its commands, in the order its usage names them, each with what it does.
-const COMMANDS: [(&str, &str); 6] = [
+const COMMANDS: [(&str, &str); 8] = [
     (
         "publish-client",
         "publish a built client into the server's embedded copy",
@@ -39,11 +41,19 @@ const COMMANDS: [(&str, &str); 6] = [
     ),
     (
         "synced",
-        "time each page from its open to synced on a returning browser",
+        "time each page from open to synced on a returning browser",
+    ),
+    (
+        "exec-test-binary",
+        "run a shared library test image with Cargo's environment",
+    ),
+    (
+        "test-stalls",
+        "annotate nextest stalls with their backstop and load",
     ),
     (
         "consumer-notes",
-        "what a project changes to take each release, or check a branch",
+        "show release notes for projects, or check a branch",
     ),
     (
         "release",
@@ -105,6 +115,8 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         Some("size-budget") => size_budget::main(rest, out, err),
         Some("crates-check") => crates_check::main(rest, out, err),
         Some("synced") => synced::main(rest, out, err),
+        Some("exec-test-binary") => exec_test::main(rest, out, err),
+        Some("test-stalls") => test_stalls::main(rest, &mut std::io::stdin().lock(), out, err),
         Some("consumer-notes") => crate::release::consumer::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => {
@@ -284,6 +296,8 @@ mod tests {
                 "size-budget",
                 "crates-check",
                 "synced",
+                "exec-test-binary",
+                "test-stalls",
                 "consumer-notes",
                 "release",
             ]

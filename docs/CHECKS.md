@@ -393,43 +393,112 @@ it once the step running ends: it runs none after it, says where it stopped and 
 the client check built in the same verify (`SYMPHONY_UI_DIST`), and the check's folder
 (`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
 never served. When the client check is red on a client it built, the tests run against that one;
-when it built none, or did not run, the browser tests build the client themselves, red if that
-build fails too. The tests' log and the summary say which.
+when it built none, or did not run, the tests runner publishes one client before scheduling,
+red if that build fails too. The tests' log and the summary say which.
 
-**The tests side by side.** The tests step (`tools/test-lanes.sh`) builds every test of the
-workspace once, then runs them in lanes side by side, each lane one `cargo test --workspace` over
-the targets it names: `perf`, `sweep`, `browser`, the board's heavy targets, the server's `after_*`
-targets, the libraries' and binaries' own tests, the rest, and the doc tests
-(`tools/test-lanes.sh --list` prints them); cargo running the targets one after another made the
-step 35 to 42 minutes. A test target no lane names runs in the rest, so a new heavy target gets a
-lane by its name. At most half the processors online run lanes at once (`getconf
-_NPROCESSORS_ONLN`; one when the system says no number), each taking the next lane none has taken.
-The build and every lane give build scripts and proc macros the rest of the build's debug info, so
-every lane's units are the build's and no lane builds or links anything while the others run.
+**The tests side by side.** The tests step (`tools/test-lanes.sh`) builds the workspace's test
+binaries once with cargo-nextest 0.9.152, then reuses that binary metadata for one nextest scheduler.
+The release owns an explicit `nextest-setup` step before tests, including a tests-only rerun. It
+runs `just nextest-setup`: this target's `tools/nextest/` is checked first (`CARGO_TARGET_DIR`, else
+`.target/`), then a linked worktree's main checkout `.target/tools/nextest/`. With neither copy
+valid, setup provisions the main cache once for its worktrees, or this target in a main checkout.
+It downloads the [upstream pinned release](https://github.com/nextest-rs/nextest/releases/tag/cargo-nextest-0.9.152),
+verifies the archive and extracted executable against SHA-256 values in `tools/nextest.sh`, and
+publishes it by one rename. Every use verifies the executable's hash and version before executing
+it. No Cargo install, build folder or unverified PATH copy is used. Ordinary release cleans keep
+the cache; if it was cleared, the next setup step provisions it again. A provisioning failure is
+red at `nextest-setup`, and tests does not start. Tests never download or install a runner.
 
-Each lane writes its log as it runs, `tests-lanes/NAME.log` beside the step's log
-(`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), and the step's log names each
-before any lane starts: a run the release run stops, with SIGTERM and then SIGKILL, leaves every
-lane's output where the step's log said. SIGTERM, SIGHUP and an interrupt end the lanes, and the
-step prints what they wrote. Once every lane has ended, each lane's output follows the one before it
-whole in the step's log, then every red lane's targets that failed as one list in cargo's words,
-the last the release run's reader keeps. A lane is green only when it said the exit status 0. A red
-lane's targets are the list cargo ended its log with on failed targets (exit 101); any other red
-lane (killed by a signal, its cargo failing before any target, its status unsaid or none) is listed
-whole, `--workspace` and its targets, and named after its output by a line in cargo's words
-(`error: the lane NAME is red …, to rerun pass` and those arguments), which the reader reruns as a
-target that failed.
+Focused `just test-rs` uses Cargo and needs no nextest. The live success/failure/stall fixture is
+explicitly ignored in that default run; the tests step selects it once by its exact name through
+workspace Cargo before concurrent batches. Its missing runner is a failure, never a skip. The
+nextest filter excludes that case, so it is neither omitted nor run twice. Cargo keeps the same
+workspace features, profile and environment as the one build for this invocation too. A failure's
+narrow rerun retains `--ignored` for this case, so it executes the fixture again.
 
-The lanes share no port or store: every server, store and browser a test starts takes a port the
-system picks and a folder of its own. The one target writing the build folder (the
-client's `build`, which links `symphony-build` there again) runs in the rest with every `symphony-build` and
-`symphony-app` target and `standalone`, which copies that folder. The browser lane writes it too
-when `SYMPHONY_UI_DIST` names no client: its own client build
-(`apps/symphony-web/build.sh`, which runs `tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again
-while the rest runs it. Verify names the client its client check built, so only a verify whose
-client check built none leaves it to the browser lane. The binaries a test would build for itself under its case's clock
-are the build's own, named by `SYMPHONY_TEST_TASKS_BINARY` and `SYMPHONY_TEST_BINARIES` (a target
-run alone builds them as before).
+To run that live fixture after setup, select it explicitly. The recipe supplies `--locked`:
+
+```sh
+just test-rs --config 'profile.dev.build-override.debug="line-tables-only"' \
+  --workspace --no-fail-fast --lib -- --ignored --exact \
+  release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test --nocapture
+```
+
+Nextest runs six cases at once (the caller's `RUST_TEST_THREADS` wins), with groups capping Chrome
+and database cases at two each (`.config/nextest.toml`). Retries are explicitly zero. Every nextest case
+has its duration in the log, and a per-case timeout ends a stalled case and its children. A timeout
+is a failure, never a pass, and replaces none of the tests' own assertions. The runner emits both
+its status lines and libtest-json-plus 0.1 events: the release readers use the events to name each
+failed or timed-out case and the exact Cargo command that reruns it alone. Captured output stays
+inside an event, so a command a fixture prints is no failure of the release run.
+
+The standalone target compiles a copied workspace: its cases run after the other nextest cases
+and reserve the entire nextest pool. The shared Cargo batches below still run independently;
+this reservation controls nextest's own child servers and work.
+
+Every terminating timeout in the release profile is a stall backstop, not a cost budget. Its
+deadline is three times the ceiling, in seconds, of the slowest completed loaded measurement
+available for its scope. A complete Cargo binary's time is a conservative upper bound for any
+one of its cases. These are the measurements that derive `.config/nextest.toml`:
+
+| Scope | Loaded measurement | Associated load, 1/5/15 minutes | Source | Backstop |
+| --- | --- | --- | --- | --- |
+| Ordinary nextest cases | 131.95 s, whole `after_lifecycle` binary | 124.30 / 142.61 / 111.32 | Release `2026-11-18T0825-74490`, commit `7f1842c6051b` | 3 × ceil(131.95) = **396 s** |
+| Standalone target | 869.16 s, whole binary, completed | 124.30 / 142.61 / 111.32 | Same release's tests log | 3 × ceil(869.16) = **2,610 s** |
+| Ordinary-case cross-check | 118.725 s, semver's real checker case | Step sampled up to 151.29 / 108.97 / 97.70 | Task run `82f06742130c0cff7b6ff249c74444db`, commit `3f534895` | Covered by the 396 s default |
+| Standalone cross-check | 304.09 s, case alone | Run sample 159.54 / 118.83 / 117.52 | Focused Cargo rerun of `3f534895` | Covered by the 2,610 s override |
+| Superseded standalone limit | Killed at 600.025 s; completion time unknown | Loaded task run above | Task run `82f06742130c0cff7b6ff249c74444db` | Censored evidence, not a completed timing or a valid backstop |
+
+Release load samples are those the tests step recorded when it ended; task samples are from
+the running checks, not a claim of constant load. The loaded release's completed 869.16 s
+measurement also exceeds the censored 600.025 s observation, so no completion time is inferred
+from the killed run. The original task baseline was an earlier, dirty source over `284fafb7`:
+1,615 s at sampled load roughly 45–84, 7,940 passed and 16 ignored including four doctests.
+It remains historical evidence, not a same-source or quiet-machine performance comparison.
+
+The periods in the config are those measured ceilings, with termination after three periods.
+The ten-second termination grace begins after the case is already failed as a stall; it is
+cleanup time, not a passing allowance or test budget. The repository-only `test-stalls` stream
+annotator reads the actual release profile and adds the reached limit and the load at the event
+to each nextest timeout. The red reader says `taken as a stall`, its limit and that load, and
+keeps the same exact rerun command. All other output passes unchanged. A reporter failure makes
+the step red, and no retry changes a timeout into a pass. Raw historical nextest logs remain
+readable, with no invented limit or load where none was recorded.
+
+The suites with shared fixtures retain one libtest process: the board's `perf`, `sweep`, `cli`,
+`server`, `store` and `launch`; the app's `after_commit`, `after_publication`, `after_worktrees`,
+`hooks`, `picks` and `project`; the server's `after_http`; the build package's `release`; and the
+browser suite. They share the store fixture's database server (including its transitive imports),
+perf's generated board, sweep's repository template or the browser's build gzip cache. Each
+integration target is one Cargo batch. The `symphony-app`, `symphony-board` and `symphony-server`
+library tests share that store fixture too: a Cargo library batch uses the build command's Rust
+exec adapter to run exactly those three metadata-listed images, leaving the stateless libraries
+to nextest. Cargo supplies the package working directory, environment and dynamic-library paths;
+the adapter changes none and replaces itself with the selected image, preserving arguments,
+process identity, signals and status. An artifact absent from the metadata is refused.
+
+Cargo also runs the doc tests, which nextest does not run. These exceptions, rather than a table
+partitioning every target, are the runner's list (`tools/test-lanes.sh --list`); other binaries,
+new targets included, belong to nextest. The shared-process exceptions keep their libtest suite
+measurements and test assertions; they acquire no nextest per-case timing or timeout. A path or
+metadata cache and an executable's warmup do not require a shared process: each nextest case can
+prepare its own from the supplied build outputs.
+
+The client's `build` test runs before scheduling: it may relink `symphony-build`, which other
+targets execute or copy (`standalone`). When the client check supplied no build, the runner
+publishes one client before scheduling, so no browser case builds or relinks while other tests
+run. Every test receives the build's binaries through `SYMPHONY_TEST_TASKS_BINARY` and
+`SYMPHONY_TEST_BINARIES`; a caller's values win. Each Cargo call keeps the workspace build's
+feature graph and its build-script/proc-macro debug info, so no concurrent batch relinks anything.
+Every server, store and browser still takes its own folder and a port the system picks.
+
+Nextest and the Cargo batches keep live logs in `tests-lanes/` beside the step's log
+(`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), with the binary metadata beside
+them. The step names each log before scheduling. At most half the processors online run batches
+at once (at least one); each batch's output follows whole in the step's log once they all end.
+Signals reach the foreground batches, which are waited for before the runner exits, and a forced
+stop leaves their live output at the named paths. Native failures retain Cargo's target lists;
+nextest failures retain their own events. A batch is green only on an explicit exit status of zero.
 
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the

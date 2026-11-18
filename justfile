@@ -53,6 +53,10 @@ client-wire:
 test-rs *ARGS:
     @{{record}} --pipeline test test "just test-rs $*" env HC_BIN="${HC_BIN:-/usr/bin/false}" tools/cargo.sh test --locked "$@"
 
+# Install the release test runner once. Test runs only use this pinned local copy and never fetch it.
+nextest-setup:
+    @bash tools/nextest.sh --setup
+
 # The settings check (`symphony settings-check`, docs/PROJECT_FILE.md): symphony.toml read as the
 # Symphony reads it and judged on its shape alone, recorded as a test run, which is what a change
 # of settings' values lands by in a reviewer's place (docs/TASKS.md, "Needed stamps").
