@@ -53,13 +53,19 @@ libc.workspace = true
 # ring's primitives and no system library. tokio drives each pool's connections on one thread.
 tokio = { version = "1", features = ["rt", "time", "net", "sync"], optional = true }
 tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"], optional = true }
-tokio-postgres-rustls = { version = "0.13", optional = true }
+tokio-postgres-rustls = { version = "0.14", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 
 [features]
 # A board in a managed PostgreSQL reached over verified TLS (src/pg/hosted.rs,
 # docs/POSTGRESQL.md): off unless a hosted build asks for it, so no other build links its driver.
 hosted-postgresql = ["dep:tokio", "dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:rustls"]
+
+# The hosted board against real PostgreSQL 16 and 18 servers (tests/hosted/main.rs).
+[[test]]
+name = "hosted"
+path = "tests/hosted/main.rs"
+required-features = ["hosted-postgresql"]
 
 [build-dependencies]
 sha2.workspace = true

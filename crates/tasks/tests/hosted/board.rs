@@ -1,0 +1,311 @@
+//! The board's store on a hosted database: made and moved by its deployment's migration alone,
+//! never in a database that holds another's objects; the same work answered as the local board
+//! answers it, on PostgreSQL 16 and 18; a writer behind held to; two migrations at once; and one
+//! project's login kept out of another's database.
+
+use crate::cluster::{self, MAJORS, Project, environment, settings};
+use crate::store::{Backend, Fixture, HOST, NOW, Seed};
+use symphony_board::pg::hosted::Client;
+use symphony_board::{Error, NewTask, Opening, Program, Schema, Store};
+
+/// The store `how` opens on `project`'s board, its clock at `NOW` and no process alive.
+fn opened(project: &Project, how: &Opening) -> Result<Store, Error> {
+    let class = if how.migrating { "maintenance" } else { "web" };
+    Store::opening_hosted(
+        project.client(class),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        HOST,
+        how,
+    )
+}
+
+fn refused(opened: Result<Store, Error>) -> String {
+    match opened {
+        Err(Error::Refused(why)) => why,
+        Err(other) => panic!("refused, not {other:?}"),
+        Ok(_) => panic!("refused, not opened"),
+    }
+}
+
+/// How many tables and functions the project's database holds, by the operator's count.
+fn objects(project: &Project) -> String {
+    project.cluster.value(
+        &project.name,
+        "SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'public') + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n \
+         ON n.oid = p.pronamespace WHERE n.nspname = 'public')",
+    )
+}
+
+fn version(project: &Project) -> String {
+    project.cluster.value(
+        &project.name,
+        "SELECT version FROM meta WHERE id = '\"schema\"'",
+    )
+}
+
+#[test]
+fn a_hosted_board_is_made_by_its_migration_alone_and_then_opens_to_every_writer() {
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        for how in [Opening::write(), Opening::read()] {
+            let why = refused(opened(&project, &how));
+            assert!(
+                why.contains("its deployment's migration"),
+                "PostgreSQL {major}: {why}"
+            );
+            assert_eq!(objects(&project), "0", "nothing was made: {why}");
+        }
+        let store = opened(&project, &Opening::write().migrating()).unwrap();
+        assert_eq!(
+            version(&project),
+            Schema::this_build().version().to_string()
+        );
+        store
+            .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
+            .unwrap();
+        drop(store);
+        let writer = opened(&project, &Opening::write()).unwrap();
+        assert_eq!(writer.get("sim/jump").unwrap().title, "Jump departure");
+        let reader = opened(&project, &Opening::read()).unwrap();
+        assert_eq!(reader.get("sim/jump").unwrap().title, "Jump departure");
+        // A migration run again finds nothing to do.
+        opened(&project, &Opening::write().migrating()).unwrap();
+        assert_eq!(writer.get("sim/jump").unwrap().title, "Jump departure");
+    }
+}
+
+#[test]
+fn a_database_that_holds_anothers_objects_is_never_taken_for_an_empty_board() {
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        project
+            .client("web")
+            .simple("CREATE TABLE theirs (kept text); INSERT INTO theirs VALUES ('kept');")
+            .unwrap();
+        let why = refused(opened(&project, &Opening::write().migrating()));
+        assert!(
+            why.contains("holds tables or functions"),
+            "PostgreSQL {major}: {why}"
+        );
+        assert_eq!(objects(&project), "1");
+        assert_eq!(
+            project
+                .cluster
+                .value(&project.name, "SELECT kept FROM theirs"),
+            "kept"
+        );
+    }
+}
+
+/// What a board answers to the same work, in text: the tasks, a thread, and each search.
+fn worked(store: &Store) -> String {
+    let titles = [
+        (
+            "sim/jump",
+            "Jump departure ÉCOLE naïve",
+            "The ship leaves ﬁnally; Straße and İstanbul",
+        ),
+        (
+            "sim/dock",
+            "Dock arrival Ångström",
+            "ǅungla ΌΣΟΣ ὈΔΥΣΣΕΎΣ résumé",
+        ),
+        (
+            "ui/map",
+            "Map 東京 кириллица",
+            "Zoë's coöperative map, ½ done, ⅷ parts",
+        ),
+    ];
+    for (slug, title, body) in titles {
+        let mut new = NewTask::new(slug, title, "owner");
+        new.body = body.to_string();
+        store.create(&new).unwrap();
+    }
+    store.claim("sim/jump", "amber-heron").unwrap();
+    store
+        .say(
+            "sim/jump",
+            "amber-heron",
+            "Départ confirmé for the Ecole",
+            None,
+        )
+        .unwrap();
+    store
+        .say("sim/dock", "brisk-finch", "odysseus and osos arrive", None)
+        .unwrap();
+    let mut said = String::new();
+    for query in [
+        "ecole",
+        "naive",
+        "strasse",
+        "istanbul",
+        "angstrom",
+        "dzungla",
+        "οσος",
+        "οδυσσευσ",
+        "resume",
+        "東京",
+        "кириллица",
+        "zoe cooperative",
+        "finally",
+        "depart",
+        "nothing-matches",
+    ] {
+        let hits: Vec<String> = store
+            .search(query)
+            .unwrap()
+            .into_iter()
+            .map(|hit| format!("{}@{:.6}", hit.slug, hit.score))
+            .collect();
+        said.push_str(&format!("{query}: {hits:?}\n"));
+    }
+    for slug in ["sim/jump", "sim/dock", "ui/map"] {
+        said.push_str(&format!("{:?}\n", store.get(slug).unwrap()));
+        let thread: Vec<(String, String)> = store
+            .thread(slug)
+            .unwrap()
+            .into_iter()
+            .map(|m| (m.sender, m.text))
+            .collect();
+        said.push_str(&format!("{thread:?}\n"));
+    }
+    said
+}
+
+#[test]
+fn the_same_work_is_answered_alike_on_hosted_16_hosted_18_and_the_local_board() {
+    let seed = || {
+        Seed::default()
+            .session("amber-heron")
+            .session("brisk-finch")
+    };
+    let local = worked(&Fixture::on(Backend::PostgreSql, seed()).store);
+    assert!(local.contains("ecole: [\"sim/jump@"), "{local}");
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        let store = opened(&project, &Opening::write().migrating()).unwrap();
+        store.copy(&seed().dump).unwrap();
+        assert_eq!(worked(&store), local, "PostgreSQL {major}");
+    }
+}
+
+#[test]
+fn a_writer_behind_holds_the_migration_and_a_board_moved_on_refuses_it() {
+    let newer = || {
+        Schema::this_build().then_each(
+            "DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;",
+            "CREATE TABLE IF NOT EXISTS fixture_next (id jsonb PRIMARY KEY, doc jsonb);",
+        )
+    };
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        let old = Program::named("tasks", "/opt/old/tasks");
+        opened(&project, &Opening::write().migrating().by(old.clone())).unwrap();
+        let stale = opened(&project, &Opening::write().by(old.clone())).unwrap();
+        // The newer build's migration is held while the old writer was seen within the week.
+        let held = refused(opened(&project, &Opening::write().migrating().at(newer())));
+        assert!(
+            held.contains("/opt/old/tasks"),
+            "PostgreSQL {major}: {held}"
+        );
+        assert_eq!(
+            version(&project),
+            Schema::this_build().version().to_string()
+        );
+        // Told to leave it behind, it moves the board, and the old writer's next write is refused.
+        opened(
+            &project,
+            &Opening::write().migrating().leave_behind().at(newer()),
+        )
+        .unwrap();
+        assert_eq!(version(&project), newer().version().to_string());
+        let late = stale.create(&NewTask::new("late/one", "Written behind", "owner"));
+        assert!(
+            matches!(late, Err(Error::Refused(_))),
+            "PostgreSQL {major}: {late:?}"
+        );
+        assert_eq!(
+            project
+                .cluster
+                .value(&project.name, "SELECT count(*) FROM task"),
+            "0"
+        );
+        refused(opened(&project, &Opening::write().by(old)));
+    }
+}
+
+#[test]
+fn two_migrations_at_once_make_the_board_once() {
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        let both: Vec<Result<Store, Error>> = std::thread::scope(|scope| {
+            let running: Vec<_> = (0..2)
+                .map(|_| scope.spawn(|| opened(&project, &Opening::write().migrating())))
+                .collect();
+            running.into_iter().map(|one| one.join().unwrap()).collect()
+        });
+        for one in &both {
+            assert!(one.is_ok(), "PostgreSQL {major}: {:?}", one.as_ref().err());
+        }
+        assert_eq!(
+            project.cluster.value(
+                &project.name,
+                "SELECT count(*) FROM meta WHERE id = '\"schema\"'"
+            ),
+            "1"
+        );
+        both[0]
+            .as_ref()
+            .unwrap()
+            .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
+            .unwrap();
+        assert_eq!(
+            both[1].as_ref().unwrap().get("sim/jump").unwrap().title,
+            "Jump departure"
+        );
+    }
+}
+
+#[test]
+fn one_projects_login_reaches_no_other_projects_board() {
+    for major in MAJORS {
+        let cluster = cluster::cluster(major);
+        let (ours, theirs) = (cluster.project(), cluster.project());
+        opened(&ours, &Opening::write().migrating())
+            .unwrap()
+            .create(&NewTask::new("ours/one", "Ours", "owner"))
+            .unwrap();
+        let other = opened(&theirs, &Opening::write().migrating()).unwrap();
+        assert!(
+            other.get("ours/one").is_err(),
+            "PostgreSQL {major}: their board holds none of ours"
+        );
+        // Our login at their database: the server lets it nowhere, and the refusal names nothing.
+        let crossed = format!(
+            "postgresql://{}:{}@localhost:{}/{}",
+            ours.name,
+            cluster::escaped(&ours.password),
+            cluster.port,
+            theirs.name
+        );
+        let client = Client::connect(
+            &settings(""),
+            environment(&[
+                ("URL", crossed),
+                ("CA", cluster.ca.display().to_string()),
+                ("CLASS", "web".into()),
+            ]),
+        )
+        .unwrap();
+        let why = crate::cluster::refused(
+            client.request(&[symphony_board::pg::Step::bare("SELECT count(*) FROM task")]),
+        );
+        assert!(why.contains("SQLSTATE 42501"), "PostgreSQL {major}: {why}");
+        assert!(
+            !why.contains(&ours.password) && !why.contains(&theirs.name),
+            "{why}"
+        );
+    }
+}

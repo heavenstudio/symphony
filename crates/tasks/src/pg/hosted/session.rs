@@ -80,6 +80,8 @@ impl<'a> FromSql<'a> for Cell {
                 text(raw)
             }
             Type::JSONB => text(raw.get(1..).ok_or("an empty jsonb")?),
+            // What a function that returns nothing answers: no text.
+            Type::VOID => Ok(String::new()),
             Type::BOOL => Ok(if raw == [1] { "t" } else { "f" }.into()),
             Type::INT8 => Ok(i64::from_be_bytes(fixed(8)?).to_string()),
             Type::INT4 | Type::OID => {
@@ -180,6 +182,21 @@ fn failed(error: &tokio_postgres::error::DbError, backend: i32) -> DbError {
     }
 }
 
+/// Whether `error` ended its session: the server says so by its severity, and by the class of
+/// an operator's intervention that ends one.
+fn ending(error: &tokio_postgres::error::DbError) -> bool {
+    use tokio_postgres::error::Severity;
+    matches!(
+        error.parsed_severity(),
+        Some(Severity::Fatal | Severity::Panic)
+    ) || [
+        SqlState::ADMIN_SHUTDOWN,
+        SqlState::CRASH_SHUTDOWN,
+        SqlState::CANNOT_CONNECT_NOW,
+    ]
+    .contains(error.code())
+}
+
 impl Session {
     /// A connection to `target`, checked and given one of `share`'s class's slots.
     pub(super) async fn connect(
@@ -221,7 +238,7 @@ impl Session {
     /// held to what this build supports.
     async fn checked(&mut self, database: &str, user: &str) -> Result<(), Refusal> {
         const SQL: &str = "SET default_transaction_isolation = 'repeatable read'; \
-            SET search_path = pg_catalog, public; \
+            SET search_path = public; \
             SELECT current_setting('server_version_num'), current_setting('server_encoding'), \
             current_database(), session_user, \
             r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls, \
@@ -424,9 +441,22 @@ impl Session {
                 Refusal::Lost("the connection was lost before any commit")
             });
         };
+        if ending(server) {
+            return Ended::broken(self.gone(sent.load(Ordering::SeqCst)));
+        }
         let said = failed(server, self.backend);
         let clean = !open || self.client.batch_execute("ROLLBACK").await.is_ok();
         Ended { said, clean }
+    }
+
+    /// A session the server ended, an operator's act or a failover: nothing of its request was
+    /// committed unless its commit was `sent`, in which case the server may have taken it.
+    fn gone(&self, sent: bool) -> Refusal {
+        if sent {
+            Refusal::Unknown("the server ended the session after the commit was sent")
+        } else {
+            Refusal::Lost("the server ended the session before any commit")
+        }
     }
 
     /// `sql`'s statements as one simple query, which says its own transactions: a migration.
@@ -435,6 +465,9 @@ impl Session {
             match self.client.batch_execute(&sql).await {
                 Ok(()) => Ok(()),
                 Err(error) => match error.as_db_error() {
+                    Some(server) if ending(server) => Err(Ended::broken(Refusal::Unknown(
+                        "the server ended the session while a script that commits ran",
+                    ))),
                     Some(server) => {
                         let said = failed(server, self.backend);
                         // The script's own transaction, if it left one failed, is rolled back.

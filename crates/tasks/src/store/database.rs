@@ -108,3 +108,156 @@ impl Database {
         }
     }
 }
+
+/// A PostgreSQL board's client: the socket's ([`pg::Client`]), or a hosted board's handle on its
+/// pool ([`pg::hosted::Client`]). Both take the same requests and give the same answers.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Postgres<'a> {
+    Socket(&'a pg::Client),
+    #[cfg(feature = "hosted-postgresql")]
+    Hosted(&'a pg::hosted::Client),
+}
+
+impl Postgres<'_> {
+    /// Each of `steps`' answers, all of them in one transaction.
+    #[track_caller]
+    pub(super) fn request(self, steps: &[pg::Step]) -> Result<Vec<pg::Answer>, DbError> {
+        match self {
+            Postgres::Socket(client) => client.request(steps),
+            #[cfg(feature = "hosted-postgresql")]
+            Postgres::Hosted(client) => client.request(steps),
+        }
+    }
+
+    /// `sql`'s statements as one simple query, which says its own transactions.
+    #[track_caller]
+    pub(super) fn simple(self, sql: &str) -> Result<Vec<pg::Answer>, DbError> {
+        match self {
+            Postgres::Socket(client) => client.simple(sql),
+            #[cfg(feature = "hosted-postgresql")]
+            Postgres::Hosted(client) => client.simple(sql),
+        }
+    }
+}
+
+/// The client a statement goes to, by the language it is sent in.
+pub(super) enum Reach<'a> {
+    SurrealDb(&'a rpc::Client),
+    PostgreSql(Postgres<'a>),
+}
+
+/// Where a store's board is: one of the [`Database`]s a caller names, or a hosted board, which
+/// no caller's [`Database`] names and the store alone dispatches to.
+#[derive(Debug)]
+pub(super) enum Board {
+    Local(Database),
+    #[cfg(feature = "hosted-postgresql")]
+    Hosted(pg::hosted::Client),
+}
+
+impl From<Database> for Board {
+    fn from(db: Database) -> Board {
+        Board::Local(db)
+    }
+}
+
+impl Board {
+    pub(super) fn reach(&self) -> Reach<'_> {
+        match self {
+            Board::Local(Database::SurrealDb(client)) => Reach::SurrealDb(client),
+            Board::Local(Database::PostgreSql(client)) => {
+                Reach::PostgreSql(Postgres::Socket(client))
+            }
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(client) => Reach::PostgreSql(Postgres::Hosted(client)),
+        }
+    }
+
+    /// The [`Database`] of a board that is in one. A hosted board has none: it is reached by its
+    /// pool, and no socket or address of it is ever given out.
+    pub(super) fn local(&self) -> &Database {
+        match self {
+            Board::Local(db) => db,
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(_) => {
+                panic!("this board is hosted, and is reached by no socket or address of its own")
+            }
+        }
+    }
+
+    /// As [`Board::local`], the database itself.
+    pub(super) fn into_local(self) -> Database {
+        match self {
+            Board::Local(db) => db,
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(_) => {
+                panic!("this board is hosted, and is reached by no socket or address of its own")
+            }
+        }
+    }
+
+    /// What a command or a log names the board's server by: a hosted board's is its label,
+    /// which says nothing of where it is.
+    pub(super) fn addr(&self) -> String {
+        match self {
+            Board::Local(db) => db.addr(),
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(client) => client.label().to_string(),
+        }
+    }
+
+    pub(super) fn database(&self) -> &str {
+        match self {
+            Board::Local(db) => db.database(),
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(client) => client.label(),
+        }
+    }
+
+    pub(super) fn is_postgresql(&self) -> bool {
+        matches!(self.reach(), Reach::PostgreSql(_))
+    }
+
+    /// A refusal of this board's schema, `why`, as its reader takes it: the commands it names
+    /// make and move a local board, and a hosted one is its deployment's migration's.
+    pub(super) fn refusal(&self, why: String) -> String {
+        match self {
+            Board::Local(_) => why,
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(_) => format!(
+                "{why}; this board is hosted, where the commands that refusal names make and \
+                 move nothing: its deployment's migration does"
+            ),
+        }
+    }
+
+    pub(super) fn bounded(&self, most: Duration) -> Board {
+        match self {
+            Board::Local(db) => Board::Local(db.bounded(most)),
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(client) => Board::Hosted(client.bounded(most)),
+        }
+    }
+
+    /// Whether the server said `said` of a board no one has opened. A hosted board's database
+    /// is the platform's to make: one that is not there is an error, never a board to make.
+    pub(super) fn undefined(&self, said: &str) -> bool {
+        match self {
+            Board::Local(db) => db.undefined(said),
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(_) => false,
+        }
+    }
+
+    #[track_caller]
+    pub(super) fn define(&self, nothing: &str) -> Result<(), DbError> {
+        match self {
+            Board::Local(db) => db.define(nothing),
+            #[cfg(feature = "hosted-postgresql")]
+            Board::Hosted(_) => Err(DbError::Failed(
+                "a hosted board's database is made by its platform, and nothing here makes one"
+                    .into(),
+            )),
+        }
+    }
+}

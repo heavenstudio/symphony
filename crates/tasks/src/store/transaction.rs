@@ -8,7 +8,7 @@
 //! in ([`Database`]). On PostgreSQL a statement with no twin yet is refused here, before anything
 //! is sent, naming the line that sent it.
 
-use super::database::Database;
+use super::database::{Board, Postgres, Reach};
 use super::postgres::{self, Pg};
 use super::statement::Statement;
 use super::surreal as sql;
@@ -127,8 +127,8 @@ impl Store {
                 self.after_write();
             }
         };
-        match &self.db {
-            Database::SurrealDb(client) => {
+        match self.db.reach() {
+            Reach::SurrealDb(client) => {
                 let results = client.query(&sql::transaction(guard, &body.surreal), vars)?;
                 committed();
                 let answer = results
@@ -138,7 +138,7 @@ impl Store {
                 answer
                     .ok_or_else(|| Failure::Stop(Error::Db("a transaction gave no answer".into())))
             }
-            Database::PostgreSql(client) => {
+            Reach::PostgreSql(client) => {
                 let twin = body
                     .postgres_at(Location::caller())
                     .map_err(Failure::Stop)?;
@@ -177,9 +177,9 @@ impl Store {
 
     #[track_caller]
     fn request_statement(&self, sql: &Statement, vars: Value) -> Result<Vec<Value>, DbError> {
-        match &self.db {
-            Database::SurrealDb(client) => client.query(&sql.surreal, vars),
-            Database::PostgreSql(client) => {
+        match self.db.reach() {
+            Reach::SurrealDb(client) => client.query(&sql.surreal, vars),
+            Reach::PostgreSql(client) => {
                 let twin = sql
                     .postgres_at(Location::caller())
                     .map_err(|refused| DbError::Failed(refused.to_string()))?;
@@ -198,7 +198,7 @@ impl Store {
 /// `statement` on PostgreSQL, behind the schema's guard when `guarded`, `vars` its variables: its
 /// answer, null for a statement that sends nothing or answers nothing.
 pub(super) fn on_postgres(
-    client: &pg::Client,
+    client: Postgres,
     statement: &Pg,
     vars: &Value,
     guarded: bool,
@@ -236,11 +236,11 @@ pub(super) fn on_postgres(
 
 /// `body`, one read, answered by the board in `db` ([`Store::read`]).
 #[track_caller]
-fn read_on(db: &Database, body: &Statement, mut vars: Value) -> Result<Value, Failure> {
+fn read_on(db: &Board, body: &Statement, mut vars: Value) -> Result<Value, Failure> {
     unset_nulls(&mut vars);
-    let answer = match db {
-        Database::SurrealDb(client) => client.query(&body.surreal, vars)?.pop(),
-        Database::PostgreSql(client) => {
+    let answer = match db.reach() {
+        Reach::SurrealDb(client) => client.query(&body.surreal, vars)?.pop(),
+        Reach::PostgreSql(client) => {
             let twin = body
                 .postgres_at(Location::caller())
                 .map_err(Failure::Stop)?;

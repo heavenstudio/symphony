@@ -211,11 +211,11 @@ pub struct Board {
 
 pub struct Store {
     /// The database the board is in, and its client.
-    db: Database,
+    db: database::Board,
     /// The client the unanswered-post lookup reads through when one is set
     /// ([`Store::looking_up_within`]): this one's board, a read that ran out its shorter wait not
     /// sent again ([`Client::bounded`]). None reads through `db`, as every other read.
-    lookup: Option<Database>,
+    lookup: Option<database::Board>,
     clock: Clock,
     pid_alive: Probe,
     host: String,
@@ -290,9 +290,9 @@ impl Store {
     /// The SurrealDB client of a board on SurrealDB. A board on PostgreSQL has none: its client is
     /// [`Store::database`]'s.
     pub fn client(&self) -> &Client {
-        match &self.db {
-            Database::SurrealDb(client) => client,
-            Database::PostgreSql(_) => {
+        match self.db.reach() {
+            database::Reach::SurrealDb(client) => client,
+            database::Reach::PostgreSql(_) => {
                 panic!("this board is on PostgreSQL, which no SurrealDB client reaches")
             }
         }
@@ -300,12 +300,12 @@ impl Store {
 
     /// The database the board is in.
     pub fn database(&self) -> &Database {
-        &self.db
+        self.db.local()
     }
 
     /// Transfer a preliminary version reader's connection to its command's full opening.
     pub(crate) fn into_database(self) -> Database {
-        self.db
+        self.db.into_local()
     }
 
     /// The time by this store's clock.

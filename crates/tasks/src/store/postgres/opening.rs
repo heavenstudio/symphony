@@ -13,6 +13,22 @@ END IF;",
     None,
 );
 
+/// How many tables, views, sequences and functions the database's own schema holds: what an
+/// empty database a board may be made in has none of.
+#[cfg(feature = "hosted-postgresql")]
+pub(in crate::store) const FOREIGN: Pg<'static> = Pg::Read(std::borrow::Cow::Borrowed(
+    "(SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public')
+    + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public')",
+));
+
+/// The server's version as a number: 160004 is 16.4.
+#[cfg(feature = "hosted-postgresql")]
+pub(in crate::store) const SERVER_VERSION: Pg<'static> = Pg::Read(std::borrow::Cow::Borrowed(
+    "current_setting('server_version_num')::bigint",
+));
+
 /// The key of the lock a migration holds while it runs, so two at once run one after the other.
 const MIGRATING: i64 = 0x0053_594d_504d_4947; // "SYMPMIG"
 
