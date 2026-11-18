@@ -634,17 +634,20 @@ stands on evidence of work already done, so nothing is built twice to land once.
 **One command reads the record.** `just tasks runs SLUG` prints what the recorder kept of the
 task at its branch's tip, `--tip SHA` at another commit ([TASKS](TASKS.md#needed-stamps)): each
 build and test command the task ran there with its newest result, when and by whom, and the runs
-of it before there; the `tests` stamp as its reader reads it; the project's `[verdicts] check`
+of it before there; each command a runner refused there, with the refusal's line; the `tests`
+stamp as its reader reads it; the project's `[verdicts] check`
 (the docs audit here) with its run there, or `no run`; and how many of its runs are at other
 commits, none of them the tip's. The executor reads it before it moves the task to review, and
 the reviewer reads it beside the thread's evidence.
 
 **The executor runs at the tip it asks review for.** A run made before the last commit is of
 another commit: the executor runs it again at the tip, and no reviewer does it in its place. A
-command that cannot pass as typed is recorded red like any other, and no green run of another
-command answers it: only a new commit clears it, so a filter goes after `--`
-(`just test-rs -p PACKAGE --test TARGET -- FILTER FILTER`), as [step 3](#picking-the-focused-set)
-writes it.
+filter goes after `--` (`just test-rs -p PACKAGE --test TARGET -- FILTER FILTER`), as
+[step 3](#picking-the-focused-set) writes it: typed without it, Cargo refuses the command line,
+and the run is recorded as refused, no red and no green at the tip, so the command typed right
+is still to run. A command that ran and cannot pass at the commit is a red no green run of
+another command answers: only a new commit clears it
+([TASKS](TASKS.md#what-clears-a-red-run)).
 
 **The reviewer takes a green recorded run at the tip as run.** It reads the diff against the
 record (`just tasks runs SLUG`) and judges whether those runs cover the change. It builds or

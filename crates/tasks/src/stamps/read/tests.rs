@@ -246,6 +246,134 @@ fn tests_are_missing_while_a_command_is_red_still_going_or_no_test_ran() {
     );
 }
 
+/// `run` as its recorder keeps it once its log said its runner refused it with `line`.
+fn refusal(mut run: Record, line: &str) -> Record {
+    let said = serde_json::json!({"pipeline": "test", "trigger": "owner", "refused": line});
+    run.run = Some(serde_json::from_value(said).unwrap());
+    run
+}
+
+const USAGE: &str = "error: unexpected argument 'owner_words' found";
+
+/// A command its runner refused is no run of it at the tip: no red where the other runs are
+/// green, no green that could stand for a test, and nothing that clears a real red.
+#[test]
+fn a_run_its_runner_refused_is_neither_a_red_nor_a_green_at_the_tip() {
+    let typed = "just test-rs --test hooks own_names owner_words";
+    let never_ran = refusal(run(3, SLUG, typed, Test, TIP, Finished, 1), USAGE);
+    assert_eq!(refused(&never_ran), Some(USAGE));
+    assert_eq!(red(&never_ran).as_deref(), Some("exit 1"));
+    let green = [
+        run(1, SLUG, "just lint-rs", Build, TIP, Finished, 0),
+        run(2, SLUG, "just test-rs", Test, TIP, Finished, 0),
+        never_ran.clone(),
+    ];
+    let reading = tests(&green, TIP, ours);
+    assert!(reading.met, "{reading:?}");
+    assert_eq!(
+        reading.detail,
+        "Green at 4be91c2: `just lint-rs`, `just test-rs`"
+    );
+    assert_eq!(reading.by.as_deref(), Some("agent-2"));
+    assert_eq!(reds(&green, TIP, ours), []);
+    // The same record without its refusal is the red it was: exit 1 alone tells nothing.
+    let mut plain = green.clone();
+    plain[2].run = None;
+    assert_eq!(
+        tests(&plain, TIP, ours).detail,
+        format!("`{typed}` red at 4be91c2: exit 1")
+    );
+    // A failing test, a compile error, a timeout and a kill are reds beside it, whatever it says.
+    for (exit, signal, why) in [
+        (Some(101), None, "exit 101"),
+        (Some(124), None, "exit 124"),
+        (None, Some(9), "ended by signal 9"),
+    ] {
+        let mut failed = run(4, SLUG, "just test-rs -p board", Test, TIP, Finished, 0);
+        (failed.exit_code, failed.signal) = (exit, signal);
+        let runs = [green.as_slice(), &[failed]].concat();
+        let reading = tests(&runs, TIP, ours);
+        assert!(!reading.met);
+        assert_eq!(
+            reading.detail,
+            format!("`just test-rs -p board` red at 4be91c2: {why}")
+        );
+        assert_eq!(
+            reds(&runs, TIP, ours),
+            [("just test-rs -p board".to_string(), why.to_string())]
+        );
+    }
+    // It clears no red of its own command, and stands for no green of it either: the run of the
+    // command before it there is still its newest.
+    let after_red = [
+        run(1, SLUG, typed, Test, TIP, Finished, 101),
+        never_ran.clone(),
+    ];
+    assert_eq!(
+        tests(&after_red, TIP, ours).detail,
+        format!("`{typed}` red at 4be91c2: exit 101")
+    );
+    let after_green = [
+        run(1, SLUG, typed, Test, TIP, Finished, 0),
+        never_ran.clone(),
+    ];
+    assert!(tests(&after_green, TIP, ours).met);
+    // Alone at the tip it is no test run there, and the reading says what was typed.
+    let alone = [
+        run(1, SLUG, "just test-rs", Test, LATER, Finished, 0),
+        never_ran.clone(),
+    ];
+    let reading = tests(&alone, TIP, ours);
+    assert!(!reading.met);
+    assert_eq!(
+        reading.detail,
+        format!(
+            "No build or test ran at 4be91c2: `{typed}` was refused by its runner and never ran \
+             ({USAGE})"
+        )
+    );
+    assert_eq!(reading.commit.as_deref(), Some(TIP));
+    let builds = [
+        run(1, SLUG, "just lint-rs", Build, TIP, Finished, 0),
+        never_ran.clone(),
+    ];
+    assert_eq!(
+        tests(&builds, TIP, ours).detail,
+        "No test ran at 4be91c2: `just lint-rs` green, no test among them"
+    );
+    // Refused at another commit, it is not the last the task ran there.
+    let elsewhere = [
+        run(1, SLUG, "just test-rs", Test, LATER, Finished, 0),
+        refusal(run(2, SLUG, typed, Test, LATER, Finished, 1), USAGE),
+    ];
+    let reading = tests(&elsewhere, TIP, ours);
+    assert_eq!(
+        reading.detail,
+        "No build or test at 4be91c2: the last ran at 7c0ffee"
+    );
+    assert_eq!(reading.by.as_deref(), Some("agent-1"));
+    // A refusal is read of a finished run alone.
+    let mut going = never_ran.clone();
+    going.state = Running;
+    assert_eq!(refused(&going), None);
+    // The check's gate reads its newest run that ran, and the runs at the tip name it apart.
+    let check = [
+        run(1, SLUG, typed, Test, TIP, Finished, 0),
+        never_ran.clone(),
+    ];
+    assert_eq!(
+        newest_of(&check, TIP, typed).unwrap().handle.as_deref(),
+        Some("agent-1")
+    );
+    assert!(newest_of(&[never_ran], TIP, typed).is_none());
+    let found = at_tip(&after_red, TIP, ours);
+    assert_eq!(numbered(&found), (vec![(1, vec![])], vec![]));
+    assert_eq!(found.refused, [&after_red[1]]);
+    let found = at_tip(&elsewhere, TIP, ours);
+    assert_eq!(numbered(&found), (vec![], vec![1, 2]));
+    assert!(found.refused.is_empty());
+}
+
 /// What [`at_tip`] holds, by operation number: each command's newest and the runs before it, then
 /// the runs elsewhere.
 fn numbered(found: &AtTip<'_>) -> (Vec<(u8, Vec<u8>)>, Vec<u8>) {

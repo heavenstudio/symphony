@@ -1875,9 +1875,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   review or blocked (its executor's move to review says the work is ready, and the landing
   closes it with no verdict) or done by an approve standing; in progress or ready it is
   refused to `@executor`, to move it to review. Each other stamp is read at the tip: `tests`
-  the task's recorded runs there (each command's newest run, so a red run of a command is
-  cleared by running it again green at the tip, and one that cannot pass only by a new
-  commit), `pictures` a post naming the tip with a picture, `owner` the owner's approve of the
+  the task's recorded runs there, by [what clears what](#what-clears-a-red-run), `pictures` a post naming the tip with a picture, `owner` the owner's approve of the
   tip. A missing one refuses, naming each and who gives it: `tests` or `pictures` to
   `@executor`, at that tip; `review`, or an assessment of another tip, to `@orchestrator`, to
   start an assessor or staff a fresh reviewer; one waiting on `owner` alone, to
@@ -2286,6 +2284,25 @@ work for you: your own reservation first, then priority, then a red task
 ([Slots](#slots)) before other work of its priority, then the areas you
 already work in (`--affinity`, and the slug prefix of tasks you hold).
 
+### What clears a red run
+
+The `tests` stamp reads, of each build and test command the task ran at the tip, its newest run
+there (`crates/tasks/src/stamps/read.rs`), a command being its recorded label, the recipe and
+its arguments as typed:
+
+| At the tip | What it is | What clears it |
+| --- | --- | --- |
+| a command's newest run red (a failing test, a compile error, a timeout, a kill) | a red: the stamp does not stand | the same command, typed the same, run again green at the tip |
+| a red run of a command that cannot pass at this commit (it names a test target or a package that is not there) | a red | a new commit only, where each stamp the task needs is given again |
+| a run its runner refused before it built or ran anything (a usage error of Cargo, nextest or just, a recipe the justfile does not hold) | no run of its command: no red and no green | nothing to clear; a red of that command before it there still stands, and so does a green |
+| a run of the command at another commit | not the tip's | nothing at the tip is changed by it |
+| a run still going or queued | not yet either | its end |
+
+A green run of another command never clears a red, and a refused run never stands for a test: the
+stamp still needs one test run green at the tip. Nobody marks a real red as not counting, and the
+land takes no waiver: a refusal is what the run's own log says, read by its recorder as it ended
+([MACHINE_WORK](MACHINE_WORK.md#a-command-its-runner-refused)).
+
 ### The regenerator
 
 What a project's `[land] generators` make (this repository's client distribution) is
@@ -2577,7 +2594,8 @@ landing](#the-default-landing)).
   stamp reads it (`crates/tasks/src/cli/commands/runs.rs`): `TIP`; `RUNS`, a row for each build
   and test command the task and the work under it ran there, its newest run's result (`green`,
   `red`, `running`, `queued`), when, how long, who, why it is red, and how many runs of it came
-  before there; `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
+  before there; `REFUSED`, when there are any, a row for each run there its runner refused, with
+  the refusal's line ([what clears what](#what-clears-a-red-run)); `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
   project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
   anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of
   them the tip's. It is what a reviewer reads in place of building again (RULES.md

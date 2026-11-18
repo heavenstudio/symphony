@@ -205,8 +205,8 @@ pub struct Missing {
 fn clears(tip: &str) -> String {
     format!(
         "the newest run of each command at the tip is what counts, so running that command again, \
-         green, at {} clears it; one that cannot pass (a mistyped command) is cleared only by a new \
-         commit, where the stamps the task needs are given again",
+         green, at {} clears it; one that cannot pass (a command that names what is not there) is \
+         cleared only by a new commit, where the stamps the task needs are given again",
         short(tip)
     )
 }
