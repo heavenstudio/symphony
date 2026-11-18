@@ -4,7 +4,7 @@
 
 use crate::children::Child as _;
 use crate::common::Seed;
-use crate::{HeldCwd, Repo, git, write};
+use crate::{HeldCwd, Repo, write};
 use std::collections::BTreeMap;
 use std::path::Path;
 use symphony_board::cli::Env;
@@ -48,24 +48,8 @@ fn stamp(r: &Repo) -> std::path::PathBuf {
 }
 
 #[test]
-fn the_command_line_asks_lsof_itself() {
-    let r = Repo::new();
-    let wt = r.detached("reviewer");
-    let held = symphony_board::sweep::size::shown(symphony_board::sweep::size::bytes(&wt));
-    let (code, out, err) = sweep(&r, &[]);
-    assert_eq!(code, 0, "{err}");
-    r.assert_removed(&wt, &out);
-    assert!(
-        out.ends_with(&format!(
-            "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* branches; \
-             freed {held}\n"
-        )),
-        "{out}"
-    );
-}
-
-#[test]
-fn the_command_line_dry_run_says_every_worktree_and_what_it_would_free() {
+fn a_dry_run_says_what_it_would_and_a_real_sweep_says_when_and_why_first_then_removes() {
+    // The only tests that ask the real `lsof` are the command line's: both passes here do.
     let r = Repo::new();
     let wt = r.detached("reviewer");
     let held = symphony_board::sweep::size::shown(symphony_board::sweep::size::bytes(&wt));
@@ -84,6 +68,25 @@ fn the_command_line_dry_run_says_every_worktree_and_what_it_would_free() {
         )),
         "{out}"
     );
+    // Only a sweep that removes writes the stamp the hourly sweep waits on.
+    assert!(!stamp(&r).exists());
+    // The sweep work finishing started says when and why first.
+    let (code, out, err) = sweep(&r, &["--background", "sim/jump is done"]);
+    assert_eq!(code, 0, "{err}");
+    let first = out.lines().next().unwrap();
+    assert!(
+        first.starts_with('[') && first.ends_with("] sim/jump is done"),
+        "{out}"
+    );
+    r.assert_removed(&wt, &out);
+    assert!(
+        out.ends_with(&format!(
+            "worktree sweep: removed 1 of 2 worktrees, deleted 0 merged worktree-agent-* branches; \
+             freed {held}\n"
+        )),
+        "{out}"
+    );
+    assert!(stamp(&r).is_file());
 }
 
 #[test]
@@ -214,31 +217,32 @@ fn outside_a_repository_it_is_refused() {
 }
 
 #[test]
-fn the_window_is_a_flag() {
+fn the_window_is_a_flag_or_an_environment_variable() {
     let r = Repo::new();
-    let wt = r.detached("idle-an-hour");
-    Repo::age(&wt, 1.0);
+    let by_flag = r.detached("idle-an-hour");
+    let by_variable = r.detached("touched-just-now");
+    Repo::age(&by_flag, 1.0);
     let (_, out, _) = run(&r, &r.root, &["sweep"], |_| {});
-    r.assert_kept(&wt, &out);
+    r.assert_kept(&by_flag, &out);
     let (code, out, err) = run(&r, &r.root, &["sweep", "--recent-hours", "0.5"], |_| {});
     assert_eq!(code, 0, "{err}");
-    r.assert_removed(&wt, &out);
-}
-
-#[test]
-fn the_window_is_an_environment_variable() {
-    let r = Repo::new();
-    let wt = r.detached("idle-an-hour");
-    Repo::age(&wt, 1.0);
+    r.assert_removed(&by_flag, &out);
+    // Touched within the flag's half hour, so that pass kept it; an hour idle, the variable's
+    // half hour lets it go.
+    r.assert_kept(&by_variable, &out);
+    Repo::age(&by_variable, 1.0);
     let (code, out, err) = run(&r, &r.root, &["sweep"], |vars| {
         vars.insert(RECENT_ENV.into(), "0.5".into());
     });
     assert_eq!(code, 0, "{err}");
-    r.assert_removed(&wt, &out);
+    r.assert_removed(&by_variable, &out);
 }
 
 #[test]
 fn a_window_that_is_not_a_number_of_hours_is_refused() {
+    let r = Repo::new();
+    let wt = r.detached("idle");
+    r.idle(&[]);
     for (window, said) in [
         (
             "two hours",
@@ -249,9 +253,6 @@ fn a_window_that_is_not_a_number_of_hours_is_refused() {
             "the window of recent activity must be 0 hours or more, not -1",
         ),
     ] {
-        let r = Repo::new();
-        let wt = r.detached("idle");
-        r.idle(&[]);
         let (code, out, err) = run(&r, &r.root, &["sweep"], |vars| {
             vars.insert(RECENT_ENV.into(), window.into());
         });
@@ -259,6 +260,16 @@ fn a_window_that_is_not_a_number_of_hours_is_refused() {
         assert!(err.starts_with(&format!("✖ {said}")), "{err}");
         assert!(wt.is_dir());
     }
+    // The sweep work finishing started says when and why before its refusal too.
+    let (code, _, err) = run(&r, &r.root, &["sweep", "--background", "hourly"], |vars| {
+        vars.insert(RECENT_ENV.into(), "soon".into());
+    });
+    assert_eq!(code, 2);
+    assert!(
+        err.starts_with("✖ [") && err.contains("] hourly: SYMPHONY_SWEEP_RECENT_HOURS="),
+        "{err}"
+    );
+    assert!(wt.is_dir());
 }
 
 #[test]
@@ -269,43 +280,6 @@ fn a_flag_that_is_not_a_number_is_a_usage_error() {
     assert!(
         err.contains("argument --recent-hours: invalid float value: 'soon'"),
         "{err}"
-    );
-}
-
-#[test]
-fn a_dry_run_says_what_it_would_and_starts_no_sweep() {
-    let r = Repo::new();
-    let wt = r.add("candidate", Some("worktree-agent-dry"), "main");
-    r.commit(&wt, "extends RefCounted\n# dry\n");
-    git(&r.root, &["merge", "-q", "--ff-only", "worktree-agent-dry"]);
-    let (code, out, err) = sweep(&r, &["--dry-run"]);
-    assert_eq!(code, 0, "{err}");
-    assert!(
-        out.contains(&format!("would remove {}", wt.display())),
-        "{out}"
-    );
-    assert!(wt.is_dir());
-    assert!(
-        out.contains("would delete 1 merged worktree-agent-* branch"),
-        "{out}"
-    );
-    assert_eq!(r.branch("worktree-agent-dry"), "+ worktree-agent-dry");
-    // Only a sweep that removes writes the stamp the hourly sweep waits on.
-    assert!(!stamp(&r).exists());
-    let (code, out, _) = sweep(&r, &[]);
-    assert_eq!(code, 0);
-    r.assert_removed(&wt, &out);
-    assert!(stamp(&r).is_file());
-}
-
-#[test]
-fn a_sweep_with_nothing_to_do_says_so() {
-    let r = Repo::new();
-    let (code, out, err) = sweep(&r, &[]);
-    assert_eq!(code, 0, "{err}");
-    assert_eq!(
-        out,
-        "worktree sweep: removed 0 of 1 worktrees, deleted 0 merged worktree-agent-* branches\n"
     );
 }
 
@@ -333,17 +307,27 @@ fn the_tasks_named_let_their_closed_sessions_worktrees_go_at_once() {
             .unwrap();
         trees.push(wt);
     }
-    // Touched just now and bound to live sessions: without the tasks, the window keeps them.
+    let other = r.detached("unrelated");
+    // Touched just now and bound to live sessions: without the tasks, the window keeps them, and
+    // the worktree of no task with them.
     let (_, out, _) = run(&r, &r.root, &["sweep"], |_| {});
-    for wt in &trees {
+    for wt in trees.iter().chain([&other]) {
         r.assert_kept(wt, &out);
     }
+    // The tasks named visit only their worktrees, even while a full pass is held: the third, which
+    // a full pass would now remove, stays.
+    Repo::age(&other, crate::IDLE_HOURS);
+    let held = symphony_board::sweep::trigger::hold(&r.root.join(".git"))
+        .unwrap()
+        .unwrap();
     let args = ["sweep", "--task", "sim/jump", "--task", "sim/dock"];
     let (code, out, err) = run(&r, &r.root, &args, |_| {});
-    assert_eq!(code, 0, "{err}");
+    assert_eq!(code, 0, "{out}{err}");
     for wt in &trees {
         r.assert_removed(wt, &out);
     }
+    r.assert_kept(&other, &out);
+    drop(held);
 }
 
 #[test]
@@ -353,28 +337,6 @@ fn a_task_it_cannot_find_is_refused() {
     assert_eq!(code, 2);
     assert!(
         err.starts_with("✖ ") && err.contains("sim/nowhere"),
-        "{err}"
-    );
-}
-
-#[test]
-fn a_sweep_work_finishing_started_says_when_and_why_first() {
-    let r = Repo::new();
-    let wt = r.detached("reviewer");
-    let (code, out, err) = sweep(&r, &["--background", "sim/jump is done"]);
-    assert_eq!(code, 0, "{err}");
-    let first = out.lines().next().unwrap();
-    assert!(
-        first.starts_with('[') && first.ends_with("] sim/jump is done"),
-        "{out}"
-    );
-    r.assert_removed(&wt, &out);
-    let (code, _, err) = run(&r, &r.root, &["sweep", "--background", "hourly"], |vars| {
-        vars.insert(RECENT_ENV.into(), "soon".into());
-    });
-    assert_eq!(code, 2);
-    assert!(
-        err.starts_with("✖ [") && err.contains("] hourly: SYMPHONY_SWEEP_RECENT_HOURS="),
         "{err}"
     );
 }
@@ -398,8 +360,9 @@ fn a_sweep_work_finishing_started_never_starts_the_boards_server() {
 #[test]
 fn a_busy_trigger_returns_without_opening_the_board_connection() {
     let r = Repo::new();
+    // Held by a commit main does not have, which keeps it before any pass scans the processes.
     let wt = r.detached("kept");
-    write(&wt, "sim/new.gd", "keep this source\n");
+    r.commit(&wt, "extends RefCounted\n# keep this commit\n");
     let request = symphony_board::sweep::Request {
         hours: Some(0.0),
         background: Some("first"),
@@ -427,32 +390,4 @@ fn a_busy_trigger_returns_without_opening_the_board_connection() {
         "{lines:?}"
     );
     r.assert_kept(&wt, &lines.join("\n"));
-}
-
-#[test]
-fn an_explicit_task_sweep_visits_only_its_worktrees_even_during_a_full_pass() {
-    let r = Repo::with(Seed::default().task("sim/jump", "done"));
-    let own = r.merged("jump", "sim/jump");
-    let other = r.detached("unrelated");
-    let handle = r.bind(&own);
-    r.board
-        .store
-        .record_launch(&NewLaunch {
-            worktree: own.to_string_lossy().into_owned(),
-            ..NewLaunch::new("sim/jump", &handle, "executor")
-        })
-        .unwrap();
-    r.board
-        .store
-        .close_task_session("sim/jump", &handle, "done", "restore")
-        .unwrap();
-    Repo::age(&other, crate::IDLE_HOURS);
-    let held = symphony_board::sweep::trigger::hold(&r.root.join(".git"))
-        .unwrap()
-        .unwrap();
-    let (code, out, err) = run(&r, &r.root, &["sweep", "--task", "sim/jump"], |_| {});
-    assert_eq!(code, 0, "{out}{err}");
-    r.assert_removed(&own, &out);
-    r.assert_kept(&other, &out);
-    drop(held);
 }

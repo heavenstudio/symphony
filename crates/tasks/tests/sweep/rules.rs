@@ -188,11 +188,13 @@ fn a_branch_a_live_task_holds_keeps_it() {
         seed = seed.task(&format!("sim/held-{}", status.replace('_', "-")), status);
     }
     let r = Repo::with(seed);
-    for status in LIVE {
+    let trees = LIVE.map(|status| {
         let slug = format!("sim/held-{}", status.replace('_', "-"));
-        let wt = r.merged(&format!("held-{status}"), &slug);
-        let said = r.sweep();
-        r.assert_kept(&wt, &said);
+        (r.merged(&format!("held-{status}"), &slug), slug, status)
+    });
+    let said = r.sweep();
+    for (wt, slug, status) in &trees {
+        r.assert_kept(wt, &said);
         assert!(
             said.contains(&format!("kept {}: task {slug} is {status}", wt.display())),
             "{said}"
@@ -306,16 +308,6 @@ fn a_cwd_scan_that_cannot_be_read_keeps_it() {
             "{name}"
         );
     }
-}
-
-#[test]
-fn the_sweep_takes_the_scan_it_is_given() {
-    let r = Repo::new();
-    let wt = r.detached("occupied");
-    let inner = wt.join("sim");
-    let result = r.sweep_with(|o| o.cwds = Box::new(move || Some(vec![inner.clone()])));
-    r.assert_kept(&wt, &text(&result));
-    assert!(text(&result).contains("a process is working inside it"));
 }
 
 #[test]
@@ -789,6 +781,10 @@ fn a_dry_run_removes_nothing_and_says_what_it_would() {
         said.contains("would delete branch worktree-agent-dry"),
         "{said}"
     );
+    assert!(
+        said.contains("would delete 1 merged worktree-agent-* branch"),
+        "{said}"
+    );
     assert!(wt.is_dir());
     assert_eq!(r.branch("worktree-agent-dry"), "+ worktree-agent-dry"); // still checked out there
 }
@@ -796,7 +792,10 @@ fn a_dry_run_removes_nothing_and_says_what_it_would() {
 #[test]
 fn a_sweep_with_nothing_to_do_says_so() {
     let r = Repo::new();
-    assert!(r.sweep().contains("removed 0 of 1 worktrees"));
+    assert_eq!(
+        r.sweep(),
+        "worktree sweep: removed 0 of 1 worktrees, deleted 0 merged worktree-agent-* branches"
+    );
 }
 
 // -- the agent branches ------------------------------------------------------------------
@@ -849,46 +848,49 @@ fn an_agent_branch_a_kept_worktree_holds_is_kept() {
 
 #[test]
 fn a_detached_agents_ref_stays_while_its_session_holds_the_worktree() {
-    for binding in ["agent-id", "direct", "direct-symlink"] {
-        for health in ["live", "stale", "left"] {
-            let r = Repo::new();
-            let wt = r.add("agent-reviewer", Some("worktree-agent-reviewer"), "main");
+    let r = Repo::new();
+    let mut cases = Vec::new();
+    // The stale sessions first, registered before the board's clock moves on: every session after
+    // it is live, and one that leaves has left whenever it registered.
+    for health in ["stale", "live", "left"] {
+        for binding in ["agent-id", "direct", "direct-symlink"] {
+            let agent = format!("{binding}-{health}");
+            let branch = format!("worktree-agent-{agent}");
+            let wt = r.add(&format!("agent-{agent}"), Some(&branch), "main");
             git(&wt, &["checkout", "-q", "--detach"]);
             let handle = match binding {
                 "agent-id" => {
                     let handle = r.bind(&r.root);
-                    assert!(
-                        r.board
-                            .store
-                            .bind_agent("reviewer", &handle, false)
-                            .unwrap()
-                    );
+                    assert!(r.board.store.bind_agent(&agent, &handle, false).unwrap());
                     handle
                 }
                 "direct" => r.bind(&wt),
                 _ => {
-                    let link = r.dir.join("bound-link");
+                    let link = r.dir.join(format!("bound-link-{health}"));
                     std::os::unix::fs::symlink(&wt, &link).unwrap();
                     r.bind(&link)
                 }
             };
-            if health == "stale" {
-                r.board.advance(LIVE_SECONDS + 60.0);
-            } else if health == "left" {
+            if health == "left" {
                 r.board.store.leave(&handle).unwrap();
             }
-            assert_eq!(r.board.health(&handle).as_str(), health);
-            let said = r.sweep();
-            if health == "left" {
-                r.assert_removed(&wt, &said);
-                assert_eq!(r.branch("worktree-agent-reviewer"), "");
-            } else {
-                r.assert_kept(&wt, &said);
-                assert_eq!(
-                    r.branch("worktree-agent-reviewer"),
-                    "worktree-agent-reviewer"
-                );
-            }
+            cases.push((wt, branch, handle, health));
+        }
+        if health == "stale" {
+            r.board.advance(LIVE_SECONDS + 60.0);
+        }
+    }
+    for (_, _, handle, health) in &cases {
+        assert_eq!(r.board.health(handle).as_str(), *health, "{handle}");
+    }
+    let said = r.sweep();
+    for (wt, branch, _, health) in &cases {
+        if *health == "left" {
+            r.assert_removed(wt, &said);
+            assert_eq!(r.branch(branch), "", "{said}");
+        } else {
+            r.assert_kept(wt, &said);
+            assert_eq!(r.branch(branch), *branch, "{said}");
         }
     }
 }
@@ -926,12 +928,18 @@ fn a_worktree_touched_within_two_hours_is_kept() {
 #[test]
 fn each_thing_it_reads_alone_keeps_it() {
     let r = Repo::new();
-    for index in 0..4 {
-        let wt = r.detached(&format!("touched-{index}"));
-        r.idle(&[]);
-        set_time(&Repo::activity(&wt)[index], SystemTime::now());
-        r.assert_kept(&wt, &text(&r.sweep_now(|_| {})));
+    let trees = [0, 1, 2, 3].map(|index| r.detached(&format!("touched-{index}")));
+    // One with nothing touched, which goes: each of the others is kept by its own marker alone.
+    let untouched = r.detached("untouched");
+    r.idle(&[]);
+    for (index, wt) in trees.iter().enumerate() {
+        set_time(&Repo::activity(wt)[index], SystemTime::now());
     }
+    let said = text(&r.sweep_now(|_| {}));
+    for wt in &trees {
+        r.assert_kept(wt, &said);
+    }
+    r.assert_removed(&untouched, &said);
 }
 
 #[test]
@@ -1098,97 +1106,148 @@ fn a_branch_moved_before_its_deletion_survives() {
     );
 }
 
+/// A stage of the sweep, the tree it is reached for and what to do there.
+type Act = (&'static str, PathBuf, Box<dyn Fn()>);
+
+/// A pause that runs each tree's `act` when the sweep reaches its stage for that tree, a tree and
+/// its stage named once.
+fn at_each(acts: Vec<Act>) -> Pause {
+    let acts: Vec<_> = acts
+        .into_iter()
+        .map(|(stage, wt, act)| (stage, wt.canonicalize().unwrap(), act))
+        .collect();
+    Box::new(move |reached, what| {
+        let what = Path::new(what).canonicalize().ok();
+        for (stage, wt, act) in &acts {
+            if reached == *stage && what.as_ref() == Some(wt) {
+                act();
+            }
+        }
+    })
+}
+
 #[test]
 fn a_session_or_launch_registered_during_the_sweep_keeps_its_tree() {
+    let r = Repo::with(Seed::default().task("sim/starting", "ready"));
+    let mut trees = Vec::new();
+    let mut acts: Vec<Act> = Vec::new();
     for (binding, stage) in [
         ("session", "remove"),
         ("launch", "remove"),
         ("session", "checked"),
         ("launch", "checked"),
     ] {
-        let r = Repo::with(Seed::default().task("sim/starting", "ready"));
-        let wt = r.detached("starting");
+        let wt = r.detached(&format!("starting-{binding}-{stage}"));
         let (store, there, root) = (r.board.other(), wt.clone(), r.root.clone());
-        let result = r.sweep_with(|o| {
-            o.pause = at(stage, &wt, move || {
-                let place = if binding == "session" { &there } else { &root };
-                let handle = store
-                    .register(&NewSession {
-                        worktree: place.to_string_lossy().into_owned(),
-                        ..NewSession::new("worker")
+        let act = move || {
+            let place = if binding == "session" { &there } else { &root };
+            let handle = store
+                .register(&NewSession {
+                    worktree: place.to_string_lossy().into_owned(),
+                    ..NewSession::new("worker")
+                })
+                .unwrap()
+                .row
+                .handle;
+            if binding == "launch" {
+                store
+                    .record_launch(&NewLaunch {
+                        worktree: there.to_string_lossy().into_owned(),
+                        ..NewLaunch::new("sim/starting", &handle, "executor")
                     })
-                    .unwrap()
-                    .row
-                    .handle;
-                if binding == "launch" {
-                    store
-                        .record_launch(&NewLaunch {
-                            worktree: there.to_string_lossy().into_owned(),
-                            ..NewLaunch::new("sim/starting", &handle, "executor")
-                        })
-                        .unwrap();
-                }
-            });
-        });
-        r.assert_kept(&wt, &text(&result));
+                    .unwrap();
+            }
+        };
+        acts.push((stage, wt.clone(), Box::new(act)));
+        trees.push(wt);
     }
+    // One nothing starts in, which goes: each of the others is kept by its own registration.
+    let nobody = r.detached("nobody-starting");
+    let result = r.sweep_with(|o| o.pause = at_each(acts));
+    let said = text(&result);
+    for wt in &trees {
+        r.assert_kept(wt, &said);
+    }
+    r.assert_removed(&nobody, &said);
 }
 
 #[test]
 fn a_new_or_replaced_lock_is_never_unlocked_by_the_old_snapshot() {
-    for (stage, old) in [
-        ("remove", None),
+    let r = Repo::new();
+    let mut trees = Vec::new();
+    let mut acts: Vec<Act> = Vec::new();
+    for (name, stage, old) in [
+        ("relocked-new", "remove", None),
         (
+            "relocked-at-remove",
             "remove",
             Some("claude agent agent-x (pid 41 start Wed Sep 30 13:10:22 2026)"),
         ),
         (
+            "relocked-at-checked",
             "checked",
             Some("claude agent agent-x (pid 41 start Wed Sep 30 13:10:22 2026)"),
         ),
     ] {
-        let r = Repo::new();
-        let wt = r.detached("relocked");
+        let wt = r.detached(name);
         if let Some(reason) = old {
             r.lock(&wt, reason);
         }
         let (root, there) = (r.root.clone(), wt.clone());
-        let result = r.sweep_with(|o| {
-            o.alive = Box::new(|_| false);
-            o.pause = at(stage, &wt, move || {
-                if old.is_some() {
-                    git(&root, &["worktree", "unlock", there.to_str().unwrap()]);
-                }
-                git(
-                    &root,
-                    &[
-                        "worktree",
-                        "lock",
-                        "--reason",
-                        "new owner",
-                        there.to_str().unwrap(),
-                    ],
-                );
-            });
-        });
-        r.assert_kept(&wt, &text(&result));
-        assert!(git(&r.root, &["worktree", "list", "--porcelain"]).contains("locked new owner"));
+        let act = move || {
+            if old.is_some() {
+                git(&root, &["worktree", "unlock", there.to_str().unwrap()]);
+            }
+            git(
+                &root,
+                &[
+                    "worktree",
+                    "lock",
+                    "--reason",
+                    "new owner",
+                    there.to_str().unwrap(),
+                ],
+            );
+        };
+        acts.push((stage, wt.clone(), Box::new(act)));
+        trees.push(wt);
+    }
+    let result = r.sweep_with(|o| {
+        o.alive = Box::new(|_| false);
+        o.pause = at_each(acts);
+    });
+    let said = text(&result);
+    let listing = git(&r.root, &["worktree", "list", "--porcelain"]);
+    for wt in &trees {
+        r.assert_kept(wt, &said);
+        let listed = listing
+            .split("\n\n")
+            .find(|entry| entry.lines().next() == Some(&format!("worktree {}", wt.display())))
+            .unwrap_or_else(|| panic!("{listing}"));
+        assert!(listed.contains("locked new owner"), "{listing}");
     }
 }
 
 #[test]
 fn activity_after_the_first_check_keeps_each_activity_marker() {
+    let r = Repo::new();
+    let mut trees = Vec::new();
+    let mut acts: Vec<Act> = Vec::new();
     for marker in 0..4 {
-        let r = Repo::new();
-        let wt = r.detached("active-again");
+        let wt = r.detached(&format!("active-again-{marker}"));
         let touched = Repo::activity(&wt)[marker].clone();
-        let result = r.sweep_with(|o| {
-            o.pause = at("checked", &wt, move || {
-                set_time(&touched, SystemTime::now())
-            });
-        });
-        r.assert_kept(&wt, &text(&result));
+        let act = move || set_time(&touched, SystemTime::now());
+        acts.push(("checked", wt.clone(), Box::new(act)));
+        trees.push(wt);
     }
+    // One nothing touches, which goes: each of the others is kept by its own marker alone.
+    let untouched = r.detached("idle-still");
+    let result = r.sweep_with(|o| o.pause = at_each(acts));
+    let said = text(&result);
+    for wt in &trees {
+        r.assert_kept(wt, &said);
+    }
+    r.assert_removed(&untouched, &said);
 }
 
 #[test]
