@@ -395,20 +395,17 @@ impl Hub {
         let project = symphony::project::Project::of(&self.root);
         // Each agent's way into its session, its pane only where the project addresses panes.
         symphony_api::resolve_sessions(&mut agents.agents, project.agents.panes == "hc");
-        agents.machine_work.guidance = project
-            .board
-            .machine_wip
-            .iter()
-            .map(|(id, guidance)| {
-                (
-                    id.clone(),
-                    symphony_api::WorkGuidance {
-                        build: guidance.build,
-                        test: guidance.test,
-                    },
-                )
-            })
-            .collect();
+        let mut guidance = BTreeMap::new();
+        for (id, limits) in &project.board.machine_wip {
+            guidance.insert(
+                id.clone(),
+                symphony_api::WorkGuidance {
+                    build: limits.build,
+                    test: limits.test,
+                },
+            );
+        }
+        agents.machine_work.guidance = guidance;
         self.update_board(store, snapshot, agents)
     }
 

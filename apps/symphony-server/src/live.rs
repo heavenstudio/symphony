@@ -1584,7 +1584,13 @@ impl Hub {
                 }
                 // A lane that moved moves what its tasks wait on: the board's snapshot again, over
                 // what was read of it already.
-                let lane: BTreeMap<String, Vec<String>> = lane.into_iter().collect();
+                let lane = {
+                    let mut mapped = BTreeMap::new();
+                    for (slug, cards) in lane {
+                        mapped.insert(slug, cards);
+                    }
+                    mapped
+                };
                 let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
                 if waiting.lane != lane {
                     waiting.lane = lane;
