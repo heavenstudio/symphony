@@ -4,9 +4,9 @@ Why the release run took a night and a morning to release nothing, what a pasted
 pre-certified CI (Buildmark) has that the Symphony lacks and the reverse, and the options for a
 run that is faster and steadier, a hosted run on GitHub among them. The ask and its words are on
 the thread of the board task `docs/release-pipeline-redesign`. This page changes no check, run
-step, budget, test or setting, and builds no attestation, signer or workflow: what it proposes is
-a card in [DECISIONS](../DECISIONS.md) or a board task, each named in
-[what follows](#what-follows).
+step, budget, test or setting, and builds no attestation, signer or workflow: each option's
+card in [DECISIONS](../DECISIONS.md) is answered, and what is built from them is a board task,
+each named in [what follows](#what-follows).
 
 "Read 2026-11-18" marks this machine that day: an Apple M3 Max laptop, 16 cores, shared with the
 agents whose work the run judges. The run records are in the git common dir,
@@ -40,12 +40,14 @@ names its run by that id, and each fix by its board task.
   on the tip, and no server runs anything again. What the proposal adds is a signature, a digest
   of the checks' environment and a verifier on another machine. What it assumes, that a branch
   green alone merges green, is the class of red the release run exists to find.
-- **Recommended, in order:** the run reruns each failure alone before it calls it red
-  ([B](#b-the-run-reruns-each-failure-alone)); the hosted run on GitHub where the plugin is there
-  ([F](#the-hosted-run-on-github)); main judged after each few landings by the inputs changed,
-  once a run costs this machine nothing ([C](#c-main-judged-in-smaller-steps)); and steps and
-  lanes carried by their inputs within a candidate
-  ([A](#a-a-steps-inputs-narrower-than-the-tree)).
+- **Decided, each on its card:** the run reruns each failure alone before it calls it red
+  ([B](#b-the-run-reruns-each-failure-alone)), and the release's checks run on GitHub where the
+  plugin is there ([F](#the-hosted-run-on-github)). Main is not judged after each landing
+  ([C](#c-main-judged-in-smaller-steps)): a run is paced by how long it takes, more often only
+  on GitHub and never on this machine. A task's own recorded run spares the release nothing
+  ([E](#e-runs-accepted-in-place-of-running-again)). Steps and lanes carried by their inputs
+  within a candidate ([A](#a-a-steps-inputs-narrower-than-the-tree)) is the release candidate's
+  own pending part, in progress.
 
 ## The day's record
 
@@ -185,9 +187,9 @@ what no task's gate can, and the day shows four classes:
 
 | class | the day's examples | found now | cheapest place to find it |
 |---|---|---|---|
-| **Combination**: two changes green apart, red together | 16 browser fixtures, two query counts, the table list (runs 2031, 2342) | up to 36 landings later, among 22 failures | a run of main soon after each landing, of the lanes its change can reach, naming one landing ([C](#c-main-judged-in-smaller-steps)) |
+| **Combination**: two changes green apart, red together | 16 browser fixtures, two query counts, the table list (runs 2031, 2342) | up to 36 landings later, among 22 failures | a whole run of main sooner, which only a hosted runner affords: runs paced by a run's length ([C](#c-main-judged-in-smaller-steps)) |
 | **A fix's own break** | the style sheet's copy, broken by the fix before it (run 2131) | one round later | the fix's own evidence: the test that failed takes 10 s, and [CHECKS](../CHECKS.md#evidence-by-kind-of-change) already names it as the closest test for a change to a copied file |
-| **A budget across many landings** | the size budgets, 62,867 bytes after 36 landings and 331,430 after 257 commits (runs 2031, 2318) | when the sum crosses the line, with no landing to name | the size check after each landing that changes a shipped package, where the growth is one landing's ([C](#c-main-judged-in-smaller-steps)) |
+| **A budget across many landings** | the size budgets, 62,867 bytes after 36 landings and 331,430 after 257 commits (runs 2031, 2318) | when the sum crosses the line, with no landing to name | the same: a run of main sooner names fewer landings ([C](#c-main-judged-in-smaller-steps)) |
 | **The run's environment** | the machine's terminals read by the store tests (runs 2031 to 0825); the laptop asleep (run 0931) | as a test's red, read as load | a runner that is nobody's desk ([D](#d-the-run-away-from-the-agents-load)), and a run that says what it ran on |
 | **Load** | 11 tests deleted | as a round each | never as a red: a rerun alone in the same run ([B](#b-the-run-reruns-each-failure-alone)), and tests written on conditions and counts ([CHECKS](../CHECKS.md#time-in-tests)) |
 
@@ -229,14 +231,18 @@ removes no round.
 
 This is the [release candidate's design](release-candidate.md#the-trades) as approved, which
 names the trade (the commit tagged is not itself run in full) and leaves it to the task that
-builds the inputs. It is filed: `tools/release-steps-carry-by-inputs`.
+builds the inputs. It is filed: `tools/release-steps-carry-by-inputs`. The tests are where a
+rerun's time is, so this, with the one scheduler and the time per test
+`tools/nextest-runs-the-tests` gave the step, is where a run not made again saves most
+([E](#e-runs-accepted-in-place-of-running-again)).
 
 ### B. The run reruns each failure alone
 
-The run already knows the command that reruns each failure alone, and writes it into the red it
-files ([RELEASES](../RELEASES.md#the-release-run), step 5). It would run them itself: once the
-lanes have ended, each test libtest named `FAILED` is run again alone, one at a time, in the same
-checkout and build.
+Chosen on [its card](../DECISIONS.md#release-run-reruns-alone), and not built yet. The run
+already knows the command that reruns each failure alone, and writes it into the red it files
+([RELEASES](../RELEASES.md#the-release-run), step 5). It runs them itself: once the tests have
+ended, each test the run named failed is run again alone, one at a time, in the same checkout
+and build.
 
 - **Fails alone:** red, as now, its task saying it failed twice.
 - **Passes alone:** not a red of the release. The run says both results and the load at each,
@@ -250,13 +256,13 @@ checkout and build.
 Cost: the reruns' own time, seconds to a few minutes (the day's reruns alone took 0.5 s to 45 s
 each without a build), and a rule changed: a test that fails in company and passes alone today
 leaves the tree before the release; under B the release is tagged with it in the tree and its
-task follows. That is the card.
+task follows.
 
 It stops catching: a real fault that shows only in company (an order or a shared resource), for
 the length of its task. Today that test is deleted on the same evidence, so nothing is caught
 less; and a test that fails in company through the environment is no longer deleted for it.
 
-The day: runs 2211 and 0931 were red only in tests that passed alone. Under B, 2211 releases
+The day: runs 2211 and 0931 were red only in tests that passed alone. With B, 2211 releases
 `ec74ff5713be` at about 22:40 on 2026-11-17, and the candidate is never dropped. Had that not
 happened, 0931 releases `5696d2f2afa5` at about 10:00 on 2026-11-18 (10:30 with the sleep). Runs
 2031, 2131 and 2342 stay red for their deterministic failures and file fewer tests. Rounds saved:
@@ -270,45 +276,38 @@ alone ([the bounds](#the-candidates-bounds)).
 
 A run judges main once 20 tasks have landed, and nothing judges main while a candidate is open
 ([RELEASES](../RELEASES.md#the-cadence), *Main while it is open*). The day's two first runs were
-36 and 55 landings wide. The proposal: after a land, never before or beside it, a round judges
-main's newest tip by what changed.
+36 and 55 landings wide: run 2031 found 20 deterministic failures together, and the size overrun
+of run 2318 took 8 hours 46 minutes to trace through 257 commits.
 
-- **When.** It is started by the land as the regenerator is, detached, and never waited for: one
-  at a time, the newest tip taken when the round before ends, so ten landings in a round are one
-  round. Nothing queues and no land is held, which
-  [the land's card](../DECISIONS.md#land-tests-changed-packages) requires.
-- **What.** The steps and lanes whose inputs (A) the landings since its last round changed. A
-  document's landing runs the docs audit; a board change the board's lanes; a change to a shipped
-  package the size check.
-- **A red** is a task of its own series at p0, naming the one to five landings of its round, with
-  one owner (RULES.md `tests/a-red-on-main-has-one-owner`). It holds no release and no candidate.
-- **While a candidate is open** it goes on. The candidate's reruns keep their own checkout and
-  lock; a round of main needs a second checkout, or the hosted run.
-- **The release run** stays: the whole verification on one commit, before a tag.
+**Proposed and refused** ([its card](../DECISIONS.md#release-main-judged-in-steps)): a round
+after each land, in the background, of the steps and lanes the landed changes can reach. At 12
+landings an hour that is a round running most of the time, and rounds without end.
 
-Cost: machine time. Landings came at 12 an hour on the evening of 2026-11-17; coalesced, that is
-a round running most of the time, on the machine whose load is the problem. On this machine it
-makes the load worse. On [a hosted runner](#the-hosted-run-on-github) it costs this machine
-nothing, which is why it is recommended after F and not before.
+**The direction instead.** How often main is judged follows how long a run takes, not how often
+tasks land:
 
-It stops catching: nothing. It adds a judgement and removes none.
+- **On this machine** the count of landings stays as it is. It is there so the machine is not
+  always under a run's load, and no run is added beside it.
+- **On GitHub**, once [the hosted run](#the-hosted-run-on-github) exists and its trial has said
+  how long a run takes, a run of main's tip may start on a clock set from that length: a run of
+  an hour started about every half hour, so at most two run at once. It is the whole run on one
+  commit, never a partial round, and a tip already judged starts none.
+- **A red** of such a run is a red of main as any other, naming the landings since the last
+  green run, fewer than today's because the runs are closer.
 
-The day: the 20 deterministic failures of run 2031 would have been found within a round of the
-landing that caused each, by the task that knew the change, instead of together at 20:59 by one
-executor. The size overrun of run 2318 would have named a landing, not 257 commits: its fix, 8
-hours 46 minutes, was a search for where the bytes came from. And each drop of a candidate would
-have fallen onto a main already judged.
-
-It changes [the approved choice](../DECISIONS.md#release-main-while-candidate-open) that nothing
-runs on main while a candidate is open, so it is a new card linking that one.
+Whether a hosted run of main goes on while a candidate is open is not decided here:
+[the approved choice](../DECISIONS.md#release-main-while-candidate-open) is that none does, and
+changing it is a card of its own.
 
 ### D. The run away from the agents' load
 
 - **A reserved share of this machine.** macOS has no way to reserve processors for a process
   group, and holding agents back for a run is what [the rule](../../RULES.md)
   (`tests/no-test-fails-on-load`) forbids. Run 1053 did it by hand all the same. Not proposed.
-  What the run does to itself is `tools/nextest-runs-the-tests`'s, in progress: eight lanes of
-  six threads on 16 cores make the run its own load ([the slow tests](slow-tests.md#what-the-lanes-do-to-each-other)).
+  What the run does to itself was `tools/nextest-runs-the-tests`'s, landed: eight lanes of six
+  threads on 16 cores made the run its own load
+  ([the slow tests](slow-tests.md#what-the-lanes-do-to-each-other)), and one scheduler now runs
+  every test.
 - **Another machine.** A second Mac running `just release` in a clone removes the agents' load
   and the sleeping lid. It costs the machine, and it needs what the hosted run needs: a way for
   a result made elsewhere to become the record and the tag here. It is the hosted design with a
@@ -333,7 +332,8 @@ The pasted shape, placed where it fits. Three candidates for a green accepted wi
   whose lint inputs are the candidate's could spare the release that step. It would spare the
   lint, the docs audit and the client check, one to four minutes of a run of 21 to 54; the tests
   step, the long one, is never a task's run. And it lets an executor's run stand for the
-  release's. Not recommended.
+  release's. Refused ([its card](../DECISIONS.md#release-accepts-task-runs)): one to four minutes
+  of 21 to 54 is no saving worth the trade.
 - **At a release, the release run's own greens, wherever they ran.** A step green in a release
   run, here or hosted, on the same inputs, is accepted by the next: A within a candidate, and F
   across machines. This is the proposal's idea with its trust the right way round: the run that
@@ -343,12 +343,17 @@ What a green accepted so must carry, beyond what a carried green carries now: th
 inputs, and the environment it ran on. A signature and an outside verifier come with F, from the
 platform, and are not built here.
 
-The middle one is the owner's to refuse or take, on a card.
+A run not made again is worth having only where the time is, which is the tests. No task's run
+is the tests step, so that saving comes from the release run's own greens: a lane whose inputs a
+fix left alone is not run again within a candidate (A, `tools/release-steps-carry-by-inputs`),
+and each test now has a time and a timeout of its own under one scheduler
+(`tools/nextest-runs-the-tests`). Nothing further is proposed.
 
 ## The hosted run on GitHub
 
-The direction given is that once the GitHub plugin lands, a release may run on GitHub's CI, and
-that a project without the plugin keeps the local run exactly as it is. The design:
+Once the GitHub plugin is in, a release's checks run on GitHub's CI, and a project without the
+plugin keeps the local run exactly as it is. The design, approved on
+[its card](../DECISIONS.md#release-run-on-github) and not built yet:
 
 **Optional by the plugin.** The release run verifies locally unless the project's GitHub
 integration is installed, its repository identity verified and hosted verification turned on,
@@ -361,8 +366,8 @@ with the commit as its input: never on a push or a pull request, since a task's 
 ([the landing design](github-pr-landing.md#checks-github-requires)). It checks out that commit
 and runs that commit's own `just verify`, a step or a lane to a job:
 
-- one job builds every test binary once and hands it to the lanes' jobs (the archive
-  `tools/nextest-runs-the-tests` brings; until then each lane's job builds its own);
+- one job builds every test binary once and hands it to the tests' jobs as an archive, where
+  nextest's can carry them; else each job builds its own, which the trial settles;
 - one job each for the lint, the client check, the size check, the docs audit, the crates and
   semver checks, and for each lane of the tests;
 - every job runs whatever the others did, as the steps do now, and uploads its log and its line
@@ -431,9 +436,12 @@ and store lanes are the ones a trial must show fit.
 machine's terminals, the lid would not have mattered, and nobody would have been told to stop
 work for a run. The deterministic reds would have been found as they were.
 
-The design is the owner's to approve on a card, and it waits for `tools/github-pr-delivery`,
-whose credential and repository binding it uses. Its first step once approved is the trial: the
-workflow on one commit, by hand, measured.
+**How often it runs.** As the local run does, by the count of landings, until the trial has
+measured a run. From then a run of main's tip may follow a clock set from a run's length
+([C](#c-main-judged-in-smaller-steps)), which this machine's load never allowed.
+
+It waits for `tools/github-pr-delivery`, whose credential and repository binding it uses. Its
+first step is the trial: the workflow on one commit, by hand, measured.
 
 ## The candidate's bounds
 
@@ -454,28 +462,34 @@ The bounds exist so that a candidate that never converges ends. A round red only
 pass alone is not a candidate failing to converge, and the count cannot tell. Under
 [B](#b-the-run-reruns-each-failure-alone) such a round is not red at all, so the reruns bound
 counts what it was meant to: with B, neither candidate of the day reaches it. So no bound's
-number is proposed for change, and no card: the change is B's consequence. If B is refused, the
-smaller change is that a rerun whose every red was answered by a discard does not count.
+number changes, and there is no card: the change is B's consequence, built with it.
 
-What a drop falls onto is C's: while nothing judges main beside a candidate, each drop is wider
-than the last.
+What a drop falls onto is unchanged: nothing judges main beside a candidate
+([C](#c-main-judged-in-smaller-steps)), so each drop is wider than the last.
 
 ## What follows
 
-Cards, each with its recommendation, in [DECISIONS](../DECISIONS.md):
+The cards, each answered in [DECISIONS](../DECISIONS.md):
 
-- **release-run-reruns-alone**: B.
-- **release-main-judged-in-steps**: C, after the hosted run.
-- **release-accepts-task-runs**: whether a task's recorded run may spare the release a step (E).
-- **release-run-on-github**: the hosted design above.
+- **release-run-reruns-alone**: B. The run reruns each failure alone.
+- **release-run-on-github**: the hosted design above, as written.
+- **release-main-judged-in-steps**: refused. A run is paced by its own length, more often only
+  on GitHub ([C](#c-main-judged-in-smaller-steps)).
+- **release-accepts-task-runs**: refused. The saving is in the tests, which the release run's
+  own carried greens reach ([E](#e-runs-accepted-in-place-of-running-again)).
 
-Tasks filed, approved in principle or uncontroversial:
+Tasks:
 
 - `tools/release-steps-carry-by-inputs` (A, and the environment a green names): the approved
-  release candidate's own pending part.
+  release candidate's own pending part, in progress.
+- `tools/nextest-runs-the-tests`: one scheduler, a time and a timeout for each test. Landed.
 - `tools/release-run-says-when-the-machine-slept`: the record's clock and the sleep.
 - `tests/idle-count-discards-restored`: the three store tests deleted on the `idle=1` line, read
   again now that its cause is fixed. It was the cause of each, and all three are back, unchanged.
+- **To be filed by the orchestrator**, which the board then names: B's rerun inside the run, with
+  the candidate's reruns bound counting only what fails alone; the hosted run's trial, after
+  `tools/github-pr-delivery`; the hosted run in `just release`, after the trial; and the hosted
+  run's clock, after both.
 
 Neither a card nor a task:
 
@@ -487,7 +501,7 @@ Neither a card nor a task:
   purchase, and nothing here needs it decided before a hosted trial says what the free runners
   do.
 - **The bounds' numbers**: B's consequence, above.
-- **The tasks C, B and F need** wait for their cards.
+- **A round of main after each land** (C): refused.
 
 ## Verified and inferred
 
