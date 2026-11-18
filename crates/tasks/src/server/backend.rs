@@ -48,6 +48,14 @@ fn engine_name<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Engi
     deserializer.deserialize_str(Name)
 }
 
+fn present(path: &Path) -> Result<bool, ServerError> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(why) if why.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(why) => Err(io("could not inspect board data", path)(why)),
+    }
+}
+
 impl Home {
     fn identity(&self) -> Result<Option<Engine>, ServerError> {
         let path = self.dir.join(FILE);
@@ -83,18 +91,20 @@ impl Home {
             Engine::SurrealDb => postgres::DATA,
             Engine::PostgreSql => super::DATA,
         });
-        if fs::symlink_metadata(&wrong).is_ok() {
+        if present(&wrong)? {
             return Err(ServerError::Io(format!(
                 "backend identity {engine:?} conflicts with data at {}: nothing was started",
                 wrong.display()
             )));
         }
-        let pg = self.dir.join(postgres::DATA);
-        if engine == Engine::PostgreSql && pg.exists() && !pg.join("PG_VERSION").is_file() {
-            return Err(ServerError::Io(format!(
-                "{} is not a complete PostgreSQL data folder",
-                pg.display()
-            )));
+        if engine == Engine::PostgreSql {
+            let pg = self.dir.join(postgres::DATA);
+            if present(&pg)? && !pg.join("PG_VERSION").is_file() {
+                return Err(ServerError::Io(format!(
+                    "{} is not a complete PostgreSQL data folder",
+                    pg.display()
+                )));
+            }
         }
         Ok(())
     }
@@ -297,6 +307,31 @@ mod tests {
         ] {
             fs::write(board.home.dir.join(FILE), text).unwrap();
             assert_eq!(board.home.backend().unwrap(), engine);
+        }
+    }
+
+    #[test]
+    fn metadata_errors_are_not_read_as_absent_data() {
+        let board = Board::new("metadata-error");
+        let file = board.home.dir.join("not-a-folder");
+        fs::write(&file, "kept").unwrap();
+        let home = Home::new(&file, Path::new("/no/surreal"));
+        for engine in [Engine::SurrealDb, Engine::PostgreSql] {
+            assert!(home.data_matches(engine).is_err());
+        }
+        assert_eq!(fs::read_to_string(file).unwrap(), "kept");
+    }
+
+    #[test]
+    fn dangling_or_cyclic_postgresql_data_is_not_an_empty_home() {
+        let board = Board::new("data-links");
+        board.home.initialize_backend(Engine::PostgreSql).unwrap();
+        let pg = board.home.dir.join(postgres::DATA);
+        for target in ["missing", postgres::DATA] {
+            std::os::unix::fs::symlink(target, &pg).unwrap();
+            assert!(board.home.backend().is_err());
+            assert!(board.home.allow_postgresql().is_err());
+            fs::remove_file(&pg).unwrap();
         }
     }
 
