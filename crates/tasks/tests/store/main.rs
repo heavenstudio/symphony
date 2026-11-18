@@ -56,6 +56,10 @@ mod fast_fix;
 mod fields;
 // The adapter contract tests run once in `server`; this adapter uses the same spawn lock.
 #[path = "../../../../tools/test-support/script_board.rs"]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the fixture scripts every crate's tests share start their children as a test likes, and wait by no timer"
+)]
 mod fixture_script;
 mod gate;
 mod hand_over_outage;
