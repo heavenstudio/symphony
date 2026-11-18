@@ -1483,9 +1483,12 @@ impl Hub {
         }
         page.board.version += 1;
         let version = page.board.version;
+        let mut data = serde_json::Map::new();
+        data.insert("version".into(), Value::from(version));
+        data.insert("changes".into(), Value::Array(changes));
         page.history.push_back(Event {
             version,
-            json: json!({"version":version, "changes":changes}).to_string(),
+            json: Value::Object(data).to_string(),
         });
         while page.history.len() > HISTORY {
             page.history.pop_front();
@@ -1626,7 +1629,7 @@ impl Hub {
                 let entry = taskview::entry(&record, &render);
                 data["blocks"] = json!(entry.blocks);
                 data["stamp"] = entry.stamp.into();
-                changed.push(region_event("message", json!(data)));
+                changed.push(region_event("message", data));
             }
         }
         *cursor = Some(latest);
