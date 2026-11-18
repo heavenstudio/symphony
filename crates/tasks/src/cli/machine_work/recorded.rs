@@ -188,6 +188,11 @@ pub struct Run {
     /// The bytes its log held as it finished.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_bytes: Option<u64>,
+    /// Once finished, the line its runner refused its command line with, when its log says that
+    /// and no work ([`crate::runs::refused`]): it built and ran nothing, so it is no evidence about
+    /// its commit, and a stamp's reader passes it over (`crate::stamps::read`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
 }
 
 impl Run {
@@ -196,9 +201,15 @@ impl Run {
         symphony_api::run_name(&self.pipeline)
             && self.step.as_deref().is_none_or(symphony_api::run_name)
             && super::projection::identity(&self.trigger)
-            && [&self.project, &self.tree, &self.runs, &self.log]
-                .iter()
-                .all(|text| text.as_ref().is_none_or(|text| text.len() <= MAX_TEXT))
+            && [
+                &self.project,
+                &self.tree,
+                &self.runs,
+                &self.log,
+                &self.refused,
+            ]
+            .iter()
+            .all(|text| text.as_ref().is_none_or(|text| text.len() <= MAX_TEXT))
             && self.log.as_deref().is_none_or(|log| {
                 Path::new(log)
                     .components()

@@ -1076,6 +1076,7 @@ impl Recording {
                     .map(str::to_owned),
                 log: log.map(|(name, _)| name),
                 log_bytes: None,
+                refused: None,
             }
         });
         let path = folder.join(recorded::OPERATIONS).join(format!("{id}.json"));
@@ -1221,6 +1222,16 @@ impl Recording {
             run.cpu_partial = cpu
                 .and_then(|cpu| cpu.partial)
                 .filter(|_| run.cpu_s.is_some());
+            // A command that ended red may never have run: its log, whole by now
+            // ([`Recording::logged`]), says whether its runner refused its command line. One
+            // that timed out or was stopped ran.
+            let red = symphony_api::End::of(true, exit_code, signal) == symphony_api::End::Red;
+            run.refused = match (&self.runs, &run.log) {
+                (Some(runs), Some(log)) if red && signal.is_none() => {
+                    crate::runs::refused::read(&runs.join(log))
+                }
+                _ => None,
+            };
         }
         let _ = recorded::keep(&self.folder, &record);
         self.line(&record);
