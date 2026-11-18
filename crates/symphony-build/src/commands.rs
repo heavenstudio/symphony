@@ -73,7 +73,8 @@ const PLAIN: [(&str, &str, &str); 4] = [
          sources moved while its version did not is red (exit 1). A registry it cannot\n\
          read is exit 2. With --branch it checks only the published packages the\n\
          checkout changes since it left the default branch, and reads nothing for a\n\
-         branch that changes none.\n",
+         branch that changes none; a crates.io that gives it no answer is said on\n\
+         stderr, the packages named as not checked, and is exit 0.\n",
     ),
     (
         "consumer-notes",
@@ -357,7 +358,7 @@ mod tests {
         );
         let (code, out, err) = built(&["help", "crates-check"]);
         assert_eq!((code, err.as_str()), (0, ""));
-        assert!(out.ends_with("branch that changes none.\n"), "{out}");
+        assert!(out.ends_with("as not checked, and is exit 0.\n"), "{out}");
         for args in [&["help", "release"][..], &["release", "--help"]] {
             let (code, out, err) = built(args);
             assert_eq!((code, err.as_str()), (0, ""), "{args:?}");

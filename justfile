@@ -22,7 +22,8 @@ fmt:
 # it says so in a `Consumer-Note` trailer (docs/RELEASES.md, "Its notes"). The step after it reads
 # the branch the same way for the published packages it changes, and runs the crates check on
 # those alone: red when one's sources moved while crates.io holds its version (docs/RELEASES.md,
-# "Packages on crates.io"). A branch that changes none reads nothing.
+# "Packages on crates.io"). A branch that changes none reads nothing, and a crates.io that gives no
+# answer is said, the packages named as not checked, and no red.
 lint-rs:
     @{{record}} --pipeline lint --step lint build "just lint-rs" just --justfile {{quote(justfile())}} _lint-rs
 

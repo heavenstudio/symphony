@@ -359,6 +359,10 @@ fn scratch_git(root: &Path, args: &[&str]) -> String {
 fn repository(tree: &Tree) -> PathBuf {
     let root = workspace(tree);
     tree.write("ws/README.md", "the workspace\n");
+    tree.write(
+        "ws/charlie/NOTES.md",
+        "what charlie carries beside its sources\n",
+    );
     scratch_git(&root, &["init", "-q", "-b", "main"]);
     scratch_git(&root, &["add", "-A"]);
     scratch_git(&root, &["commit", "-q", "-m", "first"]);
@@ -403,6 +407,12 @@ fn a_branch_touches_the_published_packages_whose_folder_it_changes() {
         "//! alpha, changed\npub fn alpha() {}\n",
     );
     assert_eq!(touched_names(&root), ["alpha", "bravo"]);
+    // A file moved out of a package is gone from it, though it is no change where it went.
+    scratch_git(&root, &["stash", "-q"]);
+    scratch_git(&root, &["mv", "charlie/NOTES.md", "NOTES.md"]);
+    assert_eq!(touched_names(&root), ["bravo", "charlie"]);
+    scratch_git(&root, &["mv", "NOTES.md", "charlie/NOTES.md"]);
+    scratch_git(&root, &["stash", "pop", "-q"]);
     // What main gained since the branch left it is not the branch's.
     scratch_git(&root, &["stash", "-q"]);
     scratch_git(&root, &["checkout", "-q", "main"]);
@@ -466,20 +476,23 @@ fn a_branchs_check_reads_only_the_packages_it_changes() {
         listed(&registry, name, &["1.0.0"]);
     }
     let folder = Registry::Folder(registry.clone());
-    let branch =
-        |default: &str| check_branch(&root, default, &folder, &tree.path("target"), later());
-    assert_eq!(branch("trunk"), Ok(None));
+    let reads = Duration::from_secs(60);
+    let target = tree.path("target");
+    let branch = |default: &str| check_branch(&root, default, &folder, &target, reads, later());
+    assert_eq!(branch("trunk"), Ok(Branch::NoBase));
     // A branch that changes none reads nothing: not the registry, which here cannot be read.
     let unreadable = Registry::Folder(tree.path("ws/README.md"));
-    let none = check_branch(&root, "main", &unreadable, &tree.path("target"), later());
-    assert_eq!(none, Ok(Some(Checked::default())));
+    let none = check_branch(&root, "main", &unreadable, &target, reads, later());
+    assert_eq!(none, Ok(Branch::Checked(Checked::default())));
     // bravo's sources moved while its version did not: red for bravo, and alpha is not read.
     tree.write(
         "ws/bravo/src/lib.rs",
         "//! bravo, changed\npub fn bravo() {}\n",
     );
     committed(&root);
-    let moved = branch("main").unwrap().unwrap();
+    let Ok(Branch::Checked(moved)) = branch("main") else {
+        panic!("{:?}", branch("main"));
+    };
     assert!(moved.lines.is_empty(), "{:?}", moved.lines);
     assert_eq!(
         moved.changed,
@@ -497,11 +510,96 @@ fn a_branchs_check_reads_only_the_packages_it_changes() {
         .read("ws/charlie/Cargo.toml")
         .replace("version = \"1.0.0\" }", "version = \"1.0.1\" }");
     tree.write("ws/charlie/Cargo.toml", &requires);
-    let bumped = branch("main").unwrap().unwrap();
+    let Ok(Branch::Checked(bumped)) = branch("main") else {
+        panic!("{:?}", branch("main"));
+    };
     assert!(bumped.changed.is_empty(), "{:?}", bumped.changed);
     assert_eq!(bumped.lines.len(), 2, "{:?}", bumped.lines);
     assert!(bumped.lines[0].starts_with("bravo 1.0.1: not on the registry "));
     assert!(bumped.lines[1].starts_with("charlie 1.0.0: not on the registry "));
+}
+
+/// The URL of a port of this machine nothing listens on: a registry that gives no answer.
+fn unanswering() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    format!("http://{}", listener.local_addr().unwrap())
+}
+
+#[test]
+fn a_registry_that_gives_no_answer_is_said_of_a_branch_and_an_error_of_the_whole_check() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let target = tree.path("target");
+    tree.write(
+        "ws/bravo/src/lib.rs",
+        "//! bravo, changed\npub fn bravo() {}\n",
+    );
+    tree.write(
+        "ws/alpha/src/lib.rs",
+        "//! alpha, changed\npub fn alpha() {}\n",
+    );
+    // Reads that end before a second try's pause: one refused connection, and no wait.
+    let reads = Duration::from_secs(1);
+    let gone = Registry::At(unanswering());
+    let Ok(Branch::Unread { packages, why }) =
+        check_branch(&root, "main", &gone, &target, reads, later())
+    else {
+        panic!("a registry that gives no answer is no error and no check");
+    };
+    assert_eq!(packages, ["alpha 1.0.0", "bravo 1.0.0"]);
+    assert!(why.starts_with("curl http://127.0.0.1:"), "{why}");
+    // The whole check of the same packages, on the same registry: an error, as it fails closed.
+    let all = packages_of(&root);
+    let whole = compared(
+        &root,
+        &gone,
+        &target,
+        &all,
+        Bound::until(Instant::now() + reads),
+        None,
+    );
+    assert!(matches!(whole, Err(Unread::NoAnswer(_))), "{whole:?}");
+    // An answer that stands as an error is one for a branch too.
+    let refusing = Server::new(vec![Answer::Says(400, "")]);
+    let refused = check_branch(
+        &root,
+        "main",
+        &Registry::At(refusing.base.clone()),
+        &target,
+        reads,
+        later(),
+    );
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|why| why.ends_with(" answered 400")),
+        "{refused:?}"
+    );
+    // And so is a version the registry lists and gives no answer for within the branch's reads:
+    // said, as nothing is known of it.
+    let listing = Server::new(vec![
+        Answer::Says(200, "{\"name\":\"alpha\",\"vers\":\"1.0.0\"}"),
+        Answer::Says(404, ""),
+        Answer::Nothing,
+    ]);
+    let unserved = check_branch(
+        &root,
+        "main",
+        &Registry::At(listing.base.clone()),
+        &target,
+        reads,
+        later(),
+    );
+    assert!(
+        matches!(unserved, Ok(Branch::Unread { .. })),
+        "{unserved:?}"
+    );
+    assert_eq!(listing.heard(), 3);
+}
+
+/// The published packages of the workspace at `root`.
+fn packages_of(root: &Path) -> Vec<Package> {
+    packages(root, bound()).unwrap()
 }
 
 #[test]
@@ -638,10 +736,18 @@ fn a_read_that_got_no_answer_or_a_servers_error_is_tried_again_and_the_next_answ
     assert_eq!(server.heard(), 2);
 }
 
+/// Why a read that got no answer on its last try says it failed: any other end fails the test.
+fn unanswered(read: Result<Option<Vec<u8>>, Unread>) -> String {
+    match read {
+        Err(Unread::NoAnswer(why)) => why,
+        other => panic!("a read that got no answer: {other:?}"),
+    }
+}
+
 #[test]
 fn a_read_that_fails_each_try_says_the_last_failure_and_its_tries() {
     let server = Server::new(vec![Answer::Nothing, Answer::Nothing, Answer::Nothing]);
-    let failed = fetched_by(reads(3, 60), &server.url(), None, bound()).unwrap_err();
+    let failed = unanswered(fetched_by(reads(3, 60), &server.url(), None, bound()));
     assert!(
         failed.starts_with(&format!("curl {} failed: curl: (52) ", server.url()))
             && failed.ends_with(" (tried 3 times)"),
@@ -651,7 +757,7 @@ fn a_read_that_fails_each_try_says_the_last_failure_and_its_tries() {
 
     // The read the release run met: no answer within a try's time, each time.
     let server = Server::new(vec![Answer::Silent, Answer::Silent]);
-    let failed = fetched_by(reads(2, 1), &server.url(), None, bound()).unwrap_err();
+    let failed = unanswered(fetched_by(reads(2, 1), &server.url(), None, bound()));
     assert!(
         failed.starts_with(&format!("curl {} ", server.url()))
             && failed.ends_with(" (tried 2 times)"),
@@ -671,7 +777,7 @@ fn a_read_is_not_tried_again_after_an_answer_that_stands_its_last_try_its_time_o
     let server = Server::new(vec![Answer::Says(400, ""), Answer::Says(200, "")]);
     assert_eq!(
         fetched_by(reads(3, 60), &server.url(), None, bound()),
-        Err(format!("{} answered 400", server.url()))
+        Err(Unread::Failed(format!("{} answered 400", server.url())))
     );
     assert_eq!(
         server.heard(),
@@ -682,7 +788,7 @@ fn a_read_is_not_tried_again_after_an_answer_that_stands_its_last_try_its_time_o
     let server = Server::new(vec![Answer::Says(503, ""), Answer::Says(200, "")]);
     assert_eq!(
         fetched_by(reads(1, 60), &server.url(), None, bound()),
-        Err(format!("{} answered 503", server.url()))
+        Err(Unread::NoAnswer(format!("{} answered 503", server.url())))
     );
     assert_eq!(server.heard(), 1, "one try is all one try makes");
 
@@ -691,7 +797,12 @@ fn a_read_is_not_tried_again_after_an_answer_that_stands_its_last_try_its_time_o
         pause: Duration::from_secs(600),
         ..reads(3, 60)
     };
-    let failed = fetched_by(paused, &server.url(), None, Bound::until(later())).unwrap_err();
+    let failed = unanswered(fetched_by(
+        paused,
+        &server.url(),
+        None,
+        Bound::until(later()),
+    ));
     assert!(
         failed.starts_with(&format!("curl {} failed: curl: (52) ", server.url()))
             && !failed.contains("tried"),
@@ -701,13 +812,12 @@ fn a_read_is_not_tried_again_after_an_answer_that_stands_its_last_try_its_time_o
 
     let server = Server::new(vec![Answer::Silent, Answer::Says(200, "")]);
     let stop = || true;
-    let failed = fetched_by(
+    let failed = unanswered(fetched_by(
         reads(3, 60),
         &server.url(),
         None,
         Bound::hearing(later(), &stop),
-    )
-    .unwrap_err();
+    ));
     assert!(
         failed.starts_with(&format!("curl {} was stopped after ", server.url()))
             && failed.ends_with(" s: the run was told to stop"),

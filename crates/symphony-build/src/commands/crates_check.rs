@@ -10,14 +10,16 @@
 //! `--branch` is a task's own, a step of `just lint-rs`: the same check of the published packages
 //! the checkout changes since it left the default branch, and of no other, so a branch that
 //! changes none reads nothing, of crates.io or of a package, and one that changes a published
-//! package's sources without its version is red at its own tip, not at the next release run.
+//! package's sources without its version is red at its own tip, not at the next release run. A
+//! crates.io that gives it no answer is said and no red (exit 0): only the whole check fails
+//! closed on that.
 #![forbid(unsafe_code)]
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::release::crates::{self, Checked, Registry};
+use crate::release::crates::{self, Branch, Checked, Registry};
 
 const USAGE: &str = "usage: symphony-build crates-check [--branch] [ROOT]";
 /// How long the check may take: a read of crates.io for each package, then the packaging and the
@@ -49,7 +51,16 @@ pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             |_| "main".to_string(),
             |project| project.default_branch.clone(),
         );
-        checked_branch(root, &default, &Registry::of_env(), &target, out, err)
+        let registry = Registry::of_env();
+        checked_branch(
+            root,
+            &default,
+            &registry,
+            &target,
+            crates::BRANCH_READS,
+            out,
+            err,
+        )
     } else {
         checked(root, &Registry::of_env(), &target, out, err)
     }
@@ -70,31 +81,46 @@ fn checked(
 
 /// The check of the published packages the checkout at `root` changes since it left `default`,
 /// said: its exit code, 0 with one line where there is no `default` to compare with or the branch
-/// changes no published package.
+/// changes no published package, and 0 with a line on `err` naming the packages it did not check
+/// where the registry gave no answer within `reads`: that is the network's, never the branch's
+/// red, and the whole check, which the release run makes, is what still fails closed on it.
 fn checked_branch(
     root: &Path,
     default: &str,
     registry: &Registry,
     target: &Path,
+    reads: Duration,
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
-    match crates::check_branch(root, default, registry, target, Instant::now() + BOUND) {
-        Ok(None) => {
+    let until = Instant::now() + BOUND;
+    match crates::check_branch(root, default, registry, target, reads, until) {
+        Ok(Branch::NoBase) => {
             let _ = writeln!(
                 out,
                 "crates-check: this checkout has no {default} to compare with: nothing checked"
             );
             0
         }
-        Ok(Some(found)) if found == Checked::default() => {
+        Ok(Branch::Checked(found)) if found == Checked::default() => {
             let _ = writeln!(
                 out,
                 "crates-check: this branch changes no published package: nothing checked"
             );
             0
         }
-        found => said(found.map(Option::unwrap_or_default), BRANCH, out, err),
+        Ok(Branch::Checked(found)) => said(Ok(found), BRANCH, out, err),
+        Ok(Branch::Unread { packages, why }) => {
+            let _ = writeln!(
+                err,
+                "crates-check: not checked: crates.io gave no answer ({why}), so nothing is known \
+                 of {}, which this branch changes: `just crates-check` reads them, and the \
+                 release run does",
+                packages.join(", ")
+            );
+            0
+        }
+        Err(problem) => said(Err(problem), BRANCH, out, err),
     }
 }
 

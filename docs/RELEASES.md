@@ -212,8 +212,14 @@ reads crates.io and publishes nothing, so a task that changes a published packag
 own tip: `just lint-rs` ends its Rust steps with `symphony-build crates-check --branch`, the same
 check of the published packages the branch changes since it left the default branch (a tracked
 file in the package's folder, or the workspace's `Cargo.toml`, whose settings each packaged
-manifest inherits) and of no other. A branch that changes none reads nothing, of crates.io or of a
-package; one that changes any reads crates.io, and is red where it cannot. On the default
+manifest inherits; a file moved out of the folder too) and of no other. A branch that changes
+none reads nothing, of crates.io or of a package. One that changes any reads crates.io, waiting
+20 seconds at most for what it lists and again for each version it holds: where crates.io gives
+no answer in that time (none at all, or a server's error) the step says on stderr that the
+packages it names were `not checked` and exits 0, since a lint is never red on the machine's
+network, and that line is no evidence either. An answer that stands as an error, a package that
+cannot be made and a red comparison stay red, and `just crates-check` itself fails closed as
+before. On the default
 branch's own tip, where the release run lints, that step has nothing to read, and the whole check
 is the run's own step, whose red is a step's (`tests/release-red-verify-crates-check`). The kit's
 three packages moved to 1.0.1 this way, a doc comment of `symphony-plugin` having changed after

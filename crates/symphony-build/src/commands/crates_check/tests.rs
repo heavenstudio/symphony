@@ -113,10 +113,15 @@ fn git(root: &Path, args: &[&str]) {
 /// The branch's check of `root` against `default` and the registry folder `registry`: its exit
 /// code, stdout and stderr.
 fn run_branch(root: &Path, default: &str, registry: &Path) -> (i32, String, String) {
+    run_branch_on(root, default, &Registry::Folder(registry.to_path_buf()))
+}
+
+/// [`run_branch`] against `registry`, its reads ending before a second try's pause.
+fn run_branch_on(root: &Path, default: &str, registry: &Registry) -> (i32, String, String) {
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let registry = Registry::Folder(registry.to_path_buf());
     let target = root.join("../target");
-    let code = checked_branch(root, default, &registry, &target, &mut out, &mut err);
+    let reads = Duration::from_secs(1);
+    let code = checked_branch(root, default, registry, &target, reads, &mut out, &mut err);
     (
         code,
         String::from_utf8(out).unwrap(),
@@ -199,6 +204,27 @@ fn a_branch_is_checked_for_the_packages_it_changes_and_says_when_that_is_none() 
     fs::create_dir_all(&index).unwrap();
     let (code, _, err) = run_branch(&root, "main", &registry);
     assert_eq!(code, 2, "{err}");
+    // A registry that gives no answer, a port nothing listens on, is said and no red for a branch;
+    // the whole check is exit 2 on it, after its three tries.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let gone = Registry::At(format!("http://{}", listener.local_addr().unwrap()));
+    drop(listener);
+    let (code, out, err) = run_branch_on(&root, "main", &gone);
+    assert_eq!((code, out.as_str()), (0, ""), "{err}");
+    assert!(
+        err.starts_with(
+            "crates-check: not checked: crates.io gave no answer (curl http://127.0.0.1:"
+        ) && err.ends_with(
+            "), so nothing is known of alpha 1.0.0, which this branch changes: `just \
+                 crates-check` reads them, and the release run does\n"
+        ),
+        "{err}"
+    );
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = checked(&root, &gone, &tree.path("target"), &mut out, &mut err);
+    let err = String::from_utf8(err).unwrap();
+    assert_eq!((code, out.is_empty()), (2, true), "{err}");
+    assert!(err.ends_with(" (tried 3 times)\n"), "{err}");
     // `--branch` takes the root after it, and no second flag.
     let (mut out, mut err) = (Vec::new(), Vec::new());
     assert_eq!(

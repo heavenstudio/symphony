@@ -162,8 +162,11 @@ rest, and that an entry says what a project does, not what the change was.
   never a publication. A change to a published package's sources, a doc comment's too, moves its
   version where crates.io holds that version with other sources: `just lint-rs` is red at the
   branch's own tip until it does, by the crates check of the published packages the branch
-  changes ([a version moves with its sources](RELEASES.md#packages-on-cratesio)), so its green
-  lint is that evidence, and `just crates-check` reads every published package. The
+  changes ([a version moves with its sources](RELEASES.md#packages-on-cratesio)). Its green lint
+  is that evidence where the step's lines name the package as read; where crates.io gave no
+  answer the step says `not checked` on stderr, naming the packages, and is no red and no
+  evidence: run `just crates-check`, which reads every published package and fails on a crates.io
+  it cannot read, and post it. The
   packages test is also the closest one for a change to a file a package carries a copy of (the
   client's `board.css` and `frame.css`, `tools/fixture_process.sh`): it fails until the copy is
   made again, naming the `cp`.
