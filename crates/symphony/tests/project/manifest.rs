@@ -472,6 +472,14 @@ fn the_land_table_names_what_the_regenerator_makes_and_whether_a_land_pushes_and
         refused("[land]\ncheck_paths = [\"../x\"]\n")
             .contains("[land] check_paths names \"../x\", which is no path inside the project")
     );
+    // The command that delivers a task by a hosted pull request: a key the project file knows, a
+    // list of words, and never one naming no command.
+    assert!(parsed("[land]\ndelivery = [\"symphony-github\", \"deliver\"]\n").is_ok());
+    assert!(refused("[land]\ndelivery = \"gh\"\n").contains("delivery"));
+    assert!(
+        refused("[land]\ndelivery = [\"\"]\n")
+            .contains("[land] delivery names no command: leave it out to land here")
+    );
     // A generator's key, which the regenerator runs before it, named in `[land] keys`: a key
     // inside the generator's own table would make an older Symphony refuse the whole file.
     let generator =

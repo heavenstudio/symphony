@@ -243,6 +243,38 @@ fn commits_only_immutable_edits_and_preserves_the_real_index() {
 }
 
 #[test]
+fn a_project_delivering_by_pull_request_commits_no_save_to_its_default_branch() {
+    isolated(
+        "a_project_delivering_by_pull_request_commits_no_save_to_its_default_branch",
+        |f| {
+            let root = f.repo();
+            write(
+                &root.join("symphony.toml"),
+                "[land]\ndelivery = [\"symphony-github\", \"deliver\"]\n",
+            );
+            git(&root, &["add", "symphony.toml"]);
+            git(&root, &["commit", "-qm", "deliver by pull request"]);
+            let tip = git(&root, &["rev-parse", "main"]);
+            let verdict = DOC.replace("[ ]", "[x]");
+            let refused = commit_verdicts(
+                &root,
+                &[f.edit("docs/a.md", DOC, &verdict)],
+                "owner verdict",
+            );
+            assert!(!refused.committed);
+            assert_eq!(
+                refused.error,
+                "not saved: this project delivers by pull request ([land] delivery), so nothing \
+                 is committed to main here, and a save has no pull request of its own in this \
+                 build: land the edit as a task's branch"
+            );
+            assert_eq!(git(&root, &["rev-parse", "main"]), tip);
+            assert_eq!(f.main("docs/a.md"), DOC);
+        },
+    );
+}
+
+#[test]
 fn two_verdicts_race_without_lost_files_or_merge_commits() {
     isolated(
         "two_verdicts_race_without_lost_files_or_merge_commits",

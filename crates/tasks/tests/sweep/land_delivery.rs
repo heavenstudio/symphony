@@ -1,0 +1,1351 @@
+//! `tasks land` delivered by a hosted pull request (`[land] delivery`, docs/TASKS.md "A land
+//! delivered by a pull request"), in scratch repositories on a board of their own, the host a
+//! bare repository this file merges in as a host would: what it asks of its transport and in what
+//! order, what refuses before anything is asked, what a lost answer, a wrong commit and a main
+//! checkout that cannot follow leave, and that a project with no such key lands as it did.
+
+use crate::{Repo, git, write};
+use serde_json::{Value, json};
+use std::cell::RefCell;
+use std::fs;
+use std::path::{Path, PathBuf};
+use symphony_board::cli::machine_work::recorded::{self, FOLDER_VAR, Phase, Record, Step};
+use symphony_board::land::delivery::{Journal, Receipt, Stage, Transport};
+use symphony_board::land::{Stop, evidence, land, land_by};
+use symphony_board::stamps::{Catalogue, Needs};
+
+const SLUG: &str = "sim/jump";
+/// The project file of a project that delivers by pull request.
+const DELIVERS: &str = "[land]\ncheck = false\ndelivery = [\"host\", \"deliver\"]\n";
+
+fn head(dir: &Path, rev: &str) -> String {
+    git(dir, &["rev-parse", rev])
+}
+
+fn project_file(r: &Repo, text: &str) {
+    write(&r.root, "symphony.toml", text);
+    git(&r.root, &["add", "symphony.toml"]);
+    git(&r.root, &["commit", "-qm", "the project file"]);
+}
+
+/// A bare repository beside the checkout, its `origin`, holding main as it is now.
+fn remote(r: &Repo) -> PathBuf {
+    let bare = r.dir.join("origin.git");
+    let at = bare.to_string_lossy().into_owned();
+    git(&r.dir, &["init", "-q", "--bare", "-b", "main", &at]);
+    git(&r.root, &["remote", "add", "origin", &at]);
+    git(&r.root, &["push", "-q", "origin", "main"]);
+    bare
+}
+
+/// A repository whose default branch commits `[land] delivery`, and its host.
+fn delivering() -> (Repo, PathBuf) {
+    let r = Repo::new();
+    project_file(&r, DELIVERS);
+    let bare = remote(&r);
+    (r, bare)
+}
+
+/// Who holds a task here.
+struct People {
+    orch: String,
+    exe: String,
+    assessor: String,
+}
+
+/// `slug` filed, orchestrated, its branch writing `file`, claimed and in review: the people, the
+/// worktree and the head.
+fn in_review(r: &Repo, slug: &str, file: &str) -> (People, PathBuf, String) {
+    let wt = r.add(&slug.replace('/', "-"), Some(slug), "main");
+    write(&wt, file, "extends Node\n");
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", &format!("work on {slug}")]);
+    let store = &r.board.store;
+    let people = People {
+        orch: r.board.session("orchestrator"),
+        exe: r.board.session("worker"),
+        assessor: r.board.session("reviewer"),
+    };
+    r.task(slug);
+    store.take_role(slug, &people.orch, "orchestrator").unwrap();
+    store.claim(slug, &people.exe).unwrap();
+    store.move_to(slug, "review", &people.exe).unwrap();
+    let tip = head(&wt, "HEAD");
+    (people, wt, tip)
+}
+
+fn assess(r: &Repo, slug: &str, by: &str, stamps: &[&str], tip: &str) {
+    let needs = Needs {
+        stamps: if stamps.is_empty() {
+            vec!["none".into()]
+        } else {
+            stamps.iter().map(|s| (*s).to_string()).collect()
+        },
+        tip: Some(tip.into()),
+        by: by.into(),
+        why: "as the guidelines say".into(),
+    };
+    (r.board.store)
+        .set_needs(slug, &Catalogue::symphony(), &needs)
+        .unwrap();
+}
+
+fn work(r: &Repo) -> PathBuf {
+    r.dir.join("work")
+}
+
+static RUNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// A test run of `slug` at `commit` the recorder kept, finished with `exit`.
+fn ran(r: &Repo, slug: &str, commit: &str, label: &str, exit: i32) {
+    let n = RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let started = 1000.0 + f64::from(n);
+    let record = Record {
+        version: 1,
+        operation_id: format!("{n:032x}"),
+        parent_id: None,
+        phase: Phase::Test,
+        label: label.into(),
+        state: Step::Finished,
+        handle: Some("amber".into()),
+        task: Some(slug.into()),
+        checkout: r.root.to_string_lossy().into_owned(),
+        branch: Some(slug.into()),
+        commit: Some(commit.into()),
+        machine_id: None,
+        host: "host".into(),
+        pid: 10,
+        child_pid: Some(11),
+        queued_at: started,
+        started_at: Some(started),
+        ended_at: Some(started + 0.5),
+        beat_at: started,
+        exit_code: Some(exit),
+        signal: None,
+        reason: String::new(),
+        run: None,
+        reading: None,
+    };
+    recorded::keep(&work(r), &record).unwrap();
+}
+
+/// `slug` ready to deliver: assessed at its head as needing `tests` and `review`, its tests green
+/// there and a fresh reviewer's approve naming it.
+fn ready(r: &Repo, slug: &str) -> (People, PathBuf, String) {
+    let (people, wt, tip) = in_review(r, slug, "sim/jump.gd");
+    assess(r, slug, &people.assessor, &["tests", "review"], &tip);
+    ran(r, slug, &tip, "cargo test -p sim", 0);
+    approve(r, slug, &format!("{tip}: reads well"));
+    (people, wt, tip)
+}
+
+/// A fresh reviewer's approve of `slug` saying `text`.
+fn approve(r: &Repo, slug: &str, text: &str) {
+    let reviewer = r.board.session("reviewer");
+    let store = &r.board.store;
+    store.take_role(slug, &reviewer, "reviewer").unwrap();
+    store.verdict(slug, &reviewer, "approve", text).unwrap();
+}
+
+/// How the host answers a merge.
+#[derive(Clone, Copy, PartialEq)]
+enum Merges {
+    /// One commit on its default branch, the merge of it and the head.
+    Squash,
+    /// A merge commit of two parents.
+    ByCommit,
+    /// One commit whose tree is the default branch's own: the head's change lost.
+    WrongTree,
+    /// Refused, for this kind of reason.
+    Refuses(&'static str),
+    /// Closed without a merge.
+    Closes,
+}
+
+/// A verb, and what runs when it is asked.
+type Hook<'r> = (&'static str, Box<dyn FnOnce() + 'r>);
+
+/// A host: the bare repository, one pull request, and what it was asked.
+struct Host<'r> {
+    r: &'r Repo,
+    bare: PathBuf,
+    merges: Merges,
+    /// Each verb asked, with its request.
+    asked: RefCell<Vec<(String, Value)>>,
+    /// The pull request: its head, and the commit it was merged as or that it was closed.
+    pull: RefCell<(Option<String>, Option<String>, bool)>,
+    /// Verbs that give no answer, each once, the act made first.
+    lost: RefCell<Vec<&'static str>>,
+    /// Run when a verb is asked, before it acts.
+    before: RefCell<Vec<Hook<'r>>>,
+    /// The head `publish` says the pull request is at, in place of the one pushed.
+    says_head: Option<String>,
+}
+
+impl<'r> Host<'r> {
+    fn new(r: &'r Repo, bare: &Path) -> Host<'r> {
+        Host {
+            r,
+            bare: bare.into(),
+            merges: Merges::Squash,
+            asked: RefCell::default(),
+            pull: RefCell::default(),
+            lost: RefCell::default(),
+            before: RefCell::default(),
+            says_head: None,
+        }
+    }
+
+    fn merging(mut self, merges: Merges) -> Self {
+        self.merges = merges;
+        self
+    }
+
+    fn losing(self, verbs: &[&'static str]) -> Self {
+        self.lost.borrow_mut().extend(verbs);
+        self
+    }
+
+    fn before(self, verb: &'static str, act: impl FnOnce() + 'r) -> Self {
+        self.before.borrow_mut().push((verb, Box::new(act)));
+        self
+    }
+
+    fn verbs(&self) -> Vec<String> {
+        (self.asked.borrow().iter())
+            .map(|(verb, _)| verb.clone())
+            .collect()
+    }
+
+    fn request(&self, verb: &str) -> Value {
+        (self.asked.borrow().iter().rev())
+            .find(|(asked, _)| asked == verb)
+            .map(|(_, request)| request.clone())
+            .unwrap()
+    }
+
+    /// The host's own merge of `head` into its default branch, as `self.merges` has it.
+    fn merge(&self, head: &str, title: &str) -> String {
+        let bare = &self.bare;
+        let base = head_of(bare, "main");
+        let tree = match self.merges {
+            Merges::WrongTree => head_of(bare, "main^{tree}"),
+            _ => git(bare, &["merge-tree", "--write-tree", &base, head]),
+        };
+        let mut args = vec!["commit-tree", &tree, "-p", &base, "-m", title];
+        if self.merges == Merges::ByCommit {
+            args.extend(["-p", head]);
+        }
+        let made = git(bare, &args);
+        git(bare, &["update-ref", "refs/heads/main", &made]);
+        made
+    }
+}
+
+fn head_of(dir: &Path, rev: &str) -> String {
+    git(dir, &["rev-parse", rev])
+}
+
+impl Transport for Host<'_> {
+    fn ask(&self, verb: &str, request: &Value) -> Result<Value, String> {
+        (self.asked.borrow_mut()).push((verb.to_string(), request.clone()));
+        let hook = {
+            let mut before = self.before.borrow_mut();
+            (before.iter().position(|(at, _)| *at == verb)).map(|at| before.remove(at).1)
+        };
+        if let Some(hook) = hook {
+            hook();
+        }
+        let lost = {
+            let mut lost = self.lost.borrow_mut();
+            (lost.iter().position(|at| *at == verb)).map(|at| lost.remove(at))
+        };
+        let answer = match verb {
+            "publish" => {
+                let (slug, head) = (
+                    request["slug"].as_str().unwrap(),
+                    request["head"].as_str().unwrap(),
+                );
+                let pushed = format!("{head}:refs/heads/{slug}");
+                git(&self.r.root, &["push", "-q", "origin", &pushed]);
+                self.pull.borrow_mut().0 = Some(head.to_string());
+                json!({
+                    "state": "published",
+                    "repository": {"id": 7, "name": "owner/name"},
+                    "pull": {"number": 3, "url": "https://example.test/owner/name/pull/3"},
+                    "head": self.says_head.clone().unwrap_or_else(|| head.to_string()),
+                })
+            }
+            "merge" => {
+                let head = request["head"].as_str().unwrap();
+                match self.merges {
+                    Merges::Refuses(kind) => {
+                        json!({"state": "refused", "kind": kind, "why": format!("no: {kind}")})
+                    }
+                    Merges::Closes => {
+                        self.pull.borrow_mut().2 = true;
+                        json!({"state": "refused", "kind": "other", "why": "it is closed"})
+                    }
+                    _ => {
+                        let made = self.merge(head, request["title"].as_str().unwrap());
+                        self.pull.borrow_mut().1 = Some(made.clone());
+                        json!({"state": "merged", "sha": made})
+                    }
+                }
+            }
+            "result" => {
+                let (head, merged, closed) = self.pull.borrow().clone();
+                let state = match (&merged, closed) {
+                    (Some(_), _) => "merged",
+                    (None, true) => "closed",
+                    (None, false) => "open",
+                };
+                json!({"state": state, "head": head, "sha": merged, "base": "main", "repository": 7})
+            }
+            "landed" => json!({"state": "noted", "said": "its issue is closed"}),
+            other => panic!("no verb {other}"),
+        };
+        match lost {
+            Some(verb) => Err(format!("{verb}: no answer")),
+            None => Ok(answer),
+        }
+    }
+}
+
+fn refusal(stop: Stop) -> String {
+    match stop {
+        Stop::Refused(line) => line,
+        Stop::Board(error) => panic!("the board failed: {error:?}"),
+    }
+}
+
+/// The land of `slug` as `actor` with `host` answering: what it printed, and how it ended.
+fn landed(r: &Repo, slug: &str, actor: &str, host: &Host) -> (String, Result<String, String>) {
+    landed_with(r, slug, actor, host, &[])
+}
+
+fn landed_with(
+    r: &Repo,
+    slug: &str,
+    actor: &str,
+    host: &Host,
+    vars: &[(&str, &str)],
+) -> (String, Result<String, String>) {
+    let mut env = r.env(&r.root);
+    let folder = work(r).to_string_lossy().into_owned();
+    env.vars.insert(FOLDER_VAR.into(), folder);
+    for (name, value) in vars {
+        env.vars.insert((*name).into(), (*value).into());
+    }
+    let mut out = Vec::new();
+    let result = land_by(&r.board.store, &env, slug, actor, &mut out, host);
+    (String::from_utf8(out).unwrap(), result.map_err(refusal))
+}
+
+fn lands(r: &Repo) -> PathBuf {
+    r.root.join(".git/symphony/tasks/land")
+}
+
+/// The landed lines on `slug`'s thread.
+fn landings(r: &Repo, slug: &str) -> Vec<String> {
+    (r.board.said(slug).into_iter())
+        .filter(|line| line.starts_with("landed "))
+        .collect()
+}
+
+/// Nothing of `slug` landed: the host's default branch and the checkout's where they were, the
+/// task open, no receipt.
+fn assert_nothing_landed(r: &Repo, bare: &Path, before: &str) {
+    assert_eq!(head(bare, "main"), before, "the host's main stays");
+    assert_eq!(head(&r.root, "main"), before, "main stays here");
+    assert!(landings(r, SLUG).is_empty(), "{:?}", r.board.said(SLUG));
+    assert!(Receipt::read(&lands(r), SLUG).is_none());
+}
+
+// -- with no key -----------------------------------------------------------------------------------
+
+#[test]
+fn with_no_delivery_key_the_land_merges_here_and_asks_no_transport() {
+    let r = Repo::new();
+    project_file(&r, "[land]\ncheck = false\n");
+    let bare = remote(&r);
+    let (people, _, tip) = ready(&r, SLUG);
+    let host = Host::new(&r, &bare);
+    let (said, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap();
+    assert!(host.verbs().is_empty(), "{:?}", host.verbs());
+    assert_eq!(
+        head(&r.root, "main^2"),
+        tip,
+        "one merge commit, the tip its second parent"
+    );
+    assert_eq!(
+        head(&bare, "main"),
+        head(&r.root, "main"),
+        "pushed by the land"
+    );
+    assert!(line.ends_with("; pushed to origin"), "{line}");
+    assert!(said.contains("merging "), "{said}");
+    assert!(!Journal::path(&lands(&r), SLUG).exists());
+    assert!(!lands(&r).join("receipts").exists());
+    // The same task, the same land, by the entry every land takes: the same line but its merge.
+    let s = Repo::new();
+    project_file(&s, "[land]\ncheck = false\n");
+    remote(&s);
+    let (people, _, _) = ready(&s, SLUG);
+    let mut env = s.env(&s.root);
+    (env.vars).insert(FOLDER_VAR.into(), work(&s).to_string_lossy().into_owned());
+    let mut out = Vec::new();
+    let plain = land(&s.board.store, &env, SLUG, &people.orch, None, &mut out)
+        .map_err(refusal)
+        .unwrap();
+    let shape = |line: &str| {
+        let (start, rest) = line.split_once(" at ").unwrap();
+        format!("{start}{}", &rest[12..])
+    };
+    assert_eq!(shape(&plain), shape(&line));
+}
+
+#[test]
+fn a_project_file_naming_an_empty_delivery_command_is_refused() {
+    let r = Repo::new();
+    project_file(&r, "[land]\ndelivery = [\"\"]\n");
+    let bare = remote(&r);
+    let (people, ..) = ready(&r, SLUG);
+    let (_, result) = landed(&r, SLUG, &people.orch, &Host::new(&r, &bare));
+    assert_eq!(
+        result.unwrap_err(),
+        "symphony.toml: [land] delivery names no command: leave it out to land here"
+    );
+}
+
+// -- what is delivered -----------------------------------------------------------------------------
+
+#[test]
+fn a_ready_task_is_squashed_by_its_pull_request_and_the_checkout_follows() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let base = head(&bare, "main");
+    // The evidence the api answers, read before the land.
+    let mut env = r.env(&r.root);
+    (env.vars).insert(FOLDER_VAR.into(), work(&r).to_string_lossy().into_owned());
+    let read = evidence::of(&r.board.store, &env, SLUG, Some(&tip)).unwrap();
+    assert!(read.eligible, "{:?}", read.blocking);
+    let host = Host::new(&r, &bare);
+    let (said, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap();
+    assert_eq!(host.verbs(), ["publish", "merge", "result", "landed"]);
+    // What was published is the evidence the api answers: one reading.
+    let published: evidence::Snapshot =
+        serde_json::from_value(host.request("publish")["snapshot"].clone()).unwrap();
+    assert_eq!(published, read);
+    let merge = host.request("merge");
+    assert_eq!(merge["head"], tip.as_str());
+    assert_eq!(merge["method"], "squash");
+    assert_eq!(
+        (merge["repository"].as_i64(), merge["pull"].as_i64()),
+        (Some(7), Some(3))
+    );
+    assert_eq!(merge["title"], format!("{SLUG}: A task"));
+    // One commit on the base, made by the host; the checkout followed it and merged nothing.
+    let squash = head(&bare, "main");
+    assert_eq!(head(&r.root, "main"), squash);
+    assert_eq!(
+        git(&r.root, &["rev-list", "--parents", "-n1", "main"]),
+        format!("{squash} {base}")
+    );
+    assert!(!said.contains("merging "), "{said}");
+    assert_eq!(
+        line,
+        format!(
+            "landed {SLUG} on main at {}; squashed from {tip} by pull request #3 of owner/name",
+            &squash[..12]
+        )
+    );
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
+    assert_eq!(landings(&r, SLUG).len(), 1);
+    // The receipt keeps the head and the commit made of it, and the head stays reachable.
+    let receipt = Receipt::read(&lands(&r), SLUG).unwrap();
+    assert_eq!(
+        (receipt.head.as_str(), receipt.squash.as_str()),
+        (tip.as_str(), squash.as_str())
+    );
+    assert_eq!(
+        (receipt.parent.as_str(), receipt.base_observed.as_str()),
+        (base.as_str(), base.as_str())
+    );
+    assert_eq!(receipt.revision, read.revision);
+    assert_eq!(receipt.tree, head(&r.root, "main^{tree}"));
+    assert_eq!(
+        head(&r.root, &format!("refs/symphony/delivered/{SLUG}")),
+        tip
+    );
+    assert!(
+        !Journal::path(&lands(&r), SLUG).exists(),
+        "nothing is left to finish"
+    );
+    assert!(
+        said.contains("land sim/jump: its issue is closed"),
+        "{said}"
+    );
+    // Asked again, it delivers nothing twice.
+    let again = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &again);
+    assert!(again.verbs().is_empty());
+    let line = result.unwrap_err();
+    assert!(
+        line.starts_with(&format!(
+            "{SLUG} was closed after its approval: landed {SLUG} on main"
+        )),
+        "{line}"
+    );
+    assert_eq!(head(&bare, "main"), squash, "delivered once");
+    // Nor does its head go back to review: its receipt says it landed, as no history does.
+    let reopened = symphony_board::land::reopenable(&r.board.store, Some(&r.env(&r.root)), SLUG);
+    assert_eq!(
+        reopened.unwrap_err().to_string(),
+        format!(
+            "{SLUG}'s tip {} is on main already, squashed as {} by pull request #3: it does not \
+             go back to review, and what it still needs goes in a new task",
+            &tip[..7],
+            &squash[..7]
+        )
+    );
+}
+
+#[test]
+fn a_task_assessed_as_needing_no_stamp_is_delivered_from_review_with_each_waiver_said() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = in_review(&r, SLUG, "docs/design.md");
+    assess(&r, SLUG, &people.assessor, &[], &tip);
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap();
+    assert!(
+        line.contains(&format!(
+            "; its needs (none) stood at {tip}; squashed from {tip}"
+        )),
+        "{line}"
+    );
+    let snapshot = host.request("publish")["snapshot"].clone();
+    assert_eq!(snapshot["assessed"], true);
+    for stamp in snapshot["stamps"].as_array().unwrap() {
+        assert_eq!(stamp["standing"], "waived", "{stamp}");
+        assert_eq!(
+            stamp["detail"],
+            format!(
+                "Waived by the assessment of {}: as the guidelines say",
+                people.assessor
+            )
+        );
+    }
+}
+
+#[test]
+fn the_base_moving_alone_keeps_the_heads_evidence() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    // The host's main gains a commit the checkout has not fetched.
+    let other = r.dir.join("elsewhere");
+    git(
+        &r.dir,
+        &[
+            "clone",
+            "-q",
+            &bare.to_string_lossy(),
+            &other.to_string_lossy(),
+        ],
+    );
+    for (key, value) in [("user.email", "o@example.com"), ("user.name", "o")] {
+        git(&other, &["config", key, value]);
+    }
+    write(&other, "sim/other.gd", "extends Node\n");
+    git(&other, &["add", "-A"]);
+    git(&other, &["commit", "-qm", "pushed elsewhere"]);
+    git(&other, &["push", "-q", "origin", "main"]);
+    let moved = head(&other, "HEAD");
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    result.unwrap();
+    let receipt = Receipt::read(&lands(&r), SLUG).unwrap();
+    assert_eq!(
+        receipt.parent, moved,
+        "squashed on the base as it was when merged"
+    );
+    assert_eq!(receipt.head, tip);
+    assert_eq!(head(&r.root, "main"), head(&bare, "main"));
+    assert!(r.root.join("sim/other.gd").exists() && r.root.join("sim/jump.gd").exists());
+}
+
+// -- what refuses before anything is asked ---------------------------------------------------------
+
+#[test]
+fn evidence_that_does_not_name_the_head_refuses_before_anything_is_published() {
+    // No assessment: the catalogue's default, an approve, lands a task here, never by a pull
+    // request.
+    let (r, bare) = delivering();
+    let before = head(&bare, "main");
+    let (people, _, tip) = in_review(&r, SLUG, "sim/jump.gd");
+    approve(&r, SLUG, &format!("{tip}: reads well"));
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(
+        line.starts_with(&format!(
+            "{SLUG} is not eligible for delivery by pull request at"
+        )),
+        "{line}"
+    );
+    assert!(
+        line.contains("no assessment names what sim/jump needs"),
+        "{line}"
+    );
+    assert!(host.verbs().is_empty());
+    assert_nothing_landed(&r, &bare, &before);
+
+    // An assessment of another commit waives nothing at the head.
+    let (r, bare) = delivering();
+    let (people, wt, old) = in_review(&r, SLUG, "docs/design.md");
+    assess(&r, SLUG, &people.assessor, &[], &old);
+    write(&wt, "docs/design.md", "# more\n");
+    git(&wt, &["commit", "-qam", "more"]);
+    let tip = head(&wt, "HEAD");
+    approve(&r, SLUG, &format!("{tip}: reads well"));
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(
+        line.contains(&format!("read {}, not the head {}", &old[..7], &tip[..7])),
+        "{line}"
+    );
+    assert!(host.verbs().is_empty());
+
+    // An approve that names no commit covers the branch by time here, and no pull request.
+    let (r, bare) = delivering();
+    let (people, _, tip) = in_review(&r, SLUG, "sim/jump.gd");
+    assess(&r, SLUG, &people.assessor, &["review"], &tip);
+    approve(&r, SLUG, "reads well");
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(line.contains("does not name the head"), "{line}");
+    assert!(host.verbs().is_empty());
+}
+
+#[test]
+fn a_needed_stamp_that_is_red_refuses_as_it_does_here() {
+    let (r, bare) = delivering();
+    let before = head(&bare, "main");
+    let (people, _, tip) = in_review(&r, SLUG, "sim/jump.gd");
+    assess(&r, SLUG, &people.assessor, &["tests"], &tip);
+    ran(&r, SLUG, &tip, "cargo test -p sim", 1);
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(
+        line.starts_with(&format!("{SLUG} lacks at its tip")),
+        "{line}"
+    );
+    assert!(host.verbs().is_empty());
+    assert_nothing_landed(&r, &bare, &before);
+    // The api says the same of it: one reading.
+    let mut env = r.env(&r.root);
+    (env.vars).insert(FOLDER_VAR.into(), work(&r).to_string_lossy().into_owned());
+    let read = evidence::of(&r.board.store, &env, SLUG, None).unwrap();
+    assert!(!read.eligible);
+    assert_eq!(read.blocking.len(), 1, "{:?}", read.blocking);
+    assert!(
+        read.blocking[0].starts_with("tests: red at"),
+        "{:?}",
+        read.blocking
+    );
+    let other = "0".repeat(40);
+    assert_eq!(
+        evidence::of(&r.board.store, &env, SLUG, Some(&other)).unwrap_err(),
+        format!("{SLUG}'s branch is at {tip}, not {other}: evidence is of the head alone")
+    );
+}
+
+#[test]
+fn a_head_changing_generated_paths_or_merging_another_history_is_refused() {
+    let r = Repo::new();
+    project_file(
+        &r,
+        "[land]\ncheck = false\ndelivery = [\"host\"]\ngenerators = [{ name = \"the client\", \
+         outputs = \"dist/\", command = [\"true\"] }]\n",
+    );
+    let bare = remote(&r);
+    let before = head(&bare, "main");
+    let (people, wt, _) = in_review(&r, SLUG, "sim/jump.gd");
+    write(&wt, "dist/app.js", "built\n");
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", "its own build"]);
+    let tip = head(&wt, "HEAD");
+    assess(&r, SLUG, &people.assessor, &[], &tip);
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    assert_eq!(
+        result.unwrap_err(),
+        format!(
+            "{SLUG} changes 1 generated path (dist/app.js), which a pull request would deliver as \
+             the branch built it"
+        )
+    );
+    assert!(host.verbs().is_empty());
+    assert_nothing_landed(&r, &bare, &before);
+
+    // A merge of a commit the host's main does not hold: an import, which a squash would flatten.
+    let (r, bare) = delivering();
+    let (people, wt, _) = in_review(&r, SLUG, "sim/jump.gd");
+    let upstream = r.add("upstream", Some("upstream"), "main");
+    write(&upstream, "sim/up.gd", "extends Node\n");
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "-qm", "upstream's own"]);
+    let foreign = head(&upstream, "HEAD");
+    git(&wt, &["merge", "-q", "--no-ff", "-m", "import", &foreign]);
+    let tip = head(&wt, "HEAD");
+    assess(&r, SLUG, &people.assessor, &[], &tip);
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(
+        line.starts_with(&format!(
+            "{SLUG}'s head {} merges {}",
+            &tip[..7],
+            &foreign[..7]
+        )),
+        "{line}"
+    );
+    assert!(host.verbs().is_empty());
+    let (told, to) = {
+        let post = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+        (post.text, post.recipient)
+    };
+    assert_eq!(to.as_deref(), Some("@orchestrator"));
+    assert!(
+        told.contains("this build delivers no import by pull request"),
+        "{told}"
+    );
+}
+
+#[test]
+fn a_project_file_the_remote_default_does_not_commit_refuses() {
+    let (r, bare) = delivering();
+    let (people, ..) = ready(&r, SLUG);
+    // Committed here and pushed nowhere: the remote's is another.
+    project_file(&r, &format!("{DELIVERS}push = false\n"));
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(
+        line.starts_with("symphony.toml here is not the one origin/main commits at"),
+        "{line}"
+    );
+    assert!(host.verbs().is_empty());
+}
+
+// -- the pull request and its head -----------------------------------------------------------------
+
+#[test]
+fn a_pull_request_at_another_head_or_bound_to_another_number_merges_nothing() {
+    let (r, bare) = delivering();
+    let before = head(&bare, "main");
+    let (people, ..) = ready(&r, SLUG);
+    let mut host = Host::new(&r, &bare);
+    host.says_head = Some("1".repeat(40));
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(
+        line.starts_with("pull request #3 is at 1111111, not the head"),
+        "{line}"
+    );
+    assert_eq!(host.verbs(), ["publish"]);
+    assert_nothing_landed(&r, &bare, &before);
+    // The journal a run left binds the task to one pull request: another is refused.
+    let mut journal = Journal::read(&lands(&r), SLUG).unwrap();
+    assert_eq!(journal.stage, Stage::Prepared);
+    journal.binding = Some(symphony_board::land::delivery::Binding {
+        repository: 7,
+        name: "owner/name".into(),
+        pull: 9,
+        url: String::new(),
+    });
+    journal.write(&lands(&r)).unwrap();
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(
+        line.contains("was bound to pull request #9 of repository 7 and is now answered with #3"),
+        "{line}"
+    );
+    assert_eq!(host.verbs(), ["publish"]);
+}
+
+#[test]
+fn a_merge_the_host_refuses_leaves_the_task_open_and_names_who_acts() {
+    for (kind, to) in [
+        ("conflict", "@executor"),
+        ("head", "@executor"),
+        ("checks", "@orchestrator"),
+    ] {
+        let (r, bare) = delivering();
+        let before = head(&bare, "main");
+        let (people, _, tip) = ready(&r, SLUG);
+        let host = Host::new(&r, &bare).merging(Merges::Refuses(kind));
+        let (_, result) = landed(&r, SLUG, &people.orch, &host);
+        assert_eq!(
+            result.unwrap_err(),
+            format!(
+                "owner/name refused to squash {SLUG} at {} by pull request #3: no: {kind}",
+                &tip[..7]
+            )
+        );
+        assert_eq!(host.verbs(), ["publish", "merge", "result"]);
+        assert_nothing_landed(&r, &bare, &before);
+        let post = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+        assert_eq!(post.recipient.as_deref(), Some(to));
+        // Asked again only by a run that validates again.
+        assert_eq!(
+            Journal::read(&lands(&r), SLUG).unwrap().stage,
+            Stage::Eligible
+        );
+    }
+}
+
+// -- a lost answer ---------------------------------------------------------------------------------
+
+#[test]
+fn a_merge_whose_answer_was_lost_is_adopted_from_the_pull_request_and_asked_once() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    // The merge is made and neither its answer nor the first reading of it arrives.
+    let host = Host::new(&r, &bare).losing(&["merge", "result"]);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(
+        line.contains("was asked for and its result is not known"),
+        "{line}"
+    );
+    assert!(line.contains("nothing is merged here"), "{line}");
+    assert_eq!(
+        Journal::read(&lands(&r), SLUG).unwrap().stage,
+        Stage::MergeRequested
+    );
+    assert_eq!(
+        head(&r.root, "main"),
+        git(&r.root, &["rev-parse", "origin/main"]),
+        "nothing moved here"
+    );
+    assert!(landings(&r, SLUG).is_empty());
+    // The next run reads the pull request before anything else and asks for no second merge.
+    let (said, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap();
+    assert_eq!(
+        host.verbs(),
+        ["publish", "merge", "result", "result", "landed"]
+    );
+    assert!(
+        said.starts_with(&format!(
+            "land {SLUG}: a delivery is under way (merge requested at"
+        )),
+        "{said}"
+    );
+    let squash = head(&bare, "main");
+    assert!(
+        line.starts_with(&format!("landed {SLUG} on main at {}", &squash[..12])),
+        "{line}"
+    );
+    assert_eq!(head(&r.root, "main"), squash);
+    assert_eq!(landings(&r, SLUG).len(), 1);
+    assert_eq!(Receipt::read(&lands(&r), SLUG).unwrap().head, tip);
+}
+
+#[test]
+fn once_a_merge_was_asked_for_no_run_merges_here_whatever_the_settings_say() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let host = Host::new(&r, &bare).losing(&["merge", "result"]);
+    landed(&r, SLUG, &people.orch, &host).1.unwrap_err();
+    // The key is taken out of the project file, here and on the host.
+    project_file(&r, "[land]\ncheck = false\n");
+    let local = head(&r.root, "main");
+    let mut out = Vec::new();
+    let result = land(
+        &r.board.store,
+        &r.env(&r.root),
+        SLUG,
+        &people.orch,
+        None,
+        &mut out,
+    );
+    let line = refusal(result.unwrap_err());
+    assert!(
+        line.starts_with(&format!(
+            "{SLUG} has a delivery by pull request under way (merge requested at {}, pull request \
+             #3 of owner/name), and [land] delivery is no longer set on main: nothing is merged \
+             here over it",
+            &tip[..7]
+        )),
+        "{line}"
+    );
+    assert_eq!(head(&r.root, "main"), local, "nothing merged here");
+    assert!(landings(&r, SLUG).is_empty());
+    assert!(
+        Journal::path(&lands(&r), SLUG).exists(),
+        "the journal is kept"
+    );
+}
+
+#[test]
+fn a_journal_that_asked_for_no_merge_does_not_hold_a_land_made_here() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let mut host = Host::new(&r, &bare);
+    host.says_head = Some("1".repeat(40));
+    landed(&r, SLUG, &people.orch, &host).1.unwrap_err();
+    assert!(Journal::path(&lands(&r), SLUG).exists());
+    project_file(&r, "[land]\ncheck = false\npush = false\n");
+    let mut env = r.env(&r.root);
+    (env.vars).insert(FOLDER_VAR.into(), work(&r).to_string_lossy().into_owned());
+    let mut out = Vec::new();
+    land(&r.board.store, &env, SLUG, &people.orch, None, &mut out)
+        .map_err(refusal)
+        .unwrap();
+    assert_eq!(head(&r.root, "main^2"), tip);
+    assert!(!Journal::path(&lands(&r), SLUG).exists());
+}
+
+// -- a commit that is not what was read ------------------------------------------------------------
+
+#[test]
+fn a_commit_that_is_not_the_squash_of_the_head_is_held_and_closes_nothing() {
+    for (merges, said) in [
+        (Merges::WrongTree, "is not what"),
+        (
+            Merges::ByCommit,
+            "has 2 parents: the head was merged by a merge commit, not squashed",
+        ),
+        (Merges::Closes, "pull request #3 was closed without a merge"),
+    ] {
+        let (r, bare) = delivering();
+        let local = head(&r.root, "main");
+        let (people, ..) = ready(&r, SLUG);
+        let host = Host::new(&r, &bare).merging(merges);
+        let (_, result) = landed(&r, SLUG, &people.orch, &host);
+        let line = result.unwrap_err();
+        assert!(
+            line.starts_with(&format!(
+                "the delivery of {SLUG} is held for reconciliation: "
+            )),
+            "{line}"
+        );
+        assert!(line.contains(said), "{line}");
+        assert!(
+            line.ends_with("Nothing is closed and nothing is merged here"),
+            "{line}"
+        );
+        assert_eq!(
+            head(&r.root, "main"),
+            local,
+            "the checkout follows nothing unproved"
+        );
+        assert!(landings(&r, SLUG).is_empty());
+        assert_eq!(
+            r.board.store.get(SLUG).unwrap().status,
+            "done",
+            "its approve stands, unlanded"
+        );
+        assert!(
+            Receipt::read(&lands(&r), SLUG).is_none(),
+            "no receipt of what was not proved"
+        );
+        let posts = |r: &Repo| {
+            (r.board.said(SLUG).iter())
+                .filter(|line| line.contains("held for reconciliation"))
+                .count()
+        };
+        assert_eq!(posts(&r), 1);
+        // A run again reads the pull request, finds it as it was, and says it once.
+        let (_, again) = landed(&r, SLUG, &people.orch, &host);
+        assert_eq!(again.unwrap_err(), line);
+        assert_eq!(posts(&r), 1);
+        assert_eq!(
+            host.verbs().iter().filter(|verb| *verb == "merge").count(),
+            1
+        );
+    }
+}
+
+// -- a checkout that cannot follow -----------------------------------------------------------------
+
+#[test]
+fn a_main_checkout_that_cannot_follow_is_landed_remotely_and_closed_once_it_can() {
+    for diverged in [false, true] {
+        let (r, bare) = delivering();
+        project_file(
+            &r,
+            &format!(
+                "{DELIVERS}\n[board]\non_land = [\"sh\", \"-c\", \"echo $1 $2 >> '{}'\", \"hook\"]\n",
+                r.dir.join("landings").display()
+            ),
+        );
+        git(&r.root, &["push", "-q", "origin", "main"]);
+        let (people, ..) = ready(&r, SLUG);
+        let dirty = || write(&r.root, "sim/world.gd", "extends RefCounted # edited\n");
+        let host = if diverged {
+            // A commit made here while the host merges: main here holds what the remote lacks.
+            Host::new(&r, &bare).before("result", || {
+                write(&r.root, "sim/local.gd", "extends Node\n");
+                git(&r.root, &["add", "-A"]);
+                git(&r.root, &["commit", "-qm", "made here"]);
+            })
+        } else {
+            Host::new(&r, &bare).before("result", dirty)
+        };
+        let vars = [("TASKS_ON_LAND", "on"), ("TASKS_ON_LAND_SAYS", "60")];
+        let (_, result) = landed_with(&r, SLUG, &people.orch, &host, &vars);
+        let local = head(&r.root, "main");
+        let squash = head(&bare, "main");
+        let line = result.unwrap_err();
+        assert!(
+            line.starts_with(&format!(
+                "{SLUG} landed remotely as {} by pull request #3 of owner/name; reconciliation \
+                 pending: ",
+                &squash[..7]
+            )),
+            "{line}"
+        );
+        assert!(
+            line.contains("Nothing here was reset, merged or pushed"),
+            "{line}"
+        );
+        assert_ne!(local, squash);
+        assert!(
+            landings(&r, SLUG).is_empty(),
+            "not closed until the checkout follows"
+        );
+        assert_eq!(
+            Journal::read(&lands(&r), SLUG).unwrap().stage,
+            Stage::RemoteMerged
+        );
+        assert!(
+            Receipt::read(&lands(&r), SLUG).is_some(),
+            "the merge is proved and kept"
+        );
+        // Tried again as it is: the same, said on the thread once.
+        landed_with(&r, SLUG, &people.orch, &host, &vars)
+            .1
+            .unwrap_err();
+        let said = (r.board.said(SLUG).iter())
+            .filter(|line| line.contains("reconciliation pending"))
+            .count();
+        assert_eq!(said, 1);
+        assert_eq!(head(&r.root, "main"), local, "never reset or merged over");
+        // Put right by a person: the edit dropped, or the commit made here taken off main.
+        if diverged {
+            git(&r.root, &["reset", "-q", "--hard", "origin/main~1"]);
+        } else {
+            git(&r.root, &["checkout", "-q", "--", "sim/world.gd"]);
+        }
+        let (_, result) = landed_with(&r, SLUG, &people.orch, &host, &vars);
+        let line = result.unwrap();
+        assert!(
+            line.starts_with(&format!("landed {SLUG} on main at {}", &squash[..12])),
+            "{line}"
+        );
+        assert_eq!(head(&r.root, "main"), squash);
+        assert_eq!(landings(&r, SLUG).len(), 1);
+        assert_eq!(
+            host.verbs().iter().filter(|verb| *verb == "merge").count(),
+            1
+        );
+        // What follows a land was started once, with the commit the host made.
+        let counted = fs::read_to_string(r.dir.join("landings")).unwrap_or_default();
+        assert_eq!(counted, format!("{SLUG} {squash}\n"));
+    }
+}
+
+#[test]
+fn a_run_cut_short_after_the_board_closed_the_task_closes_and_dispatches_nothing_twice() {
+    let (r, bare) = delivering();
+    let (people, ..) = ready(&r, SLUG);
+    let host = Host::new(&r, &bare);
+    landed(&r, SLUG, &people.orch, &host).1.unwrap();
+    let squash = head(&bare, "main");
+    let journal = |stage| Journal {
+        slug: SLUG.into(),
+        operation: "task".into(),
+        stage,
+        head: Receipt::read(&lands(&r), SLUG).unwrap().head,
+        base_observed: String::new(),
+        revision: String::new(),
+        title: String::new(),
+        body: String::new(),
+        by: people.orch.clone(),
+        closes: vec!["done".into()],
+        stood: String::new(),
+        binding: Some(symphony_board::land::delivery::Binding {
+            repository: 7,
+            name: "owner/name".into(),
+            pull: 3,
+            url: String::new(),
+        }),
+        squash: Some(squash.clone()),
+        held: None,
+    };
+    // Killed after the board's write and before the journal said closed: the line is found.
+    journal(Stage::Reconciled).write(&lands(&r)).unwrap();
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    result.unwrap();
+    assert_eq!(landings(&r, SLUG).len(), 1, "closed once");
+    assert_eq!(
+        host.verbs().iter().filter(|verb| *verb == "landed").count(),
+        2
+    );
+    // Killed while it started what follows a land: nothing is started again.
+    journal(Stage::Dispatching).write(&lands(&r)).unwrap();
+    let (said, result) = landed(&r, SLUG, &people.orch, &host);
+    result.unwrap();
+    assert!(
+        said.contains("was started by a run before this one, and is not started twice"),
+        "{said}"
+    );
+    assert_eq!(
+        host.verbs().iter().filter(|verb| *verb == "landed").count(),
+        2
+    );
+    assert!(!Journal::path(&lands(&r), SLUG).exists());
+}
+
+// -- evidence that changes while it is published ---------------------------------------------------
+
+#[test]
+fn evidence_that_changes_while_it_is_published_is_published_again_or_refused_never_merged_stale() {
+    // Another green run at the head: the same standing on other evidence, published again.
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let host =
+        Host::new(&r, &bare).before("publish", || ran(&r, SLUG, &tip, "cargo test -p sim", 0));
+    let (said, result) = landed(&r, SLUG, &people.orch, &host);
+    result.unwrap();
+    assert_eq!(
+        host.verbs(),
+        ["publish", "publish", "merge", "result", "landed"]
+    );
+    assert!(
+        said.contains("its evidence changed while it was published; publishing it again"),
+        "{said}"
+    );
+    let (first, second) = {
+        let asked = host.asked.borrow();
+        (
+            asked[0].1["snapshot"]["revision"].clone(),
+            asked[1].1["snapshot"]["revision"].clone(),
+        )
+    };
+    assert_ne!(first, second);
+    assert_eq!(
+        Receipt::read(&lands(&r), SLUG).unwrap().revision,
+        second.as_str().unwrap()
+    );
+
+    // A red run at the head while it was published: no merge is asked for.
+    let (r, bare) = delivering();
+    let before = head(&bare, "main");
+    let (people, _, tip) = ready(&r, SLUG);
+    let host =
+        Host::new(&r, &bare).before("publish", || ran(&r, SLUG, &tip, "cargo test -p sim", 1));
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap_err();
+    assert!(
+        line.contains("is not eligible for delivery by pull request"),
+        "{line}"
+    );
+    assert!(line.contains("tests: red at"), "{line}");
+    assert_eq!(host.verbs(), ["publish"]);
+    assert_nothing_landed(&r, &bare, &before);
+}
+
+/// The limit the design states: a red arriving after the last validation, while the host works on
+/// the request, does not recall it. The receipt names the revision that was validated, and the
+/// evidence read after says what changed.
+#[test]
+fn a_withdrawal_after_the_last_validation_does_not_recall_a_request_already_made() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let host = Host::new(&r, &bare).before("merge", || ran(&r, SLUG, &tip, "cargo test -p sim", 1));
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    result.unwrap();
+    let receipt = Receipt::read(&lands(&r), SLUG).unwrap();
+    let validated = host.request("publish")["snapshot"]["revision"].clone();
+    assert_eq!(receipt.revision, validated.as_str().unwrap());
+    let mut env = r.env(&r.root);
+    (env.vars).insert(FOLDER_VAR.into(), work(&r).to_string_lossy().into_owned());
+    let now = evidence::of(&r.board.store, &env, SLUG, None).unwrap();
+    assert_ne!(
+        now.revision, receipt.revision,
+        "what stands now is another revision"
+    );
+    assert!(
+        now.blocking
+            .iter()
+            .any(|line| line.starts_with("tests: red at")),
+        "{:?}",
+        now.blocking
+    );
+}
+
+// -- the api ---------------------------------------------------------------------------------------
+
+/// `tasks api`'s answer to `call` in `r`'s main checkout.
+fn api(r: &Repo, call: Value) -> Value {
+    let mut env = r.env(&r.root);
+    (env.vars).insert(FOLDER_VAR.into(), work(r).to_string_lossy().into_owned());
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let input = call.to_string();
+    let args = ["api".to_string()];
+    let code = symphony_board::cli::main(&args, &env, &mut input.as_bytes(), &mut out, &mut err);
+    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&err));
+    serde_json::from_slice(&out).unwrap()
+}
+
+#[test]
+fn the_api_answers_the_evidence_the_land_publishes_and_writes_nothing() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let thread = r.board.said(SLUG);
+    let call = |args: Value| api(&r, json!({"method": "evidence", "args": args}));
+    let answered = call(json!({"slug": SLUG, "head": tip}));
+    let read: evidence::Snapshot = serde_json::from_value(answered["ok"].clone()).unwrap();
+    assert_eq!(read.version, evidence::VERSION);
+    assert_eq!(
+        (read.slug.as_str(), read.head.as_str(), read.branch.as_str()),
+        (SLUG, tip.as_str(), "main")
+    );
+    assert!(
+        read.eligible && read.assessed && read.blocking.is_empty(),
+        "{answered}"
+    );
+    let standing: Vec<(&str, &str)> = (answered["ok"]["stamps"].as_array().unwrap().iter())
+        .map(|stamp| {
+            (
+                stamp["name"].as_str().unwrap(),
+                stamp["standing"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        standing,
+        [
+            ("tests", "met"),
+            ("review", "met"),
+            ("pictures", "waived"),
+            ("owner", "waived")
+        ]
+    );
+    for stamp in answered["ok"]["stamps"].as_array().unwrap() {
+        let met = stamp["standing"] == "met";
+        assert_eq!(
+            !stamp["evidence"].as_array().unwrap().is_empty(),
+            met,
+            "{stamp}"
+        );
+    }
+    // Asked with no head it reads the branch's, and twice it says the same.
+    assert_eq!(call(json!({"slug": SLUG})), answered);
+    assert_eq!(r.board.said(SLUG), thread, "a reading posts nothing");
+    // Another head than the branch's, and no slug, are refused by name.
+    let other = "0".repeat(40);
+    assert_eq!(
+        call(json!({"slug": SLUG, "head": other}))["refused"],
+        format!("{SLUG}'s branch is at {tip}, not {other}: evidence is of the head alone")
+    );
+    assert!(call(json!({}))["error"].as_str().unwrap().contains("slug"));
+    // What the land publishes is that answer.
+    let host = Host::new(&r, &bare);
+    landed(&r, SLUG, &people.orch, &host).1.unwrap();
+    assert_eq!(host.request("publish")["snapshot"], answered["ok"]);
+}
+
+// -- the command ----------------------------------------------------------------------------------
+
+#[test]
+fn the_delivery_command_is_run_with_its_verb_and_request_and_its_refusal_merges_nothing() {
+    let r = Repo::new();
+    let script = r.dir.join("deliver.sh");
+    let seen = r.dir.join("seen");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\necho \"$1 $2\" >> '{seen}'\ncp \"$3\" '{seen}.request'\nprintf \
+             '{{\"state\":\"unavailable\",\"why\":\"the host is away\"}}'\n",
+            seen = seen.display()
+        ),
+    )
+    .unwrap();
+    project_file(
+        &r,
+        &format!(
+            "[land]\ncheck = false\ndelivery = [\"sh\", \"{}\"]\n",
+            script.display()
+        ),
+    );
+    let bare = remote(&r);
+    let before = head(&bare, "main");
+    let (people, _, tip) = ready(&r, SLUG);
+    let mut env = r.env(&r.root);
+    (env.vars).insert(FOLDER_VAR.into(), work(&r).to_string_lossy().into_owned());
+    let mut out = Vec::new();
+    let result = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out);
+    assert_eq!(
+        refusal(result.unwrap_err()),
+        format!("{SLUG} was not published (unavailable): the host is away; nothing merged")
+    );
+    assert_eq!(fs::read_to_string(&seen).unwrap(), "publish --request\n");
+    let request: Value =
+        serde_json::from_str(&fs::read_to_string(r.dir.join("seen.request")).unwrap()).unwrap();
+    assert_eq!(request["verb"], "publish");
+    assert_eq!(request["head"], tip.as_str());
+    assert_eq!(request["snapshot"]["eligible"], true);
+    assert_nothing_landed(&r, &bare, &before);
+    // A command that fails, or says what is no object, is no answer.
+    fs::write(&script, "#!/bin/sh\necho 'cannot reach it' >&2\nexit 3\n").unwrap();
+    let mut out = Vec::new();
+    let result = land(&r.board.store, &env, SLUG, &people.orch, None, &mut out);
+    let line = refusal(result.unwrap_err());
+    assert!(line.starts_with("nothing merged: sh "), "{line}");
+    assert!(line.ends_with(" publish: cannot reach it"), "{line}");
+}
+
+#[test]
+fn the_regenerator_lands_nothing_where_the_project_delivers_by_pull_request() {
+    let r = Repo::new();
+    project_file(
+        &r,
+        "[land]\ncheck = false\ndelivery = [\"host\"]\ngenerators = [{ name = \"the client\", \
+         outputs = \"dist/\", command = [\"sh\", \"-c\", \"mkdir -p dist && echo built > dist/app.js\"] }]\n",
+    );
+    let bare = remote(&r);
+    let before = head(&r.root, "main");
+    let mut out = Vec::new();
+    let refused = symphony_board::land::regenerate::run(&r.board.store, &r.env(&r.root), &mut out)
+        .unwrap_err();
+    assert!(
+        refused.starts_with("[land] delivery is set: main lands by pull request alone"),
+        "{refused}"
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    assert_eq!(head(&bare, "main"), before);
+    // A land there says so, and starts none.
+    let (people, _, tip) = in_review(&r, SLUG, "sim/jump.gd");
+    assess(&r, SLUG, &people.assessor, &[], &tip);
+    let host = Host::new(&r, &bare);
+    let (said, result) = landed(&r, SLUG, &people.orch, &host);
+    result.unwrap();
+    assert!(
+        said.contains(
+            "the regenerator is not started: with [land] delivery it commits nothing to main"
+        ),
+        "{said}"
+    );
+}
