@@ -150,10 +150,11 @@ pub fn parse(path: &Path, text: &str) -> Result<Local, Vec<String>> {
             Some(key) => format!("[{}] {key}", tables.join(".")),
             None => format!("[{}]", tables.join(".")),
         };
-        let line = match (key, tables.split_last()) {
-            (Some(key), _) => limits::line(text, tables, key),
-            (None, Some((table, above))) => limits::line(text, above, table),
-            (None, None) => None,
+        let line = match key {
+            Some(key) => limits::line(text, tables, key),
+            None => tables
+                .split_last()
+                .and_then(|(table, above)| limits::line(text, above, table)),
         };
         limits::Written { at, line }.named()
     };
