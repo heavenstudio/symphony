@@ -768,6 +768,13 @@ impl Project {
         if let Some(written) = &land.check_paths {
             symphony_board::land::check_paths::parse(written)?;
         }
+        if land
+            .delivery
+            .first()
+            .is_some_and(|program| program.trim().is_empty())
+        {
+            return Err("[land] delivery names no command: leave it out to land here".into());
+        }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
                 "[verdicts] generators need a land command: a generated branch never moves the \

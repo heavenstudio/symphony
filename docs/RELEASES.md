@@ -751,6 +751,10 @@ the hour, and its green release refreshes the server and its projects
 
 - **The count** is `[releases] every_landings` in `symphony.toml`, 20 unless the project says. `0`
   turns the cadence off, and then only the scheduled run or `just release` releases.
+- **A line that delivers by pull request** (`[land] delivery` in the project file its tip
+  commits, [TASKS](TASKS.md#a-land-delivered-by-a-pull-request)) is not counted: its tasks land
+  as squashed commits, which are no merges, so the count refuses by name, no run is due by
+  landings there, and a release candidate's settle says the same and advances nothing.
 - **A landing** is a merge on the main line's first-parent line whose subject names a branch:
   "Merge branch 'SLUG'", the merge `just land` makes, or "Merge branch 'SLUG' into BRANCH", git's
   own made by hand. A merge of the default branch itself ("Merge branch 'main' into SLUG", a task

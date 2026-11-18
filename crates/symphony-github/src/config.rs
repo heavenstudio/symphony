@@ -46,8 +46,8 @@ impl Issues {
     }
 }
 
-/// What the adapter does with pull requests. The setting is read and held to its words; this
-/// build serves `off` alone and says so of the others.
+/// What the adapter does with pull requests: `publish` answers a land's delivery
+/// ([`crate::deliver`]); `track` is read and held to its word, and this build serves none of it.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum PullRequests {
@@ -85,6 +85,10 @@ struct Written {
     #[serde(default)]
     import_comments: bool,
     export_label: Option<String>,
+    checks_token_file: Option<PathBuf>,
+    checks_app_id: Option<i64>,
+    #[serde(default)]
+    close_issues: bool,
 }
 
 /// The one GitHub.com repository the adapter may reach.
@@ -113,6 +117,13 @@ pub struct Config {
     pub import_labels: Vec<String>,
     pub import_comments: bool,
     pub export_label: Option<String>,
+    /// Where the token that writes a delivery's checks is: an installation token of the one
+    /// GitHub App the branch's protection takes them from, never the token that merges.
+    pub checks_token_file: Option<PathBuf>,
+    /// That App's number: a check written by any other is not read as one of ours.
+    pub checks_app_id: Option<i64>,
+    /// Whether a delivered task's mapped issue is closed once the board closed the task.
+    pub close_issues: bool,
 }
 
 /// The settings with the revision they were read at: a digest of the committed file's text, so a
@@ -184,12 +195,18 @@ pub fn parse(text: &str) -> Result<Config, String> {
     for text in written.import_labels.iter().chain(&written.export_label) {
         label(text).map_err(wrong)?;
     }
-    if let Some(file) = &written.token_file
-        && !file.is_absolute()
-    {
-        return Err(wrong(
-            "token_file is an absolute path outside the repository".into(),
-        ));
+    for (key, file) in [
+        ("token_file", &written.token_file),
+        ("checks_token_file", &written.checks_token_file),
+    ] {
+        if file.as_ref().is_some_and(|file| !file.is_absolute()) {
+            return Err(wrong(format!(
+                "{key} is an absolute path outside the repository"
+            )));
+        }
+    }
+    if written.checks_app_id.is_some_and(|id| id <= 0) {
+        return Err(wrong("checks_app_id is a GitHub App's number".into()));
     }
     if written.enabled {
         if repository.is_none() {
@@ -206,6 +223,22 @@ pub fn parse(text: &str) -> Result<Config, String> {
                 written.issues.word()
             )));
         }
+        if written.pull_requests == PullRequests::Publish {
+            if written.checks_token_file.is_none() || written.checks_app_id.is_none() {
+                return Err(wrong(
+                    "pull_requests = \"publish\" needs checks_token_file and checks_app_id: the \
+                     GitHub App whose checks the branch's protection takes, and a token of its \
+                     own"
+                    .into(),
+                ));
+            }
+            if written.checks_token_file == written.token_file {
+                return Err(wrong(
+                    "checks_token_file is token_file: what writes the checks is never what merges"
+                        .into(),
+                ));
+            }
+        }
     }
     Ok(Config {
         enabled: written.enabled,
@@ -216,6 +249,9 @@ pub fn parse(text: &str) -> Result<Config, String> {
         import_labels: written.import_labels,
         import_comments: written.import_comments,
         export_label: written.export_label,
+        checks_token_file: written.checks_token_file,
+        checks_app_id: written.checks_app_id,
+        close_issues: written.close_issues,
     })
 }
 

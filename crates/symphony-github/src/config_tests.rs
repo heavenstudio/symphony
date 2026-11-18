@@ -20,7 +20,8 @@ fn each_capability_is_its_own_setting() {
     ] {
         for pulls in ["off", "track", "publish"] {
             let text = format!(
-                "{ON}issues = \"{issues}\"\npull_requests = \"{pulls}\"\nimport_labels = [\"a\"]\n"
+                "{ON}issues = \"{issues}\"\npull_requests = \"{pulls}\"\nimport_labels = \
+                 [\"a\"]\nchecks_token_file = \"/secrets/checks\"\nchecks_app_id = 42\n"
             );
             let config = parse(&text).unwrap();
             assert_eq!(
@@ -44,6 +45,29 @@ fn what_does_not_hold_together_is_refused_by_name() {
             "enabled needs token_file",
         ),
         (&format!("{ON}issues = \"import\"\n"), "needs import_labels"),
+        (
+            &format!("{ON}pull_requests = \"publish\"\n"),
+            "pull_requests = \"publish\" needs checks_token_file and checks_app_id",
+        ),
+        (
+            &format!("{ON}pull_requests = \"publish\"\nchecks_token_file = \"/secrets/checks\"\n"),
+            "needs checks_token_file and checks_app_id",
+        ),
+        (
+            &format!(
+                "{ON}pull_requests = \"publish\"\nchecks_token_file = \"/secrets/token\"\nchecks_app_id = 42\n"
+            ),
+            "checks_token_file is token_file: what writes the checks is never what merges",
+        ),
+        (
+            "checks_token_file = \"checks\"\n",
+            "checks_token_file is an absolute path outside the repository",
+        ),
+        (
+            "checks_app_id = 0\n",
+            "checks_app_id is a GitHub App's number",
+        ),
+        ("close_issues = \"yes\"\n", "expected a boolean"),
         (
             &format!("{ON}issues = \"exchange\"\n"),
             "needs import_labels",

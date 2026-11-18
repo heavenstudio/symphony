@@ -85,6 +85,18 @@ pub struct Draft {
     pub body: String,
 }
 
+/// The pull request a task is delivered by ([`crate::deliver`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pull {
+    pub number: i64,
+    pub url: String,
+    /// The task's number on the board when it was bound: a slug given to another task is
+    /// another pull request's.
+    pub task: i64,
+    /// The commit it was squashed as, once the board closed the task.
+    pub landed: Option<String>,
+}
+
 /// Which side an operator kept of a conflict.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -104,6 +116,9 @@ pub struct State {
     pub drafts: BTreeMap<String, Draft>,
     #[serde(default)]
     pub resolutions: BTreeMap<String, Side>,
+    /// The pull request each delivered task is bound to, by its slug.
+    #[serde(default)]
+    pub pulls: BTreeMap<String, Pull>,
     /// The `updated_at` the next listing starts from.
     pub cursor: Option<String>,
     /// The settings' revision the cursor was read under. Under another, what the listing

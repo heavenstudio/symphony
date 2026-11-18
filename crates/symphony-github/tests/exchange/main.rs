@@ -2,13 +2,14 @@
 //! repository held in memory (`github.rs`). `flows.rs` and `recovery.rs` run it on a board held
 //! in memory (`memory.rs`), where each failure is planted exactly; `scratch.rs` runs it on a
 //! real scratch board through `tasks api`, its requests made by a real `curl` to a loopback
-//! server (`http.rs`).
+//! server (`http.rs`). `deliver.rs` asks it the four verbs of a land delivered by a pull request.
 
 #![expect(
     clippy::unwrap_used,
     reason = "the fixtures beside the tests assert as they do: an unwrap is the failure"
 )]
 
+mod deliver;
 mod flows;
 mod github;
 mod http;
@@ -29,6 +30,27 @@ use symphony_github::credential::Secret;
 use symphony_github::reconcile::Context;
 use symphony_github::state::{Entry, State, Store};
 use symphony_github::transport::{Failure, Request, Response, Transport};
+
+/// What keeps a test that starts processes apart from a run on the state held in memory. A
+/// child, between its fork and its exec, holds every file this process has open, a run's state
+/// lock among them: a lock one test dropped then reads as held to its next run, which is refused
+/// as a second writer. So a run holds this shared, and a test that starts processes holds it
+/// alone for as long as it runs. The adapter itself is one process with one thread.
+pub(crate) static STARTS: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+/// Held while no process may be started.
+pub(crate) fn no_start() -> std::sync::RwLockReadGuard<'static, ()> {
+    STARTS
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Held by a test that starts processes.
+pub(crate) fn starting() -> std::sync::RwLockWriteGuard<'static, ()> {
+    STARTS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// The token every fixture's file holds: nothing a test reads back may contain it.
 pub(crate) const TOKEN: &str = "ghp_fixtureTOKEN0123456789abcdefSECRET";
@@ -202,6 +224,7 @@ impl Rig {
     }
 
     pub(crate) fn run(&self, args: &[&str]) -> Ran {
+        let _alone = no_start();
         let github = Arc::clone(&self.github);
         let connect = move |_token: Secret| -> Result<Box<dyn Transport>, String> {
             Ok(Box::new(Shared(Arc::clone(&github))))

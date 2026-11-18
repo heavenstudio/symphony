@@ -299,6 +299,9 @@ pub(super) struct FileLand {
     /// What holds the project's tests and checks, which a red's fix its orchestrator approves
     /// changes none of (`symphony_board::land::check_paths`); its defaults when left out.
     pub(super) check_paths: Option<Vec<String>>,
+    /// The command that delivers a task by a hosted pull request, in place of the land's own
+    /// merge and push (`symphony_board::land::delivery`); none, and the land merges here.
+    pub(super) delivery: Vec<String>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -312,6 +315,7 @@ impl Default for FileLand {
             timeout_seconds: symphony_board::land::TIMEOUT.as_secs(),
             check: true,
             check_paths: None,
+            delivery: Vec::new(),
             unknown: Unknown::new(),
         }
     }
