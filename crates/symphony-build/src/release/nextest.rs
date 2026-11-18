@@ -93,6 +93,8 @@ mod tests {
                 .args([
                     "nextest",
                     "run",
+                    "--profile",
+                    "default",
                     "--offline",
                     "--color",
                     "never",
@@ -113,6 +115,8 @@ mod tests {
                 .current_dir(&tree.root)
                 .env("CARGO_TARGET_DIR", tree.path("target"))
                 .env("NEXTEST_EXPERIMENTAL_LIBTEST_JSON", "1")
+                // The outer runner exports its profile; this fixture owns a different config.
+                .env("NEXTEST_PROFILE", "release")
                 .env_remove("RUSTFLAGS")
                 .env_remove("CARGO_ENCODED_RUSTFLAGS")
                 .output()
