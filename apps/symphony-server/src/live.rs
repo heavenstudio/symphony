@@ -1455,25 +1455,26 @@ impl Hub {
                 (scope.clone(), followed)
             })
             .collect();
-        listed
-            .into_iter()
-            .filter_map(|(scope, followed)| {
-                let root = if scope.is_empty() {
-                    self.root.clone()
-                } else {
-                    self.tree(&scope)?
-                };
-                let moved: Vec<String> = followed
-                    .into_iter()
-                    .filter(|(rel, held)| *held != symphony::docview::linked(&root, rel, tasks))
-                    .map(|(rel, _)| rel)
-                    .collect();
-                (!moved.is_empty()).then(|| {
-                    let rendered = self.render_again(&root, &scope, moved);
-                    (scope, rendered)
-                })
+        let mut rendered = BTreeMap::new();
+        for (scope, documents) in listed.into_iter().filter_map(|(scope, followed)| {
+            let root = if scope.is_empty() {
+                self.root.clone()
+            } else {
+                self.tree(&scope)?
+            };
+            let moved: Vec<String> = followed
+                .into_iter()
+                .filter(|(rel, held)| *held != symphony::docview::linked(&root, rel, tasks))
+                .map(|(rel, _)| rel)
+                .collect();
+            (!moved.is_empty()).then(|| {
+                let rendered = self.render_again(&root, &scope, moved);
+                (scope, rendered)
             })
-            .collect()
+        }) {
+            rendered.insert(scope, documents);
+        }
+        rendered
     }
 
     fn publish(&self, page: &mut Page, changes: Vec<Value>) {
@@ -2066,11 +2067,13 @@ fn document_change(
                     .map(|section| section.key.clone())
                     .collect(),
             ),
-            threads: doc
-                .threads
-                .iter()
-                .map(|(slug, fragment)| (slug.clone(), Some(fragment.clone())))
-                .collect(),
+            threads: {
+                let mut threads = BTreeMap::new();
+                for (slug, fragment) in &doc.threads {
+                    threads.insert(slug.clone(), Some(fragment.clone()));
+                }
+                threads
+            },
             title: Some(doc.title.clone()),
             waiting: Some(doc.waiting.clone()),
             crumbs: Some(doc.crumbs.clone()),
