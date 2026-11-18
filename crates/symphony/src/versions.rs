@@ -153,7 +153,9 @@ fn records(repo: &gix::Repository, rel: &str) -> Option<Vec<Record>> {
         });
     }
     let mut found = found.into_values().collect::<Vec<_>>();
-    found.sort_by(|a, b| b.time.cmp(&a.time).then_with(|| b.id.cmp(&a.id)));
+    symphony_board::order::sort_by(&mut found, &|a, b| {
+        b.time.cmp(&a.time).then_with(|| b.id.cmp(&a.id))
+    });
     Some(found)
 }
 

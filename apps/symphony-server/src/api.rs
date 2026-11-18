@@ -524,10 +524,13 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 })
                 .await
                 {
-                    Ok(Ok(hits)) => hits
-                        .into_iter()
-                        .map(|hit| (hit.slug, hit.score))
-                        .collect::<std::collections::BTreeMap<_, _>>(),
+                    Ok(Ok(hits)) => {
+                        let mut scores = std::collections::BTreeMap::new();
+                        for hit in hits {
+                            scores.insert(hit.slug, hit.score);
+                        }
+                        scores
+                    }
                     Ok(Err(why)) => {
                         let (status, said) = unavailable(&why, "");
                         return Some(error(status, said));
@@ -606,7 +609,9 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                             }
                         });
                         let total = view.agents.len();
-                        view.agents.sort_by(|a, b| a.handle.cmp(&b.handle));
+                        symphony_board::order::sort_by(&mut view.agents, &|a, b| {
+                            a.handle.cmp(&b.handle)
+                        });
                         if let Some(after) = &agent_after {
                             view.agents.retain(|a| a.handle > *after);
                         }

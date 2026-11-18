@@ -931,6 +931,10 @@ fn the_sign_off_lane_follows_a_plugins_owner_gate_kept_for_the_task_as_it_is_now
     let hub = shared.api.get().unwrap();
     let lane = || hub.task_signoff.lock().unwrap().clone();
     assert_eq!(lane(), ["tools/y"], "nothing kept yet: the Symphony's rule");
+    assert_eq!(
+        hub.waiting.lock().unwrap().lane,
+        std::collections::BTreeMap::from([("tools/y".into(), vec!["initial-card".into()])])
+    );
     assert!(calls(&root).is_empty(), "the lane asks the plugin nothing");
 
     // The pages ask the plugin; the lane reads what came back at the next look, the board unchanged.
@@ -945,6 +949,11 @@ fn the_sign_off_lane_follows_a_plugins_owner_gate_kept_for_the_task_as_it_is_now
         "the plugin's owner gate in the Symphony's place: held lifts tools/x, met leaves tools/y"
     );
 
+    assert_eq!(
+        hub.waiting.lock().unwrap().lane,
+        std::collections::BTreeMap::from([("tools/x".into(), Vec::<String>::new())])
+    );
+
     // In review, neither has an answer kept for it as it is now: the card rule decides again, so
     // tools/y, whose card still waits, is back and tools/x, which posted none, is out.
     for slug in ["tools/x", "tools/y"] {
@@ -952,6 +961,10 @@ fn the_sign_off_lane_follows_a_plugins_owner_gate_kept_for_the_task_as_it_is_now
     }
     observe(hub, &f.store, &[]);
     assert_eq!(lane(), ["tools/y"]);
+    assert_eq!(
+        hub.waiting.lock().unwrap().lane,
+        std::collections::BTreeMap::from([("tools/y".into(), vec!["initial-card".into()])])
+    );
     assert_eq!(calls(&root).len(), 2, "asked by the pages alone");
     shared.stop();
 }

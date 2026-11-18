@@ -1047,3 +1047,145 @@ fn committed_reader_refuses_missing_nonregular_and_non_utf8_project_files() {
     layouts::git(&tree.root, &["commit", "-qm", "binary fixture"]);
     assert!(committed(&tree.root, "HEAD").unwrap_err().contains("utf-8"));
 }
+
+#[test]
+fn authority_set_collection_preserves_variants_full_results_and_refusal_precedence() {
+    use std::collections::BTreeSet;
+    let mut base = Validated::new(builtin()).unwrap().definition().clone();
+    let capability = "fixture_authority";
+    assert!(!base.capabilities.iter().any(|name| name == capability));
+    base.capabilities.push(capability.into());
+    base.capabilities.sort();
+    let index = base
+        .edges
+        .iter()
+        .position(|edge| edge.operation == Operation::Claim && !edge.human_wait)
+        .unwrap();
+    let edge_id = base.edges[index].id.clone();
+    let unique = vec![
+        Authority::TaskRole {
+            role: Role::Executor,
+        },
+        Authority::TaskRole {
+            role: Role::Reviewer,
+        },
+        Authority::TaskRole {
+            role: Role::Orchestrator,
+        },
+        Authority::ProjectCapability {
+            capability: capability.into(),
+        },
+        Authority::SystemCapability {
+            capability: capability.into(),
+        },
+    ];
+    let mut early = unique.clone();
+    early.insert(0, unique[0].clone());
+    let mut late = unique.clone();
+    late.push(unique[3].clone());
+    for authorities in [
+        unique.clone(),
+        vec![unique[4].clone(), unique[3].clone()],
+        early,
+        late,
+        vec![],
+        vec![unique[1].clone(), unique[1].clone()],
+        vec![unique[4].clone(), unique[4].clone()],
+    ] {
+        let standard_len = authorities.iter().collect::<BTreeSet<_>>().len();
+        let mut definition = base.clone();
+        definition.edges[index].authority = authorities.clone();
+        let actual = Validated::new(definition.clone());
+        if authorities.is_empty() {
+            assert_eq!(
+                actual.unwrap_err(),
+                format!("edge {edge_id} requires a label and authority")
+            );
+        } else if standard_len != authorities.len() {
+            assert_eq!(
+                actual.unwrap_err(),
+                format!("duplicate authority: {edge_id}")
+            );
+        } else {
+            definition.edges[index].authority.sort();
+            assert_eq!(
+                actual.unwrap().definition(),
+                &definition,
+                "all fields stay unchanged except existing normalization"
+            );
+        }
+    }
+    let duplicate = vec![unique[0].clone(), unique[0].clone()];
+    let mut blank_label = base.clone();
+    blank_label.edges[index].label = " ".into();
+    blank_label.edges[index].authority = duplicate.clone();
+    assert_eq!(
+        Validated::new(blank_label).unwrap_err(),
+        format!("edge {edge_id} requires a label and authority")
+    );
+    let unknown = Authority::ProjectCapability {
+        capability: "missing_authority_fixture".into(),
+    };
+    let mut multiple_invalid = base.clone();
+    multiple_invalid.edges[index].authority = [duplicate, vec![unknown.clone()]].concat();
+    multiple_invalid.edges[index].alias = Some("?".into());
+    multiple_invalid.edges[index].human_wait = true;
+    assert_eq!(
+        Validated::new(multiple_invalid).unwrap_err(),
+        format!("duplicate authority: {edge_id}")
+    );
+    let mut unknown_only = base.clone();
+    unknown_only.edges[index].authority = vec![unknown];
+    assert_eq!(
+        Validated::new(unknown_only).unwrap_err(),
+        "unknown capability: missing_authority_fixture"
+    );
+    let mut wrong_human_wait = base;
+    wrong_human_wait.edges[index].authority = unique;
+    wrong_human_wait.edges[index].human_wait = true;
+    assert_eq!(
+        Validated::new(wrong_human_wait).unwrap_err(),
+        format!(
+            "human wait requires only project capability alternatives and deliberate action: {edge_id}"
+        )
+    );
+}
+
+#[test]
+fn authority_insert_all_matches_the_standard_set_length_and_reports_cost() {
+    use std::collections::BTreeSet;
+    let authorities: Vec<_> = (0..512)
+        .map(|index| match index % 5 {
+            0 => Authority::TaskRole {
+                role: Role::Executor,
+            },
+            1 => Authority::TaskRole {
+                role: Role::Reviewer,
+            },
+            2 => Authority::TaskRole {
+                role: Role::Orchestrator,
+            },
+            3 => Authority::ProjectCapability {
+                capability: format!("cap_{}", index % 73),
+            },
+            _ => Authority::SystemCapability {
+                capability: format!("cap_{}", index % 73),
+            },
+        })
+        .collect();
+    let (expected, old_cpu) = test_time::cpu::spent(|| authorities.iter().collect::<BTreeSet<_>>());
+    let (actual, new_cpu) = test_time::cpu::spent(|| {
+        let mut set = BTreeSet::new();
+        for authority in &authorities {
+            set.insert(authority);
+        }
+        set
+    });
+    assert_eq!(actual.len(), expected.len());
+    assert_eq!(actual, expected);
+    eprintln!(
+        "authority set: input={}, unique={}, standard_thread_cpu={old_cpu:?}, insert_all_thread_cpu={new_cpu:?}; insert-all uses tree nodes without collection Vec/stable-sort scratch; only length is observed by validation",
+        authorities.len(),
+        actual.len()
+    );
+}

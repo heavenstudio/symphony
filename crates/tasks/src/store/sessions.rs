@@ -473,7 +473,10 @@ impl Store {
         let bound: Vec<BoundAgent> = self.retrying(|| {
             self.transact(both(sql::AGENT_BINDINGS, pg::agent_bindings()), json!({}))
         })?;
-        Ok(bound.into_iter().map(|b| (b.handle, b.binding)).collect())
+        Ok(bound
+            .into_iter()
+            .map(|b| (b.handle, b.binding))
+            .collect_map())
     }
 }
 

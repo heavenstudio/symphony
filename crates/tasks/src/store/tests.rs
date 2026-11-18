@@ -124,7 +124,7 @@ fn a_read_of_the_sessions_shown_reads_them_by_id_and_never_the_table() {
 fn a_call_tried_again_is_counted_on_its_own_thread_and_one_out_of_patience_gives_up() {
     let before = Store::tried_again_here();
     let mut tries = 0;
-    let done = retried(PATIENCE, || {
+    let done = retried(PATIENCE, &mut || {
         tries += 1;
         if tries < 3 {
             Err(Failure::Again)
@@ -137,11 +137,11 @@ fn a_call_tried_again_is_counted_on_its_own_thread_and_one_out_of_patience_gives
     let elsewhere = std::thread::spawn(Store::tried_again_here).join().unwrap();
     assert_eq!(elsewhere, 0, "another thread's count is its own");
     let before = Store::tried_again_here();
-    let refused = retried::<()>(PATIENCE, || {
+    let refused = retried::<()>(PATIENCE, &mut || {
         Err(Failure::Stop(Error::Refused("no task 'x'".into())))
     });
     assert_eq!(refused, Err(Error::Refused("no task 'x'".into())));
-    let gave_up = retried::<()>(Duration::ZERO, || Err(Failure::Again));
+    let gave_up = retried::<()>(Duration::ZERO, &mut || Err(Failure::Again));
     assert_eq!(
         gave_up,
         Err(Error::Db(
@@ -225,4 +225,59 @@ fn a_task_record_reads_its_row_beside_its_version_however_its_times_are_written(
         .unwrap()
         .to_string();
     assert!(error.contains("missing field `version`"), "{error}");
+}
+
+#[test]
+fn retrying_keeps_callback_capture_and_result_drop_order_through_success_refusal_and_panic() {
+    use std::sync::{Arc, Mutex};
+    struct Dropped(&'static str, Arc<Mutex<Vec<&'static str>>>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.1.lock().unwrap().push(self.0);
+        }
+    }
+    let store = Store::unchecked(
+        crate::rpc::Client::new("127.0.0.1:1", "sf", "unused"),
+        Box::new(|| 0.0),
+        Box::new(|_| false),
+        "fixture-host",
+    );
+    for case in ["success", "refusal", "panic"] {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let captured = Dropped("capture dropped", Arc::clone(&events));
+        let called = Arc::clone(&events);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            store.retrying(move || {
+                let _keep = &captured;
+                called.lock().unwrap().push("called");
+                match case {
+                    "refusal" => Err(Failure::Stop(Error::Refused("exact refusal 猫".into()))),
+                    "panic" => std::panic::panic_any("exact callback panic"),
+                    _ => Ok(Dropped("result dropped", Arc::clone(&called))),
+                }
+            })
+        }));
+        assert_eq!(
+            *events.lock().unwrap(),
+            ["called", "capture dropped"],
+            "{case}"
+        );
+        match (case, result) {
+            ("success", Ok(Ok(value))) => {
+                drop(value);
+                assert_eq!(
+                    *events.lock().unwrap(),
+                    ["called", "capture dropped", "result dropped"]
+                );
+            }
+            ("refusal", Ok(Err(error))) => {
+                assert_eq!(error, Error::Refused("exact refusal 猫".into()))
+            }
+            ("panic", Err(payload)) => assert_eq!(
+                payload.downcast_ref::<&str>(),
+                Some(&"exact callback panic")
+            ),
+            _ => panic!("unexpected result for {case}"),
+        }
+    }
 }

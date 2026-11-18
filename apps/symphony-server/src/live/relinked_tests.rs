@@ -475,3 +475,133 @@ fn a_board_relinks_only_when_a_task_comes_goes_or_moves_what_a_document_lists() 
     assert!(relinks(&board, &more), "a task came");
     assert!(relinks(&more, &board), "a task went");
 }
+
+#[test]
+fn restored_document_changes_keep_the_complete_snapshot_and_thread_map() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let served = Served::new(&root);
+    served.open("", TOPIC);
+    let mut pages = served.hub.pages.write().unwrap();
+    let page = pages.get_mut("").unwrap();
+    let mut doc = page.documents[TOPIC].clone();
+    for name in ["z", "a", "猫"] {
+        doc.threads.insert(
+            name.into(),
+            symphony_api::Fragment {
+                blocks: doc.sections[0].blocks.clone(),
+                html: format!("<p>{name}</p>"),
+                media: Vec::new(),
+            },
+        );
+    }
+    for threads in [doc.threads.clone(), std::collections::BTreeMap::new()] {
+        doc.threads = threads;
+        page.missing.insert(TOPIC.into());
+        let expected = symphony_api::DocumentChange {
+            path: doc.path.clone(),
+            sections: doc.sections.clone(),
+            order: Some(doc.sections.iter().map(|s| s.key.clone()).collect()),
+            threads: doc
+                .threads
+                .iter()
+                .map(|(slug, fragment)| (slug.clone(), Some(fragment.clone())))
+                .collect(),
+            title: Some(doc.title.clone()),
+            waiting: Some(doc.waiting.clone()),
+            crumbs: Some(doc.crumbs.clone()),
+            headings: Some(doc.headings.clone()),
+            tasks: Some(doc.tasks.clone()),
+            comparison: Some(doc.comparison.clone().into_iter().collect()),
+            cards: doc
+                .cards
+                .iter()
+                .map(|card| symphony_api::ItemChange {
+                    key: card.slug.clone(),
+                    value: Some(card.clone()),
+                    removed: false,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let actual = super::document_change(page, TOPIC, &doc).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            serde_json::to_vec(&actual).unwrap(),
+            serde_json::to_vec(&expected).unwrap()
+        );
+        assert!(!page.missing.contains(TOPIC));
+    }
+}
+
+#[test]
+fn restored_and_relinked_map_payloads_keep_duplicates_and_report_cost() {
+    fn compare<V: Clone + serde::Serialize + std::fmt::Debug + PartialEq>(
+        label: &str,
+        rows: Vec<(String, V)>,
+    ) {
+        for count in [0, 1, 32, 512] {
+            let old_input = rows[..count].to_vec();
+            let new_input = old_input.clone();
+            let (old, old_cpu) = test_time::cpu::spent(|| {
+                old_input
+                    .into_iter()
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            });
+            let (new, new_cpu) = test_time::cpu::spent(|| {
+                let mut map = std::collections::BTreeMap::new();
+                for (key, value) in new_input {
+                    map.insert(key, value);
+                }
+                map
+            });
+            assert_eq!(new, old);
+            assert_eq!(
+                serde_json::to_value(&new).unwrap(),
+                serde_json::to_value(&old).unwrap()
+            );
+            assert_eq!(
+                new.keys().collect::<Vec<_>>(),
+                old.keys().collect::<Vec<_>>()
+            );
+            eprintln!(
+                "{label} n={count}: standard_cpu={old_cpu:?},insert_cpu={new_cpu:?}; tree nodes only, no pair Vec/stable scratch"
+            );
+        }
+    }
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let served = Served::new(&root);
+    served.open("", TOPIC);
+    let doc = served.hub.pages.read().unwrap()[""].documents[TOPIC].clone();
+    compare(
+        "restored threads",
+        (0..512)
+            .map(|i| {
+                (
+                    format!("key-{}", i % 37),
+                    Some(symphony_api::Fragment {
+                        blocks: doc.sections[0].blocks.clone(),
+                        html: format!("payload-{i}"),
+                        media: Vec::new(),
+                    }),
+                )
+            })
+            .collect(),
+    );
+    compare(
+        "relinked documents",
+        (0..512)
+            .map(|i| {
+                (
+                    format!("scope-{}", i % 37),
+                    vec![(
+                        format!("docs/{i}.md"),
+                        u64::try_from(i).unwrap(),
+                        Ok::<_, String>(doc.clone()),
+                    )],
+                )
+            })
+            .collect(),
+    );
+}

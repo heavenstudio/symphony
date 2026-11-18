@@ -355,12 +355,13 @@ impl Hub {
             initial_board: watch::Sender::new(true),
             initial_start: Mutex::new(None),
             invalid: RwLock::new(BTreeMap::new()),
-            trees: RwLock::new(
-                measured("hub branch trees", || branches::trees(root))
-                    .into_iter()
-                    .map(|t| (t.id(), t.path))
-                    .collect(),
-            ),
+            trees: RwLock::new({
+                let mut trees = BTreeMap::new();
+                for tree in measured("hub branch trees", || branches::trees(root)) {
+                    trees.insert(tree.id(), tree.path);
+                }
+                trees
+            }),
             tasks: Mutex::new(TaskState {
                 last: None,
                 raw: None,
@@ -945,7 +946,10 @@ impl Hub {
         self.listed
             .store(listing.is_some(), std::sync::atomic::Ordering::SeqCst);
         let listing = listing.unwrap_or_default();
-        let trees = listing.iter().map(|t| (t.id(), t.path.clone())).collect();
+        let mut trees = BTreeMap::new();
+        for tree in &listing {
+            trees.insert(tree.id(), tree.path.clone());
+        }
         let previous = std::mem::replace(
             &mut *self.trees.write().unwrap_or_else(|e| e.into_inner()),
             trees,
@@ -1451,25 +1455,26 @@ impl Hub {
                 (scope.clone(), followed)
             })
             .collect();
-        listed
-            .into_iter()
-            .filter_map(|(scope, followed)| {
-                let root = if scope.is_empty() {
-                    self.root.clone()
-                } else {
-                    self.tree(&scope)?
-                };
-                let moved: Vec<String> = followed
-                    .into_iter()
-                    .filter(|(rel, held)| *held != symphony::docview::linked(&root, rel, tasks))
-                    .map(|(rel, _)| rel)
-                    .collect();
-                (!moved.is_empty()).then(|| {
-                    let rendered = self.render_again(&root, &scope, moved);
-                    (scope, rendered)
-                })
+        let mut rendered = BTreeMap::new();
+        for (scope, documents) in listed.into_iter().filter_map(|(scope, followed)| {
+            let root = if scope.is_empty() {
+                self.root.clone()
+            } else {
+                self.tree(&scope)?
+            };
+            let moved: Vec<String> = followed
+                .into_iter()
+                .filter(|(rel, held)| *held != symphony::docview::linked(&root, rel, tasks))
+                .map(|(rel, _)| rel)
+                .collect();
+            (!moved.is_empty()).then(|| {
+                let rendered = self.render_again(&root, &scope, moved);
+                (scope, rendered)
             })
-            .collect()
+        }) {
+            rendered.insert(scope, documents);
+        }
+        rendered
     }
 
     fn publish(&self, page: &mut Page, changes: Vec<Value>) {
@@ -1478,9 +1483,12 @@ impl Hub {
         }
         page.board.version += 1;
         let version = page.board.version;
+        let mut data = serde_json::Map::new();
+        data.insert("version".into(), Value::from(version));
+        data.insert("changes".into(), Value::Array(changes));
         page.history.push_back(Event {
             version,
-            json: json!({"version":version, "changes":changes}).to_string(),
+            json: Value::Object(data).to_string(),
         });
         while page.history.len() > HISTORY {
             page.history.pop_front();
@@ -1579,7 +1587,13 @@ impl Hub {
                 }
                 // A lane that moved moves what its tasks wait on: the board's snapshot again, over
                 // what was read of it already.
-                let lane: BTreeMap<String, Vec<String>> = lane.into_iter().collect();
+                let lane = {
+                    let mut mapped = BTreeMap::new();
+                    for (slug, cards) in lane {
+                        mapped.insert(slug, cards);
+                    }
+                    mapped
+                };
                 let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
                 if waiting.lane != lane {
                     waiting.lane = lane;
@@ -1615,7 +1629,7 @@ impl Hub {
                 let entry = taskview::entry(&record, &render);
                 data["blocks"] = json!(entry.blocks);
                 data["stamp"] = entry.stamp.into();
-                changed.push(region_event("message", json!(data)));
+                changed.push(region_event("message", data));
             }
         }
         *cursor = Some(latest);
@@ -1968,7 +1982,7 @@ fn tree_inputs(root: &Path) -> Vec<(String, RecursiveMode)> {
     let project = symphony::project::Project::of(root);
     let mut folders: Vec<String> = Vec::new();
     let mut by_depth: Vec<&String> = project.entrypoints.iter().map(|e| &e.folder).collect();
-    by_depth.sort_by_key(|folder| folder.len());
+    symphony_board::order::sort_by_key(&mut by_depth, &|folder| folder.len());
     for folder in by_depth {
         // A folder inside one already watched recursively is watched with it.
         if !folders
@@ -2062,11 +2076,13 @@ fn document_change(
                     .map(|section| section.key.clone())
                     .collect(),
             ),
-            threads: doc
-                .threads
-                .iter()
-                .map(|(slug, fragment)| (slug.clone(), Some(fragment.clone())))
-                .collect(),
+            threads: {
+                let mut threads = BTreeMap::new();
+                for (slug, fragment) in &doc.threads {
+                    threads.insert(slug.clone(), Some(fragment.clone()));
+                }
+                threads
+            },
             title: Some(doc.title.clone()),
             waiting: Some(doc.waiting.clone()),
             crumbs: Some(doc.crumbs.clone()),
@@ -2234,9 +2250,9 @@ fn documents(
 }
 
 fn sort_activity(activity: &mut Activity) {
-    activity
-        .items
-        .sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
+    symphony_board::order::sort_by(&mut activity.items, &|a, b| {
+        (&b.ts, &b.id).cmp(&(&a.ts, &a.id))
+    });
     activity.items.truncate(40);
 }
 

@@ -79,3 +79,158 @@ fn equal_path_keys_keep_the_same_representation_as_collection() {
     assert_eq!(key.as_os_str(), expected_key.as_os_str());
     assert_eq!(value, expected_value);
 }
+
+#[test]
+fn ordered_store_payloads_keep_last_values_and_report_collection_cost() {
+    fn compare<V: Clone>(name: &str, pairs: Vec<(String, V)>, fingerprint: impl Fn(&V) -> String) {
+        for reversed in [false, true] {
+            let mut input = pairs.clone();
+            input.sort_by(|a, b| a.0.cmp(&b.0));
+            if reversed {
+                input.reverse();
+            }
+            let copied = input.clone();
+            let (expected, old_cpu) =
+                test_time::cpu::spent(|| copied.into_iter().collect::<BTreeMap<_, _>>());
+            let (actual, new_cpu) = test_time::cpu::spent(|| input.into_iter().collect_map());
+            let fields = |map: &BTreeMap<String, V>| {
+                map.iter()
+                    .map(|(key, value)| (key.clone(), fingerprint(value)))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                fields(&actual),
+                fields(&expected),
+                "{name}, reversed={reversed}"
+            );
+            eprintln!(
+                "{name} collector: pairs={}, unique={}, pair_bytes={}, reversed={reversed}, standard_thread_cpu={old_cpu:?}, insertion_thread_cpu={new_cpu:?}; existing pair Vec reused, tree nodes replace bulk construction; no stable-sort scratch in insertion helper",
+                pairs.len(),
+                actual.len(),
+                std::mem::size_of::<(String, V)>()
+            );
+        }
+    }
+    let bindings = (0..512)
+        .map(|index| {
+            (
+                (index % 73).to_string(),
+                crate::Binding {
+                    agent: index.to_string(),
+                    branch: format!("branch-{index}"),
+                    worktree: "/fixture".into(),
+                    ..crate::Binding::default()
+                },
+            )
+        })
+        .collect();
+    compare("Binding", bindings, |value| format!("{value:?}"));
+    let messages = (0..512)
+        .map(|index| {
+            (
+                (index % 73).to_string(),
+                crate::Message {
+                    id: index,
+                    slug: "work".into(),
+                    sender: format!("sender-{index}"),
+                    recipient: None,
+                    kind: "msg".into(),
+                    text: format!("message-{index}"),
+                    ts: 1.0,
+                },
+            )
+        })
+        .collect();
+    compare("Message", messages, |value| format!("{value:?}"));
+    let callbacks: Vec<(String, crate::Callback)> =
+        (0..512)
+            .map(|index| {
+                ((index % 73).to_string(),
+        serde_json::from_value(serde_json::json!({
+            "handle":format!("handle-{index}"),"address":format!("codex:fixture-{index}"),
+            "host":"fixture","chat":index%3==0,"session":crate::rows::SessionRow::default()
+        })).unwrap()
+    )
+            })
+            .collect();
+    compare("Callback", callbacks, |value| {
+        format!(
+            "{:?}",
+            (
+                &value.handle,
+                &value.address,
+                &value.host,
+                value.chat,
+                &value.terminal
+            )
+        )
+    });
+}
+
+#[test]
+fn outer_thread_slot_and_descendant_payload_maps_keep_complete_values_and_report_cost() {
+    fn compare<K: Clone + Ord + std::fmt::Debug, V: Clone + PartialEq + std::fmt::Debug>(
+        label: &str,
+        pairs: Vec<(K, V)>,
+    ) {
+        for count in [0, 1, 32, 512] {
+            for reversed in [false, true] {
+                let mut input = pairs[..count].to_vec();
+                input.sort_by(|a, b| a.0.cmp(&b.0));
+                if reversed {
+                    input.reverse();
+                }
+                let old_input = input.clone();
+                let (old, old_cpu) =
+                    test_time::cpu::spent(|| old_input.into_iter().collect::<BTreeMap<_, _>>());
+                let (new, new_cpu) = test_time::cpu::spent(|| input.into_iter().collect_map());
+                assert_eq!(new, old, "{label} n={count} reversed={reversed}");
+                eprintln!(
+                    "{label} n={count},reversed={reversed}: old_cpu={old_cpu:?},insert_cpu={new_cpu:?}; pair={}bytes, existing pair Vec retained, no stable-sort scratch",
+                    std::mem::size_of::<(K, V)>()
+                );
+            }
+        }
+    }
+    compare(
+        "threads",
+        (0..512)
+            .map(|i| {
+                (
+                    format!("task-{}", i % 73),
+                    vec![crate::Message {
+                        id: i,
+                        slug: format!("task-{i}"),
+                        sender: "owner".into(),
+                        recipient: Some("worker".into()),
+                        kind: "msg".into(),
+                        text: format!("Exact metadata {i}"),
+                        ts: 1.0,
+                    }],
+                )
+            })
+            .collect(),
+    );
+    compare(
+        "slot holdings",
+        (0..512)
+            .map(|i| {
+                (
+                    format!("owner-{}", i % 73),
+                    std::collections::BTreeSet::from([format!("slot-{i}"), "shared".into()]),
+                )
+            })
+            .collect(),
+    );
+    compare(
+        "latest descendant",
+        (0..512)
+            .map(|i| {
+                (
+                    (format!("handle-{}", i % 7), format!("task-{}", i % 13)),
+                    i64::from(i),
+                )
+            })
+            .collect(),
+    );
+}

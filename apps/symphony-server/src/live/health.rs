@@ -100,12 +100,11 @@ pub(crate) fn low_disk(root: &Path) -> Box<dyn Fn() -> Option<Low> + Send + Sync
         return Box::new(|| None);
     }
     let var = symphony_env::LOW_DISK_GB;
-    reading(
-        root,
-        &std::env::vars()
-            .filter(|(name, _)| name == var.name)
-            .collect(),
-    )
+    let mut vars = BTreeMap::new();
+    for (name, value) in std::env::vars().filter(|(name, _)| name == var.name) {
+        vars.insert(name, value);
+    }
+    reading(root, &vars)
 }
 
 /// The disk holding `root`, read at each call against the threshold `vars` names.

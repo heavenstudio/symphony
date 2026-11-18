@@ -31,6 +31,7 @@
 use super::branches::{self, Recorded};
 use super::surreal::cap as sql;
 use super::{Change, Error, Failure, Opens, Store, View, Which, refused};
+use crate::maps::Collect as _;
 use crate::slots::{self, OPEN};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -206,7 +207,7 @@ impl Store {
                         slots.into_keys().map(String::from).collect(),
                     )
                 })
-                .collect())
+                .collect_map())
         })
     }
 
