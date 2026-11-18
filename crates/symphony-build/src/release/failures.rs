@@ -44,6 +44,7 @@ const WIDTH: usize = 240;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Test {
     name: String,
+    timed_out: bool,
     panic: Option<String>,
     /// Whether the panic is its own thread's, the one libtest names for it, which no panic of a
     /// thread it started replaces.
@@ -80,7 +81,9 @@ struct Open {
 
 /// The state of one reading of a test run's log, and of the step's own last word.
 #[derive(Clone, Default)]
-struct Reading {
+pub(super) struct Reading {
+    nextest: super::nextest::Reader,
+    nextest_failures: Vec<super::nextest::Failure>,
     tests: Vec<Test>,
     /// Where the target cargo started last begins in `tests`.
     from: usize,
@@ -115,7 +118,7 @@ struct Reading {
 }
 
 impl Reading {
-    fn line(&mut self, line: &str) {
+    pub(super) fn line(&mut self, line: &str) {
         if let Some(open) = &mut self.open {
             open.lines.push(line.to_string());
         }
@@ -134,6 +137,25 @@ impl Reading {
             }
             return;
         }
+        if let Some(event) = self.nextest.line(line) {
+            match event {
+                super::nextest::Event::Started => {
+                    self.started.get_or_insert(self.count);
+                }
+                super::nextest::Event::Failed(failure) => {
+                    let label = format!("{} {}", failure.suite, failure.name);
+                    if !self.tests.iter().any(|test| test.name == label) {
+                        let mut test = nextest_test(&failure.name, &failure.output);
+                        test.name = label;
+                        test.timed_out = failure.timed_out;
+                        self.tests.push(test);
+                        self.nextest_failures.push(failure);
+                    }
+                }
+                super::nextest::Event::Other => {}
+            }
+            return;
+        }
         if self.listing {
             let entry = line.trim();
             if line.starts_with(char::is_whitespace) && entry.starts_with('`') {
@@ -146,6 +168,7 @@ impl Reading {
             if self.failed(&name).is_none() {
                 self.tests.push(Test {
                     name,
+                    timed_out: false,
                     panic: None,
                     own: false,
                 });
@@ -208,7 +231,7 @@ impl Reading {
     /// went on, or a line split the list past reading) is read again from where it opened, as
     /// ending at its next `failures:` or `test result:` line, target or block, and the log after
     /// it as before.
-    fn end(&mut self) {
+    pub(super) fn end(&mut self) {
         while let Some(open) = self.open.take() {
             let Open { reading, at, lines } = *open;
             *self = reading;
@@ -218,6 +241,11 @@ impl Reading {
             }
         }
         self.close();
+    }
+
+    /// Newly read nextest failures, excluding any events inside a native test's captured output.
+    pub(super) fn take_nextest_failures(&mut self) -> Vec<super::nextest::Failure> {
+        std::mem::take(&mut self.nextest_failures)
     }
 
     /// Where the test `name` is among the failed tests of the target cargo started last.
@@ -290,6 +318,33 @@ impl Reading {
         }
         self.threads.clear();
     }
+}
+
+/// A nextest event's captured output is read only for its panic, never for failed tests or Cargo
+/// commands it printed. Use the same panic preference as a libtest block: the case's own thread.
+fn nextest_test(name: &str, output: &str) -> Test {
+    let mut reading = Reading {
+        tests: vec![Test {
+            name: name.to_string(),
+            timed_out: false,
+            panic: None,
+            own: false,
+        }],
+        section: Some(0),
+        ..Reading::default()
+    };
+    for line in output.lines() {
+        if let Some(said) = reading.said.take()
+            && !line.trim().is_empty()
+            && !line.starts_with("note: run with `RUST_BACKTRACE")
+        {
+            reading.say(said, line.trim());
+        }
+        if let Some((thread, panic)) = panicked(line) {
+            reading.panicked(thread, panic);
+        }
+    }
+    reading.tests.pop().expect("the event's test")
 }
 
 /// What the log at `log` says failed; nothing when it cannot be read or says nothing it knows.
@@ -505,14 +560,19 @@ impl Failures {
     pub(crate) fn quoted(&self) -> Option<String> {
         let mut said = Vec::new();
         for test in self.tests.iter().take(LISTED) {
-            said.push(cut(&format!("test {} ... FAILED", test.name)));
+            let status = if test.timed_out {
+                "TIMED OUT"
+            } else {
+                "FAILED"
+            };
+            said.push(cut(&format!("test {} ... {status}", test.name)));
             if let Some(panic) = &test.panic {
                 said.push(format!("    {}", cut(panic)));
             }
         }
         if self.tests.len() > LISTED {
             said.push(format!(
-                "… and {} more tests named FAILED in the log",
+                "… and {} more failed tests in the log",
                 self.tests.len() - LISTED
             ));
         }

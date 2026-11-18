@@ -11,7 +11,7 @@
 #     crates-check  the crates-check recipe: each published package whose version crates.io holds
 #                   packaged from the same sources (docs/RELEASES.md, "Packages on crates.io")
 #     tests         every test target of the workspace, the browser tests among them, built once and
-#                   run in lanes side by side (tools/test-lanes.sh), each lane's log in tests-lanes/
+#                   scheduled by nextest with shared-fixture Cargo batches (tools/test-lanes.sh), logs in tests-lanes/
 #                   beside the step's log (SYMPHONY_TEST_LANE_LOGS), named in it as the lanes start
 #
 # Each is recorded as a step of the verify run (docs/MACHINE_WORK.md) and writes its output to a
@@ -169,7 +169,7 @@ for step in "${chosen[@]}"; do
             else
                 why='the client check did not run in this verify'
             fi
-            how="$why, so SYMPHONY_UI_DIST was unset: the browser tests built the client themselves (build/symphony-ui), red if that build failed"
+            how="$why, so SYMPHONY_UI_DIST was unset: the tests runner published one client before scheduling (build/symphony-ui), red if that build failed"
             run tests "${tests[*]}" \
                 env -u SYMPHONY_UI_DIST SYMPHONY_TEST_LANE_LOGS="$lanes" \
                 tools/record.sh --step tests test tests "${tests[@]}"

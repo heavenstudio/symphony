@@ -41,6 +41,7 @@ mod gone;
 mod group;
 mod install;
 mod notes;
+mod nextest;
 mod place;
 mod record;
 mod refresh;

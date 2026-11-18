@@ -147,6 +147,7 @@ pub(crate) fn read(log: &Path) -> Log {
     let mut previous: Option<(String, usize)> = None;
     let mut first_gone: Option<First> = None;
     let mut lanes = Lanes::default();
+    let mut nextest = super::failures::Reading::default();
     let mut line = Vec::new();
     loop {
         line.clear();
@@ -156,6 +157,10 @@ pub(crate) fn read(log: &Path) -> Log {
         }
         let text = String::from_utf8_lossy(&line);
         let text = text.trim_end_matches(['\n', '\r']);
+        nextest.line(text);
+        for failure in nextest.take_nextest_failures() {
+            nextest_failed(&mut found, failure);
+        }
         let started = segment.header.is_some() || !found.targets.is_empty();
         if lanes.read(text, started) {
             continue;
@@ -200,6 +205,10 @@ pub(crate) fn read(log: &Path) -> Log {
             }
         }
     }
+    nextest.end();
+    for failure in nextest.take_nextest_failures() {
+        nextest_failed(&mut found, failure);
+    }
     close(&mut found, &segment);
     found.went = first_gone.map(|first| match first {
         First::Building => Went::Building,
@@ -210,6 +219,25 @@ pub(crate) fn read(log: &Path) -> Log {
         First::Beside => Went::Lanes(lanes.names, lanes.at_once.unwrap_or_default()),
     });
     found
+}
+
+/// Each nextest case belongs to its metadata-selected Cargo target and is rerun once.
+fn nextest_failed(found: &mut Log, failure: super::nextest::Failure) {
+    if let Some(target) = found
+        .targets
+        .iter_mut()
+        .find(|f| f.target == failure.target)
+    {
+        if !target.tests.contains(&failure.name) {
+            target.tests.push(failure.name);
+        }
+    } else {
+        found.targets.push(Failed {
+            target: failure.target,
+            tests: vec![failure.name],
+            gone: Vec::new(),
+        });
+    }
 }
 
 /// Where a log first says files of its build gone.
@@ -387,7 +415,7 @@ pub(crate) fn arguments(failed: &[Failed]) -> Vec<String> {
 
 /// `word` as a shell reads it back: as it is when it holds nothing a shell reads apart, else in
 /// single quotes.
-fn quoted(word: &str) -> String {
+pub(super) fn quoted(word: &str) -> String {
     let plain = |c: char| c.is_ascii_alphanumeric() || "_:./-".contains(c);
     if !word.is_empty() && word.chars().all(plain) {
         return word.to_string();

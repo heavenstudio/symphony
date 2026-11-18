@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::Path;
 
 mod crates_check;
+mod exec_test;
 mod size_budget;
 mod synced;
 
@@ -24,7 +25,7 @@ const HEAD: &str = "usage: symphony-build COMMAND [ARGS]...\n\n\
 const LISTED: &str = "`symphony-build help`";
 
 /// Its commands, in the order its usage names them, each with what it does.
-const COMMANDS: [(&str, &str); 5] = [
+const COMMANDS: [(&str, &str); 6] = [
     (
         "publish-client",
         "publish a built client into the server's embedded copy",
@@ -40,6 +41,10 @@ const COMMANDS: [(&str, &str); 5] = [
     (
         "synced",
         "time each page from its open to synced on a returning browser",
+    ),
+    (
+        "exec-test-binary",
+        "run a shared library test image with Cargo's environment",
     ),
     (
         "release",
@@ -86,6 +91,7 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         Some("size-budget") => size_budget::main(rest, out, err),
         Some("crates-check") => crates_check::main(rest, out, err),
         Some("synced") => synced::main(rest, out, err),
+        Some("exec-test-binary") => exec_test::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => {
             let _ = writeln!(err, "{}", unknown(name));
@@ -264,6 +270,7 @@ mod tests {
                 "size-budget",
                 "crates-check",
                 "synced",
+                "exec-test-binary",
                 "release",
             ]
         );

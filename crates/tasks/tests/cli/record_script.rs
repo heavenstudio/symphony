@@ -684,7 +684,8 @@ const CLIENT_LINT: &str = "#!/bin/sh\nexit 0\n";
 
 /// The client's build's stand-in (`apps/symphony-web/build.sh`, which the `symphony-ui-dist`
 /// recipe runs): green, building nothing, as the client check's stand-in writes the client.
-const CLIENT_BUILD: &str = "#!/bin/sh\nexit 0\n";
+const CLIENT_BUILD: &str =
+    "#!/bin/sh\nmkdir -p \"$1/public\"\nprintf client > \"$1/public/index.html\"\n";
 
 /// Cargo's stand-in: `fmt` red under `FAIL_LINT`, and held a minute under `HOLD_LINT`, once it has
 /// made the file that names; `metadata` saying no target, so the tests' lanes are the libraries'
@@ -692,9 +693,13 @@ const CLIENT_BUILD: &str = "#!/bin/sh\nexit 0\n";
 /// client it was handed and the steps folder it sees, red under `FAIL_TESTS`.
 const RECIPES_CARGO: &str = r#"#!/bin/sh
 if [ "$1" = metadata ]; then exit 0; fi
+if [ "$1" = nextest ] && [ "$2" = list ]; then
+    printf '{"rust-binaries":{}}\n'
+    exit 0
+fi
 if [ "$1" = fmt ] && [ -n "${HOLD_LINT:-}" ]; then : > "$HOLD_LINT"; sleep 60; fi
 if [ "$1" = fmt ] && [ -n "${FAIL_LINT:-}" ]; then echo 'fmt stand-in: a diff'; exit 8; fi
-if [ "$1" = test ]; then
+if [ "$1" = test ] || [ "$1" = nextest ]; then
     echo "client=${SYMPHONY_UI_DIST-unset}"
     echo "steps=${SYMPHONY_CHECK_STEPS-unset}"
     if [ -n "${FAIL_TESTS:-}" ]; then exit 9; fi
@@ -722,9 +727,19 @@ impl Recipes {
         for name in ["justfile", "symphony.just"] {
             fs::copy(tool("..").join(name), tree.join(name)).unwrap();
         }
-        for name in ["cargo.sh", "record.sh", "test-lanes.sh", "verify.sh"] {
+        for name in [
+            "cargo.sh",
+            "record.sh",
+            "nextest.sh",
+            "test-lanes.sh",
+            "verify.sh",
+        ] {
             fs::copy(tool(name), tree.join("tools").join(name)).unwrap();
         }
+        executable(
+            &tree.join("tools/.nextest/0.9.152/bin/cargo-nextest"),
+            "#!/bin/sh\necho cargo-nextest 0.9.152\n",
+        );
         executable(&tree.join("tools/client-check.sh"), CLIENT_CHECK);
         executable(&tree.join("apps/symphony-web/check.sh"), CLIENT_LINT);
         executable(&tree.join("apps/symphony-web/build.sh"), CLIENT_BUILD);
@@ -1227,7 +1242,10 @@ fn listed(folder: &Path) -> Vec<(String, i32, PathBuf, String)> {
 
 /// The client a tests step's log says it was handed, its real path; `unset` for none.
 fn served(log: &str) -> String {
-    let client = log.lines().next().unwrap().strip_prefix("client=").unwrap();
+    let client = log
+        .lines()
+        .find_map(|line| line.strip_prefix("client="))
+        .unwrap();
     if client == "unset" {
         return client.into();
     }
@@ -1313,9 +1331,17 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
     // The stale client is gone, and the tests say they were served none.
     assert!(!stale.exists(), "the client check's folder was cleared");
     let tests = log("tests");
-    let none = "the client check built no client, so SYMPHONY_UI_DIST was unset: the browser \
-                tests built the client themselves (build/symphony-ui), red if that build failed";
-    assert_eq!(served(&tests), "unset", "{tests}");
+    let none = "the client check built no client, so SYMPHONY_UI_DIST was unset: the \
+                tests runner published one client before scheduling (build/symphony-ui), red if that build failed";
+    assert_eq!(
+        served(&tests),
+        tree.join("build/symphony-ui/public")
+            .canonicalize()
+            .unwrap()
+            .display()
+            .to_string(),
+        "{tests}"
+    );
     assert!(tests.contains("\nsteps=unset\n"), "{tests}");
     assert!(tests.ends_with(&format!("\nverify: {none}\n")), "{tests}");
     // What it said names each red step and its log, then the reds together.
@@ -1382,16 +1408,14 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
     let built = tree.join("build/verified-client/public").canonicalize();
     let built = built.unwrap().display().to_string();
     assert_eq!(served(&tests), built);
-    // Each lane of the tests keeps its log beside the step's, which names it before any started.
-    for (lane, targets) in [("units", "--lib --bins"), ("doc", "--doc")] {
+    // The nextest batch and doctests keep their live logs beside the recorded step.
+    for batch in ["nextest", "doc"] {
         assert!(
-            tests.contains(&format!(
-                "/steps of a check/tests-lanes/{lane}.log ({targets})\n"
-            )),
+            tests.contains(&format!("/steps of a check/tests-lanes/{batch}.log (")),
             "{tests}"
         );
-        let log = fs::read_to_string(folder.join(format!("tests-lanes/{lane}.log"))).unwrap();
-        assert_eq!(log, format!("client={built}\nsteps=unset\n"), "{lane}");
+        let log = fs::read_to_string(folder.join(format!("tests-lanes/{batch}.log"))).unwrap();
+        assert_eq!(log, format!("client={built}\nsteps=unset\n"), "{batch}");
     }
     // What a step runs is not told the folder: a verify it runs lists its steps elsewhere.
     assert!(tests.contains("\nsteps=unset\n"), "{tests}");
@@ -1420,7 +1444,15 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
     let names: Vec<&str> = steps.iter().map(|step| step.0.as_str()).collect();
     assert_eq!(names, ["docs-audit", "tests"]);
     let tests = fs::read_to_string(tree.join("build/verify/tests.log")).unwrap();
-    assert_eq!(served(&tests), "unset", "{tests}");
+    assert_eq!(
+        served(&tests),
+        tree.join("build/symphony-ui/public")
+            .canonicalize()
+            .unwrap()
+            .display()
+            .to_string(),
+        "{tests}"
+    );
     assert!(tree.join("build/verify/tests-lanes/doc.log").is_file());
     assert!(
         tests.contains("\nverify: the client check did not run in this verify, so "),

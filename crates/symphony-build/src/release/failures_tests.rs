@@ -438,7 +438,7 @@ fn many_failed_tests_are_cut_at_the_listed_and_counted() {
         lines[LISTED - 1],
         format!("test case_{} ... FAILED", LISTED - 1)
     );
-    assert_eq!(lines[LISTED], "… and 5 more tests named FAILED in the log");
+    assert_eq!(lines[LISTED], "… and 5 more failed tests in the log");
     assert_eq!(
         lines[LISTED + 1],
         "error: test failed, to rerun pass `-p p --lib`",
@@ -941,5 +941,105 @@ fn a_log_that_is_not_utf8_is_read_as_far_as_it_says_something() {
             "client-check: refused \u{fffd}",
             "error: recipe `x` failed on line 1"
         ]
+    );
+}
+
+#[test]
+fn nextest_names_each_failure_and_timeout_with_the_panics_own_location() {
+    let text = include_str!("fixtures/tests-nextest-red.log");
+    assert_eq!(
+        quoted_lines(text).unwrap(),
+        [
+            "test runner-fixture::runner_fixture fails ... FAILED",
+            "    panicked at src/lib.rs:2:22: fixture failure",
+            "test runner-fixture::runner_fixture timeout ... TIMED OUT",
+        ]
+    );
+    let tree = Tree::new();
+    let log = rerun::read(&tree.write("nextest.log", text));
+    assert_eq!(
+        rerun::arguments(&log.targets),
+        [
+            "-p runner-fixture --lib -- fails --exact",
+            "-p runner-fixture --lib -- timeout --exact",
+        ]
+    );
+}
+
+#[test]
+fn nextest_escaped_test_output_is_read_only_for_its_own_panic() {
+    let start = r#"{"type":"suite","event":"started","nextest":{"crate":"p","test_binary":"case","kind":"test"}}"#;
+    let failed = serde_json::json!({"type":"test", "event":"failed", "name":"p::case$own",
+        "stdout":"test fake ... FAILED\nerror: test failed, to rerun pass `-p fake --lib`\nthread 'worker' panicked at worker.rs:1:1:\nworker failure\nthread 'own' panicked at own.rs:2:3:\nown failure\n"
+    });
+    assert_eq!(
+        quoted_lines(&format!("{start}\n{failed}\n")).unwrap(),
+        [
+            "test p::case own ... FAILED",
+            "    panicked at own.rs:2:3: own failure",
+        ]
+    );
+}
+
+#[test]
+fn nextest_and_cargo_failures_share_one_log_without_losing_either_targets_cases() {
+    let nextest = include_str!("fixtures/tests-nextest-red.log");
+    let cargo = "     Running tests/shared.rs (.target/debug/deps/shared-123)\ntest shared_case ... FAILED\nerror: test failed, to rerun pass `-p board --test shared`\n";
+    for text in [format!("{nextest}{cargo}"), format!("{cargo}{nextest}")] {
+        let quoted = read_in(&text).quoted().unwrap();
+        assert!(
+            quoted.contains("test runner-fixture::runner_fixture timeout ... TIMED OUT"),
+            "{quoted}"
+        );
+        assert!(quoted.contains("test shared_case ... FAILED"), "{quoted}");
+        let tree = Tree::new();
+        let log = rerun::read(&tree.write("mixed.log", &text));
+        let mut args = rerun::arguments(&log.targets);
+        args.sort();
+        assert_eq!(
+            args,
+            [
+                "-p board --test shared -- shared_case --exact",
+                "-p runner-fixture --lib -- fails --exact",
+                "-p runner-fixture --lib -- timeout --exact"
+            ]
+        );
+    }
+}
+
+#[test]
+fn duplicate_nextest_failure_events_are_named_and_rerun_once() {
+    let fixture = include_str!("fixtures/tests-nextest-red.log");
+    let repeats: String = fixture
+        .lines()
+        .filter(|line| line.contains("\"event\":\"failed\""))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let text = format!("{fixture}{repeats}");
+    assert_eq!(quoted_lines(&text), quoted_lines(fixture));
+    let tree = Tree::new();
+    let log = rerun::read(&tree.write("duplicate.log", &text));
+    assert_eq!(rerun::arguments(&log.targets).len(), 2);
+}
+
+#[test]
+fn a_native_failure_printing_nextest_fixture_events_reruns_only_its_own_case() {
+    let fixture = include_str!("fixtures/tests-nextest-red.log");
+    let text = format!(
+        "     Running tests/native.rs (.target/debug/deps/native-1)\ntest native_case ... FAILED\nfailures:\n\n---- native_case stdout ----\n{fixture}\nthread 'native_case' panicked at native.rs:1:2:\nouter failure\n\nfailures:\n    native_case\n\ntest result: FAILED. 0 passed; 1 failed\nerror: test failed, to rerun pass `-p p --test native`\n"
+    );
+    assert_eq!(
+        quoted_lines(&text).unwrap(),
+        [
+            "test native_case ... FAILED",
+            "    panicked at native.rs:1:2: outer failure",
+            "error: test failed, to rerun pass `-p p --test native`",
+        ]
+    );
+    let tree = Tree::new();
+    let log = rerun::read(&tree.write("captured.log", &text));
+    assert_eq!(
+        rerun::arguments(&log.targets),
+        ["-p p --test native -- native_case --exact"]
     );
 }
