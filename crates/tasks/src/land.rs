@@ -1823,6 +1823,12 @@ impl Landing<'_> {
             if let Some(done) = self.resumed() {
                 return done;
             }
+            // A pull request a run before bound, read before anything is judged: one merged or
+            // closed since is settled, and one whose evidence no longer stands is told so.
+            if let Some(done) = self.bound_before() {
+                return done;
+            }
+            self.unchecked().map_err(|refusal| self.refuse(refusal))?;
         } else if self.task {
             delivery::left(&self.folder, slug, &self.settings.default_branch)
                 .map_err(Stop::Refused)?;

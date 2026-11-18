@@ -275,6 +275,12 @@ impl Transport for Host<'_> {
                     request["slug"].as_str().unwrap(),
                     request["head"].as_str().unwrap(),
                 );
+                // As a host does: nothing more is published to a pull request merged or closed.
+                let (_, merged, closed) = self.pull.borrow().clone();
+                if merged.is_some() || closed {
+                    let why = "pull request #3 is merged or closed: nothing more is published";
+                    return Ok(json!({"state": "refused", "why": why}));
+                }
                 let pushed = format!("{head}:refs/heads/{slug}");
                 git(&self.r.root, &["push", "-q", "origin", &pushed]);
                 self.pull.borrow_mut().0 = Some(head.to_string());
@@ -793,7 +799,8 @@ fn a_pull_request_at_another_head_or_bound_to_another_number_merges_nothing() {
         line.contains("was bound to pull request #9 of repository 7 and is now answered with #3"),
         "{line}"
     );
-    assert_eq!(host.verbs(), ["publish"]);
+    // The pull request the journal names is read first, then the one the command answers with.
+    assert_eq!(host.verbs(), ["result", "publish"]);
 }
 
 #[test]
@@ -1140,6 +1147,218 @@ fn a_merge_given_no_usable_answer_whose_pull_request_is_still_open_is_asked_agai
     assert_eq!(post.recipient.as_deref(), Some("@orchestrator"));
 }
 
+// -- a pull request bound by a run before ----------------------------------------------------------
+
+/// `slug` published and its merge refused by the host's checks: bound to its pull request, which
+/// is open and says the evidence stands.
+fn bound<'r>(r: &'r Repo, bare: &Path, people: &People) -> Host<'r> {
+    let host = Host::new(r, bare).merging(Merges::Refuses("checks"));
+    landed(r, SLUG, &people.orch, &host).1.unwrap_err();
+    assert_eq!(host.verbs(), ["publish", "merge", "result"]);
+    assert_eq!(host.request("publish")["snapshot"]["eligible"], true);
+    host
+}
+
+#[test]
+fn evidence_withdrawn_at_a_bound_head_is_published_as_blocking_before_the_land_refuses() {
+    // A red run at the head, and a new head nobody assessed. A task done by its approve takes
+    // no later verdict or assessment on the board, so these are what withdraws its evidence.
+    for withdrawn in ["red", "moved"] {
+        let (r, bare) = delivering();
+        let before = head(&bare, "main");
+        let (people, wt, tip) = ready(&r, SLUG);
+        let host = bound(&r, &bare, &people);
+        let mut now = tip.clone();
+        match withdrawn {
+            "red" => ran(&r, SLUG, &tip, "cargo test -p sim", 1),
+            _ => {
+                write(&wt, "sim/jump.gd", "extends Node # more\n");
+                git(&wt, &["commit", "-qam", "more"]);
+                now = head(&wt, "HEAD");
+            }
+        }
+        let (said, result) = landed(&r, SLUG, &people.orch, &host);
+        result.unwrap_err();
+        // The pull request is read, then told: the head as it is and a snapshot that blocks.
+        assert_eq!(host.verbs()[3..], ["result", "publish"], "{withdrawn}");
+        let published = host.request("publish");
+        assert_eq!(published["head"], now.as_str(), "{withdrawn}");
+        assert_eq!(published["snapshot"]["eligible"], false, "{withdrawn}");
+        assert_eq!(published["snapshot"]["head"], now.as_str());
+        assert!(
+            !published["snapshot"]["blocking"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            said.contains(&format!(
+                "its evidence does not stand at {}, and pull request #3 of owner/name says so now",
+                &now[..7]
+            )),
+            "{withdrawn}: {said}"
+        );
+        assert_eq!(
+            host.verbs().iter().filter(|verb| *verb == "merge").count(),
+            1
+        );
+        assert_nothing_landed(&r, &bare, &before);
+        // Asked again as it is: told again, which the command answers by finding what stands.
+        landed(&r, SLUG, &people.orch, &host).1.unwrap_err();
+        assert_eq!(host.verbs()[5..], ["result", "publish"], "{withdrawn}");
+    }
+}
+
+#[test]
+fn evidence_that_stands_at_a_bound_head_is_published_once_by_the_delivery_itself() {
+    let (r, bare) = delivering();
+    let (people, ..) = ready(&r, SLUG);
+    let mut host = bound(&r, &bare, &people);
+    host.merges = Merges::Squash;
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    result.unwrap();
+    assert_eq!(
+        host.verbs()[3..],
+        ["result", "publish", "merge", "result", "landed"]
+    );
+    assert_eq!(host.request("publish")["snapshot"]["eligible"], true);
+}
+
+#[test]
+fn a_bound_pull_request_merged_since_it_was_read_as_open_is_adopted_or_held_never_published_to() {
+    // The host finished a merge whose answer was lost and read as open, or a person merged it.
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let host = bound(&r, &bare, &people);
+    let squash = host.merge(&tip, "by hand");
+    host.pull.borrow_mut().1 = Some(squash.clone());
+    let (said, result) = landed(&r, SLUG, &people.orch, &host);
+    let line = result.unwrap();
+    assert!(
+        said.contains("was merged since it was read as open: going on from it"),
+        "{said}"
+    );
+    assert!(
+        line.starts_with(&format!("landed {SLUG} on main at {}", &squash[..12])),
+        "{line}"
+    );
+    assert_eq!(
+        host.verbs()[3..],
+        ["result", "result", "landed"],
+        "no publication, no merge"
+    );
+    assert_eq!(head(&r.root, "main"), squash);
+    assert_eq!(Receipt::read(&lands(&r), SLUG).unwrap().head, tip);
+    assert_eq!(landings(&r, SLUG).len(), 1);
+
+    // Merged by hand as a merge commit: held by name, on every run the same, said once.
+    let (r, bare) = delivering();
+    let local = head(&r.root, "main");
+    let (people, _, tip) = ready(&r, SLUG);
+    let mut host = bound(&r, &bare, &people);
+    host.merges = Merges::ByCommit;
+    let made = host.merge(&tip, "by hand");
+    host.pull.borrow_mut().1 = Some(made);
+    for _ in 0..2 {
+        let (_, result) = landed(&r, SLUG, &people.orch, &host);
+        let line = result.unwrap_err();
+        assert!(
+            line.starts_with("the delivery of sim/jump is held for reconciliation: "),
+            "{line}"
+        );
+        assert!(line.contains("has 2 parents"), "{line}");
+    }
+    assert_eq!(
+        host.verbs()
+            .iter()
+            .filter(|verb| *verb == "publish")
+            .count(),
+        1
+    );
+    assert_eq!(head(&r.root, "main"), local);
+    assert!(landings(&r, SLUG).is_empty() && Receipt::read(&lands(&r), SLUG).is_none());
+    let held = (r.board.said(SLUG).iter())
+        .filter(|line| line.contains("held for reconciliation"))
+        .count();
+    assert_eq!(held, 1);
+
+    // Merged by hand after its evidence was withdrawn, after the branch moved on, or closed:
+    // nothing is adopted, and each is held by its name.
+    for (case, said) in [
+        ("red", "the evidence of sim/jump does not stand there"),
+        ("moved", "'s branch is at"),
+        ("closed", "pull request #3 was closed without a merge"),
+    ] {
+        let (r, bare) = delivering();
+        let local = head(&r.root, "main");
+        let (people, wt, tip) = ready(&r, SLUG);
+        let host = bound(&r, &bare, &people);
+        if case == "closed" {
+            host.pull.borrow_mut().2 = true;
+        } else {
+            let squash = host.merge(&tip, "by hand");
+            host.pull.borrow_mut().1 = Some(squash);
+        }
+        match case {
+            "red" => ran(&r, SLUG, &tip, "cargo test -p sim", 1),
+            "moved" => {
+                write(&wt, "sim/jump.gd", "extends Node # more\n");
+                git(&wt, &["commit", "-qam", "more"]);
+            }
+            _ => {}
+        }
+        let (_, result) = landed(&r, SLUG, &people.orch, &host);
+        let line = result.unwrap_err();
+        assert!(
+            line.starts_with("the delivery of sim/jump is held for reconciliation: "),
+            "{case}: {line}"
+        );
+        assert!(line.contains(said), "{case}: {line}");
+        assert_eq!(
+            host.verbs()[3..],
+            ["result"],
+            "{case}: nothing published, nothing merged"
+        );
+        assert_eq!(head(&r.root, "main"), local, "{case}");
+        assert!(landings(&r, SLUG).is_empty() && Receipt::read(&lands(&r), SLUG).is_none());
+    }
+}
+
+// -- the project's merge check ---------------------------------------------------------------------
+
+#[test]
+fn a_project_whose_land_checks_its_merge_delivers_nothing_past_that_check() {
+    // `[land] check` left as it is, on, with a check to run: the default land runs it on the
+    // merge, and no squash made by a host is run through it.
+    let r = Repo::new();
+    project_file(
+        &r,
+        "[land]\ndelivery = [\"host\", \"deliver\"]\n\n[verdicts]\ncheck = [\"sh\", \"-c\", \"true\"]\n",
+    );
+    let bare = remote(&r);
+    let before = head(&bare, "main");
+    let (people, ..) = ready(&r, SLUG);
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    assert_eq!(
+        result.unwrap_err(),
+        "[land] delivery is set and so is the land's merge check (`sh -c true`), which a squash \
+         made by the host is never run on: nothing is delivered past a check the project asks for"
+    );
+    assert!(host.verbs().is_empty());
+    assert_nothing_landed(&r, &bare, &before);
+    let post = r.board.store.thread(SLUG).unwrap().pop().unwrap();
+    assert_eq!(post.recipient.as_deref(), Some("@orchestrator"));
+    // With the check on and none to run, nothing is lost and the task is delivered.
+    let r = Repo::new();
+    project_file(&r, "[land]\ndelivery = [\"host\", \"deliver\"]\n");
+    let bare = remote(&r);
+    let (people, ..) = ready(&r, SLUG);
+    landed(&r, SLUG, &people.orch, &Host::new(&r, &bare))
+        .1
+        .unwrap();
+}
+
 // -- a checkout that cannot follow -----------------------------------------------------------------
 
 #[test]
@@ -1274,9 +1493,10 @@ fn a_run_cut_short_after_the_board_closed_the_task_closes_and_dispatches_nothing
         said.contains("was started by a run before this one, and is not started twice"),
         "{said}"
     );
+    // The command is told again, as it is safe to: a run cut before it was asked told nobody.
     assert_eq!(
         host.verbs().iter().filter(|verb| *verb == "landed").count(),
-        2
+        3
     );
     assert!(!Journal::path(&lands(&r), SLUG).exists());
 }

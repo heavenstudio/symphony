@@ -21,6 +21,12 @@
 //! task needs, whether it stands and whether to ask for the merge are this land's, by
 //! [`evidence::snapshot`], the one reading `tasks api`'s `evidence` answers too.
 //!
+//! Before it judges anything a land reads the pull request a run before bound the task to
+//! ([`Landing::bound_before`]): one merged since is settled or held, never published to, and one
+//! whose evidence no longer stands is told so by a snapshot that blocks. And it delivers nothing
+//! past the merge check the project asks for, which no squash is run through
+//! ([`Landing::unchecked`]).
+//!
 //! The land keeps a [`Journal`] in the lands' folder, written before each step it names:
 //!
 //! 1. **Prepared**: the head, the snapshot's revision and the commit's title and body. The
@@ -388,6 +394,139 @@ impl Landing<'_> {
             journal.said()
         ));
         Some(self.settle(journal, None))
+    }
+
+    /// Refuse a delivery where the land's merge check is set (`[land] check`, on unless the
+    /// project turns it off, with a `[verdicts] check`): the default land runs it on its merge
+    /// before main moves, and the commit a host squashes is checked by nothing here, so the
+    /// check would be lost without a word.
+    pub(super) fn unchecked(&self) -> Result<(), Refusal> {
+        if self.settings.check.is_empty() {
+            return Ok(());
+        }
+        Err(Refusal::to(
+            format!(
+                "[land] delivery is set and so is the land's merge check (`{}`), which a squash \
+                 made by the host is never run on: nothing is delivered past a check the project \
+                 asks for",
+                self.settings.check.join(" ")
+            ),
+            "@orchestrator",
+            "The project's owner decides: the pull request's required checks take the check's \
+             place and the project file says `[land] check = false`, or the key is taken out"
+                .into(),
+        ))
+    }
+
+    /// The pull request a run before bound this task to, read before the land judges anything:
+    /// none with no such binding, or with one still open whose evidence stands.
+    ///
+    /// - Merged at the branch's head while its evidence stands (a merge whose lost answer was
+    ///   read as open and that the host finished after, or one made by hand): settled as any
+    ///   merge is, proved or held.
+    /// - Merged or closed otherwise: held, by name, and nothing closed.
+    /// - Open, the evidence no longer eligible (a changes verdict, a red run, a new head): the
+    ///   snapshot that blocks is published, so the check the host requires says so, and the
+    ///   land goes on to its own refusal.
+    pub(super) fn bound_before(&mut self) -> Option<Result<String, Stop>> {
+        let slug = self.slug;
+        let journal = Journal::read(&self.folder, slug)?;
+        let binding = journal.binding.clone()?;
+        let tip = rev(&self.main, &format!("refs/heads/{slug}"))?;
+        let request = json!({
+            "verb": "result", "slug": slug,
+            "repository": binding.repository, "pull": binding.pull,
+        });
+        let result = match self.ask("result", &request) {
+            Ok(result) => result,
+            Err(why) => {
+                self.say(&format!(
+                    "land {slug}: pull request #{} could not be read ({why})",
+                    binding.pull
+                ));
+                return None;
+            }
+        };
+        let (said, _) = state(&result);
+        let snapshot = match (self.store.get(slug), self.store.thread(slug)) {
+            (Ok(task), Ok(thread)) => {
+                evidence::snapshot(self.store, self.env, &self.main, &task, &thread, &tip).ok()
+            }
+            _ => None,
+        };
+        let stands = snapshot.as_ref().is_some_and(|snapshot| snapshot.eligible);
+        match said {
+            "open" => {
+                if let Some(snapshot) = snapshot.filter(|snapshot| !snapshot.eligible) {
+                    self.withdraw(&journal, &binding, &tip, &snapshot);
+                }
+                None
+            }
+            "merged" if journal.head == tip && stands => {
+                self.say(&format!(
+                    "land {slug}: pull request #{} of {} was merged since it was read as open: \
+                     going on from it",
+                    binding.pull, binding.name
+                ));
+                Some(self.settle(journal, None))
+            }
+            "merged" | "closed" => {
+                let what = if said == "closed" {
+                    format!("pull request #{} was closed without a merge", binding.pull)
+                } else if journal.head != tip {
+                    format!(
+                        "pull request #{} was merged at {} and {slug}'s branch is at {}",
+                        binding.pull,
+                        short(result["head"].as_str().unwrap_or(&journal.head)),
+                        short(&tip)
+                    )
+                } else {
+                    format!(
+                        "pull request #{} was merged at {} and the evidence of {slug} does not \
+                         stand there",
+                        binding.pull,
+                        short(&tip)
+                    )
+                };
+                Some(Err(self.hold(journal, what)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Publish `snapshot`, which is not eligible, to the pull request `binding`: the head the
+    /// branch is at now and checks that fail, the one the host requires first. What the land
+    /// refuses with follows; a publication that fails is said and changes none of it.
+    fn withdraw(&mut self, journal: &Journal, binding: &Binding, tip: &str, snapshot: &Snapshot) {
+        let slug = self.slug;
+        let request = json!({
+            "verb": "publish", "slug": slug, "by": self.actor, "head": tip,
+            "branch": self.settings.default_branch, "title": journal.title,
+            "body": journal.body, "snapshot": snapshot,
+        });
+        let said = match self.ask("publish", &request) {
+            Ok(answer) if state(&answer).0 == "published" => format!(
+                "land {slug}: its evidence does not stand at {}, and pull request #{} of {} says \
+                 so now",
+                short(tip),
+                binding.pull,
+                binding.name
+            ),
+            Ok(answer) => format!(
+                "land {slug}: its evidence does not stand at {}, and pull request #{} was not \
+                 told ({}): its checks may still say it does",
+                short(tip),
+                binding.pull,
+                state(&answer).1
+            ),
+            Err(why) => format!(
+                "land {slug}: its evidence does not stand at {}, and pull request #{} was not \
+                 told ({why}): its checks may still say it does",
+                short(tip),
+                binding.pull
+            ),
+        };
+        self.say(&said);
     }
 
     /// Deliver the task's `tip`, found ready as `judged`, by its pull request.
@@ -977,10 +1116,10 @@ impl Landing<'_> {
             journal.stage = Stage::Closed;
             journal.write(&self.folder).map_err(here)?;
         }
-        if journal.stage == Stage::Closed {
-            // Named before anything is started, so nothing is started twice.
-            journal.stage = Stage::Dispatching;
-            journal.write(&self.folder).map_err(here)?;
+        // Told on every run that reaches here: the verb is safe to ask twice, and a run cut short
+        // after the stage was written and before it was asked would otherwise never tell it.
+        let dispatched = journal.stage == Stage::Dispatching;
+        {
             let request = json!({
                 "verb": "landed", "slug": slug, "by": self.actor, "head": journal.head,
                 "repository": binding.repository, "pull": binding.pull, "squash": squash,
@@ -999,6 +1138,11 @@ impl Landing<'_> {
                     "land {slug}: the delivery command did not note the landing: {why}"
                 )),
             }
+        }
+        if !dispatched {
+            // Named before anything is started, so nothing is started twice.
+            journal.stage = Stage::Dispatching;
+            journal.write(&self.folder).map_err(here)?;
             if !self.settings.generators.is_empty() {
                 self.say(&format!(
                     "land {slug}: the regenerator is not started: with [land] delivery it commits \

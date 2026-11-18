@@ -564,6 +564,11 @@ impl Saves {
     ) -> Result<(Value, Option<NewAsk>), Failure> {
         let (root, rel) = self.scope(scope, string(payload, "path"))?;
         let target = Self::target(&root, &rel)?;
+        // Refused before a file is written: a save on the default branch of a project that
+        // delivers by pull request would commit what its host never holds.
+        if root == self.root && commit::on_main(&root) {
+            commit::delivered_by_the_host(&root).map_err(|error| Failure { status: 409, error })?;
+        }
         // A branch's file, by its path in the worktree: git is asked of it.
         let file = (root != self.root).then(|| crate::project::Project::of(&root).file(&rel));
         let tap: String = if route == "/api/decision" {

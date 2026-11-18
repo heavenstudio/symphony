@@ -214,6 +214,14 @@ The pull request's title and text, and the squash commit's title, are the task's
 the handles and the reasons in the evidence are sent nowhere: a check says a stamp's name and
 where it stands, and no more.
 
+A land that finds the evidence of a bound pull request withdrawn publishes that too: `publish`
+with a snapshot that is not eligible pushes the head the branch is at and fails
+`symphony/eligible` there before any other check moves. The pull request stays as it is, ready
+if a merge was asked for before: what keeps it from merging then is the failed check a protected
+branch requires, and on a branch not so protected nothing does. A waived stamp's check is
+neutral and says only that the assessment waived it: the assessor's reason is board text and is
+sent nowhere.
+
 Every write is journaled before it is made and looked for before it is made again: a pull
 request by its branch, a check by its name, its conclusion and the evidence's revision, a merge
 by the pull request's own state. A lost answer is answered `unavailable` or `unknown`, and the

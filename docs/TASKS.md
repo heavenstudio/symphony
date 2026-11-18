@@ -2450,6 +2450,12 @@ verbs are `publish`, `merge`, `result` and `landed` (`crates/tasks/src/land/deli
 decides nothing: what a task needs and whether it stands is
 [the evidence](#the-evidence-of-a-task-at-its-head) the land reads and hands it.
 
+It delivers nothing past a check the project asks for. The default land runs `[verdicts] check`
+on its merge before main moves (`[land] check`, on unless the project turns it off); a commit the
+host squashes is run through nothing here. So with the key set and that check to run, the land
+refuses by name, to the orchestrator, until the project's owner says `[land] check = false`,
+the pull request's required checks taking its place, or takes the key out.
+
 A land keeps a journal of the delivery in the lands' folder, written before each step:
 
 1. **Prepared.** The remote default branch is fetched, and the project file it commits must be
@@ -2470,8 +2476,20 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    fast-forwarded. A dirty or diverged one is left as it is, the land answering "landed remotely,
    reconciliation pending" once on the thread, and a land run again closes the task once the
    checkout can follow. Nothing here is reset, merged or pushed for it.
-6. **Closed**, then what follows a land, each once: the landed line names the commit, the head and
-   the pull request, `landed` tells the program, and `[board] on_land` runs with the commit.
+6. **Closed**, then what follows a land: the landed line names the commit, the head and the pull
+   request, once; `[board] on_land` runs with the commit, once; and `landed` tells the program on
+   every run that reaches here, as the verb is safe to ask twice and a run cut short before it
+   told nobody.
+
+A pull request a run before bound the task to is read before the land judges anything, on every
+run, by `result`:
+
+| The bound pull request | What the land does |
+| --- | --- |
+| Open, the evidence standing | goes on: publishes and asks for the merge |
+| Open, the evidence not eligible now (a red run, a head nobody assessed) | publishes the snapshot that blocks, at the head the branch is at, so the check the host requires fails there; then refuses as any land does |
+| Merged at the branch's head, the evidence standing (the host finished a merge whose lost answer was read as open, or a person merged it) | proves the commit and adopts it, or holds it, as any merge; nothing is published to it and no second merge asked |
+| Merged while the evidence does not stand, or with the branch at another head, or closed unmerged | held for reconciliation, by name; nothing closed |
 
 | What the land finds | What it does |
 | --- | --- |
@@ -2484,7 +2502,8 @@ One limit holds by design: evidence withdrawn after the last reading and before 
 a request already made does not recall it. The receipt names the revision that was read.
 
 What else writes the default branch lands nothing there while the key is set, each refused by
-name: the regenerator, and a save of a document from the app. The release cadence refuses to
+name: the regenerator, and a save of a document from the app, refused where it begins, before a
+file is written, and again where an edit is handed to the committer and in the commit itself. The release cadence refuses to
 count the landings of a line whose tip sets the key, since a squash is no merge of the land's: no
 release run is due by landings there and no release candidate is advanced, each saying so
 ([RELEASES](RELEASES.md#the-cadence)). The sweep keeps the worktree and branch of a squashed

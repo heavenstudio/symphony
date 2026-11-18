@@ -831,3 +831,89 @@ fn a_draft_stays_one_until_its_merge_and_a_mark_that_fails_merges_nothing() {
     assert!(journal.contains(&"ready Failed".to_string()), "{journal:?}");
     d.assert_no_token();
 }
+
+/// The evidence as the board's own type writes it, so the two sides cannot drift apart: a land
+/// that refuses a head it has a pull request for hands over exactly this, not eligible
+/// (`Landing::bound_before` in the board's `land/delivery.rs`).
+fn withdrawn(head: &str) -> Value {
+    use symphony_board::land::evidence::{Assessment, Snapshot, Stamp, Standing, VERSION};
+    let stamp = |name: &str, standing| Stamp {
+        name: name.into(),
+        standing,
+        detail: "a private line".into(),
+        evidence: Vec::new(),
+    };
+    serde_json::to_value(Snapshot {
+        version: VERSION,
+        slug: SLUG.into(),
+        task: 7,
+        status: "done".into(),
+        head: head.into(),
+        branch: "main".into(),
+        policy: "p".into(),
+        catalogue: "c".into(),
+        assessment: Some(Assessment {
+            by: "calm-owl-2".into(),
+            tip: Some(head.into()),
+            why: "a private reason".into(),
+            stamps: vec!["tests".into(), "review".into()],
+        }),
+        assessed: true,
+        stamps: vec![
+            stamp("tests", Standing::Missing),
+            stamp("review", Standing::Met),
+            stamp("pictures", Standing::Waived),
+        ],
+        blocking: vec!["tests: red at the head".into()],
+        eligible: false,
+        revision: "withdrawn".into(),
+    })
+    .unwrap()
+}
+
+#[test]
+fn evidence_the_board_withdrew_fails_the_required_check_of_a_pull_request_already_ready() {
+    let d = Delivery::new("deliver-withdrawn", "");
+    d.publish(&snapshot(HEAD, "met", "r1"));
+    // A merge GitHub refused leaves the pull request ready, its checks green.
+    d.rig
+        .github
+        .set_pull(100, &json!({"mergeable_state": "blocked"}));
+    assert_eq!(d.merge(100)["kind"], "checks");
+    assert_eq!(d.rig.github.pulls()[0]["draft"], false);
+    assert!(names(&d.rig.github.checks(HEAD)).contains(&("symphony/eligible", "success")));
+    // The board's own snapshot of the withdrawal, at that head.
+    let before = d.writes().len();
+    assert_eq!(d.publish(&withdrawn(HEAD))["state"], "published");
+    let checks = d.rig.github.checks(HEAD);
+    assert_eq!(checks.len(), 5, "each name once: {checks:?}");
+    assert!(names(&checks).contains(&("symphony/eligible", "failure")));
+    assert!(names(&checks).contains(&("symphony/tests", "failure")));
+    let first: Value = serde_json::from_str(
+        &(d.rig
+            .github
+            .asked()
+            .into_iter()
+            .skip_while(|(method, ..)| method != "PUT"))
+        .find(|(method, ..)| method == "PATCH")
+        .unwrap()
+        .2
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        first["name"], "symphony/eligible",
+        "the verdict fails before any stamp moves"
+    );
+    assert_eq!(
+        d.writes().len() - before,
+        5,
+        "each check is of the new revision"
+    );
+    // At a head the branch moved to: pushed, so the pull request is at it, failing there.
+    let other = "b".repeat(40);
+    assert_eq!(d.publish(&withdrawn(&other))["head"], other.as_str());
+    assert!(names(&d.rig.github.checks(&other)).contains(&("symphony/eligible", "failure")));
+    assert_eq!(d.rig.github.pulls()[0]["head"]["sha"], other.as_str());
+    d.assert_no_token();
+}
