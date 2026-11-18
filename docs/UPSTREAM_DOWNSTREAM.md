@@ -143,8 +143,8 @@ tasks, one on each board, and both clones.
    freshly fetched `origin/main`: `git apply --index FILE`, then a commit whose message is
    written there, anew.
 6. **Prove the branch is clean** ([below](#export-evidence)), and run the upstream's own checks
-   for the change: its closest tests and its lint, which includes the hook that refuses a
-   consuming project's name in any tracked file.
+   for the change: its closest tests, its lint, and the hook test that refuses a consuming
+   project's name in any tracked file (`own_names`).
 7. **Review and land it as any upstream task**, under the upstream's rules, by a reviewer who
    did not write it.
 8. **Close the loop privately.** The private task records the upstream commit the export landed
