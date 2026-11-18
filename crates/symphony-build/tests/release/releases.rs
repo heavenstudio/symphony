@@ -7,7 +7,7 @@ use std::fs;
 use super::{CHECK, DAY, Fixture, NOW, git};
 
 #[test]
-fn a_green_tip_is_tagged_as_the_days_release_and_only_the_tag_reaches_the_remote() {
+fn a_second_release_that_day_is_numbered_and_the_next_day_starts_again() {
     let fixture = Fixture::new();
     let first = git(&fixture.main, &["rev-parse", "HEAD"]);
     // What a hostile configuration would push beside the release: an annotated tag on main's
@@ -74,12 +74,9 @@ fn a_green_tip_is_tagged_as_the_days_release_and_only_the_tag_reaches_the_remote
     assert_eq!(runs[0]["checks"][0]["name"], "verify");
     assert_eq!(runs[0]["checks"][0]["command"], "test ! -e red");
     assert_eq!(runs[0]["checks"][0]["exit_code"], 0);
-}
 
-#[test]
-fn a_second_release_that_day_is_numbered_and_the_next_day_starts_again() {
-    let fixture = Fixture::new();
-    fixture.night(NOW, 0);
+    // This checkout's own commit put aside, the next landing is one change on main.
+    git(&fixture.main, &["reset", "-q", "--hard", &first]);
     let second = fixture.land("notes.txt", Some("a fix"), "a fix");
     fixture.night(NOW + 3600.0, 0);
     let third = fixture.land(

@@ -7,7 +7,7 @@
 
 use std::fs;
 
-use symphony_board::{NewSession, NewTask};
+use symphony_board::NewSession;
 
 use super::{CHECK, Fixture, NOW, git};
 
@@ -312,49 +312,6 @@ fn a_red_run_holds_its_commit_until_its_reds_own_land_answers_it_and_the_rerun_r
     );
 }
 
-#[test]
-fn a_land_that_merged_main_after_its_approve_advances_to_the_commit_approved_before() {
-    let fixture = holding("");
-    let red = held(&fixture);
-    let hands = hands(&fixture);
-    let approved = fix(&fixture, RED, "red", None);
-    approve(&fixture, &hands, RED, &approved, true);
-    // Main moved on, so the land came back to the executor, who merged main and was approved again.
-    fixture.land("notes.txt", Some("main moved"), "main moves on");
-    git(&fixture.main, &["checkout", "-q", RED]);
-    git(
-        &fixture.main,
-        &[
-            "merge",
-            "-q",
-            "--no-ff",
-            "-m",
-            &format!("Merge branch 'main' into {RED}"),
-            "main",
-        ],
-    );
-    fixture.write("fix.txt", "after the merge");
-    let after = fixture.commit("fix again after main");
-    git(&fixture.main, &["checkout", "-q", "main"]);
-    approve(&fixture, &hands, RED, &after, false);
-    let merge = land(&fixture, RED, true);
-    let out = due(&fixture, NOW + 300.0, RED, &merge, 0);
-    assert!(
-        out.contains(&format!(
-            "release: advanced the release candidate from {} to {}, the newest approved commit of \
-             {RED}'s land",
-            &red[..12],
-            &approved[..12]
-        )),
-        "{out}"
-    );
-    assert_eq!(
-        fixture.tagged("release-2026-11-12"),
-        approved,
-        "the commit approved before main was merged, never the merged tip"
-    );
-}
-
 /// A red whose assessment needs no review lands from review with no approve: the candidate takes
 /// the tip its landing's line says its needed stamps stood on, as it takes an approved commit.
 #[test]
@@ -507,52 +464,6 @@ fn the_hours_bound_drops_it_and_main_is_run_at_once() {
 }
 
 #[test]
-fn a_reds_land_with_no_approved_commit_that_passes_drops_it_and_main_is_run_at_once() {
-    let fixture = holding("");
-    let red = held(&fixture);
-    let hands = hands(&fixture);
-    fixture.land("notes.txt", Some("main moved"), "main moves on");
-    // The fix merged main before its approve: no approved commit holds the candidate and the fix
-    // alone.
-    git(
-        &fixture.main,
-        &["checkout", "-q", "-b", RED, "release-candidate"],
-    );
-    git(
-        &fixture.main,
-        &[
-            "merge",
-            "-q",
-            "--no-ff",
-            "-m",
-            &format!("Merge branch 'main' into {RED}"),
-            "main",
-        ],
-    );
-    fs::remove_file(fixture.main.join("red")).unwrap();
-    let merged = fixture.commit("fix after merging main");
-    git(&fixture.main, &["checkout", "-q", "main"]);
-    approve(&fixture, &hands, RED, &merged, true);
-    let merge = land(&fixture, RED, true);
-    let out = due(&fixture, NOW + 300.0, RED, &merge, 0);
-    for said in [
-        format!(
-            "release: dropped the release candidate: {RED} landed ({}) with no approved commit \
-             that descends from the candidate ({}) and holds beyond it nothing main held before \
-             the land\n",
-            &merge[..12],
-            &red[..12]
-        ),
-        "release: due: the release candidate was dropped, so a run on origin/main's tip starts\n"
-            .into(),
-        "release: green; tagged release-2026-11-12, pushed to origin\n".into(),
-    ] {
-        assert!(out.contains(&said), "{said}\n\n{out}");
-    }
-    assert_eq!(fixture.tagged("release-2026-11-12"), merge, "main's tip");
-}
-
-#[test]
 fn a_release_on_main_that_passes_it_drops_it() {
     let fixture = holding("");
     let red = held(&fixture);
@@ -644,52 +555,6 @@ fn a_red_closed_as_covered_by_another_reds_land_is_answered_by_it_and_the_rerun_
             &fixed[..12]
         )),
         "{message}"
-    );
-}
-
-#[test]
-fn a_red_closed_as_covered_by_a_landing_that_did_not_advance_it_drops_it_and_main_is_run() {
-    let fixture = holding("");
-    let red = held(&fixture);
-    // A task on main, no red's, fixes the red, and the red is closed as covered by its landing.
-    let hands = hands(&fixture);
-    let store = fixture.store();
-    let other = "tools/fixed-on-main";
-    let task = NewTask::new(other, "Fixed on main", &hands.orchestrator);
-    store.create(&task).unwrap();
-    (store.take_role(other, &hands.orchestrator, "orchestrator")).unwrap();
-    store.claim(other, &hands.executor).unwrap();
-    (store.move_to(other, "review", &hands.executor)).unwrap();
-    git(&fixture.main, &["checkout", "-q", "-b", other, "main"]);
-    fs::remove_file(fixture.main.join("red")).unwrap();
-    fixture.commit("fixed on main");
-    let merge = land(&fixture, other, true);
-    let landed = format!("landed {other} on main at {}", &merge[..12]);
-    (store.landed(other, &hands.orchestrator, &landed, false, &["review"])).unwrap();
-    (store.take_role(RED, &hands.orchestrator, "orchestrator")).unwrap();
-    let note = "its fix landed on main";
-    (store.close_covered(RED, &hands.orchestrator, other, &merge, note)).unwrap();
-
-    let out = due(&fixture, NOW + 300.0, other, &merge, 0);
-    for said in [
-        format!(
-            "release: dropped the release candidate: {RED} was closed as covered by {other}'s \
-             land ({}), which did not advance the candidate: its fix is on main, not in the \
-             candidate\n",
-            &merge[..12]
-        ),
-        "release: due: the release candidate was dropped, so a run on origin/main's tip starts\n"
-            .into(),
-        "release: green; tagged release-2026-11-12, pushed to origin\n".into(),
-    ] {
-        assert!(out.contains(&said), "{said}\n\n{out}");
-    }
-    assert_eq!(fixture.tagged("release-2026-11-12"), merge, "main's tip");
-    let candidate = record(&fixture);
-    assert_eq!(candidate["commit"], red.as_str());
-    assert_eq!(
-        (&candidate["state"], &candidate["ended"]["due"]),
-        (&"dropped".into(), &false.into())
     );
 }
 

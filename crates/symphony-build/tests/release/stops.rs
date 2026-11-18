@@ -598,25 +598,8 @@ fn a_process_left_in_the_checkout_stops_the_run_before_it_checks_anything() {
         "the checkout was left as it was"
     );
 
-    // Gone, the next run goes and closes the red.
-    let out = fixture.night(NOW + 120.0, 0);
-    assert!(
-        out.contains("release: closed tests/release-red-run"),
-        "{out}"
-    );
-    assert_eq!(
-        fixture.remote_tags(),
-        ["release-2026-11-12", "release-2026-11-12.2"]
-    );
-}
-
-#[test]
-fn a_process_holding_a_file_inside_the_checkout_open_stops_the_run_too() {
-    let fixture = Fixture::new();
-    fixture.night(NOW, 0);
-    fixture.land("notes.txt", Some("more"), "more");
-    let checkout = fixture.worktree();
-    // From outside it, as an editor or a `tail -f` started elsewhere would.
+    // One holding a file inside it open from outside, as an editor or a `tail -f` started
+    // elsewhere would, stops the run too: the same red hears of it.
     let mut holding = Command::new("sleep")
         .arg("1000")
         .stdin(fs::File::open(checkout.join("symphony.toml")).unwrap())
@@ -624,7 +607,7 @@ fn a_process_holding_a_file_inside_the_checkout_open_stops_the_run_too() {
         .spawn()
         .unwrap();
     let guard = Process(libc::pid_t::try_from(holding.id()).unwrap());
-    let (code, out, err) = fixture.release_at(NOW + 60.0, &["--check", CHECK]);
+    let (code, out, err) = fixture.release_at(NOW + 90.0, &["--check", CHECK]);
     holding.kill().unwrap();
     holding.wait().unwrap();
     guard.ended();
@@ -638,10 +621,25 @@ fn a_process_holding_a_file_inside_the_checkout_open_stops_the_run_too() {
         "{err}"
     );
     assert!(
-        out.contains("release: filed tests/release-red-run"),
+        !out.contains("release: verify"),
+        "nothing was checked: {out}"
+    );
+    assert!(
+        out.contains("release: updated tests/release-red-run"),
         "{out}"
     );
     assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+
+    // Gone, the next run goes and closes the red.
+    let out = fixture.night(NOW + 120.0, 0);
+    assert!(
+        out.contains("release: closed tests/release-red-run"),
+        "{out}"
+    );
+    assert_eq!(
+        fixture.remote_tags(),
+        ["release-2026-11-12", "release-2026-11-12.2"]
+    );
 }
 
 #[test]
