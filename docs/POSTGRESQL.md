@@ -41,6 +41,7 @@ kept until explicitly removed. A whole stopped cluster is the unit of a
 [PostgreSQL filesystem backup](https://www.postgresql.org/docs/18/backup-file.html).
 
 `Postgres::restore` copies a snapshot into a new scratch home, with the same PostgreSQL major.
+Initialize that home's PostgreSQL identity explicitly before using repository discovery on it.
 It refuses an existing target cluster and a running source, and starts neither source nor target.
 The next start writes the target's own socket settings and lets PostgreSQL recover its WAL. The
 snapshot is unchanged. This is rehearsal and inspection, not an in-place rollback or acceptance

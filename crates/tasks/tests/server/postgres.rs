@@ -146,7 +146,7 @@ fn holds_snapshots_and_recovery_keep_the_stopped_cluster_and_the_holder_contract
         std::fs::read_to_string(snapshot.join("PG_VERSION"))
             .unwrap()
             .trim(),
-        "18"
+        serving.version.split('.').next().unwrap()
     );
 }
 
