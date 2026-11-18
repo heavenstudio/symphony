@@ -1,0 +1,326 @@
+//! What the exchange keeps, in the folder the board names for it (`symphony/integrations/github`
+//! in the git common dir): the repository it is bound to, a mapping for each task it exchanges,
+//! the curated text of each task opted in, the preview waiting to be applied, and a journal of
+//! every operation. One lock in that folder serializes whoever writes it, for this project
+//! alone. The state file is replaced whole, and the journal is appended and synced before the
+//! operation it names goes on.
+
+use crate::plan::Preview;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::fs::{self, File, OpenOptions, TryLockError};
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+
+/// The repository the state is bound to, by its number, which a rename or a transfer keeps.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Binding {
+    pub repository_id: i64,
+    pub node_id: String,
+    /// Its name when last read: a display name.
+    pub full_name: String,
+}
+
+/// Which side a mapping began on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Origin {
+    /// An issue imported as a proposal: the local side is the task's title and brief.
+    Import,
+    /// A task published as an issue: the local side is its curated text, never its brief.
+    Export,
+}
+
+/// Why a mapping is exchanged no further until its operator says.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Flag {
+    /// Both sides changed since they were last the same.
+    Conflict,
+    /// GitHub answers 404 for the issue: missing or not accessible.
+    Inaccessible,
+    /// The task the mapping names is no longer the one it was kept for.
+    Suspended(String),
+}
+
+impl Flag {
+    #[must_use]
+    pub fn said(&self) -> String {
+        match self {
+            Flag::Conflict => "conflict: both sides changed".into(),
+            Flag::Inaccessible => "the issue is missing or not accessible".into(),
+            Flag::Suspended(why) => format!("suspended: {why}"),
+        }
+    }
+}
+
+/// One task and the issue it is exchanged with.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mapping {
+    pub origin: Origin,
+    /// The task's number under `generation`, the board's recovery generation it was read at.
+    pub task_id: i64,
+    pub generation: String,
+    pub issue_number: i64,
+    pub issue_id: i64,
+    pub issue_node: String,
+    pub url: String,
+    /// The digest of each side when they were last synchronized.
+    pub local: String,
+    pub remote: String,
+    /// `open` or `closed`, as last seen.
+    pub remote_state: String,
+    /// The newest comment update read, and the comments read that carry it.
+    pub comments_since: Option<String>,
+    #[serde(default)]
+    pub comments_seen: Vec<i64>,
+    pub flag: Option<Flag>,
+}
+
+/// The curated public text of a task opted in.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Draft {
+    pub title: String,
+    pub body: String,
+}
+
+/// Which side an operator kept of a conflict.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Side {
+    Local,
+    Remote,
+}
+
+/// Everything kept but the journal.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct State {
+    pub binding: Option<Binding>,
+    /// By the task's slug.
+    #[serde(default)]
+    pub mappings: BTreeMap<String, Mapping>,
+    #[serde(default)]
+    pub drafts: BTreeMap<String, Draft>,
+    #[serde(default)]
+    pub resolutions: BTreeMap<String, Side>,
+    /// The `updated_at` the next listing starts from.
+    pub cursor: Option<String>,
+    /// Why nothing is dispatched until a preview succeeds again.
+    pub paused: Option<String>,
+    /// The second before which nothing is sent.
+    pub rate_limited_until: Option<i64>,
+}
+
+/// The state folder.
+pub struct Store {
+    dir: PathBuf,
+}
+
+/// The lock, held until dropped.
+pub struct Locked(#[expect(dead_code, reason = "held for its lock, released when it drops")] File);
+
+fn wrong(path: &Path, error: impl std::fmt::Display) -> String {
+    format!("{}: {error}", path.display())
+}
+
+impl Store {
+    /// The store in `dir`, which is made if it is not there.
+    ///
+    /// # Errors
+    ///
+    /// The folder cannot be made.
+    pub fn open(dir: &Path) -> Result<Store, String> {
+        fs::create_dir_all(dir).map_err(|error| wrong(dir, error))?;
+        Ok(Store { dir: dir.into() })
+    }
+
+    /// The store in `dir` if the folder is there: a read that makes nothing.
+    #[must_use]
+    pub fn existing(dir: &Path) -> Option<Store> {
+        dir.is_dir().then(|| Store { dir: dir.into() })
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        self.dir.join(name)
+    }
+
+    /// The lock every writer of this folder takes.
+    ///
+    /// # Errors
+    ///
+    /// Another process holds it: nothing waits.
+    pub fn lock(&self) -> Result<Locked, String> {
+        let path = self.path("lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|error| wrong(&path, error))?;
+        match file.try_lock() {
+            Ok(()) => Ok(Locked(file)),
+            Err(TryLockError::WouldBlock) => Err(format!(
+                "another run holds {}: one writer at a time",
+                path.display()
+            )),
+            Err(TryLockError::Error(error)) => Err(wrong(&path, error)),
+        }
+    }
+
+    fn read<T: for<'de> Deserialize<'de>>(&self, name: &str) -> Result<Option<T>, String> {
+        let path = self.path(name);
+        match fs::read_to_string(&path) {
+            Ok(text) => serde_json::from_str(&text)
+                .map(Some)
+                .map_err(|error| wrong(&path, error)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(wrong(&path, error)),
+        }
+    }
+
+    /// `value` as the whole of file `name`: written beside it, synced, then moved over it.
+    fn replace<T: Serialize>(&self, name: &str, value: &T) -> Result<(), String> {
+        let path = self.path(name);
+        let beside = self.path(&format!("{name}.new"));
+        let text = serde_json::to_string_pretty(value).map_err(|error| wrong(&path, error))?;
+        let write = || -> std::io::Result<()> {
+            let mut file = File::create(&beside)?;
+            file.write_all(text.as_bytes())?;
+            file.sync_all()?;
+            fs::rename(&beside, &path)?;
+            File::open(&self.dir)?.sync_all()
+        };
+        write().map_err(|error| wrong(&path, error))
+    }
+
+    /// The state kept, or none: never kept, or lost.
+    ///
+    /// # Errors
+    ///
+    /// The file is there and does not read.
+    pub fn state(&self) -> Result<Option<State>, String> {
+        self.read("state.json")
+    }
+
+    /// # Errors
+    ///
+    /// The file could not be written.
+    pub fn save(&self, state: &State) -> Result<(), String> {
+        self.replace("state.json", state)
+    }
+
+    /// The preview waiting to be applied.
+    ///
+    /// # Errors
+    ///
+    /// The file is there and does not read.
+    pub fn preview(&self) -> Result<Option<Preview>, String> {
+        self.read("preview.json")
+    }
+
+    /// # Errors
+    ///
+    /// The file could not be written.
+    pub fn keep_preview(&self, preview: &Preview) -> Result<(), String> {
+        self.replace("preview.json", preview)
+    }
+
+    /// No preview waits any more.
+    ///
+    /// # Errors
+    ///
+    /// The file is there and could not be removed.
+    pub fn drop_preview(&self) -> Result<(), String> {
+        let path = self.path("preview.json");
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(wrong(&path, error)),
+        }
+    }
+
+    /// One more line of the journal, on disk before this returns.
+    ///
+    /// # Errors
+    ///
+    /// The line could not be written or synced: the operation it names must not go on.
+    pub fn journal(&self, entry: &Entry) -> Result<(), String> {
+        let path = self.path("journal.jsonl");
+        let mut line = serde_json::to_string(entry).map_err(|error| wrong(&path, error))?;
+        line.push('\n');
+        let write = || -> std::io::Result<()> {
+            let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+            file.write_all(line.as_bytes())?;
+            file.sync_all()
+        };
+        write().map_err(|error| wrong(&path, error))
+    }
+
+    /// The journal, oldest first. A last line cut short by a crash is left out.
+    ///
+    /// # Errors
+    ///
+    /// The file is there and could not be read.
+    pub fn entries(&self) -> Result<Vec<Entry>, String> {
+        let path = self.path("journal.jsonl");
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(wrong(&path, error)),
+        };
+        Ok(text
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect())
+    }
+}
+
+/// What a journal line says of an operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Event {
+    /// Written before the operation is dispatched.
+    Intent,
+    /// Its result, written before anything kept moves on by it.
+    Ack,
+    /// It was not made and is not to be: what it found (a conflict, an issue not accessible)
+    /// is kept instead.
+    Skipped,
+    /// It was not made this run: nothing was written by it, and a later run makes it.
+    Failed,
+    /// Its result is not known: the next run finds out before trying again.
+    Unknown,
+    /// Every operation of a preview is acknowledged.
+    Applied,
+}
+
+/// One line of the journal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Entry {
+    /// Seconds since 1970.
+    pub at: i64,
+    pub event: Event,
+    /// The preview it belongs to, by digest.
+    pub preview: String,
+    /// The operation's id, its place in that preview for all but a publication.
+    pub op: String,
+    /// What kind of operation, and the task or issue it is for.
+    pub kind: String,
+    pub target: String,
+    /// The digest of the content it writes.
+    pub digest: String,
+    /// What it expects to find: the digest of the remote text it replaces, or the board's token
+    /// with its generation.
+    pub base: Value,
+    /// The settings' revision it was dispatched under.
+    pub config: String,
+    /// Who ran it.
+    pub by: String,
+    /// An acknowledgment's result, or why it failed.
+    pub result: Value,
+}
+
+#[cfg(test)]
+#[path = "state_tests.rs"]
+mod tests;

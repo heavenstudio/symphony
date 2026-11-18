@@ -1,0 +1,34 @@
+# `symphony-github`: the optional exchange of selected tasks with GitHub issues (docs/GITHUB.md),
+# a program of its own that reaches the board through `tasks api` alone and GitHub through `curl`.
+# Never published and never shipped: no project is given it, and neither the library every project
+# links, the board nor the server compiles any of it, so a project that never writes
+# `symphony-github.toml` runs none of it.
+[package]
+name = "symphony-github"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+# Its settings file.
+toml.workspace = true
+# The digests a preview, a synchronized version and an operation are named by.
+sha2.workspace = true
+
+[dev-dependencies]
+# The scratch board its exchange tests run on, reached as the program reaches it: `tasks api`.
+symphony-board = { path = "../tasks" }
+symphony-env = { path = "../symphony-env" }
+
+[lints]
+workspace = true
+
+[[test]]
+name = "exchange"
+path = "tests/exchange/main.rs"
