@@ -101,6 +101,7 @@ impl Postgres {
     pub fn restore(&self, snapshot: &Path) -> Result<(), ServerError> {
         self.scratch_only()?;
         let _locked = self.home.lock(Doing::Snapshotting)?;
+        self.home.allow_postgresql()?;
         self.home.unheld()?;
         let data = self.data();
         if data.exists() {

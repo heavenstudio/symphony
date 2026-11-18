@@ -313,6 +313,33 @@ fn recovery_never_removes_a_source_that_is_also_its_copy_work_folder() {
 }
 
 #[test]
+fn recovery_refuses_a_home_selected_for_surrealdb_before_copying() {
+    let target = StandIn::new("restore-wrong-engine", &[]);
+    target
+        .pg
+        .home
+        .initialize_backend(crate::server::Engine::SurrealDb)
+        .unwrap();
+    let source = target.dir.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("kept"), "source evidence").unwrap();
+    assert!(
+        target
+            .pg
+            .restore(&source)
+            .unwrap_err()
+            .to_string()
+            .contains("owns SurrealDB")
+    );
+    assert!(!target.pg.data().exists());
+    assert!(!target.pg.home.dir.join("postgresql.restoring").exists());
+    assert_eq!(
+        fs::read_to_string(source.join("kept")).unwrap(),
+        "source evidence"
+    );
+}
+
+#[test]
 fn a_release_older_than_the_oldest_or_none_is_refused_naming_it() {
     let old = StandIn::new("old", &[("postgres", &postgres("17.2", "exit 1"))]);
     let refused = old.refused();
