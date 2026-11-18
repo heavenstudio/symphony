@@ -1,5 +1,7 @@
-//! Whose approve a land goes by, and what it does with one that does not do: its reviewer's after
-//! its own changes, never one from a session that executed the task, nor its orchestrator's; an approve naming no commit covers none made during its review; a tip merged by hand
+//! Whose approve a land goes by, and what it does with one that does not do: never one from a
+//! session that executed the task, nor its orchestrator's (its reviewer's after its own changes is
+//! the command line's test, `land::the_command_line_lands_and_refuses_with_one_line`); an approve
+//! naming no commit covers none made during its review; a tip merged by hand
 //! is no land to finish; and an approved task goes back to review while its tip is not on main.
 
 use super::*;
@@ -117,76 +119,44 @@ fn the_reviewer_of_its_review_instruction_lands_it_and_a_slices_executor_does_no
     assert_eq!(head(&r.root, "main^2"), tip);
 }
 
-/// A later round goes to the same reviewer, as the skills say: its own earlier changes leave it a
-/// fresh reviewer, and its approve of the fixed tip lands the task.
-#[test]
-fn the_same_reviewers_approve_after_its_own_changes_lands_the_task() {
-    let r = Repo::new();
-    manifest(&r, "");
-    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let first = head(&wt, "HEAD");
-    let people = judged(&r, SLUG, "changes", &format!("{first}: it jumps twice"));
-    write(&wt, "sim/jump.gd", "extends Node # once\n");
-    git(&wt, &["commit", "-qam", "jump once"]);
-    let fixed = head(&wt, "HEAD");
-    let store = &r.board.store;
-    store.move_to(SLUG, "review", &people.exe).unwrap();
-    store
-        .verdict(SLUG, &people.rev, "approve", &format!("{fixed}: once"))
-        .unwrap();
-    let (said, result) = landed(&r, SLUG, &people.orch);
-    result.unwrap();
-    let by = format!("land {SLUG}: approved by {} at ", people.rev);
-    assert!(said.starts_with(&by), "{said}");
-    assert_eq!(head(&r.root, "main^2"), fixed);
-}
-
 #[test]
 fn a_legacy_mark_never_lands_on_its_orchestrators_approve() {
-    for (risk, file) in [
-        ("a one-line fix", "sim/jump.gd"),
-        (
-            "a red is fixed as a bug fix is: its old risk",
-            "tests/jump.gd",
-        ),
-    ] {
-        let r = Repo::new();
-        manifest(&r, "");
-        let store = &r.board.store;
-        let orch = r.board.session("orchestrator");
-        let exe = r.board.session("worker");
-        let wt = branch(&r, SLUG, file, "extends Node\n");
-        let tip = head(&wt, "HEAD");
-        store
-            .create(&NewTask::new(SLUG, "A legacy fix", &orch))
-            .unwrap();
-        store
-            .raw()
-            .row("task", SLUG)
-            .set(serde_json::json!({"fields._board.fast_fix": risk}))
-            .unwrap();
-        store.take_role(SLUG, &orch, "orchestrator").unwrap();
-        store.claim(SLUG, &exe).unwrap();
-        store.move_to(SLUG, "review", &exe).unwrap();
-        assert!(store.verdict(SLUG, &orch, "approve", &tip).is_err());
-        assert!(store.take_role(SLUG, &orch, "reviewer").is_err());
-        approved_by_an_older_board(&r, &orch, &format!("{tip}: fine"));
-        let before = head(&r.root, "main");
-        let (_, result) = landed(&r, SLUG, &orch);
-        let line = format!(
-            "{SLUG}'s approve is {orch}'s, which orchestrated it: a fresh reviewer approves it"
-        );
-        assert_refused(&r, &result, &line, &before);
-        assert_eq!(store.get(SLUG).unwrap().status, "review");
-        assert!(runs(&r).is_empty());
-        let rev = r.board.session("reviewer");
-        store.take_role(SLUG, &rev, "reviewer").unwrap();
-        store
-            .verdict(SLUG, &rev, "approve", &format!("{tip}: checked"))
-            .unwrap();
-        landed(&r, SLUG, &orch).1.unwrap();
-        assert_eq!(head(&r.root, "main^2"), tip);
-    }
+    let r = Repo::new();
+    manifest(&r, "");
+    let store = &r.board.store;
+    let orch = r.board.session("orchestrator");
+    let exe = r.board.session("worker");
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let tip = head(&wt, "HEAD");
+    store
+        .create(&NewTask::new(SLUG, "A legacy fix", &orch))
+        .unwrap();
+    // The mark an older board left: no code reads it, whatever its text.
+    store
+        .raw()
+        .row("task", SLUG)
+        .set(serde_json::json!({"fields._board.fast_fix": "a one-line fix"}))
+        .unwrap();
+    store.take_role(SLUG, &orch, "orchestrator").unwrap();
+    store.claim(SLUG, &exe).unwrap();
+    store.move_to(SLUG, "review", &exe).unwrap();
+    assert!(store.verdict(SLUG, &orch, "approve", &tip).is_err());
+    assert!(store.take_role(SLUG, &orch, "reviewer").is_err());
+    approved_by_an_older_board(&r, &orch, &format!("{tip}: fine"));
+    let before = head(&r.root, "main");
+    let (_, result) = landed(&r, SLUG, &orch);
+    let line =
+        format!("{SLUG}'s approve is {orch}'s, which orchestrated it: a fresh reviewer approves it");
+    assert_refused(&r, &result, &line, &before);
+    assert_eq!(store.get(SLUG).unwrap().status, "review");
+    assert!(runs(&r).is_empty());
+    let rev = r.board.session("reviewer");
+    store.take_role(SLUG, &rev, "reviewer").unwrap();
+    store
+        .verdict(SLUG, &rev, "approve", &format!("{tip}: checked"))
+        .unwrap();
+    landed(&r, SLUG, &orch).1.unwrap();
+    assert_eq!(head(&r.root, "main^2"), tip);
 }
 
 #[test]
