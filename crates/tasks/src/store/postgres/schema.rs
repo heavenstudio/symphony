@@ -533,7 +533,7 @@ $f$;
 /// text at each change of class (a letter, a number, ASCII punctuation one character a term),
 /// dropping the rest; its filters then lower each term and make it ASCII (`deunicode`). Here a
 /// letter is PostgreSQL's (`[[:alpha:]]`, Unicode's alphabetic, as Rust's `is_alphabetic`, a newer
-/// Unicode's letters aside), a number Rust's own ([`NUMBERS`]), and a term outside
+/// Unicode's letters aside), a number Rust's own ([`number_class`]), and a term outside
 /// ASCII is decomposed (NFKD) with its accents dropped and the Latin letters that have no
 /// decomposition spelt as `deunicode` spells them; another script is kept as it is, where
 /// `deunicode` spells it in Latin letters.
@@ -603,29 +603,46 @@ fn latin() -> String {
 
 /// The tokenizer's numeric class from the pinned toolchain, kept as data for schema construction.
 /// The full regeneration test checks every Unicode scalar when the toolchain changes.
-const NUMBERS: &str = concat!(
-    r"\x30-\x39\xb2-\xb3\xb9\xbc-\xbe\x660-\x669\x6f0-\x6f9\x7c0-\x7c9\x966-\x96f\x9e6-\x9ef",
-    r"\x9f4-\x9f9\xa66-\xa6f\xae6-\xaef\xb66-\xb6f\xb72-\xb77\xbe6-\xbf2\xc66-\xc6f\xc78-\xc7e",
-    r"\xce6-\xcef\xd58-\xd5e\xd66-\xd78\xde6-\xdef\xe50-\xe59\xed0-\xed9\xf20-\xf33\x1040-\x1049",
-    r"\x1090-\x1099\x1369-\x137c\x17e0-\x17e9\x17f0-\x17f9\x1810-\x1819\x1946-\x194f\x19d0-\x19da",
-    r"\x1a80-\x1a89\x1a90-\x1a99\x1b50-\x1b59\x1bb0-\x1bb9\x1c40-\x1c49\x1c50-\x1c59\x2070",
-    r"\x2074-\x2079\x2080-\x2089\x2150-\x215f\x2189\x2460-\x249b\x24ea-\x24ff\x2776-\x2793\x2cfd",
-    r"\x3192-\x3195\x3220-\x3229\x3248-\x324f\x3251-\x325f\x3280-\x3289\x32b1-\x32bf\xa620-\xa629",
-    r"\xa830-\xa835\xa8d0-\xa8d9\xa900-\xa909\xa9d0-\xa9d9\xa9f0-\xa9f9\xaa50-\xaa59\xabf0-\xabf9",
-    r"\xff10-\xff19\x10107-\x10133\x10175-\x10178\x1018a-\x1018b\x102e1-\x102fb\x10320-\x10323",
-    r"\x104a0-\x104a9\x10858-\x1085f\x10879-\x1087f\x108a7-\x108af\x108fb-\x108ff\x10916-\x1091b",
-    r"\x109bc-\x109bd\x109c0-\x109cf\x109d2-\x109ff\x10a40-\x10a48\x10a7d-\x10a7e\x10a9d-\x10a9f",
-    r"\x10aeb-\x10aef\x10b58-\x10b5f\x10b78-\x10b7f\x10ba9-\x10baf\x10cfa-\x10cff\x10d30-\x10d39",
-    r"\x10d40-\x10d49\x10e60-\x10e7e\x10f1d-\x10f26\x10f51-\x10f54\x10fc5-\x10fcb\x11052-\x1106f",
-    r"\x110f0-\x110f9\x11136-\x1113f\x111d0-\x111d9\x111e1-\x111f4\x112f0-\x112f9\x11450-\x11459",
-    r"\x114d0-\x114d9\x11650-\x11659\x116c0-\x116c9\x116d0-\x116e3\x11730-\x1173b\x118e0-\x118f2",
-    r"\x11950-\x11959\x11bf0-\x11bf9\x11c50-\x11c6c\x11d50-\x11d59\x11da0-\x11da9\x11de0-\x11de9",
-    r"\x11f50-\x11f59\x11fc0-\x11fd4\x16130-\x16139\x16a60-\x16a69\x16ac0-\x16ac9\x16b50-\x16b59",
-    r"\x16b5b-\x16b61\x16d70-\x16d79\x16e80-\x16e96\x1ccf0-\x1ccf9\x1d2c0-\x1d2d3\x1d2e0-\x1d2f3",
-    r"\x1d360-\x1d378\x1d7ce-\x1d7ff\x1e140-\x1e149\x1e2f0-\x1e2f9\x1e4f0-\x1e4f9\x1e5f1-\x1e5fa",
-    r"\x1e8c7-\x1e8cf\x1e950-\x1e959\x1ec71-\x1ecab\x1ecad-\x1ecaf\x1ecb1-\x1ecb4\x1ed01-\x1ed2d",
-    r"\x1ed2f-\x1ed3d\x1f100-\x1f10c\x1fbf0-\x1fbf9",
-);
+/// Delta-coded endpoints; the low bit adds a range separator after that endpoint.
+const NUMBER_DELTAS: &[u16] = &[
+    0x0061, 0x0012, 0x00f3, 0x0002, 0x000c, 0x0007, 0x0004, 0x0b45, 0x0012, 0x010f, 0x0012, 0x018f,
+    0x0012, 0x033b, 0x0012, 0x00ef, 0x0012, 0x000b, 0x000a, 0x00db, 0x0012, 0x00ef, 0x0012, 0x00ef,
+    0x0012, 0x0007, 0x000a, 0x00df, 0x0018, 0x00e9, 0x0012, 0x0013, 0x000c, 0x00d1, 0x0012, 0x00d3,
+    0x000c, 0x0011, 0x0024, 0x00dd, 0x0012, 0x00c3, 0x0012, 0x00ef, 0x0012, 0x008f, 0x0026, 0x021b,
+    0x0012, 0x008f, 0x0012, 0x05a1, 0x0026, 0x08c9, 0x0012, 0x000f, 0x0012, 0x002f, 0x0012, 0x025b,
+    0x0012, 0x0103, 0x0014, 0x014d, 0x0012, 0x000f, 0x0012, 0x016f, 0x0012, 0x00af, 0x0012, 0x010f,
+    0x0012, 0x000f, 0x0012, 0x082e, 0x0009, 0x000a, 0x000f, 0x0012, 0x018f, 0x001e, 0x0054, 0x05af,
+    0x0076, 0x009f, 0x002a, 0x04ef, 0x003a, 0x0ad4, 0x092b, 0x0006, 0x0117, 0x0012, 0x003f, 0x000e,
+    0x0005, 0x001c, 0x0043, 0x0012, 0x0051, 0x001c, 0xe6c3, 0x0012, 0x040f, 0x000a, 0x0137, 0x0012,
+    0x004f, 0x0012, 0x018f, 0x0012, 0x002f, 0x0012, 0x00af, 0x0012, 0x032f, 0x0012, 0xa62f, 0x0012,
+    0x03dd, 0x0058, 0x0085, 0x0006, 0x0025, 0x0002, 0x02ad, 0x0034, 0x004b, 0x0006, 0x02fb, 0x0012,
+    0x075f, 0x000e, 0x0035, 0x000c, 0x0051, 0x0010, 0x0099, 0x0008, 0x002f, 0x000a, 0x0143, 0x0002,
+    0x0007, 0x001e, 0x0007, 0x005a, 0x0083, 0x0010, 0x006b, 0x0002, 0x003f, 0x0004, 0x0099, 0x0008,
+    0x00d3, 0x000e, 0x0033, 0x000e, 0x0055, 0x000c, 0x0297, 0x000a, 0x0063, 0x0012, 0x000f, 0x0012,
+    0x022f, 0x003c, 0x013f, 0x0012, 0x0057, 0x0006, 0x00e3, 0x000c, 0x010f, 0x003a, 0x0103, 0x0012,
+    0x007b, 0x0012, 0x0123, 0x0012, 0x0011, 0x0026, 0x01f9, 0x0012, 0x02af, 0x0012, 0x00ef, 0x0012,
+    0x02ef, 0x0012, 0x00cf, 0x0012, 0x000f, 0x0026, 0x009b, 0x0016, 0x034b, 0x0024, 0x00bd, 0x0012,
+    0x052f, 0x0012, 0x00af, 0x0038, 0x01c9, 0x0012, 0x008f, 0x0012, 0x006f, 0x0012, 0x02cf, 0x0012,
+    0x00cf, 0x0028, 0x82b9, 0x0012, 0x124f, 0x0012, 0x00af, 0x0012, 0x010f, 0x0012, 0x0005, 0x000c,
+    0x041f, 0x0012, 0x020f, 0x002c, 0xbcb5, 0x0012, 0x0b8f, 0x0026, 0x001b, 0x0026, 0x00db, 0x0030,
+    0x08ad, 0x0062, 0x1283, 0x0012, 0x034f, 0x0012, 0x03ef, 0x0012, 0x01f1, 0x0012, 0x059b, 0x0010,
+    0x0103, 0x0012, 0x0631, 0x0074, 0x0005, 0x0004, 0x0005, 0x0006, 0x009b, 0x0058, 0x0005, 0x001c,
+    0x0787, 0x0018, 0x15c9, 0x0012,
+];
+
+fn number_class() -> String {
+    // Six hexadecimal digits, the prefix and a range separator fit every Unicode scalar.
+    let mut class = String::with_capacity(NUMBER_DELTAS.len() * 9);
+    let mut number = 0u32;
+    for &delta in NUMBER_DELTAS {
+        number += u32::from(delta >> 1);
+        let _ = write!(class, "\\x{number:x}");
+        if delta & 1 != 0 {
+            class.push('-');
+        }
+    }
+    class
+}
 
 #[cfg(test)]
 fn numbers() -> String {
@@ -763,8 +780,11 @@ pub(in crate::store) fn define() -> String {
     sql.push_str(UNIQUES);
     sql.push_str(INDEXES);
     sql.push_str(FUNCTIONS);
-    static ANALYZED: std::sync::LazyLock<String> =
-        std::sync::LazyLock::new(|| WORDS.replace("NUMBERS", NUMBERS).replace("LATIN", &latin()));
+    static ANALYZED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        WORDS
+            .replace("NUMBERS", &number_class())
+            .replace("LATIN", &latin())
+    });
     sql.push_str(&ANALYZED);
     sql.push_str(&triggers());
     sql
@@ -830,7 +850,8 @@ mod tests {
     fn the_analyzers_numbers_are_rusts_that_are_no_letters() {
         let class = numbers();
         assert_eq!(
-            NUMBERS, class,
+            number_class(),
+            class,
             "regenerate numeric-class data for this toolchain"
         );
         assert!(
