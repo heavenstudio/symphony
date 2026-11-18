@@ -4,7 +4,9 @@
 //! measures a compiled plugin's calls through the protocol's JSON (`symphony::plugins::measure`).
 //! It checks no JSON Schema (`serve` refuses `validate`: a schema check is a library call,
 //! `symphony::schema::validate`), so it links none of the validator, which would add a fifth to
-//! its size. And on macOS it exports no symbol, as no other code loads it. The size each would add
+//! its size. It opens boards only to read (`Store::read_as`, `Store::reading`), so it links none of
+//! the migration that makes or moves one, the two databases' schema texts among it. And on macOS
+//! it exports no symbol, as no other code loads it. The size each would add
 //! is the binary's budget's to hold (docs/CHECKS.md, "Size budgets"). The commands only this
 //! repository's own build and release run use are a package of their own (crates/symphony-build),
 //! which this library never compiles, so there is nothing of theirs to look for here.
@@ -62,6 +64,33 @@ fn the_binary_links_no_schema_validator() {
         "the symphony binary links the JSON Schema validator: something it runs reaches \
          `symphony::schema` (`serve` refuses `validate`; a schema check is a library call)"
     );
+}
+
+/// The texts looked for are one statement of each database's schema, which only a migration
+/// runs. This test's own executable names a writer's opening (`Store::open`), so it links the
+/// migration and holds both, and so shows each text is there to find where it is.
+#[test]
+fn the_binary_links_no_board_migration() {
+    let writer: fn(symphony_board::rpc::Client) -> _ = symphony_board::Store::open;
+    std::hint::black_box(writer);
+    let this = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+    let binary = binary();
+    for text in [
+        "DEFINE TABLE IF NOT EXISTS writer SCHEMALESS;",
+        "CREATE OR REPLACE FUNCTION board_terms",
+    ] {
+        assert!(
+            holds(&this, text.as_bytes()),
+            "this test's executable, which names a writer's opening, does not hold {text:?}: the \
+             text this test looks for is no longer the migration's"
+        );
+        assert!(
+            !holds(&binary, text.as_bytes()),
+            "the symphony binary links the board's schema migration ({text:?}): something it \
+             runs opens a board other than by `Store::read_as` or `Store::reading` \
+             (crates/symphony/src/taskview/connect.rs), or reads `Schema::steps`"
+        );
+    }
 }
 
 /// On macOS the binary links with `-no_exported_symbols` (crates/symphony/build.rs): no other code
