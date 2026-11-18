@@ -60,10 +60,7 @@ fn programs(major: u32) -> PathBuf {
         return symphony_board::server::postgres::discover_programs(&crate::store::project_root())
             .unwrap_or_else(|why| panic!("PostgreSQL 18 is needed: {why}"));
     }
-    let folder = std::env::var_os("SYMPHONY_POSTGRESQL_16").map_or_else(
-        || "/opt/homebrew/opt/postgresql@16/bin".into(),
-        PathBuf::from,
-    );
+    let folder = symphony_board::server::postgres::hosted_programs_16();
     assert!(
         folder.join("postgres").is_file() && folder.join("initdb").is_file(),
         "the hosted tests need PostgreSQL 16's programs and found none in {}: install them \
