@@ -16,26 +16,15 @@ use super::{Pg, row};
 use std::fmt::Write as _;
 
 /// The copy's one transaction: each of `tables` emptied and filled from `v -> table`, its rows as
-/// the dump gives them with their ids, each sender's last word prefilled before inserting its
-/// messages, and the counters set to `last` and `last_ts` (messages), `last_task` and `last_ask`.
-/// Prefilling the maximum makes the normal trigger's conditional updates no-ops during the
-/// bulk insert, avoiding long chains of rewritten versions of one sender's row. Every trigger
-/// remains enabled and the prefill rolls back with any failed copy.
+/// the dump gives them with their ids, each sender's last word made again by the messages'
+/// trigger, and the counters set to `last` and `last_ts` (messages), `last_task` and `last_ask`.
 pub(in crate::store) fn copy(tables: &[&str]) -> Pg<'static> {
     let mut block = String::from("DELETE FROM said;\n");
     for table in tables {
-        let _ = writeln!(block, "DELETE FROM {table};");
-        if *table == "message" {
-            block.push_str(
-                "INSERT INTO said (id, sid, slug)
-SELECT DISTINCT ON (sender) jsonb_build_array(sender), sid, slug
-FROM jsonb_populate_recordset(NULL::message, v -> 'message') AS r
-WHERE kind IN ('msg', 'verdict') ORDER BY sender, sid DESC, slug DESC;\n",
-            );
-        }
         let _ = writeln!(
             block,
-            "INSERT INTO {table} SELECT r.* FROM jsonb_populate_recordset(NULL::{table}, v -> '{table}') AS r;"
+            "DELETE FROM {table};
+INSERT INTO {table} SELECT r.* FROM jsonb_populate_recordset(NULL::{table}, v -> '{table}') AS r;"
         );
     }
     block.push_str(
