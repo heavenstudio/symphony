@@ -94,8 +94,16 @@ mod tests {
             include_str!("fixtures/nextest/.config/nextest.toml"),
         );
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| root.join(".target"));
+        let target = if target.is_absolute() {
+            target
+        } else {
+            root.join(target)
+        };
         let done =
-            std::process::Command::new(root.join("tools/.nextest/0.9.152/bin/cargo-nextest"))
+            std::process::Command::new(target.join("tools/nextest/0.9.152/bin/cargo-nextest"))
                 .args([
                     "nextest",
                     "run",

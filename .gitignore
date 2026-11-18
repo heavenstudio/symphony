@@ -3,7 +3,6 @@
 /.target.seed.*
 /.target.clear.*
 /build/
-/tools/.nextest/
 /.venv/
 *.profraw
 *.profdata

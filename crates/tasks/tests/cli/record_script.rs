@@ -746,7 +746,7 @@ impl Recipes {
             fs::copy(tool(name), tree.join("tools").join(name)).unwrap();
         }
         executable(
-            &tree.join("tools/.nextest/0.9.152/bin/cargo-nextest"),
+            &tree.join(".target/tools/nextest/0.9.152/bin/cargo-nextest"),
             "#!/bin/sh\necho cargo-nextest 0.9.152\n",
         );
         executable(

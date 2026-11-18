@@ -116,7 +116,7 @@ impl Lanes {
             "#!/bin/sh\nprintf '%s\\n' \"${PROCESSORS-32}\"\n",
         );
         executable(
-            &root.join(format!("tools/.nextest/{VERSION}/bin/cargo-nextest")),
+            &root.join(format!(".target/tools/nextest/{VERSION}/bin/cargo-nextest")),
             &format!("#!/bin/sh\nprintf 'cargo-nextest {VERSION}\\n'\n"),
         );
         executable(
@@ -321,7 +321,7 @@ fn absent_or_wrong_pinned_runner_refuses_before_a_build_and_names_setup() {
     let lanes = Lanes::new("nextest-pin");
     let binary = lanes
         .root
-        .join(format!("tools/.nextest/{VERSION}/bin/cargo-nextest"));
+        .join(format!(".target/tools/nextest/{VERSION}/bin/cargo-nextest"));
     fs::remove_file(&binary).unwrap();
     for wrong in [false, true] {
         if wrong {
@@ -379,7 +379,7 @@ fn listing_needs_no_install_or_build_and_bad_arguments_run_nothing() {
     fs::remove_file(
         lanes
             .root
-            .join(format!("tools/.nextest/{VERSION}/bin/cargo-nextest")),
+            .join(format!(".target/tools/nextest/{VERSION}/bin/cargo-nextest")),
     )
     .unwrap();
     let done = lanes.run(&["--list"], &[]);
@@ -515,9 +515,10 @@ fn setup_can_seed_the_pinned_runner_from_a_matching_local_install_without_a_buil
     let lanes = Lanes::new("nextest-setup");
     let binary = lanes
         .root
-        .join(format!("tools/.nextest/{VERSION}/bin/cargo-nextest"));
+        .join(format!(".target/tools/nextest/{VERSION}/bin/cargo-nextest"));
     fs::remove_file(&binary).unwrap();
     let seed = lanes.stand.join("bin/cargo-nextest");
+    executable(&lanes.stand.join("bin/cargo"), "#!/bin/sh\nexit 64\n");
     executable(&seed, &format!("#!/bin/sh\necho cargo-nextest {VERSION}\n"));
     let path = format!(
         "{}:{}",
@@ -528,12 +529,71 @@ fn setup_can_seed_the_pinned_runner_from_a_matching_local_install_without_a_buil
         Command::of(lanes.root.join("tools/nextest.sh"))
             .arg("--setup")
             .env("PATH", path)
+            .env_remove("CARGO_TARGET_DIR")
             .stdin(Stdio::null()),
     )
     .unwrap();
     assert!(done.status.success(), "{done:?}");
     assert_eq!(fs::read(&binary).unwrap(), fs::read(seed).unwrap());
     assert!(!lanes.stand.join("built").exists());
+}
+
+#[test]
+fn setup_and_runtime_use_the_default_relative_or_absolute_target_cache() {
+    for variant in 0..3 {
+        let lanes = Lanes::new(&format!("nextest-target-cache-{variant}"));
+        let selected = match variant {
+            0 => None,
+            1 => Some("relative target".to_string()),
+            _ => Some(lanes.stand.join("absolute target").display().to_string()),
+        };
+        let target = selected.as_ref().map_or_else(
+            || lanes.root.join(".target"),
+            |path| {
+                let path = PathBuf::from(path);
+                if path.is_absolute() {
+                    path
+                } else {
+                    lanes.root.join(path)
+                }
+            },
+        );
+        let binary = target.join(format!("tools/nextest/{VERSION}/bin/cargo-nextest"));
+        if binary.exists() {
+            fs::remove_file(&binary).unwrap();
+        }
+        let seed = lanes.stand.join("bin/cargo-nextest");
+        executable(&seed, &format!("#!/bin/sh\necho cargo-nextest {VERSION}\n"));
+        executable(&lanes.stand.join("bin/cargo"), "#!/bin/sh\nexit 64\n");
+        let mut command = Command::of(lanes.root.join("tools/nextest.sh"));
+        command
+            .arg("--setup")
+            .current_dir(&lanes.stand)
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    lanes.stand.join("bin").display(),
+                    std::env::var("PATH").unwrap()
+                ),
+            )
+            .env_remove("CARGO_TARGET_DIR")
+            .stdin(Stdio::null());
+        if let Some(path) = &selected {
+            command.env("CARGO_TARGET_DIR", path);
+        }
+        let done = output(&mut command).unwrap();
+        assert!(done.status.success(), "{done:?}");
+        assert_eq!(fs::read(&binary).unwrap(), fs::read(seed).unwrap());
+        assert!(!lanes.root.join("tools/.nextest").exists());
+        let vars: Vec<_> = selected
+            .as_ref()
+            .map(|path| ("CARGO_TARGET_DIR", path.as_str()))
+            .into_iter()
+            .collect();
+        let done = lanes.run(&[], &vars);
+        assert!(done.status.success(), "{done:?}");
+    }
 }
 
 #[test]
@@ -582,6 +642,12 @@ fn a_stall_reporter_failure_is_red_even_when_nextest_passes() {
 fn a_relative_target_folder_names_its_built_binaries_for_every_test_batch() {
     let lanes = Lanes::new("nextest-target-folder");
     let debug = lanes.root.join("other-target/debug");
+    executable(
+        &lanes.root.join(format!(
+            "other-target/tools/nextest/{VERSION}/bin/cargo-nextest"
+        )),
+        &format!("#!/bin/sh\necho cargo-nextest {VERSION}\n"),
+    );
     fs::create_dir_all(&debug).unwrap();
     fs::write(debug.join("tasks"), "built tasks").unwrap();
     let done = lanes.run(&[], &[("CARGO_TARGET_DIR", "other-target")]);

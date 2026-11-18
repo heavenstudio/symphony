@@ -368,8 +368,11 @@ red if that build fails too. The tests' log and the summary say which.
 
 **The tests side by side.** The tests step (`tools/test-lanes.sh`) builds the workspace's test
 binaries once with cargo-nextest 0.9.152, then reuses that binary metadata for one nextest scheduler.
-Run `just nextest-setup` once to install the pinned runner under `tools/.nextest/`; it can copy an
-existing install of that exact version, otherwise it installs the locked package. A tests step
+Run `just nextest-setup` once to install the pinned runner under the target folder's
+`tools/nextest/` (`.target/tools/nextest/` by default; `CARGO_TARGET_DIR` wins). This cache survives
+the release checkout's ordinary clean, which preserves `.target/`; a new or cleared target
+folder needs setup again. Setup can copy an existing install of that exact version, otherwise
+it installs the locked package. A tests step
 never installs or downloads nextest: a missing or different local copy fails before the build,
 naming that setup command. Focused `just test-rs` commands continue to use Cargo.
 

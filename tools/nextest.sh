@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# --setup installs the pinned runner under tools/.nextest; --check only checks it. Everything
-# else runs that runner through tools/cargo.sh, preserving the recorder and the workspace limits.
+# --setup installs under the target folder's tools/nextest; --check only checks it. Other
+# arguments run that runner through tools/cargo.sh, preserving recorder and workspace limits.
 # Only --setup may download. An already installed copy of exactly this version can seed it.
 set -euo pipefail
 root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 version=0.9.152
-folder="$root/tools/.nextest/$version"
+tool_target="${CARGO_TARGET_DIR:-$root/.target}"
+case "$tool_target" in /*) ;; *) tool_target="$root/$tool_target" ;; esac
+folder="$tool_target/tools/nextest/$version"
 binary="$folder/bin/cargo-nextest"
 
 matches() {
