@@ -2,14 +2,14 @@
 //! run's own checkout, installed whole in a temporary machine folder with its manifest, and
 //! `current` pointed at it where no project is registered to hold it; a build that fails leaves no
 //! folder and `current` where it was, and is the refresh's red, which a later refresh that installs
-//! closes.
+//! closes; on the tests' clock with no stand-in, nothing is built or installed.
 
 use std::fs;
 use std::path::PathBuf;
 
 use super::consumers::register;
 use super::refresh::refreshing;
-use super::{CHECK, Fixture, NOW};
+use super::{CHECK, DAY, Fixture, NOW};
 
 /// The release a run of the fixture's clock tags.
 const RELEASE: &str = "release-2026-11-12";
@@ -42,7 +42,15 @@ fn builds(fixture: &Fixture) -> Vec<String> {
 
 #[test]
 fn a_green_release_is_built_once_in_the_runs_checkout_and_installed_on_the_machine() {
-    let (fixture, commit) = installing();
+    let (fixture, _) = installing();
+    // On the tests' clock with no stand-in for cargo, a release builds and installs nothing.
+    let out = fixture.night(NOW - DAY, 0);
+    assert!(!out.contains("refresh-install"), "{out}");
+    assert!(!machine(&fixture).join("releases").exists());
+    assert!(builds(&fixture).is_empty());
+
+    // The next day's, with the stand-in.
+    let commit = fixture.land("crates/core/notes.txt", Some("b\n"), "a landing after it");
     let builder = builder(&fixture);
     let (code, out, err) =
         fixture.release_with(NOW, &["--check", CHECK], &[(BUILDER, builder.as_str())]);
@@ -207,12 +215,4 @@ fn a_build_that_fails_leaves_no_folder_and_a_red_refresh_which_the_next_install_
     );
     assert!(releases.join(RELEASE).join("manifest.json").is_file());
     assert_eq!(builds(&fixture).len(), 2);
-}
-
-#[test]
-fn on_the_tests_clock_with_no_stand_in_nothing_is_built_or_installed() {
-    let (fixture, _) = installing();
-    let out = fixture.night(NOW, 0);
-    assert!(!out.contains("refresh-install"), "{out}");
-    assert!(!machine(&fixture).join("releases").exists());
 }
