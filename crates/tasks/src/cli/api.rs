@@ -36,8 +36,8 @@ pub use context::{run, serve};
 pub const MAJOR: i64 = 2;
 
 /// The api's minor within [`MAJOR`]: 1 added a task's `id`, `bound`, `edit_bound` and
-/// `integration_state`.
-pub const MINOR: i64 = 1;
+/// `integration_state`; 2 added `evidence`.
+pub const MINOR: i64 = 2;
 
 /// Why a call has no result.
 enum Fail {
@@ -461,6 +461,18 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let place = crate::project::locate(&env.cwd).map_err(Fail::Error)?;
             let path = crate::folders::integration(&place.common, &name).map_err(Fail::Refused)?;
             json!({"path": path})
+        }
+        // Read-only: the task's evidence at its branch's head, as the land reads it.
+        "evidence" => {
+            args!(slug: need, head: take);
+            let (slug, head): (String, Option<String>) = (slug, head);
+            let context = board.context.clone().ok_or_else(|| {
+                Fail::Error("evidence: it is read from a checkout of the task's repository".into())
+            })?;
+            let snapshot =
+                crate::land::evidence::of(board.get()?, &context, &slug, head.as_deref())
+                    .map_err(Fail::Refused)?;
+            json!(&snapshot)
         }
         "mark_red" => {
             args!(slug: need, red: need, by: actor);

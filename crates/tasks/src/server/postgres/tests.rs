@@ -732,3 +732,16 @@ fn a_selected_home_uses_the_validated_project_installation() {
     );
     assert!(!fixture.pg.data().exists(), "discovery starts no database");
 }
+
+#[test]
+fn the_hosted_checks_postgresql_16_is_the_folder_named_or_homebrews_keg() {
+    let named = super::hosted_16_from(Some("/opt/pg16/bin".into()));
+    assert_eq!(named, std::path::Path::new("/opt/pg16/bin"));
+    for none in [None, Some(std::ffi::OsString::new())] {
+        assert_eq!(
+            super::hosted_16_from(none),
+            std::path::Path::new("/opt/homebrew/opt/postgresql@16/bin")
+        );
+    }
+    assert_eq!(super::HOSTED_16, "SYMPHONY_POSTGRESQL_16");
+}

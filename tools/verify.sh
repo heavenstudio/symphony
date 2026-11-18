@@ -11,6 +11,8 @@
 #     crates-check  the crates-check recipe: each published package whose version crates.io holds
 #                   packaged from the same sources (docs/RELEASES.md, "Packages on crates.io")
 #     semver-check  the kit/helper APIs against crates.io, with their actual version moves
+#     hosted        the hosted-check recipe: the board built with its hosted feature, its tests and
+#                   its matrix on PostgreSQL 16 and 18, which no other step builds
 #     nextest-setup provision the checksum-pinned runner, outside the tests step
 #     tests         every test target of the workspace, the browser tests among them, built once and
 #                   scheduled by nextest with shared-fixture Cargo batches (tools/test-lanes.sh), logs in tests-lanes/
@@ -48,7 +50,7 @@ CDPATH='' cd "$(dirname "$justfile")" || exit 2
 interrupted=''
 trap 'interrupted=1' INT
 
-steps=(lint client-check size-check docs-audit crates-check semver-check nextest-setup tests)
+steps=(lint client-check size-check docs-audit crates-check semver-check hosted nextest-setup tests)
 
 # STEP: what the step STEP reads, a line each, in the words of tools/test-lanes.sh's `reads`:
 # `package NAME` (the folders of the packages it builds with), `path PATH`, or `tree`, the whole
@@ -63,6 +65,8 @@ reads() {
         client-check) printf 'path apps/symphony-web\npath apps/symphony-server\n' ;;
         size-check) printf 'package symphony-server\npackage symphony-app\npackage symphony-board\n' ;;
         semver-check) printf 'path crates\n' ;;
+        # The board with its hosted feature, and the settings table it judges.
+        hosted) printf 'package symphony-board\n' ;;
         nextest-setup) ;;
     esac
 }
@@ -205,6 +209,11 @@ for step in "${chosen[@]}"; do
         run semver-check "just semver-check" \
             tools/record.sh --step semver-check test "semver check" \
             just --justfile "$justfile" semver-check
+        ;;
+    hosted)
+        run hosted "just hosted-check" \
+            tools/record.sh --step hosted test "hosted check" \
+            just --justfile "$justfile" hosted-check
         ;;
     nextest-setup)
         run nextest-setup "just nextest-setup" \

@@ -1370,6 +1370,7 @@ fn record(root: &Path, commit: &str) -> Result<(), String> {
 }
 
 fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, CommitError> {
+    delivered_by_the_host(root)?;
     let source = root.canonicalize().map_err(|e| e.to_string())?;
     let (saved, refused) = saved_uploads(root, edits);
     let mut last = String::new();
@@ -1486,6 +1487,34 @@ fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, C
 }
 
 /// Commit edits already written into `root`, then sync main checkouts without losing local edits.
+/// Refuse a commit made here on the default branch of a project that delivers by pull request
+/// (`[land] delivery`, `symphony_board::land::delivery`): there the host alone writes that
+/// branch, and a commit made here would be one the remote never holds.
+///
+/// It is asked where a save begins ([`crate::save`]), before a file is written, where an edit
+/// is handed to the committer ([`Committer::submit`]), before it is queued, and by the commit
+/// every path ends in, so an edit queued before the key was set commits nothing either: its
+/// worker files the refusal on the board, the edit kept where the committer keeps its backlog.
+///
+/// # Errors
+///
+/// The project delivers by pull request: the line a save is refused with.
+pub fn delivered_by_the_host(root: &Path) -> Result<(), String> {
+    let at = format!("{}:symphony.toml", main_ref(root));
+    let Ok(text) = git(root, &["show", &at]) else {
+        return Ok(());
+    };
+    match symphony_board::land::delivery::of(&text) {
+        Ok(command) if !command.is_empty() => Err(format!(
+            "not saved: this project delivers by pull request ([land] delivery), so nothing is \
+             committed to {} here, and a save has no pull request of its own in this build: land \
+             the edit as a task's branch",
+            Project::of(root).default_branch
+        )),
+        _ => Ok(()),
+    }
+}
+
 pub fn commit_verdicts(root: &Path, edits: &[Edit], message: &str) -> Outcome {
     let _stage = PublicationStage::start(format_args!("commit verdicts {message:?}"));
     let result = (|| {
@@ -2514,6 +2543,9 @@ impl Committer {
     }
 
     pub fn submit(&self, edit: Edit) -> Result<(), String> {
+        // Refused to the one who saves, before anything is queued: a worker's refusal later
+        // would be a failure filed on the board for an edit nobody can land from here.
+        delivered_by_the_host(&self.root)?;
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let backlog = Arc::new(Backlog::new(&self.root)?);
         // Publish the immutable edit before registering it as a page another publication

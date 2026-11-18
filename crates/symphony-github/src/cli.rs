@@ -3,7 +3,8 @@
 //! `status` reads what is kept and the committed settings and writes nothing anywhere.
 //! `publish` and `resolve` write only the adapter's own folder. `preview` reads GitHub when the
 //! adapter is turned on and writes nothing there or on the board. `reconcile` is the one
-//! command that writes either, and only the preview it is handed.
+//! command that writes either, and only the preview it is handed. `deliver` is the land's, not an
+//! operator's: it answers one verb of a delivery by pull request ([`crate::deliver`]).
 
 use crate::config::PullRequests;
 use crate::github::{clean_body, clean_title};
@@ -30,6 +31,8 @@ project's default branch commits symphony-github.toml with enabled = true.
                                       (50); safe to run again
   resolve SLUG local|remote           keep one side of a conflict, or take up a suspended
                                       mapping again; the next preview shows what follows
+  deliver VERB --request FILE         answer a land delivered by a pull request, which runs it
+                                      (`[land] delivery`): publish, merge, result or landed
 
 --tasks PROGRAM names the board's program, else the `tasks` beside this one or on PATH.
 ";
@@ -106,10 +109,10 @@ fn status(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
                 out,
                 "pull requests: {}{}",
                 config.pull_requests.word(),
-                if config.pull_requests == PullRequests::Off {
-                    ""
-                } else {
-                    " (this build tracks and publishes none)"
+                match config.pull_requests {
+                    PullRequests::Off => "",
+                    PullRequests::Track => " (this build tracks none)",
+                    PullRequests::Publish => " (a land's delivery: `deliver`)",
                 }
             );
             if let Some(file) = &config.token_file {
@@ -155,6 +158,21 @@ fn kept(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
         state.mappings.len(),
         state.drafts.len()
     );
+    for (slug, pull) in &state.pulls {
+        let landed = (pull.landed.as_deref())
+            .map(|squash| {
+                format!(
+                    " (landed as {})",
+                    squash.chars().take(12).collect::<String>()
+                )
+            })
+            .unwrap_or_default();
+        let _ = writeln!(
+            out,
+            "  {slug} is delivered by #{} {}{landed}",
+            pull.number, pull.url
+        );
+    }
     for (slug, mapping) in &state.mappings {
         let flag = mapping
             .flag
@@ -305,6 +323,18 @@ fn command(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
             reconcile::apply(ctx, &digest, &by, limit, out)
         }
         "resolve" => resolve(ctx, &rest, out),
+        "deliver" => {
+            let file = need(&mut rest, "--request")?;
+            let [verb] = rest.as_slice() else {
+                return Err("deliver takes one VERB: publish, merge, result or landed".into());
+            };
+            let main = ctx
+                .repository
+                .first()
+                .ok_or("the project has no main checkout")?;
+            let remote = crate::deliver::Git { main: main.clone() };
+            crate::deliver::run(ctx, &remote, verb, std::path::Path::new(&file), out)
+        }
         other => Err(format!("no command {other:?}\n{USAGE}")),
     }
 }

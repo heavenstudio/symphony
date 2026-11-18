@@ -148,13 +148,21 @@ pub(crate) fn parse(text: &str) -> Result<Vec<Input>, String> {
 }
 
 /// What a run ran on, which no tree pins: the system and its version, and the Chrome and the
-/// PostgreSQL its tests use, each as it says its own version, or why it does not.
+/// PostgreSQL its tests use, each as it says its own version, or why it does not; and the
+/// PostgreSQL 16 the hosted board's check proves the board on beside that one
+/// ([`symphony_board::server::postgres::hosted_programs_16`], the check's own rule). A record
+/// written before that was kept names none, and so is no environment a run now runs on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Environment {
     pub(crate) system: String,
     pub(crate) chrome: String,
     pub(crate) postgresql: String,
+    #[serde(default)]
+    pub(crate) postgresql_16: String,
 }
+
+/// What an environment says of a program its record does not name.
+const UNRECORDED: &str = "not recorded";
 
 impl Environment {
     /// The environment of this machine now, for the project at `root`, each program asked within
@@ -168,20 +176,32 @@ impl Environment {
             Ok(programs) => version(&programs.join("postgres").to_string_lossy(), bound),
             Err(_) => "none found".into(),
         };
+        let sixteen = symphony_board::server::postgres::hosted_programs_16();
         Environment {
             system: system(bound),
             chrome,
             postgresql,
+            postgresql_16: sixteen_at(&sixteen, bound),
         }
     }
 
     /// It on one line, as a run's output and a carried green's record say it.
     pub(crate) fn said(&self) -> String {
+        let sixteen = match self.postgresql_16.as_str() {
+            "" => UNRECORDED,
+            said => said,
+        };
         format!(
-            "{}; Chrome: {}; PostgreSQL: {}",
+            "{}; Chrome: {}; PostgreSQL: {}; the hosted check's PostgreSQL 16: {sixteen}",
             self.system, self.chrome, self.postgresql
         )
     }
+}
+
+/// The version the `postgres` in `folder` says, or why it does not: the hosted check's
+/// PostgreSQL 16, which is there or the check is red.
+fn sixteen_at(folder: &Path, bound: Bound<'_>) -> String {
+    version(&folder.join("postgres").to_string_lossy(), bound)
 }
 
 /// What `program ARGS` printed, its first line trimmed; none when it failed or printed nothing.
@@ -363,13 +383,95 @@ mod tests {
         let environment = Environment::now(&tree.root, far());
         assert!(!environment.system.is_empty(), "{environment:?}");
         assert!(!environment.chrome.is_empty() && !environment.postgresql.is_empty());
+        assert!(!environment.postgresql_16.is_empty(), "{environment:?}");
         assert_eq!(
             environment.said(),
             format!(
-                "{}; Chrome: {}; PostgreSQL: {}",
-                environment.system, environment.chrome, environment.postgresql
+                "{}; Chrome: {}; PostgreSQL: {}; the hosted check's PostgreSQL 16: {}",
+                environment.system,
+                environment.chrome,
+                environment.postgresql,
+                environment.postgresql_16
             )
         );
+    }
+
+    /// A folder of `tree` whose `postgres` says `version`.
+    fn postgres(tree: &Tree, folder: &str, version: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+        let program = format!("{folder}/postgres");
+        tree.write(&program, &format!("#!/bin/sh\necho '{version}'\n"));
+        let path = tree.root.join(&program);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        tree.root.join(folder)
+    }
+
+    #[test]
+    fn another_postgresql_16_is_another_environment_with_the_same_18_and_tree() {
+        let tree = Tree::new();
+        let on = |sixteen: &Path| Environment {
+            system: "Stand-in 1".into(),
+            chrome: "Chrome 2".into(),
+            postgresql: "postgres (PostgreSQL) 18.7".into(),
+            postgresql_16: sixteen_at(sixteen, far()),
+        };
+        let was = on(&postgres(&tree, "was", "postgres (PostgreSQL) 16.16"));
+        let upgraded = on(&postgres(&tree, "upgraded", "postgres (PostgreSQL) 16.17"));
+        assert_eq!(was.postgresql_16, "postgres (PostgreSQL) 16.16");
+        assert_eq!(was.postgresql, upgraded.postgresql);
+        assert_ne!(was.said(), upgraded.said());
+        assert_eq!(was.said(), on(&tree.root.join("was")).said());
+        assert!(
+            was.said()
+                .ends_with("; the hosted check's PostgreSQL 16: postgres (PostgreSQL) 16.16"),
+            "{}",
+            was.said()
+        );
+        // None installed is said, with why, and is another environment than one that has it.
+        let none = on(&tree.root.join("none"));
+        assert!(
+            none.postgresql_16.contains("does not say its version ("),
+            "{none:?}"
+        );
+        assert_ne!(none.said(), was.said());
+    }
+
+    #[test]
+    fn a_record_written_before_the_16_was_kept_reads_and_is_no_environment_of_now() {
+        let old: Environment = serde_json::from_str(
+            r#"{"system":"Stand-in 1","chrome":"Chrome 2","postgresql":"postgres 18"}"#,
+        )
+        .unwrap();
+        assert_eq!(old.postgresql_16, "");
+        assert_eq!(
+            old.said(),
+            "Stand-in 1; Chrome: Chrome 2; PostgreSQL: postgres 18; the hosted check's \
+             PostgreSQL 16: not recorded"
+        );
+        // Whatever a machine's 16 says now, or that it has none, it is never what the old
+        // record says: a green that stood on it is carried nowhere.
+        let tree = Tree::new();
+        for now in [
+            sixteen_at(
+                &postgres(&tree, "has", "postgres (PostgreSQL) 16.16"),
+                far(),
+            ),
+            sixteen_at(&tree.root.join("none"), far()),
+        ] {
+            let now = Environment {
+                postgresql_16: now,
+                ..old.clone()
+            };
+            assert_ne!(now.said(), old.said());
+        }
+        // What is written now holds the field, and reads back as itself.
+        let kept = Environment {
+            postgresql_16: "postgres (PostgreSQL) 16.16".into(),
+            ..old
+        };
+        let read: Environment =
+            serde_json::from_str(&serde_json::to_string(&kept).unwrap()).unwrap();
+        assert_eq!(read, kept);
     }
 
     #[test]

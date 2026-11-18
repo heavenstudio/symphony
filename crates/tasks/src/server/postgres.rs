@@ -467,6 +467,24 @@ pub fn programs(root: &Path) -> Result<Option<PathBuf>, String> {
     }
 }
 
+/// The variable that names the folder of PostgreSQL 16's programs for the hosted board's check.
+pub const HOSTED_16: &str = "SYMPHONY_POSTGRESQL_16";
+
+/// Where the hosted board's check finds PostgreSQL 16's programs
+/// (docs/POSTGRESQL.md, "A hosted board"): the folder [`HOSTED_16`] names, otherwise Homebrew's
+/// keg, which changes no `postgres` on `PATH`. The one rule: the check's servers and the release
+/// run's record of what it ran on both ask here. It inspects nothing and starts nothing.
+pub fn hosted_programs_16() -> PathBuf {
+    hosted_16_from(std::env::var_os(HOSTED_16))
+}
+
+fn hosted_16_from(named: Option<std::ffi::OsString>) -> PathBuf {
+    named.filter(|folder| !folder.is_empty()).map_or_else(
+        || "/opt/homebrew/opt/postgresql@16/bin".into(),
+        PathBuf::from,
+    )
+}
+
 /// The machine's PostgreSQL installation: the project file's explicit [`programs`] folder first,
 /// otherwise the first executable `postgres` on `PATH`. All tools come from that one folder;
 /// an invalid override or incompatible first installation is refused, never skipped. The server

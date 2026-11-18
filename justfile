@@ -32,6 +32,7 @@ _lint-rs:
     @tools/cargo.sh fmt --all --check
     @tools/cargo.sh clippy --workspace --all-targets --locked -- -D warnings
     @tools/cargo.sh clippy -p symphony-api --features typescript --all-targets --locked -- -D warnings
+    @tools/cargo.sh clippy -p symphony-board --features hosted-postgresql --all-targets --locked -- -D warnings
     @tools/rs-bin.sh symphony-build consumer-notes --check
     @tools/rs-bin.sh symphony-build crates-check --branch .
     @just --justfile {{quote(justfile())}} client-lint
@@ -162,8 +163,14 @@ crates-check:
 semver-check:
     @{{record}} --pipeline semver test "just semver-check" bash tools/semver.sh --all-features -p symphony-plugin -p symphony-blocks -p symphony-docs -p symphony-env -p symphony-args -p symphony-schema -p process-cwd -p repository-read
 
+# The hosted board's build (docs/POSTGRESQL.md, "A hosted board"), which no default build has: the
+# board's own tests with the `hosted-postgresql` feature and its matrix against PostgreSQL 16 and
+# 18 servers of its own (crates/tasks/tests/hosted), red where either is not installed.
+hosted-check:
+    @{{record}} --pipeline hosted test "just hosted-check" tools/cargo.sh test --locked -p symphony-board --features hosted-postgresql --lib --test hosted
+
 # The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit,
-# the crates and semver checks and every test target, each a step with a log of its own, run
+# the crates and semver checks, the hosted board's check and every test target, each a step with a log of its own, run
 # whatever the ones before it did; red when any step is, naming each. `just verify STEP...` runs
 # those steps alone. The native browser harness runs headless Chrome; no game engine or display is
 # needed.

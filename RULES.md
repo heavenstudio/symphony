@@ -448,7 +448,9 @@ by hand ([its card](docs/DECISIONS.md#consumer-manifest-line)).
 
 Nothing is pushed but main, by the land, and a release's tag, by the release run
 ([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)): nothing else of a task, its branch
-included. A consuming project's branch is pushed only on the owner's word naming that push; a
+included. A project that sets `[land] delivery` has its land's program push the task's branch
+for its pull request ([TASKS](docs/TASKS.md#a-land-delivered-by-a-pull-request)); this repository
+sets none. A consuming project's branch is pushed only on the owner's word naming that push; a
 release's refresh makes none and moves no pin ([the refresh](docs/RELEASES.md#the-refresh)).
 
 ### `delete-by-name`

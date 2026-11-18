@@ -77,7 +77,7 @@ It holds preferences alone, in the same tables, keys and types as the project fi
 A setting that holds a command or a program the Symphony runs, or that decides what lands, is never
 read from it and is refused there by name: `[project]`'s `cargo` and `default_branch`, and all of
 `[plugins]`, `[verdicts]`, `[land]`, `[releases]` and `[stamps]`, and `[board]`'s `on_review`,
-`on_land`, `machine_work_reader`, `postgresql` and `assessments`. A file no commit records must
+`on_land`, `machine_work_reader`, `postgresql`, `external_postgresql` and `assessments`. A file no commit records must
 not change the landing gate or run a command: that would be a way around review that leaves no
 trace. Every other table or key (the rest of `[project]`, `[board]` and `[agents]`, `[theme]`,
 `[[entrypoints]]`, `[workflow]`, or a name misspelt) is refused by name too, as no setting a local
@@ -265,6 +265,7 @@ What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASK
 | `generators` | `[]` | what the regenerator a land starts makes of the default branch's newest tip, each a table as below ([TASKS](TASKS.md#the-regenerator)) |
 | `keys` | none | a generator's name, then the command printing its key: a tip whose key passed before runs nothing |
 | `check_paths` | the list in [TASKS](TASKS.md#the-default-landing) | what holds the project's tests and checks, which a red's fix its orchestrator approves may not change |
+| `delivery` | none: the land merges and pushes here | the command that delivers a task by a hosted pull request in place of that merge and push, a list of words run as `COMMAND VERB --request FILE` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); it decides what lands, so a change of it is reviewed |
 
 ## `[[land.generators]]`
 
@@ -291,6 +292,7 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `review_alarm_clear_hours` | `1` | the hours review must stay at or under it to clear it |
 | `swept_cap_gb` | `5` | the gigabytes the evidence kept of removed worktrees may hold before the sweep asks for a check by hand |
 | `postgresql` | discover `postgres` on `PATH` | an explicit absolute folder of the machine's PostgreSQL programs takes precedence over discovery; only a scratch board's server starts it so far ([DECISIONS](DECISIONS.md#postgresql-binary-source)) |
+| `external_postgresql` | none: the board is the machine's own | `[board.external_postgresql]`, where a hosted board's PostgreSQL is and the budget of its connections, as below |
 | `machine_wip` | none | `[board.machine_wip.MACHINE]`, advice per machine, as below |
 | `machine_work_reader` | none | the project's own machine-work reader, an executable the server runs ([MACHINE_WORK](MACHINE_WORK.md)) |
 | `slot_locks` | none | the folder of the project's test-slot locks, which the agents view probes; under `.git/`, the git common dir |
@@ -310,6 +312,57 @@ absolute path. An explicit value always wins, including when it is invalid. A mi
 failed version probe or server older than 18 fails with setup guidance; discovery never skips
 an incompatible installation to select another. It inspects programs only, starting no database;
 only scratch boards use PostgreSQL so far.
+
+## `[board.external_postgresql]`
+
+Where a hosted board's PostgreSQL is, for a build with the `hosted-postgresql` feature
+([POSTGRESQL](POSTGRESQL.md#a-hosted-board)); every build reads and judges the table, so the
+settings check says the same anywhere. It holds no credential: each `_env` key is the name of a
+variable of the process's environment, never a value, and a URL, a password or a key written
+here is a key the table does not have and is refused. No command reaches a hosted board yet:
+the table is read by the library's hosted opening alone.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `url_env` | one of the two | the variable holding the PostgreSQL URI: one host, the project's own database and login, a password; TLS is always verified, whatever it asks |
+| `url_file_env` | one of the two | the variable holding the path of a mounted file of that URI |
+| `ca_file_env` | required | the variable holding the path of the certificate authority's PEM file: the only authority trusted |
+| `client_cert_file_env` | none | the variable holding the path of a client certificate, where the endpoint asks for one; with `client_key_file_env` or not at all |
+| `client_key_file_env` | none | the variable holding the path of that certificate's key |
+| `class_env` | required | the variable holding this process's class, one of the budget's |
+| `connect_timeout_seconds` | `10` | how long a connection may take to be made |
+| `acquire_timeout_seconds` | `10` | how long a request waits for a connection of the pool |
+| `request_timeout_seconds` | `300` | how long a request may take once it has its connection |
+| `queue_max` | `16` | the requests that may wait for a connection at once; one more is refused at once |
+| `budget` | required | `[board.external_postgresql.budget]`, the deployment's connections, as below |
+
+## `[board.external_postgresql.budget]`
+
+The deployment's whole use of the login role, counted for every process that can be alive at
+once. A hosted board's table without it is refused.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `role_connection_cap` | required | the connections the platform holds the role to |
+| `other_users` | `0` | the role's connections that are not the board's |
+| `maintenance` | required, at least 1 | the connections of a migration or an export, the class `maintenance` |
+| `headroom` | required | the connections left free |
+| `classes` | required, at least one | `[board.external_postgresql.budget.classes.CLASS]`, a class of process by its name, as below |
+
+Every class's `processes` times its `pool_max`, with `other_users`, `maintenance` and
+`headroom`, is at most `role_connection_cap`, or the table is refused. Each connection takes
+one of its class's slots in the database, so a class never passes its total whatever each
+process counts.
+
+## `[board.external_postgresql.budget.classes.CLASS]`
+
+One class of process, named in lower-case letters, digits, `-` and `_`; `maintenance` is the
+budget's own and no class's name.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `processes` | required, at least 1 | the processes of the class that can be alive at once: old and new revisions during a rollout, draining instances, each process of an instance |
+| `pool_max` | required, at least 1 | the connections one process of the class holds at most: its pool |
 
 ## `[board.machine_wip.MACHINE]`
 

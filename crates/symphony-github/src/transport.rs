@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 /// A request, relative to the API's base.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
-    /// `GET`, `POST` or `PATCH`.
+    /// `GET`, `POST`, `PATCH` or `PUT`.
     pub method: &'static str,
     /// The path and query, from the first `/`.
     pub path: String,

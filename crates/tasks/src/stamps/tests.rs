@@ -60,7 +60,8 @@ fn a_change_of_settings_values_skips_review_for_the_settings_check_as_tests() {
         "[project] cargo and default_branch",
         "[plugins] crates and process",
         "[verdicts], [land], [releases], [stamps]",
-        "[board] on_review, on_land, machine_work_reader, postgresql and assessments",
+        "[board] on_review, on_land, machine_work_reader, postgresql, external_postgresql and \
+         assessments",
     ] {
         assert!(review.applies.contains(kept), "{kept}: {}", review.applies);
     }

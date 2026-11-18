@@ -82,3 +82,67 @@ refresh back; a later due opening can try again. This uses the existing counter 
 schema version.
 
 Measurements and their limits belong to [the store comparison](analysis/board-store-baseline.md).
+
+## A hosted board
+
+A hosted board is kept in a PostgreSQL the platform runs, reached over TCP with verified TLS:
+a database made beforehand for one project, owned by that project's login, which can make no
+database or role. It is a build's choice, the board's `hosted-postgresql` feature, which no
+default build and no installed release has: the release's `tasks`, `symphony` and server link
+none of the driver, and a hosted deployment builds the board with the feature named. No
+command reaches a hosted board yet, and none moves a board to one: the library opens one
+(`Store::opening_hosted` over `pg::hosted::Client`), and reaching it from a command is the
+cutover's, with its own decision. [The design](analysis/hosted-postgresql.md) says why each
+rule below is what it is, and [the matrix](history/hosted-postgresql-matrix.md) what was
+proved, on which servers, and what was not.
+
+**Servers.** PostgreSQL 16 and 18; any other major is refused before a statement of the
+board's runs. The local board's own server stays 18 or later. On 16 the search analyzer is a
+definition of its own, built from 18's Unicode data, so a search reads the same words on
+both; text outside ASCII costs about six times 18's to index there.
+
+**Settings and secrets.** [`[board.external_postgresql]`](PROJECT_FILE.md#boardexternal_postgresql)
+names the variables that hold the URL (or the path of a mounted file of it), the certificate
+authority's file and the process's class. No credential is written in a project file, passed
+as an argument or said in a refusal: a refusal says a key's name, a fixed reason, PostgreSQL's
+SQLSTATE, and the backend and second its log has the rest under. The secret is read again for
+each new connection, so a rotated one is taken up and the connections made with the old one
+are retired.
+
+**The connection.** TLS is always on and always verified against that authority alone, for
+the name the URL gives; the login is SCRAM bound to the TLS channel, and a server that offers
+less (trust, a clear-text or MD5 password, no TLS) is refused. The login must be no superuser,
+hold no right to make databases or roles, replicate or pass row security, be no member of
+another role, and own the database, which must be UTF-8.
+
+**Transactions.** A request's statements run in one explicit `REPEATABLE READ` transaction on
+one connection, with the transaction's own variables, as the socket client's do; a migration's
+script says its own. Nothing is sent twice. A connection lost before the commit was sent
+committed nothing and says so; one lost after it says the outcome is not known, and the caller
+reads the board before deciding. A conflict the server reports is decided again by the store,
+as on any board.
+
+**Capacity.** A process keeps one pool for a board and class, of that class's `pool_max`, with a bounded
+line; a request past the line or its wait is refused, never given a connection outside the
+pool. The budget in the settings is the deployment's: every class's processes times its pool,
+with the maintenance connections, the role's other users and headroom, within the role's cap,
+or the table is refused. Each connection takes one of its class's slots in the database (a
+session advisory lock), so a class's total holds across processes, revisions and instances
+whatever each one counts; the role's own cap, where the server refuses first, is a refusal of
+capacity too. A pool is not used across a fork, and a thread that holds a connection is
+refused a second.
+
+**Making and moving.** A hosted board is made, and moved to a newer schema, only by an
+opening that says it is the deployment's migration (`Opening::migrating`), which runs as the
+class `maintenance`; any other opening of an empty or older board is refused before anything
+is written. A database that holds tables or functions and no board's record is never taken
+for an empty one. The writers' record and the schema guard are the same as on any board: a
+writer seen within the week holds a migration, and a writer behind a board moved on is
+refused at its next write.
+
+**Its check.** `just hosted-check` builds the board with the feature and runs its tests and
+its matrix against PostgreSQL 16 and 18 servers of its own on this machine; `just lint-rs`
+builds it under clippy, and the release run runs the check as its `hosted` step. It needs
+PostgreSQL 16's programs beside 18's (`brew install postgresql@16`, which starts nothing and
+changes no `postgres` on `PATH`; `SYMPHONY_POSTGRESQL_16` names another folder), and `openssl`
+for the certificates its servers present. Without them it is red, never skipped.

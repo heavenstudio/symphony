@@ -34,6 +34,7 @@ pub(crate) fn landings(
     tip: &str,
     branch: &str,
 ) -> Result<Vec<Landing>, String> {
+    squashed(root, tip, branch)?;
     let range = match base {
         Some(base) => format!("{base}..{tip}"),
         None => tip.to_string(),
@@ -58,6 +59,25 @@ pub(crate) fn landings(
             })
         })
         .collect())
+}
+
+/// Refuse to count the landings of a line whose tip delivers by pull request (`[land] delivery`,
+/// `symphony_board::land::delivery`): a land there leaves one squashed commit of one parent, which
+/// is no merge of the land's, so a count would miss every one of them and a release candidate
+/// would never be advanced by its reds' landings. A project file that does not read sets nothing.
+fn squashed(root: &Path, tip: &str, branch: &str) -> Result<(), String> {
+    let Ok(text) = git(root, &["show", &format!("{tip}:symphony.toml")]) else {
+        return Ok(());
+    };
+    match symphony_board::land::delivery::of(&text) {
+        Ok(command) if !command.is_empty() => Err(format!(
+            "[land] delivery is set on {branch} at {}: its tasks land as squashed commits, which \
+             this build's release cadence does not count and its release candidate is not \
+             advanced over, so no release run is due by landings and none is cut here",
+            short(tip)
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// What the count starts after.
@@ -476,6 +496,41 @@ mod tests {
             inputs: None,
             environment: None,
         }
+    }
+
+    #[test]
+    fn a_line_that_delivers_by_pull_request_is_refused_by_name_never_counted_as_no_landing() {
+        let tree = Tree::new();
+        let (root, _) = repository(&tree, &["a/one"]);
+        let write = |text: &str, message: &str| {
+            std::fs::write(root.join("symphony.toml"), text).unwrap();
+            for args in [
+                &["add", "symphony.toml"][..],
+                &["commit", "-q", "-m", message],
+            ] {
+                let named = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+                git(&root, &[&named[..], args].concat()).unwrap();
+            }
+            commit(&root, "main").unwrap()
+        };
+        // A project file with no such key, and one that does not read, count as before.
+        let plain = write("[land]\ncheck = false\n", "no key");
+        assert_eq!(landings(&root, None, &plain, "main").unwrap().len(), 1);
+        let unread = write("[land\n", "does not read");
+        assert_eq!(landings(&root, None, &unread, "main").unwrap().len(), 1);
+        let tip = write("[land]\ndelivery = [\"host\", \"deliver\"]\n", "deliver");
+        let refused = landings(&root, None, &tip, "main").unwrap_err();
+        assert_eq!(
+            refused,
+            format!(
+                "[land] delivery is set on main at {}: its tasks land as squashed commits, which \
+                 this build's release cadence does not count and its release candidate is not \
+                 advanced over, so no release run is due by landings and none is cut here",
+                short(&tip)
+            )
+        );
+        // Read at the tip asked about: the line before the key was committed is counted.
+        assert_eq!(landings(&root, None, &plain, "main").unwrap().len(), 1);
     }
 
     #[test]

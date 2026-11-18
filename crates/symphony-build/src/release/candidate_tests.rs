@@ -343,6 +343,7 @@ fn environment() -> crate::release::inputs::Environment {
         system: "Stand-in 1".into(),
         chrome: "Chrome 2".into(),
         postgresql: "postgres 18".into(),
+        postgresql_16: "postgres 16".into(),
     }
 }
 
@@ -544,6 +545,25 @@ fn a_rerun_runs_what_it_cannot_tell_the_inputs_of() {
           Chrome: Chrome 3; PostgreSQL: postgres 18): none of them is carried"
         ]
     );
+    // The hosted check's PostgreSQL 16 alone changed, the tree, the system, Chrome and 18 the
+    // same; or the tip's is not what the greens' record names (a record written before the 16
+    // was kept names none): another environment, and nothing is carried.
+    for sixteen in ["postgres 16 of another build", ""] {
+        let now = crate::release::inputs::Environment {
+            postgresql_16: sixteen.into(),
+            ..environment()
+        }
+        .said();
+        let (plan, why) = tip(Some(&same), &now);
+        assert_eq!(plan, (Planned::Whole, Vec::new()), "{sixteen:?}");
+        assert_eq!(
+            why,
+            [format!(
+                "2 greens of the candidate stood on another environment than this one ({now}): \
+                 none of them is carried"
+            )]
+        );
+    }
     // Nor on the same tree, where a green was always carried.
     let this_tree = |_: &str| true;
     assert_eq!(

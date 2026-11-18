@@ -462,6 +462,16 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
         if settings.generators.is_empty() {
             return Ok("no [land] generators: nothing to regenerate".into());
         }
+        if !super::delivery::command(&main)?.is_empty() {
+            // It commits to the default branch and pushes it, which a project delivering by pull
+            // request lets nothing but the host do.
+            return Err(format!(
+                "[land] delivery is set: {} lands by pull request alone, and the regenerator, \
+                 which commits what the generators make and pushes it, has no pull request of its \
+                 own in this build: nothing regenerated",
+                settings.default_branch
+            ));
+        }
         let Some(held) = try_hold(&folder)? else {
             return Ok(said.unwrap_or_else(|| {
                 "the regenerator runs already: it goes round once it ends, and makes the newest \
@@ -505,6 +515,8 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
             now: &std::time::Instant::now,
             recorder: None,
             named: false,
+            transport: None,
+            delivery: Vec::new(),
             out: &mut *out,
         };
         let mut regenerator = Regenerator {

@@ -45,6 +45,7 @@ pub const PROTECTED_KEYS: [(&str, &[&str]); 2] = [
             "on_land",
             "machine_work_reader",
             "postgresql",
+            "external_postgresql",
             "assessments",
         ],
     ),

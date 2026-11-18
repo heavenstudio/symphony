@@ -4,8 +4,10 @@ A hosted board needs a database that survives its application process. The propo
 explicit external connection to a pre-created, dedicated PostgreSQL database, beside the local
 socket path. The application never starts a replacement database when that connection fails.
 The [database boundary](../DECISIONS.md#hosted-postgresql-database-boundary) and the independent
-[server-version choice](../DECISIONS.md#hosted-postgresql-versions) await a decision before
-implementation. Landing this analysis supplies neither capability nor permission to move data.
+[server-version choice](../DECISIONS.md#hosted-postgresql-versions) are decided: a dedicated
+database for each project, and external PostgreSQL 16 and 18. The connection adapter is built
+behind the board's `hosted-postgresql` feature ([what a hosted board is](../POSTGRESQL.md#a-hosted-board),
+[the adapter as built](#the-adapter-as-built)); nothing here gives permission to move data.
 
 ## Delivery boundary
 
@@ -29,16 +31,26 @@ live cutover and its permission belong to `docs/board-pg-cutover-card`.
 
 ## Configuration and secrets
 
-Proposed keys below are a design, not settings Symphony reads today:
+The keys are read today ([PROJECT_FILE](../PROJECT_FILE.md#boardexternal_postgresql)). A
+process's pool is its class's in the budget, so the table has no `pool_max` of its own:
 
 ```toml
 [board.external_postgresql]
 url_env = "SYMPHONY_DATABASE_URL"
 ca_file_env = "SYMPHONY_DATABASE_CA_FILE"
-pool_max = 3
+class_env = "SYMPHONY_DATABASE_CLASS"
 connect_timeout_seconds = 10
 acquire_timeout_seconds = 10
 request_timeout_seconds = 300
+
+[board.external_postgresql.budget]
+role_connection_cap = 12
+maintenance = 1
+headroom = 2
+
+[board.external_postgresql.budget.classes]
+web = { processes = 2, pool_max = 3 }
+worker = { processes = 1, pool_max = 3 }
 ```
 
 The platform injects the URL as an environment secret, or an alternative `url_file_env` names
@@ -75,19 +87,44 @@ insufficient. PostgreSQL documents the distinction in
 [SSL support](https://www.postgresql.org/docs/16/libpq-ssl.html). Network reachability, DNS and
 firewall policy remain the deployer's work; this task creates no tunnel or proxy.
 
-The proposed hosted adapter uses maintained libpq through a reviewed Rust binding for TLS,
-authentication and result handling, rather than extending the socket client's authentication
-state machine. Initially support SCRAM password login over verified TLS and an optional client
+The first proposal was maintained libpq through a Rust binding; both were then measured, and
+the adapter is built on the Rust driver instead ([the driver](#the-driver)), rather than
+extending the socket client's authentication state machine. Initially support SCRAM password login over verified TLS and an optional client
 certificate when the endpoint requires one. Refuse unsupported authentication, including an
 unimplemented token-refresh mechanism, without downgrading. IAM/connector authentication would
 need its own tested adapter. Use explicit connection parameters and disable ambient connection
 defaults; libpq's [connection control](https://www.postgresql.org/docs/18/libpq-connect.html)
 describes both parameter handling and the need for a trusted `search_path`.
 
-The optional hosted build carries a pinned, maintained libpq/TLS runtime in its image. Its Rust
-binding, native dependency size, packaging on supported hosts and deadlines must be proved in
-the implementation task. The local socket build keeps its current dependency path. This
-proposal chooses a library boundary, not an unmeasured binary-size allowance.
+The local socket build keeps its dependency path: the driver is optional, and no default build
+or installed release compiles it.
+
+### The driver
+
+Two were built into the same small program and measured on this machine (aarch64 macOS,
+release profile, 2026-11-18), over a baseline of 342,816 bytes:
+
+| Driver | Binary | Build | What the image must carry |
+| --- | --- | --- | --- |
+| libpq through a thin binding | +53,088 bytes | 20.5 CPU-seconds | libpq and its TLS library, dynamically linked, at a version the image pins |
+| `tokio-postgres` with `rustls` (`ring`) | +1,893,824 bytes | 113.7 CPU-seconds, 95 crates | nothing: linked statically |
+
+The static driver was chosen, behind the off-by-default feature `hosted-postgresql`: a hosted
+image then carries one binary and no native library whose version, TLS build and search path
+are a second thing to pin and patch, and its certificate verification is the build's own and
+not the image's OpenSSL configuration. Its cost is the larger binary and build, which only a
+build that names the feature pays: with the feature off the dependency tree of the board and
+of the workspace is what it was (36 and 312 crates), and the shipped binaries' size budgets
+are unchanged. What every build does carry is the settings table's reading and judging, so a
+project file is checked the same anywhere: against the commit this was built on, `tasks` and
+`agent-send` are 16 bytes larger, `symphony` 33,088 and `symphony-server` 49,600, each within
+its budget. The libpq binding stays the alternative where a platform already ships and
+patches libpq and a hosted binary's size matters more than a second moving part. The lockfile
+gained 51 packages for it, the platform-conditional ones among them (`tokio-postgres` 0.7.18,
+`tokio-postgres-rustls` 0.14.0, `rustls` 0.23.46 with `ring` 0.17.14 and `rustls-webpki`
+0.103.17, `postgres-protocol` and `postgres-types`, and what they need); no package it held
+moved. `tokio-postgres-rustls` 0.13 read no channel binding from a server certificate, so a
+login that requires it was refused; 0.14 does, and the matrix logs in with it required.
 
 ## Transactions before pooling
 
@@ -184,8 +221,8 @@ language privileges, not superuser privileges for these trusted languages
 ([functions](https://www.postgresql.org/docs/16/sql-createfunction.html),
 [anonymous blocks](https://www.postgresql.org/docs/16/sql-do.html)).
 
-Use the dedicated database's `public` schema with a fixed trusted search path containing
-`pg_catalog` and `public`; revoke public object-creation rights from other logins. Deny other
+Use the dedicated database's `public` schema with a fixed trusted search path, `public` alone,
+which PostgreSQL searches after `pg_catalog`, so no schema named for the login comes first; revoke public object-creation rights from other logins. Deny other
 project roles CONNECT to this database, revoke inherited PUBLIC CONNECT/TEMP where appropriate,
 and remove cross-project grants/default privileges. Database ownership is intentionally broad
 inside this one database. A shared application database with name prefixes or only a project-id
@@ -310,7 +347,9 @@ cutover, restore or shared-server restart is authorized by these steps.
 
 The proposed target is external PostgreSQL 16 and 18, while local startup keeps 18 or later.
 The version card may instead require the platform to upgrade. SQL availability in documentation
-is only a reason to try 16, not a supported-version claim. Every runtime cell below is **pending**.
+is only a reason to try 16, not a supported-version claim. The cells were run on scratch
+servers of both majors on one machine: [the matrix as run](../history/hosted-postgresql-matrix.md)
+says which passed, by which test, and which rows have no proof yet.
 Use disposable databases on both majors, the same release artifact, and the restricted owner
 role described above. Record server/client versions, encoding, collation provider and privileges.
 
@@ -368,3 +407,31 @@ binary/image cost. The release run performs the repository's full verification. 
 the deployer proves network/certificate reachability, enforced overlap budget, backup restore
 and project isolation on authorized scratch resources. No runtime test, target-version
 integration, throughput figure, restore drill or cloud deployment is claimed by this design task.
+
+## The adapter as built
+
+Built, behind the feature, and proved on scratch PostgreSQL 16 and 18 servers
+([the matrix as run](../history/hosted-postgresql-matrix.md)): the settings and their check;
+the secret references, read at each connection, and refusals that say none of them; verified
+TLS with channel-bound SCRAM; the server, login and database checks; one explicit transaction
+a request with nothing sent twice and a lost commit said as unknown; the process's pool, its
+line and its refusals; the budget's rule in the settings and its slots in the database; the
+store's private dispatch beside the socket client, the public `Database` and `pg::Client`
+unchanged; a board made and moved by the migration opening alone; and PostgreSQL 16's
+analyzer.
+
+Not built, each still this design's and none claimed by the adapter:
+
+- a command's reach of a hosted board: the library opens one, and the board's commands and
+  the server still reach the machine's own board;
+- the project's identity bound into the board's record, and a hosted deployment's durable
+  place for the recovery authority: the board's recovery generation and the writes bound to it
+  ([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)) are the board's own and a hosted
+  board has them as any, but the authority that says which generation a board is bound to is
+  handed to a store by its caller, and nothing here keeps one outside a container;
+- a refusal of a schema whose definitions differ at the same version (a digest);
+- reconnection with backoff: a request makes one connection attempt within its deadline and
+  is refused, and the next request tries again;
+- export, restore and their drill, which are the lifecycle's;
+- the remote execution rows (admission, intent, leases), which no board has yet;
+- anything on a platform's own PostgreSQL: no cloud database was made, reached or read.

@@ -703,15 +703,22 @@ green stands with the digest it was green on.
 
 Its one risk is a path a test reads that no input names: its green is carried across a change
 that broke it. A test that reads a file outside its packages and outside the root's other entries
-declares it beside its lane.
+declares it beside its lane. The hosted board's step declares the board's package, so it is run
+again on any change to the board or a package it builds with. The PostgreSQL 16 and 18 programs
+it starts are the machine's, which no digest holds: they are named in the environment a run ran
+on (below), each by the version it says, and a green of another environment is never carried.
 
 ### What a run ran on
 
 No tree pins the system, Chrome or PostgreSQL the checks run on, so each run's record names them
 (`environment`): the system and its version (`sw_vers` where there is one, and `uname -srm`), and
 Chrome and PostgreSQL each as it says its own version (the Chrome the tests find, the `postgres`
-of `[board] postgresql`, else the first on `PATH`), or that none was found. A candidate's green
-stands with the environment of its run, and a rerun on another carries none of them and says so.
+of `[board] postgresql`, else the first on `PATH`), or that none was found. It names the
+PostgreSQL 16 of the hosted board's check as well, found as that check finds it (the folder
+`SYMPHONY_POSTGRESQL_16` names, else Homebrew's keg), by the version it says or why it says
+none. A candidate's green stands with the environment of its run, and a rerun on another carries
+none of them and says so; a record written before the 16 was named names none, so its greens are
+of another environment and are run again.
 
 ### Its bounds
 
@@ -751,6 +758,10 @@ the hour, and its green release refreshes the server and its projects
 
 - **The count** is `[releases] every_landings` in `symphony.toml`, 20 unless the project says. `0`
   turns the cadence off, and then only the scheduled run or `just release` releases.
+- **A line that delivers by pull request** (`[land] delivery` in the project file its tip
+  commits, [TASKS](TASKS.md#a-land-delivered-by-a-pull-request)) is not counted: its tasks land
+  as squashed commits, which are no merges, so the count refuses by name, no run is due by
+  landings there, and a release candidate's settle says the same and advances nothing.
 - **A landing** is a merge on the main line's first-parent line whose subject names a branch:
   "Merge branch 'SLUG'", the merge `just land` makes, or "Merge branch 'SLUG' into BRANCH", git's
   own made by hand. A merge of the default branch itself ("Merge branch 'main' into SLUG", a task

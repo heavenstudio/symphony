@@ -786,6 +786,29 @@ INSERT INTO recovery (id, generation) VALUES ('\"board\"', gen_random_uuid()::te
 /// This build's steps on PostgreSQL: every table, index, function and trigger, each made if it is
 /// not there or replaced, so the steps run again on a board that has them change nothing.
 pub(in crate::store) fn define() -> String {
+    static ANALYZED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| analyzed(WORDS));
+    defined(&ANALYZED)
+}
+
+/// [`define`] for a PostgreSQL 16 server, which has no `pg_c_utf8`: the same steps, the
+/// analyzer's letters, lower case and decomposition PostgreSQL 18's, said as data
+/// ([`sixteen`]), so a board there finds and ranks as one on 18 does.
+#[cfg(feature = "hosted-postgresql")]
+pub(in crate::store) fn define_on_16() -> String {
+    static ANALYZED: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| analyzed(&sixteen::words(WORDS)));
+    defined(&ANALYZED)
+}
+
+/// `words`, the analyzer's definition, its numbers and its Latin spellings written in.
+fn analyzed(words: &str) -> String {
+    words
+        .replace("NUMBERS", &number_class())
+        .replace("LATIN", &latin())
+}
+
+/// The steps, `analyzed` the analyzer among them.
+fn defined(analyzed: &str) -> String {
     let mut sql = String::new();
     for table in &TABLES {
         sql.push_str(&create(table));
@@ -794,15 +817,13 @@ pub(in crate::store) fn define() -> String {
     sql.push_str(RECOVERY);
     sql.push_str(INDEXES);
     sql.push_str(FUNCTIONS);
-    static ANALYZED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        WORDS
-            .replace("NUMBERS", &number_class())
-            .replace("LATIN", &latin())
-    });
-    sql.push_str(&ANALYZED);
+    sql.push_str(analyzed);
     sql.push_str(&triggers());
     sql
 }
+
+#[cfg(feature = "hosted-postgresql")]
+mod sixteen;
 
 /// The board's marker: every connection's revision and every session's, summed.
 pub(in crate::store) const MARKER: &str =
