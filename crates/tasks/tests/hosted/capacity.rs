@@ -346,6 +346,15 @@ fn a_rotated_secret_is_read_again_and_the_connections_made_with_the_old_one_are_
         until("the old connection to end", || {
             project.cluster.sessions(&project.name) == 1
         });
+        // A URL that comes to name another board is refused: a process is never moved under.
+        let elsewhere = cluster::cluster(major).project();
+        *url.lock().unwrap() = elsewhere.url();
+        let moved = refused(client.request(&[Step::bare("SELECT 1")]));
+        assert!(
+            moved.contains("now names another endpoint, database or login"),
+            "PostgreSQL {major}: {moved}"
+        );
+        assert_eq!(elsewhere.cluster.sessions(&elsewhere.name), 0);
         // The old secret, were it still read, is refused by the server.
         let stale = Client::connect(
             &settings(""),

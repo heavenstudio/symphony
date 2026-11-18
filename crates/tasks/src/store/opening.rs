@@ -352,8 +352,10 @@ impl Store {
             ))));
         }
         if found.is_none() {
-            let foreign =
-                self.request(both("RETURN NONE;", postgres::opening::FOREIGN), json!({}))?;
+            let foreign = self.request(
+                both(sql::opening::POSTGRESQL_ALONE, postgres::opening::FOREIGN),
+                json!({}),
+            )?;
             if foreign.last().and_then(Value::as_i64) != Some(0) {
                 return Err(Failure::Stop(Error::Refused(format!(
                     "{board} is hosted in a database that holds tables or functions and no \
@@ -540,7 +542,10 @@ impl Store {
         #[cfg(feature = "hosted-postgresql")]
         if self.db.is_postgresql() {
             let version = self.request(
-                both("RETURN NONE;", postgres::opening::SERVER_VERSION),
+                both(
+                    sql::opening::POSTGRESQL_ALONE,
+                    postgres::opening::SERVER_VERSION,
+                ),
                 json!({}),
             )?;
             if version

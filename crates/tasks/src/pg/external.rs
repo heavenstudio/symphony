@@ -107,6 +107,38 @@ pub struct Share {
     pub class_max: u32,
 }
 
+/// The table the project file at the main checkout `root` holds: none when it holds none, or
+/// there is no file. Refused, naming the file, when the file does not parse or the table is not
+/// one [`Settings::validate`] takes. Only that table is read; the rest of the file is the
+/// Symphony's.
+pub fn of(root: &std::path::Path) -> Result<Option<Settings>, String> {
+    let path = root.join(crate::project::FILE);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    let named = |why: String| format!("{}: {why}", path.display());
+    let table: toml::Table = text.parse().map_err(|error| named(format!("{error}")))?;
+    let Some(written) = table
+        .get("board")
+        .and_then(|board| board.get("external_postgresql"))
+    else {
+        return Ok(None);
+    };
+    judged(written.clone()).map(Some).map_err(named)
+}
+
+/// The table as `written` in a project file, read and judged ([`Settings::validate`]): what
+/// the board's own reader and a project's check of its file both take.
+pub fn judged(written: toml::Value) -> Result<Settings, String> {
+    let settings: Settings = written
+        .try_into()
+        .map_err(|error| format!("{TABLE}: {error}"))?;
+    settings.validate()?;
+    Ok(settings)
+}
+
 impl Settings {
     /// The table judged on its shape alone: its references named, its waits and queue in range
     /// and its budget within the role's cap. A refusal names the key, never a value an
@@ -304,6 +336,40 @@ fn class_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_project_files_table_is_read_judged_and_absent_without_one() {
+        let root = std::env::temp_dir().join(format!("board-external-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(of(&root), Ok(None), "no file");
+        let file = root.join(crate::project::FILE);
+        std::fs::write(&file, "[board]\nguide = \"TASKS.md\"\n").unwrap();
+        assert_eq!(of(&root), Ok(None), "no table");
+        let written = "[board.external_postgresql]\nurl_env = \"URL\"\nca_file_env = \"CA\"\n\
+            class_env = \"CLASS\"\n[board.external_postgresql.budget]\nrole_connection_cap = 5\n\
+            maintenance = 1\nheadroom = 1\n[board.external_postgresql.budget.classes]\n\
+            web = { processes = 1, pool_max = 2 }\n";
+        std::fs::write(&file, written).unwrap();
+        let read = of(&root).unwrap().unwrap();
+        assert_eq!(read.share("web").unwrap().class_max, 2);
+        // Over its cap, a key it does not have, and text that is no TOML: each names the file.
+        for (broken, why) in [
+            (written.replace("cap = 5", "cap = 3"), "role_connection_cap"),
+            (
+                written.replace("url_env", "url"),
+                "[board.external_postgresql]",
+            ),
+            ("[board".to_string(), "symphony.toml"),
+        ] {
+            std::fs::write(&file, broken).unwrap();
+            let refused = of(&root).unwrap_err();
+            assert!(
+                refused.contains(why) && refused.starts_with(&file.display().to_string()),
+                "{refused}"
+            );
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     const WHOLE: &str = r#"
 url_env = "SYMPHONY_DATABASE_URL"

@@ -374,7 +374,8 @@ never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it 
 records and how it is scheduled: [RELEASES](RELEASES.md#the-release-run).
 
 **Every step runs.** `just verify` runs its steps in order, lint, the client check, the size
-budgets, the docs audit, the crates and semver checks and the tests (`tools/verify.sh`), each whatever the
+budgets, the docs audit, the crates and semver checks, the hosted board's check
+(`just hosted-check`, [POSTGRESQL](POSTGRESQL.md#a-hosted-board)) and the tests (`tools/verify.sh`), each whatever the
 ones before it did, and is red when any is, so a red step never hides the ones after it. Each step
 is recorded as a step
 of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,

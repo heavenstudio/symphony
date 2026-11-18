@@ -1,7 +1,8 @@
 //! The project file's `[board]` table: the guide task messages render as part of, what the board starts when a task moves to review and
 //! once one lands, the cap on an orchestrator's open tasks, when the pipeline alarm raises, the
 //! size past which the sweep asks for a check of the evidence it set aside, the folder of the
-//! machine's PostgreSQL programs, and the project's own tools the board reads beside its own: a
+//! machine's PostgreSQL programs, where a hosted board's PostgreSQL is (`[board.external_postgresql]`,
+//! `symphony_board::pg::external`), and the project's own tools the board reads beside its own: a
 //! machine-work reader, a folder of test-slot locks and a folder of landing assessments. A path
 //! there is project-relative, and one under `.git/` names the repository's common git folder, but
 //! PostgreSQL's, which is the machine's and absolute; none is the Symphony's default, which reads
@@ -110,6 +111,12 @@ impl Board {
                  PostgreSQL programs"
             ));
         }
+        // Where a hosted board's PostgreSQL is and the budget of its connections, which the board
+        // reads itself (`symphony_board::pg::external::of`); judged here by the board's own rule,
+        // so a project's lint refuses what a hosted build would not take.
+        if let Some(external) = file.external_postgresql {
+            symphony_board::pg::external::judged(external)?;
+        }
         Ok(Board {
             guide: inside("[board] guide", file.guide)?,
             on_review: file.on_review,
@@ -143,6 +150,7 @@ pub(super) struct FileBoard {
     assessments: Option<String>,
     swept_cap_gb: Option<f64>,
     postgresql: Option<String>,
+    external_postgresql: Option<toml::Value>,
     #[serde(flatten)]
     pub(super) unknown: super::file::Unknown,
 }

@@ -312,3 +312,56 @@ fn one_projects_login_reaches_no_other_projects_board() {
         );
     }
 }
+
+#[test]
+fn a_made_board_is_its_logins_own_with_no_definer_function_extension_or_other_schema() {
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        opened(&project, &Opening::write().migrating()).unwrap();
+        let count = |sql: &str| project.cluster.value(&project.name, sql);
+        assert_ne!(objects(&project), "0");
+        // Every table, index, sequence and function is the login's, and none runs as its definer.
+        assert_eq!(
+            count(&format!(
+                "SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = \
+                 c.relnamespace WHERE n.nspname = 'public' AND pg_get_userbyid(c.relowner) <> \
+                 '{0}') + (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = \
+                 p.pronamespace WHERE n.nspname = 'public' AND (p.prosecdef OR \
+                 pg_get_userbyid(p.proowner) <> '{0}'))",
+                project.name
+            )),
+            "0",
+            "PostgreSQL {major}"
+        );
+        // Nothing was installed or made beside the board: the extension every database has,
+        // the schemas every database has, the two languages a board is written in.
+        assert_eq!(
+            count("SELECT string_agg(extname, ',') FROM pg_extension"),
+            "plpgsql"
+        );
+        assert_eq!(
+            count(
+                "SELECT string_agg(nspname, ',' ORDER BY nspname) FROM pg_namespace WHERE \
+                 nspname !~ '^pg_' AND nspname <> 'information_schema'"
+            ),
+            "public"
+        );
+        assert_eq!(
+            count(
+                "SELECT string_agg(DISTINCT l.lanname, ',' ORDER BY l.lanname) FROM pg_proc p \
+                 JOIN pg_language l ON l.oid = p.prolang JOIN pg_namespace n ON n.oid = \
+                 p.pronamespace WHERE n.nspname = 'public'"
+            ),
+            "plpgsql,sql"
+        );
+        // And the server holds no role or database the migration made.
+        assert_eq!(
+            count(&format!(
+                "SELECT count(*) FROM pg_database WHERE datdba = (SELECT oid FROM pg_roles \
+                 WHERE rolname = '{}')",
+                project.name
+            )),
+            "1"
+        );
+    }
+}

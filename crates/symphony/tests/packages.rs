@@ -637,3 +637,45 @@ fn a_keyword_crates_io_refuses_is_told_by_its_shape() {
         );
     }
 }
+
+/// The hosted board's driver (TLS and PostgreSQL's wire protocol over TCP) is compiled into no
+/// build that does not ask for it by name: the board has the feature, no member's features turn
+/// it on, its own default among them, no member asks the board for it, and the driver's crates
+/// are the board's alone, each optional. So the installed release and every default build are
+/// what they were without it (docs/POSTGRESQL.md, "A hosted board").
+#[test]
+fn no_member_turns_the_hosted_board_on_unless_a_build_names_its_feature() {
+    const FEATURE: &str = "hosted-postgresql";
+    const BOARD: &str = "symphony-board";
+    const DRIVER: [&str; 3] = ["tokio-postgres", "tokio-postgres-rustls", "rustls"];
+    let mut has = false;
+    for package in members() {
+        for (feature, enables) in package["features"].as_object().unwrap() {
+            if name(package) == BOARD && feature == FEATURE {
+                has = true;
+                continue;
+            }
+            for enabled in enables.as_array().unwrap() {
+                assert!(
+                    !enabled.as_str().unwrap().contains(FEATURE),
+                    "{}'s feature {feature} turns {FEATURE} on",
+                    name(package)
+                );
+            }
+        }
+        for dependency in package["dependencies"].as_array().unwrap() {
+            let depended = dependency["name"].as_str().unwrap();
+            let asked = dependency["features"].as_array().unwrap();
+            assert!(
+                depended != BOARD || !asked.iter().any(|feature| feature == FEATURE),
+                "{} asks the board for {FEATURE}",
+                name(package)
+            );
+            if DRIVER.contains(&depended) {
+                assert_eq!(name(package), BOARD, "{depended} is the board's alone");
+                assert_eq!(dependency["optional"], true, "{depended} is optional");
+            }
+        }
+    }
+    assert!(has, "the board has the feature {FEATURE}");
+}

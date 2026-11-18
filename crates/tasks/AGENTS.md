@@ -147,6 +147,22 @@ for a scratch board alone, on a socket under `/tmp` and no TCP; `postgres/lifecy
 stopped-cluster snapshot, scratch recovery and vacuum
 ([POSTGRESQL](../../docs/POSTGRESQL.md)). `port.rs` is a child
 server's loopback port.
+
+`pg.rs` is the socket client of that PostgreSQL. `pg/external.rs` is the hosted board's settings,
+`[board.external_postgresql]`, which every build reads and judges, and `pg/hosted.rs` the hosted
+client, compiled only with the `hosted-postgresql` feature
+([a hosted board](../../docs/POSTGRESQL.md#a-hosted-board)): `hosted/secret.rs` reads the
+references and judges the URL, `hosted/session.rs` is one verified connection and the one place
+a driver's or a server's error becomes a refusal, `hosted/pool.rs` the process's bounded pool.
+A change there keeps four things: no refusal carries a driver's or a server's own words (they
+can hold the URL, a name or a statement), only a kind, a fixed reason, a SQLSTATE and where the
+server's log has the rest; nothing is sent a second time, whatever was lost; a connection goes
+back to the pool only when its request left it clean; and the store reaches a hosted board by
+its private dispatch (`store/database.rs`'s `Board`), the public `Database` and `pg::Client`
+as they are. PostgreSQL 16 has an analyzer of its own (`store/postgres/schema/sixteen.rs`, from
+`unicode16.tsv`, PostgreSQL 18's answers as data): a change to the analyzer's definition is
+proved on both by `tests/hosted/analyzer.rs`. The feature's tests are `just hosted-check`, which
+no `just test-rs` of the default build runs.
 `board_health.rs` is the query log and the hour the Symphony serves
 ([TASKS](../../docs/TASKS.md#board-health)). The owner's side is TASKS's [stuck
 servers](../../docs/TASKS.md#stuck-servers) and [a board that went
@@ -394,6 +410,9 @@ run the machine's PostgreSQL 18 or later, from this repository's `symphony.toml`
 postgresql`) or the first executable `postgres` on `PATH`, with `initdb`, `pg_ctl` and `psql` in
 that same folder ([setup](../../docs/PROJECT_FILE.md#board)). An invalid override or incompatible
 installation fails; each server runs on a scratch board of its own, started and stopped by the test.
+The hosted board's tests (`tests/hosted/`, `just hosted-check`) start PostgreSQL 16 and 18 servers
+of their own with TLS on a loopback port (`tests/hosted/cluster.rs`): 18 found the same way, 16 in
+Homebrew's keg or the folder `SYMPHONY_POSTGRESQL_16` names, and `openssl` for their certificates.
 
 ### The command line's tests
 

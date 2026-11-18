@@ -11,6 +11,8 @@
 #     crates-check  the crates-check recipe: each published package whose version crates.io holds
 #                   packaged from the same sources (docs/RELEASES.md, "Packages on crates.io")
 #     semver-check  the kit/helper APIs against crates.io, with their actual version moves
+#     hosted        the hosted-check recipe: the board built with its hosted feature, its tests and
+#                   its matrix on PostgreSQL 16 and 18, which no other step builds
 #     tests         every test target of the workspace, the browser tests among them, built once and
 #                   run in lanes side by side (tools/test-lanes.sh), each lane's log in tests-lanes/
 #                   beside the step's log (SYMPHONY_TEST_LANE_LOGS), named in it as the lanes start
@@ -41,7 +43,7 @@ CDPATH='' cd "$(dirname "$justfile")" || exit 2
 interrupted=''
 trap 'interrupted=1' INT
 
-steps=(lint client-check size-check docs-audit crates-check semver-check tests)
+steps=(lint client-check size-check docs-audit crates-check semver-check hosted tests)
 chosen=()
 for arg in "$@"; do
     known=''
@@ -155,6 +157,11 @@ for step in "${chosen[@]}"; do
         run semver-check "just semver-check" \
             tools/record.sh --step semver-check test "semver check" \
             just --justfile "$justfile" semver-check
+        ;;
+    hosted)
+        run hosted "just hosted-check" \
+            tools/record.sh --step hosted test "hosted check" \
+            just --justfile "$justfile" hosted-check
         ;;
     tests)
         tests=(tools/test-lanes.sh)

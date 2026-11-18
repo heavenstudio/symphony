@@ -142,3 +142,44 @@ fn the_board_table_takes_the_folder_of_the_machines_postgresql_as_the_board_read
     ));
     assert!(refused("[board]\npostgresql = 18\n").contains("postgresql"));
 }
+
+#[test]
+fn the_board_table_takes_a_hosted_boards_postgresql_as_the_board_reads_it() {
+    // The board reads the table itself; the project takes what it takes and refuses what it
+    // refuses: references to secrets and a budget within the role's cap, never a credential.
+    let written = "[board.external_postgresql]\nurl_env = \"BOARD_URL\"\nca_file_env = \"BOARD_CA\"\n\
+        class_env = \"BOARD_CLASS\"\n[board.external_postgresql.budget]\nrole_connection_cap = 8\n\
+        maintenance = 1\nheadroom = 2\n[board.external_postgresql.budget.classes]\n\
+        web = { processes = 2, pool_max = 2 }\n";
+    assert!(parsed(written).is_ok());
+    let root = std::env::temp_dir().join(format!("symphony-external-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("symphony.toml"), written).unwrap();
+    let read = symphony_board::pg::external::of(&root).unwrap().unwrap();
+    assert_eq!(read.url_env.as_deref(), Some("BOARD_URL"));
+    std::fs::remove_dir_all(&root).unwrap();
+    for (broken, why) in [
+        (written.replace("cap = 8", "cap = 6"), "role_connection_cap"),
+        (written.replace("url_env = \"BOARD_URL\"\n", ""), "url_env"),
+        (written.replace("url_env", "url"), "url"),
+        (
+            written.replace("headroom = 2\n", "headroom = 2\npassword = \"x\"\n"),
+            "password",
+        ),
+    ] {
+        assert!(
+            refused(&broken).contains(why),
+            "{broken}: {}",
+            refused(&broken)
+        );
+    }
+    let unbudgeted = written
+        .split("[board.external_postgresql.budget]")
+        .next()
+        .unwrap();
+    assert!(
+        refused(unbudgeted).contains("budget"),
+        "{}",
+        refused(unbudgeted)
+    );
+}

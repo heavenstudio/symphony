@@ -355,15 +355,14 @@ mod tests {
         )
     }
 
+    /// What a borrower got: its connection's number, or its refusal.
+    type Got = mpsc::Receiver<Result<usize, Refused<&'static str>>>;
+
     /// A borrower on a thread of its own: it sends what it got, and keeps a lease until told.
     fn borrower(
         pool: &Arc<Pool<Arc<Numbers>>>,
         within: Duration,
-    ) -> (
-        mpsc::Receiver<Result<usize, Refused<&'static str>>>,
-        mpsc::Sender<bool>,
-        std::thread::JoinHandle<()>,
-    ) {
+    ) -> (Got, mpsc::Sender<bool>, std::thread::JoinHandle<()>) {
         let (got, gotten) = mpsc::channel();
         let (release, released) = mpsc::channel::<bool>();
         let pool = Arc::clone(pool);

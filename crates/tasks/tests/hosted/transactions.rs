@@ -312,3 +312,73 @@ fn a_session_keeps_nothing_of_a_request_but_its_slot() {
         );
     }
 }
+
+#[test]
+fn a_statement_sent_alone_that_fails_or_answers_what_is_not_read_commits_nothing() {
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        table(&project);
+        let client = project.client("web");
+        assert_eq!(client.server_major(), Ok(major));
+        let failed = refused(client.request(&[Step::bare("UPDATE t SET n = 1 / (n - n)")]));
+        assert!(
+            failed.ends_with("(SQLSTATE 22012)"),
+            "PostgreSQL {major}: {failed}"
+        );
+        assert_eq!(
+            client.counts().idle,
+            1,
+            "a statement's own error leaves it clean"
+        );
+        // A column of a type the client does not read as the socket client's text is refused,
+        // whatever the statement did before it, and its connection is not lent again.
+        let unread = refused(
+            client.request(&[Step::bare("UPDATE t SET n = 5"), Step::bare("SELECT now()")]),
+        );
+        assert!(
+            unread.contains("a column of a type the hosted client does not read"),
+            "PostgreSQL {major}: {unread}"
+        );
+        assert_eq!(n(&project), "0");
+        assert_eq!(client.counts(), Counts::default());
+    }
+}
+
+#[test]
+fn a_script_the_server_ends_or_does_not_answer_is_unknown_and_is_not_sent_again() {
+    for major in MAJORS {
+        let project = cluster::cluster(major).project();
+        table(&project);
+        let client = project.client(symphony_board::pg::external::MAINTENANCE);
+        let ended = refused(client.simple(
+            "BEGIN; UPDATE t SET n = 6; SELECT pg_terminate_backend(pg_backend_pid()); COMMIT;",
+        ));
+        assert!(
+            ended.contains("while a script that commits ran")
+                && ended.contains("whether the request was committed is not known"),
+            "PostgreSQL {major}: {ended}"
+        );
+        assert_eq!(n(&project), "0");
+        let operator = project.cluster.operator(&project.name);
+        operator.simple("SELECT pg_advisory_lock(4244)").unwrap();
+        let hasty = client.bounded(Duration::from_millis(500));
+        let late = refused(
+            hasty.simple("BEGIN; UPDATE t SET n = 7; SELECT pg_advisory_xact_lock(4244); COMMIT;"),
+        );
+        assert!(
+            late.contains("the server did not answer a script that commits in time"),
+            "PostgreSQL {major}: {late}"
+        );
+        test_time::wait::until_true("the cancelled session to end", READY, || {
+            project.cluster.sessions(&project.name) == 0
+        })
+        .unwrap();
+        operator.simple("SELECT pg_advisory_unlock(4244)").unwrap();
+        assert_eq!(n(&project), "0");
+        assert_eq!(
+            (client.requests(), hasty.requests()),
+            (1, 1),
+            "each sent once"
+        );
+    }
+}

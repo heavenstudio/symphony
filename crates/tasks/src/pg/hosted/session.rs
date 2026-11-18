@@ -203,6 +203,46 @@ fn ending(error: &tokio_postgres::error::DbError) -> bool {
     .contains(error.code())
 }
 
+/// The server's major version, when what the session `said` of itself (its version, encoding,
+/// database, login, whether the login holds a right a board's may not, is a member of another
+/// role, and owns the database) is what a board is kept in for `database` and `user`.
+fn held(said: &[&str], database: &str, user: &str) -> Result<u32, Refusal> {
+    let at = |column: usize| said.get(column).copied().unwrap_or("");
+    let major = at(0).parse::<u32>().unwrap_or(0) / 10_000;
+    if !SUPPORTED.contains(&major) {
+        return Err(Refusal::Unsupported(format!(
+            "the server is PostgreSQL {major}, and this build is proved on {} alone",
+            SUPPORTED.map(|major| major.to_string()).join(" and ")
+        )));
+    }
+    if at(1) != "UTF8" {
+        return Err(Refusal::Unsupported("the database is not UTF-8".into()));
+    }
+    if at(2) != database || at(3) != user {
+        return Err(Refusal::Unsupported(
+            "the session is not in the database and login the URL names".into(),
+        ));
+    }
+    if at(4) != "f" {
+        return Err(Refusal::Unsupported(
+            "the login is a superuser or may make databases or roles, replicate or pass \
+             row security; a board's login may do none of these"
+                .into(),
+        ));
+    }
+    if at(5) != "f" {
+        return Err(Refusal::Unsupported(
+            "the login is a member of another role; a board's login is its own alone".into(),
+        ));
+    }
+    if at(6) != "t" {
+        return Err(Refusal::Unsupported(
+            "the database is not owned by the login; a board's database is its login's own".into(),
+        ));
+    }
+    Ok(major)
+}
+
 impl Session {
     /// A connection to `target`, checked and given one of `share`'s class's slots.
     pub(super) async fn connect(
@@ -267,42 +307,10 @@ impl Session {
             .ok_or(Refusal::Unsupported(
                 "the login has no role of its own".into(),
             ))?;
-        let at = |column: usize| row.get(column).unwrap_or("");
-        let major = at(0).parse::<u32>().unwrap_or(0) / 10_000;
-        if !SUPPORTED.contains(&major) {
-            return Err(Refusal::Unsupported(format!(
-                "the server is PostgreSQL {major}, and this build is proved on {} alone",
-                SUPPORTED.map(|major| major.to_string()).join(" and ")
-            )));
-        }
-        if at(1) != "UTF8" {
-            return Err(Refusal::Unsupported("the database is not UTF-8".into()));
-        }
-        if at(2) != database || at(3) != user {
-            return Err(Refusal::Unsupported(
-                "the session is not in the database and login the URL names".into(),
-            ));
-        }
-        if at(4) != "f" {
-            return Err(Refusal::Unsupported(
-                "the login is a superuser or may make databases or roles, replicate or pass \
-                 row security; a board's login may do none of these"
-                    .into(),
-            ));
-        }
-        if at(5) != "f" {
-            return Err(Refusal::Unsupported(
-                "the login is a member of another role; a board's login is its own alone".into(),
-            ));
-        }
-        if at(6) != "t" {
-            return Err(Refusal::Unsupported(
-                "the database is not owned by the login; a board's database is its login's own"
-                    .into(),
-            ));
-        }
+        let said: Vec<&str> = (0..8).map(|column| row.get(column).unwrap_or("")).collect();
+        let major = held(&said, database, user)?;
         self.major = major;
-        self.backend = at(7).parse().unwrap_or(0);
+        self.backend = said[7].parse().unwrap_or(0);
         Ok(())
     }
 
@@ -501,6 +509,50 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_session_is_held_to_the_majors_proved_and_to_a_login_and_database_of_its_own() {
+        let good = ["180007", "UTF8", "board", "login", "f", "f", "t", "41"];
+        assert_eq!(held(&good, "board", "login"), Ok(18));
+        let with = |column: usize, value: &'static str| {
+            let mut said = good;
+            said[column] = value;
+            held(&said, "board", "login").map_err(|refusal| refusal.to_string())
+        };
+        assert_eq!(with(0, "160016"), Ok(16));
+        // Every other major, older, between and newer, and a version that is no number.
+        for (version, major) in [
+            ("150012", 15),
+            ("170004", 17),
+            ("190000", 19),
+            ("90624", 9),
+            ("", 0),
+            ("eighteen", 0),
+        ] {
+            let refused = with(0, version).unwrap_err();
+            assert!(
+                refused.contains(&format!("the server is PostgreSQL {major}, "))
+                    && refused.contains("proved on 16 and 18 alone"),
+                "{version}: {refused}"
+            );
+        }
+        for (column, value, why) in [
+            (1, "LATIN1", "not UTF-8"),
+            (1, "SQL_ASCII", "not UTF-8"),
+            (2, "postgres", "not in the database and login the URL names"),
+            (3, "another", "not in the database and login the URL names"),
+            (4, "t", "superuser or may make databases or roles"),
+            (4, "", "superuser or may make databases or roles"),
+            (5, "t", "member of another role"),
+            (6, "f", "not owned by the login"),
+            (6, "", "not owned by the login"),
+        ] {
+            let refused = with(column, value).unwrap_err();
+            assert!(refused.contains(why), "{column} {value}: {refused}");
+        }
+        // A row short of its columns is refused, never read as a login that may do nothing.
+        assert!(held(&good[..4], "board", "login").is_err());
+    }
 
     #[test]
     fn a_class_has_one_key_and_another_class_another() {

@@ -45,8 +45,9 @@ pub struct Cluster {
 }
 
 /// Each server started, or why it did not start: a start that failed is not tried again.
-static CLUSTERS: Mutex<BTreeMap<(u32, Certificate), Result<&'static Cluster, String>>> =
-    Mutex::new(BTreeMap::new());
+static CLUSTERS: Mutex<BTreeMap<(u32, Certificate), Started>> = Mutex::new(BTreeMap::new());
+/// A server, or why it did not start.
+type Started = Result<&'static Cluster, String>;
 static NAMES: AtomicUsize = AtomicUsize::new(0);
 
 /// Both majors a hosted board is proved on.

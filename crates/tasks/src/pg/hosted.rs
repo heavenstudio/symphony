@@ -193,6 +193,10 @@ impl Drop for Driver {
     }
 }
 
+/// Why a secret that came to name another board is refused.
+const MOVED: &str = "now names another endpoint, database or login than this process connected \
+    to; a board is moved by a deployment, never under a running process";
+
 /// How a pool makes its connections: the settings and the environment its secrets are read
 /// from, its class's share, and the generation the last reading was.
 struct Hosting {
@@ -210,11 +214,7 @@ impl Hosting {
     fn read(&self) -> Result<secret::Target, Refusal> {
         let target = secret::Target::read(&self.settings, &*self.env)?;
         if target.identity != self.identity {
-            return Err(Refusal::Configuration(
-                "url_env",
-                "now names another endpoint, database or login than this process connected to; \
-                 a board is moved by a deployment, never under a running process",
-            ));
+            return Err(Refusal::Configuration("url_env", MOVED));
         }
         *self
             .generation
@@ -405,8 +405,12 @@ impl Client {
 
     fn lease(&self) -> Result<pool::Lease<'_, Hosting>, DbError> {
         // A rotation is seen before the pool looks at its idle connections; a reading that
-        // fails leaves them as they are, and the next connection made says why.
-        let _ = self.shared.pool.connector().read();
+        // fails leaves them as they are, and the next connection made says why. But a secret
+        // that names another board is refused at once: an idle connection to the board it no
+        // longer names is not the one this process is now told to use.
+        if let Err(moved @ Refusal::Configuration(_, MOVED)) = self.shared.pool.connector().read() {
+            return Err(moved.into());
+        }
         self.shared
             .pool
             .acquire(self.acquire, self.connect)
