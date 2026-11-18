@@ -55,6 +55,7 @@ fn item(path: &str, slug: &str, text: &str) -> QueueItem {
         kind: "dislike".into(),
         text: text.into(),
         branch: None,
+        ask: None,
     }
 }
 
@@ -649,5 +650,155 @@ fn held_card_selection_prefers_main_then_first_lexical_equal_rank() {
         ),
         Read::Waiting,
         "an agent waiting on any matching copy takes precedence over selection"
+    );
+}
+
+/// The ask the rows of `agent` are told from `open`, on a page holding `held`.
+fn noted(
+    mut agent: Vec<QueueItem>,
+    open: &[Ask],
+    held: Reading,
+) -> Vec<Option<symphony_api::QueueAsk>> {
+    note(&mut agent, open, &held.held);
+    agent.into_iter().map(|item| item.ask).collect()
+}
+
+fn told(id: i64, asked: i64, holder: Option<(&str, i64)>) -> Option<symphony_api::QueueAsk> {
+    Some(symphony_api::QueueAsk {
+        id,
+        asked,
+        holder: holder.map(|(handle, _)| handle.to_string()),
+        held: holder.map(|(_, since)| since),
+    })
+}
+
+#[test]
+fn a_card_waiting_on_an_agent_says_its_open_ask_who_holds_it_and_since_when() {
+    let nobody = card(None);
+    let agent = vec![item("docs/A.md", "lamp-a", "")];
+    assert_eq!(
+        noted(
+            agent.clone(),
+            std::slice::from_ref(&nobody),
+            reading(vec![], &[])
+        ),
+        [told(7, 900, None)],
+        "held by nobody is said as that"
+    );
+    let held = Ask {
+        holder: Some("umber-stoat".into()),
+        held: Some(930.9),
+        ..card(None)
+    };
+    assert_eq!(
+        noted(agent.clone(), &[held], reading(vec![], &[])),
+        [told(7, 900, Some(("umber-stoat", 930)))]
+    );
+    // A message on the card is the card's ask too.
+    let message = Ask {
+        kind: "message".into(),
+        ..card(None)
+    };
+    assert_eq!(
+        noted(agent, &[message], reading(vec![], &[])),
+        [told(7, 900, None)]
+    );
+}
+
+#[test]
+fn a_row_no_open_ask_is_about_says_none() {
+    let rows = vec![
+        item("docs/A.md", "lamp-b", ""),
+        item("docs/B.md", "lamp-a", ""),
+        item("docs/A.md", "L12", "Too many lamps"),
+    ];
+    let answered = Ask {
+        open: false,
+        ..card(None)
+    };
+    // Another card, another document, a comment's row; an answered ask, a chat, a task's message
+    // and a comment's ask, which names no card.
+    let asks = [card(None), answered, chat(3), ask("task"), comment(None)];
+    assert_eq!(noted(rows, &asks, reading(vec![], &[])), [None, None, None]);
+    // A comment's row is never taken for the card of its name.
+    let named = Ask {
+        card: Some("L12".into()),
+        ..card(None)
+    };
+    assert_eq!(
+        noted(
+            vec![item("docs/A.md", "L12", "Too many lamps")],
+            &[named],
+            reading(vec![], &[])
+        ),
+        [None]
+    );
+    // An ask said of nothing leaves a row told before with none.
+    let mut before = item("docs/A.md", "lamp-a", "");
+    before.ask = told(7, 900, None);
+    assert_eq!(noted(vec![before], &[], reading(vec![], &[])), [None]);
+}
+
+#[test]
+fn the_oldest_of_a_cards_open_asks_is_the_one_its_row_says() {
+    let later = Ask {
+        id: 9,
+        asked: 950.0,
+        ..card(None)
+    };
+    let same_time = Ask {
+        id: 8,
+        ..card(None)
+    };
+    assert_eq!(
+        noted(
+            vec![item("docs/A.md", "lamp-a", "")],
+            &[later, same_time, card(None)],
+            reading(vec![], &[])
+        ),
+        [told(7, 900, None)]
+    );
+}
+
+#[test]
+fn a_branchs_ask_is_said_on_its_branchs_page_and_on_mains_only_with_the_owners_line() {
+    let branch = card(Some("pic/x"));
+    let rows = || {
+        vec![
+            item("@pic~x/docs/A.md", "lamp-a", ""),
+            item("docs/A.md", "lamp-a", ""),
+        ]
+    };
+    assert_eq!(
+        noted(
+            rows(),
+            std::slice::from_ref(&branch),
+            reading(vec![], &[("docs/A.md", "lamp-a")])
+        ),
+        [told(7, 900, None), None],
+        "main's copy without the owner's line is another card"
+    );
+    assert_eq!(
+        noted(
+            rows(),
+            std::slice::from_ref(&branch),
+            owner_said(reading(vec![], &[]), "docs/A.md", 890.0)
+        ),
+        [told(7, 900, None), told(7, 900, None)],
+        "main's copy carrying the owner's line is the branch's card"
+    );
+    assert_eq!(
+        noted(
+            rows(),
+            std::slice::from_ref(&branch),
+            owner_said(reading(vec![], &[]), "docs/A.md", 700.0)
+        ),
+        [told(7, 900, None), None],
+        "a line from before the ask is not the one it is about"
+    );
+    // Main's ask is said on main's page and on the page of a branch that proposes the card again.
+    assert_eq!(
+        noted(rows(), &[card(None)], reading(vec![], &[])),
+        [told(7, 900, None), told(7, 900, None)]
     );
 }

@@ -10,6 +10,7 @@ export const PING_EVENT = "ping";
 export const SERVER_EVENT = "server";
 export const CACHE_FORMAT = 2;
 export const BOARD_CARDS = 5;
+export const ASK_LATE_SECONDS = 600;
 export const FILE_QUERY = "raw";
 export const REPORTS_PATH = "/api/reports";
 export const RUNS_PATH = "/api/runs";
@@ -322,6 +323,31 @@ export type QueueItem = {
   kind: string;
   text: string;
   branch?: string | null;
+  /**
+   * The owner's open ask a card waiting on an agent is on the board; none for a comment, a card
+   * to spot-check, a card no ask is open for, and until the board is read.
+   */
+  ask?: QueueAsk | null;
+};
+
+export type QueueAsk = {
+  /**
+   * Its number on the board: `ask N`.
+   */
+  id: number;
+  /**
+   * When the owner said it, in whole seconds since the epoch: its age runs from here, and past
+   * [`ASK_LATE_SECONDS`] it is late.
+   */
+  asked: number;
+  /**
+   * The session that holds it; none is nobody.
+   */
+  holder?: string | null;
+  /**
+   * Since when its holder holds it, in whole seconds since the epoch.
+   */
+  held?: number | null;
 };
 
 export type Activity = { items: Array<ActivityItem> };

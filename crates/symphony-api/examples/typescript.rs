@@ -101,6 +101,7 @@ fn constants() -> String {
         ("SERVER_EVENT", text(api::SERVER_EVENT)),
         ("CACHE_FORMAT", api::CACHE_FORMAT.to_string()),
         ("BOARD_CARDS", api::BOARD_CARDS.to_string()),
+        ("ASK_LATE_SECONDS", api::ASK_LATE_SECONDS.to_string()),
         ("FILE_QUERY", text(api::FILE_QUERY)),
         ("REPORTS_PATH", text(api::REPORTS_PATH)),
         ("RUNS_PATH", text(api::RUNS_PATH)),
@@ -188,6 +189,7 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::Change>(cfg),
         declared::<api::Queue>(cfg),
         declared::<api::QueueItem>(cfg),
+        declared::<api::QueueAsk>(cfg),
         declared::<api::Activity>(cfg),
         declared::<api::ActivityItem>(cfg),
         declared::<api::Pending>(cfg),
@@ -1253,11 +1255,25 @@ fn samples() -> Value {
         kind: "comment".into(),
         text: "Answered.".into(),
         branch: branch.map(Into::into),
+        ask: None,
+    };
+    let asked = |holder: Option<&str>| api::QueueItem {
+        ask: Some(api::QueueAsk {
+            id: 3,
+            asked: 1_000,
+            holder: holder.map(Into::into),
+            held: holder.map(|_| 1_120),
+        }),
+        ..item(None)
     };
     let queue = api::Queue {
         waiting: vec![card.clone(), bare.clone()],
         spot_check: vec![item(None)],
-        agent: vec![item(Some("app/lamps"))],
+        agent: vec![
+            item(Some("app/lamps")),
+            asked(None),
+            asked(Some("umber-stoat")),
+        ],
         branches: vec![],
     };
     let board = api::Board {

@@ -455,6 +455,7 @@ pub fn snapshot(
                 kind: comment.kind.clone(),
                 text: doc_title.clone(),
                 branch: None,
+                ask: None,
             });
         }
         for card in &doc.decisions {
@@ -471,6 +472,7 @@ pub fn snapshot(
                         .map_or_else(|| card.note.join(" "), |e| e.text.clone()),
                 ),
                 branch: None,
+                ask: None,
             };
             if card.group(&plugins) == Group::Auto {
                 queue.spot_check.push(item.clone());
