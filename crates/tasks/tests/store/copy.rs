@@ -503,7 +503,8 @@ fn tables(f: &Fixture) -> Vec<String> {
     names
 }
 
-const BOARD_TABLES: [&str; 25] = [
+const BOARD_TABLES: [&str; 26] = [
+    "artifact_ledger",
     "ask",
     "barred_key",
     "callback_event",
