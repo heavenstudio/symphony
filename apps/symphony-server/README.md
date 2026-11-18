@@ -141,8 +141,9 @@ A server that is not following says so in its log (`server.log` in the machine f
 starting `· Symphony reload:`: one for each hand-off it begins, one for each release that did not
 take over, with why and when it is tried again, and one for each reason it begins none (`current`
 naming the release it is, or none), said when that reason changes. The follow ends only with the
-server: one that ends before, a bug, is said in the log and on the notice and started again at
-its next check, so no release waits on a restart by hand. The refresh of a release quotes the
+server: one that ends before, a bug, is said in the log and on the notice and started again once
+its supervisor has waited for the next wake or period, so no release waits on a restart by hand
+and a follow that dies at every start costs one line a wait. The refresh of a release quotes the
 last of those lines when the server did not follow `current` within its wait
 ([RELEASES](../../docs/RELEASES.md#the-refresh)). The reload writes its lines without
 `eprintln!`, which panics its thread once stderr cannot be written.

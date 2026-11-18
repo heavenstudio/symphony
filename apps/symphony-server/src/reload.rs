@@ -793,8 +793,9 @@ impl Following {
 
 /// The reload of the server of the release `follow.release`: its follow of the machine's `current`
 /// ([`follow_current`]), which ends only with the server. One that ends before, a bug, is said in
-/// the log and on the notice and started again, at the wake or the period after: a server that
-/// follows nothing holds every release until someone restarts it by hand.
+/// the log and on the notice and started again once this has waited for the wake or the period
+/// after, wherever in the follow it died: a server that follows nothing holds every release until
+/// someone restarts it by hand, and one that dies at every start costs one line a wait.
 fn follow<W: Watcher>(
     serve: &Serve,
     follow: &Follow,
@@ -835,9 +836,10 @@ fn follow<W: Watcher>(
         if let Some(hub) = shared.api.get() {
             hub.tell_update(message);
         }
-        // The loop started in its place waits first, so one that dies at every check costs one
-        // line a wake or a period, and says again what holds it.
-        state.initial = false;
+        // Waited for here, not in the follow started next, which may die before its own wait.
+        // That one then reads `current` at once, and says again what holds it.
+        backstop.wait();
+        state.initial = true;
         state.noticed = true;
         state.idle.clear();
     }

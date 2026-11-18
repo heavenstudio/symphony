@@ -266,50 +266,68 @@ fn a_commands_failure_says_how_it_ended_and_its_last_lines_and_the_log_keeps_it_
 }
 
 #[test]
-fn what_the_reload_said_is_its_last_line_since_current_moved_or_that_it_said_nothing() {
+fn what_the_reload_said_is_its_last_line_since_current_moved_or_its_last_before_it() {
     let tree = Tree::new();
     let machine = tree.path("machine");
     fs::create_dir_all(&machine).unwrap();
     let log = machine.join(SERVER_LOG);
-    let nothing = format!(
-        "its log ({}) has no line of its reload since current moved, where a reload that follows \
-         says each hand-off it begins: its reload is not running, and only a stop and a start of \
-         the server, the owner's word, takes the release",
-        log.display()
-    );
-    // No log at all, as a server started in a terminal leaves none.
-    assert_eq!(reload_said(&machine, 0), nothing);
-    let before = "[2026-11-18T10:00:00.000Z] · Symphony reload: current names release-1; handing \
-                  over to its server\n[2026-11-18T10:58:50.851Z] · idle-session sweep of symphony \
-                  ended after 7.261s\n";
-    fs::write(&log, before).unwrap();
-    let moved = before.len() as u64;
-    // What it said before the move is not its answer to it.
-    assert_eq!(reload_said(&machine, moved), nothing);
-    let after = "[2026-11-18T13:13:01.000Z] · Symphony reload: current names release-2; handing \
-                 over to its server\n[2026-11-18T13:13:02.000Z] · Symphony reload: Symphony server \
-                 update failed; the previous server is still serving. The release release-2 did \
-                 not take over: replacement did not become ready: it ended. It is tried again at \
-                 about 2026-11-18 14:18.\n[2026-11-18T13:13:43.000Z] · idle-session sweep of \
-                 symphony started\n";
-    fs::write(&log, format!("{before}{after}")).unwrap();
+    // No log at all, as a server started in a terminal leaves none: nothing is said of its reload.
     assert_eq!(
-        reload_said(&machine, moved),
+        reload_said(&machine, 0),
         format!(
-            "its log ({}) says last: [2026-11-18T13:13:02.000Z] · Symphony reload: Symphony server \
-             update failed; the previous server is still serving. The release release-2 did not \
-             take over: replacement did not become ready: it ended. It is tried again at about \
-             2026-11-18 14:18.",
+            "it keeps no log at {} to say why (a server started in a terminal says it there)",
             log.display()
         )
     );
-    // A log started again since, shorter than it was at the move, is read whole.
-    assert!(
-        reload_said(&machine, moved + 10_000).contains("says last: [2026-11-18T13:13:02.000Z]")
+    let none = format!(
+        "the newest 256 KiB of its log ({}) hold no line of its reload, where one that follows \
+         says each hand-off it begins: its reload may not be running, which a line starting `· \
+         Symphony reload:` further back in that log, or none in it, tells",
+        log.display()
     );
-    // Only its newest part is read: a line further back than that is not found.
-    let sweeps = "[2026-11-18T13:18:43.000Z] · idle-session sweep of symphony started\n"
-        .repeat(usize::try_from(LOG_READ).unwrap() / 64);
-    fs::write(&log, format!("{before}{after}{sweeps}")).unwrap();
-    assert_eq!(reload_said(&machine, moved), nothing);
+    let sweep = "[2026-11-18T10:58:50.851Z] · idle-session sweep of symphony ended after 7.261s\n";
+    fs::write(&log, sweep).unwrap();
+    assert_eq!(
+        reload_said(&machine, 0),
+        none,
+        "a possibility, never a fact"
+    );
+    let failed = "[2026-11-18T13:13:02.000Z] · Symphony reload: Symphony server update failed; the \
+                  previous server is still serving. The release release-2 did not take over: \
+                  replacement did not become ready: it ended. It is tried again at about \
+                  2026-11-18 14:18.";
+    let attempt = "[2026-11-18T13:13:01.000Z] · Symphony reload: current names release-2; handing \
+                   over to its server";
+    let said = format!("{sweep}{attempt}\n{failed}\n{sweep}");
+    fs::write(&log, &said).unwrap();
+    // Since the move: its last line, the refusal and when it is tried again.
+    let moved = sweep.len() as u64;
+    assert_eq!(
+        reload_said(&machine, moved),
+        format!("its log ({}) says last: {failed}", log.display())
+    );
+    // A retry of the refresh while the reload waits to try the release again: `current` named it
+    // already, so the log's length is taken after the refusal, and nothing follows it. The reload
+    // is alive, and its last line says when it tries again.
+    assert_eq!(
+        reload_said(&machine, said.len() as u64),
+        format!(
+            "its reload wrote no line in its log ({}) since current moved, as one that waits to \
+             try a release again writes none; its last line before: {failed}",
+            log.display()
+        )
+    );
+    // A log started again since, shorter than it was at the move, is all since the move.
+    assert_eq!(
+        reload_said(&machine, said.len() as u64 + 10_000),
+        format!("its log ({}) says last: {failed}", log.display())
+    );
+    // Only its newest part is read: a line further back than that is not found, and said so.
+    let sweeps = sweep.repeat(usize::try_from(LOG_READ).unwrap() / sweep.len() + 1);
+    fs::write(&log, format!("{said}{sweeps}")).unwrap();
+    assert_eq!(reload_said(&machine, moved), none);
+    assert_eq!(
+        reload_said(&machine, (said.len() + sweeps.len()) as u64),
+        none
+    );
 }

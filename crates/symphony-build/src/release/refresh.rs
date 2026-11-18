@@ -808,33 +808,55 @@ fn server(machine: &Path, before: Option<Front>, logged: u64, against: &Against<
     }
 }
 
-/// What the machine's server's reload said in its log (`machine`'s [`SERVER_LOG`]) since that log
-/// was `from` bytes long, when `current` moved: its last line, which names the hand-off it began
-/// or why the release did not take over, or that it said nothing. A reload that follows says each
-/// hand-off it begins, so one that said nothing of a `current` that moved is not running. No more
-/// than the log's newest [`LOG_READ`] bytes are read, and a log shorter than `from`, started
-/// again since, is read whole.
+/// What the machine's server's reload said in its log (`machine`'s [`SERVER_LOG`]) of a `current`
+/// that moved when that log was `from` bytes long: its last line since, which names the hand-off
+/// it began or why the release did not take over. With none since, its last line before, said as
+/// that: a reload that waits to try a release again writes nothing until that wait is over, as
+/// when `current` named the release already and this refresh is a retry, so no line since is no
+/// sign it stopped. Only with no line of it at all is it said that it may not be running, and
+/// never as a fact: a server started in a terminal keeps no log, and only the log's newest
+/// [`LOG_READ`] bytes are read. A log shorter than `from`, started again since, is all since.
 fn reload_said(machine: &Path, from: u64) -> String {
     let path = machine.join(SERVER_LOG);
-    let last = || {
+    let read = || {
         let mut log = File::open(&path).ok()?;
         let length = log.metadata().ok()?.len();
-        let from = if from > length { 0 } else { from };
-        log.seek(SeekFrom::Start(from.max(length.saturating_sub(LOG_READ))))
-            .ok()?;
+        let start = length.saturating_sub(LOG_READ);
+        log.seek(SeekFrom::Start(start)).ok()?;
         let mut said = Vec::new();
         log.read_to_end(&mut said).ok()?;
-        let said = String::from_utf8_lossy(&said);
-        let line = said.lines().rev().find(|line| line.contains(RELOAD_LINE))?;
+        let since = if from > length { 0 } else { from };
+        // How far into what was read the move is.
+        Some((said, usize::try_from(since.saturating_sub(start)).ok()?))
+    };
+    let Some((said, since)) = read() else {
+        return format!(
+            "it keeps no log at {} to say why (a server started in a terminal says it there)",
+            path.display()
+        );
+    };
+    let last = |bytes: &[u8]| {
+        let text = String::from_utf8_lossy(bytes);
+        let line = text.lines().rev().find(|line| line.contains(RELOAD_LINE))?;
         Some(line.trim().to_string())
     };
-    match last() {
-        Some(line) => format!("its log ({}) says last: {line}", path.display()),
-        None => format!(
-            "its log ({}) has no line of its reload since current moved, where a reload that \
-             follows says each hand-off it begins: its reload is not running, and only a stop and \
-             a start of the server, the owner's word, takes the release",
+    let since = since.min(said.len());
+    if let Some(line) = last(&said[since..]) {
+        return format!("its log ({}) says last: {line}", path.display());
+    }
+    match last(&said[..since]) {
+        Some(line) => format!(
+            "its reload wrote no line in its log ({}) since current moved, as one that waits to \
+             try a release again writes none; its last line before: {line}",
             path.display()
+        ),
+        None => format!(
+            "the newest {} KiB of its log ({}) hold no line of its reload, where one that follows \
+             says each hand-off it begins: its reload may not be running, which a line starting \
+             `{}` further back in that log, or none in it, tells",
+            LOG_READ / 1024,
+            path.display(),
+            RELOAD_LINE.trim()
         ),
     }
 }

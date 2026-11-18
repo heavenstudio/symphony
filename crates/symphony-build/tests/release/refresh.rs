@@ -990,7 +990,7 @@ fn a_failed_move_is_red_and_leaves_current_where_it_was_until_a_refresh_gets_thr
     assert!(fixture.reds()["tests/release-red-refresh-alpha"].red());
 
     // Green again: moved, current pointed, the server waited for, and the red closed. What the
-    // server's reload said before `current` moved is not what it says of the move.
+    // server's reload said before `current` moved is quoted as said before it.
     fs::remove_file(fixture.root.join("migrate-red")).unwrap();
     let log = machine(&fixture).join("server.log");
     fs::write(
@@ -1013,10 +1013,10 @@ fn a_failed_move_is_red_and_leaves_current_where_it_was_until_a_refresh_gets_thr
     assert!(
         out.contains(&format!(
             "release: refresh: the machine's server (process 4242, port {port}) still answers as \
-             the release {RELEASE} after 1 s; its log ({}) has no line of its reload since current \
-             moved, where a reload that follows says each hand-off it begins: its reload is not \
-             running, and only a stop and a start of the server, the owner's word, takes the \
-             release. Its own reload",
+             the release {RELEASE} after 1 s; its reload wrote no line in its log ({}) since \
+             current moved, as one that waits to try a release again writes none; its last line \
+             before: [2026-06-01T00:00:00.000Z] · Symphony reload: current names release-0; \
+             handing over to its server. Its own reload",
             log.display()
         )),
         "{out}"

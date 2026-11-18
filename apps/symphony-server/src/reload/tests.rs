@@ -1882,17 +1882,20 @@ fn a_release_server_that_cannot_watch_its_machine_folder_reads_current_once_a_pe
     );
 }
 
-/// A watcher whose backend panics the first time one is made, as a bug in a follow's loop would,
-/// and watches nothing after.
+/// A watcher whose backend panics the first [`DEATHS`] times one is made, before the follow that
+/// makes it has waited for anything, as a bug at a follow's start would, and watches nothing after.
 struct Dying;
 
-/// Whether [`Dying`] has panicked: one test makes it.
-static DIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// How many times a [`Dying`] watcher panics.
+const DEATHS: usize = 3;
+
+/// How many [`Dying`] watchers were made: one test makes them.
+static MADE: AtomicUsize = AtomicUsize::new(0);
 
 impl notify::Watcher for Dying {
     fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
         assert!(
-            DIED.swap(true, Ordering::SeqCst),
+            MADE.fetch_add(1, Ordering::SeqCst) >= DEATHS,
             "the watcher's backend is gone"
         );
         Ok(Self)
@@ -1920,30 +1923,32 @@ fn point(machine: &Path, name: &str) {
 }
 
 /// A release's server whose follow of `current` dies, as one that panics does, says so on its
-/// notice, and a follow is started
-/// in its place: at its next wake it reads `current`, tries the release it names and says why
-/// that one did not take over, and the link named back at this release clears the notice.
+/// notice, and a follow is started in its place once the supervisor has waited for a wake: one
+/// that dies again at its start, before any wait of its own, is started once a wake and no more,
+/// never in a spin. The follow that lives reads `current` at once, tries the release it names and
+/// says why that one did not take over, and the link named back at this release clears the notice.
 #[test]
-fn a_release_servers_follow_that_dies_is_said_on_the_notice_and_started_again() {
+fn a_release_servers_follow_that_dies_is_said_on_the_notice_and_started_again_once_a_wait() {
     use symphony::machine::release;
     let server = Reloading::new(installs_a_replacement_that_ends);
     let clock = Clock::new();
     let (backstop, waits) = backstop::watched();
-    let follow = server.following::<Dying>(backstop, clock.retry());
-    let died = server.notice_after("");
-    assert_eq!(
-        died,
-        format!(
-            "Symphony server reload stopped following {}: it panicked: the watcher's backend is \
-             gone. It is started again at its next check; this server is still the release \
-             release-1.",
-            server.home.join(release::CURRENT).display()
-        )
-    );
-    // The follow started in its place waits, where the one that died read at once.
-    waits.begun(1);
     point(&server.home, "release-2");
-    server.shared.ask_handover();
+    let follow = server.following::<Dying>(backstop, clock.retry());
+    let died = format!(
+        "Symphony server reload stopped following {}: it panicked: the watcher's backend is gone. \
+         It is started again at its next check; this server is still the release release-1.",
+        server.home.join(release::CURRENT).display()
+    );
+    assert_eq!(server.notice_after(""), died);
+    // Each death is followed by one wait, on a period no test reaches: only a wake starts the next.
+    for death in 1..=DEATHS {
+        waits.begun(death);
+        assert_eq!(MADE.load(Ordering::SeqCst), death, "one start a wait");
+        assert_eq!(server.notice(), died);
+        server.shared.ask_handover();
+    }
+    // The follow that lives reads `current` before any wait of its own.
     let refused = server.notice_after(&died);
     assert_eq!(
         refused,
@@ -1954,6 +1959,8 @@ fn a_release_servers_follow_that_dies_is_said_on_the_notice_and_started_again() 
             clock.minute(5 * MINUTE)
         )
     );
+    assert_eq!(MADE.load(Ordering::SeqCst), DEATHS + 1);
+    waits.begun(DEATHS + 1);
     point(&server.home, "release-1");
     server.shared.ask_handover();
     assert_eq!(
