@@ -445,3 +445,91 @@ fn a_verdict_and_a_chat_go_from_the_owners_save_to_their_answer() {
 fn owner_asks_now() -> f64 {
     symphony::owner_asks::now()
 }
+
+/// The ask each row of main's agent queue says, by its slug.
+fn told(hub: &Hub) -> Vec<(String, Option<symphony_api::QueueAsk>)> {
+    hub.pages.read().unwrap()[""]
+        .queue
+        .agent
+        .iter()
+        .map(|item| (item.slug.clone(), item.ask.clone()))
+        .collect()
+}
+
+/// A private server reads the open asks too: the row of a card waiting on an agent says the ask the
+/// board holds for it, who holds it once someone does, and nothing once it is answered; each
+/// change is one event of the agent queue, a tick that finds the asks as they were none, and a
+/// read of the documents keeps what the board last said.
+#[test]
+fn a_tick_tells_the_agent_queues_cards_their_open_asks_and_a_document_read_keeps_them() {
+    let tree = Tree::new();
+    let root = repository_holding(&tree, "main", DOC, &register(""));
+    let fixture = Fixture::empty();
+    let store = &fixture.store;
+    let private = hub(&root, false);
+    private.note_asks(store);
+    assert_eq!(
+        told(&private),
+        [("lamp-a".to_string(), None), ("lamp-b".to_string(), None)],
+        "a card no ask is open for says none"
+    );
+    let version = || private.pages.read().unwrap()[""].board.version;
+    let before = version();
+
+    let lamp_a = symphony::verdicts::open_cards(&root).unwrap()[0].ask();
+    let ask = store.open_ask(&lamp_a).unwrap();
+    private.note_asks(store);
+    let nobody = symphony_api::QueueAsk {
+        id: ask.id,
+        asked: ask.asked.floor() as i64,
+        holder: None,
+        held: None,
+    };
+    assert_eq!(
+        told(&private),
+        [
+            ("lamp-a".to_string(), Some(nobody.clone())),
+            ("lamp-b".to_string(), None)
+        ]
+    );
+    assert_eq!(version(), before + 1);
+    let event = private.pages.read().unwrap()[""]
+        .history
+        .back()
+        .unwrap()
+        .json
+        .clone();
+    assert!(
+        event.contains("\"agent-queue\"") && !event.contains("agent-queue-order"),
+        "the row changed and the order did not: {event}"
+    );
+    // The same asks again publish nothing.
+    private.note_asks(store);
+    assert_eq!(version(), before + 1);
+
+    let worker = fixture.session("worker");
+    let held = store.hold_ask(ask.id, Some(&worker), "took it").unwrap();
+    private.note_asks(store);
+    assert_eq!(
+        told(&private)[0].1,
+        Some(symphony_api::QueueAsk {
+            holder: Some(worker.clone()),
+            held: held.held.map(|since| since.floor() as i64),
+            ..nobody
+        })
+    );
+    // The documents read again: the rows are built anew and still say the ask.
+    private.refresh_docs(None).unwrap();
+    assert_eq!(
+        told(&private)[0].1.as_ref().and_then(|ask| ask.holder.clone()),
+        Some(worker.clone())
+    );
+
+    store.close_ask(ask.id, &worker, "asked in person").unwrap();
+    private.note_asks(store);
+    assert_eq!(told(&private)[0].1, None);
+    assert!(
+        store.asks(None).unwrap().is_empty(),
+        "a private server wrote nothing"
+    );
+}

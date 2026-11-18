@@ -2791,6 +2791,24 @@
           "kind": "comment",
           "text": "Answered.",
           "branch": "app/lamps"
+        },
+        {
+          "href": "/docs/A.md#s",
+          "path": "docs/A.md",
+          "slug": "s",
+          "title": "A card",
+          "kind": "comment",
+          "text": "Answered.",
+          "ask": { "id": 3, "asked": 1000 }
+        },
+        {
+          "href": "/docs/A.md#s",
+          "path": "docs/A.md",
+          "slug": "s",
+          "title": "A card",
+          "kind": "comment",
+          "text": "Answered.",
+          "ask": { "id": 3, "asked": 1000, "holder": "umber-stoat", "held": 1120 }
         }
       ],
       "branches": []

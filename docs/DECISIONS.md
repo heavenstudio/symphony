@@ -88,6 +88,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     And those can be documented to be further explored later. For now however, a computer based install using whatever is available should be setup, by having an agent do it and add settings to connect to the symphony.toml settings
   [2026-11-15 12:33] owner · approved — Ah, and do use the latest version locally in homebrew, update it if needed.
+  [2026-11-18 18:12] agent — C is built. The board takes the PostgreSQL the machine has and installs none: it finds `postgres` on `PATH`, or in the folder `[board] postgresql` names in `symphony.toml`, and asks for 18 or later, the Homebrew version on this Mac (`tools/board-pg-server`, `tools/postgresql-setup-portable`). The setup line is in [PROJECT_FILE](PROJECT_FILE.md#board). A devcontainer, a Dockerfile and Nix are not built and no task is filed for them.
 
 ### Releases
 
@@ -154,6 +155,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **consumer-contract-versioning** (B) and your words under it, "I would like to publish crates (MIT license) to crates.io as the pacakge manager", put the packages on crates.io; they do not say whether git also holds the client. **release-delivery** (C) ships a release's client beside the server once `symphony update` installs releases; it does not say what git holds before then. **symphony-update-command** (B) has projects follow releases, which every option keeps. **pin-waits-for-current-client** (A) keeps a pin to a commit of main off a client older than its sources: A and B leave such a pin no client and C makes it wait for a release, so none changes that choice. None of them answers this card.
   [2026-11-15 11:38] owner · approved — A
+  [2026-11-18 18:12] agent — A stands: the built client is committed as today. The first publication on crates.io is made (`inbox/submit-crates`). The commits stop once the consuming project takes Symphony from crates.io, which it has not yet; no task is filed for the stop until then.
 
 ## Rejected and replaced
 

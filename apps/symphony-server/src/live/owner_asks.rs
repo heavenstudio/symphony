@@ -4,7 +4,8 @@
 //! ([`symphony::owner_asks`]), when the documents or the ask store changed and a minute after it
 //! last looked. A private server leaves them alone. No start moves anything else: the verdict tasks
 //! filed before asks become asks only by `symphony verdict-asks`, run once in a project's main
-//! checkout ([`symphony::verdicts::to_asks`]).
+//! checkout ([`symphony::verdicts::to_asks`]). Every server, a private one too, reads the open asks
+//! each tick for the agent queue's rows ([`Hub::note_asks`]): who holds each and since when.
 
 use std::sync::atomic::Ordering;
 
@@ -18,6 +19,37 @@ pub(crate) struct Kept {
 }
 
 impl Hub {
+    /// Tell the agent queue's cards the owner's open asks as the board on `store` holds them now:
+    /// who holds each and since when. Every server does, a private one and one behind the board's
+    /// schema too, as it only reads; a read that fails leaves the rows as they were.
+    pub(super) fn note_asks(&self, store: &symphony_board::Store) {
+        let open = match measured("queue asks", || store.asks(None)) {
+            Ok(open) => open,
+            Err(error) => {
+                eprintln!("ASKS not read for the queue: {error}");
+                return;
+            }
+        };
+        {
+            let mut kept = self.queue_asks.lock().unwrap_or_else(|e| e.into_inner());
+            if **kept == open {
+                return;
+            }
+            *kept = std::sync::Arc::new(open.clone());
+        }
+        let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
+        for page in pages.values_mut() {
+            let mut agent = page.queue.agent.clone();
+            owner_asks::note(&mut agent, &open, &page.held);
+            let mut changes = Vec::new();
+            super::diff_items(&mut changes, "agent-queue", &page.queue.agent, &agent, |c| {
+                c.href.clone()
+            });
+            page.queue.agent = agent;
+            self.publish(page, changes);
+        }
+    }
+
     pub(super) fn keep_asks(&self, store: &symphony_board::Store) {
         let mut kept = self.owner_asks.lock().unwrap_or_else(|e| e.into_inner());
         let Some(kept) = kept.as_mut() else {

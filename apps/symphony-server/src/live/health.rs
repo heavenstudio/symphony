@@ -364,11 +364,14 @@ pub(crate) fn unstaffed(tasks: &symphony_api::Tasks) -> Option<&'static str> {
     })
 }
 
-/// What a page says of a board at `schema`, ahead of this build's, which it reads and never writes.
+/// What a page says of a board at `schema`, ahead of this build's, which it reads and never writes:
+/// and what that does to the owner's words, which are saved in the documents while the asks and the
+/// chat they open wait in the journal ([`symphony::callbacks`]).
 pub(crate) fn read_only(schema: i64) -> String {
     format!(
         "The task board is at schema {schema}, ahead of this Symphony's {}: it is read, and nothing \
-         is written to it from here, until a Symphony at schema {schema} serves it.",
+         is written to it from here, until a Symphony at schema {schema} serves it. A verdict or a \
+         message saved now is kept, and reaches no agent until then.",
         symphony_board::SCHEMA
     )
 }

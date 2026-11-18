@@ -58,6 +58,10 @@
 .queue-row .chip {
   margin-left: 8px;
 }
+/* A late ask reads as late, never as work under way. */
+.queue-ask[data-late="true"] {
+  color: var(--stale);
+}
 .queue-rank,
 .ghost-rank {
   display: inline-flex;
