@@ -125,10 +125,13 @@ impl Action {
         }
     }
 
-    /// Whether applying it sends a request that changes GitHub.
+    /// Whether applying it writes outside the adapter's own folder: GitHub, or the board.
     #[must_use]
-    pub fn writes_remote(&self) -> bool {
-        matches!(self, Action::Publish { .. } | Action::Push { .. })
+    pub fn dispatches(&self) -> bool {
+        !matches!(
+            self,
+            Action::Bind { .. } | Action::Adopt { .. } | Action::Local { .. }
+        )
     }
 }
 

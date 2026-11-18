@@ -990,7 +990,7 @@ pub fn apply(
             remaining += 1;
             continue;
         }
-        if action.writes_remote() {
+        if action.dispatches() {
             // Turned off, or changed, since the run began: this dispatch and the rest are not
             // made.
             let now = enabled(ctx);

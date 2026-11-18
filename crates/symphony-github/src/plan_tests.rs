@@ -123,7 +123,18 @@ fn a_preview_is_named_by_what_it_would_do() {
         "m".repeat(32),
         "a publication is the same operation in every preview"
     );
-    assert!(publish.writes_remote() && !note("x").writes_remote());
+    assert!(
+        publish.dispatches() && note("x").dispatches(),
+        "GitHub's writes and the board's"
+    );
+    let local = Action::Local {
+        slug: "a/a".into(),
+        change: Change::Flag(None),
+    };
+    assert!(
+        !local.dispatches(),
+        "what only the adapter's folder keeps is no dispatch"
+    );
     assert_eq!((publish.kind(), publish.target()), ("publish", "a/a"));
     assert_ne!(
         content("ab", "c"),

@@ -33,8 +33,8 @@ refusal as turned off.
 | `export_label` | none | a label put on each issue the adapter creates |
 
 `enabled = true` needs `repository` and `token_file`, and an `issues` that imports needs
-`import_labels`. The settings are read again before every request that changes GitHub, so a
-landing that turns the adapter off stops a run at its next dispatch.
+`import_labels`. The settings are read again before every operation that writes GitHub or the
+board, so a landing that turns the adapter off stops a run at its next dispatch.
 
 ## The token
 

@@ -800,6 +800,29 @@ fn turned_off_during_a_run_the_next_dispatch_is_not_made_and_turning_on_previews
 }
 
 #[test]
+fn turned_off_during_a_run_the_board_is_written_no_further_either() {
+    let rig = Rig::new("disable-board", IMPORT);
+    for n in 0..3 {
+        rig.github
+            .open(&format!("Issue {n}"), "Text.", &["symphony"]);
+    }
+    let digest = rig.preview().digest().unwrap();
+    rig.settings.after(2, None);
+    let ended = rig.reconcile(&digest);
+    assert_eq!(ended.code, 1);
+    assert!(
+        ended.err.contains("nothing more was dispatched"),
+        "{}",
+        ended.err
+    );
+    assert_eq!(
+        rig.board.slugs().len(),
+        1,
+        "one proposal before it was turned off, none after"
+    );
+}
+
+#[test]
 fn one_writer_at_a_time_and_a_kept_preview_that_was_altered_is_refused() {
     let rig = Rig::new("lock", IMPORT);
     rig.github.open("One", "Text.", &["symphony"]);
