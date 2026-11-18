@@ -44,6 +44,31 @@ fn said(parsed: &Parsed, env: &Env) -> Result<String, String> {
     }
     let home = Home::in_common(&common, env.read(symphony_env::SURREAL).map(Path::new));
     let board = format!("the {} board's store", project.id);
+    if home.backend().map_err(|why| why.to_string())? == crate::server::Engine::PostgreSql {
+        let pg = home
+            .project_postgresql(&project.place.root)
+            .map_err(|why| why.to_string())?;
+        return if parsed.flag("list") {
+            let paths = pg.snapshots().map_err(|why| why.to_string())?;
+            Ok(if paths.is_empty() {
+                format!("no PostgreSQL snapshot of {board} is kept")
+            } else {
+                paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        } else {
+            let path = pg
+                .snapshot(Clock::of(env)?.now())
+                .map_err(|why| why.to_string())?;
+            Ok(format!(
+                "✔ took a PostgreSQL snapshot of {board}: {}",
+                path.display()
+            ))
+        };
+    }
     if parsed.flag("list") {
         let kept = home.snapshots()?;
         if kept.is_empty() {

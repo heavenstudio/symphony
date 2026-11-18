@@ -139,10 +139,13 @@ and never stored; `stages.rs` where a task's time went
 `server/` holds its parts, each a module doc: `starters.rs` the lock every start, stop, hold,
 release and reclaim takes, `ending.rs` the asks to end, `apart.rs` a start off a reader's thread,
 `left.rs` the private replay's record, `snapshot.rs` the snapshots, `hold.rs`, `reclaim.rs`,
-`storage.rs` the SurrealKV settings, `export.rs` what a refresh reads of a running board, and
+`storage.rs` the SurrealKV settings, `backend.rs` the board home's durable engine identity and
+server selection, `export.rs` what a refresh reads of a running board, and
 `scratch.rs` a fixture's supervised server. `postgres.rs` is the board's PostgreSQL beside it,
-the machine's own from `[board] postgresql` or discovered on `PATH`, which `Home` starts and stops for a scratch board
-alone, on a socket under `/tmp` and no TCP; no board reads from it yet. `port.rs` is a child
+the machine's own from `[board] postgresql` or discovered on `PATH`, which `Home` starts and stops
+for a scratch board alone, on a socket under `/tmp` and no TCP; `postgres/lifecycle.rs` its hold,
+stopped-cluster snapshot, scratch recovery and vacuum
+([POSTGRESQL](../../docs/POSTGRESQL.md)). `port.rs` is a child
 server's loopback port.
 `board_health.rs` is the query log and the hour the Symphony serves
 ([TASKS](../../docs/TASKS.md#board-health)). The owner's side is TASKS's [stuck

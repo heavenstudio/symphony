@@ -115,6 +115,70 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
         }
     };
     let actor = actor.filter(|actor| !actor.trim().is_empty());
+    let pg = (|| -> Result<Option<crate::server::Postgres>, String> {
+        if home.backend().map_err(|why| why.to_string())? != crate::server::Engine::PostgreSql {
+            return Ok(None);
+        }
+        let project = crate::project::find(&env.cwd, machine(env).as_deref())?;
+        home.project_postgresql(&project.place.root)
+            .map(Some)
+            .map_err(|why| why.to_string())
+    })();
+    let pg = match pg {
+        Ok(pg) => pg,
+        Err(why) => {
+            let _ = writeln!(err, "✖ {why}");
+            return 2;
+        }
+    };
+    if let Some(pg) = pg {
+        match (&asked, actor.as_deref()) {
+            (Asked::Say, _) => {
+                return match pg.current() {
+                    Ok(serving) => {
+                        let _ = writeln!(
+                            out,
+                            "the board's PostgreSQL at {} is {}; {}",
+                            pg.data().display(),
+                            pg.held()
+                                .map_or_else(|| "not held".into(), |hold| hold.to_string()),
+                            serving.map_or_else(
+                                || "no server runs on its data".into(),
+                                |server| format!(
+                                    "pid {} on {}",
+                                    server.pid,
+                                    server.socket.display()
+                                )
+                            )
+                        );
+                        0
+                    }
+                    Err(why) => {
+                        let _ = writeln!(err, "✖ {why}");
+                        2
+                    }
+                };
+            }
+            (Asked::Hold(why), Some(by)) => {
+                return match pg.hold(by, why) {
+                    Ok(holding) => {
+                        let _ = writeln!(
+                            out,
+                            "✔ the board's PostgreSQL is {}. Nothing serves {} now",
+                            holding.hold,
+                            holding.data.display()
+                        );
+                        0
+                    }
+                    Err(why) => {
+                        let _ = writeln!(err, "✖ {why}");
+                        2
+                    }
+                };
+            }
+            _ => {}
+        }
+    }
     match (asked, actor) {
         (Asked::Say, _) => {
             let _ = writeln!(out, "{}", said(&home));

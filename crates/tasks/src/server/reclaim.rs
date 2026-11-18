@@ -58,10 +58,12 @@ impl Home {
     /// which is left serving, and with none running, on the reclaim's own server on the store,
     /// once the store is kept.
     pub fn reclaim(&self) -> Result<Reclaimed, ServerError> {
+        self.require_surreal()?;
         if !self.surreal.is_file() {
             return Err(self.no_surreal());
         }
         let held = self.lock(Doing::Reclaiming)?;
+        self.require_surreal()?;
         self.unheld()?;
         let work = self.dir.join(RECLAIM);
         let data = self.dir.join(DATA);

@@ -5,7 +5,7 @@
 //! while a writer seen in the last week is behind the schema it would move to, naming each, unless
 //! `--leave-behind` says to ([`crate::Store::opening`]).
 
-use super::{Clock, Env, open_as, reach};
+use super::{Clock, Env, open_as_database, reach};
 use crate::rpc::Client;
 use crate::{NAMESPACE, Opening, Store};
 use std::io::Write;
@@ -84,11 +84,25 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
 /// seen in the last week is behind the schema it would move to, unless `leave_behind`.
 fn migrate(env: &Env, leave_behind: bool) -> Result<String, String> {
     let reached = reach(env, &env.cwd, true)?;
+    let version_reader = Store::unchecked_on(
+        reached.database(),
+        Box::new(crate::store::now),
+        Box::new(|_| true),
+        "",
+        &Opening::read(),
+    );
+    let mut before = None;
     let board = match &reached.live {
         Some(live) => {
             // A board that went back is refused as one wherever this runs, before where it runs is
             // asked: a worktree's refusal must not send anyone to run a migrate in the main checkout.
-            if let Some(back) = crate::live::seen::checked(live, || version(&reached.client))? {
+            if let Some(back) = crate::live::seen::checked(live, || {
+                let version = version_reader
+                    .board_version()
+                    .map_err(|why| why.to_string())?;
+                before = Some(version);
+                Ok(version)
+            })? {
                 return Err(back.refusal());
             }
             in_main(live, env)?;
@@ -100,7 +114,12 @@ fn migrate(env: &Env, leave_behind: bool) -> Result<String, String> {
             reached.client.addr()
         ),
     };
-    let before = version(&reached.client)?;
+    let before = match before {
+        Some(before) => before,
+        None => version_reader
+            .board_version()
+            .map_err(|why| why.to_string())?,
+    };
     let clock = Clock::of(env)?;
     let how = Opening::write().migrating();
     let how = if leave_behind {
@@ -108,7 +127,7 @@ fn migrate(env: &Env, leave_behind: bool) -> Result<String, String> {
     } else {
         how
     };
-    let store = open_as(reached, &clock, how)?;
+    let store = open_as_database(reached, version_reader.into_database(), &clock, how)?;
     let after = store
         .board_version()
         .map_err(|e| e.to_string())?
@@ -153,11 +172,14 @@ fn in_main(live: &crate::live::Live, env: &Env) -> Result<(), String> {
 /// The schema of the board `client` reaches, none when it is not made yet: one read of a client of
 /// its own, which defines and writes nothing.
 pub(super) fn version(client: &Client) -> Result<Option<i64>, String> {
-    Store::unchecked(
-        Client::new(client.addr(), NAMESPACE, client.database()),
+    Store::unchecked_on(
+        super::named_database(
+            Client::new(client.addr(), NAMESPACE, client.database()).waiting(client.wait_limit()),
+        ),
         Box::new(crate::store::now),
         Box::new(|_| true),
         "",
+        &Opening::read(),
     )
     .board_version()
     .map_err(|e| e.to_string())

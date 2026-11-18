@@ -7,7 +7,7 @@
 //! A SCHEMAFULL table's fields are typed columns ([`TABLES`]): a required field `NOT NULL`, an
 //! `option<…>` one nullable, an object or an array `jsonb`, a field held to a few values checked
 //! against them. A SCHEMALESS table holds its fields whole in `doc`. A row is read as SurrealDB
-//! gives it, its unset fields left out: `jsonb_strip_nulls(to_jsonb(row)) - 'id'`.
+//! gives it, its unset SQL columns left out by [`super::row`], preserving nested JSON nulls.
 //!
 //! The marker is the sum of revision rows that no two writers share, so it moves with every commit
 //! a reader can see and is never where two writes meet: each connection's own row,
@@ -16,6 +16,8 @@
 //! SurrealDB. A connection runs one transaction at a time, so its row is never written by two at
 //! once, and a pid is reused only after its process ended. A sequence, or the highest id of a log,
 //! would be no marker: a commit that ends later can hold a lower number than one a reader saw.
+//! An hourly writer-line refresh folds ended backends' rows into `counter:['board']` in one
+//! transaction without changing their sum ([`super::writers::WRITE_LINE`]).
 //!
 //! The deleted search by meaning's three tables and `moved`, the record of the one-time move from
 //! SQLite, have no place here: no PostgreSQL board held them.

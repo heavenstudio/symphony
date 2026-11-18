@@ -15,6 +15,8 @@ the evidence behind decisions are under [Design and history](#design-and-history
 
 ## Operation and setup
 
+- [PostgreSQL board lifecycle](POSTGRESQL.md) — scratch engine identity, server selection,
+  holds, snapshots, recovery and space reclamation.
 - [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
   with its default.
 - [Releases](RELEASES.md) — how a release is cut by the release run or out of cycle, named and

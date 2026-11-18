@@ -28,11 +28,12 @@ const SCRATCH: &str = "a scratch table of its own";
 const AS_WRITTEN: &str = "a row written as the fixture cannot";
 
 /// Every test file that still sends a statement, by its path under the package.
-const STILL_SENDS: [(&str, &str); 42] = [
+const STILL_SENDS: [(&str, &str); 43] = [
     ("tests/cli/attach.rs", ENGINE),
     ("tests/cli/launch_rollback.rs", ENGINE),
     ("tests/cli/main_only/writers.rs", AS_WRITTEN),
     ("tests/cli/monitor_panes.rs", ONE_REQUEST),
+    ("tests/cli/pg_lifecycle.rs", ENGINE),
     ("tests/cli/pull_unanswered.rs", ENGINE),
     ("tests/launch/reap.rs", AS_WRITTEN),
     ("tests/launch/reap_unread.rs", ENGINE),

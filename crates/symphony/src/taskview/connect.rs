@@ -132,7 +132,10 @@ fn open(
     // A read-only web request is never a board session or a launcher.
     env.vars.remove("TASKS_SESSION");
     let reached = reach(&env, held(root).as_deref())?;
-    let client = reached.client.waiting(BOARD_WAIT);
+    let client = match reached.database() {
+        symphony_board::Database::SurrealDb(client) => client.waiting(BOARD_WAIT).into(),
+        symphony_board::Database::PostgreSql(client) => client.waiting(BOARD_WAIT).into(),
+    };
     let how = symphony_board::Opening::read()
         .of(reached.project.as_deref())
         .live(reached.live);
@@ -143,7 +146,7 @@ fn open(
                 .ok()
                 .filter(|n| n.is_finite())
                 .ok_or_else(|| format!("TASKS_NOW={text} is not a time in seconds"))?;
-            symphony_board::Store::reading(
+            symphony_board::Store::reading_on(
                 client,
                 Box::new(move || now),
                 Box::new(symphony_board::sys::pid_alive),
@@ -151,7 +154,18 @@ fn open(
                 &how,
             )
         }
-        None => symphony_board::Store::read_as(client, &how),
+        None => symphony_board::Store::reading_on(
+            client,
+            Box::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64()
+            }),
+            Box::new(symphony_board::sys::pid_alive),
+            &symphony_board::sys::hostname(),
+            &how,
+        ),
     }
     .map_err(|e| e.to_string())?;
     // The cap the command line holds starts to, which the agents view and the PULL digest show.

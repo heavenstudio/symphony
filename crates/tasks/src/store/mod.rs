@@ -303,6 +303,11 @@ impl Store {
         &self.db
     }
 
+    /// Transfer a preliminary version reader's connection to its command's full opening.
+    pub(crate) fn into_database(self) -> Database {
+        self.db
+    }
+
     /// The time by this store's clock.
     pub fn now(&self) -> f64 {
         (self.clock)()
