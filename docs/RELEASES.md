@@ -208,9 +208,16 @@ and compares every file with that version's `.crate` from crates.io, Cargo's own
 files that differ: its version must move before a release publishes it. A version crates.io does
 not list yet is green, with nothing to compare, and a crates.io it cannot read is red too
 (exit 2): a read that got no answer, or a server's error, is tried three times before it is. It
-reads crates.io and publishes nothing, so it is cheap enough for the evidence of a
-task that changes a published package; in the release run, its red is a step's
-(`tests/release-red-verify-crates-check`).
+reads crates.io and publishes nothing, so a task that changes a published package runs it at its
+own tip: `just lint-rs` ends its Rust steps with `symphony-build crates-check --branch`, the same
+check of the published packages the branch changes since it left the default branch (a tracked
+file in the package's folder, or the workspace's `Cargo.toml`, whose settings each packaged
+manifest inherits) and of no other. A branch that changes none reads nothing, of crates.io or of a
+package; one that changes any reads crates.io, and is red where it cannot. On the default
+branch's own tip, where the release run lints, that step has nothing to read, and the whole check
+is the run's own step, whose red is a step's (`tests/release-red-verify-crates-check`). The kit's
+three packages moved to 1.0.1 this way, a doc comment of `symphony-plugin` having changed after
+1.0.0 was published (`tests/main-red-crates-check-plugin-sources`).
 
 **The API decides the size of a bump.** `just semver-check`, the `semver-check` step of release
 verification, runs [cargo-semver-checks](https://github.com/obi1kenobi/cargo-semver-checks) 0.51.0

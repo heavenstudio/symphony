@@ -159,8 +159,11 @@ rest, and that an entry says what a project does, not what the change was.
   or a published package's dependency on a sibling): `just test-rs -p symphony-app --test packages`
   and `cargo publish --dry-run` naming every published package together, from the committed tip
   (no `--allow-dirty`), its output on the thread ([RELEASES](RELEASES.md#packages-on-cratesio));
-  never a publication. A change to a published package's sources adds `just crates-check`, red
-  for a package whose version crates.io holds with other sources, which only reads crates.io. The
+  never a publication. A change to a published package's sources, a doc comment's too, moves its
+  version where crates.io holds that version with other sources: `just lint-rs` is red at the
+  branch's own tip until it does, by the crates check of the published packages the branch
+  changes ([a version moves with its sources](RELEASES.md#packages-on-cratesio)), so its green
+  lint is that evidence, and `just crates-check` reads every published package. The
   packages test is also the closest one for a change to a file a package carries a copy of (the
   client's `board.css` and `frame.css`, `tools/fixture_process.sh`): it fails until the copy is
   made again, naming the `cp`.

@@ -349,6 +349,161 @@ fn a_package_whose_version_the_registry_holds_is_red_once_its_sources_move_and_n
     assert!(bumped.lines[0].starts_with("alpha 1.0.1: not on the registry "));
 }
 
+/// `git ARGS` in the scratch repository `root`, as an author of the test's own.
+fn scratch_git(root: &Path, args: &[&str]) -> String {
+    let named = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+    git_until(root, &[&named[..], args].concat(), bound()).unwrap()
+}
+
+/// [`workspace`] as a repository: one commit on `main`, and the branch `work` checked out on it.
+fn repository(tree: &Tree) -> PathBuf {
+    let root = workspace(tree);
+    tree.write("ws/README.md", "the workspace\n");
+    scratch_git(&root, &["init", "-q", "-b", "main"]);
+    scratch_git(&root, &["add", "-A"]);
+    scratch_git(&root, &["commit", "-q", "-m", "first"]);
+    scratch_git(&root, &["checkout", "-q", "-b", "work"]);
+    root
+}
+
+/// Everything written in `root` committed.
+fn committed(root: &Path) {
+    scratch_git(root, &["add", "-A"]);
+    scratch_git(root, &["commit", "-q", "-m", "work"]);
+}
+
+/// The published packages the checkout at `root` changes since it left `main`, by name.
+fn touched_names(root: &Path) -> Vec<String> {
+    let touched = touched(root, "main", bound()).unwrap().unwrap();
+    touched.into_iter().map(|package| package.name).collect()
+}
+
+#[test]
+fn a_branch_touches_the_published_packages_whose_folder_it_changes() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    // No such branch to compare with, and a folder that is no workspace.
+    assert_eq!(touched(&root, "trunk", bound()), Ok(None));
+    assert!(touched_names(&root).is_empty(), "nothing changed yet");
+    // A file no package holds, and an unpublished member's: none.
+    tree.write("ws/README.md", "the workspace, said again\n");
+    tree.write(
+        "ws/delta/src/lib.rs",
+        "//! delta, changed\npub fn delta() {}\n",
+    );
+    committed(&root);
+    assert!(touched_names(&root).is_empty());
+    // A committed change of one package, and a change of another not committed yet; a file its
+    // package does not carry counts as its sources do.
+    tree.write("ws/bravo/tests/it.rs", "#[test]\nfn it() {}\n");
+    committed(&root);
+    assert_eq!(touched_names(&root), ["bravo"]);
+    tree.write(
+        "ws/alpha/src/lib.rs",
+        "//! alpha, changed\npub fn alpha() {}\n",
+    );
+    assert_eq!(touched_names(&root), ["alpha", "bravo"]);
+    // What main gained since the branch left it is not the branch's.
+    scratch_git(&root, &["stash", "-q"]);
+    scratch_git(&root, &["checkout", "-q", "main"]);
+    tree.write(
+        "ws/charlie/src/lib.rs",
+        "//! charlie, on main\npub fn charlie() {}\n",
+    );
+    committed(&root);
+    assert!(touched_names(&root).is_empty(), "main against itself");
+    scratch_git(&root, &["checkout", "-q", "work"]);
+    assert_eq!(touched_names(&root), ["bravo"]);
+    // The workspace's own manifest, which every packaged manifest inherits from: all of them.
+    let manifest = tree.read("ws/Cargo.toml") + "\n[workspace.package]\nlicense = \"MIT\"\n";
+    tree.write("ws/Cargo.toml", &manifest);
+    assert_eq!(touched_names(&root), ["alpha", "bravo", "charlie"]);
+}
+
+#[test]
+fn the_packages_files_change_are_read_by_folder_from_the_workspaces_root() {
+    let member = |name: &str, manifest: &str| json!({"name": name, "version": "1.0.0", "manifest_path": manifest});
+    let metadata = json!({
+        "workspace_root": "/ws",
+        "packages": [
+            member("deep", "/ws/crates/deep/Cargo.toml"),
+            member("deeper", "/ws/crates/deep-er/Cargo.toml"),
+            member("outside", "/elsewhere/outside/Cargo.toml"),
+        ],
+    });
+    let names = |files: &[&str]| {
+        let changed = changed_by(&metadata, files);
+        changed
+            .into_iter()
+            .map(|package| package.name)
+            .collect::<Vec<_>>()
+    };
+    assert!(names(&[]).is_empty());
+    // A folder is matched whole: `crates/deep-er` is not in `crates/deep`.
+    assert_eq!(names(&["crates/deep-er/src/lib.rs"]), ["deeper"]);
+    assert_eq!(names(&["crates/deep/Cargo.toml", "docs/a.md"]), ["deep"]);
+    // A member's manifest is not the workspace's; the workspace's changes every member, the one
+    // outside its root too.
+    assert_eq!(names(&["Cargo.toml"]), ["deep", "deeper", "outside"]);
+    assert!(names(&["elsewhere/outside/src/lib.rs", "Cargo.lock"]).is_empty());
+    // A package at the root itself holds every file.
+    let rooted = json!({"workspace_root": "/ws", "packages": [member("rooted", "/ws/Cargo.toml")]});
+    assert_eq!(changed_by(&rooted, &["src/lib.rs"]).len(), 1);
+    assert!(changed_by(&json!({}), &["src/lib.rs"]).is_empty());
+}
+
+#[test]
+fn a_branchs_check_reads_only_the_packages_it_changes() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let registry = tree.path("registry");
+    // alpha and bravo published as main holds them.
+    for name in ["alpha", "bravo"] {
+        let published = packaged(&root, name, &tree.path("published"));
+        fs::create_dir_all(registry.join("crates").join(name)).unwrap();
+        let file = format!("crates/{name}/{name}-1.0.0.crate");
+        fs::copy(&published, registry.join(file)).unwrap();
+        listed(&registry, name, &["1.0.0"]);
+    }
+    let folder = Registry::Folder(registry.clone());
+    let branch =
+        |default: &str| check_branch(&root, default, &folder, &tree.path("target"), later());
+    assert_eq!(branch("trunk"), Ok(None));
+    // A branch that changes none reads nothing: not the registry, which here cannot be read.
+    let unreadable = Registry::Folder(tree.path("ws/README.md"));
+    let none = check_branch(&root, "main", &unreadable, &tree.path("target"), later());
+    assert_eq!(none, Ok(Some(Checked::default())));
+    // bravo's sources moved while its version did not: red for bravo, and alpha is not read.
+    tree.write(
+        "ws/bravo/src/lib.rs",
+        "//! bravo, changed\npub fn bravo() {}\n",
+    );
+    committed(&root);
+    let moved = branch("main").unwrap().unwrap();
+    assert!(moved.lines.is_empty(), "{:?}", moved.lines);
+    assert_eq!(
+        moved.changed,
+        [Changed {
+            package: "bravo 1.0.0".into(),
+            files: vec!["src/lib.rs changed".into()],
+        }]
+    );
+    // Its version moved with them: green, and charlie, changed too, is the next release's.
+    let manifest = tree
+        .read("ws/bravo/Cargo.toml")
+        .replacen("1.0.0", "1.0.1", 1);
+    tree.write("ws/bravo/Cargo.toml", &manifest);
+    let requires = tree
+        .read("ws/charlie/Cargo.toml")
+        .replace("version = \"1.0.0\" }", "version = \"1.0.1\" }");
+    tree.write("ws/charlie/Cargo.toml", &requires);
+    let bumped = branch("main").unwrap().unwrap();
+    assert!(bumped.changed.is_empty(), "{:?}", bumped.changed);
+    assert_eq!(bumped.lines.len(), 2, "{:?}", bumped.lines);
+    assert!(bumped.lines[0].starts_with("bravo 1.0.1: not on the registry "));
+    assert!(bumped.lines[1].starts_with("charlie 1.0.0: not on the registry "));
+}
+
 #[test]
 fn a_check_fails_closed_on_a_registry_it_cannot_read_or_a_package_it_cannot_fetch() {
     let tree = Tree::new();

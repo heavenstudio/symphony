@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use symphony_board::sys::Command;
 
+use super::git::git_until;
 use super::group::{Bound, Failed, output_until};
 use symphony::children::command;
 
@@ -97,8 +98,14 @@ fn failure(stderr: &[u8]) -> String {
 /// what a member inherits from the workspace as `cargo publish` does, offline and without the
 /// members' dependencies.
 pub(crate) fn packages(root: &Path, bound: Bound<'_>) -> Result<Vec<Package>, String> {
+    Ok(metadata(root, bound)?.map_or_else(Vec::new, |metadata| published(&metadata)))
+}
+
+/// What `cargo metadata` says of the workspace at `root`, offline and without the members'
+/// dependencies; none when `root` holds no `Cargo.toml`.
+fn metadata(root: &Path, bound: Bound<'_>) -> Result<Option<Value>, String> {
     if !root.join("Cargo.toml").is_file() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     let done = run(
         command("cargo")
@@ -120,9 +127,59 @@ pub(crate) fn packages(root: &Path, bound: Bound<'_>) -> Result<Vec<Package>, St
             failure(&done.stderr)
         ));
     }
-    let metadata: Value = serde_json::from_slice(&done.stdout)
-        .map_err(|e| format!("cargo metadata in {} said no JSON: {e}", root.display()))?;
-    Ok(published(&metadata))
+    serde_json::from_slice(&done.stdout)
+        .map(Some)
+        .map_err(|e| format!("cargo metadata in {} said no JSON: {e}", root.display()))
+}
+
+/// The folder of the member `member` of `cargo metadata`'s, from the workspace's root: where its
+/// manifest is, empty for a package at the root itself. None for a manifest outside the root.
+fn folder(metadata: &Value, member: &Value) -> Option<PathBuf> {
+    let manifest = Path::new(member["manifest_path"].as_str()?);
+    let within = manifest.strip_prefix(metadata["workspace_root"].as_str()?);
+    Some(within.ok()?.parent()?.to_path_buf())
+}
+
+/// The published packages of `metadata` that `files` change, each a path from the workspace's
+/// root: a file in the package's folder, whether its package carries it or not, or the workspace's
+/// own manifest, whose settings and dependency versions every member's packaged manifest inherits.
+fn changed_by(metadata: &Value, files: &[&str]) -> Vec<Package> {
+    let members = metadata["packages"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let all = files.contains(&"Cargo.toml");
+    let changed = |package: &Package| {
+        all || (members.iter())
+            .filter(|member| member["name"] == package.name.as_str())
+            .filter_map(|member| folder(metadata, member))
+            .any(|folder| {
+                files
+                    .iter()
+                    .any(|file| Path::new(file).starts_with(&folder))
+            })
+    };
+    let mut found = published(metadata);
+    found.retain(changed);
+    found
+}
+
+/// The published packages the checkout at `root` changes since it left the default branch
+/// `default` ([`changed_by`] every tracked file that differs from their merge base, committed or
+/// not); none where the checkout has no `default` to compare with. On `default`'s own line that is
+/// what is not committed yet.
+pub(crate) fn touched(
+    root: &Path,
+    default: &str,
+    bound: Bound<'_>,
+) -> Result<Option<Vec<Package>>, String> {
+    let Ok(base) = git_until(root, &["merge-base", "HEAD", default], bound) else {
+        return Ok(None);
+    };
+    let listed = git_until(root, &["diff", "--name-only", "--relative", &base], bound)?;
+    let files: Vec<&str> = listed.lines().collect();
+    Ok(Some(
+        metadata(root, bound)?.map_or_else(Vec::new, |metadata| changed_by(&metadata, &files)),
+    ))
 }
 
 /// The published members `cargo metadata` names, by name: a member with no `publish` list
@@ -382,8 +439,36 @@ pub(crate) fn check(
     until: Instant,
 ) -> Result<Checked, String> {
     let bound = Bound::until(until);
+    compared(root, registry, target, &packages(root, bound)?, bound)
+}
+
+/// [`check`] of the packages a branch changes alone ([`touched`]), which is what a task's lint
+/// runs: none where the checkout has no `default` to compare with, and nothing read, of crates.io
+/// or of the packages, for a branch that changes no published package.
+pub(crate) fn check_branch(
+    root: &Path,
+    default: &str,
+    registry: &Registry,
+    target: &Path,
+    until: Instant,
+) -> Result<Option<Checked>, String> {
+    let bound = Bound::until(until);
+    let Some(touched) = touched(root, default, bound)? else {
+        return Ok(None);
+    };
+    compared(root, registry, target, &touched, bound).map(Some)
+}
+
+/// [`check`] of `packages`, members the workspace at `root` publishes.
+fn compared(
+    root: &Path,
+    registry: &Registry,
+    target: &Path,
+    packages: &[Package],
+    bound: Bound<'_>,
+) -> Result<Checked, String> {
     let mut checked = Checked::default();
-    let (held, lacked) = split(registry, &packages(root, bound)?, bound)?;
+    let (held, lacked) = split(registry, packages, bound)?;
     for package in &lacked {
         checked.lines.push(format!(
             "{}: not on {} yet: nothing to compare, and a release publishes it while [releases] \

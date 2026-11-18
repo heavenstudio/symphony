@@ -97,3 +97,113 @@ fn a_registry_it_cannot_read_is_exit_2_and_a_second_root_is_refused() {
     let (mut out, mut err) = (Vec::new(), Vec::new());
     assert_eq!(main(&["--root".into()], &mut out, &mut err), 2);
 }
+
+/// `git ARGS` in `root`, as an author of the test's own.
+fn git(root: &Path, args: &[&str]) {
+    let done = symphony::children::output(
+        symphony::children::git()
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(root),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+}
+
+/// The branch's check of `root` against `default` and the registry folder `registry`: its exit
+/// code, stdout and stderr.
+fn run_branch(root: &Path, default: &str, registry: &Path) -> (i32, String, String) {
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let registry = Registry::Folder(registry.to_path_buf());
+    let target = root.join("../target");
+    let code = checked_branch(root, default, &registry, &target, &mut out, &mut err);
+    (
+        code,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+#[test]
+fn a_branch_is_checked_for_the_packages_it_changes_and_says_when_that_is_none() {
+    let tree = Tree::new();
+    let root = workspace(&tree);
+    let registry = tree.path("registry");
+    git(&root, &["init", "-q", "-b", "main"]);
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-q", "-m", "first"]);
+    git(&root, &["checkout", "-q", "-b", "work"]);
+    assert_eq!(
+        run_branch(&root, "trunk", &registry),
+        (
+            0,
+            "crates-check: this checkout has no trunk to compare with: nothing checked\n".into(),
+            String::new()
+        )
+    );
+    assert_eq!(
+        run_branch(&root, "main", &registry),
+        (
+            0,
+            "crates-check: this branch changes no published package: nothing checked\n".into(),
+            String::new()
+        )
+    );
+    // It changes alpha, at a version the registry lacks: green, and said as a branch's.
+    tree.write(
+        "ws/alpha/src/lib.rs",
+        "pub fn alpha() {}\npub fn more() {}\n",
+    );
+    let (code, out, err) = run_branch(&root, "main", &registry);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    assert!(
+        out.starts_with("crates-check: alpha 1.0.0: not on the registry ")
+            && out.ends_with(&format!("crates-check: {BRANCH}\n")),
+        "{out}"
+    );
+    // The registry holds that version with the sources main has: red, as the whole check is.
+    git(&root, &["stash", "-q"]);
+    let packed = symphony::children::output(
+        symphony::children::command("cargo")
+            .args([
+                "package",
+                "--no-verify",
+                "--exclude-lockfile",
+                "--offline",
+                "--quiet",
+            ])
+            .env("CARGO_TARGET_DIR", tree.path("published"))
+            .current_dir(&root),
+    )
+    .unwrap();
+    assert!(packed.status.success(), "{packed:?}");
+    git(&root, &["stash", "pop", "-q"]);
+    fs::create_dir_all(registry.join("crates/alpha")).unwrap();
+    fs::copy(
+        tree.path("published/package/alpha-1.0.0.crate"),
+        registry.join("crates/alpha/alpha-1.0.0.crate"),
+    )
+    .unwrap();
+    let index = registry.join("index/al/ph/alpha");
+    fs::create_dir_all(index.parent().unwrap()).unwrap();
+    fs::write(&index, "{\"name\":\"alpha\",\"vers\":\"1.0.0\"}\n").unwrap();
+    let (code, out, err) = run_branch(&root, "main", &registry);
+    assert_eq!((code, out.as_str()), (1, ""), "{err}");
+    assert!(
+        err.starts_with("crates-check: alpha 1.0.0: on crates.io, and its packaged sources differ")
+            && err.contains("src/lib.rs changed"),
+        "{err}"
+    );
+    // A registry it cannot read is exit 2 for a branch too.
+    fs::remove_file(&index).unwrap();
+    fs::create_dir_all(&index).unwrap();
+    let (code, _, err) = run_branch(&root, "main", &registry);
+    assert_eq!(code, 2, "{err}");
+    // `--branch` takes the root after it, and no second flag.
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    assert_eq!(
+        main(&["--branch".into(), "--root".into()], &mut out, &mut err),
+        2
+    );
+    assert_eq!(String::from_utf8(err).unwrap(), format!("{USAGE}\n"));
+}
