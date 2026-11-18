@@ -229,14 +229,16 @@ pub fn parse(path: &str, text: &str) -> Read {
     let slots = |table: &str, value: &Value| {
         let at = setting(table, SLOTS);
         let (least, below) = least(SLOTS);
-        whole(value, least).map(|cap| (cap, at.clone())).map_err(|why| {
-            let why = why.unwrap_or(below);
-            format!(
-                "{path}: {} is {}; {why}; no cap on an orchestrator's open tasks applies",
-                at.named(),
-                shown(value)
-            )
-        })
+        whole(value, least)
+            .map(|cap| (cap, at.clone()))
+            .map_err(|why| {
+                let why = why.unwrap_or(below);
+                format!(
+                    "{path}: {} is {}; {why}; no cap on an orchestrator's open tasks applies",
+                    at.named(),
+                    shown(value)
+                )
+            })
     };
     let cap = match (limits.get(SLOTS), board.get(SLOTS)) {
         (Some(ours), Some(older)) => {

@@ -152,3 +152,56 @@ fn literal_help_flags_and_del_round_trip_through_the_binary_and_settings_readers
         );
     }
 }
+
+#[test]
+fn a_linked_worktree_reads_the_main_checkouts_local_file_and_has_none_of_its_own() {
+    let tree = Tree::new();
+    let (main, linked) = layouts::repository(&tree.root);
+    let machine = tree.path("machine");
+    let local = main.join(symphony::project::LOCAL_FILE);
+    assert_eq!(symphony::project::Project::local_file(&linked), local);
+    assert_eq!(symphony::project::Project::local_file(&main), local);
+    // Written from the linked worktree, it lands beside the main checkout's project file.
+    let (code, out, err) = model(
+        &linked.join("docs"),
+        &machine,
+        &["reviewer", "local-model", "--local"],
+    );
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    assert_eq!(
+        out,
+        format!(
+            "{}: reviewer model set to \"local-model\"\n",
+            local.display()
+        )
+    );
+    assert!(!linked.join(symphony::project::LOCAL_FILE).exists());
+    for root in [&main, &linked] {
+        let project = symphony::project::Project::load(root).unwrap();
+        assert_eq!(
+            project.agents.models.reviewer.as_deref(),
+            Some("local-model"),
+            "{}",
+            root.display()
+        );
+    }
+    // One of the linked worktree's own is read by nobody.
+    std::fs::write(
+        linked.join(symphony::project::LOCAL_FILE),
+        "[agents.models]\nreviewer = \"stray\"\n",
+    )
+    .unwrap();
+    let project = symphony::project::Project::load(&linked).unwrap();
+    assert_eq!(
+        project.agents.models.reviewer.as_deref(),
+        Some("local-model")
+    );
+    assert_eq!(
+        Defaults::configured(&main)
+            .unwrap()
+            .models
+            .reviewer
+            .as_deref(),
+        Some("local-model")
+    );
+}

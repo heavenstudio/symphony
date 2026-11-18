@@ -197,7 +197,10 @@ fn a_local_settings_file_is_judged_with_the_project_file() {
     let (code, _, err) = check(&root, "[hooks]\n");
     assert_eq!(code, 1);
     assert!(err.contains("✖ the project file is refused.\n"), "{err}");
-    assert!(err.contains("✖ the local settings file is refused"), "{err}");
+    assert!(
+        err.contains("✖ the local settings file is refused"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -231,10 +234,9 @@ fn a_local_settings_file_git_tracks_is_refused() {
     let tree = Tree::new();
     let root = folder(&tree, "lamps");
     let git = |args: &[&str]| {
-        let done = symphony_board::sys::output(
-            symphony_board::sys::git().arg("-C").arg(&root).args(args),
-        )
-        .unwrap();
+        let done =
+            symphony_board::sys::output(symphony_board::sys::git().arg("-C").arg(&root).args(args))
+                .unwrap();
         assert!(done.status.success(), "{args:?}");
     };
     git(&["init", "-q"]);

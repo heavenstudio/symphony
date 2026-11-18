@@ -117,7 +117,10 @@ fn a_setting_that_runs_a_command_or_decides_what_lands_is_refused_by_name_with_t
         ),
         ("[plugins]\ncrates = [\"p\"]\n", "[plugins] crates (line 2)"),
         ("[plugins.process]\np = [\"run\"]\n", "[plugins] process"),
-        ("[releases]\npublish = true\n", "[releases] publish (line 2)"),
+        (
+            "[releases]\npublish = true\n",
+            "[releases] publish (line 2)",
+        ),
         ("[stamps.review]\nstale = 1\n", "[stamps] review"),
         ("\n[land]\n", "[land] (line 2)"),
     ] {
@@ -315,11 +318,16 @@ fn a_local_key_replaces_the_committed_one_and_one_left_out_keeps_it() {
     std::fs::write(
         root.join(FILE),
         "# mine\n[agents.models]\nexecutor = \"fable\"\n\n[limits]\nmachine_agents = 4\n\
-         orchestrator_slots = 2\n",
+         orchestrator_slots = 2\norchestrator_tasks = 30\n",
     )
     .unwrap();
     let read = crate::limits::read_at(&file);
     assert_eq!(read.problems, Vec::<String>::new());
+    assert_eq!(read.limits.orchestrator_tasks, 30);
+    assert_eq!(
+        read.written[TASKS].said(),
+        "symphony.local.toml [limits] orchestrator_tasks, line 8"
+    );
     assert_eq!(read.limits.machine_agents, Some(4));
     assert_eq!(
         read.limits.orchestrator_slots,

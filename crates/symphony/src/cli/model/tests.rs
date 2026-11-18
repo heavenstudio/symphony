@@ -254,10 +254,17 @@ fn local_writes_the_local_file_beside_the_main_project_file_and_never_the_projec
             .contains("already")
     );
     // A file with comments keeps them, and `all` sets the four.
-    std::fs::write(&local, "# mine\n[agents.models] # roles\nexecutor = 'x' # e\n").unwrap();
+    std::fs::write(
+        &local,
+        "# mine\n[agents.models] # roles\nexecutor = 'x' # e\n",
+    )
+    .unwrap();
     change_in(&main, "all", "opus", &none, true).unwrap();
     let text = std::fs::read_to_string(&local).unwrap();
-    assert!(text.starts_with("# mine\n[agents.models] # roles\n"), "{text}");
+    assert!(
+        text.starts_with("# mine\n[agents.models] # roles\n"),
+        "{text}"
+    );
     assert!(text.contains("executor = \"opus\" # e\n"), "{text}");
     let defaults = Defaults::configured(&main).unwrap();
     for role in ROLES {

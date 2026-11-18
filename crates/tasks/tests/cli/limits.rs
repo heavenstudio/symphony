@@ -356,7 +356,11 @@ fn a_local_settings_file_overrides_the_committed_settings_and_limits_names_it() 
     assert_eq!(store.slots(), None, "and the cap it wrote is gone");
     // A setting that decides what lands is refused by name, and none of the file is read: the
     // board runs on the committed values.
-    fs::write(&local, "[limits]\nlow_volume = 1\n\n[land]\ncheck = false\n").unwrap();
+    fs::write(
+        &local,
+        "[limits]\nlow_volume = 1\n\n[land]\ncheck = false\n",
+    )
+    .unwrap();
     let ran = c.run_as(&orch, &["limits"], "");
     assert_eq!(ran.code, 0, "{}", ran.err);
     assert_eq!(

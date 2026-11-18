@@ -409,12 +409,12 @@ impl Project {
         let mut problems = Self::local(root).err().unwrap_or_default();
         let file = Self::local_file(root);
         let tracked = file.parent().is_some_and(|folder| {
-            symphony_board::sys::output(
-                crate::children::git()
-                    .arg("-C")
-                    .arg(folder)
-                    .args(["ls-files", "--error-unmatch", "--", LOCAL_FILE]),
-            )
+            symphony_board::sys::output(crate::children::git().arg("-C").arg(folder).args([
+                "ls-files",
+                "--error-unmatch",
+                "--",
+                LOCAL_FILE,
+            ]))
             .is_ok_and(|done| done.status.success())
         });
         if tracked {
