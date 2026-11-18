@@ -378,6 +378,16 @@ fn the_names_consumers_call_keep_their_shapes() {
             Span::Blocks { blocks },
         ]
     };
+    // These variants are constructed by known consumers; keep their names across a major too.
+    let _ = [
+        FigureSize::Small,
+        FigureSize::Row,
+        FigureSize::Large,
+        FigureSize::Tile,
+        FigureSize::Cell,
+        FigureSize::Slot,
+        FigureSize::Wide,
+    ];
     let _ = |block: &Block| {
         matches!(block, Block::Heading { anchor, .. } if anchor.is_empty())
             || matches!(block, Block::Component { kind, blocks }

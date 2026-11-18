@@ -339,7 +339,7 @@ project is given and neither the library nor the shipped `symphony` compiles
    call written as a consumer writes it, and a few, a generic one among them, by name alone; the
    structs a consumer builds by the fields it builds them with; the variants a consumer builds,
    compares or matches, as it does; and the plugin traits by the methods a
-   plugin writes. Each enum whose variants a guard holds is also matched there by every variant, the
+   plugin writes. The exhaustive product enums are also matched there by every variant, the
    guards' own choice: a variant added fails the guard, and waits for a consumer release plan only
    where a consumer matches that enum whole, while a variant that only that match names goes or
    changes with it. Vocabulary variant inventories wider than known consumer calls are left
