@@ -165,7 +165,7 @@ Before the go-ahead, the patch and the words that go with it are read for:
 - code that only makes sense with private code the patch does not carry, which is not reusable
   yet;
 - the commit's author and committer, which are the public identity the upstream's
-  [authorship rule](../RULES.md#commitsno-ai-authorship) asks for.
+  [rules](../RULES.md) ask for (`commits/no-ai-authorship`).
 
 A doubt is a refusal: the change stays private until it is rewritten.
 
