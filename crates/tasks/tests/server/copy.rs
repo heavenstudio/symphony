@@ -13,6 +13,7 @@ use symphony_board::rows::{
     DeliveryRow, Dump, LinkRow, MessageRow, RoleRow, TaskRow, TaskSessionRow,
 };
 use symphony_board::rpc::Client;
+use symphony_board::server::Storage;
 
 const TASKS: usize = 480;
 const SESSIONS: usize = 560;
@@ -212,6 +213,53 @@ fn a_refused_copy_of_a_quarter_board_leaves_the_board_and_its_index_as_they_were
         ),
         marker
     );
+    assert!(
+        tables(&store).iter().all(|t| !t.starts_with("copy_")),
+        "{:?}",
+        tables(&store)
+    );
+}
+
+/// A copy larger than its server's memtable, which the server does not commit: the store says so
+/// in one line, with the rows and bytes it staged and the setting, and the board is as it was,
+/// nothing staged left behind.
+#[test]
+fn a_copy_larger_than_its_servers_memtable_is_refused_in_one_line_and_leaves_the_board() {
+    let s = Scratch::new("copy-unfit");
+    let small_memtable = Storage {
+        memtable: 4 << 20,
+        ..Storage::BOARD
+    };
+    let running = s.home().storage(small_memtable).ensure().unwrap();
+    let store = Store::open(Client::new(&running.addr, "sf", "tasks")).unwrap();
+    let small = Dump {
+        tasks: vec![task("sim/jump", "ready")],
+        sessions: vec![session("amber-heron")],
+        ..Dump::default()
+    };
+    store.copy(&small).unwrap();
+    let generation = store.recovery_generation().unwrap();
+    let why = match store.copy(&quarter_board()) {
+        Err(symphony_board::Error::Db(why)) => why,
+        other => panic!("expected the server not to commit the copy, got {other:?}"),
+    };
+    assert!(
+        why.starts_with(
+            "the server did not commit the copy's one transaction, and the board is as it was: \
+             the copy staged "
+        ),
+        "{why}"
+    );
+    for said in [
+        format!("{TASKS} of task"),
+        format!("{MESSAGES} of message"),
+        "SURREAL_SURREALKV_MAX_MEMTABLE_SIZE".to_string(),
+    ] {
+        assert!(why.contains(&said), "{why}");
+    }
+    assert!(!why.contains('\n'), "{why}");
+    assert_eq!(store.dump().unwrap(), small);
+    assert_eq!(store.recovery_generation().unwrap(), generation);
     assert!(
         tables(&store).iter().all(|t| !t.starts_with("copy_")),
         "{:?}",

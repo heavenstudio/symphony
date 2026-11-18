@@ -51,17 +51,18 @@ pub(in crate::store) fn insert_staged(staging: &str, table: &str) -> String {
     staging_request(&format!("INSERT INTO {staging}_{table} $rows RETURN NONE;"))
 }
 
-/// Every staging table of `tables` removed, each if it is there.
-pub(in crate::store) fn remove_staged(staging: &str, tables: &[&str]) -> String {
-    let remove: String = tables
-        .iter()
-        .map(|table| format!("REMOVE TABLE IF EXISTS {staging}_{table};"))
-        .collect();
-    staging_request(&remove)
+/// The names of `tables`' staging tables.
+pub(in crate::store) fn staged(staging: &str, tables: &[&str]) -> Vec<String> {
+    (tables.iter())
+        .map(|table| format!("{staging}_{table}"))
+        .collect()
 }
 
-/// The copy's one transaction: each of `tables` emptied and filled from its staging table, which
-/// is removed, the caches of the board it replaces dropped, the counters set to `$last` and
+/// The copy's one transaction: each of `tables`' staging tables found holding the rows the copy
+/// sent it (`$sent`, a count a table), else refused before anything is written, as the database
+/// makes a staging table again for rows sent after another copy removed it and the swap would
+/// otherwise put in a part of the board; then each table emptied and filled from its staging
+/// table, which is removed, the caches of the board it replaces dropped, the counters set to `$last` and
 /// `$last_ts` (messages), `$last_task` and `$last_ask`, and the board's recovery generation
 /// replaced ([`super::recovery::REBIND`]), which is its answer: the numbers and versions the copy
 /// gives name other tasks than the ones a token was read on, in the same transaction or not at
@@ -70,6 +71,14 @@ pub(in crate::store) fn swap(staging: &str, tables: &[&str]) -> String {
     let mut swap = String::new();
     // Each sender's last word goes with the messages, before them, so their deletion
     // finds no word to look past; the copied messages' events name them again.
+    swap.push_str("LET $there = object::keys((INFO FOR DB).tables);\n");
+    for table in tables {
+        let _ = writeln!(
+            swap,
+            "LET $held = IF '{staging}_{table}' IN $there {{ (SELECT count() FROM {staging}_{table} GROUP ALL)[0].count ?? 0 }} ELSE {{ 'no table' }};
+IF $held != $sent.{table} {{ THROW string::concat(\"refused: the copy's staging was taken while it staged, as a copy of the board started meanwhile takes it, and the board is as it was: its {table} holds \", <string>$held, ' of the ', <string>$sent.{table}, ' rows it sent'); }};"
+        );
+    }
     swap.push_str("DELETE said RETURN NONE;\n");
     for table in tables {
         let _ = writeln!(

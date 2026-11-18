@@ -111,6 +111,13 @@ fn stale_remove_staging_preserves_newer_tables_even_when_migration_follows_the_t
     let why = refused(writer.remove_staging());
     refusal(&why);
     assert_eq!(refused(writer.remove_staging()), why);
+    // Its copy, which clears what an earlier one left before it stages, is refused the same
+    // way and says what it was at.
+    let (Error::Refused(copying) | Error::Db(copying)) = writer.copy(&before).unwrap_err();
+    assert_eq!(
+        copying,
+        format!("{why}; staging left by an earlier copy could not be removed")
+    );
     assert_eq!(count(f.store.client(), "copy_abandoned"), json!(1));
     assert_table(f.store.client(), "copy_schema_probe");
     // A writer at the new version can clean both staging tables, preserving unrelated data.
@@ -207,4 +214,67 @@ fn cleanup_refused_after_a_failed_swap_reports_both_causes_and_preserves_staging
     assert_eq!(count(f.store.client(), &staging[0]), json!(2));
     assert_table(f.store.client(), "copy_schema_probe");
     assert_eq!(f.store.dump().unwrap(), before);
+}
+
+/// A copy whose staging another copy's start removed (`remove_staging`, which every copy begins
+/// with) is refused at its swap and leaves the board whole: between two requests of its first
+/// table, where the database makes the staging table again for the rows sent after and the
+/// swap would otherwise put in the later rows alone, and once everything was staged.
+#[test]
+fn a_copy_whose_staging_another_copy_took_is_refused_and_leaves_the_board() {
+    for (at, held) in [
+        (
+            "INSERT INTO copy_",
+            "its task holds 2 of the 3 rows it sent",
+        ),
+        (
+            "DELETE said",
+            "its task holds no table of the 3 rows it sent",
+        ),
+    ] {
+        let f = Fixture::new(Seed::default().task("old/one", "ready"));
+        let before = f.store.dump().unwrap();
+        // Each task needs a request of its own.
+        let dump = Dump {
+            tasks: (0..3)
+                .map(|id| symphony_board::rows::TaskRow {
+                    id: id + 1,
+                    body: "x".repeat(600_000),
+                    ..task(&format!("new/{id}"), "ready")
+                })
+                .collect(),
+            ..Dump::default()
+        };
+        let mut other = Some(f.other_client());
+        let mut seen = 0;
+        let relay = Relay::with_before(
+            f.store.client().addr(),
+            0,
+            Some(Box::new(move |sql| {
+                if sql.contains(at) {
+                    seen += 1;
+                    // The second request of the first table, or the swap.
+                    if seen == if at == "DELETE said" { 1 } else { 2 }
+                        && let Some(client) = other.take()
+                    {
+                        opened(client, &Opening::write()).remove_staging().unwrap();
+                    }
+                }
+            })),
+        );
+        let writer = opened(
+            relay.client("sf", f.store.client().database()),
+            &Opening::write(),
+        );
+        assert_eq!(
+            refused(writer.copy(&dump)),
+            format!(
+                "the copy's staging was taken while it staged, as a copy of the board started \
+                 meanwhile takes it, and the board is as it was: {held}"
+            ),
+            "{at}"
+        );
+        assert_eq!(f.store.dump().unwrap(), before, "{at}");
+        assert_no_copy_tables(f.store.client());
+    }
 }
