@@ -4672,11 +4672,7 @@ fn a_fresh_context_is_a_page_as_a_launch_leaves_it_and_ends_the_one_before_with_
     // The launch's own page is closed; a context this made is disposed of, its pages with it.
     .chain(fresh(
         1,
-        command(
-            "",
-            "Target.closeTarget",
-            json!({"targetId": "page-target"}),
-        ),
+        command("", "Target.closeTarget", json!({"targetId": "page-target"})),
     ))
     .chain(fresh(
         2,
@@ -4743,7 +4739,9 @@ fn visit_keeping(
     chrome.open("about:blank").unwrap();
     chrome.open(base).unwrap();
     assert!(
-        chrome.wait_for("window.kept === true", PROTOCOL_CPU).unwrap(),
+        chrome
+            .wait_for("window.kept === true", PROTOCOL_CPU)
+            .unwrap(),
         "the page's script never ran"
     );
     let script = format!("{base}kept.js");
@@ -4848,7 +4846,11 @@ fn a_context_left_for_a_fresh_one_leaves_no_target_and_the_page_runs_on_in_the_n
         assert_ne!(pages, before);
         // The page is one to drive: it opens, answers and waits as a launch's does.
         chrome.open(&base).unwrap();
-        assert!(chrome.wait_for("window.kept === true", PROTOCOL_CPU).unwrap());
+        assert!(
+            chrome
+                .wait_for("window.kept === true", PROTOCOL_CPU)
+                .unwrap()
+        );
         assert_eq!(chrome.eval("1 + 1").unwrap(), json!(2));
         before = pages;
     }
