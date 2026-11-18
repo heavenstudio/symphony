@@ -79,3 +79,90 @@ fn equal_path_keys_keep_the_same_representation_as_collection() {
     assert_eq!(key.as_os_str(), expected_key.as_os_str());
     assert_eq!(value, expected_value);
 }
+
+#[test]
+fn ordered_store_payloads_keep_last_values_and_report_collection_cost() {
+    fn compare<V: Clone>(name: &str, pairs: Vec<(String, V)>, fingerprint: impl Fn(&V) -> String) {
+        for reversed in [false, true] {
+            let mut input = pairs.clone();
+            input.sort_by(|a, b| a.0.cmp(&b.0));
+            if reversed {
+                input.reverse();
+            }
+            let copied = input.clone();
+            let (expected, old_cpu) =
+                test_time::cpu::spent(|| copied.into_iter().collect::<BTreeMap<_, _>>());
+            let (actual, new_cpu) = test_time::cpu::spent(|| input.into_iter().collect_map());
+            let fields = |map: &BTreeMap<String, V>| {
+                map.iter()
+                    .map(|(key, value)| (key.clone(), fingerprint(value)))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                fields(&actual),
+                fields(&expected),
+                "{name}, reversed={reversed}"
+            );
+            eprintln!(
+                "{name} collector: pairs={}, unique={}, pair_bytes={}, reversed={reversed}, standard_thread_cpu={old_cpu:?}, insertion_thread_cpu={new_cpu:?}; existing pair Vec reused, tree nodes replace bulk construction; no stable-sort scratch in insertion helper",
+                pairs.len(),
+                actual.len(),
+                std::mem::size_of::<(String, V)>()
+            );
+        }
+    }
+    let bindings = (0..512)
+        .map(|index| {
+            (
+                (index % 73).to_string(),
+                crate::Binding {
+                    agent: index.to_string(),
+                    branch: format!("branch-{index}"),
+                    worktree: "/fixture".into(),
+                    ..crate::Binding::default()
+                },
+            )
+        })
+        .collect();
+    compare("Binding", bindings, |value| format!("{value:?}"));
+    let messages = (0..512)
+        .map(|index| {
+            (
+                (index % 73).to_string(),
+                crate::Message {
+                    id: index,
+                    slug: "work".into(),
+                    sender: format!("sender-{index}"),
+                    recipient: None,
+                    kind: "msg".into(),
+                    text: format!("message-{index}"),
+                    ts: 1.0,
+                },
+            )
+        })
+        .collect();
+    compare("Message", messages, |value| format!("{value:?}"));
+    let callbacks: Vec<(String, crate::Callback)> =
+        (0..512)
+            .map(|index| {
+                ((index % 73).to_string(),
+        serde_json::from_value(serde_json::json!({
+            "handle":format!("handle-{index}"),"address":format!("codex:fixture-{index}"),
+            "host":"fixture","chat":index%3==0,"session":crate::rows::SessionRow::default()
+        })).unwrap()
+    )
+            })
+            .collect();
+    compare("Callback", callbacks, |value| {
+        format!(
+            "{:?}",
+            (
+                &value.handle,
+                &value.address,
+                &value.host,
+                value.chat,
+                &value.terminal
+            )
+        )
+    });
+}

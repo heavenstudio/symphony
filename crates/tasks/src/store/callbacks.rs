@@ -17,6 +17,7 @@ use super::surreal::callbacks as sql;
 use super::{Error, Store, refused};
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::{attach, probes, pull};
+use crate::maps::Collect as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -344,7 +345,7 @@ impl Store {
                 row.chat = recipient.as_deref() == Some(row.handle.as_str());
                 (row.handle.clone(), row)
             })
-            .collect())
+            .collect_map())
     }
 
     fn stored_callbacks(&self) -> Result<Vec<Callback>, Error> {
