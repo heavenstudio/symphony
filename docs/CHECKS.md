@@ -363,8 +363,8 @@ it once the step running ends: it runs none after it, says where it stopped and 
 the client check built in the same verify (`SYMPHONY_UI_DIST`), and the check's folder
 (`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
 never served. When the client check is red on a client it built, the tests run against that one;
-when it built none, or did not run, the browser tests build the client themselves, red if that
-build fails too. The tests' log and the summary say which.
+when it built none, or did not run, the tests runner publishes one client before scheduling,
+red if that build fails too. The tests' log and the summary say which.
 
 **The tests side by side.** The tests step (`tools/test-lanes.sh`) builds the workspace's test
 binaries once with cargo-nextest 0.9.152, then reuses that binary metadata for one nextest scheduler.
