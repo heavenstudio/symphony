@@ -570,7 +570,7 @@ pub fn sort_register(text: &str, plugins: &crate::plugins::Plugins) -> Result<St
                 .iter()
                 .map(|card| card.posted_at().unwrap_or_default())
                 .collect();
-            members.sort_by(|a, b| posted[*b].cmp(&posted[*a]));
+            symphony_board::order::sort_by(&mut members, &|a, b| posted[*b].cmp(&posted[*a]));
         }
         out.push(format!("## {}", group.title())); // no count: the page and the board count live
         out.push(String::new());

@@ -187,3 +187,13 @@ fn duplicate_slug_is_refused() {
         .is_err()
     );
 }
+
+#[test]
+fn equal_and_missing_dates_preserve_complete_card_and_topic_history() {
+    let input = "Before\n<!-- register:start -->\n### First\n\n- [ ] **z** — Z\n  [2026-09-25 09:00] agent — exact Z history\n- [ ] **u** — undated first\n### Second\n\n- [ ] **a** — A\n  [2026-09-25 09:00] agent — exact A history\n- [ ] **v** — undated second\n<!-- register:end -->\nAfter\n";
+    let expected = "Before\n<!-- register:start -->\n## Needs your decision\n\n### First\n\n- [ ] **z** — Z\n  [2026-09-25 09:00] agent — exact Z history\n- [ ] **u** — undated first\n\n### Second\n\n- [ ] **a** — A\n  [2026-09-25 09:00] agent — exact A history\n- [ ] **v** — undated second\n<!-- register:end -->\nAfter\n";
+    assert_eq!(sorted(input), expected);
+    assert_eq!(sorted(expected), expected);
+    let empty = "Before\n<!-- register:start -->\n<!-- register:end -->\nAfter\n";
+    assert_eq!(sorted(empty), empty);
+}

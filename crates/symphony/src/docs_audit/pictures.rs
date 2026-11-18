@@ -164,7 +164,7 @@ pub(super) fn pictures(text: &str, definitions: &Definitions) -> Vec<Picture> {
                 ));
             }
         }
-        here.sort_by_key(|(start, _)| *start);
+        symphony_board::order::sort_by_key(&mut here, &|(start, _)| *start);
         found.extend(here.into_iter().map(|(_, picture)| picture));
     }
     found

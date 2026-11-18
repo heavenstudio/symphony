@@ -241,3 +241,90 @@ fn concurrent_reservations_allow_one_attempt_and_keep_it_after_reopening() {
         );
     }
 }
+
+#[test]
+fn descendant_latest_maps_keep_two_parent_alignment_full_posts_and_equal_clock_cutoffs() {
+    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+        let (f, first) = setup(backend);
+        let handle = first.handle.clone();
+        f.task("work-two");
+        f.store.claim("work-two", &handle).unwrap();
+        f.task_with(NewTask {
+            parent: Some("work-two".into()),
+            ..NewTask::new("other-child", "child", "owner")
+        });
+        let second = f
+            .store
+            .say("work-two", "owner", "Second request", Some(&handle))
+            .unwrap();
+        let check = |posts: Vec<(&str, Message)>| {
+            let board = f.store.board().unwrap();
+            let asked = BTreeSet::from([handle.clone()]);
+            let actual = f
+                .store
+                .pending_posts(&board, Asked::Handles(&asked))
+                .unwrap();
+            // This bounded lookup deliberately returns Message metadata without body text.
+            let expected: BTreeMap<_, _> = posts
+                .into_iter()
+                .map(|(slug, mut post)| {
+                    post.text.clear();
+                    (slug, post)
+                })
+                .collect();
+            let ordered: Vec<_> = board
+                .tasks
+                .iter()
+                .filter_map(|t| {
+                    expected
+                        .get(t.slug.as_str())
+                        .map(|post| (t.slug.clone(), post.clone()))
+                })
+                .collect();
+            assert_eq!(
+                actual
+                    .iter()
+                    .map(|p| (p.slug.clone(), p.post.clone()))
+                    .collect::<Vec<_>>(),
+                ordered
+            );
+            for p in actual {
+                assert_eq!(p.handle, handle);
+                assert_eq!(p.role, first.role);
+                assert_eq!(p.health, first.health);
+                assert_eq!(p.seen, first.seen);
+                assert_eq!(p.status, "in_progress");
+                let executor = p.executor.unwrap();
+                assert_eq!(executor.handle, handle);
+                assert!(executor.held);
+                assert_eq!(executor.health, first.health);
+            }
+        };
+        check(vec![
+            ("work", first.post.clone()),
+            ("work-two", second.clone()),
+        ]);
+        let reply = f
+            .store
+            .say("different-name", &handle, "First child answer", None)
+            .unwrap();
+        assert!(reply.id > first.post.id);
+        assert_eq!(reply.ts, first.post.ts);
+        check(vec![("work-two", second.clone())]);
+        let newer = f
+            .store
+            .say("work", "owner", "New parent request", Some(&handle))
+            .unwrap();
+        assert!(newer.id > reply.id);
+        assert_eq!(newer.ts, reply.ts);
+        check(vec![("work", newer.clone()), ("work-two", second.clone())]);
+        f.store
+            .say("other-child", &handle, "Second child answer", None)
+            .unwrap();
+        check(vec![("work", newer)]);
+        f.store
+            .say("different-name", &handle, "Newest child answer", None)
+            .unwrap();
+        check(vec![]);
+    }
+}

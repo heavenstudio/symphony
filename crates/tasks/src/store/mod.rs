@@ -8,6 +8,7 @@
 //! optimistic conflict) or finds itself stale reads and decides again.
 
 use crate::health::{self, EXECUTING, Health};
+use crate::maps::Collect as _;
 pub(crate) use crate::quote::repr;
 use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
 use crate::rpc::{Client, DbError};
@@ -432,7 +433,7 @@ impl Store {
                     .into_iter()
                     .map(|rows| rows.into_iter().map(message).collect()),
             )
-            .collect())
+            .collect_map())
     }
 
     /// Become the executor. Of any number of claims at once, one wins. A claim that starts ready
@@ -790,16 +791,17 @@ impl Store {
         TRIED_AGAIN.with(std::cell::Cell::get)
     }
 
-    fn retrying<T>(&self, once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
-        retried(PATIENCE, once)
+    fn retrying<T>(&self, mut once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
+        retried(PATIENCE, &mut once)
     }
 }
 
 /// `once` tried until it gives its result or refuses, again each time the board moved under it,
 /// for `patience` at most: each try again counted on this thread ([`Store::tried_again_here`]).
+#[inline(never)]
 fn retried<T>(
     patience: Duration,
-    mut once: impl FnMut() -> Result<T, Failure>,
+    once: &mut dyn FnMut() -> Result<T, Failure>,
 ) -> Result<T, Error> {
     let began = Instant::now();
     let mut attempt = 0;

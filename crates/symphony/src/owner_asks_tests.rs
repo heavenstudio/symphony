@@ -620,3 +620,34 @@ fn a_reply_is_placed_by_its_checkout_its_branch_and_its_documents_route() {
     assert_eq!(reply_place(&outside.path("docs/A.md")), None);
     assert_eq!(reply_place(&main.path("docs/none.md")), None);
 }
+
+#[test]
+fn held_card_selection_prefers_main_then_first_lexical_equal_rank() {
+    let held = [
+        ("@z/docs/A.md", "lamp-a"),
+        ("@a/docs/A.md", "lamp-a"),
+        ("@0/docs/B.md", "lamp-a"),
+        ("@0/docs/A.md", "another-card"),
+    ];
+    let branch_copies = reading(Vec::new(), &held);
+    assert_eq!(
+        read(&card(None), &branch_copies),
+        answered("@a/docs/A.md#lamp-a"),
+        "equal ranks retain the first held-key order, regardless of insertion order"
+    );
+    let mut on_main = held.to_vec();
+    on_main.push(("docs/A.md", "lamp-a"));
+    assert_eq!(
+        read(&card(None), &reading(Vec::new(), &on_main)),
+        answered("docs/A.md#lamp-a"),
+        "main outranks the lexically earlier branch pages"
+    );
+    assert_eq!(
+        read(
+            &card(None),
+            &reading(vec![item("@z/docs/A.md", "lamp-a", "waiting")], &on_main)
+        ),
+        Read::Waiting,
+        "an agent waiting on any matching copy takes precedence over selection"
+    );
+}

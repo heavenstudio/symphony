@@ -243,3 +243,98 @@ fn a_tree_watches_its_projects_documents_folder_and_what_its_plugins_watch_outsi
         recursive(&["docs", "posters", "room/shelf"])
     );
 }
+
+#[test]
+fn watch_root_depth_ties_keep_manifest_order_and_drop_nested_roots() {
+    shelf::install().unwrap();
+    let tree = Tree::new();
+    let root = repository(&tree);
+    tree.write("main/symphony.toml", "[[entrypoints]]\nurl='/nested/'\nfolder='root/nested'\n[[entrypoints]]\nurl='/z/'\nfolder='zz'\n[[entrypoints]]\nurl='/a/'\nfolder='aa'\n[[entrypoints]]\nurl='/root/'\nfolder='root'\n");
+    assert_eq!(
+        tree_inputs(&root),
+        [
+            ("zz".into(), RecursiveMode::Recursive),
+            ("aa".into(), RecursiveMode::Recursive),
+            ("root".into(), RecursiveMode::Recursive),
+        ]
+    );
+    tree.write(
+        "main/symphony.toml",
+        "[[entrypoints]]\nurl='/z/'\nfolder='zz'\n[[entrypoints]]\nurl='/'\nfolder='.'\n",
+    );
+    assert_eq!(
+        tree_inputs(&root),
+        [(String::new(), RecursiveMode::Recursive)]
+    );
+}
+
+#[test]
+fn shared_watch_root_sort_preserves_all_equal_length_refs_and_reports_cpu_cost() {
+    let folders: Vec<_> = (0..512)
+        .map(|index| format!("{index:04}-{}", "x".repeat(index % 11)))
+        .collect();
+    let mut actual: Vec<_> = folders.iter().rev().collect();
+    let mut expected = actual.clone();
+    let (_, old_cpu) = test_time::cpu::spent(|| expected.sort_by_key(|folder| folder.len()));
+    let (_, new_cpu) = test_time::cpu::spent(|| {
+        symphony_board::order::sort_by_key(&mut actual, &|folder| folder.len())
+    });
+    assert!(
+        actual
+            .iter()
+            .zip(&expected)
+            .all(|(a, b)| std::ptr::eq(*a, *b))
+    );
+    assert_eq!(actual.len(), expected.len());
+    eprintln!(
+        "watch-root report sort: n={}, reference_bytes={}, position_bytes={}, old_thread_cpu={old_cpu:?}, shared_thread_cpu={new_cpu:?}; additional usize-sort scratch; production rebuilds watch inputs on configuration refresh",
+        actual.len(),
+        std::mem::size_of::<&String>(),
+        actual.len() * std::mem::size_of::<usize>()
+    );
+}
+
+#[test]
+fn native_tree_maps_match_listing_on_startup_addition_and_removal() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let compare = |hub: &Hub| {
+        let expected: BTreeMap<_, _> = branches::trees(&root)
+            .into_iter()
+            .map(|t| (t.id(), t.path))
+            .collect();
+        assert_eq!(*hub.trees.read().unwrap(), expected);
+        for (id, path) in expected {
+            assert_eq!(hub.tree(&id), Some(path));
+        }
+    };
+    let hub = Hub::new(&root, &root.join("build/client"));
+    compare(&hub);
+    let branch = tree.path("branch-z");
+    crate::testing::git(
+        &root,
+        &["worktree", "add", "-b", "tools/z", branch.to_str().unwrap()],
+    );
+    let second = tree.path("branch-a");
+    crate::testing::git(
+        &root,
+        &["worktree", "add", "-b", "tools/a", second.to_str().unwrap()],
+    );
+    let started = Hub::new(&root, &root.join("build/client"));
+    compare(&started);
+    hub.refresh_docs(None).unwrap();
+    compare(&hub);
+    assert_eq!(
+        hub.trees
+            .read()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["tools~a", "tools~z"]
+    );
+    crate::testing::git(&root, &["worktree", "remove", branch.to_str().unwrap()]);
+    hub.refresh_docs(None).unwrap();
+    compare(&hub);
+    assert!(hub.tree("tools~z").is_none());
+}

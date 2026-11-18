@@ -813,7 +813,7 @@ pub fn scan_listed(root: &Path, trees: Vec<Tree>, finished: &BTreeSet<String>) -
 }
 
 fn scan_trees(root: &Path, mut all: Vec<Tree>, finished: &BTreeSet<String>) -> Scan {
-    all.sort_by(|a, b| a.branch.cmp(&b.branch));
+    symphony_board::order::sort_by(&mut all, &|a, b| a.branch.cmp(&b.branch));
     if all.is_empty() {
         return Scan::default();
     }
