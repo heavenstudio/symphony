@@ -242,11 +242,11 @@ fn a_local_settings_file_is_judged_with_the_project_file() {
     let tree = Tree::new();
     let root = folder(&tree, "lamps");
     let local = root.join(symphony::project::LOCAL_FILE);
-    let committed = "[agents.models]\nexecutor = \"opus\"\n";
+    let committed = "[agents.models]\nexecutor = \"committed-model\"\n";
     // One that holds preferences alone passes, and is said.
     std::fs::write(
         &local,
-        "[agents.models]\nexecutor = \"fable\"\n\n[limits]\nmachine_agents = 4\n",
+        "[agents.models]\nexecutor = \"local-model\"\n\n[limits]\nmachine_agents = 4\n",
     )
     .unwrap();
     let (code, out, err) = check(&root, committed);
@@ -259,7 +259,10 @@ fn a_local_settings_file_is_judged_with_the_project_file() {
     );
     // And the project the Symphony loads takes its model.
     let project = symphony::project::Project::load(&root).unwrap();
-    assert_eq!(project.agents.models.executor.as_deref(), Some("fable"));
+    assert_eq!(
+        project.agents.models.executor.as_deref(),
+        Some("local-model")
+    );
     assert_eq!(project.agents.models.reviewer, None);
     for (text, named) in [
         (
@@ -300,7 +303,10 @@ fn a_local_settings_file_is_judged_with_the_project_file() {
         );
         // Refused, none of it is read: the project loads on the committed settings.
         let project = symphony::project::Project::load(&root).unwrap();
-        assert_eq!(project.agents.models.executor.as_deref(), Some("opus"));
+        assert_eq!(
+            project.agents.models.executor.as_deref(),
+            Some("committed-model")
+        );
     }
     // Both files refused, both are said.
     let (code, _, err) = check(&root, "[hooks]\n");
