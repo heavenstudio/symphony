@@ -169,6 +169,10 @@ mod tests {
                 "-p runner-fixture --lib -- timeout --exact"
             ]
         );
+        eprintln!("Live nextest fixture reader:\n{quoted}");
+        for args in args {
+            eprintln!("Fixture rerun arguments: {args}");
+        }
     }
 
     #[test]
