@@ -118,6 +118,24 @@ fn the_names_consumers_call_keep_their_shapes() {
         &[String],
         &str,
     ) -> Result<recovery::BoundTask> = Store::amend_bound;
+    // The bound edit, which rewrites a brief too, and where an integration keeps its state.
+    let _: fn(
+        &Store,
+        &str,
+        &recovery::Bound,
+        &recovery::Edit,
+        &str,
+    ) -> Result<recovery::BoundTask> = Store::edit_bound;
+    let _ = |title: Option<String>, body: Option<String>, links: Vec<String>| {
+        let edit = recovery::Edit { title, body, links };
+        (
+            edit.clone() == recovery::Edit::default(),
+            serde_json::to_string(&edit).unwrap(),
+        )
+    };
+    let _: &str = symphony_board::folders::INTEGRATIONS;
+    let _: fn(&Path, &str) -> std::result::Result<PathBuf, String> =
+        symphony_board::folders::integration;
     let _: fn(&Store) -> Result<String> = Store::rebind;
     let _: fn(&Store) -> Result<Option<String>> = Store::recovery_generation;
     let _ = |read: recovery::BoundTask| {

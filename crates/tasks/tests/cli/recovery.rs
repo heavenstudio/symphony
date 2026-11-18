@@ -11,13 +11,13 @@ use symphony_board::recovery::Authority as _;
 use symphony_board::server::Home;
 use symphony_board::{Error, NewTask};
 
-struct Alpha {
-    root: PathBuf,
+pub(crate) struct Alpha {
+    pub(crate) root: PathBuf,
     machine: PathBuf,
 }
 
 impl Alpha {
-    fn new(name: &str) -> Alpha {
+    pub(crate) fn new(name: &str) -> Alpha {
         let dir = scratch(name);
         let root = repository(&dir.join("alpha"));
         std::fs::write(root.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
@@ -26,7 +26,7 @@ impl Alpha {
         Alpha { root, machine }
     }
 
-    fn env(&self) -> Env {
+    pub(crate) fn env(&self) -> Env {
         let vars: BTreeMap<String, String> = [
             ("SYMPHONY_SURREAL", surreal().display().to_string()),
             ("SYMPHONY_MACHINE_DIR", self.machine.display().to_string()),
@@ -46,7 +46,7 @@ impl Alpha {
         Home::in_common(&self.root.join(".git"), Some(&surreal()))
     }
 
-    fn run(&self, args: &[&str]) -> (i32, String, String) {
+    pub(crate) fn run(&self, args: &[&str]) -> (i32, String, String) {
         let ran = run(&self.env(), args, "");
         (ran.code, ran.out, ran.err)
     }

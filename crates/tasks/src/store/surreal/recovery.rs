@@ -1,5 +1,7 @@
 //! The statements of `store/recovery.rs`.
 
+use super::logged;
+
 /// The board's recovery generation, as a value.
 macro_rules! generation {
     () => {
@@ -46,6 +48,34 @@ pub(in crate::store) fn amend(acts: bool) -> String {
     format!("{FENCED}{}\n{READ}", super::work::amend(acts))
 }
 
+/// A bound edit ([`crate::store::recovery::Edit`]): [`FENCED`], then the task's title replaced
+/// when `$retitle`, its brief when `$rewrite` and `$links` added, each change of the two a line on
+/// the thread, then the task as the write left it ([`READ`]).
+pub(in crate::store) fn edit(acts: bool) -> String {
+    let act = if acts { super::write::ACT } else { "" };
+    let said = logged("$slug", "$actor", "'system'", "$said", "NONE");
+    format!(
+        "{FENCED}{act}
+LET $task = (SELECT title, body FROM ONLY type::record('task', $slug));
+LET $new_title = IF $retitle {{ $title }} ELSE {{ $task.title }};
+LET $new_body = IF $rewrite {{ $body }} ELSE {{ $task.body }};
+FOR $link IN $links {{
+    UPSERT type::record('link', [$slug, 'doc', $link])
+        CONTENT {{ slug: $slug, kind: 'doc', target: $link }} RETURN NONE;
+}};
+UPDATE type::record('task', $slug) SET title = $new_title, body = $new_body, version += 1 RETURN NONE;
+IF $task.title != $new_title {{
+    LET $said = $actor + ' retitled it: ' + $task.title + ' → ' + $new_title;
+    {said}
+}};
+IF $task.body != $new_body {{
+    LET $said = $actor + ' rewrote its brief';
+    {said}
+}};
+{READ}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,6 +91,12 @@ mod tests {
             .unwrap();
         assert!(fence < first_write, "{amend}");
         assert!(amend.ends_with(READ));
+        for acts in [true, false] {
+            let edit = edit(acts);
+            assert!(edit.starts_with(FENCED) && edit.ends_with(READ), "{edit}");
+            assert_eq!(edit.contains(super::super::write::ACT), acts);
+            assert!(crate::schema::mutates(&edit));
+        }
         assert!(!crate::schema::mutates(READ) && !crate::schema::mutates(GENERATION));
         assert!(crate::schema::mutates(REBIND) && REBIND.ends_with(GENERATION));
     }

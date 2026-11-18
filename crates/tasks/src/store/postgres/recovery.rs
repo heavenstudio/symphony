@@ -62,6 +62,43 @@ pub(in crate::store) fn amend(acts: bool) -> Pg<'static> {
     Pg::script_then(format!("{FENCED}\n{block}"), read_value())
 }
 
+/// A bound edit (`super::super::surreal::recovery::edit`): [`FENCED`], then the title replaced
+/// when `retitle`, the brief when `rewrite` and `links` added, each change of the two a line on
+/// the thread, then the task as the write left it.
+pub(in crate::store) fn edit(acts: bool) -> Pg<'static> {
+    let act = if acts { super::act() } else { String::new() };
+    let said = super::work::said;
+    let block = format!(
+        "{FENCED}
+{act} \
+DECLARE \
+    title_ text; \
+    body_ text; \
+    new_title_ text; \
+    new_body_ text; \
+BEGIN \
+    SELECT title, body INTO title_, body_ FROM task WHERE slug = v ->> 'slug'; \
+    new_title_ := CASE WHEN (v ->> 'retitle')::boolean THEN v ->> 'title' ELSE title_ END; \
+    new_body_ := CASE WHEN (v ->> 'rewrite')::boolean THEN v ->> 'body' ELSE body_ END; \
+    INSERT INTO link (id, slug, kind, target) \
+        SELECT DISTINCT jsonb_build_array(v ->> 'slug', 'doc', l), v ->> 'slug', 'doc', l \
+        FROM jsonb_array_elements_text(v -> 'links') AS l \
+        ON CONFLICT (id) DO NOTHING; \
+    UPDATE task SET title = new_title_, body = new_body_, version = version + 1 \
+        WHERE slug = v ->> 'slug'; \
+    IF title_ IS DISTINCT FROM new_title_ THEN \
+        {} \
+    END IF; \
+    IF body_ IS DISTINCT FROM new_body_ THEN \
+        {} \
+    END IF; \
+END;",
+        said("(v ->> 'actor') || ' retitled it: ' || title_ || ' → ' || new_title_"),
+        said("(v ->> 'actor') || ' rewrote its brief'")
+    );
+    Pg::script_then(block, read_value())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,6 +116,15 @@ mod tests {
             .unwrap();
         assert!(block.find("bound_stale").unwrap() < first_write, "{block}");
         assert_eq!(answer, read_value());
+        for acts in [true, false] {
+            let Pg::Script(block, Some(answer)) = edit(acts) else {
+                panic!("a bound edit is a block and its read");
+            };
+            assert!(block.starts_with(FENCED), "{block}");
+            assert_eq!(block.contains("UPDATE session"), acts, "{block}");
+            assert!(block.find("bound_stale").unwrap() < block.find("UPDATE task").unwrap());
+            assert_eq!(answer, read_value());
+        }
         assert_eq!(read(), Pg::read(read_value()));
         assert_eq!(rebind(), Pg::script_then(ROTATE, VALUE));
         assert_eq!(generation(), Pg::read(VALUE));
