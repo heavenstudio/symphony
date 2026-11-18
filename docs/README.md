@@ -60,8 +60,8 @@ still await implementation; its approval alone does not make it current app beha
   boundary for working evidence, Git revisions and recovery on a fresh application disk.
 - [A project's task workflow](analysis/project-workflow.md) — the proposed project-defined
   steps, the existing gate boundary, and migration that preserves the default flow.
-- [The board's cutover to PostgreSQL](analysis/board-pg-cutover.md) — the proposed order for
-  moving live boards, one board's move, the way back, and what is not built yet.
+- [The board's cutover to PostgreSQL](analysis/board-pg-cutover.md) — the order for moving
+  live boards, one board's move, the way back, what is not built yet and what the move waits for.
 - [Managed PostgreSQL](analysis/hosted-postgresql.md) — the proposed hosted connection,
   connection budget, database boundary and PostgreSQL 16/18 validation contract.
 - [Configurable delivery workflows](analysis/configurable-delivery-workflow.md) — the proposed
@@ -77,8 +77,8 @@ still await implementation; its approval alone does not make it current app beha
 - [The slow tests, reviewed](analysis/slow-tests.md) — a time per test for the release run's six
   slowest binaries, what each slow test proves, and what is kept, made faster, merged or removed.
 - [The release pipeline, redesigned](analysis/release-pipeline.md) — a night of red release runs
-  read by run, a pre-certified CI proposal checked against the stamps, and the options, a hosted
-  run on GitHub among them.
+  read by run, a pre-certified CI proposal checked against the stamps, and the options with
+  what was chosen of them, a hosted run on GitHub among them.
 - [Naming inventory and superseded plan](analysis/own-names.md) — historical naming evidence,
   with pointers to the current naming rules and state paths.
 - [History](history/README.md) — retained records and superseded measurements.

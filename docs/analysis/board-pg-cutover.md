@@ -1,9 +1,10 @@
 # The board's cutover to PostgreSQL, and the way back
 
-The procedure that would move a live board from SurrealDB to PostgreSQL, for the owner to judge
-before anything live moves: the order, what is copied when, how long a board cannot be written,
-how to go back, and what the two stores measured side by side. It is a proposal. Today PostgreSQL
-serves only scratch boards ([POSTGRESQL](../POSTGRESQL.md)), and no command here moves a live one.
+The procedure that moves a live board from SurrealDB to PostgreSQL: the order, what is copied
+when, how long a board cannot be written, how to go back, and what the two stores measured side
+by side. [What a live move waits for](#the-choice) is decided: the pieces not built yet, a clean
+rehearsal, and the memory peak found and answered. Today PostgreSQL serves only scratch boards
+([POSTGRESQL](../POSTGRESQL.md)), and no command here moves a live one.
 
 ## What the comparison showed
 
@@ -46,14 +47,15 @@ days at rest.
 
 ## What is not ready
 
-Each is needed before a live board moves. None is built by this page.
+Each is needed before a live board moves. None is built by this page, and none waits for the
+memory task of [the choice](#the-choice).
 
 | what | state |
 |---|---|
 | The live-board guard covers PostgreSQL's tables and finds a PostgreSQL board | landed with the lifecycle |
 | Holds, stopped-cluster snapshots, reclaim and the schema fence on PostgreSQL | landed, proved on scratch boards |
 | A copy does not let an old task number or version be taken for a new one | landed with `tools/board-recovery-generation`, board schema 22: every copy of a whole board replaces its [recovery generation](../TASKS.md#a-board-that-was-copied-or-restored), and a write naming a task read before the copy is refused. The cutover is itself such a copy |
-| PostgreSQL starting for a board that is not a scratch one | not built: it is refused by design until this is answered |
+| PostgreSQL starting for a board that is not a scratch one | not built: it is refused by design |
 | The cutover command: hold, export, copy, compare, switch, with each failure leaving the board as it was | not built |
 | Restoring a PostgreSQL snapshot over the board it was taken from | not built: a snapshot restores into a new scratch home only |
 | The release refresh on a PostgreSQL board: its snapshot before a schema move is SurrealDB's export | not built |
@@ -125,17 +127,20 @@ minutes; the rehearsal gives the real figure, for the whole of it, before any li
 
 ## The choice
 
-The procedure is the same either way. The choice is what the live move waits for.
+What the live move waits for, chosen on [its card](../DECISIONS.md#board-pg-cutover): the
+prerequisites, and the memory peak.
 
-- **A: the prerequisites alone.** Once what is not ready is built and the rehearsal is clean, the
-  boards move in the order above. The measured cost is accepted: more server CPU, and a memory
-  peak over the 512 MiB target while ten or more sessions write at once.
-- **B: the prerequisites, and the memory peak.** As A, and the live move also waits for one task:
-  find why PostgreSQL peaks at 1,752 MiB with thirty sessions and bring it under the target, or
-  show why it cannot be, measured by the same driver. The prerequisites and the rehearsal go
-  ahead meanwhile, so B delays only the last step.
+- **The prerequisites and the rehearsal.** What is not ready above is built, and the rehearsal
+  on a copy is clean. They go ahead now.
+- **The memory peak.** One task finds why PostgreSQL's server peaks at 1,752 MiB with thirty
+  sessions, and at 14.8 GiB on a board ten times the size, and brings it under the 512 MiB
+  target, or shows why it cannot be, measured by the same driver on scratch boards. It delays
+  only the last step, the move of a live board.
 
-B is recommended. The target was part of what was approved, the run misses it by more than three
+The target was part of what the store was approved with, the run misses it by more than three
 times, and nobody knows the cause yet: it may be a setting, or it may be what one connection per
 command costs. The cutover is the one step that takes a hold on a live board and a second hold to
 undo. Everything before it is free to do and free to drop.
+
+The other option, not taken, was to move on the prerequisites alone and accept the measured
+cost.
