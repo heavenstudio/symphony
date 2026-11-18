@@ -209,7 +209,7 @@ impl Client {
         let maker = self.of(MAINTENANCE);
         match maker.simple(&format!("CREATE DATABASE {}", self.database)) {
             Ok(_) => Ok(()),
-            Err(DbError::Failed(said)) if coded(&said, DATABASE_THERE) => Ok(()),
+            Err(DbError::Failed(said)) if database_there(&said) => Ok(()),
             Err(other) => Err(other),
         }
     }
@@ -519,6 +519,13 @@ pub(crate) fn error_of(body: &[u8]) -> DbError {
 /// Whether `said`, a [`DbError::Failed`]'s words, is the server's error of SQLSTATE `state`.
 fn coded(said: &str, state: &str) -> bool {
     said.ends_with(&format!("(SQLSTATE {state})"))
+}
+
+/// Concurrent CREATE DATABASE can meet either on the database's name or on the catalogue's
+/// unique index for that name. No other unique constraint means this database was made.
+fn database_there(said: &str) -> bool {
+    coded(said, DATABASE_THERE)
+        || (coded(said, "23505") && said.contains("\"pg_database_datname_index\""))
 }
 
 /// Whether `said` is the server's refusal of a connection to a database it does not hold: a board

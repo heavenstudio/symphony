@@ -678,6 +678,22 @@ fn a_database_is_a_plain_name() {
 }
 
 #[test]
+fn only_a_duplicate_database_or_its_name_index_means_another_maker_won() {
+    assert!(database_there("database already exists (SQLSTATE 42P04)"));
+    assert!(database_there(
+        "duplicate key value violates unique constraint \"pg_database_datname_index\" (SQLSTATE 23505)"
+    ));
+    for said in [
+        "duplicate key value violates unique constraint \"pg_database_oid_index\" (SQLSTATE 23505)",
+        "pg_database_datname_index (SQLSTATE 23505)",
+        "\"pg_database_datname_index\" (SQLSTATE 42501)",
+        "database already exists (SQLSTATE 42P04) more text",
+    ] {
+        assert!(!database_there(said), "{said}");
+    }
+}
+
+#[test]
 fn a_client_says_where_it_reaches() {
     let client = Client::new(Path::new("/tmp/symphony-pg-1"), "board_1");
     assert_eq!(client.addr(), "postgresql:/tmp/symphony-pg-1");

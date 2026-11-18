@@ -86,9 +86,121 @@ impl Board {
 
 impl Drop for Board {
     fn drop(&mut self) {
+        if let Some(hold) = self.pg.held() {
+            let _ = self.pg.release(&hold.by, None);
+        }
         let _ = self.pg.stop();
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+#[test]
+fn holds_snapshots_and_recovery_keep_the_stopped_cluster_and_the_holder_contract() {
+    let board = Board::new("lifecycle");
+    let serving = board.pg.ensure().unwrap();
+    board.psql(
+        &serving,
+        "CREATE TABLE kept (n int); INSERT INTO kept VALUES (1)",
+    );
+    assert!(
+        board.pg.snapshot(1.0).is_err(),
+        "never copy a running cluster"
+    );
+    let held = board.pg.hold("amber-heron", "snapshot").unwrap();
+    assert_eq!(held.stopped.unwrap().pid, serving.pid);
+    board.none_left();
+    assert!(board.pg.ensure().is_err());
+    assert!(board.pg.stop().is_err());
+    assert!(board.pg.reclaim("postgres").is_err());
+    assert!(board.pg.hold("other", "take over").is_err());
+    assert!(board.pg.release("other", None).is_err());
+    assert_eq!(board.pg.hold("amber-heron", "retry").unwrap().stopped, None);
+
+    let snapshot = board.pg.snapshot(1.0).unwrap();
+    let partial = snapshot.parent().unwrap().join(".taking");
+    std::fs::create_dir(&partial).unwrap();
+    std::fs::write(partial.join("PG_VERSION"), "partial").unwrap();
+    assert_eq!(
+        board.pg.snapshots().unwrap().as_slice(),
+        std::slice::from_ref(&snapshot)
+    );
+    let second = board.pg.snapshot(1.0).unwrap();
+    assert_ne!(snapshot, second, "two in one second keep both");
+    assert!(!partial.exists());
+    assert_eq!(board.pg.snapshots().unwrap().len(), 2);
+    board.pg.release("other", Some("amber-heron")).unwrap();
+    assert_eq!(board.pg.held(), None);
+    let resumed = board.pg.ensure().unwrap();
+    board.psql(&resumed, "INSERT INTO kept VALUES (2)");
+
+    let recovered = Board::new("recovered");
+    recovered.pg.restore(&snapshot).unwrap();
+    assert!(
+        recovered.pg.restore(&snapshot).is_err(),
+        "never replace existing data"
+    );
+    let restored = recovered.pg.ensure().unwrap();
+    assert_eq!(recovered.psql(&restored, "SELECT sum(n) FROM kept"), "1");
+    assert_eq!(board.psql(&resumed, "SELECT sum(n) FROM kept"), "3");
+    assert_eq!(
+        std::fs::read_to_string(snapshot.join("PG_VERSION"))
+            .unwrap()
+            .trim(),
+        serving.version.split('.').next().unwrap()
+    );
+}
+
+#[test]
+fn reclaim_returns_dead_space_without_changing_the_database_rows() {
+    let board = Board::new("vacuum");
+    assert!(board.pg.reclaim("postgres").is_err());
+    let serving = board.pg.ensure().unwrap();
+    board.psql(&serving, "CREATE TABLE bloat AS SELECT g, md5(g::text) AS value FROM generate_series(1, 10000) g; DELETE FROM bloat WHERE g > 10");
+    let size = || {
+        board
+            .psql(&serving, "SELECT pg_relation_size('bloat')")
+            .parse::<u64>()
+            .unwrap()
+    };
+    let before = size();
+    board.pg.reclaim("postgres").unwrap();
+    assert!(size() < before, "VACUUM FULL returned the dead pages");
+    assert_eq!(
+        board.psql(&serving, "SELECT count(*), sum(g) FROM bloat"),
+        "10|55"
+    );
+}
+
+#[test]
+fn snapshots_refuse_unmade_clusters_and_external_tablespaces_and_recovery_checks_the_major() {
+    let board = Board::new("snapshot-refusals");
+    assert!(board.pg.snapshots().unwrap().is_empty());
+    assert!(board.pg.snapshot(1.0).is_err());
+    board.pg.ensure().unwrap();
+    board.pg.stop().unwrap();
+    let external = board.pg.data().join("pg_tblspc").join("outside");
+    std::fs::write(&external, "not part of this cluster").unwrap();
+    assert!(
+        board
+            .pg
+            .snapshot(1.0)
+            .unwrap_err()
+            .to_string()
+            .contains("tablespaces")
+    );
+    std::fs::remove_file(external).unwrap();
+    let snapshot = board.pg.snapshot(1.0).unwrap();
+    std::fs::write(snapshot.join("PG_VERSION"), "17").unwrap();
+    let target = Board::new("wrong-major");
+    assert!(
+        target
+            .pg
+            .restore(&snapshot)
+            .unwrap_err()
+            .to_string()
+            .contains("same major")
+    );
+    assert!(!target.pg.data().exists());
 }
 
 #[test]

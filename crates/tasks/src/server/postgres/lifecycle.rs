@@ -1,0 +1,251 @@
+//! PostgreSQL's stopped-cluster snapshots and holds. A snapshot carries the complete cluster,
+//! WAL included, and is published by rename only once copied. Recovery copies it into a new
+//! scratch board; the snapshot itself is never started or changed. Physical recovery requires
+//! the same PostgreSQL major. Routine free space is reused by autovacuum; `reclaim` asks
+//! PostgreSQL to return it to the filesystem with VACUUM FULL, without exporting or swapping data.
+
+use super::{DATA, Postgres, Serving, command, fs, io, output};
+use crate::server::snapshot::{clone, copy, named, order, stamp};
+use crate::server::starters::Doing;
+use crate::server::{Hold, ServerError};
+use std::path::{Path, PathBuf};
+
+const SNAPSHOTS: &str = "postgresql-snapshots";
+const TAKING: &str = ".taking";
+
+/// A PostgreSQL board held stopped, under the same holder/release protocol as any board.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Holding {
+    pub hold: Hold,
+    pub stopped: Option<Serving>,
+    pub data: PathBuf,
+}
+
+impl Postgres {
+    /// Hold the board stopped. The hold is recorded before shutdown, so a failed stop leaves it
+    /// held; the holder repeats this call to finish it. No start succeeds until release.
+    pub fn hold(&self, by: &str, why: &str) -> Result<Holding, ServerError> {
+        self.scratch_only()?;
+        let _locked = self.home.lock(Doing::Holding)?;
+        self.home.allow_postgresql()?;
+        let hold = self.home.hold_as(by, why)?;
+        let stopped = self.stop_held()?;
+        Ok(Holding {
+            hold,
+            stopped,
+            data: self.data(),
+        })
+    }
+
+    /// The board's hold, including an unreadable hold, which fails closed.
+    pub fn held(&self) -> Option<Hold> {
+        self.home.held()
+    }
+
+    /// Release without starting anything. Only the holder, or someone naming that holder, can.
+    pub fn release(&self, by: &str, of: Option<&str>) -> Result<Option<Hold>, ServerError> {
+        self.home.release(by, of)
+    }
+
+    /// Keep the complete cluster while stopped, under the starters' lock. Refuse a running
+    /// server or an unreadable status. A clone is preferred, with a plain copy on other volumes.
+    /// Snapshots are kept until explicitly removed; a partial copy is never listed as one.
+    pub fn snapshot(&self, now: f64) -> Result<PathBuf, ServerError> {
+        self.scratch_only()?;
+        let _locked = self.home.lock(Doing::Snapshotting)?;
+        self.home.allow_postgresql()?;
+        self.stopped()?;
+        let folder = self.home.dir.join(SNAPSHOTS);
+        fs::create_dir_all(&folder).map_err(io("could not make", &folder))?;
+        let taking = folder.join(TAKING);
+        copy_cluster(&self.data(), &taking)?;
+        let base = stamp(now);
+        let mut name = base.clone();
+        let mut suffix = 0;
+        while folder.join(&name).exists() {
+            suffix += 1;
+            name = format!("{base}.{suffix}");
+        }
+        let path = folder.join(name);
+        fs::rename(&taking, &path).map_err(io("could not publish", &path))?;
+        Ok(path)
+    }
+
+    /// Whole snapshots, newest names first. The work folder of an interrupted copy is excluded.
+    pub fn snapshots(&self) -> Result<Vec<PathBuf>, ServerError> {
+        let folder = self.home.dir.join(SNAPSHOTS);
+        let entries = match fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(why) if why.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(why) => return Err(io("could not read", &folder)(why)),
+        };
+        let mut paths = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(io("could not read", &folder))?;
+            if entry.file_name().to_str().is_some_and(named)
+                && entry.path().join("PG_VERSION").is_file()
+            {
+                paths.push(entry.path());
+            }
+        }
+        crate::order::sort_by(&mut paths, &|a, b| {
+            let a = a.file_name().unwrap().to_str().unwrap();
+            let b = b.file_name().unwrap().to_str().unwrap();
+            order(b).cmp(&order(a))
+        });
+        Ok(paths)
+    }
+
+    /// Recover a snapshot into this new scratch board, without modifying or starting the source.
+    /// Existing data is never replaced, and a failed or interrupted copy is retried from scratch.
+    pub fn restore(&self, snapshot: &Path) -> Result<(), ServerError> {
+        self.scratch_only()?;
+        let _locked = self.home.lock(Doing::Snapshotting)?;
+        self.home.allow_postgresql()?;
+        self.home.unheld()?;
+        let data = self.data();
+        if data.exists() {
+            return Err(ServerError::Io(format!(
+                "{} already holds PostgreSQL data: recovery needs a new scratch board",
+                data.display()
+            )));
+        }
+        let version_file = snapshot.join("PG_VERSION");
+        let version =
+            fs::read_to_string(&version_file).map_err(io("could not read", &version_file))?;
+        if version.trim().parse::<u32>().ok() != super::major(&self.version()?) {
+            return Err(ServerError::Io(format!(
+                "{} is PostgreSQL {}, and physical recovery needs the same major",
+                snapshot.display(),
+                version.trim()
+            )));
+        }
+        self.stopped_at(snapshot)?;
+        let taking = self.home.dir.join(format!("{DATA}.restoring"));
+        copy_cluster(snapshot, &taking)?;
+        // A snapshot taken after an unclean end can carry the old server's pid file. Its data is
+        // now a different cluster path, whose new server must make its own record.
+        let pid = taking.join("postmaster.pid");
+        match fs::remove_file(&pid) {
+            Ok(()) => {}
+            Err(why) if why.kind() == std::io::ErrorKind::NotFound => {}
+            Err(why) => return Err(io("could not remove", &pid)(why)),
+        }
+        fs::rename(&taking, &data).map_err(io("could not publish", &data))
+    }
+
+    /// Reclaim the named database's dead space using PostgreSQL's rewrite. It needs temporary
+    /// disk room and locks each table exclusively; it changes no board rows or schema version.
+    pub fn reclaim(&self, database: &str) -> Result<(), ServerError> {
+        self.scratch_only()?;
+        assert!(crate::rpc::plain(database), "a database is a plain name");
+        let _locked = self.home.lock(Doing::Reclaiming)?;
+        self.home.allow_postgresql()?;
+        self.home.unheld()?;
+        if self.running(&self.version()?)?.is_none() {
+            return Err(ServerError::NotUp(
+                "PostgreSQL must be running to reclaim a database".into(),
+            ));
+        }
+        crate::pg::Client::new(&self.socket(), database)
+            .simple("VACUUM (FULL, ANALYZE)")
+            .map(|_| ())
+            .map_err(|why| {
+                ServerError::Io(format!(
+                    "could not reclaim PostgreSQL database {database}: {why:?}"
+                ))
+            })
+    }
+
+    fn stopped(&self) -> Result<(), ServerError> {
+        self.stopped_at(&self.data())
+    }
+
+    fn stopped_at(&self, data: &Path) -> Result<(), ServerError> {
+        let pg_ctl = self.program("pg_ctl");
+        let said = output(command(&pg_ctl).args(["status", "-D"]).arg(data))
+            .map_err(io("could not run", &pg_ctl))?;
+        if said.status.code() == Some(3) {
+            Ok(())
+        } else {
+            Err(ServerError::Io(format!(
+                "PostgreSQL at {} is running or its status is unknown: no snapshot was taken ({})",
+                data.display(),
+                String::from_utf8_lossy(&said.stdout).trim()
+            )))
+        }
+    }
+}
+
+/// Copy a whole private cluster, never a cluster with external tablespaces whose files would be
+/// absent. Remove only the work folder this operation owns, including an interrupted attempt.
+fn copy_cluster(from: &Path, to: &Path) -> Result<(), ServerError> {
+    let source = from
+        .canonicalize()
+        .map_err(io("could not resolve snapshot source", from))?;
+    let target = to
+        .parent()
+        .unwrap()
+        .canonicalize()
+        .map_err(io("could not resolve snapshot target", to))?
+        .join(to.file_name().unwrap());
+    if source.starts_with(&target) || target.starts_with(&source) {
+        return Err(ServerError::Io(
+            "snapshot source and target overlap: nothing was copied or removed".into(),
+        ));
+    }
+    let tablespaces = from.join("pg_tblspc");
+    let mut entries = fs::read_dir(&tablespaces).map_err(io("could not read", &tablespaces))?;
+    if entries.next().is_some() {
+        return Err(ServerError::Io(
+            "a board snapshot cannot carry external PostgreSQL tablespaces".into(),
+        ));
+    }
+    if to.exists() {
+        fs::remove_dir_all(to).map_err(io("could not remove partial copy", to))?;
+    }
+    if let Err(why) = clone(from, to) {
+        let _ = fs::remove_dir_all(to);
+        copy(from, to).map_err(|again| {
+            ServerError::Io(format!(
+                "could not clone ({why}) or copy ({again}) the PostgreSQL cluster"
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_complete_named_snapshots_are_listed_in_numeric_order_within_a_second() {
+        let dir = std::env::temp_dir().join(format!("pg-snapshot-list-{}", std::process::id()));
+        let home = crate::server::Home::new(&dir, Path::new("/no/surreal"));
+        let pg = home.postgresql(Path::new("/no/postgres"));
+        let folder = dir.join(SNAPSHOTS);
+        let base = "1970-01-01T00-00-01Z";
+        for name in (0..12)
+            .map(|n| {
+                if n == 0 {
+                    base.into()
+                } else {
+                    format!("{base}.{n}")
+                }
+            })
+            .chain([TAKING.into(), "not-a-snapshot".into()])
+        {
+            let path = folder.join(name);
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("PG_VERSION"), "18").unwrap();
+        }
+        fs::create_dir(folder.join(format!("{base}.50"))).unwrap();
+        let found = pg.snapshots().unwrap();
+        assert_eq!(found.len(), 12);
+        assert_eq!(found[0].file_name().unwrap(), format!("{base}.11").as_str());
+        assert_eq!(found[1].file_name().unwrap(), format!("{base}.10").as_str());
+        assert_eq!(found.last().unwrap().file_name().unwrap(), base);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

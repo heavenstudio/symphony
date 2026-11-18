@@ -23,6 +23,24 @@ fn landed_first(r: &Repo) -> (People, String) {
     (people, merge)
 }
 
+/// `SLUG`'s landing made by hand, for a test whose subject is the close and not the land: its
+/// branch merged into main as a land merges it and its `landed` line on its thread, which are all a
+/// covered close reads of a landing. The people, and the merge on main. The land itself makes them
+/// in [`its_executor_closes_it_from_the_command_line_naming_the_merge_on_main`].
+fn landing(r: &Repo) -> (People, String) {
+    manifest(r, "");
+    branch(r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(r, SLUG, "good");
+    let message = format!("Merge branch '{SLUG}'");
+    git(&r.root, &["merge", "-q", "--no-ff", "-m", &message, SLUG]);
+    let merge = head(&r.root, "main");
+    let line = format!("landed {SLUG} on main at {}", &merge[..12]);
+    (r.board.store)
+        .landed(SLUG, &people.orch, &line, true, &["done"])
+        .unwrap();
+    (people, merge)
+}
+
 /// `COVERED`, filed by the owner and claimed by `exe`.
 fn claimed(r: &Repo, exe: &str) {
     r.task(COVERED);
@@ -102,7 +120,7 @@ fn its_executor_closes_it_from_the_command_line_naming_the_merge_on_main() {
 #[test]
 fn a_branch_of_its_own_with_commits_main_lacks_refuses_naming_them() {
     let r = Repo::new();
-    let (people, merge) = landed_first(&r);
+    let (people, merge) = landing(&r);
     claimed(&r, &people.exe);
     let wt = branch(&r, COVERED, "app/covered.gd", "extends Node\n");
     write(&wt, "app/more.gd", "extends Node\n");
@@ -149,7 +167,7 @@ fn a_branch_of_its_own_with_commits_main_lacks_refuses_naming_them() {
 #[test]
 fn the_branch_its_executors_launch_recorded_counts_as_its_own() {
     let r = Repo::new();
-    let (people, _) = landed_first(&r);
+    let (people, _) = landing(&r);
     claimed(&r, &people.exe);
     let wt = branch(&r, "launched-x", "app/covered.gd", "extends Node\n");
     let store = &r.board.store;
@@ -219,7 +237,7 @@ fn closing(r: &Repo, exe: &str) -> Result<String, symphony_board::Error> {
 #[test]
 fn an_in_process_executors_worktree_agent_branch_counts_as_its_own() {
     let r = Repo::new();
-    let (people, _) = landed_first(&r);
+    let (people, _) = landing(&r);
     claimed(&r, &people.exe);
     let wt = branch(
         &r,
@@ -249,7 +267,7 @@ fn an_in_process_executors_worktree_agent_branch_counts_as_its_own() {
 #[test]
 fn commits_on_a_detached_head_where_its_executor_works_count_as_its_own() {
     let r = Repo::new();
-    let (people, _) = landed_first(&r);
+    let (people, _) = landing(&r);
     claimed(&r, &people.exe);
     let wt = r.detached("agent-detached");
     write(&wt, "app/covered.gd", "extends Node\n");
@@ -276,7 +294,7 @@ fn commits_on_a_detached_head_where_its_executor_works_count_as_its_own() {
 #[test]
 fn changes_no_commit_has_where_its_executor_works_refuse_naming_them() {
     let r = Repo::new();
-    let (people, _) = landed_first(&r);
+    let (people, _) = landing(&r);
     claimed(&r, &people.exe);
     let wt = r.add("agent-dirty", Some("worktree-agent-dirty"), "main");
     write(&wt, "sim/world.gd", "extends Node\n");
@@ -303,7 +321,7 @@ fn changes_no_commit_has_where_its_executor_works_refuse_naming_them() {
 #[test]
 fn changes_in_the_main_checkout_are_not_read_as_its_own() {
     let r = Repo::new();
-    let (people, _) = landed_first(&r);
+    let (people, _) = landing(&r);
     claimed(&r, &people.exe);
     write(&r.root, "stray.gd", "extends Node\n");
     works_in(&r, &people.exe, &r.root, "main");
@@ -357,7 +375,7 @@ fn a_landing_whose_commit_main_does_not_hold_covers_nothing() {
 #[test]
 fn outside_a_checkout_of_its_repository_it_is_refused() {
     let r = Repo::new();
-    let (people, _) = landed_first(&r);
+    let (people, _) = landing(&r);
     claimed(&r, &people.exe);
     let refusal = format!(
         "{COVERED} is closed as covered only from a checkout of its repository, which says \
@@ -378,7 +396,7 @@ fn outside_a_checkout_of_its_repository_it_is_refused() {
 #[test]
 fn the_land_refuses_a_covered_task_whatever_approve_came_before() {
     let r = Repo::new();
-    let (people, merge) = landed_first(&r);
+    let (people, merge) = landing(&r);
     claimed(&r, &people.exe);
     let store = &r.board.store;
     store.move_to(COVERED, "review", &people.exe).unwrap();

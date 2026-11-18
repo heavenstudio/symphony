@@ -7,7 +7,7 @@ use std::fs;
 use super::{CHECK, DAY, Fixture, NOW, git};
 
 #[test]
-fn a_green_tip_is_tagged_as_the_days_release_and_only_the_tag_reaches_the_remote() {
+fn a_second_release_that_day_is_numbered_and_the_next_day_starts_again() {
     let fixture = Fixture::new();
     let first = git(&fixture.main, &["rev-parse", "HEAD"]);
     // What a hostile configuration would push beside the release: an annotated tag on main's
@@ -74,12 +74,9 @@ fn a_green_tip_is_tagged_as_the_days_release_and_only_the_tag_reaches_the_remote
     assert_eq!(runs[0]["checks"][0]["name"], "verify");
     assert_eq!(runs[0]["checks"][0]["command"], "test ! -e red");
     assert_eq!(runs[0]["checks"][0]["exit_code"], 0);
-}
 
-#[test]
-fn a_second_release_that_day_is_numbered_and_the_next_day_starts_again() {
-    let fixture = Fixture::new();
-    fixture.night(NOW, 0);
+    // This checkout's own commit put aside, the next landing is one change on main.
+    git(&fixture.main, &["reset", "-q", "--hard", &first]);
     let second = fixture.land("notes.txt", Some("a fix"), "a fix");
     fixture.night(NOW + 3600.0, 0);
     let third = fixture.land(
@@ -105,6 +102,14 @@ fn a_second_release_that_day_is_numbered_and_the_next_day_starts_again() {
              Board schema 16, unchanged since release-2026-11-12.\n\
              Pin 1, unchanged since release-2026-11-12.\n\n\
              Green: verify.\n\n\
+             For a project taking this release (`just symphony-cli release-notes` prints every \
+             release's since the project's own):\n\
+             Cargo.toml and Cargo.lock:\n\
+             - Name this release in each of the project's Symphony dependency lines, `tag = \
+             \"release-2026-11-12.2\"`, or `rev = \"{second}\"` where the project pins a commit, \
+             and let Cargo.lock follow: a build run with `--locked` refuses until the lock is \
+             updated.\n\
+             Nothing else changes for a project.\n\n\
              Changes on main since release-2026-11-12 (1):\n{} a fix\n",
             &second[..12],
             git(&fixture.main, &["rev-parse", "--short", &second]),
@@ -119,7 +124,14 @@ fn a_second_release_that_day_is_numbered_and_the_next_day_starts_again() {
         "the release before is the day's newest, not its first: {message}"
     );
     assert!(
-        message.contains("Changes on main since release-2026-11-12.2 (1):\n"),
+        message.contains(
+            "updated.\nBoard:\n- Board schema 16 to 17. A board is moved only by a build at \
+             schema 17: take this release first"
+        ) && message.contains("`just tasks migrate --leave-behind`"),
+        "what a project does to take it, before the changes: {message}"
+    );
+    assert!(
+        message.contains("\n\nChanges on main since release-2026-11-12.2 (1):\n"),
         "{message}"
     );
 
@@ -593,4 +605,25 @@ fn the_tests_clock_never_pushes_a_release_off_this_machine() {
         "{out}"
     );
     assert!(fixture.remote_tags().is_empty());
+}
+
+#[test]
+fn what_a_landing_says_of_a_release_already_cut_is_in_the_next_releases_message() {
+    let fixture = Fixture::new();
+    fixture.night(NOW, 0);
+    fixture.land(
+        "notes.txt",
+        Some("said late"),
+        "Say it\n\nConsumer-Note: release-2026-11-12 once: run it\nConsumer-Note: tools: a new one",
+    );
+    fixture.night(NOW + 3600.0, 0);
+    let message = fixture.message("release-2026-11-12.2");
+    assert!(
+        message.contains(
+            "updated.\nTools:\n- a new one\nSaid with this release of an earlier one, for a \
+             project already at or past it:\n- Of release-2026-11-12, Run once: run it\n\nChanges \
+             on main since release-2026-11-12 (1):\n"
+        ),
+        "{message}"
+    );
 }

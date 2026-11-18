@@ -331,7 +331,12 @@ impl Store {
     /// Whether this store, opened by `how`, may move `board`, a project's live board found at
     /// `found` (none: not made yet), forward ([`live::may_move`]). A scratch board it always may.
     fn may_move(&self, how: &Opening, board: &Live, found: Option<i64>) -> Result<(), Failure> {
-        live::may_move(
+        let may_move = if self.db.is_postgresql() {
+            live::may_move_postgresql
+        } else {
+            live::may_move
+        };
+        may_move(
             board,
             how.schema == Schema::this_build(),
             how.migrating,

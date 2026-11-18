@@ -6,14 +6,16 @@
 use std::path::{Path, PathBuf};
 
 /// What opens a board, or opens one to write, as the board crate spells it.
-const OPENS: [&str; 12] = [
+const OPENS: [&str; 14] = [
     "Opening::write",
     "Access::Write",
     "Store::open(",
     "Store::open_as(",
     "Store::opening(",
+    "Store::opening_on(",
     "Store::read_as(",
     "Store::reading(",
+    "Store::reading_on(",
     "Store::with(",
     "Store::unchecked",
     "cli::connect(",
@@ -24,7 +26,7 @@ const OPENS: [&str; 12] = [
 /// The one source that opens a board, and the openings it may make: by the opening it is handed,
 /// which is `Opening::read()`.
 const READER: &str = "taskview/connect.rs";
-const READS: [&str; 2] = ["Store::read_as(", "Store::reading("];
+const READS: [&str; 3] = ["Store::read_as(", "Store::reading(", "Store::reading_on("];
 
 /// Whether `path` is a test's source, which opens boards as it likes: a `tests.rs` or `*_tests.rs`,
 /// or anything in a `tests` or `testing` folder or a `testing.rs`.
@@ -118,6 +120,14 @@ fn every_spelling_of_an_opening_is_found_and_a_name_ending_in_one_is_not() {
             "Store::open(",
         ),
         ("Store::with(client, clock, probe, host)", "Store::with("),
+        (
+            "Store::opening_on(db, clock, probe, host, how)",
+            "Store::opening_on(",
+        ),
+        (
+            "Store::reading_on(db, clock, probe, host, how)",
+            "Store::reading_on(",
+        ),
         (
             "&symphony_board::Opening::write().of(None)",
             "Opening::write",

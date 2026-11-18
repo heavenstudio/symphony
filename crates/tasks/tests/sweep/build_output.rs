@@ -201,7 +201,7 @@ fn a_branch_with_no_commits_ahead_of_main_loses_it_once_its_task_is_done() {
     );
     let fresh = r.add("fresh", Some("sim/fresh"), "main");
     let fast = r.add("fast", Some("sim/fast"), "main");
-    landed(&r, "other", "sim/other");
+    r.commit(&r.root, "extends RefCounted\n# main moved on\n");
     git(&fast, &["merge", "-q", "--ff-only", "main"]);
     let again = landed(&r, "again", "sim/again");
     git(&again, &["reset", "-q", "--hard", "main"]);
@@ -241,11 +241,21 @@ fn work_that_never_landed_loses_its_build_output_and_keeps_its_commits() {
 
 #[test]
 fn a_task_before_review_keeps_the_build_output() {
-    for status in ["in_progress", "blocked", "ready", "concept", "design"] {
-        let r = Repo::with(Seed::default().task("sim/landed", status));
-        let (wt, folders) = finished(&r);
-        let done = sweep_at(&r, LATER, false);
-        assert_untouched(&r, &wt, &folders, &done);
+    const BEFORE: [&str; 5] = ["in_progress", "blocked", "ready", "concept", "design"];
+    let seed = BEFORE.iter().fold(Seed::default(), |seed, status| {
+        seed.task(&format!("sim/{status}"), status)
+    });
+    let r = Repo::with(seed);
+    // Each landed, kept whole and built, as `finished` makes one.
+    let trees = BEFORE.map(|status| {
+        let wt = landed(&r, status, &format!("sim/{status}"));
+        held(&r, &wt);
+        let folders = built(&wt);
+        (wt, folders)
+    });
+    let done = sweep_at(&r, LATER, false);
+    for (wt, folders) in &trees {
+        assert_untouched(&r, wt, folders, &done);
     }
 }
 

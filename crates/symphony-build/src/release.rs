@@ -34,6 +34,7 @@ mod board;
 pub(crate) mod cadence;
 mod candidate;
 mod checks;
+pub(crate) mod consumer;
 pub(crate) mod crates;
 mod failures;
 mod git;
@@ -47,6 +48,7 @@ mod record;
 mod refresh;
 mod rerun;
 mod schedule;
+mod span;
 mod steps;
 mod tags;
 #[cfg(test)]
@@ -937,7 +939,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     };
     let folder = lock.folder.clone();
     let lock_path = lock.path.clone();
-    let started = Instant::now();
+    let started = span::Span::begin();
     let when = local(options.now);
     let mut record = Run {
         version: record::VERSION,
@@ -971,6 +973,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         refreshed: None,
         published: None,
         rerun: None,
+        slept: 0.0,
     };
     // HUP, INT and TERM stop the run, its check's group and its git, and let it say so and release
     // the lock; a signal this process was started ignoring stays ignored.
@@ -1006,6 +1009,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         check: None,
     };
     let _ = record::hold(&folder, &running);
+    span::awake();
     // A run that ended without recording itself (killed, or the machine stopped) is recorded first,
     // so its logs stay with it and `--status` names it.
     for found in record::recover(&folder, earlier.as_ref(), &record.id, options.now) {
@@ -1025,7 +1029,8 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         let _ = record::hold(&folder, &running);
     };
     let within = Within {
-        bound: Bound::hearing(started + options.timeout, &heard),
+        // The run's time is counted while the machine is awake: a sleep takes none of it.
+        bound: Bound::hearing(started.awake + options.timeout, &heard),
         running: Some(&say),
     };
     let refreshing = Refreshing {
@@ -1091,7 +1096,16 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             record.refreshed = Some(refreshing.to(&record.id, &tag, &commit, out));
         }
     }
-    record.ended_at = options.now + started.elapsed().as_secs_f64();
+    // By the wall clock, with how long of it the machine slept ([`span`]).
+    let took = started.took();
+    record.ended_at = options.now + took.seconds;
+    record.slept = took.slept;
+    if let Some(slept) = span::said(record.slept) {
+        let _ = writeln!(
+            out,
+            "release: the machine slept {slept} under this run, which its time counts"
+        );
+    }
     // What the run makes of the release candidate, known before the board is told, whose red
     // tasks say the candidate they are fixed on.
     let decided_red = ran.is_ok() && record.result == "red";
@@ -1306,14 +1320,14 @@ struct Refreshing<'a> {
     options: &'a Options,
     folder: &'a Path,
     running: &'a Running,
-    started: Instant,
+    started: span::Span,
     heard: &'a dyn Fn() -> bool,
 }
 
 impl Refreshing<'_> {
     /// The lock's word made to cover `more` from now, so no later run takes this one for stuck.
     fn hold_for(&self, more: Duration) {
-        let until = self.options.now + self.started.elapsed().as_secs_f64() + more.as_secs_f64();
+        let until = self.options.now + self.started.took().seconds + more.as_secs_f64();
         let _ = record::hold(
             self.folder,
             &Running {
@@ -1745,6 +1759,7 @@ fn tell(
         whole: !options.refresh,
         candidate: holding,
         rerun: record.rerun.is_some(),
+        slept: record.slept,
     };
     let board = symphony::taskcli::CliBoard::new(&repo.main);
     let mut steps = record.checks.clone();
@@ -2049,6 +2064,14 @@ fn night(
         }
         _ => Vec::new(),
     };
+    // A tag is never held back for its notes: one git cannot read is said, and left out.
+    let taking = consumer::taking(&repo.root, &name, &candidate).unwrap_or_else(|why| {
+        let _ = writeln!(
+            out,
+            "release: {name}'s message says nothing of what a project does to take it: {why}"
+        );
+        Vec::new()
+    });
     let message = notes::message(
         &name,
         &candidate,
@@ -2057,6 +2080,7 @@ fn night(
         &checked,
         &publishes,
         &held_notes,
+        &taking,
         &changes,
     );
     if let Err(problem) = git_until(
@@ -2811,6 +2835,7 @@ mod tests {
             refreshed: None,
             published: None,
             rerun: None,
+            slept: 0.0,
         }
     }
 

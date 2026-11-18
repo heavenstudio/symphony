@@ -26,7 +26,7 @@ const HEAD: &str = "usage: symphony-build COMMAND [ARGS]...\n\n\
 const LISTED: &str = "`symphony-build help`";
 
 /// Its commands, in the order its usage names them, each with what it does.
-const COMMANDS: [(&str, &str); 7] = [
+const COMMANDS: [(&str, &str); 8] = [
     (
         "publish-client",
         "publish a built client into the server's embedded copy",
@@ -52,6 +52,10 @@ const COMMANDS: [(&str, &str); 7] = [
         "annotate nextest stalls with their backstop and load",
     ),
     (
+        "consumer-notes",
+        "what a project changes to take each release, or check a branch",
+    ),
+    (
         "release",
         "verify main's tip in full and tag it a release when green",
     ),
@@ -59,7 +63,7 @@ const COMMANDS: [(&str, &str); 7] = [
 
 /// The usage of its commands that read no options of their own, and what their help says after
 /// their line: what `--help` or `-h` anywhere on their command line prints ([`plain_help`]).
-const PLAIN: [(&str, &str, &str); 3] = [
+const PLAIN: [(&str, &str, &str); 4] = [
     (
         "publish-client",
         "usage: symphony-build publish-client STAGE PUBLIC",
@@ -78,6 +82,18 @@ const PLAIN: [(&str, &str, &str); 3] = [
          build folder, and compared file by file with that version there: one whose\n\
          sources moved while its version did not is red (exit 1). A registry it cannot\n\
          read is exit 2.\n",
+    ),
+    (
+        "consumer-notes",
+        crate::release::consumer::USAGE,
+        "ROOT is the repository (default: the current folder). It prints the notes of\n\
+         every release tagged there, oldest first, as a release's install writes\n\
+         them, and under `unreleased` what the commits since the newest would say.\n\
+         With --check it reads the branch checked out there against the default\n\
+         branch: one that moves the board schema, takes a call out of a consumer-API\n\
+         guard or a key out of the settings reference with no Consumer-Note trailer\n\
+         saying what a project does, or with a trailer that reads as no entry, is\n\
+         red (exit 1).\n",
     ),
 ];
 
@@ -98,6 +114,7 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         Some("synced") => synced::main(rest, out, err),
         Some("exec-test-binary") => exec_test::main(rest, out, err),
         Some("test-stalls") => test_stalls::main(rest, &mut std::io::stdin().lock(), out, err),
+        Some("consumer-notes") => crate::release::consumer::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => {
             let _ = writeln!(err, "{}", unknown(name));
@@ -278,6 +295,7 @@ mod tests {
                 "synced",
                 "exec-test-binary",
                 "test-stalls",
+                "consumer-notes",
                 "release",
             ]
         );

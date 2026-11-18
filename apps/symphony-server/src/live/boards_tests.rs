@@ -69,6 +69,10 @@ impl Project {
         make(&root)
             .create(&NewTask::new(&format!("{id}/one"), "Made first", "owner"))
             .unwrap();
+        let home = Home::in_common(&root.join(".git"), Some(&surreal()));
+        if home.backend().unwrap() == symphony_board::server::Engine::PostgreSql {
+            home.project_postgresql(&root).unwrap().stop().unwrap();
+        }
         let reach = env(&root);
         let reaches = Arc::new(Mutex::new(true));
         let gate = Arc::clone(&reaches);
@@ -189,7 +193,14 @@ impl Project {
 impl Drop for Project {
     fn drop(&mut self) {
         self.hub.stop();
-        let _ = self.home().stop();
+        let home = self.home();
+        if home.backend().ok() == Some(symphony_board::server::Engine::PostgreSql) {
+            if let Ok(pg) = home.project_postgresql(&self.root) {
+                let _ = pg.stop();
+            }
+        } else {
+            let _ = home.stop();
+        }
     }
 }
 
@@ -215,6 +226,67 @@ fn pinned(root: &Path, now: &str) -> Env {
 /// The board of `root`'s project, opened to write as its command line opens it.
 fn writer(root: &Path) -> Store {
     symphony_board::cli::connect(&env(root)).unwrap()
+}
+
+#[test]
+fn a_machine_hub_starts_its_selected_postgresql_board_and_keeps_its_reader_read_only() {
+    let tree = Tree::new();
+    let project = Project::made_by(&tree, "pg", |root| {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let programs = symphony_board::server::postgres::discover_programs(&workspace).unwrap();
+        std::fs::write(
+            root.join("symphony.toml"),
+            format!(
+                "[project]\nid = \"pg\"\n[board]\npostgresql = {:?}\n",
+                programs.display().to_string()
+            ),
+        )
+        .unwrap();
+        let home = Home::in_common(&root.join(".git"), None);
+        home.initialize_backend(symphony_board::server::Engine::PostgreSql)
+            .unwrap();
+        writer(root)
+    });
+    // The constructor stops the seeded cluster before starting its hub. Its read starts it.
+    project.reads(&["pg/one"]);
+    let home = project.home();
+    let pg = home.project_postgresql(&project.root).unwrap();
+    assert!(pg.current().unwrap().is_some());
+    assert!(!home.dir().join("data").exists());
+    let shared = Shared::new(
+        1,
+        1234,
+        &project.root,
+        None,
+        Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+    );
+    assert!(shared.api.set(project.hub.clone()).is_ok());
+    let (status, body) = answer(&shared, asked("GET", "/api/tasks", None));
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["tasks"][0]["slug"], "pg/one", "{body}");
+    let reader = symphony::taskview::connect_in(&project.root, env(&project.root)).unwrap();
+    assert!(reader.database().is_postgresql());
+    assert_eq!(reader.get("pg/one").unwrap().title, "Made first");
+    // A web reader cannot migrate a newer board or write through it.
+    drop(reader);
+    let schema = Schema::this_build().then_each("", "CREATE TABLE fixture_next (id int);");
+    let reached = symphony_board::cli::board(&env(&project.root)).unwrap();
+    let how = reached.opening(Opening::write().at(schema).migrating().leave_behind());
+    Store::opening_on(
+        reached.database(),
+        Box::new(|| 1_000_000.0),
+        Box::new(|_| false),
+        "test",
+        &how,
+    )
+    .unwrap();
+    let reader = symphony::taskview::connect_in(&project.root, env(&project.root)).unwrap();
+    assert!(
+        reader
+            .create(&NewTask::new("pg/refused", "Cannot write", "owner"))
+            .is_err()
+    );
+    assert!(reader.get("pg/refused").is_err());
 }
 
 /// The board of `root`'s project, opened to write by a build one schema version behind this one:

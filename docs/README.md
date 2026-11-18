@@ -15,6 +15,8 @@ the evidence behind decisions are under [Design and history](#design-and-history
 
 ## Operation and setup
 
+- [PostgreSQL board lifecycle](POSTGRESQL.md) — scratch engine identity, server selection,
+  holds, snapshots, recovery and space reclamation.
 - [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
   with its default.
 - [Releases](RELEASES.md) — how a release is cut by the release run or out of cycle, named and
@@ -55,6 +57,8 @@ still await implementation; its approval alone does not make it current app beha
   boundary for working evidence, Git revisions and recovery on a fresh application disk.
 - [A project's task workflow](analysis/project-workflow.md) — the proposed project-defined
   steps, the existing gate boundary, and migration that preserves the default flow.
+- [The board's cutover to PostgreSQL](analysis/board-pg-cutover.md) — the proposed order for
+  moving live boards, one board's move, the way back, and what is not built yet.
 - [Managed PostgreSQL](analysis/hosted-postgresql.md) — the proposed hosted connection,
   connection budget, database boundary and PostgreSQL 16/18 validation contract.
 - [Configurable delivery workflows](analysis/configurable-delivery-workflow.md) — the proposed

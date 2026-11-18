@@ -1,6 +1,7 @@
 //! What a release says it holds, in its tag's message: the board schema and the pin at its commit,
 //! each said changed or not since the release before it, the checks it passed, the packages it
-//! publishes on crates.io, and the changes on main since that release. A project's update reads the
+//! publishes on crates.io, what a project does to take it ([`super::consumer`]), and the changes on
+//! main since that release. A project's update reads the
 //! schema and the pin to know whether it must update (docs/RELEASES.md), so the message names both
 //! by the words "Board schema" and "Pin".
 
@@ -84,8 +85,9 @@ fn fact(what: &str, now: Option<i64>, before: Option<(&str, Option<i64>)>) -> St
 /// The tag `tag`'s message for the release of `commit`: what it holds against `previous` (none for
 /// the first release), the checks it passed, what it publishes on crates.io (`crates`, its lines:
 /// [`super::crates::notes`]), what a release candidate's record says of it (`candidate`, its lines:
-/// [`super::candidate::Candidate::notes`]), and `changes`, the commits on main since `previous`,
-/// one `SHORT SUBJECT` line each, newest first.
+/// [`super::candidate::Candidate::notes`]), what a project does to take it (`taking`, its lines:
+/// [`super::consumer::taking`]), and `changes`, the commits on main since `previous`, one `SHORT
+/// SUBJECT` line each, newest first.
 #[expect(
     clippy::too_many_arguments,
     reason = "each is a part of the message, in the order it says them"
@@ -98,6 +100,7 @@ pub(crate) fn message(
     checks: &[String],
     crates: &[String],
     candidate: &[String],
+    taking: &[String],
     changes: &[String],
 ) -> String {
     let before =
@@ -111,7 +114,7 @@ pub(crate) fn message(
     if !checks.is_empty() {
         text.push_str(&format!("\nGreen: {}.\n", checks.join(", ")));
     }
-    for lines in [crates, candidate] {
+    for lines in [crates, candidate, taking] {
         if !lines.is_empty() {
             text.push('\n');
             for line in lines {
@@ -240,6 +243,7 @@ mod tests {
             &["verify".into()],
             &[],
             &[],
+            &[],
             &["abc first".into()],
         );
         assert_eq!(
@@ -270,6 +274,7 @@ mod tests {
             &["verify".into(), "lint".into()],
             &[],
             &[],
+            &[],
             &["bbb second".into(), "aaa first".into()],
         );
         assert_eq!(
@@ -296,6 +301,7 @@ mod tests {
                 "- tests/release-red-verify (verify): advanced it to bbb".into(),
             ],
             &[],
+            &[],
         );
         assert!(
             said.ends_with(
@@ -316,6 +322,7 @@ mod tests {
             &["verify".into()],
             &["Publishes to crates.io: a 1.0.0, b 0.1.0.".into()],
             &["Release candidate: first judged aaa.".into()],
+            &[],
             &[],
         );
         assert!(
@@ -343,6 +350,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             &changes,
         );
         assert!(said.contains(&format!("({})", LISTED + 3)), "{said}");
@@ -353,5 +361,33 @@ mod tests {
         assert!(!said.contains(&format!("c{} change", LISTED)), "{said}");
         assert!(said.ends_with("… and 3 more\n"), "{said}");
         assert!(!said.contains("Green:"), "no checks named, none said");
+    }
+
+    #[test]
+    fn what_a_project_does_to_take_it_is_said_after_the_candidate_and_before_the_changes() {
+        let previous = Previous {
+            tag: "release-2026-11-11".into(),
+            commit: "f".repeat(40),
+            facts: Facts::default(),
+        };
+        let said = message(
+            "release-2026-11-12",
+            &"0".repeat(40),
+            Facts::default(),
+            Some(&previous),
+            &["verify".into()],
+            &[],
+            &["Release candidate: first judged aaa.".into()],
+            &["For a project taking this release:".into(), "Board:".into()],
+            &["aaa first".into()],
+        );
+        assert!(
+            said.ends_with(
+                "Green: verify.\n\nRelease candidate: first judged aaa.\n\nFor a project taking \
+                 this release:\nBoard:\n\nChanges on main since release-2026-11-11 (1):\naaa \
+                 first\n"
+            ),
+            "{said}"
+        );
     }
 }

@@ -528,7 +528,7 @@ pub trait Generator: Send + Sync {
 
 /// A way to reach an agent: register its address, deliver a message to it, probe whether it lives.
 pub trait Transport: Send + Sync {
-    /// The name `[agents] transports` lists (`claude-uds`).
+    /// The transport's name (`claude-uds`).
     fn name(&self) -> &str;
     /// The address an agent of `handle` registers with, from what the agent's session reports.
     fn register(&self, handle: &str, reported: &str) -> Result<String, String>;

@@ -29,6 +29,7 @@ const KINDS: [(&str, &str, &str); 8] = [
 
 #[test]
 fn a_web_kind_s_first_visit_asks_for_the_chunks_its_entry_imports_while_the_entry_is_held() {
+    let Some(mut chrome) = chrome() else { return };
     for (kind, path, ready) in KINDS {
         let entry = module(dist(), kind).script;
         let source = std::fs::read_to_string(dist().join(entry.trim_start_matches('/')))
@@ -36,9 +37,9 @@ fn a_web_kind_s_first_visit_asks_for_the_chunks_its_entry_imports_while_the_entr
         // Read from the entry itself, not from the manifest the shell preloads by.
         let chunks = common::imported(&entry, &source);
         assert!(!chunks.is_empty(), "{kind}'s entry imports no chunk");
-        // A profile of its own, so no chunk is in the browser's cache from another kind.
+        // A context of its own, so no chunk is in the browser's cache from another kind.
         let site = site();
-        let Some(mut chrome) = chrome() else { return };
+        chrome.fresh_context();
         site.hold_route(&entry, true);
         chrome.open(&site.url(path));
         let asked = |file: &String| site.requests().iter().filter(|p| *p == file).count();
@@ -233,6 +234,7 @@ pub(super) fn serve_page(site: &super::site::Site, path: &str, kind: &str) {
 
 #[test]
 fn html_preloads_start_every_kinds_chunks_while_its_shell_is_held_and_are_reused() {
+    let Some(mut chrome) = chrome() else { return };
     for (kind, path, ready) in KINDS {
         let site = site();
         serve_page(&site, path, kind);
@@ -246,7 +248,7 @@ fn html_preloads_start_every_kinds_chunks_while_its_shell_is_held_and_are_reused
             .unwrap();
         let spec = module(dist(), kind);
         site.hold_route(shell, true);
-        let Some(mut chrome) = chrome() else { return };
+        chrome.fresh_context();
         chrome.save_data();
         chrome.call("Page.navigate", json!({"url": site.url(path)}));
         if let Err(stall) = test_time::until_true(

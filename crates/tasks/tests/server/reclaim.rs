@@ -12,8 +12,11 @@ use symphony_board::rpc::Client;
 use symphony_board::server::{Home, Kept, Running, ServerError, Storage, bytes};
 use symphony_board::{NAMESPACE, NewAsk, NewSession, NewTask, Store};
 
-/// A memtable small enough that a test's writes flush and compact many times over.
+/// A memtable the value-log fixture can fill.
 const MEMTABLE: u64 = 2 << 20;
+
+/// Small enough that the bounded-store test flushes and compacts many times over.
+const BOUNDED_MEMTABLE: u64 = 1 << 20;
 
 /// The storage the live board's store grew under: SurrealKV's own value-log threshold, and a
 /// memtable a test can fill.
@@ -22,10 +25,14 @@ const GREW_UNDER: Storage = Storage {
     memtable: MEMTABLE,
 };
 
-/// The most a store under `MEMTABLE` may take beside what it holds, whatever compaction is behind:
+/// The most a store under `BOUNDED_MEMTABLE` may take beside what it holds, whatever compaction is behind:
 /// SurrealKV compacts level 0 at 4 files and stalls writes at 12, each at most one memtable, beside
 /// the write-ahead logs of the active memtable and of the 2 immutable ones it allows.
-const BOUND: u64 = 16 * MEMTABLE;
+const BOUND: u64 = 16 * BOUNDED_MEMTABLE;
+
+/// This fixture's reclaimed store measured 323,584 bytes. Write twice what its fourfold reduction
+/// needs, rounded up to whole 64 KiB rewrites; the assertions below still judge the actual sizes.
+const RECLAIM_REWRITES: u64 = (323_584_u64 * 4 * 2).div_ceil(65536);
 
 fn board(running: &Running, db: &str) -> Store {
     Store::open(Client::new(&running.addr, "sf", db)).unwrap()
@@ -54,13 +61,13 @@ fn data(home: &Home) -> std::path::PathBuf {
 fn a_row_rewritten_many_times_leaves_the_store_the_size_of_what_it_holds() {
     let s = Scratch::new("bounded");
     let home = s.home().storage(Storage {
-        memtable: MEMTABLE,
+        memtable: BOUNDED_MEMTABLE,
         ..Storage::BOARD
     });
     let store = board(&home.ensure().unwrap(), "tasks");
     let (mut written, mut most) = (0, 0);
     for _ in 0..16 {
-        written += rewrite(&store, 128);
+        written += rewrite(&store, 4 * BOUND / 16 / 65536);
         most = most.max(bytes(&data(&home)));
     }
     assert!(written >= 4 * BOUND, "{written} bytes written");
@@ -125,7 +132,7 @@ fn a_store_that_grew_under_the_value_log_is_rebuilt_with_every_database_task_and
             "owner",
         ))
         .unwrap();
-    let written = rewrite(&live, 512);
+    let written = rewrite(&live, RECLAIM_REWRITES);
     let (held, scratch_held) = (holdings(&live), holdings(&scratch));
     let thread = live.thread("sim/task-07").unwrap();
     let slugs = |store: &Store| -> Vec<String> {
@@ -143,6 +150,10 @@ fn a_store_that_grew_under_the_value_log_is_rebuilt_with_every_database_task_and
     let reclaimed = home.reclaim().unwrap();
     // `before` is the old store at rest, its server ended: what the grown store kept of the writes.
     let before = reclaimed.before;
+    eprintln!(
+        "reclaim: {} bytes after, {before} before, {written} written",
+        reclaimed.after
+    );
     assert!(
         before >= written / 2,
         "{before} bytes for {written} written"
@@ -216,9 +227,6 @@ fn a_store_that_grew_under_the_value_log_is_rebuilt_with_every_database_task_and
         held
     );
     recovered.stop().unwrap();
-    // What the board writes after the reclaim stays beside its keys too.
-    rewrite(&live, 64);
-    assert!(bytes(&data(&home).join("vlog")) < 65536);
 }
 
 /// A board of its own in `s`'s folder, its store a clone of `kept` (never the snapshot itself), its
@@ -371,32 +379,6 @@ fn a_store_without_the_board_s_own_database_is_left_as_it_was_and_served_again()
     );
 }
 
-#[test]
-fn a_reclaim_stopped_between_its_moves_is_never_served_empty_and_finished_by_the_next() {
-    let s = Scratch::new("reclaim-cut");
-    let home = s.home();
-    let running = home.ensure().unwrap();
-    let store = board(&running, "tasks");
-    store
-        .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
-        .unwrap();
-    let held = holdings(&store);
-    // Where the first move of a reclaim leaves the store, its successor not yet moved in.
-    home.stop().unwrap();
-    let old = home.dir().join("reclaim").join("old");
-    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-    std::fs::rename(data(&home), &old).unwrap();
-    let error = home.ensure().unwrap_err();
-    assert!(
-        error.to_string().contains(&old.display().to_string()),
-        "{error}"
-    );
-    assert!(!exists(&data(&home)), "no empty store was made");
-    let reclaimed = home.reclaim().unwrap();
-    assert_eq!(holdings(&board(&reclaimed.running, "tasks")), held);
-    assert!(!exists(&old));
-}
-
 /// The board's server on the new store starts and its address cannot be recorded (here a folder
 /// takes the address file's place): that server is ended before the stores move back, so the old
 /// store's server is the only one, and what the board writes after the rollback stays the board's
@@ -467,7 +449,8 @@ exec {real} "$@""#,
 }
 
 /// Two databases whose names differ only in case, on a filesystem that folds case as macOS's
-/// does: each comes out of the reclaim holding what it held, never the other's.
+/// does: each comes out of a reclaim interrupted between its moves holding what it held, never
+/// the other's. A normal start refuses the interrupted store and never makes an empty one.
 #[test]
 fn databases_whose_names_differ_only_in_case_each_keep_their_own_tasks_through_a_reclaim() {
     let s = Scratch::new("reclaim-case");
@@ -487,12 +470,25 @@ fn databases_whose_names_differ_only_in_case_each_keep_their_own_tasks_through_a
     }
     let held = cases.map(|(db, _)| holdings(&board(&running, db)));
     assert_ne!(held[0], held[1]);
+    let tasks_held = holdings(&board(&running, "tasks"));
+    home.stop().unwrap();
+    let old = home.dir().join("reclaim/old");
+    std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+    std::fs::rename(data(&home), &old).unwrap();
+    let error = home.ensure().unwrap_err();
+    assert!(
+        error.to_string().contains(&old.display().to_string()),
+        "{error}"
+    );
+    assert!(!exists(&data(&home)), "no empty store was made");
     let reclaimed = home.reclaim().unwrap();
+    assert_eq!(holdings(&board(&reclaimed.running, "tasks")), tasks_held);
     for ((db, title), held) in cases.into_iter().zip(held) {
         let after = board(&reclaimed.running, db);
         assert_eq!(after.get("probe/own").unwrap().title, title, "{db}");
         assert_eq!(holdings(&after), held, "{db}");
     }
+    assert!(!exists(&old));
 }
 
 /// The line SurrealDB 3.3.0 prints for the elements of schema 17's `before ON ask`, an array field

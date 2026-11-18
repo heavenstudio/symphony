@@ -33,7 +33,7 @@ import {
   until,
 } from "./testing";
 import { retryWait } from "./timing";
-import { CACHE_FORMAT, FEED_EVENT } from "./wire";
+import { CACHE_FORMAT, FEED_EVENT, PING_EVENT } from "./wire";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -593,6 +593,38 @@ describe("the board's loop", () => {
     expect(opened.map(({ closed }) => closed)).toEqual([1]);
     expect(did).toEqual([["show", 7], ["read"], ["stale", false]]);
     expect(paused).toEqual([]);
+  });
+
+  it("gives a silent feed up after two and a half pings, 12.5 s at the longest, and holds one that pings", async () => {
+    // The longest a server lets its feed go without a ping (symphony_api::PING_MAX_MS).
+    const longest = 5_000;
+    const opened = feeds();
+    const { asked, did, paused, done } = loop();
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, { ...(CASES.samples.board as object), ping_ms: longest }, "b1"));
+    await asking(opened, 1);
+    const source = opened[0]?.source;
+    source?.dispatchEvent(new Event("open"));
+    await turn();
+    const live = [["show", 7], ["read"], ["stale", false]];
+    expect(did).toEqual(live);
+    // From here the clock is the test's: each ping starts the wait for the next thing said.
+    vi.useFakeTimers();
+    try {
+      for (let pings = 0; pings < 3; pings += 1) {
+        say(source, PING_EVENT, "");
+        await vi.advanceTimersByTimeAsync(12_499);
+        expect(did).toEqual(live);
+        expect(opened.map(({ closed }) => closed)).toEqual([0]);
+      }
+      await vi.advanceTimersByTimeAsync(1);
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(opened.map(({ closed }) => closed)).toEqual([1]);
+    expect(did).toEqual([...live, ["stale", true]]);
+    expect(paused).toHaveLength(1);
   });
 
   /** The loop's board read and its feed open, then `events` said on it, one after another. */

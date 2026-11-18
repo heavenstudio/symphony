@@ -214,6 +214,7 @@ impl Home {
     /// Take a snapshot of its store now, at `now` (seconds since the epoch), under the starters'
     /// lock: refused while a process serves the store, or when there is none.
     pub fn snapshot(&self, now: f64) -> Result<Taken, String> {
+        self.require_surreal().map_err(|why| why.to_string())?;
         let _held = self.lock(Doing::Snapshotting).map_err(|e| e.to_string())?;
         self.snapshot_held(now)
     }
@@ -490,12 +491,12 @@ pub fn clones(folder: &Path) -> bool {
 thread_local! {
     /// Why a clone made on this thread fails, while a test says one does: a volume that cannot
     /// clone, so the plain copy's path runs where every volume a test runs on clones.
-    static CLONE_FAILS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+    pub(super) static CLONE_FAILS: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
 }
 
 /// Clone the folder `from` whole to `to`, which must not exist, copy-on-write: one `clonefile` on
 /// macOS, `cp -R --reflink=always` on Linux; why not, when it cannot.
-fn clone(from: &Path, to: &Path) -> Result<(), String> {
+pub(super) fn clone(from: &Path, to: &Path) -> Result<(), String> {
     #[cfg(test)]
     if let Some(why) = CLONE_FAILS.get() {
         return Err(why.into());
@@ -535,7 +536,7 @@ fn clone(from: &Path, to: &Path) -> Result<(), String> {
 
 /// Copy the folder `from` whole to `to`, which must not exist, byte by byte, keeping each file's
 /// times.
-fn copy(from: &Path, to: &Path) -> Result<(), String> {
+pub(super) fn copy(from: &Path, to: &Path) -> Result<(), String> {
     if cfg!(target_os = "macos") {
         cp(&["-R", "-p"], from, to)
     } else {
@@ -595,7 +596,7 @@ fn free_name(folder: &Path, base: &str) -> String {
 }
 
 /// Whether `name` is a snapshot's: `YYYY-MM-DDTHH-MM-SSZ`, then `.N` or nothing.
-fn named(name: &str) -> bool {
+pub(super) fn named(name: &str) -> bool {
     const SHAPE: &[u8; 20] = b"0000-00-00T00-00-00Z";
     let bytes = name.as_bytes();
     let (stamp, after) = bytes.split_at(bytes.len().min(SHAPE.len()));
@@ -612,7 +613,7 @@ fn named(name: &str) -> bool {
 }
 
 /// How snapshots are ordered by date: by their time, then by the count after it.
-fn order(name: &str) -> (&str, u64) {
+pub(super) fn order(name: &str) -> (&str, u64) {
     match name.split_once('.') {
         Some((stamp, n)) => (stamp, n.parse().unwrap_or(0)),
         None => (name, 0),

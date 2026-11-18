@@ -53,7 +53,8 @@ use super::checks::{Ran, Step};
 use super::git::git;
 use super::group::{Bound, Failed, output_until};
 use super::install::{self, Installed};
-use super::record::{Refresh, THEIRS};
+use super::record::{Refresh, TAKES, THEIRS};
+use super::span::Span;
 use symphony::children::command;
 use symphony::machine::{Entry, Registry, release, switch};
 
@@ -380,7 +381,7 @@ struct Judged {
     snapshot: Option<PathBuf>,
     name: String,
     log: Log,
-    started: Instant,
+    started: Span,
 }
 
 /// What a board's judgment, then its move, came to.
@@ -414,7 +415,7 @@ impl Judged {
         let id = &self.id;
         let (line, error) = match ended {
             Verdict::Done(said) => (said, None),
-            Verdict::Theirs { why, .. } => (format!("{id}: {THEIRS}: {why}"), None),
+            Verdict::Theirs { why, .. } => (format!("{id}: {THEIRS}: {why} ({TAKES})"), None),
             Verdict::Red(why) => (format!("{id}: red: {why}"), Some(why)),
             Verdict::Move { live, .. } => (
                 format!("{id}: its board is at schema {live}, not moved"),
@@ -427,7 +428,7 @@ impl Judged {
             command: format!("the refresh of {id}'s board to {}", against.tag),
             exit_code: error.is_none().then_some(0),
             signal: None,
-            seconds: self.started.elapsed().as_secs_f64(),
+            seconds: self.started.took().seconds,
             log: self.log.path.clone(),
             steps: Vec::new(),
             interrupted: error.is_some() && against.until.interrupted(),
@@ -465,7 +466,7 @@ fn judge(entry: &Entry, common: &Path, target: i64, against: &Against<'_>) -> Ju
         snapshot: None,
         name,
         log,
-        started: Instant::now(),
+        started: Span::begin(),
     };
     judged.verdict = verdict(&judged, against);
     judged

@@ -96,15 +96,8 @@ fn a_worktrees_artifacts_are_kept_and_its_build_output_is_not() {
     for build in ["sim-a/target", "sim-a/proof/server"] {
         assert!(!kept.join(build).exists(), "{build}: {said}");
     }
-}
-
-#[test]
-fn under_its_cap_the_sweep_keeps_what_it_sets_aside_and_warns_of_nothing() {
-    let r = Repo::with(Seed::default().task("sim/a", "done"));
-    let wt = r.merged("a", "sim/a");
-    write(&wt, "artifacts/sim-a/shot.png", "a picture\n");
-    let said = r.sweep();
-    r.assert_removed(&wt, &said);
+    // Under its cap the sweep keeps what it sets aside and warns of nothing: no line of its own,
+    // no warning from `tasks status`, and the record of where it came from and what it measured.
     assert!(set_aside_lines(&said).is_empty(), "{said}");
     assert!(warnings(&r).is_empty());
     let record = record(&r);
