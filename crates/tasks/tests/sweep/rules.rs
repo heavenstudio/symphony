@@ -1106,9 +1106,12 @@ fn a_branch_moved_before_its_deletion_survives() {
     );
 }
 
+/// A stage of the sweep, the tree it is reached for and what to do there.
+type Act = (&'static str, PathBuf, Box<dyn Fn()>);
+
 /// A pause that runs each tree's `act` when the sweep reaches its stage for that tree, a tree and
 /// its stage named once.
-fn at_each(acts: Vec<(&'static str, PathBuf, Box<dyn Fn()>)>) -> Pause {
+fn at_each(acts: Vec<Act>) -> Pause {
     let acts: Vec<_> = acts
         .into_iter()
         .map(|(stage, wt, act)| (stage, wt.canonicalize().unwrap(), act))
@@ -1127,7 +1130,7 @@ fn at_each(acts: Vec<(&'static str, PathBuf, Box<dyn Fn()>)>) -> Pause {
 fn a_session_or_launch_registered_during_the_sweep_keeps_its_tree() {
     let r = Repo::with(Seed::default().task("sim/starting", "ready"));
     let mut trees = Vec::new();
-    let mut acts: Vec<(&'static str, PathBuf, Box<dyn Fn()>)> = Vec::new();
+    let mut acts: Vec<Act> = Vec::new();
     for (binding, stage) in [
         ("session", "remove"),
         ("launch", "remove"),
@@ -1172,7 +1175,7 @@ fn a_session_or_launch_registered_during_the_sweep_keeps_its_tree() {
 fn a_new_or_replaced_lock_is_never_unlocked_by_the_old_snapshot() {
     let r = Repo::new();
     let mut trees = Vec::new();
-    let mut acts: Vec<(&'static str, PathBuf, Box<dyn Fn()>)> = Vec::new();
+    let mut acts: Vec<Act> = Vec::new();
     for (name, stage, old) in [
         ("relocked-new", "remove", None),
         (
@@ -1229,7 +1232,7 @@ fn a_new_or_replaced_lock_is_never_unlocked_by_the_old_snapshot() {
 fn activity_after_the_first_check_keeps_each_activity_marker() {
     let r = Repo::new();
     let mut trees = Vec::new();
-    let mut acts: Vec<(&'static str, PathBuf, Box<dyn Fn()>)> = Vec::new();
+    let mut acts: Vec<Act> = Vec::new();
     for marker in 0..4 {
         let wt = r.detached(&format!("active-again-{marker}"));
         let touched = Repo::activity(&wt)[marker].clone();
