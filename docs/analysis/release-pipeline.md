@@ -25,10 +25,11 @@ names its run by that id, and each fix by its board task.
   alone each. Two rounds were red in nothing else (2026-11-17T2211-98626 and
   2026-11-18T0931-12491): each would have been a release had the run itself rerun its failures
   alone.
-- **Three of the 11 were probably not load.** Three deleted store tests failed as `idle=1` where
+- **Three of the 11 were not load.** Three deleted store tests failed as `idle=1` where
   `idle=0` was expected. The next morning the same line was traced to the machine's own
   terminals read by the tests, a fault of the run's environment, and fixed without deleting
-  anything (`tests/release-red-verify-tests-23`). "Passes alone" cannot tell load from
+  anything (`tests/release-red-verify-tests-23`). The three were then read again and restored
+  unchanged (`tests/idle-count-discards-restored`). "Passes alone" cannot tell load from
   environment, and the discard rule acts on it at once.
 - **The candidate's bounds made it worse once.** The reruns bound dropped a candidate whose last
   round was red in two load-dependent tests and one check already fixed on main. The run of
@@ -100,7 +101,9 @@ Read together:
   and its task found the cause: a terminal of another project open on this machine, named as a
   fixture's session is, read through the machine's `hc`. `tools/test-lanes.sh` now gives the
   lanes an `hc` that answers nothing. The thread of that fix does not name the three earlier
-  tests, so that they failed for it is inferred from the line they share.
+  tests; `tests/idle-count-discards-restored` read their logs, where each failure adds one
+  `idle` line naming a session of that other project's board live over the run, and restored all
+  three as they were deleted.
 - **The laptop slept under a run.** Run 0931's record says it took 1,425 s; its logs span 09:32
   to 10:25. The system's power log has the machine asleep, lid closed on battery, for all but
   five minutes of 09:52 to 10:23, with the `board` and `rest` lanes still running. The record
@@ -472,7 +475,7 @@ Tasks filed, approved in principle or uncontroversial:
   release candidate's own pending part.
 - `tools/release-run-says-when-the-machine-slept`: the record's clock and the sleep.
 - `tests/idle-count-discards-restored`: the three store tests deleted on the `idle=1` line, read
-  again now that its cause is fixed, and brought back where it was the cause.
+  again now that its cause is fixed. It was the cause of each, and all three are back, unchanged.
 
 Neither a card nor a task:
 
@@ -497,7 +500,9 @@ visibility and the runners' sizes and price for public repositories, from GitHub
 Inferred:
 
 - That the three `idle=1` discards share the cause found in `tests/release-red-verify-tests-23`:
-  from the failing line alone. The filed task settles it.
+  each log's extra `idle` line names a handle that the other project's board on this machine
+  records as its executor over that run. The terminal itself is no longer listed by `hc`, so
+  that it carried the name is inferred from those records.
 - What B would have released and when: from which runs were red only in tests that passed alone,
   each on one or two runs alone under load. A rerun inside the run could have failed where the
   executor's passed.
