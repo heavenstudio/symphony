@@ -19,6 +19,7 @@ use serde_json::Value;
 
 use symphony_board::sys::Command;
 
+use super::git::git_until;
 use super::group::{Bound, Failed, output_until};
 use symphony::children::command;
 
@@ -97,8 +98,14 @@ fn failure(stderr: &[u8]) -> String {
 /// what a member inherits from the workspace as `cargo publish` does, offline and without the
 /// members' dependencies.
 pub(crate) fn packages(root: &Path, bound: Bound<'_>) -> Result<Vec<Package>, String> {
+    Ok(metadata(root, bound)?.map_or_else(Vec::new, |metadata| published(&metadata)))
+}
+
+/// What `cargo metadata` says of the workspace at `root`, offline and without the members'
+/// dependencies; none when `root` holds no `Cargo.toml`.
+fn metadata(root: &Path, bound: Bound<'_>) -> Result<Option<Value>, String> {
     if !root.join("Cargo.toml").is_file() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     let done = run(
         command("cargo")
@@ -120,9 +127,61 @@ pub(crate) fn packages(root: &Path, bound: Bound<'_>) -> Result<Vec<Package>, St
             failure(&done.stderr)
         ));
     }
-    let metadata: Value = serde_json::from_slice(&done.stdout)
-        .map_err(|e| format!("cargo metadata in {} said no JSON: {e}", root.display()))?;
-    Ok(published(&metadata))
+    serde_json::from_slice(&done.stdout)
+        .map(Some)
+        .map_err(|e| format!("cargo metadata in {} said no JSON: {e}", root.display()))
+}
+
+/// The folder of the member `member` of `cargo metadata`'s, from the workspace's root: where its
+/// manifest is, empty for a package at the root itself. None for a manifest outside the root.
+fn folder(metadata: &Value, member: &Value) -> Option<PathBuf> {
+    let manifest = Path::new(member["manifest_path"].as_str()?);
+    let within = manifest.strip_prefix(metadata["workspace_root"].as_str()?);
+    Some(within.ok()?.parent()?.to_path_buf())
+}
+
+/// The published packages of `metadata` that `files` change, each a path from the workspace's
+/// root: a file in the package's folder, whether its package carries it or not, or the workspace's
+/// own manifest, whose settings and dependency versions every member's packaged manifest inherits.
+fn changed_by(metadata: &Value, files: &[&str]) -> Vec<Package> {
+    let members = metadata["packages"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let all = files.contains(&"Cargo.toml");
+    let changed = |package: &Package| {
+        all || (members.iter())
+            .filter(|member| member["name"] == package.name.as_str())
+            .filter_map(|member| folder(metadata, member))
+            .any(|folder| {
+                files
+                    .iter()
+                    .any(|file| Path::new(file).starts_with(&folder))
+            })
+    };
+    let mut found = published(metadata);
+    found.retain(changed);
+    found
+}
+
+/// The published packages the checkout at `root` changes since it left the default branch
+/// `default` ([`changed_by`] every tracked file that differs from their merge base, committed or
+/// not); none where the checkout has no `default` to compare with. On `default`'s own line that is
+/// what is not committed yet.
+pub(crate) fn touched(
+    root: &Path,
+    default: &str,
+    bound: Bound<'_>,
+) -> Result<Option<Vec<Package>>, String> {
+    let Ok(base) = git_until(root, &["merge-base", "HEAD", default], bound) else {
+        return Ok(None);
+    };
+    // A file moved out of a package is gone from it: both of a rename's paths are listed.
+    let diff = ["diff", "--name-only", "--no-renames", "--relative", &base];
+    let listed = git_until(root, &diff, bound)?;
+    let files: Vec<&str> = listed.lines().collect();
+    Ok(Some(
+        metadata(root, bound)?.map_or_else(Vec::new, |metadata| changed_by(&metadata, &files)),
+    ))
 }
 
 /// The published members `cargo metadata` names, by name: a member with no `publish` list
@@ -153,7 +212,7 @@ fn split(
     registry: &Registry,
     packages: &[Package],
     bound: Bound<'_>,
-) -> Result<(Vec<Package>, Vec<Package>), String> {
+) -> Result<(Vec<Package>, Vec<Package>), Unread> {
     let (mut held, mut lacked) = (Vec::new(), Vec::new());
     for package in packages {
         if registry.has(&package.name, &package.version, bound)? {
@@ -170,16 +229,56 @@ fn said(packages: &[Package]) -> Vec<String> {
     packages.iter().map(Package::said).collect()
 }
 
+/// Why a registry was not read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Unread {
+    /// It gave no answer, or a server's error, on the last try of a read ([`fetched_by`]): the
+    /// network's or the registry's for now, which says nothing of what it holds.
+    NoAnswer(String),
+    /// Anything else: an answer that stands as an error, a file that cannot be read or written.
+    Failed(String),
+}
+
+impl From<Unread> for String {
+    fn from(unread: Unread) -> String {
+        match unread {
+            Unread::NoAnswer(why) | Unread::Failed(why) => why,
+        }
+    }
+}
+
+impl From<String> for Unread {
+    fn from(why: String) -> Unread {
+        Unread::Failed(why)
+    }
+}
+
 /// Where a registry holds what crates.io holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Registry {
     /// crates.io itself, read with curl.
     CratesIo,
+    /// A server laid out as [`Registry::Folder`] is, read with curl as crates.io is but by reads
+    /// of its own: the tests' own, at its URL.
+    #[cfg(test)]
+    At(String, Reads),
     /// A folder laid out as crates.io serves it ([`REGISTRY`]): the tests'.
     Folder(PathBuf),
 }
 
 impl Registry {
+    /// The tests' server at `url`, each read of it `tries` tries with no pause between, a try
+    /// within a time no test reaches: a test of what a read's end means waits on nothing.
+    #[cfg(test)]
+    pub(crate) fn at(url: String, tries: u32) -> Registry {
+        let reads = Reads {
+            each: Duration::from_secs(60),
+            tries,
+            pause: Duration::ZERO,
+        };
+        Registry::At(url, reads)
+    }
+
     /// The folder [`REGISTRY`] names, else crates.io.
     pub(crate) fn of_env() -> Registry {
         std::env::var_os(REGISTRY).map_or(Registry::CratesIo, |folder| {
@@ -191,23 +290,27 @@ impl Registry {
     fn said(&self) -> String {
         match self {
             Registry::CratesIo => "crates.io".into(),
+            #[cfg(test)]
+            Registry::At(url, _) => format!("the registry {url}"),
             Registry::Folder(folder) => format!("the registry {}", folder.display()),
         }
     }
 
     /// Whether it holds `name` at `version`, yanked or not: a version is published once.
-    pub(crate) fn has(&self, name: &str, version: &str, bound: Bound<'_>) -> Result<bool, String> {
+    pub(crate) fn has(&self, name: &str, version: &str, bound: Bound<'_>) -> Result<bool, Unread> {
         let path = index_path(name);
         let listed = match self {
             Registry::CratesIo => fetched(&format!("{INDEX}/{path}"), None, bound)?,
+            #[cfg(test)]
+            Registry::At(url, reads) => {
+                fetched_by(*reads, &format!("{url}/index/{path}"), None, bound)?
+            }
             Registry::Folder(folder) => match fs::read(folder.join("index").join(&path)) {
                 Ok(bytes) => Some(bytes),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => None,
                 Err(e) => {
-                    return Err(symphony::text::os_error(
-                        &e,
-                        &folder.join("index").join(&path),
-                    ));
+                    let file = folder.join("index").join(&path);
+                    return Err(symphony::text::os_error(&e, &file).into());
                 }
             },
         };
@@ -221,21 +324,27 @@ impl Registry {
         version: &str,
         to: &Path,
         bound: Bound<'_>,
-    ) -> Result<(), String> {
+    ) -> Result<(), Unread> {
         let file = format!("{name}/{name}-{version}.crate");
-        match self {
-            Registry::CratesIo => match fetched(&format!("{DOWNLOADS}/{file}"), Some(to), bound)? {
-                Some(_) => Ok(()),
-                None => Err(format!(
-                    "crates.io lists {name} {version} but serves no {file}"
-                )),
-            },
+        let (url, reads) = match self {
+            Registry::CratesIo => (format!("{DOWNLOADS}/{file}"), READS),
+            #[cfg(test)]
+            Registry::At(url, reads) => (format!("{url}/crates/{file}"), *reads),
             Registry::Folder(folder) => {
                 let from = folder.join("crates").join(&file);
-                fs::copy(&from, to)
-                    .map(|_| ())
-                    .map_err(|e| symphony::text::os_error(&e, &from))
+                return match fs::copy(&from, to) {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(symphony::text::os_error(&e, &from).into()),
+                };
             }
+        };
+        match fetched_by(reads, &url, Some(to), bound)? {
+            Some(_) => Ok(()),
+            None => Err(format!(
+                "{} lists {name} {version} but serves no {file}",
+                self.said()
+            )
+            .into()),
         }
     }
 }
@@ -261,8 +370,8 @@ fn lists(file: &str, version: &str) -> bool {
 
 /// How [`fetched`] reads: each try by curl within `each`, up to `tries`, waiting `pause` times the
 /// tries made so far before the next.
-#[derive(Clone, Copy, Debug)]
-struct Reads {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Reads {
     each: Duration,
     tries: u32,
     pause: Duration,
@@ -280,7 +389,7 @@ enum Try {
 /// named (its bytes then none), else its bytes; none when it serves nothing there (404, or 403 as a
 /// bucket of files answers for one it lacks). Any other answer is an error, and so is the last try
 /// of a read that got none.
-fn fetched(url: &str, to: Option<&Path>, bound: Bound<'_>) -> Result<Option<Vec<u8>>, String> {
+fn fetched(url: &str, to: Option<&Path>, bound: Bound<'_>) -> Result<Option<Vec<u8>>, Unread> {
     fetched_by(READS, url, to, bound)
 }
 
@@ -294,20 +403,20 @@ fn fetched_by(
     url: &str,
     to: Option<&Path>,
     bound: Bound<'_>,
-) -> Result<Option<Vec<u8>>, String> {
+) -> Result<Option<Vec<u8>>, Unread> {
     let mut tried = 1;
     loop {
         let problem = match tried_once(url, to, reads.each, bound) {
-            Try::Stands(answer) => return answer,
+            Try::Stands(answer) => return answer.map_err(Unread::Failed),
             Try::Again(problem) => problem,
         };
         let pause = reads.pause * tried;
         if tried >= reads.tries || bound.interrupted() || Instant::now() + pause >= bound.until {
-            return Err(if tried == 1 {
+            return Err(Unread::NoAnswer(if tried == 1 {
                 problem
             } else {
                 format!("{problem} (tried {tried} times)")
-            });
+            }));
         }
         #[expect(
             clippy::disallowed_methods,
@@ -382,8 +491,66 @@ pub(crate) fn check(
     until: Instant,
 ) -> Result<Checked, String> {
     let bound = Bound::until(until);
+    let packages = packages(root, bound)?;
+    compared(root, registry, target, &packages, bound, None).map_err(String::from)
+}
+
+/// How long a branch's check waits on the registry at most: for what it lists of the packages the
+/// branch changes, and again for each version it holds. A task's lint is not held longer by a
+/// network that answers nothing.
+pub(crate) const BRANCH_READS: Duration = Duration::from_secs(20);
+
+/// What [`check_branch`] found.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Branch {
+    /// The checkout has no default branch to compare with.
+    NoBase,
+    /// The packages the branch changes, checked: none of either for a branch that changes none.
+    Checked(Checked),
+    /// The registry gave no answer ([`Unread::NoAnswer`]), so the packages named, each
+    /// `NAME VERSION`, were not checked: no red, as it says nothing of the branch, and no proof.
+    Unread { packages: Vec<String>, why: String },
+}
+
+/// [`check`] of the packages a branch changes alone ([`touched`]), which is what a task's lint
+/// runs: nothing is read, of the registry or of the packages, for a branch that changes no
+/// published package, and a registry that gives no answer within `reads` is said, not an error.
+/// What the registry answers as an error, and a package it cannot make or unpack, still are.
+pub(crate) fn check_branch(
+    root: &Path,
+    default: &str,
+    registry: &Registry,
+    target: &Path,
+    reads: Duration,
+    until: Instant,
+) -> Result<Branch, String> {
+    let bound = Bound::until(until);
+    let Some(touched) = touched(root, default, bound)? else {
+        return Ok(Branch::NoBase);
+    };
+    match compared(root, registry, target, &touched, bound, Some(reads)) {
+        Ok(checked) => Ok(Branch::Checked(checked)),
+        Err(Unread::NoAnswer(why)) => Ok(Branch::Unread {
+            packages: said(&touched),
+            why,
+        }),
+        Err(Unread::Failed(why)) => Err(why),
+    }
+}
+
+/// [`check`] of `packages`, members the workspace at `root` publishes, waiting on the registry no
+/// longer than `reads`, where one is given, for what it lists and for each version it serves.
+fn compared(
+    root: &Path,
+    registry: &Registry,
+    target: &Path,
+    packages: &[Package],
+    bound: Bound<'_>,
+    reads: Option<Duration>,
+) -> Result<Checked, Unread> {
+    let reading = || reads.map_or(bound, |most| bound.sooner(most));
     let mut checked = Checked::default();
-    let (held, lacked) = split(registry, &packages(root, bound)?, bound)?;
+    let (held, lacked) = split(registry, packages, reading())?;
     for package in &lacked {
         checked.lines.push(format!(
             "{}: not on {} yet: nothing to compare, and a release publishes it while [releases] \
@@ -424,12 +591,13 @@ pub(crate) fn check(
             "cargo package failed in {}: {}",
             root.display(),
             failure(&done.stderr)
-        ));
+        )
+        .into());
     }
     for each in held {
         let crate_file = format!("{}-{}.crate", each.name, each.version);
         let theirs_file = scratch.join(&crate_file);
-        registry.download(&each.name, &each.version, &theirs_file, bound)?;
+        registry.download(&each.name, &each.version, &theirs_file, reading())?;
         unpacked(&target.join("package").join(&crate_file), &ours, bound)?;
         unpacked(&theirs_file, &theirs, bound)?;
         let folder = format!("{}-{}", each.name, each.version);
@@ -667,7 +835,7 @@ pub(crate) fn publish(
     };
     let (held, lacked) = match split(registry, &packages, bound) {
         Ok(split) => split,
-        Err(problem) => return unread(problem, &packages),
+        Err(problem) => return unread(problem.into(), &packages),
     };
     let mut done = Publication {
         release: release.into(),
@@ -693,7 +861,7 @@ pub(crate) fn publish(
     logged(log, &line, &ended);
     let (up, left) = match split(registry, &lacked, bound) {
         Ok(split) => split,
-        Err(problem) => return unread(problem, &lacked),
+        Err(problem) => return unread(problem.into(), &lacked),
     };
     done.uploaded = said(&up);
     done.left = said(&left);
@@ -756,6 +924,7 @@ pub(crate) fn notes(at: &Path, registry: &Registry, bound: Bound<'_>) -> Vec<Str
     let lacked = match split(registry, &packages, bound) {
         Ok((_, lacked)) => said(&lacked),
         Err(problem) => {
+            let problem = String::from(problem);
             return vec![format!(
                 "{} could not be read when it was tagged ({problem}): the step after its push \
                  publishes what it lacks.",
