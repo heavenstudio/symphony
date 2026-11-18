@@ -392,16 +392,25 @@ red if that build fails too. The tests' log and the summary say which.
 
 **The tests side by side.** The tests step (`tools/test-lanes.sh`) builds the workspace's test
 binaries once with cargo-nextest 0.9.152, then reuses that binary metadata for one nextest scheduler.
-Run `just nextest-setup` once to install the pinned runner under the target folder's
-`tools/nextest/` (`.target/tools/nextest/` by default; `CARGO_TARGET_DIR` wins). This cache survives
-the release checkout's ordinary clean, which preserves `.target/`; a new or cleared target
-folder needs setup again. Setup can copy an existing install of that exact version, otherwise
-it installs the locked package. A tests step
-never installs or downloads nextest: a missing or different local copy fails before the build,
-naming that setup command. Focused `just test-rs` commands continue to use Cargo.
+The release owns an explicit `nextest-setup` step before tests, including a tests-only rerun. It
+runs `just nextest-setup`: this target's `tools/nextest/` is checked first (`CARGO_TARGET_DIR`, else
+`.target/`), then a linked worktree's main checkout `.target/tools/nextest/`. With neither copy
+valid, setup provisions the main cache once for its worktrees, or this target in a main checkout.
+It downloads the [upstream pinned release](https://github.com/nextest-rs/nextest/releases/tag/cargo-nextest-0.9.152),
+verifies the archive and extracted executable against SHA-256 values in `tools/nextest.sh`, and
+publishes it by one rename. Every use verifies the executable's hash and version before executing
+it. No Cargo install, build folder or unverified PATH copy is used. Ordinary release cleans keep
+the cache; if it was cleared, the next setup step provisions it again. A provisioning failure is
+red at `nextest-setup`, and tests does not start. Tests never download or install a runner.
+
+Focused `just test-rs` uses Cargo and needs no nextest. The live success/failure/stall fixture is
+explicitly ignored in that default run; the tests step selects it once by its exact name through
+workspace Cargo before concurrent batches. Its missing runner is a failure, never a skip. The
+nextest filter excludes that case, so it is neither omitted nor run twice. Cargo keeps the same
+workspace features, profile and environment as the one build for this invocation too.
 
 Nextest runs six cases at once (the caller's `RUST_TEST_THREADS` wins), with groups capping Chrome
-and database cases at two each (`.config/nextest.toml`). Retries are explicitly zero. Every case
+and database cases at two each (`.config/nextest.toml`). Retries are explicitly zero. Every nextest case
 has its duration in the log, and a per-case timeout ends a stalled case and its children. A timeout
 is a failure, never a pass, and replaces none of the tests' own assertions. The runner emits both
 its status lines and libtest-json-plus 0.1 events: the release readers use the events to name each

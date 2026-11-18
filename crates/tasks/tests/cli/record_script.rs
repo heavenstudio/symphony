@@ -745,10 +745,7 @@ impl Recipes {
         ] {
             fs::copy(tool(name), tree.join("tools").join(name)).unwrap();
         }
-        executable(
-            &tree.join(".target/tools/nextest/0.9.152/bin/cargo-nextest"),
-            "#!/bin/sh\necho cargo-nextest 0.9.152\n",
-        );
+        super::test_lanes::mock_nextest(&tree);
         executable(
             &tree.join(".target/debug/symphony-build"),
             "#!/bin/sh\ncat\n",
@@ -800,6 +797,19 @@ impl Recipes {
             .env_remove(STEPS_VAR)
             .env("CARGO", &self.cargo)
             .env("CARGO_TARGET_DIR", self.tree.join(".target"))
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    self.tree.join(".target/nextest-fixture/bin").display(),
+                    std::env::var("PATH").unwrap()
+                ),
+            )
+            .env(
+                "NEXT_TOOL_ARCHIVE",
+                self.tree.join(".target/nextest-fixture/tool.tar.gz"),
+            )
+            .env_remove("FAIL_NEXTEST_SETUP")
             .env("TASKS_WORK", &self.work)
             .env(RUNS_VAR, &self.runs)
             .env("TASKS_RECORDER", RECORDER)
@@ -1130,15 +1140,69 @@ fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_o
 }
 
 /// The steps of a verify, in the order it runs them, each with the label its record keeps.
-const STEPS: [(&str, &str); 7] = [
+const STEPS: [(&str, &str); 8] = [
     ("lint", "just lint-rs"),
     ("client-check", "just client-check"),
     ("size-check", "just size-check"),
     ("docs-audit", "docs audit"),
     ("crates-check", "crates check"),
     ("semver-check", "semver check"),
+    ("nextest-setup", "nextest setup"),
     ("tests", "tests"),
 ];
+
+#[test]
+fn a_cold_release_target_is_provisioned_before_tests_and_a_setup_red_starts_no_tests() {
+    for fails in [false, true] {
+        let setup = Setup::new("record-script-nextest-setup");
+        let recipes = Recipes::new(&setup);
+        fs::remove_dir_all(recipes.tree.join(".target/tools")).unwrap();
+        let vars = if fails {
+            vec![("FAIL_NEXTEST_SETUP", "1")]
+        } else {
+            vec![]
+        };
+        let done = recipes.just_with(&["verify", "tests"], &vars);
+        assert_eq!(done.status.code(), Some(i32::from(fails)), "{done:?}");
+        let steps = listed(&recipes.tree.join("build/verify"));
+        let names: Vec<_> = steps.iter().map(|step| (step.0.as_str(), step.1)).collect();
+        if fails {
+            assert_eq!(names, [("nextest-setup", 2)]);
+            assert!(!recipes.tree.join("build/verify/tests.log").exists());
+            let log =
+                fs::read_to_string(recipes.tree.join("build/verify/nextest-setup.log")).unwrap();
+            assert!(log.contains("nextest: cannot fetch"), "{log}");
+        } else {
+            assert_eq!(names, [("nextest-setup", 0), ("tests", 0)]);
+            assert!(
+                recipes
+                    .tree
+                    .join(".target/tools/nextest/0.9.152/bin/cargo-nextest")
+                    .is_file()
+            );
+        }
+        let lines = symphony_api::fold(day_lines(
+            &recipes.work,
+            &recipes.runs,
+            if fails { 2 } else { 3 },
+        ));
+        let provision = lines
+            .iter()
+            .find(|line| line.step.as_deref() == Some("nextest-setup"))
+            .unwrap();
+        assert_eq!(provision.label, "nextest setup");
+        assert_eq!(
+            provision.end,
+            Some(if fails { End::Red } else { End::Green })
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .any(|line| line.step.as_deref() == Some("tests")),
+            !fails
+        );
+    }
+}
 
 #[test]
 fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_checks_docs_and_tests() {
@@ -1155,12 +1219,12 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_check
     };
     let red = verify(true);
     assert!(!red.status.success(), "{red:?}");
-    let first = symphony_api::fold(day_lines(&recipes.work, runs, 9));
+    let first = symphony_api::fold(day_lines(&recipes.work, runs, 10));
     let green = verify(false);
     assert!(green.status.success(), "{green:?}");
-    let lines = day_lines(&recipes.work, runs, 18);
+    let lines = day_lines(&recipes.work, runs, 20);
     // A start line and an end line for each run and step, and none for the commands inside them.
-    assert_eq!(lines.len(), 36, "{lines:#?}");
+    assert_eq!(lines.len(), 40, "{lines:#?}");
     let second: Vec<RunLine> = symphony_api::fold(lines)
         .into_iter()
         .filter(|line| first.iter().all(|earlier| earlier.run != line.run))
@@ -1174,7 +1238,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_check
     let commit = git_says(tree, &["rev-parse", "HEAD"]);
     let checked = git_says(tree, &["rev-parse", "HEAD^{tree}"]);
     for (runs, end) in [(&first, End::Red), (&second, End::Green)] {
-        assert_eq!(runs.len(), 9, "{runs:#?}");
+        assert_eq!(runs.len(), 10, "{runs:#?}");
         let verify = named(runs, None);
         assert_eq!(
             (
@@ -1253,7 +1317,7 @@ fn a_verify_writes_its_run_and_a_step_each_for_lint_client_size_and_crates_check
         );
     }
     // Each step's operation is a child of its run's; the commands inside them are none.
-    let history = setup.history(18);
+    let history = setup.history(20);
     for record in &history {
         let line = second
             .iter()
@@ -1330,7 +1394,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
     );
     assert_eq!(red.status.code(), Some(1), "{red:?}");
     // Every step ran past the reds before it, each recorded as its own command ended.
-    let lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 8));
+    let lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 9));
     let ended: Vec<_> = STEPS
         .iter()
         .map(|(step, _)| {
@@ -1349,6 +1413,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
             ("docs-audit", Some(End::Green), Some(0)),
             ("crates-check", Some(End::Red), Some(5)),
             ("semver-check", Some(End::Red), Some(6)),
+            ("nextest-setup", Some(End::Green), Some(0)),
             ("tests", Some(End::Red), Some(9)),
         ]
     );
@@ -1367,6 +1432,7 @@ fn a_verify_runs_every_step_after_red_ones_and_names_each_red_with_its_own_log()
             ("docs-audit", 0, "just symphony-cli docs-audit --check"),
             ("crates-check", 5, "just crates-check"),
             ("semver-check", 6, "just semver-check"),
+            ("nextest-setup", 0, "just nextest-setup"),
             ("tests", 9, "tools/test-lanes.sh"),
         ]
     );
@@ -1455,6 +1521,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
             ("docs-audit", 0),
             ("crates-check", 0),
             ("semver-check", 0),
+            ("nextest-setup", 0),
             ("tests", 0)
         ]
     );
@@ -1486,7 +1553,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
         "{tests}"
     );
     assert_eq!(
-        steps[6].3,
+        steps[7].3,
         "SYMPHONY_UI_DIST=\"$PWD/build/verified-client/public\" tools/test-lanes.sh"
     );
     assert!(
@@ -1501,7 +1568,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
     assert!(some.status.success(), "{some:?}");
     let steps = listed(&tree.join("build/verify"));
     let names: Vec<&str> = steps.iter().map(|step| step.0.as_str()).collect();
-    assert_eq!(names, ["docs-audit", "tests"]);
+    assert_eq!(names, ["docs-audit", "nextest-setup", "tests"]);
     let tests = fs::read_to_string(tree.join("build/verify/tests.log")).unwrap();
     assert_eq!(
         served(&tests),
@@ -1517,7 +1584,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
         tests.contains("\nverify: the client check did not run in this verify, so "),
         "{tests}"
     );
-    let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 12));
+    let mut lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 14));
     lines.sort_by(|one, other| one.queued.total_cmp(&other.queued));
     let labels: Vec<&str> = (lines.iter())
         .filter(|line| line.step.is_none())
@@ -1526,7 +1593,7 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
     assert_eq!(labels, ["just verify", "just verify tests docs-audit"]);
     assert_eq!(
         String::from_utf8(some.stdout).unwrap().lines().last(),
-        Some("verify: green: docs-audit tests")
+        Some("verify: green: docs-audit nextest-setup tests")
     );
 
     // A step it does not know runs nothing.
@@ -1535,11 +1602,11 @@ fn a_verify_writes_its_steps_where_it_is_told_and_runs_the_steps_it_is_named() {
     assert!(
         String::from_utf8_lossy(&unknown.stderr).starts_with(
             "verify: no step nothing; the steps are lint client-check size-check docs-audit \
-             crates-check semver-check tests\n"
+             crates-check semver-check nextest-setup tests\n"
         ),
         "{unknown:?}"
     );
-    assert_eq!(listed(&tree.join("build/verify")).len(), 2, "as it was");
+    assert_eq!(listed(&tree.join("build/verify")).len(), 3, "as it was");
 }
 
 #[test]

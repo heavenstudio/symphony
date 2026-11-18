@@ -11,6 +11,7 @@
 #     crates-check  the crates-check recipe: each published package whose version crates.io holds
 #                   packaged from the same sources (docs/RELEASES.md, "Packages on crates.io")
 #     semver-check  the kit/helper APIs against crates.io, with their actual version moves
+#     nextest-setup provision the checksum-pinned runner, outside the tests step
 #     tests         every test target of the workspace, the browser tests among them, built once and
 #                   scheduled by nextest with shared-fixture Cargo batches (tools/test-lanes.sh), logs in tests-lanes/
 #                   beside the step's log (SYMPHONY_TEST_LANE_LOGS), named in it as the lanes start
@@ -41,7 +42,7 @@ CDPATH='' cd "$(dirname "$justfile")" || exit 2
 interrupted=''
 trap 'interrupted=1' INT
 
-steps=(lint client-check size-check docs-audit crates-check semver-check tests)
+steps=(lint client-check size-check docs-audit crates-check semver-check nextest-setup tests)
 chosen=()
 for arg in "$@"; do
     known=''
@@ -59,7 +60,9 @@ for step in "${steps[@]}"; do
         continue
     fi
     for arg in "$@"; do
-        if [ "$step" = "$arg" ]; then
+        # Even a tests-only release rerun has its explicit setup prerequisite. A setup failure
+        # is red at that step; tests never starts and cannot file a misleading missing-tool red.
+        if [ "$step" = "$arg" ] || { [ "$step" = nextest-setup ] && [ "$arg" = tests ]; }; then
             chosen+=("$step")
             break
         fi
@@ -156,7 +159,18 @@ for step in "${chosen[@]}"; do
             tools/record.sh --step semver-check test "semver check" \
             just --justfile "$justfile" semver-check
         ;;
+    nextest-setup)
+        run nextest-setup "just nextest-setup" \
+            tools/record.sh --step nextest-setup build "nextest setup" \
+            just --justfile "$justfile" nextest-setup
+        ;;
     tests)
+        case " ${red[*]-} " in
+        *" nextest-setup "*)
+            printf 'verify: tests not started: nextest-setup is red; see %s/nextest-setup.log\n' "$logs"
+            continue
+            ;;
+        esac
         tests=(tools/test-lanes.sh)
         lanes="$logs/tests-lanes"
         if [ -n "$fresh" ]; then

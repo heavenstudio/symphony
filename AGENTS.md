@@ -134,9 +134,12 @@ so a missing browser cannot pass as acceptance not run) and the client's pinned 
 PATH, or fnm to fetch it once: `tools/node.sh`); the consuming project's binaries are not
 prerequisites. The client build needs Git, Bash and jq, and native
 board fixtures need lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`).
-The release tests step needs cargo-nextest 0.9.152, installed once with `just nextest-setup`
-under `.target/tools/nextest/` (`CARGO_TARGET_DIR` wins); test runs never install it.
-Focused `just test-rs` commands use Cargo.
+The release verification owns an explicit `nextest-setup` step before tests, provisioning
+cargo-nextest 0.9.152 from checksum-pinned upstream binaries (Bash, curl, tar and `sha256sum` or
+`shasum`, HTTPS to GitHub). The launcher checks this target's `tools/nextest/` first, then a linked
+worktree's main checkout `.target/tools/nextest/`; setup provisions that main cache once for its
+worktrees. Tests never install it. Focused `just test-rs` uses Cargo and needs no nextest: the live
+runner fixture is explicitly ignored there and selected by name by the release tests step.
 The board's server tests (`just test-rs -p symphony-board --test server`, and so the release run)
 need the machine's PostgreSQL 18 or later: the absolute folder `symphony.toml`'s `[board]
 postgresql` names, otherwise the first executable `postgres` on `PATH`, with `initdb`, `pg_ctl`

@@ -29,7 +29,9 @@ esac
 shared_tests=(perf sweep cli server store launch release after_commit after_publication
     after_worktrees hooks picks project after_http browser)
 shared_libraries=(symphony-board symphony-app symphony-server)
+live_fixture=release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test
 filter='not (kind(test) & binary(=build))'
+filter="$filter & not (kind(lib) & package(=symphony-build) & test(=$live_fixture))"
 for target in "${shared_tests[@]}"; do
     filter="$filter & not (kind(test) & binary(=$target))"
 done
@@ -43,6 +45,7 @@ run=(test --config 'profile.dev.build-override.debug="line-tables-only"' --works
 if [ -n "$list" ]; then
     printf 'nextest %s\n' "$filter"
     printf 'cargo --test build (before scheduling)\n'
+    printf 'cargo --lib -- --ignored --exact %s (before scheduling)\n' "$live_fixture"
     for target in "${shared_tests[@]}"; do printf 'cargo --test %s\n' "$target"; done
     printf 'cargo --lib (exec adapter selects %s)\n' "${shared_libraries[*]}"
     printf 'doc --doc\n'
@@ -92,6 +95,20 @@ if jq -e '."rust-binaries"[] | select(."binary-name" == "build" and .kind == "te
     first=$?
     if [ -n "$interrupted" ]; then exit "$interrupted"; fi
     if [ "$first" -ne 0 ]; then failed+=('    `--workspace --test build`'); fi
+fi
+# This live tool regression is explicitly ignored in ordinary focused Cargo tests. The release
+# owns it here, by its exact name, after provisioning; absence is a real failure, never a skip.
+# Keep the workspace feature graph, profile and environment of the one build, before any readers.
+if jq -e '."rust-binaries" | to_entries[] | select(.key == "symphony-build" and .value.kind == "lib")' \
+    "$logs/binaries.json" >/dev/null; then
+    tools/cargo.sh "${run[@]}" --lib -- --ignored --exact "$live_fixture"
+    fixture_code=$?
+    if [ -n "$interrupted" ]; then exit "$interrupted"; fi
+    if [ "$fixture_code" -ne 0 ]; then
+        if [ "$first" -eq 0 ]; then first="$fixture_code"; fi
+        printf 'test-lanes: the explicit runner fixture failed (exit %s)\n' "$fixture_code"
+        failed+=('    `-p symphony-build --lib`')
+    fi
 fi
 # Without a verified client, publish one once before any browser or build-folder reader starts.
 if [ -z "${SYMPHONY_UI_DIST:-}" ]; then
@@ -231,7 +248,7 @@ for i in "${started[@]-}"; do
     esac
     if [ "$first" -eq 0 ]; then first="$code"; fi
     if [ "$name" = nextest ]; then
-        printf 'test-lanes: nextest ended red (exit %s); its JSON events name each failure\n' "$code"
+        printf 'test-lanes: nextest ended red (exit %s); case events name test failures, other errors remain in its log\n' "$code"
         continue
     fi
     # The lane's own list: the lines of the `error: N target(s) failed:` that ends its log, which

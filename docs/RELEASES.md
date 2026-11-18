@@ -323,6 +323,19 @@ project is given and neither the library nor the shipped `symphony` compiles
    output to a log of its own. It runs in a process group of its own and inherits no descriptor of
    the run's, its lock included (below); what its group still runs when it ends is killed with it.
 
+   **The runner's setup belongs to the release run.** Before `tests`, verification runs the
+   explicit `nextest-setup` step (`just nextest-setup`), on a full run and a tests-only rerun.
+   `tools/nextest.sh` verifies this target's cached cargo-nextest first, then the main checkout's
+   target from a linked worktree. When neither holds the pin, setup downloads it into the main
+   cache, once for the machine's worktrees; a main checkout uses its own target. Both the upstream
+   archive and executable are checked against committed SHA-256 values, and every later use
+   rechecks the executable's hash and version. It needs Bash, curl, tar, `sha256sum` or `shasum`,
+   and HTTPS to GitHub for a cold cache; macOS and glibc Linux have pinned builds. A failed fetch,
+   hash or install is red at `nextest-setup`, with its reason in that step's log; `tests` does not
+   start. No test downloads the runner, and no manual setup in the release checkout is owed
+   before a land. Focused Cargo tests need no runner: the live runner fixture is explicitly
+   ignored there, and the tests step runs it once by name, where absence fails.
+
    **Its steps.** Each check is given a folder of its own among the run's logs
    (`SYMPHONY_CHECK_STEPS`, `logs/ID/KEY.steps/`), where `just verify` lists the steps it ran, each
    with its exit status and a log of its own ([CHECKS](CHECKS.md#the-release-run)). The run records

@@ -85,6 +85,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "the release tests step selects this live runner fixture explicitly"]
     fn the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test() {
         let tree = crate::test_tree::Tree::new();
         tree.write("Cargo.toml", include_str!("fixtures/nextest/Cargo.toml"));
@@ -94,47 +95,48 @@ mod tests {
             include_str!("fixtures/nextest/.config/nextest.toml"),
         );
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let target = std::env::var_os("CARGO_TARGET_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| root.join(".target"));
-        let target = if target.is_absolute() {
-            target
-        } else {
-            root.join(target)
-        };
-        let done =
-            std::process::Command::new(target.join("tools/nextest/0.9.152/bin/cargo-nextest"))
-                .args([
-                    "nextest",
-                    "run",
-                    "--profile",
-                    "default",
-                    "--offline",
-                    "--color",
-                    "never",
-                    "--no-fail-fast",
-                    "--message-format",
-                    "libtest-json-plus",
-                    "--message-format-version",
-                    "0.1",
-                    "--failure-output",
-                    "never",
-                    "--success-output",
-                    "never",
-                ])
-                .arg("--manifest-path")
-                .arg(tree.path("Cargo.toml"))
-                .arg("--config-file")
-                .arg(config)
-                .current_dir(&tree.root)
-                .env("CARGO_TARGET_DIR", tree.path("target"))
-                .env("NEXTEST_EXPERIMENTAL_LIBTEST_JSON", "1")
-                // The outer runner exports its profile; this fixture owns a different config.
-                .env("NEXTEST_PROFILE", "release")
-                .env_remove("RUSTFLAGS")
-                .env_remove("CARGO_ENCODED_RUSTFLAGS")
-                .output()
-                .expect("the pinned nextest is installed: just nextest-setup");
+        let found = std::process::Command::new(root.join("tools/nextest.sh"))
+            .arg("--where")
+            .output()
+            .expect("the workspace nextest launcher starts");
+        assert!(
+            found.status.success(),
+            "{}",
+            String::from_utf8_lossy(&found.stderr)
+        );
+        let binary = String::from_utf8(found.stdout).unwrap();
+        let done = std::process::Command::new(binary.trim_end())
+            .args([
+                "nextest",
+                "run",
+                "--profile",
+                "default",
+                "--offline",
+                "--color",
+                "never",
+                "--no-fail-fast",
+                "--message-format",
+                "libtest-json-plus",
+                "--message-format-version",
+                "0.1",
+                "--failure-output",
+                "never",
+                "--success-output",
+                "never",
+            ])
+            .arg("--manifest-path")
+            .arg(tree.path("Cargo.toml"))
+            .arg("--config-file")
+            .arg(config)
+            .current_dir(&tree.root)
+            .env("CARGO_TARGET_DIR", tree.path("target"))
+            .env("NEXTEST_EXPERIMENTAL_LIBTEST_JSON", "1")
+            // The outer runner exports its profile; this fixture owns a different config.
+            .env("NEXTEST_PROFILE", "release")
+            .env_remove("RUSTFLAGS")
+            .env_remove("CARGO_ENCODED_RUSTFLAGS")
+            .output()
+            .expect("the pinned nextest is installed: just nextest-setup");
         assert_eq!(done.status.code(), Some(100), "{done:?}");
         let backstop = tree.write(
             "backstop.toml",
@@ -181,6 +183,27 @@ mod tests {
         for args in args {
             eprintln!("Fixture rerun arguments: {args}");
         }
+    }
+
+    #[test]
+    fn the_default_focused_run_leaves_the_live_fixture_explicitly_ignored_without_tools() {
+        let tree = crate::test_tree::Tree::new();
+        let target = tree.path("target-with-no-tools");
+        let done = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test",
+            ])
+            .env("CARGO_TARGET_DIR", &target)
+            .output()
+            .unwrap();
+        assert!(done.status.success(), "{done:?}");
+        let out = String::from_utf8(done.stdout).unwrap();
+        assert!(
+            out.contains("test result: ok. 0 passed; 0 failed; 1 ignored;"),
+            "{out}"
+        );
+        assert!(!target.exists());
     }
 
     #[test]

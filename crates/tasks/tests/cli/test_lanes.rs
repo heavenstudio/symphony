@@ -2,7 +2,8 @@
 //! exceptions, the client build before concurrent readers, no retries, pinned setup, and live logs.
 
 use crate::children::Child as _;
-use crate::scratch;
+use crate::{git, scratch};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::process::ExitStatusExt as _;
@@ -13,6 +14,47 @@ use symphony_board::sys::{Command, Stdio, group_alive, output, wait_output};
 
 const LANES: usize = 9;
 const VERSION: &str = "0.9.152";
+pub(super) const MOCK_TOOL: &str = "#!/bin/sh\nprintf 'cargo-nextest 0.9.152\\n'\n";
+
+/// Real launcher and SHA-256 checks over a local archive. Only the pin's fixture bytes and fetch
+/// transport change, so corrupt archives and executable copies can be tested without a network.
+pub(super) fn mock_nextest(root: &Path) {
+    let fixture = root.join(".target/nextest-fixture");
+    executable(&fixture.join("cargo-nextest"), MOCK_TOOL);
+    let archive = fixture.join("tool.tar.gz");
+    let done = output(
+        Command::of("tar")
+            .args(["-czf", archive.to_str().unwrap(), "-C"])
+            .arg(&fixture)
+            .arg("cargo-nextest"),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    let path = root.join("tools/nextest.sh");
+    let script = fs::read_to_string(&path).unwrap();
+    let guard = "if [ \"${BASH_SOURCE[0]}\" = \"$0\" ]; then main \"$@\"; fi";
+    assert!(script.contains(guard));
+    fs::write(
+        path,
+        script.replace(
+            guard,
+            &format!(
+                "binary_sha256() {{ echo {:x}; }}\narchive_sha256() {{ echo {:x}; }}\nmain \"$@\"",
+                Sha256::digest(MOCK_TOOL),
+                Sha256::digest(fs::read(&archive).unwrap())
+            ),
+        ),
+    )
+    .unwrap();
+    executable(
+        &root.join(format!(".target/tools/nextest/{VERSION}/bin/cargo-nextest")),
+        MOCK_TOOL,
+    );
+    executable(
+        &fixture.join("bin/curl"),
+        "#!/bin/sh\nif [ -n \"${FAIL_NEXTEST_SETUP:-}\" ]; then exit 7; fi\nwhile [ $# -gt 0 ]; do\nif [ \"$1\" = -o ]; then cp \"$NEXT_TOOL_ARCHIVE\" \"$2\"; exit; fi\nshift\ndone\nexit 64\n",
+    );
+}
 const CARGO: &str = r#"#!/bin/bash
 if [ "$1" = nextest ] && [ "$2" = list ]; then
     printf '%s\n' "$*" >>"$STAND/built"
@@ -27,6 +69,10 @@ if [ "$1" = nextest ]; then
     printf '<%s>\n' "$@" >"$STAND/nextest-args"
 else
     case " $* " in
+        *' --ignored --exact release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test '*)
+            printf '%s\n' "$*" >"$STAND/runner-fixture-args"
+            printf 'explicit runner fixture\n'
+            exit "${FAIL_LIVE_FIXTURE:-0}" ;;
         *' --test build '*)
             : >"$STAND/serial-done"
             printf 'serial build test\n'
@@ -76,6 +122,7 @@ exit 0
 const METADATA: &str = r#"{"rust-build-meta":{"platforms":{"host":{"platform":{"triple":"fixture-host"}}}},"rust-binaries":{
  "symphony-board":{"binary-name":"symphony_board","kind":"lib","binary-path":"/build/deps/board-exact"},
  "stateless":{"binary-name":"stateless","kind":"lib","binary-path":"/build/deps/stateless-exact"},
+ "symphony-build":{"binary-name":"symphony_build","kind":"lib","binary-path":"/build/deps/build-exact"},
  "perf":{"binary-name":"perf","kind":"test"},
  "sweep":{"binary-name":"sweep","kind":"test"},
  "cli":{"binary-name":"cli","kind":"test"},
@@ -105,6 +152,8 @@ impl Lanes {
             fs::copy(source.join(name), root.join("tools").join(name)).unwrap();
         }
         fs::write(root.join("Cargo.toml"), "[workspace]\nmembers=[]\n").unwrap();
+        git(&root, &["init", "-q"]);
+        mock_nextest(&root);
         let stand = dir.join("stand");
         executable(&stand.join("cargo"), CARGO);
         executable(
@@ -114,10 +163,6 @@ impl Lanes {
         executable(
             &stand.join("bin/getconf"),
             "#!/bin/sh\nprintf '%s\\n' \"${PROCESSORS-32}\"\n",
-        );
-        executable(
-            &root.join(format!(".target/tools/nextest/{VERSION}/bin/cargo-nextest")),
-            &format!("#!/bin/sh\nprintf 'cargo-nextest {VERSION}\\n'\n"),
         );
         executable(
             &root.join("apps/symphony-web/build.sh"),
@@ -142,14 +187,19 @@ impl Lanes {
             .env(
                 "PATH",
                 format!(
-                    "{}:{}",
+                    "{}:{}:{}",
                     self.stand.join("bin").display(),
+                    self.root.join(".target/nextest-fixture/bin").display(),
                     std::env::var("PATH").unwrap()
                 ),
             )
             .env("CARGO", self.stand.join("cargo"))
             .env("METADATA", self.stand.join("metadata.json"))
             .env("STAND", &self.stand)
+            .env(
+                "NEXT_TOOL_ARCHIVE",
+                self.root.join(".target/nextest-fixture/tool.tar.gz"),
+            )
             .env("TASKS_RECORDER", "off")
             .env("PROCESSORS", "32")
             .env("EXPECT_SERIAL", "1")
@@ -167,6 +217,7 @@ impl Lanes {
             .env_remove("SAY_STATUS")
             .env_remove("FAIL_BUILD")
             .env_remove("FAIL_REPORTER")
+            .env_remove("FAIL_LIVE_FIXTURE")
             .env_remove("HOLD")
             .envs(vars.iter().copied())
             .stdin(Stdio::null());
@@ -174,6 +225,31 @@ impl Lanes {
     }
     fn run(&self, args: &[&str], vars: &[(&str, &str)]) -> Output {
         output(&mut self.command(args, vars)).unwrap()
+    }
+    fn tool(&self, args: &[&str], vars: &[(&str, &str)]) -> Output {
+        output(
+            Command::of(self.root.join("tools/nextest.sh"))
+                .args(args)
+                .current_dir(&self.stand)
+                .env(
+                    "PATH",
+                    format!(
+                        "{}:{}:{}",
+                        self.stand.join("bin").display(),
+                        self.root.join(".target/nextest-fixture/bin").display(),
+                        std::env::var("PATH").unwrap()
+                    ),
+                )
+                .env(
+                    "NEXT_TOOL_ARCHIVE",
+                    self.root.join(".target/nextest-fixture/tool.tar.gz"),
+                )
+                .env_remove("CARGO_TARGET_DIR")
+                .env_remove("FAIL_NEXTEST_SETUP")
+                .envs(vars.iter().copied())
+                .stdin(Stdio::null()),
+        )
+        .unwrap()
     }
     fn logs(&self) -> PathBuf {
         self.root.join("build/test-lanes")
@@ -288,7 +364,8 @@ fn one_build_feeds_nextest_and_only_shared_fixtures_and_docs_run_on_cargo() {
         selection,
         serde_json::json!([
             {"binary":"/build/deps/board-exact", "shared":true},
-            {"binary":"/build/deps/stateless-exact", "shared":false}
+            {"binary":"/build/deps/stateless-exact", "shared":false},
+            {"binary":"/build/deps/build-exact", "shared":false}
         ])
     );
     let libraries = fs::read_to_string(lanes.stand.join("started/libraries")).unwrap();
@@ -303,6 +380,10 @@ fn one_build_feeds_nextest_and_only_shared_fixtures_and_docs_run_on_cargo() {
     );
     let docs = fs::read_to_string(lanes.stand.join("started/doc")).unwrap();
     assert!(!docs.contains("exec-test-binary"), "{docs}");
+    let live = fs::read_to_string(lanes.stand.join("runner-fixture-args")).unwrap();
+    assert!(live.contains("--workspace --locked --no-fail-fast --lib -- --ignored --exact release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test"), "{live}");
+    assert!(!live.contains("exec-test-binary"), "{live}");
+    assert!(args.contains("not (kind(lib) & package(=symphony-build) & test(=release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test))"), "{args}");
     assert!(lanes.stand.join("client-built").exists());
     let shared = fs::read_to_string(lanes.stand.join("started/cli")).unwrap();
     assert!(shared.contains("--test cli"), "{shared}");
@@ -511,31 +592,173 @@ fn signals_end_all_batches_and_leave_their_named_live_logs() {
 }
 
 #[test]
-fn setup_can_seed_the_pinned_runner_from_a_matching_local_install_without_a_build() {
+fn setup_fetches_one_verified_archive_without_a_cargo_install_and_reuses_it_offline() {
     let lanes = Lanes::new("nextest-setup");
     let binary = lanes
         .root
         .join(format!(".target/tools/nextest/{VERSION}/bin/cargo-nextest"));
     fs::remove_file(&binary).unwrap();
-    let seed = lanes.stand.join("bin/cargo-nextest");
     executable(&lanes.stand.join("bin/cargo"), "#!/bin/sh\nexit 64\n");
-    executable(&seed, &format!("#!/bin/sh\necho cargo-nextest {VERSION}\n"));
+    let done = lanes.tool(&["--setup"], &[]);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(fs::read_to_string(&binary).unwrap(), MOCK_TOOL);
+    let done = lanes.tool(&["--setup"], &[("FAIL_NEXTEST_SETUP", "1")]);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        fs::read_dir(binary.parent().unwrap().parent().unwrap())
+            .unwrap()
+            .count(),
+        1
+    );
+    assert!(!lanes.stand.join("built").exists());
+}
+
+#[test]
+fn linked_worktrees_reuse_and_provision_only_the_main_cache() {
+    let main = Lanes::new("nextest-main-cache");
+    git(&main.root, &["add", "tools"]);
+    git(&main.root, &["commit", "-q", "-m", "runner"]);
+    let linked = main.stand.join("linked workspace");
+    git(
+        &main.root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().unwrap(),
+        ],
+    );
+    let linked = Lanes {
+        root: linked.canonicalize().unwrap(),
+        stand: main.stand.clone(),
+    };
+    let cached = main
+        .root
+        .join(format!(".target/tools/nextest/{VERSION}/bin/cargo-nextest"));
+    let done = linked.tool(&["--where"], &[("FAIL_NEXTEST_SETUP", "1")]);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        String::from_utf8(done.stdout).unwrap().trim(),
+        cached.to_str().unwrap()
+    );
+    assert!(!linked.root.join(".target").exists());
+
+    fs::remove_file(&cached).unwrap();
+    let done = linked.tool(&["--check"], &[]);
+    assert_eq!(done.status.code(), Some(2), "{done:?}");
     let path = format!(
         "{}:{}",
-        lanes.stand.join("bin").display(),
+        main.root.join(".target/nextest-fixture/bin").display(),
         std::env::var("PATH").unwrap()
     );
-    let done = output(
-        Command::of(lanes.root.join("tools/nextest.sh"))
-            .arg("--setup")
-            .env("PATH", path)
-            .env_remove("CARGO_TARGET_DIR")
-            .stdin(Stdio::null()),
-    )
-    .unwrap();
+    let archive = main.root.join(".target/nextest-fixture/tool.tar.gz");
+    let done = linked.tool(
+        &["--setup"],
+        &[
+            ("PATH", &path),
+            ("NEXT_TOOL_ARCHIVE", archive.to_str().unwrap()),
+        ],
+    );
     assert!(done.status.success(), "{done:?}");
-    assert_eq!(fs::read(&binary).unwrap(), fs::read(seed).unwrap());
+    assert_eq!(fs::read_to_string(&cached).unwrap(), MOCK_TOOL);
+    assert!(!linked.root.join(".target").exists());
+
+    let own = linked
+        .root
+        .join(format!(".target/tools/nextest/{VERSION}/bin/cargo-nextest"));
+    executable(&own, MOCK_TOOL);
+    let done = linked.tool(&["--where"], &[]);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        String::from_utf8(done.stdout).unwrap().trim(),
+        own.to_str().unwrap()
+    );
+    // A corrupt local copy falls back without executing the corrupt bytes or downloading.
+    executable(&own, "#!/bin/sh\nexit 79\n");
+    let done = linked.tool(&["--where"], &[("FAIL_NEXTEST_SETUP", "1")]);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        String::from_utf8(done.stdout).unwrap().trim(),
+        cached.to_str().unwrap()
+    );
+}
+
+#[test]
+fn setup_refuses_a_failed_download_or_wrong_hash_and_leaves_no_partial_tool() {
+    for corrupt in [false, true] {
+        let lanes = Lanes::new("nextest-failed-setup");
+        let folder = lanes.root.join(format!(".target/tools/nextest/{VERSION}"));
+        fs::remove_file(folder.join("bin/cargo-nextest")).unwrap();
+        let vars = if corrupt {
+            fs::write(
+                lanes.root.join(".target/nextest-fixture/tool.tar.gz"),
+                "not the pinned archive",
+            )
+            .unwrap();
+            vec![]
+        } else {
+            vec![("FAIL_NEXTEST_SETUP", "1")]
+        };
+        let done = lanes.tool(&["--setup"], &vars);
+        assert_eq!(done.status.code(), Some(2), "{done:?}");
+        let err = String::from_utf8(done.stderr).unwrap();
+        assert!(
+            err.contains(if corrupt {
+                "archive SHA-256"
+            } else {
+                "cannot fetch"
+            }),
+            "{err}"
+        );
+        assert!(!folder.join("bin/cargo-nextest").exists());
+        assert_eq!(
+            fs::read_dir(&folder).unwrap().count(),
+            1,
+            "only the empty bin folder survives"
+        );
+        let done = lanes.tool(&["--check"], &[]);
+        assert_eq!(done.status.code(), Some(2), "{done:?}");
+    }
+}
+
+#[test]
+fn the_runtime_refuses_changed_bytes_even_when_the_version_string_matches() {
+    let lanes = Lanes::new("nextest-binary-hash");
+    let binary = lanes
+        .root
+        .join(format!(".target/tools/nextest/{VERSION}/bin/cargo-nextest"));
+    executable(&binary, &format!("{MOCK_TOOL}# changed bytes\n"));
+    let done = lanes.tool(&["--check"], &[]);
+    assert_eq!(done.status.code(), Some(2), "{done:?}");
+    assert!(
+        String::from_utf8(done.stderr)
+            .unwrap()
+            .contains("missing or differs")
+    );
     assert!(!lanes.stand.join("built").exists());
+}
+
+#[test]
+fn the_named_live_fixture_is_not_retried_or_hidden_when_it_fails() {
+    let lanes = Lanes::new("nextest-live-red");
+    let done = lanes.run(&[], &[("FAIL_LIVE_FIXTURE", "101")]);
+    assert_eq!(done.status.code(), Some(101), "{done:?}");
+    let said = String::from_utf8(done.stdout).unwrap();
+    assert_eq!(
+        said.matches("explicit runner fixture\n").count(),
+        1,
+        "{said}"
+    );
+    assert!(
+        said.contains("the explicit runner fixture failed (exit 101)"),
+        "{said}"
+    );
+    assert_eq!(
+        fs::read_dir(lanes.stand.join("started")).unwrap().count(),
+        LANES
+    );
 }
 
 #[test]
@@ -562,35 +785,16 @@ fn setup_and_runtime_use_the_default_relative_or_absolute_target_cache() {
         if binary.exists() {
             fs::remove_file(&binary).unwrap();
         }
-        let seed = lanes.stand.join("bin/cargo-nextest");
-        executable(&seed, &format!("#!/bin/sh\necho cargo-nextest {VERSION}\n"));
         executable(&lanes.stand.join("bin/cargo"), "#!/bin/sh\nexit 64\n");
-        let mut command = Command::of(lanes.root.join("tools/nextest.sh"));
-        command
-            .arg("--setup")
-            .current_dir(&lanes.stand)
-            .env(
-                "PATH",
-                format!(
-                    "{}:{}",
-                    lanes.stand.join("bin").display(),
-                    std::env::var("PATH").unwrap()
-                ),
-            )
-            .env_remove("CARGO_TARGET_DIR")
-            .stdin(Stdio::null());
-        if let Some(path) = &selected {
-            command.env("CARGO_TARGET_DIR", path);
-        }
-        let done = output(&mut command).unwrap();
-        assert!(done.status.success(), "{done:?}");
-        assert_eq!(fs::read(&binary).unwrap(), fs::read(seed).unwrap());
-        assert!(!lanes.root.join("tools/.nextest").exists());
         let vars: Vec<_> = selected
             .as_ref()
             .map(|path| ("CARGO_TARGET_DIR", path.as_str()))
             .into_iter()
             .collect();
+        let done = lanes.tool(&["--setup"], &vars);
+        assert!(done.status.success(), "{done:?}");
+        assert_eq!(fs::read_to_string(&binary).unwrap(), MOCK_TOOL);
+        assert!(!lanes.root.join("tools/.nextest").exists());
         let done = lanes.run(&[], &vars);
         assert!(done.status.success(), "{done:?}");
     }
@@ -646,7 +850,7 @@ fn a_relative_target_folder_names_its_built_binaries_for_every_test_batch() {
         &lanes.root.join(format!(
             "other-target/tools/nextest/{VERSION}/bin/cargo-nextest"
         )),
-        &format!("#!/bin/sh\necho cargo-nextest {VERSION}\n"),
+        MOCK_TOOL,
     );
     fs::create_dir_all(&debug).unwrap();
     fs::write(debug.join("tasks"), "built tasks").unwrap();
