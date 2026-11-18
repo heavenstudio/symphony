@@ -61,8 +61,12 @@ impl Home {
         let path = self.dir.join(FILE);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
-            Err(why) if why.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(why) => return Err(io("could not read backend identity", &path)(why)),
+            Err(why) => {
+                if why.kind() == std::io::ErrorKind::NotFound && !present(&path)? {
+                    return Ok(None);
+                }
+                return Err(io("could not read backend identity", &path)(why));
+            }
         };
         if !text.trim_start().starts_with('{') {
             return Err(ServerError::Io(format!(
@@ -313,6 +317,23 @@ mod tests {
             assert!(home.data_matches(engine).is_err());
         }
         assert_eq!(fs::read_to_string(file).unwrap(), "kept");
+    }
+
+    #[test]
+    fn unreadable_identity_paths_are_never_absent_identity() {
+        let board = Board::new("identity-links");
+        let identity = board.home.dir.join(FILE);
+        for target in ["missing", FILE] {
+            std::os::unix::fs::symlink(target, &identity).unwrap();
+            assert!(board.home.backend().is_err());
+            assert!(board.home.initialize_backend(Engine::SurrealDb).is_err());
+            assert!(board.home.initialize_backend(Engine::PostgreSql).is_err());
+            assert!(fs::symlink_metadata(&identity).unwrap().is_symlink());
+            fs::remove_file(&identity).unwrap();
+        }
+        fs::create_dir(&identity).unwrap();
+        assert!(board.home.backend().is_err());
+        assert!(board.home.initialize_backend(Engine::SurrealDb).is_err());
     }
 
     #[test]
