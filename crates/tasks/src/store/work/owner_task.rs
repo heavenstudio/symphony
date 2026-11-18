@@ -13,14 +13,14 @@ use std::fmt::Write as _;
 impl Store {
     /// A new task, on the record. `assignee`: a session reserved without a lapse.
     pub fn create(&self, new: &NewTask) -> Result<Task, Error> {
-        self.create_with_receipt(new, None, None)
+        self.create_with_receipt(new, None, None, true)
     }
 
     /// [`Store::create`], the task filed on `arm` ([`crate::arm`]): the label is written with the
     /// task, in its one transaction, and no write changes it after.
     pub fn create_in_arm(&self, new: &NewTask, arm: &str) -> Result<Task, Error> {
         let arm = crate::arm::named(arm).map_err(refused)?;
-        self.create_with_receipt(new, None, Some(arm))
+        self.create_with_receipt(new, None, Some(arm), true)
     }
 
     /// The slugs of the owner's tasks saved under `receipt` ([`Store::create_owner_task`]), two
@@ -37,14 +37,7 @@ impl Store {
     /// and fails nothing, the task saved, and the board's next read of the whole board gives it
     /// ([`Store::give_if_due`]).
     pub fn create_owner_task(&self, new: &NewTask, receipt: &str) -> Result<Task, Error> {
-        if new.by != OWNER || receipt.is_empty() {
-            return Err(refused(format!(
-                "owner task receipt {} requires actor owner and a nonempty receipt; actor is {}",
-                repr(receipt),
-                repr(&new.by)
-            )));
-        }
-        let made = self.create_with_receipt(new, Some(receipt), None)?;
+        let made = self.owner_task(new, receipt, true)?;
         match self.give_filed(&made.slug, OWNER, None) {
             Ok(_) => Ok(self.get(&made.slug).unwrap_or(made)),
             Err(error) => {
@@ -54,11 +47,31 @@ impl Store {
         }
     }
 
+    /// Commit the owner's receipt, task and creation message without waiting for orchestration
+    /// or callback delivery. A server clock must dispatch this board's callbacks.
+    /// The durable unowned task is picked up by [`Store::give_if_due`] on the next whole-board
+    /// read, including after a restart. Call [`Store::create_owner_task`] to give it immediately.
+    pub fn persist_owner_task(&self, new: &NewTask, receipt: &str) -> Result<Task, Error> {
+        self.owner_task(new, receipt, false)
+    }
+
+    fn owner_task(&self, new: &NewTask, receipt: &str, deliver: bool) -> Result<Task, Error> {
+        if new.by != OWNER || receipt.is_empty() {
+            return Err(refused(format!(
+                "owner task receipt {} requires actor owner and a nonempty receipt; actor is {}",
+                repr(receipt),
+                repr(&new.by)
+            )));
+        }
+        self.create_with_receipt(new, Some(receipt), None, deliver)
+    }
+
     fn create_with_receipt(
         &self,
         new: &NewTask,
         receipt: Option<&str>,
         arm: Option<&str>,
+        deliver: bool,
     ) -> Result<Task, Error> {
         if !plain_slug(&new.slug) {
             return Err(refused(format!(
@@ -131,6 +144,6 @@ impl Store {
         {
             vars.extend(filer);
         }
-        self.retrying(|| self.written(body(), vars.clone(), &new.slug))
+        self.retrying(|| self.written_statement(body(), vars.clone(), &new.slug, deliver))
     }
 }

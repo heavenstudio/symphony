@@ -1,3 +1,8 @@
+//! Argument and return types, field types and downstream call compatibility remain here:
+//! cargo-semver-checks does not compare arbitrary types or enforce the two-release migration
+//! rule. `just semver-check` holds public names and the version bump; these typed calls cover
+//! what it leaves out. No name-only inventory is kept here.
+//!
 //! The public names of `repository_read` that consuming projects' code calls, each in the shape it
 //! calls it: a signature pinned by coercing the function to its pointer type. Nothing here runs; it
 //! is compiled by the test build and by `just lint-rs` (clippy over every target), so a change that

@@ -1981,6 +1981,61 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
     );
 }
 
+#[test]
+fn quick_chat_acknowledges_durable_intents_before_delivery_and_replays_once() {
+    isolated(
+        "quick_chat_acknowledges_durable_intents_before_delivery_and_replays_once",
+        |f| {
+            let root = f.repo();
+            let saves = ClosingSaves::start(&root);
+            for words in ["First quick question", "Second quick question"] {
+                let value = saves.post(
+                    "",
+                    "/api/quick-chat",
+                    json!({"text":words,"page":"/docs/a.md#one"}),
+                );
+                assert!(value["id"].is_i64(), "{value}");
+            }
+            drop(saves);
+            let store = f.store();
+            assert!(store.asks(None).unwrap().is_empty(), "delivery has not run");
+            let journal = f.home.join("asks.db");
+            let sqlite = |sql: &str| {
+                let done =
+                    sys::output(sys::Command::new("sqlite3").arg(&journal).arg(sql)).unwrap();
+                assert!(done.status.success(), "{done:?}");
+                String::from_utf8_lossy(&done.stdout).trim().to_owned()
+            };
+            assert_eq!(sqlite("SELECT count(*) FROM callbacks;"), "2");
+            assert_eq!(
+                sqlite("SELECT count(*) FROM messages WHERE by = 'owner';"),
+                "2"
+            );
+            // A crash after the board commits but before the local outbox deletes its record has
+            // the same replay as this refused delete. The event key prevents a second delivery.
+            sqlite(
+                "CREATE TRIGGER hold_delivery BEFORE DELETE ON callbacks BEGIN SELECT RAISE(ABORT, 'held after board commit'); END;",
+            );
+            let error = symphony::callbacks::Flusher::new(&root)
+                .flush(&root)
+                .unwrap_err();
+            assert!(error.contains("held after board commit"), "{error}");
+            assert_eq!(sqlite("SELECT count(*) FROM callbacks;"), "2");
+            sqlite("DROP TRIGGER hold_delivery;");
+            let mut restarted = symphony::callbacks::Flusher::new(&root);
+            restarted.flush(&root).unwrap();
+            restarted.flush(&root).unwrap();
+            assert_eq!(sqlite("SELECT count(*) FROM callbacks;"), "0");
+            let asks = store.asks(None).unwrap();
+            assert_eq!(asks.len(), 2);
+            assert!(asks.iter().all(|ask| ask.lines == 1));
+            let events = store.raw().table("chat_event").fields(&["text"]).unwrap();
+            assert_eq!(events.as_array().unwrap().len(), 2);
+            f.clean_workers();
+        },
+    );
+}
+
 /// A journal written before asks gains their column with its records kept, and a record whose ask
 /// the board refuses still delivers its chat: neither holds the journal.
 #[test]

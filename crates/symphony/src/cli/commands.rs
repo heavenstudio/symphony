@@ -36,7 +36,7 @@ const OWN: [(&str, &str); 15] = [
     ),
     (
         "model",
-        "set a role's model in the main checkout: model ROLE MODEL",
+        "set role models and the launch agent: model ROLE MODEL",
     ),
     (
         "blocks",
@@ -64,12 +64,18 @@ const OWN: [(&str, &str); 15] = [
 const PLAIN: [(&str, &str, &str); 5] = [
     (
         "model",
-        "usage: symphony model ROLE MODEL",
+        "usage: symphony model ROLE MODEL [--agent AGENT] [--assessor MODEL] [--local]",
         "ROLE is orchestrator, executor, reviewer, assessor, or all (all four roles).\n\
          MODEL is any string; use -- before a value beginning with a dash.\n\
+         With all, --agent codex|claude also sets the launch agent and fallback\n\
+         model; --assessor MODEL overrides the assessor. For example:\n\
+           model all fable --agent claude --assessor haiku\n\
+         Recognizable cross-agent model names warn on stderr, without refusing.\n\
          Comments and order are preserved. The main checkout's symphony.toml is\n\
          edited, including from a linked worktree. Checking and landing the edit\n\
-         follow the project's settings-only policy. Resumed agents keep their model.\n",
+         follow the project's settings-only policy. Resumed agents keep their model.\n\
+         --local edits symphony.local.toml beside it instead, which git does not\n\
+         version and which overrides the project file on this machine: nothing lands.\n",
     ),
     (
         "settings-check",
@@ -77,7 +83,8 @@ const PLAIN: [(&str, &str, &str); 5] = [
         "DIR is the project (default: the current folder). It reads symphony.toml as\n\
          the Symphony does and refuses, naming each on stderr (exit 1), a table or key\n\
          the Symphony does not know, a value of the wrong type and a required value left\n\
-         out. It judges no name against a list: a model is any text.\n",
+         out. A model is any text; recognizable cross-agent names warn without\n\
+         refusing.\n",
     ),
     ("project", "usage: symphony project add [DIR]", ""),
     (

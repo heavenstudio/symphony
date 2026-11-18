@@ -65,7 +65,7 @@ pub(in crate::save) fn create(
         }
     }
     // The slug guard, immutable receipt, task and creation message share one transaction.
-    match store.create_owner_task(new, receipt) {
+    match store.persist_owner_task(new, receipt) {
         Ok(_) => Ok(saved()),
         Err(error) => match found(store, new, receipt) {
             Ok(true) => Ok(saved()),

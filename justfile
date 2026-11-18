@@ -38,8 +38,11 @@ client-lint:
 client-wire:
     @bash apps/symphony-web/wire.sh
 
+# No test reads this machine's terminals: a test that names no hc of its own (HC_BIN) is given one
+# that answers nothing, as on a machine with none, so a terminal here named as a fixture's session
+# is never taken for its pane. The recorder keeps the caller's.
 test-rs *ARGS:
-    @{{record}} --pipeline test test "just test-rs $*" tools/cargo.sh test --locked "$@"
+    @{{record}} --pipeline test test "just test-rs $*" env HC_BIN="${HC_BIN:-/usr/bin/false}" tools/cargo.sh test --locked "$@"
 
 # Install the release test runner once. Test runs only use this pinned local copy and never fetch it.
 nextest-setup:
@@ -145,8 +148,13 @@ _size-check:
 crates-check:
     @{{record}} --pipeline crates test "just crates-check" tools/rs-bin.sh symphony-build crates-check .
 
+# Each kit/helper API against its last published version, with its actual version bump and all
+# features. The launcher fetches the checksum-pinned tool into this checkout's build folder.
+semver-check:
+    @{{record}} --pipeline semver test "just semver-check" bash tools/semver.sh --all-features -p symphony-plugin -p symphony-blocks -p symphony-docs -p symphony-env -p symphony-args -p symphony-schema -p process-cwd -p repository-read
+
 # The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit,
-# the crates check and every test target, each a step of this run with a log of its own, run
+# the crates and semver checks and every test target, each a step with a log of its own, run
 # whatever the ones before it did; red when any step is, naming each. `just verify STEP...` runs
 # those steps alone. The native browser harness runs headless Chrome; no game engine or display is
 # needed.

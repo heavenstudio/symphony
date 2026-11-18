@@ -19,6 +19,9 @@ the evidence behind decisions are under [Design and history](#design-and-history
   with its default.
 - [Releases](RELEASES.md) — how a release is cut by the release run or out of cycle, named and
   read, and the release run's schedule.
+- [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
+  public repository into a private copy with its ancestry kept, the export of selected reusable
+  changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.
 - [Machine build and test work](MACHINE_WORK.md) — observed build/test phases, the board's build
   and test recorder (`tasks run`), and advisory machine targets.
 - [Runs](RUNS.md) — the day files of a project's runs and their steps: the line each writes,
@@ -64,6 +67,11 @@ still await implementation; its approval alone does not make it current app beha
   visitor admission, project permissions, foreground lifecycle and readiness; the local gate stays.
 - [Desktop client analysis](analysis/desktop-client.md) — the design and evidence behind the
   Mac app.
+- [The slow tests, reviewed](analysis/slow-tests.md) — a time per test for the release run's six
+  slowest binaries, what each slow test proves, and what is kept, made faster, merged or removed.
+- [The release pipeline, redesigned](analysis/release-pipeline.md) — a night of red release runs
+  read by run, a pre-certified CI proposal checked against the stamps, and the options, a hosted
+  run on GitHub among them.
 - [Naming inventory and superseded plan](analysis/own-names.md) — historical naming evidence,
   with pointers to the current naming rules and state paths.
 - [History](history/README.md) — retained records and superseded measurements.
