@@ -1,5 +1,9 @@
 //! Listening sockets and the server lease survive exec; accepted connections stay with the old
 //! generation. A private readiness pipe makes a failed replacement harmless to the serving one.
+//!
+//! What the reload says goes to the log by [`crate::front::tell`], never `eprintln!`, which panics
+//! its thread when stderr cannot be written: a reload that died of saying something replaces
+//! nothing from then on, and says nothing of it.
 
 use crate::backstop::{self, Backstop, Wake, Waker};
 use crate::cli::Serve;
@@ -362,7 +366,9 @@ fn replace(
     }
     .and_then(|()| {
         if installed && let Err(why) = stamp_install(&install, fingerprint) {
-            eprintln!("· Symphony reload: could not stamp installed binary: {why}");
+            crate::front::tell(format_args!(
+                "· Symphony reload: could not stamp installed binary: {why}"
+            ));
         }
         let release = crate::home::release_of(exe);
         home.record(
@@ -377,7 +383,9 @@ fn replace(
         if let Some(client) = &client
             && let Err(why) = client.stamp()
         {
-            eprintln!("· Symphony reload: could not stamp installed client: {why}");
+            crate::front::tell(format_args!(
+                "· Symphony reload: could not stamp installed client: {why}"
+            ));
         }
         // This generation records up to now, its agents and its board's hours alike, the
         // replacement from the commit on: closed last, so nothing that can fail falls between.
@@ -507,13 +515,15 @@ fn watch_with<W: Watcher + Send + 'static>(
         let mut watcher = match W::new(handler, notify::Config::default()) {
             Ok(watcher) => watcher,
             Err(why) => {
-                eprintln!("· Symphony reload: cannot watch Symphony sources: {why}");
+                crate::front::tell(format_args!(
+                    "· Symphony reload: cannot watch Symphony sources: {why}"
+                ));
                 return;
             }
         };
         let mut watched = BTreeSet::new();
         if let Err(why) = watch_sources(&serve.root, &mut watcher, &directories, &mut watched) {
-            eprintln!("· Symphony reload: {why}");
+            crate::front::tell(format_args!("· Symphony reload: {why}"));
             return;
         }
         let mut attempted = setup.fingerprint;
@@ -547,7 +557,7 @@ fn watch_with<W: Watcher + Send + 'static>(
                 && let Err(why) =
                     watch_sources(&serve.root, &mut watcher, &directories, &mut watched)
             {
-                eprintln!("· Symphony reload: {why}");
+                crate::front::tell(format_args!("· Symphony reload: {why}"));
                 continue;
             }
             initial = false;
@@ -560,7 +570,7 @@ fn watch_with<W: Watcher + Send + 'static>(
                 }
                 Err(why) => {
                     if why != last_problem {
-                        eprintln!("· Symphony reload: {why}");
+                        crate::front::tell(format_args!("· Symphony reload: {why}"));
                         last_problem = why;
                     }
                     continue;
@@ -601,7 +611,7 @@ fn watch_with<W: Watcher + Send + 'static>(
                 // built at once: no update failed. A notice that says one did says this in its
                 // place, so the retry it names is the one to come, at the time to come.
                 if !failure_told {
-                    eprintln!("· Symphony reload: {why}");
+                    crate::front::tell(format_args!("· Symphony reload: {why}"));
                 } else if replaced(&shared, Err(why)) {
                     return;
                 }
@@ -703,7 +713,7 @@ fn handed_over(
             }
         }
         Some(Err(why)) => {
-            eprintln!("· Symphony hand-off refused: {why}");
+            crate::front::tell(format_args!("· Symphony hand-off refused: {why}"));
             HandOff::None
         }
         None => HandOff::None,
@@ -739,11 +749,11 @@ fn watch_current<W: Watcher>(machine: &Path, moved: Waker) -> Option<W> {
     });
     watcher
         .inspect_err(|why| {
-            eprintln!(
+            crate::front::tell(format_args!(
                 "· Symphony reload: cannot watch {} for `current` moving: {why}; it is read once \
                  a period",
                 machine.display()
-            );
+            ));
         })
         .ok()
 }
@@ -757,14 +767,34 @@ struct Follow {
     lease: File,
 }
 
-/// The reload of the server of the release `follow.release`: whether the machine's `current` names
-/// another release, read at the start, as its watcher `W` hears the link move, and once `backstop`'s
-/// period as an event can be lost; when it does, the hand-off to that release's server, by its own
-/// folder's path, with no build. A release not installed whole, or whose server does not become
-/// ready, leaves this one serving, said on the notice, and is tried again when `retry` says, at the
-/// check that finds it due; `current` named back at this release clears the notice. A starter's
-/// request to hand over is refused, said in the log: no start replaces a release's server
-/// ([`symphony::machine::host`]).
+/// What a follow of `current` keeps from one check to the next, and from a loop that died to the
+/// one started in its place.
+struct Following {
+    /// Whether the next check comes before any wait: the first of the server's life.
+    initial: bool,
+    /// The release it tried to hand over to last, while `current` names another than this one.
+    attempted: Option<String>,
+    /// Whether the notice says something of this follow, which `current` naming this release
+    /// clears.
+    noticed: bool,
+    /// Why it hands over to nothing, as the log said it last: said again once it is another.
+    idle: String,
+}
+
+impl Following {
+    /// It hands over to nothing for `why`: one log line when that is news.
+    fn idle(&mut self, why: String) {
+        if self.idle != why {
+            crate::front::tell(format_args!("· Symphony reload: {why}"));
+            self.idle = why;
+        }
+    }
+}
+
+/// The reload of the server of the release `follow.release`: its follow of the machine's `current`
+/// ([`follow_current`]), which ends only with the server. One that ends before, a bug, is said in
+/// the log and on the notice and started again, at the wake or the period after: a server that
+/// follows nothing holds every release until someone restarts it by hand.
 fn follow<W: Watcher>(
     serve: &Serve,
     follow: &Follow,
@@ -772,23 +802,87 @@ fn follow<W: Watcher>(
     mut backstop: Backstop,
     mut retry: Retry,
 ) {
+    // The stop and a starter's hand-off request wake it, as the watcher does.
+    shared.wake_at_stop(backstop.waker());
+    shared.wake_at_handover(backstop.waker());
+    let mut state = Following {
+        initial: true,
+        attempted: None,
+        noticed: false,
+        idle: String::new(),
+    };
+    while !shared.stopping() {
+        let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            follow_current::<W>(serve, follow, shared, &mut backstop, &mut retry, &mut state);
+        }));
+        if shared.stopping() {
+            return;
+        }
+        let why = match ended {
+            Ok(()) => "its loop ended".to_string(),
+            Err(panic) => format!("it panicked: {}", panicked(panic.as_ref())),
+        };
+        let message = format!(
+            "Symphony server reload stopped following {}: {why}. It is started again at its next \
+             check; this server is still the release {}.",
+            follow
+                .machine
+                .join(symphony::machine::release::CURRENT)
+                .display(),
+            follow.release
+        );
+        crate::front::tell(format_args!("· Symphony reload: {message}"));
+        if let Some(hub) = shared.api.get() {
+            hub.tell_update(message);
+        }
+        // The loop started in its place waits first, so one that dies at every check costs one
+        // line a wake or a period, and says again what holds it.
+        state.initial = false;
+        state.noticed = true;
+        state.idle.clear();
+    }
+}
+
+/// What a panic said, when it said text.
+fn panicked(panic: &(dyn std::any::Any + Send)) -> &str {
+    panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("with no message")
+}
+
+/// One follow of `current`, until the server stops: whether the link names another release than
+/// `follow.release`, read at the start, as its watcher `W` hears the link move, and once
+/// `backstop`'s period as an event can be lost; when it does, the hand-off to that release's
+/// server, by its own folder's path, with no build. Each hand-off it begins is one log line, and
+/// so is each reason it begins none (`current` naming this release, or none), said when it
+/// changes. A release not installed whole, or whose server does not become ready, leaves this one
+/// serving, said in the log and on the notice with when it is tried again, which is when `retry`
+/// says, at the check that finds it due; `current` named back at this release clears the notice. A
+/// starter's request to hand over is refused, said in the log: no start replaces a release's
+/// server ([`symphony::machine::host`]).
+fn follow_current<W: Watcher>(
+    serve: &Serve,
+    follow: &Follow,
+    shared: &Shared,
+    backstop: &mut Backstop,
+    retry: &mut Retry,
+    state: &mut Following,
+) {
     let Follow {
         machine,
         release,
         sockets,
         lease,
     } = follow;
-    // The stop and a starter's hand-off request wake it, as the watcher does. Watched before its
-    // first read, so no move after that read goes unheard.
-    shared.wake_at_stop(backstop.waker());
-    shared.wake_at_handover(backstop.waker());
+    let link = machine.join(symphony::machine::release::CURRENT);
+    // Watched before its first read, so no move after that read goes unheard.
     let _watcher = watch_current::<W>(machine, backstop.waker());
-    let mut initial = true;
-    let mut attempted: Option<String> = None;
     while !shared.stopping() {
         // `current` is read at the start, at a wake and once a period: a wake for the stop or a
         // hand-off is looked at first, and `current` read after it all the same.
-        if !initial {
+        if !state.initial {
             // A new link and its rename are one move: read once both are done.
             if backstop.wait() == Wake::Event && !shared.stopping() {
                 backstop.debounce(backstop::QUIET, backstop::QUIET);
@@ -797,39 +891,54 @@ fn follow<W: Watcher>(
                 return;
             }
         }
-        initial = false;
+        state.initial = false;
         if shared
             .handover
             .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
             match crate::host::Handover::take(machine) {
-                Some(Ok(request)) => eprintln!(
+                Some(Ok(request)) => crate::front::tell(format_args!(
                     "· Symphony hand-off refused: this server is the release {release}, which only \
                      its reload replaces, following {}; {} asked for {}",
-                    machine.join(symphony::machine::release::CURRENT).display(),
+                    link.display(),
                     request.root.display(),
                     request.exe.display()
-                ),
-                Some(Err(why)) => eprintln!("· Symphony hand-off refused: {why}"),
+                )),
+                Some(Err(why)) => {
+                    crate::front::tell(format_args!("· Symphony hand-off refused: {why}"));
+                }
                 None => {}
             }
         }
         let Some(next) = symphony::machine::release::current(machine) else {
+            state.idle(format!(
+                "{} names no release, so the release {release} hands over to none",
+                link.display()
+            ));
             continue;
         };
         if &next == release {
-            if attempted.take().is_some()
+            state.attempted = None;
+            if std::mem::take(&mut state.noticed)
                 && let Some(hub) = shared.api.get()
             {
                 hub.tell_update(String::new());
             }
+            state.idle(format!(
+                "{} names {release}, the release this server is: it follows the link",
+                link.display()
+            ));
             continue;
         }
-        if attempted.as_deref() == Some(next.as_str()) && !retry.again(&next) {
+        // Said at its failure, with the time it is tried again.
+        if state.attempted.as_deref() == Some(next.as_str()) && !retry.again(&next) {
             continue;
         }
-        attempted = Some(next.clone());
-        eprintln!("· Symphony reload: current names {next}; handing over to its server");
+        state.attempted = Some(next.clone());
+        state.idle.clear();
+        crate::front::tell(format_args!(
+            "· Symphony reload: current names {next}; handing over to its server"
+        ));
         let result = to_release(machine, &next)
             .and_then(|exe| replace(serve, &exe, sockets, lease, &next, shared, None))
             .map_err(|why| {
@@ -842,6 +951,7 @@ fn follow<W: Watcher>(
         if replaced(shared, result) {
             return;
         }
+        state.noticed = true;
     }
 }
 
@@ -905,10 +1015,10 @@ fn kept(
 fn replaced(shared: &Shared, result: Result<u32, String>) -> bool {
     match result {
         Ok(pid) => {
-            eprintln!(
+            crate::front::tell(format_args!(
                 "· Symphony reload: replacement pid {pid} ready; draining pid {}",
                 shared.pid
-            );
+            ));
             shared
                 .replaced
                 .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -922,7 +1032,7 @@ fn replaced(shared: &Shared, result: Result<u32, String>) -> bool {
             let message = format!(
                 "Symphony server update failed; the previous server is still serving. {why}"
             );
-            eprintln!("· Symphony reload: {message}");
+            crate::front::tell(format_args!("· Symphony reload: {message}"));
             if let Some(hub) = shared.api.get() {
                 hub.tell_update(message);
             }

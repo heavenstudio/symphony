@@ -1881,3 +1881,162 @@ fn a_release_server_that_cannot_watch_its_machine_folder_reads_current_once_a_pe
         "a watcher that cannot watch wakes nothing"
     );
 }
+
+/// A watcher whose backend panics the first time one is made, as a bug in a follow's loop would,
+/// and watches nothing after.
+struct Dying;
+
+/// Whether [`Dying`] has panicked: one test makes it.
+static DIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+impl notify::Watcher for Dying {
+    fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
+        assert!(
+            DIED.swap(true, Ordering::SeqCst),
+            "the watcher's backend is gone"
+        );
+        Ok(Self)
+    }
+
+    fn watch(&mut self, _: &Path, _: notify::RecursiveMode) -> notify::Result<()> {
+        Ok(())
+    }
+
+    fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+        Ok(())
+    }
+
+    fn kind() -> notify::WatcherKind {
+        notify::WatcherKind::NullWatcher
+    }
+}
+
+/// `machine`'s `current` named at the release `name`, as `release::point` moves it.
+fn point(machine: &Path, name: &str) {
+    use symphony::machine::release;
+    let link = machine.join(".current.test");
+    std::os::unix::fs::symlink(Path::new(release::RELEASES).join(name), &link).unwrap();
+    std::fs::rename(&link, machine.join(release::CURRENT)).unwrap();
+}
+
+/// A release's server whose follow of `current` dies, as one that panics does, says so on its
+/// notice, and a follow is started
+/// in its place: at its next wake it reads `current`, tries the release it names and says why
+/// that one did not take over, and the link named back at this release clears the notice.
+#[test]
+fn a_release_servers_follow_that_dies_is_said_on_the_notice_and_started_again() {
+    use symphony::machine::release;
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    let clock = Clock::new();
+    let (backstop, waits) = backstop::watched();
+    let follow = server.following::<Dying>(backstop, clock.retry());
+    let died = server.notice_after("");
+    assert_eq!(
+        died,
+        format!(
+            "Symphony server reload stopped following {}: it panicked: the watcher's backend is \
+             gone. It is started again at its next check; this server is still the release \
+             release-1.",
+            server.home.join(release::CURRENT).display()
+        )
+    );
+    // The follow started in its place waits, where the one that died read at once.
+    waits.begun(1);
+    point(&server.home, "release-2");
+    server.shared.ask_handover();
+    let refused = server.notice_after(&died);
+    assert_eq!(
+        refused,
+        format!(
+            "{FAILED} The release release-2 did not take over: {} holds no manifest. It is tried \
+             again at about {}.",
+            release::folder(&server.home, "release-2").display(),
+            clock.minute(5 * MINUTE)
+        )
+    );
+    point(&server.home, "release-1");
+    server.shared.ask_handover();
+    assert_eq!(
+        server.notice_after(&refused),
+        "",
+        "it follows the link again"
+    );
+    assert!(!server.shared.stopping(), "still serving");
+    server.stop(follow);
+}
+
+/// What a follow says in the log: one line for each reason it hands over to nothing, when that
+/// reason changes and not at each check, and one for each hand-off it begins, with why the
+/// release did not take over. A server that is not following says so where an agent reads it.
+#[test]
+fn a_release_servers_follow_says_each_attempt_and_each_reason_it_makes_none_once() {
+    use symphony::machine::release;
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    let clock = Clock::new();
+    let (backstop, waits) = backstop::watched();
+    let (serve, shared) = (server.serve(), server.shared.clone());
+    let following = super::Follow {
+        machine: server.home.clone(),
+        release: "release-1".into(),
+        sockets: Vec::new(),
+        lease: std::fs::File::open(&server.root).unwrap(),
+    };
+    let link = server.home.join(release::CURRENT);
+    // The moves of `current`, each once the follow waits after the check before it, then its stop.
+    let mover = std::thread::spawn({
+        let (home, shared) = (server.home.clone(), server.shared.clone());
+        move || {
+            waits.begun(1);
+            // A wake with nothing moved: the same reason, not said again.
+            shared.ask_handover();
+            waits.begun(2);
+            for (wait, name) in [(3, "release-1"), (4, "release-2"), (5, "release-1")] {
+                point(&home, name);
+                shared.ask_handover();
+                waits.begun(wait);
+            }
+            shared.stop();
+        }
+    });
+    let retry = clock.retry();
+    let ((), said) = told::during(|| {
+        super::follow::<notify::NullWatcher>(&serve, &following, &shared, backstop, retry);
+    });
+    joined(mover, "the moves of current to end", stall());
+    let named = |name: &str| {
+        format!(
+            "· Symphony reload: {} names {name}, the release this server is: it follows the link",
+            link.display()
+        )
+    };
+    assert_eq!(
+        said,
+        [
+            format!(
+                "· Symphony reload: {} names no release, so the release release-1 hands over to \
+                 none",
+                link.display()
+            ),
+            named("release-1"),
+            "· Symphony reload: current names release-2; handing over to its server".to_string(),
+            format!(
+                "· Symphony reload: {FAILED} The release release-2 did not take over: {} holds no \
+                 manifest. It is tried again at about {}.",
+                release::folder(&server.home, "release-2").display(),
+                clock.minute(5 * MINUTE)
+            ),
+            named("release-1"),
+        ]
+    );
+}
+
+#[test]
+fn a_panic_is_said_by_its_text_when_it_has_one() {
+    let text = |panic: Box<dyn std::any::Any + Send>| super::panicked(panic.as_ref()).to_string();
+    assert_eq!(text(Box::new("a literal")), "a literal");
+    assert_eq!(
+        text(Box::new(String::from("a formatted one"))),
+        "a formatted one"
+    );
+    assert_eq!(text(Box::new(7)), "with no message");
+}

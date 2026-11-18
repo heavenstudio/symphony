@@ -31,8 +31,9 @@
 //!   judges them at the release's schema, nothing to move, and finishes the rest.
 //! - **The machine's server.** A release's server follows `current` by its own reload
 //!   (`apps/symphony-server/src/reload.rs`): the refresh waits, bounded, until it answers as the
-//!   release, or says it has not yet ([`server`]). A project's build serving takes the release by a
-//!   stop and a start, the owner's word, never the refresh's.
+//!   release, or says it has not yet, with what its reload said in its log since `current` moved
+//!   ([`server`], [`reload_said`]). A project's build serving takes the release by a stop and a
+//!   start, the owner's word, never the refresh's.
 //!
 //! Each project whose board is judged is one step, `refresh-ID`, ending in one of three: green
 //! (moved, or nothing to move); **the project's to finish** (writers to rebuild, a board below the
@@ -40,7 +41,7 @@
 //! the Symphony's board. Nothing here starts, stops or signals a server or a database.
 
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -69,6 +70,12 @@ const RELOAD: Duration = Duration::from_secs(5 * 60);
 const RELOAD_SECONDS: &str = "SYMPHONY_RELEASE_RELOAD_SECONDS";
 /// How often that wait asks the server what it is.
 const RELOAD_LOOK: Duration = Duration::from_millis(500);
+/// The machine's server's log, in the machine folder (the server's `home::LOG`).
+const SERVER_LOG: &str = "server.log";
+/// What starts each line the server's reload says in that log.
+const RELOAD_LINE: &str = "· Symphony reload: ";
+/// The most of that log read for what the reload said: its newest part.
+const LOG_READ: u64 = 256 * 1024;
 /// The variables no command run in a project keeps, beside the repository git was pointed at
 /// (`symphony_board::sys::GIT_VARS`: each command names its own folder): the board, session and
 /// task a run of the Symphony's names (a project's command reaches its own), the landing's marker,
@@ -166,6 +173,8 @@ pub(crate) fn release(
     let before = clear
         .then(|| symphony::machine::command::running(machine, None))
         .flatten();
+    // Its log's length then: what its reload says of the move comes after.
+    let logged = fs::metadata(machine.join(SERVER_LOG)).map_or(0, |log| log.len());
     let pointed = clear && install::point(machine, &mut installed);
     if clear {
         let line = installed.said.pop().unwrap_or_default();
@@ -183,7 +192,7 @@ pub(crate) fn release(
     refresh.steps.push(installed.ran);
     refresh.steps.extend(steps);
     if pointed {
-        let line = server(machine, before, against);
+        let line = server(machine, before, logged, against);
         say(&mut refresh, out, line);
     }
     told(refresh, out)
@@ -758,8 +767,9 @@ fn prune(folder: &Path, kept: usize) {
 
 /// What the machine's server does with the release `current` now names, said: the server this
 /// machine's folder `machine` records, as it answered before `current` moved (`before`), waited for
-/// while it is another release's, bounded ([`follows`]).
-fn server(machine: &Path, before: Option<Front>, against: &Against<'_>) -> String {
+/// while it is another release's, bounded ([`follows`]); one that did not follow is said with what
+/// its reload wrote in its log since that log was `logged` bytes long ([`reload_said`]).
+fn server(machine: &Path, before: Option<Front>, logged: u64, against: &Against<'_>) -> String {
     let tag = against.tag;
     let Some(front) = before else {
         return format!(
@@ -781,11 +791,12 @@ fn server(machine: &Path, before: Option<Front>, against: &Against<'_>) -> Strin
                 new.pid, new.port
             ),
             Err(waited) => format!(
-                "{named} still answers as the release {running} after {} s: its own reload \
+                "{named} still answers as the release {running} after {} s; {}. Its own reload \
                  (apps/symphony-server/src/reload.rs) follows current once a second, and one whose \
-                 server does not take over leaves it serving, says why on its notice and tries again \
-                 (`just symphony-status` says which answers)",
-                waited.as_secs()
+                 server does not take over leaves it serving, says why in its log and on its notice \
+                 and tries again (`just symphony-status` says which answers)",
+                waited.as_secs(),
+                reload_said(machine, logged)
             ),
         },
         None => format!(
@@ -793,6 +804,37 @@ fn server(machine: &Path, before: Option<Front>, against: &Against<'_>) -> Strin
              stop and a start (`just symphony --stop`, then `just symphony`), the owner's word, make \
              {tag} the machine's server",
             front.root
+        ),
+    }
+}
+
+/// What the machine's server's reload said in its log (`machine`'s [`SERVER_LOG`]) since that log
+/// was `from` bytes long, when `current` moved: its last line, which names the hand-off it began
+/// or why the release did not take over, or that it said nothing. A reload that follows says each
+/// hand-off it begins, so one that said nothing of a `current` that moved is not running. No more
+/// than the log's newest [`LOG_READ`] bytes are read, and a log shorter than `from`, started
+/// again since, is read whole.
+fn reload_said(machine: &Path, from: u64) -> String {
+    let path = machine.join(SERVER_LOG);
+    let last = || {
+        let mut log = File::open(&path).ok()?;
+        let length = log.metadata().ok()?.len();
+        let from = if from > length { 0 } else { from };
+        log.seek(SeekFrom::Start(from.max(length.saturating_sub(LOG_READ))))
+            .ok()?;
+        let mut said = Vec::new();
+        log.read_to_end(&mut said).ok()?;
+        let said = String::from_utf8_lossy(&said);
+        let line = said.lines().rev().find(|line| line.contains(RELOAD_LINE))?;
+        Some(line.trim().to_string())
+    };
+    match last() {
+        Some(line) => format!("its log ({}) says last: {line}", path.display()),
+        None => format!(
+            "its log ({}) has no line of its reload since current moved, where a reload that \
+             follows says each hand-off it begins: its reload is not running, and only a stop and \
+             a start of the server, the owner's word, takes the release",
+            path.display()
         ),
     }
 }
