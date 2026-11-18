@@ -472,6 +472,7 @@ mod tests {
             refreshed: None,
             published: None,
             rerun: None,
+            slept: 0.0,
         }
     }
 

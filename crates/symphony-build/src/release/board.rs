@@ -158,6 +158,9 @@ pub(crate) struct Night<'a> {
     pub(crate) candidate: Option<&'a str>,
     /// Whether the run reran the release candidate, whose tip it checked, rather than main's.
     pub(crate) rerun: bool,
+    /// How long the machine slept under the run, in seconds; 0 when it did not
+    /// ([`super::span`]).
+    pub(crate) slept: f64,
 }
 
 /// The key a check's red task is filed under: its name in lower case, every run of anything but a
@@ -312,11 +315,19 @@ const NOTHING_LANDS: &str = "Nothing lands for it: what clears it is a process e
 /// How many of the commands that rerun a failure alone a red task lists at most.
 const RERUNS_LISTED: usize = 12;
 
-/// How a red task says the load when its check ended.
-fn load(ran: &Ran) -> String {
-    match &ran.load {
+/// How a red task says the load when its check ended, and beside it how long the machine slept
+/// under its run, when it did: a failure across a sleep is not one of load.
+fn load(ran: &Ran, night: &Night<'_>) -> String {
+    let load = match &ran.load {
         Some(load) => format!("Load average when it ended: {}.", load.said()),
         None => "Load average when it ended: not recorded.".into(),
+    };
+    match super::span::said(night.slept) {
+        Some(slept) => format!(
+            "{load}\nThe machine slept {slept} under this run, which its times count: a wait or a \
+             timeout that failed across that sleep failed on the sleep, not on load."
+        ),
+        None => load,
     }
 }
 
@@ -550,7 +561,7 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
         command = ran.command,
         ended = ran.ended(),
         log = ran.log.display(),
-        load = load(ran),
+        load = load(ran, night),
         tail = quoted(ran),
         environment = environment(ran),
         alone = alone(ran, night),
@@ -577,7 +588,7 @@ fn again(ran: &Ran, night: &Night<'_>) -> String {
         night.when,
         ran.ended(),
         ran.log.display(),
-        load(ran),
+        load(ran, night),
         environment(ran),
         alone(ran, night),
         quoted(ran)
@@ -1124,6 +1135,7 @@ mod tests {
             whole: true,
             candidate: None,
             rerun: false,
+            slept: 0.0,
         }
     }
 
@@ -2013,6 +2025,43 @@ mod tests {
             again.contains("(2):\n- `just test-rs -p symphony-board --lib -- store::case_0 --exact`\n- `just test-rs -p symphony --test nightly`"),
             "{again}"
         );
+        assert!(
+            !board
+                .thread("tests/release-red-verify")
+                .join("\n")
+                .contains("slept"),
+            "a run that did not sleep says nothing of one"
+        );
+    }
+
+    #[test]
+    fn a_red_of_a_run_the_machine_slept_under_says_for_how_long_beside_its_load() {
+        let tree = crate::test_tree::Tree::new();
+        let red = Ran {
+            log: cargo_log(&tree, 1),
+            load: Some(super::super::checks::Load {
+                averages: [50.0, 68.0, 62.0],
+                processors: 16,
+            }),
+            ..ran("verify", 101)
+        };
+        let slept = Night {
+            slept: 1589.0,
+            ..night(&[])
+        };
+        let board = Fake::default();
+        report(&board, &slept, std::slice::from_ref(&red));
+        // Red again, on a later run that slept too: its line says so as well.
+        report(&board, &slept, std::slice::from_ref(&red));
+        let said = "Load average when it ended: 50.00, 68.00, 62.00 (over 1, 5 and 15 minutes) on \
+                    16 processors.\nThe machine slept 26 min under this run, which its times \
+                    count: a wait or a timeout that failed across that sleep failed on the sleep, \
+                    not on load.\n\n";
+        let thread = board.thread("tests/release-red-verify");
+        assert_eq!(thread.len(), 2, "{thread:?}");
+        for post in &thread {
+            assert!(post.contains(said), "{said:?} in:\n{post}");
+        }
     }
 
     #[test]
