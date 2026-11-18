@@ -538,9 +538,9 @@ fn a_registry_that_gives_no_answer_is_said_of_a_branch_and_an_error_of_the_whole
         "ws/alpha/src/lib.rs",
         "//! alpha, changed\npub fn alpha() {}\n",
     );
-    // Reads that end before a second try's pause: one refused connection, and no wait.
-    let reads = Duration::from_secs(1);
-    let gone = Registry::At(unanswering());
+    // No bound here is one a test reaches: a read ends by what the registry answers, in one try.
+    let reads = Duration::from_secs(60);
+    let gone = Registry::at(unanswering(), 1);
     let Ok(Branch::Unread { packages, why }) =
         check_branch(&root, "main", &gone, &target, reads, later())
     else {
@@ -550,46 +550,27 @@ fn a_registry_that_gives_no_answer_is_said_of_a_branch_and_an_error_of_the_whole
     assert!(why.starts_with("curl http://127.0.0.1:"), "{why}");
     // The whole check of the same packages, on the same registry: an error, as it fails closed.
     let all = packages_of(&root);
-    let whole = compared(
-        &root,
-        &gone,
-        &target,
-        &all,
-        Bound::until(Instant::now() + reads),
-        None,
-    );
+    let whole = compared(&root, &gone, &target, &all, bound(), None);
     assert!(matches!(whole, Err(Unread::NoAnswer(_))), "{whole:?}");
     // An answer that stands as an error is one for a branch too.
     let refusing = Server::new(vec![Answer::Says(400, "")]);
-    let refused = check_branch(
-        &root,
-        "main",
-        &Registry::At(refusing.base.clone()),
-        &target,
-        reads,
-        later(),
-    );
+    let registry = Registry::at(refusing.base.clone(), 1);
+    let refused = check_branch(&root, "main", &registry, &target, reads, later());
     assert!(
         refused
             .as_ref()
             .is_err_and(|why| why.ends_with(" answered 400")),
         "{refused:?}"
     );
-    // And so is a version the registry lists and gives no answer for within the branch's reads:
-    // said, as nothing is known of it.
+    // A version the registry lists and gives no answer for is said as well, as nothing is known
+    // of it: alpha listed, bravo not, then alpha's download.
     let listing = Server::new(vec![
         Answer::Says(200, "{\"name\":\"alpha\",\"vers\":\"1.0.0\"}"),
         Answer::Says(404, ""),
         Answer::Nothing,
     ]);
-    let unserved = check_branch(
-        &root,
-        "main",
-        &Registry::At(listing.base.clone()),
-        &target,
-        reads,
-        later(),
-    );
+    let registry = Registry::at(listing.base.clone(), 1);
+    let unserved = check_branch(&root, "main", &registry, &target, reads, later());
     assert!(
         matches!(unserved, Ok(Branch::Unread { .. })),
         "{unserved:?}"

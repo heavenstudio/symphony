@@ -116,11 +116,11 @@ fn run_branch(root: &Path, default: &str, registry: &Path) -> (i32, String, Stri
     run_branch_on(root, default, &Registry::Folder(registry.to_path_buf()))
 }
 
-/// [`run_branch`] against `registry`, its reads ending before a second try's pause.
+/// [`run_branch`] against `registry`, its reads within a time no test reaches.
 fn run_branch_on(root: &Path, default: &str, registry: &Registry) -> (i32, String, String) {
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let target = root.join("../target");
-    let reads = Duration::from_secs(1);
+    let reads = Duration::from_secs(60);
     let code = checked_branch(root, default, registry, &target, reads, &mut out, &mut err);
     (
         code,
@@ -205,9 +205,9 @@ fn a_branch_is_checked_for_the_packages_it_changes_and_says_when_that_is_none() 
     let (code, _, err) = run_branch(&root, "main", &registry);
     assert_eq!(code, 2, "{err}");
     // A registry that gives no answer, a port nothing listens on, is said and no red for a branch;
-    // the whole check is exit 2 on it, after its three tries.
+    // the whole check is exit 2 on it, after its three tries, here with no pause between.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let gone = Registry::At(format!("http://{}", listener.local_addr().unwrap()));
+    let gone = Registry::at(format!("http://{}", listener.local_addr().unwrap()), 3);
     drop(listener);
     let (code, out, err) = run_branch_on(&root, "main", &gone);
     assert_eq!((code, out.as_str()), (0, ""), "{err}");

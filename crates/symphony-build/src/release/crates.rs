@@ -258,15 +258,27 @@ impl From<String> for Unread {
 pub(crate) enum Registry {
     /// crates.io itself, read with curl.
     CratesIo,
-    /// A server laid out as [`Registry::Folder`] is, read with curl as crates.io is: the tests'
-    /// own, at its URL.
+    /// A server laid out as [`Registry::Folder`] is, read with curl as crates.io is but by reads
+    /// of its own: the tests' own, at its URL.
     #[cfg(test)]
-    At(String),
+    At(String, Reads),
     /// A folder laid out as crates.io serves it ([`REGISTRY`]): the tests'.
     Folder(PathBuf),
 }
 
 impl Registry {
+    /// The tests' server at `url`, each read of it `tries` tries with no pause between, a try
+    /// within a time no test reaches: a test of what a read's end means waits on nothing.
+    #[cfg(test)]
+    pub(crate) fn at(url: String, tries: u32) -> Registry {
+        let reads = Reads {
+            each: Duration::from_secs(60),
+            tries,
+            pause: Duration::ZERO,
+        };
+        Registry::At(url, reads)
+    }
+
     /// The folder [`REGISTRY`] names, else crates.io.
     pub(crate) fn of_env() -> Registry {
         std::env::var_os(REGISTRY).map_or(Registry::CratesIo, |folder| {
@@ -279,7 +291,7 @@ impl Registry {
         match self {
             Registry::CratesIo => "crates.io".into(),
             #[cfg(test)]
-            Registry::At(url) => format!("the registry {url}"),
+            Registry::At(url, _) => format!("the registry {url}"),
             Registry::Folder(folder) => format!("the registry {}", folder.display()),
         }
     }
@@ -290,7 +302,9 @@ impl Registry {
         let listed = match self {
             Registry::CratesIo => fetched(&format!("{INDEX}/{path}"), None, bound)?,
             #[cfg(test)]
-            Registry::At(url) => fetched(&format!("{url}/index/{path}"), None, bound)?,
+            Registry::At(url, reads) => {
+                fetched_by(*reads, &format!("{url}/index/{path}"), None, bound)?
+            }
             Registry::Folder(folder) => match fs::read(folder.join("index").join(&path)) {
                 Ok(bytes) => Some(bytes),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => None,
@@ -312,10 +326,10 @@ impl Registry {
         bound: Bound<'_>,
     ) -> Result<(), Unread> {
         let file = format!("{name}/{name}-{version}.crate");
-        let url = match self {
-            Registry::CratesIo => format!("{DOWNLOADS}/{file}"),
+        let (url, reads) = match self {
+            Registry::CratesIo => (format!("{DOWNLOADS}/{file}"), READS),
             #[cfg(test)]
-            Registry::At(url) => format!("{url}/crates/{file}"),
+            Registry::At(url, reads) => (format!("{url}/crates/{file}"), *reads),
             Registry::Folder(folder) => {
                 let from = folder.join("crates").join(&file);
                 return match fs::copy(&from, to) {
@@ -324,7 +338,7 @@ impl Registry {
                 };
             }
         };
-        match fetched(&url, Some(to), bound)? {
+        match fetched_by(reads, &url, Some(to), bound)? {
             Some(_) => Ok(()),
             None => Err(format!(
                 "{} lists {name} {version} but serves no {file}",
@@ -356,8 +370,8 @@ fn lists(file: &str, version: &str) -> bool {
 
 /// How [`fetched`] reads: each try by curl within `each`, up to `tries`, waiting `pause` times the
 /// tries made so far before the next.
-#[derive(Clone, Copy, Debug)]
-struct Reads {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Reads {
     each: Duration,
     tries: u32,
     pause: Duration,
