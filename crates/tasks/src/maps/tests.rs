@@ -166,3 +166,71 @@ fn ordered_store_payloads_keep_last_values_and_report_collection_cost() {
         )
     });
 }
+
+#[test]
+fn outer_thread_slot_and_descendant_payload_maps_keep_complete_values_and_report_cost() {
+    fn compare<K: Clone + Ord + std::fmt::Debug, V: Clone + PartialEq + std::fmt::Debug>(
+        label: &str,
+        pairs: Vec<(K, V)>,
+    ) {
+        for count in [0, 1, 32, 512] {
+            for reversed in [false, true] {
+                let mut input = pairs[..count].to_vec();
+                input.sort_by(|a, b| a.0.cmp(&b.0));
+                if reversed {
+                    input.reverse();
+                }
+                let old_input = input.clone();
+                let (old, old_cpu) =
+                    test_time::cpu::spent(|| old_input.into_iter().collect::<BTreeMap<_, _>>());
+                let (new, new_cpu) = test_time::cpu::spent(|| input.into_iter().collect_map());
+                assert_eq!(new, old, "{label} n={count} reversed={reversed}");
+                eprintln!(
+                    "{label} n={count},reversed={reversed}: old_cpu={old_cpu:?},insert_cpu={new_cpu:?}; pair={}bytes, existing pair Vec retained, no stable-sort scratch",
+                    std::mem::size_of::<(K, V)>()
+                );
+            }
+        }
+    }
+    compare(
+        "threads",
+        (0..512)
+            .map(|i| {
+                (
+                    format!("task-{}", i % 73),
+                    vec![crate::Message {
+                        id: i,
+                        slug: format!("task-{i}"),
+                        sender: "owner".into(),
+                        recipient: Some("worker".into()),
+                        kind: "msg".into(),
+                        text: format!("Exact metadata {i}"),
+                        ts: 1.0,
+                    }],
+                )
+            })
+            .collect(),
+    );
+    compare(
+        "slot holdings",
+        (0..512)
+            .map(|i| {
+                (
+                    format!("owner-{}", i % 73),
+                    std::collections::BTreeSet::from([format!("slot-{i}"), "shared".into()]),
+                )
+            })
+            .collect(),
+    );
+    compare(
+        "latest descendant",
+        (0..512)
+            .map(|i| {
+                (
+                    (format!("handle-{}", i % 7), format!("task-{}", i % 13)),
+                    i64::from(i),
+                )
+            })
+            .collect(),
+    );
+}

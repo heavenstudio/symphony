@@ -47,3 +47,21 @@ fn ordered_collectors_keep_empty_complete_values_lexical_keys_and_chat_projectio
     assert!(f.store.callbacks().unwrap().is_empty());
 }
 }
+
+on_both! {
+fn outer_threads_keep_complete_metadata_duplicates_empty_unknown_and_one_read(backend:Backend) {
+    let f=Fixture::on(backend,Seed::default().task("a","ready").task("z","ready").task("empty","ready"));
+    let a=f.store.say("a","owner","Exact A",None).unwrap();
+    let z=f.store.say("z","owner","Exact Z",None).unwrap();
+    f.advance(1.0);
+    let reply=f.store.say("z","owner","Exact later Z",Some("@orchestrator")).unwrap();
+    let expected=BTreeMap::from([("a".into(),vec![a]),("z".into(),vec![z,reply]),("empty".into(),vec![])]);
+    let before=f.store.database().requests();
+    let actual=f.store.threads(&["z".into(),"a".into(),"z".into(),"empty".into()]).unwrap();
+    assert_eq!(f.store.database().requests()-before,1);
+    assert_eq!(actual,expected);
+    assert_eq!(actual.keys().map(String::as_str).collect::<Vec<_>>(),["a","empty","z"]);
+    assert!(f.store.threads(&[]).unwrap().is_empty());
+    assert_eq!(crate::common::refused(f.store.threads(&["missing-a".into(),"a".into(),"missing-z".into()])),"no task 'missing-a'");
+}
+}

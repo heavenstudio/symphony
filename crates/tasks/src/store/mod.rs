@@ -8,6 +8,7 @@
 //! optimistic conflict) or finds itself stale reads and decides again.
 
 use crate::health::{self, EXECUTING, Health};
+use crate::maps::Collect as _;
 pub(crate) use crate::quote::repr;
 use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
 use crate::rpc::{Client, DbError};
@@ -432,7 +433,7 @@ impl Store {
                     .into_iter()
                     .map(|rows| rows.into_iter().map(message).collect()),
             )
-            .collect())
+            .collect_map())
     }
 
     /// Become the executor. Of any number of claims at once, one wins. A claim that starts ready
