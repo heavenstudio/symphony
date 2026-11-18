@@ -106,6 +106,10 @@ pub struct State {
     pub resolutions: BTreeMap<String, Side>,
     /// The `updated_at` the next listing starts from.
     pub cursor: Option<String>,
+    /// The settings' revision the cursor was read under. Under another, what the listing
+    /// passed by may be selected now, so the next listing starts from the beginning.
+    #[serde(default)]
+    pub cursor_revision: Option<String>,
     /// Why nothing is dispatched until a preview succeeds again.
     pub paused: Option<String>,
     /// The second before which nothing is sent.

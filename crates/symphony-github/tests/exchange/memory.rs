@@ -29,6 +29,8 @@ struct Inner {
     notes: Vec<Note>,
     faults: Vec<(&'static str, Fault)>,
     unbound: bool,
+    /// A brief someone rewrites just after the next listing of the tasks is read.
+    after_listing: Option<(String, String, String)>,
     /// Every call that writes, by name and slug.
     writes: Vec<String>,
 }
@@ -48,6 +50,7 @@ impl MemBoard {
                 notes: Vec::new(),
                 faults: Vec::new(),
                 unbound: false,
+                after_listing: None,
                 writes: Vec::new(),
             }),
             folder,
@@ -76,6 +79,12 @@ impl MemBoard {
         task.title = title.into();
         task.body = body.into();
         *version += 1;
+    }
+
+    /// The same, made just after the next listing of the tasks is read: between what a
+    /// preview lists and the token it then reads.
+    pub(crate) fn rewrite_after_listing(&self, slug: &str, title: &str, body: &str) {
+        self.inner().after_listing = Some((slug.into(), title.into(), body.into()));
     }
 
     /// The board put back from an older copy: another generation, every version started again.
@@ -185,12 +194,15 @@ impl Board for MemBoard {
     }
 
     fn tasks(&self) -> Result<Vec<Task>, BoardError> {
-        Ok(self
-            .inner()
-            .tasks
-            .iter()
-            .map(|(task, _)| task.clone())
-            .collect())
+        let (listed, edit): (Vec<Task>, _) = {
+            let mut inner = self.inner();
+            let listed = inner.tasks.iter().map(|(task, _)| task.clone()).collect();
+            (listed, inner.after_listing.take())
+        };
+        if let Some((slug, title, body)) = edit {
+            self.rewrite(&slug, &title, &body);
+        }
+        Ok(listed)
     }
 
     fn propose(&self, slug: &str, title: &str, body: &str, _by: &str) -> Result<Task, BoardError> {

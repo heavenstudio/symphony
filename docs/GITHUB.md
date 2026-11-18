@@ -36,6 +36,11 @@ refusal as turned off.
 `import_labels`. The settings are read again before every operation that writes GitHub or the
 board, so a landing that turns the adapter off stops a run at its next dispatch.
 
+The issues are listed from where the last listing ended, and that place holds only under the
+settings it was read under. After a landing that changes them, the next preview lists every
+issue again, so an open issue that carried a label before the label selected it is imported
+without anyone editing it.
+
 ## The token
 
 The settings name where the token is, never the token. The file is outside the repository (its
@@ -62,10 +67,10 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
   writes nothing, not even its folder.
 - **`publish SLUG --title TITLE --body-file FILE`** opts a task in: TITLE and FILE's text are
   kept as its curated public text and shown as they will be published. Nothing is sent.
-- **`preview`** reads both sides and shows what a reconcile would do, with the exact text of
+- **`preview [--rebind]`** reads both sides and shows what a reconcile would do, with the exact text of
   every write, then keeps that preview under the digest it prints. It writes nothing to GitHub
   or the board. Turned off, it reads nothing from GitHub and shows only the curated texts that
-  wait.
+  wait. `--rebind` binds to [another repository found at the name](#what-pauses-or-suspends).
 - **`reconcile --preview DIGEST --as HANDLE`** applies the preview of that digest and no other:
   at most 50 operations a run, or `--limit N`. HANDLE is the board session the board's writes
   are made as.
@@ -84,8 +89,15 @@ title one line of 200 characters, a body of 60,000 with a line saying where it w
 nothing of the brief or the thread, and ends in a marker, an HTML comment holding a digest of
 the repository's number and the task's slug, which shows the slug to nobody.
 
+Anyone who can open an issue can write a marker, so a marker alone maps nothing. An issue
+carrying a task's marker is mapped to it only where `issues` exports and this side kept a curated
+text for the task or journaled its publication; otherwise the preview names the issue and maps
+nothing, and no note of it reaches the task. Where the curated text kept and the issue's differ,
+the mapping starts as a conflict, never as an edit pushed into the issue.
+
 **Edits.** Each side of a mapping is compared with the digest it had when the two were last the
-same; no time is compared. The local side of an import is the task's title and brief, and of a
+same; no time is compared. A task's brief is judged from the one read that gives its token, so
+an edit made while a preview runs is seen by it or refused by the board, never written over. The local side of an import is the task's title and brief, and of a
 publication its curated text.
 
 | Local | Remote | What a reconcile does |
@@ -101,7 +113,9 @@ than replacing what was kept.
 
 **Notes.** A mapped issue closed or reopened is a note to `@orchestrator`, a triage request
 that moves nothing. With `import_comments`, each comment becomes a note quoting it, addressed to
-nobody. Each note is written once for its key however often it is planned.
+nobody. Each note is written once for its key however often it is planned, and only while the
+board still holds the mapped task under the slug: after a restore that put another there, the
+note is skipped.
 
 Not exchanged: thread messages, labels other than `export_label` on creation, assignees,
 workflow, roles, dependencies and stamps.
@@ -130,8 +144,8 @@ A reconcile is safe to run again and to interrupt.
 - A run cut short is run again with the same digest. An operation acknowledged in the journal
   is settled from it and not made again.
 - An operation dispatched whose result never arrived is looked for before it is tried: a
-  created issue by its marker among every issue of the repository (one found is mapped, more
-  than one stops with none mapped and none created), an issue's edit and a brief's edit by
+  created issue by its marker among every issue of the repository, under whichever preview it
+  was dispatched (one found is mapped, more than one stops with none mapped and none created), an issue's edit and a brief's edit by
   reading the side they wrote, a proposal by its slug and the line naming its issue.
 - A brief is rewritten only by `edit_bound`, with the token the preview read. A token the board
   refuses ends the run and drops the preview: nothing is tried on what the board holds now, and
@@ -151,7 +165,7 @@ A reconcile is safe to run again and to interrupt.
 | The rate limit (429, or 403 with `Retry-After` or no quota left) | nothing is sent before the time GitHub gave; the same preview goes on after it |
 | The board was restored or rebound, or the slug names another task | the mapping is suspended until `resolve`; no task is written by a mapping kept for another |
 | The board has no recovery binding | no mapping is written or made: [bind the board](TASKS.md#a-board-that-was-copied-or-restored) first |
-| The state folder was lost | the next preview maps again what both sides still show (a proposal by its slug and issue line, a publication by its marker) and imports or publishes none of it twice |
+| The state folder was lost | the next preview maps again what both sides still show (a proposal by its slug and issue line) and imports none of it twice; a publication is named with its issue and mapped again once `publish` opts its task in, found by its marker and not published twice |
 | Issues moved between pages while they were listed | what was read is used and the cursor stays, so the next preview lists from it again |
 
 ## Checking it

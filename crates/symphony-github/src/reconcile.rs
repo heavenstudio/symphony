@@ -10,7 +10,7 @@
 //! brief is rewritten only by its token, and a token the board refuses ends the run and drops
 //! the preview: the next preview reads the task again.
 
-use crate::board::{Board, BoardError, Token};
+use crate::board::{Board, BoardError, Bound, Token};
 use crate::config::{Config, Loaded, Repository, Source};
 use crate::credential::{self, Secret};
 use crate::github::{ApiError, Client, Comment, Issue};
@@ -48,18 +48,17 @@ pub type Outcome = Result<i32, String>;
 
 struct BoardTokens<'a> {
     board: &'a dyn Board,
-    read: RefCell<BTreeMap<String, Result<Token, String>>>,
+    read: RefCell<BTreeMap<String, Result<Bound, String>>>,
 }
 
 impl Tokens for BoardTokens<'_> {
-    fn token(&self, slug: &str) -> Result<Token, String> {
+    fn bound(&self, slug: &str) -> Result<Bound, String> {
         self.read
             .borrow_mut()
             .entry(slug.into())
             .or_insert_with(|| {
                 self.board
                     .bound(slug)
-                    .map(|bound| bound.token)
                     .map_err(|error| error.said().to_string())
             })
             .clone()
@@ -243,9 +242,10 @@ fn gather(
     client: &Client<'_>,
     state: &State,
     config: &Config,
+    cursor: Option<&str>,
 ) -> Result<Gathered, (ApiError, &'static str)> {
     let listing = client
-        .issues(state.cursor.as_deref(), MAX_PAGES)
+        .issues(cursor, MAX_PAGES)
         .map_err(|error| (error, "listing the issues"))?;
     let mut issues = listing.issues;
     let mut missing = BTreeSet::new();
@@ -313,6 +313,33 @@ fn turned_off(store: &Store, state: &State, why: &str, out: &mut dyn Write) -> O
     Ok(0)
 }
 
+/// The cursor, which holds only under the settings it was read under: an issue passed by
+/// while it was not selected is listed again once a landing selects it.
+fn cursor_under(state: &State, revision: &str, out: &mut dyn Write) -> Option<String> {
+    let cursor = state
+        .cursor
+        .clone()
+        .filter(|_| state.cursor_revision.as_deref() == Some(revision));
+    if state.cursor.is_some() && cursor.is_none() {
+        let _ = writeln!(
+            out,
+            "The committed settings changed since the issues were last listed: every issue is \
+             listed again."
+        );
+    }
+    cursor
+}
+
+/// The tasks whose publication the journal holds a word of.
+fn journaled(store: &Store) -> Result<BTreeSet<String>, String> {
+    Ok(store
+        .entries()?
+        .into_iter()
+        .filter(|entry| entry.kind == "publish")
+        .map(|entry| entry.target)
+        .collect())
+}
+
 /// `symphony-github preview`: read both sides and keep what a reconcile would do.
 ///
 /// # Errors
@@ -355,7 +382,9 @@ pub fn preview(ctx: &Context<'_>, rebind: bool, out: &mut dyn Write) -> Outcome 
         store.drop_preview()?;
         return Err(state.paused.clone().unwrap_or_default());
     }
-    let read = match gather(&client, &state, config) {
+    let cursor = cursor_under(&state, &loaded.revision, out);
+    let published = journaled(&store)?;
+    let read = match gather(&client, &state, config, cursor.as_deref()) {
         Ok(read) => read,
         Err((error, doing)) => return Err(keep(&mut state, &error, doing)),
     };
@@ -380,7 +409,7 @@ pub fn preview(ctx: &Context<'_>, rebind: bool, out: &mut dyn Write) -> Outcome 
         tasks: &tasks,
         comments: &comments,
         tokens: &tokens,
-        rebind,
+        published: &published,
     });
     if config.pull_requests != crate::config::PullRequests::Off {
         notices.push(format!(
@@ -390,7 +419,7 @@ pub fn preview(ctx: &Context<'_>, rebind: bool, out: &mut dyn Write) -> Outcome 
     }
     let newest = issues.iter().map(|issue| &issue.updated_at).max().cloned();
     let next_cursor = if stable {
-        newest.filter(|newest| state.cursor.as_ref() != Some(newest))
+        newest.filter(|newest| cursor.as_ref() != Some(newest))
     } else {
         notices.push(
             "issues moved between pages while they were listed: the cursor stays, and the \
@@ -424,6 +453,7 @@ fn kept(
     if preview.actions.is_empty() {
         if let Some(cursor) = &preview.next_cursor {
             state.cursor = Some(cursor.clone());
+            state.cursor_revision = Some(preview.config.clone());
         }
         store.save(&state)?;
         store.drop_preview()?;
@@ -562,7 +592,7 @@ impl Run<'_> {
         // The board keeps no earlier words of a brief, so the journal does: what the task read
         // before this edit is in its acknowledgment.
         let before = board.bound(slug).ok();
-        let done = |token: &Token, prior: Option<&crate::board::Bound>| {
+        let done = |token: &Token, prior: Option<&Bound>| {
             json!({
                 "task_id": token.id(), "generation": token.generation(),
                 "local": plan::content(title, body),
@@ -637,7 +667,10 @@ impl Run<'_> {
                 [] => {}
                 [one] => {
                     published(board, slug, marker, one, by);
-                    return Ok(issue_result(one, &token, &digest));
+                    // Mapped at the text the issue holds: where the curated text moved on
+                    // since that dispatch, the next preview reads its edit and pushes it.
+                    let holds = plan::content(&one.title, &plan::strip_marker(&one.body));
+                    return Ok(issue_result(one, &token, &holds));
                 }
                 many => {
                     return Err(Stop::Skip(format!(
@@ -715,6 +748,41 @@ impl Run<'_> {
         }
     }
 
+    /// A note on the thread of the task a mapping names, and of no other: a note carries a
+    /// slug, and a board restored or rebound since the preview may hold another task under it.
+    fn note(
+        &self,
+        state: &State,
+        slug: &str,
+        (key, text): (&str, &str),
+        to: Option<&str>,
+    ) -> Result<Value, Stop> {
+        let board = self.ctx.board;
+        let Some(mapping) = state.mappings.get(slug) else {
+            return Err(Stop::Skip(format!(
+                "{slug}: mapped to no issue now: its note was not written"
+            )));
+        };
+        match board.bound(slug) {
+            Ok(now)
+                if now.token.id() == mapping.task_id
+                    && now.token.generation() == mapping.generation => {}
+            Ok(_) => {
+                return Err(Stop::Skip(format!(
+                    "{slug}: the board holds another task or generation than the one mapped: \
+                     its note was not written; preview again"
+                )));
+            }
+            Err(BoardError::Refused(why)) => return Err(Stop::Skip(format!("{slug}: {why}"))),
+            Err(error) => return Err(end(board_said(&error), Event::Failed)),
+        }
+        match board.note(slug, text, to, key, self.by) {
+            Ok(()) => Ok(json!({})),
+            Err(BoardError::Refused(why)) => Err(Stop::Skip(format!("{slug}: {why}"))),
+            Err(error) => Err(end(board_said(&error), Event::Unknown)),
+        }
+    }
+
     /// One action done: its result. `unknown` says an earlier run dispatched it and never
     /// learned what came of it.
     fn act(&mut self, state: &mut State, action: &Action, unknown: bool) -> Result<Value, Stop> {
@@ -725,11 +793,7 @@ impl Run<'_> {
                 key,
                 text,
                 to,
-            } => match self.ctx.board.note(slug, text, to.as_deref(), key, self.by) {
-                Ok(()) => Ok(json!({})),
-                Err(BoardError::Refused(why)) => Err(Stop::Skip(format!("{slug}: {why}"))),
-                Err(error) => Err(end(board_said(&error), Event::Unknown)),
-            },
+            } => self.note(state, slug, (key, text), to.as_deref()),
             Action::Import {
                 slug,
                 issue,
@@ -965,6 +1029,13 @@ pub fn apply(
     for entry in entries.iter().filter(|entry| entry.preview == digest) {
         last.insert(&entry.op, entry);
     }
+    // A publication is one operation in every preview, named by its marker: one dispatched
+    // under an earlier preview whose result never arrived is not known to be unmade, so it is
+    // looked for among every issue before anything is created under this one.
+    let mut dispatched: BTreeMap<&str, Event> = BTreeMap::new();
+    for entry in entries.iter().filter(|entry| entry.kind == "publish") {
+        dispatched.insert(&entry.op, entry.event);
+    }
     let mut run = Run {
         ctx,
         loaded: &loaded,
@@ -984,7 +1055,11 @@ pub fn apply(
             }
             Some((Event::Skipped, _)) => continue,
             Some((Event::Intent | Event::Unknown, _)) => true,
-            _ => false,
+            Some(_) => false,
+            None => matches!(
+                dispatched.get(op.as_str()),
+                Some(Event::Intent | Event::Unknown)
+            ),
         };
         if done >= limit {
             remaining += 1;
@@ -1065,6 +1140,7 @@ pub fn apply(
     })?;
     if let Some(cursor) = &preview.next_cursor {
         state.cursor = Some(cursor.clone());
+        state.cursor_revision = Some(preview.config.clone());
     }
     store.save(&state)?;
     store.drop_preview()?;

@@ -7,7 +7,7 @@
 //! synchronized. One changed side may update the other; two changed sides are a conflict, which
 //! overwrites neither. No time is compared.
 
-use crate::board::{Task, Token};
+use crate::board::{Bound, Task, Token};
 use crate::config::Config;
 use crate::github::{Comment, Issue, Repo};
 use crate::state::{Binding, Draft, Flag, Mapping, Origin, Side, State};
@@ -276,12 +276,13 @@ fn quoted(text: &str) -> String {
 
 /// The board's tokens, read when the plan first needs each.
 pub trait Tokens {
-    /// The token of the task `slug` now.
+    /// The token of the task `slug` now, with the title and brief that version holds: one
+    /// read, so what the plan judges is what the token names.
     ///
     /// # Errors
     ///
     /// Why the board gives none.
-    fn token(&self, slug: &str) -> Result<Token, String>;
+    fn bound(&self, slug: &str) -> Result<Bound, String>;
 }
 
 /// Everything a plan is decided from.
@@ -297,8 +298,8 @@ pub struct Seen<'a> {
     /// The comments read, by issue number.
     pub comments: &'a BTreeMap<i64, Vec<Comment>>,
     pub tokens: &'a dyn Tokens,
-    /// The operator asked to bind to the repository found, whatever the state was bound to.
-    pub rebind: bool,
+    /// The tasks whose publication this side's journal holds a word of.
+    pub published: &'a BTreeSet<String>,
 }
 
 /// The two sides of a mapping as they read now, each with its digest.
@@ -314,7 +315,7 @@ struct Sides {
 impl Sides {
     /// The local side is the task's brief for an import and the curated text for a
     /// publication; the remote side is the issue's text, as the local side would hold it.
-    fn of(mapping: &Mapping, task: &Task, draft: Option<&Draft>, issue: &Issue) -> Sides {
+    fn of(mapping: &Mapping, task: &Bound, draft: Option<&Draft>, issue: &Issue) -> Sides {
         let (local_title, local_body) = match (mapping.origin, draft) {
             (Origin::Import, _) => (task.title.clone(), task.body.clone()),
             (Origin::Export, Some(draft)) => (draft.title.clone(), draft.body.clone()),
@@ -356,7 +357,7 @@ struct Planner<'a> {
     adopted: BTreeSet<String>,
 }
 
-impl<'a> Planner<'a> {
+impl Planner<'_> {
     fn local(&mut self, slug: &str, change: Change) {
         self.actions.push(Action::Local {
             slug: slug.into(),
@@ -379,9 +380,11 @@ impl<'a> Planner<'a> {
         });
     }
 
-    /// The task a mapping still names, with its token under the mapping's generation; a
-    /// mapping that names another is suspended, never moved to it.
-    fn still(&mut self, slug: &str, mapping: &Mapping) -> Option<(&'a Task, Token)> {
+    /// The task a mapping still names, as its token's own read holds it, under the mapping's
+    /// generation; a mapping that names another is suspended, never moved to it. The listing
+    /// says only that the task is there: its title and brief are the ones that came with the
+    /// token, so an edit made between the two reads is judged, never written over.
+    fn still(&mut self, slug: &str, mapping: &Mapping) -> Option<Bound> {
         let suspended = |why: &str| Some(Flag::Suspended(why.into()));
         let Some(task) = self.tasks.get(slug).copied() else {
             self.flag(
@@ -395,9 +398,12 @@ impl<'a> Planner<'a> {
             self.flag(slug, mapping, suspended("the slug names another task now"));
             return None;
         }
-        match self.seen.tokens.token(slug) {
-            Ok(token) if token.generation() == mapping.generation && token.id() == task.id => {
-                Some((task, token))
+        match self.seen.tokens.bound(slug) {
+            Ok(bound)
+                if bound.token.generation() == mapping.generation
+                    && bound.token.id() == task.id =>
+            {
+                Some(bound)
             }
             Ok(_) => {
                 self.flag(
@@ -560,12 +566,13 @@ impl<'a> Planner<'a> {
                 .push(format!("{slug}: suspended, not exchanged: {why}"));
             return;
         }
-        let Some((task, token)) = self.still(slug, mapping) else {
+        let Some(task) = self.still(slug, mapping) else {
             return;
         };
+        let token = task.token.clone();
         self.news(slug, mapping, issue);
         let config = self.seen.config;
-        let sides = Sides::of(mapping, task, self.seen.state.drafts.get(slug), issue);
+        let sides = Sides::of(mapping, &task, self.seen.state.drafts.get(slug), issue);
         let local_changed = sides.local_now != mapping.local;
         let remote_changed = sides.remote_now != mapping.remote;
         match (local_changed, remote_changed) {
@@ -598,8 +605,14 @@ impl<'a> Planner<'a> {
     /// answer was. The digests kept are the sides' own when they agree, and otherwise ones
     /// neither side has, so the next preview reads a conflict and overwrites neither.
     fn adopt(&mut self, slug: &str, task: &Task, issue: &Issue, origin: Origin) {
-        let token = match self.seen.tokens.token(slug) {
-            Ok(token) => token,
+        let bound = match self.seen.tokens.bound(slug) {
+            Ok(bound) if bound.token.id() == task.id => bound,
+            Ok(_) => {
+                self.notices.push(format!(
+                    "{slug}: not mapped again: the slug names another task now"
+                ));
+                return;
+            }
             Err(why) => {
                 self.notices.push(format!(
                     "{slug}: not mapped again: the board gives no token: {why}"
@@ -607,28 +620,37 @@ impl<'a> Planner<'a> {
                 return;
             }
         };
-        let kept = self.seen.state.drafts.get(slug).cloned();
+        let token = &bound.token;
+        let unknown = || ("unknown".to_string(), "unknown".to_string(), None);
         let (local, remote, draft) = match origin {
             Origin::Import => {
-                let agree = task.title == issue.title && task.body == render_import(issue);
+                let agree = bound.title == issue.title && bound.body == render_import(issue);
                 if agree {
                     (
-                        content(&task.title, &task.body),
+                        content(&bound.title, &bound.body),
                         content(&issue.title, &issue.body),
                         None,
                     )
                 } else {
-                    ("unknown".into(), "unknown".into(), None)
+                    unknown()
                 }
             }
             Origin::Export => {
                 let body = strip_marker(&issue.body);
                 let digest = content(&issue.title, &body);
-                let draft = kept.is_none().then(|| Draft {
-                    title: issue.title.clone(),
-                    body,
-                });
-                (digest.clone(), digest, draft)
+                match self.seen.state.drafts.get(slug) {
+                    // The curated text kept and the issue's differ: neither is taken for the
+                    // other's last version, so the next preview reads a conflict.
+                    Some(kept) if content(&kept.title, &kept.body) != digest => unknown(),
+                    Some(_) => (digest.clone(), digest, None),
+                    None => {
+                        let draft = Draft {
+                            title: issue.title.clone(),
+                            body,
+                        };
+                        (digest.clone(), digest, Some(draft))
+                    }
+                }
             }
         };
         self.adopted.insert(slug.into());
@@ -669,7 +691,32 @@ impl<'a> Planner<'a> {
                          mapped and none is published again; close the duplicates, then preview",
                         task.slug, issue.number
                     ));
+                } else if !seen.config.issues.exports()
+                    || !(seen.state.drafts.contains_key(&task.slug)
+                        || seen.published.contains(&task.slug))
+                {
+                    // Anyone who can open an issue can write a marker. One for a task this
+                    // side neither curated a text for nor journaled a publication of maps
+                    // nothing and notes nothing: its operator opts the task in, or not.
+                    self.notices.push(format!(
+                        "issue #{} ({}) carries the marker of {}, which nothing kept here \
+                         shows was published{}: not mapped. If it is this task's publication, \
+                         `symphony-github publish {}` with its text opts it in again",
+                        issue.number,
+                        issue.url,
+                        task.slug,
+                        if seen.config.issues.exports() {
+                            String::new()
+                        } else {
+                            format!(", and issues is {}", seen.config.issues.word())
+                        },
+                        task.slug
+                    ));
                 } else {
+                    self.notices.push(format!(
+                        "{}: issue #{} ({}) carries its marker and is mapped to it",
+                        task.slug, issue.number, issue.url
+                    ));
                     self.adopt(&task.slug, task, issue, Origin::Export);
                 }
                 return;

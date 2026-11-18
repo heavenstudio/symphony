@@ -5,7 +5,7 @@
 
 use crate::github::Fault;
 use crate::{Rig, memory};
-use symphony_github::plan::{import_slug, marker_for};
+use symphony_github::plan::{import_slug, marker_for, with_marker};
 use symphony_github::state::{Event, Flag};
 
 const IMPORT: &str = "issues = \"import\"\nimport_labels = [\"symphony\"]";
@@ -361,13 +361,24 @@ fn lost_state_is_mapped_again_from_both_sides_and_nothing_is_published_or_import
         "{}",
         preview.out
     );
+    // A marker alone maps nothing: nothing kept here shows this side published it.
+    assert!(
+        preview.out.contains("carries the marker of tools/a") && preview.out.contains("not mapped"),
+        "{}",
+        preview.out
+    );
+    assert!(!preview.out.contains("map tools/a"), "{}", preview.out);
+    assert!(!preview.out.contains("import issue"), "{}", preview.out);
+    rig.reconcile(&preview.digest().unwrap()).ok();
+    assert!(!rig.state().mappings.contains_key("tools/a"));
+    // Its operator opts the task in again, and its issue is found rather than made again.
+    draft(&rig, "tools/a", "Public", "Body.");
+    let preview = rig.preview();
     assert!(
         preview.out.contains("map tools/a to issue #2 again"),
         "{}",
         preview.out
     );
-    assert!(!preview.out.contains("publish tools/a"), "{}", preview.out);
-    assert!(!preview.out.contains("import issue"), "{}", preview.out);
     rig.reconcile(&preview.digest().unwrap()).ok();
     assert_eq!(
         rig.github.issues().len(),
@@ -850,4 +861,166 @@ fn one_writer_at_a_time_and_a_kept_preview_that_was_altered_is_refused() {
         refused.err
     );
     assert_eq!(rig.board.slugs(), Vec::<String>::new());
+}
+
+#[test]
+fn a_landing_that_selects_an_issue_already_listed_imports_it_once() {
+    let rig = Rig::new("cursor-settings", "issues = \"export\"");
+    let number = rig.github.open("Waiting", "Text.", &["symphony"]);
+    rig.sync();
+    assert!(rig.state().cursor.is_some(), "the listing passed it by");
+    assert_eq!(rig.board.slugs(), Vec::<String>::new());
+
+    // Nobody edits the issue: the settings alone change.
+    rig.enable(EXCHANGE);
+    let said = rig.sync();
+    assert!(said.contains("every issue is listed again"), "{said}");
+    assert_eq!(rig.board.slugs(), [import_slug(77, number)]);
+    let listings = rig.github.asked().len();
+    rig.sync();
+    assert_eq!(rig.board.slugs().len(), 1, "imported once");
+    assert_eq!(rig.preview().digest(), None);
+    assert!(
+        !rig.preview().out.contains("listed again"),
+        "the cursor holds again under the settings it was read under"
+    );
+    assert!(rig.github.asked().len() > listings);
+
+    // A label added to the selection does the same for the issues that carry it.
+    let other = rig.github.open("Another", "Text.", &["later"]);
+    rig.sync();
+    assert_eq!(rig.board.slugs().len(), 1);
+    rig.enable("issues = \"exchange\"\nimport_labels = [\"symphony\", \"later\"]");
+    rig.sync();
+    assert_eq!(
+        rig.board.slugs(),
+        [import_slug(77, number), import_slug(77, other)]
+    );
+}
+
+#[test]
+fn a_brief_edited_between_the_listing_and_its_token_is_a_conflict_not_an_overwrite() {
+    let rig = Rig::new("atomic-preview", IMPORT);
+    let number = rig.github.open("One", "Text.", &["symphony"]);
+    let slug = import_slug(77, number);
+    rig.sync();
+    let brief = rig.board.task(&slug).unwrap().body;
+
+    rig.github.edit(number, "One", "Edited there.");
+    // The preview lists the task as it was, and the token it reads next is of the edit.
+    let refined = format!("{brief}\nRefined here.");
+    rig.board.rewrite_after_listing(&slug, "One", &refined);
+    let preview = rig.preview();
+    assert!(!preview.out.contains("rewrite"), "{}", preview.out);
+    rig.reconcile(&preview.digest().unwrap()).ok();
+    assert_eq!(rig.board.task(&slug).unwrap().body, refined);
+    assert_eq!(rig.state().mappings[&slug].flag, Some(Flag::Conflict));
+    assert!(
+        !rig.board
+            .writes()
+            .iter()
+            .any(|write| write.starts_with("edit")),
+        "{:?}",
+        rig.board.writes()
+    );
+}
+
+#[test]
+fn a_marker_anyone_wrote_maps_no_task_that_was_never_opted_in() {
+    let rig = Rig::new("planted-marker", EXCHANGE);
+    rig.board.file("tools/a", "A", "brief");
+    let planted = with_marker("A stranger's words.", &marker_for(77, "tools/a"));
+    let number = rig.github.open("Planted", &planted, &[]);
+    let said = rig.sync();
+    assert!(said.contains("not mapped"), "{said}");
+    rig.github.close(number);
+    rig.github.comment(number, "stranger", "Noise.");
+    rig.sync();
+    let state = rig.state();
+    assert!(state.mappings.is_empty() && state.drafts.is_empty());
+    assert_eq!(rig.board.notes(), []);
+    assert_eq!(rig.github.writes(), 0);
+
+    // With a curated text waiting, the planted issue is not taken for its last version: the
+    // two differ, so it is a conflict the operator answers, and nothing is pushed into it.
+    draft(&rig, "tools/a", "Public", "Ours.");
+    rig.sync();
+    rig.sync();
+    assert_eq!(rig.state().mappings["tools/a"].flag, Some(Flag::Conflict));
+    assert_eq!(rig.github.writes(), 0);
+    assert_eq!(rig.github.issue(number)["body"], planted.as_str());
+}
+
+#[test]
+fn a_publication_dispatched_under_an_earlier_preview_is_looked_for_before_any_create() {
+    let rig = Rig::new("lost-create-new-preview", EXCHANGE);
+    // More issues than one preview lists, so the listing never reaches the new one.
+    rig.github.page_size(1);
+    for n in 0..25 {
+        rig.github.open(&format!("Old {n}"), "Text.", &[]);
+    }
+    rig.board.file("tools/a", "A", "brief");
+    draft(&rig, "tools/a", "Public", "Body.");
+    let first = rig.preview().digest().unwrap();
+    rig.github
+        .fault("POST", "/repos/o/n/issues", Fault::LoseAnswer);
+    assert_eq!(rig.reconcile(&first).code, 1);
+    assert_eq!(rig.github.issues().len(), 26, "GitHub made the issue");
+
+    // The curated text moves on, so the next preview is another one.
+    draft(&rig, "tools/a", "Public", "Body, revised.");
+    let preview = rig.preview();
+    let second = preview.digest().unwrap();
+    assert_ne!(first, second);
+    assert!(
+        preview.out.contains("pages of issues changed"),
+        "{}",
+        preview.out
+    );
+    rig.reconcile(&second).ok();
+    assert_eq!(rig.github.issues().len(), 26, "no second public issue");
+    let creates = rig
+        .github
+        .asked()
+        .iter()
+        .filter(|(method, ..)| method == "POST")
+        .count();
+    assert_eq!(creates, 1);
+    assert_eq!(rig.state().mappings["tools/a"].issue_number, 26);
+
+    // Mapped at the text the issue holds, so the revision follows as an edit of it.
+    rig.sync();
+    assert!(
+        rig.github.issue(26)["body"]
+            .as_str()
+            .unwrap()
+            .starts_with("Body, revised."),
+        "{}",
+        rig.github.issue(26)
+    );
+    assert_eq!(rig.github.issues().len(), 26);
+}
+
+#[test]
+fn a_note_is_not_written_on_the_task_a_restored_board_holds_under_the_slug() {
+    let rig = Rig::new("note-restored", IMPORT);
+    let number = rig.github.open("One", "Text.", &["symphony"]);
+    let slug = import_slug(77, number);
+    rig.sync();
+    rig.github.close(number);
+    let preview = rig.preview();
+    assert!(preview.out.contains("is now closed"), "{}", preview.out);
+
+    // Between the preview and its reconcile the board is restored, and the slug is another's.
+    rig.board.restore();
+    rig.board.replace(&slug, "Someone's own task", "Unrelated.");
+    let applied = rig.reconcile(&preview.digest().unwrap());
+    assert!(
+        applied.out.contains("its note was not written"),
+        "{}{}",
+        applied.out,
+        applied.err
+    );
+    assert_eq!(rig.board.notes(), []);
+    assert_eq!(rig.board.task(&slug).unwrap().body, "Unrelated.");
 }
