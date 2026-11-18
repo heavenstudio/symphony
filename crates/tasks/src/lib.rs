@@ -454,8 +454,8 @@ mod reclaim_tests {
 
     impl Place {
         fn new(name: &str) -> Place {
-            let dir = std::env::temp_dir()
-                .join(format!("reclaim-main-{name}-{}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("reclaim-main-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(dir.join("repo/.git")).unwrap();
             std::fs::create_dir_all(dir.join("repo/sub")).unwrap();
