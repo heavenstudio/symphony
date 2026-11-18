@@ -766,6 +766,19 @@ fn the_command_prints_every_releases_notes_and_checks_a_branch() {
                 .ends_with("(docs/RELEASES.md, \"Its notes\")"),
         "{err}"
     );
+    // What the branch's commits would say in the next release's notes, and of the one before.
+    repo.commit(
+        "Say it\n\nConsumer-Note: board: a table\nConsumer-Note: release-2026-11-17 once: run it",
+    );
+    assert_eq!(run(&["--check", "ROOT"]), (0, String::new(), String::new()));
+    let (code, out, _) = run(&["ROOT"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("\nRun once:\n- run it (added after this release was cut, by the commit ")
+            && out.contains("that unreleased holds: not in its tag's message)\n\n## unreleased\n")
+            && out.ends_with("From release-2026-11-17.\n\nBoard:\n- Board schema 20 to 21. First rebuild at this release every program of the project that writes its board (a `tasks` or `agent-send` it links, a program of its own that opens the board through the board's crate) and run each once, which records it. Then `just tasks migrate` in the project's main checkout moves the board: it names each writer seen in the last week that is still behind and moves nothing (exit 2) until each is rebuilt and has run. `just tasks migrate --leave-behind` moves it all the same, and each writer left behind is refused the board until it is rebuilt. Until the move, a build at schema 21 is refused the board at 20.\n- a table\n"),
+        "{out}"
+    );
     for (args, why) in [
         (vec!["--chekc"], "unknown --chekc"),
         (vec!["ROOT", "more"], "unexpected more"),

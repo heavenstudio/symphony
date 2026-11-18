@@ -78,10 +78,12 @@ const PLAIN: [(&str, &str, &str); 4] = [
         crate::release::consumer::USAGE,
         "ROOT is the repository (default: the current folder). It prints the notes of\n\
          every release tagged there, oldest first, as a release's install writes\n\
-         them. With --check it reads the branch checked out there against the\n\
-         default branch: one that changes the board schema, or takes a call out of a\n\
-         consumer-API guard, with no Consumer-Note trailer saying what a project\n\
-         does, or with a trailer that reads as no entry, is red (exit 1).\n",
+         them, and under `unreleased` what the commits since the newest would say.\n\
+         With --check it reads the branch checked out there against the default\n\
+         branch: one that moves the board schema, takes a call out of a consumer-API\n\
+         guard or a key out of the settings reference with no Consumer-Note trailer\n\
+         saying what a project does, or with a trailer that reads as no entry, is\n\
+         red (exit 1).\n",
     ),
 ];
 

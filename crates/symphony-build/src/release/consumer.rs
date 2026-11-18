@@ -794,11 +794,16 @@ pub(crate) enum Checked {
     Owed(Vec<String>),
 }
 
+/// What `symphony-build release-notes` heads the commits since the newest release with: no
+/// release's name, so nothing reads it as one.
+const UNRELEASED: &str = "unreleased";
+
 /// The usage of `symphony-build release-notes`.
 pub(crate) const USAGE: &str = "usage: symphony-build release-notes [--check] [ROOT]";
 
 /// `symphony-build release-notes [--check] [ROOT]`: the notes of every release ROOT's repository
-/// tags, as the next install would write them ([`document`]); with `--check`, whether the branch
+/// tags, as the next install would write them ([`document`]), the commits since the newest under
+/// [`UNRELEASED`]; with `--check`, whether the branch
 /// checked out there says what it owes a consumer ([`check`]), exit 1 when it does not. Its exit
 /// code.
 pub(crate) fn main(
@@ -828,8 +833,12 @@ pub(crate) fn main(
     let root = root.unwrap_or_else(|| std::path::PathBuf::from("."));
     if !checking {
         let made = git(&root, &["rev-parse", "HEAD"]).and_then(|head| {
-            let history = history(&root, &releases(&root, &head)?)?;
-            Ok(document(&history))
+            let mut releases = releases(&root, &head)?;
+            // What the commits since the newest release would say in the next one's notes.
+            if releases.last().is_none_or(|(_, commit)| *commit != head) {
+                releases.push((UNRELEASED.to_string(), head));
+            }
+            Ok(document(&history(&root, &releases)?))
         });
         return match made {
             Ok(text) => {
