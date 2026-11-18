@@ -5,11 +5,31 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
+## Auto-approved: spot-check
+
+### Releases
+
+- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
+  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
+
+    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
+
+    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
+
+    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
+
+    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
+
+    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
+
+    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
+  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
+
+## Waiting on an agent
 
 ### Board
 
-- [ ] **board-pg-cutover** — PostgreSQL now passes the board's tests on scratch boards, and no live board has moved. Moving one means holding it, so nobody can write to it, while it is copied and compared; going back after it has been written to takes a second hold. Side by side, PostgreSQL failed nothing and answers most commands sooner, but its server used 1.7 times the CPU and its memory peaked at 1,752 MiB with thirty sessions writing at once, against the 512 MiB target the move was approved with. When may the live boards move? A: once the missing pieces are built and a rehearsal on a copy is clean. B: as A, and only after a task finds why memory peaks that high and brings it under the target, or shows it cannot be. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/board-pg-cutover#The choice]]
+- [x] **board-pg-cutover** — PostgreSQL now passes the board's tests on scratch boards, and no live board has moved. Moving one means holding it, so nobody can write to it, while it is copied and compared; going back after it has been written to takes a second hold. Side by side, PostgreSQL failed nothing and answers most commands sooner, but its server used 1.7 times the CPU and its memory peaked at 1,752 MiB with thirty sessions writing at once, against the 512 MiB target the move was approved with. When may the live boards move? A: once the missing pieces are built and a rehearsal on a copy is clean. B: as A, and only after a task finds why memory peaks that high and brings it under the target, or shows it cannot be. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/board-pg-cutover#The choice]]
   [2026-11-18 15:06] agent — Posted for the board task `docs/board-pg-cutover-card`. Nothing live moves before you answer.
 
     **The order, under either.**
@@ -47,28 +67,27 @@ their dated history work is in [REVIEW](REVIEW.md).
     **Why B.** The memory target was part of what you approved, the run misses it by more than three times, and nobody knows why yet: a setting, or the price of one connection per command. B delays only the last step: the missing pieces and the rehearsal go ahead meanwhile.
 
     **Earlier verdicts checked.** Your approval of PostgreSQL for the board (2026-11-09, recorded on the board task `tools/board-postgresql`) chose the store and one connection per command; that task's brief keeps the cutover for your review, which is this card. **postgresql-binary-source** (C) says where the program comes from. Neither says when a live board moves, or what happens when the measured memory misses the target.
+  [2026-11-18 18:01] owner · approved — B sounds great
+- [x] **postgresql-binary-source** — The board is moving from SurrealDB to PostgreSQL, so every machine that runs a board needs the PostgreSQL program. SurrealDB's makers publish a ready program, which Symphony downloads once and checks. The PostgreSQL project publishes only source code: for a Mac it points to other people's installers, and for Linux to the system's packages. Nothing on the board's pages changes under any option. Where should the program come from? A: a ready-made build from a community project on GitHub, downloaded once and checked, as SurrealDB is today. B: PostgreSQL's own source code from postgresql.org, downloaded, checked and compiled once on each machine. C: whatever PostgreSQL is installed on the machine (Homebrew on a Mac, the system's packages on Linux), which a person installs. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/postgresql-binary-source#The options]]
+  [2026-11-15 12:05] agent — Posted for the board task `docs/postgresql-binary-source-card`. Each source was read today, and B was tried on this Mac; the pages read are listed in the analysis.
 
-## Auto-approved: spot-check
+    **What each costs.**
+    - **A:** the least work, and it installs in seconds: today's download with other names. The build is made by a project that is one person in practice (96 of its 100 listed contributions) and calls itself community-maintained, not a vendor. For this Mac it is an 89 MB download and 283 MB on disk, most of it libraries the board never uses. It has followed each PostgreSQL release within four days, the two times checked. It needs macOS 15, or a Linux as new as Debian 12.
+    - **B:** nobody's build but PostgreSQL's own source, checked against the checksum PostgreSQL publishes. Tried here: about 6 minutes of CPU (4 and a half on the clock), once per machine and again for each new version, a few times a year. The result is 35 MB from a 23 MB download, and it started, answered a text search and stopped. It needs a compiler and four build tools on every machine: a Mac with the developer tools has them, a Linux machine needs them installed. A compile can fail where a download cannot, after a system update say. It is more to write than A, and a consuming project needs it as an installed command where today the board prints one line.
+    - **C:** nothing for Symphony to download or build. You install PostgreSQL once on this Mac (`brew install postgresql@18`), and so does whoever sets up each other machine; on Linux that takes the administrator's password. The version is then the machine's and not Symphony's: it moves when Homebrew or the system updates, two machines can differ, and tests fail on a machine where nobody installed it.
 
-### Releases
+    **Not verified.** B was not tried on Linux or on an Intel Mac: no such machine was at hand. A's build was downloaded and measured, not run. Whether the board will need a library the trial left out (ICU, for sorting text by language) is not known until its PostgreSQL schema is written; if it does, B grows a second thing to compile.
 
-- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
-  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
+    **Why B.** It is the only option that keeps what you have today: the program comes from the people who write it, at a version Symphony names, checked before use. It is also the smallest, an eighth of A on disk. Its price is minutes once per machine and a build step to keep working. A is the fallback if that build proves a burden. C gives up knowing that a test, a consuming project and this machine run the same database.
 
-    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
+    **Earlier verdicts checked.** Your approval of PostgreSQL for the board (2026-11-09, recorded on the board task `tools/board-postgresql`) chose the database and that Symphony's server starts it; it does not say whose build of it a machine runs. No card in this register speaks of where a database program comes from.
+  [2026-11-15 12:32] owner · approved — C. This project should only depend on it being available, not manage it's installation for now. In the future, some build based aspect can be added, including:
+    1. Devcontainer - user by the maestro project
+    2. Dockefile - very commonly used. Should ideally be the same of the devcontainer since it supports docker anyway
+    3. Nix based - interesting for microvm post start install
 
-    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
-
-    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
-
-    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
-
-    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
-
-    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
-  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
-
-## Waiting on an agent
+    And those can be documented to be further explored later. For now however, a computer based install using whatever is available should be setup, by having an agent do it and add settings to connect to the symphony.toml settings
+  [2026-11-15 12:33] owner · approved — Ah, and do use the latest version locally in homebrew, update it if needed.
 
 ### Releases
 
@@ -114,29 +133,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **release-candidate-process** (A) holds a commit and reruns what was red; it does not say what makes a rerun red. Your rule that a test red on load is discarded says what happens to the test, and B keeps it; it does not say whether the run or an agent makes the run alone.
   [2026-11-18 12:47] owner · approved — B
-
-### Board
-
-- [x] **postgresql-binary-source** — The board is moving from SurrealDB to PostgreSQL, so every machine that runs a board needs the PostgreSQL program. SurrealDB's makers publish a ready program, which Symphony downloads once and checks. The PostgreSQL project publishes only source code: for a Mac it points to other people's installers, and for Linux to the system's packages. Nothing on the board's pages changes under any option. Where should the program come from? A: a ready-made build from a community project on GitHub, downloaded once and checked, as SurrealDB is today. B: PostgreSQL's own source code from postgresql.org, downloaded, checked and compiled once on each machine. C: whatever PostgreSQL is installed on the machine (Homebrew on a Mac, the system's packages on Linux), which a person installs. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/postgresql-binary-source#The options]]
-  [2026-11-15 12:05] agent — Posted for the board task `docs/postgresql-binary-source-card`. Each source was read today, and B was tried on this Mac; the pages read are listed in the analysis.
-
-    **What each costs.**
-    - **A:** the least work, and it installs in seconds: today's download with other names. The build is made by a project that is one person in practice (96 of its 100 listed contributions) and calls itself community-maintained, not a vendor. For this Mac it is an 89 MB download and 283 MB on disk, most of it libraries the board never uses. It has followed each PostgreSQL release within four days, the two times checked. It needs macOS 15, or a Linux as new as Debian 12.
-    - **B:** nobody's build but PostgreSQL's own source, checked against the checksum PostgreSQL publishes. Tried here: about 6 minutes of CPU (4 and a half on the clock), once per machine and again for each new version, a few times a year. The result is 35 MB from a 23 MB download, and it started, answered a text search and stopped. It needs a compiler and four build tools on every machine: a Mac with the developer tools has them, a Linux machine needs them installed. A compile can fail where a download cannot, after a system update say. It is more to write than A, and a consuming project needs it as an installed command where today the board prints one line.
-    - **C:** nothing for Symphony to download or build. You install PostgreSQL once on this Mac (`brew install postgresql@18`), and so does whoever sets up each other machine; on Linux that takes the administrator's password. The version is then the machine's and not Symphony's: it moves when Homebrew or the system updates, two machines can differ, and tests fail on a machine where nobody installed it.
-
-    **Not verified.** B was not tried on Linux or on an Intel Mac: no such machine was at hand. A's build was downloaded and measured, not run. Whether the board will need a library the trial left out (ICU, for sorting text by language) is not known until its PostgreSQL schema is written; if it does, B grows a second thing to compile.
-
-    **Why B.** It is the only option that keeps what you have today: the program comes from the people who write it, at a version Symphony names, checked before use. It is also the smallest, an eighth of A on disk. Its price is minutes once per machine and a build step to keep working. A is the fallback if that build proves a burden. C gives up knowing that a test, a consuming project and this machine run the same database.
-
-    **Earlier verdicts checked.** Your approval of PostgreSQL for the board (2026-11-09, recorded on the board task `tools/board-postgresql`) chose the database and that Symphony's server starts it; it does not say whose build of it a machine runs. No card in this register speaks of where a database program comes from.
-  [2026-11-15 12:32] owner · approved — C. This project should only depend on it being available, not manage it's installation for now. In the future, some build based aspect can be added, including:
-    1. Devcontainer - user by the maestro project
-    2. Dockefile - very commonly used. Should ideally be the same of the devcontainer since it supports docker anyway
-    3. Nix based - interesting for microvm post start install
-
-    And those can be documented to be further explored later. For now however, a computer based install using whatever is available should be setup, by having an agent do it and add settings to connect to the symphony.toml settings
-  [2026-11-15 12:33] owner · approved — Ah, and do use the latest version locally in homebrew, update it if needed.
 
 ### The built client
 

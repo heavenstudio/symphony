@@ -1,0 +1,14 @@
+    Starting 3 tests across 1 binary
+{"type":"suite","event":"started","test_count":3,"nextest":{"crate":"runner-fixture","test_binary":"runner_fixture","kind":"lib"}}
+{"type":"test","event":"started","name":"runner-fixture::runner_fixture$fails"}
+{"type":"test","event":"started","name":"runner-fixture::runner_fixture$succeeds"}
+{"type":"test","event":"started","name":"runner-fixture::runner_fixture$timeout"}
+        PASS [   0.032s] (1/3) runner-fixture succeeds
+{"type":"test","event":"ok","name":"runner-fixture::runner_fixture$succeeds","exec_time":0.032104708}
+{"type":"test","event":"failed","name":"runner-fixture::runner_fixture$fails","exec_time":0.024429458,"stdout":"\nthread 'fails' (58675275) panicked at src/lib.rs:2:22:\nfixture failure\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"}
+        FAIL [   0.024s] (2/3) runner-fixture fails
+     TIMEOUT [   1.003s] (3/3) runner-fixture timeout
+{"type":"test","event":"failed","name":"runner-fixture::runner_fixture$timeout","exec_time":1.003285875,"reason":"time limit exceeded"}
+{"type":"suite","event":"failed","passed":1,"failed":2,"ignored":0,"measured":0,"filtered_out":0,"exec_time":1.059820041,"nextest":{"crate":"runner-fixture","test_binary":"runner_fixture","kind":"lib"}}
+     Summary [   1.011s] 3 tests run: 1 passed, 1 failed, 1 timed out, 0 skipped
+error: test run failed

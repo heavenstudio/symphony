@@ -41,6 +41,7 @@ mod git;
 mod gone;
 mod group;
 mod install;
+mod nextest;
 mod notes;
 mod place;
 mod record;
@@ -66,6 +67,11 @@ use place::{Place, normal};
 use record::{Checking, Run, Running, local};
 use symphony_board::sys::{Interrupts, pid_alive};
 use tags::Release;
+
+/// A test stall's observed load, using the release run's own load reader and wording.
+pub(crate) fn test_load() -> String {
+    checks::Load::now().map_or_else(|| "unavailable".into(), |load| load.said())
+}
 
 use symphony::cli::{Flag, parse};
 use symphony::project::Project;
