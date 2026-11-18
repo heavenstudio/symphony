@@ -1154,8 +1154,13 @@ const STEPS: [(&str, &str); 8] = [
 #[test]
 fn a_cold_release_target_is_provisioned_before_tests_and_a_setup_red_starts_no_tests() {
     for fails in [false, true] {
-        let setup = Setup::new("record-script-nextest-setup");
+        // Separate repositories: the failed cold run must not share the successful run's logs.
+        let setup = Setup::new(&format!("record-script-nextest-setup-{fails}"));
         let recipes = Recipes::new(&setup);
+        assert!(
+            !recipes.tree.join("build/verify/tests.log").exists(),
+            "the fixture starts without a prior tests log"
+        );
         fs::remove_dir_all(recipes.tree.join(".target/tools")).unwrap();
         let vars = if fails {
             vec![("FAIL_NEXTEST_SETUP", "1")]
@@ -1168,7 +1173,11 @@ fn a_cold_release_target_is_provisioned_before_tests_and_a_setup_red_starts_no_t
         let names: Vec<_> = steps.iter().map(|step| (step.0.as_str(), step.1)).collect();
         if fails {
             assert_eq!(names, [("nextest-setup", 2)]);
-            assert!(!recipes.tree.join("build/verify/tests.log").exists());
+            assert!(
+                !recipes.tree.join("build/verify/tests.log").exists(),
+                "tests log: {:?}; verify: {done:?}",
+                fs::read_to_string(recipes.tree.join("build/verify/tests.log"))
+            );
             let log =
                 fs::read_to_string(recipes.tree.join("build/verify/nextest-setup.log")).unwrap();
             assert!(log.contains("nextest: cannot fetch"), "{log}");
