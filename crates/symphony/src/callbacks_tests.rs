@@ -41,8 +41,12 @@ fn chat_persists_its_question_and_delivery_intent_in_three_sqlite_processes() {
 #[test]
 fn callback_publication_initializes_missing_and_legacy_outboxes_without_losing_records() {
     let tree = Tree::new();
-    for legacy in [false, true] {
-        let path = tree.root.join(if legacy { "legacy.db" } else { "new.db" });
+    for case in ["new", "empty", "legacy"] {
+        let legacy = case == "legacy";
+        let path = tree.root.join(format!("{case}.db"));
+        if case == "empty" {
+            std::fs::write(&path, "").unwrap();
+        }
         if legacy {
             let store = AskStore::open(&path).unwrap();
             store.run("DROP TABLE callbacks; CREATE TABLE callbacks (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL); INSERT INTO callbacks(text) VALUES ('old');").unwrap();
@@ -132,6 +136,18 @@ fn insertable_but_malformed_outboxes_never_acknowledge_an_intent() {
             "id INTEGER PRIMARY KEY, text TEXT NOT NULL, ask TEXT",
         ),
         (
+            "default-marker",
+            "id INTEGER PRIMARY KEY, text TEXT NOT NULL, ask TEXT, future TEXT DEFAULT 'AUTOINCREMENT'",
+        ),
+        (
+            "comment-marker",
+            "id INTEGER PRIMARY KEY /* AUTOINCREMENT */, text TEXT NOT NULL, ask TEXT",
+        ),
+        (
+            "stale-sequence",
+            "id INTEGER PRIMARY KEY, text TEXT NOT NULL, ask TEXT, future TEXT DEFAULT 'AUTOINCREMENT'",
+        ),
+        (
             "nullable-text",
             "id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT, ask TEXT",
         ),
@@ -144,6 +160,11 @@ fn insertable_but_malformed_outboxes_never_acknowledge_an_intent() {
         let path = tree.root.join(format!("{case}.db"));
         let store = AskStore::open(&path).unwrap();
         store.run(&format!("DROP TABLE callbacks; CREATE TABLE callbacks ({columns}); INSERT INTO callbacks(text) VALUES ('existing');")).unwrap();
+        if case == "stale-sequence" {
+            store
+                .run("INSERT INTO sqlite_sequence(name, seq) VALUES ('callbacks', 10);")
+                .unwrap();
+        }
         let error = publish_at(&path, "must remain unacknowledged", None).unwrap_err();
         assert!(error.contains("callbacks needs"), "{case}: {error}");
         assert!(error.contains(path.to_str().unwrap()), "{case}: {error}");
@@ -166,14 +187,23 @@ fn an_outbox_with_extra_columns_remains_compatible_and_receipts_do_not_reuse_ids
     let path = tree.root.join("extended.db");
     let store = AskStore::open(&path).unwrap();
     store
-        .run("ALTER TABLE callbacks ADD COLUMN future TEXT;")
+        .run("ALTER TABLE callbacks ADD COLUMN future TEXT DEFAULT 'AUTOINCREMENT'; CREATE TRIGGER another_intent AFTER INSERT ON callbacks WHEN NEW.text = 'first' BEGIN INSERT INTO callbacks(text) VALUES ('derived'); END;")
         .unwrap();
     publish_at(&path, "first", None).unwrap();
-    let first: Vec<Value> = store.rows("SELECT id FROM callbacks;").unwrap();
+    let first: Vec<Value> = store
+        .rows("SELECT id, text FROM callbacks ORDER BY id;")
+        .unwrap();
+    assert_eq!(
+        first
+            .iter()
+            .map(|row| row["text"].clone())
+            .collect::<Vec<_>>(),
+        [json!("first"), json!("derived")]
+    );
     store.run("DELETE FROM callbacks;").unwrap();
     publish_at(&path, "second", None).unwrap();
     let second: Vec<Value> = store.rows("SELECT id FROM callbacks;").unwrap();
-    assert!(second[0]["id"].as_i64().unwrap() > first[0]["id"].as_i64().unwrap());
+    assert!(second[0]["id"].as_i64().unwrap() > first.last().unwrap()["id"].as_i64().unwrap());
 
     let blocked = tree.root.join("blocked");
     std::fs::write(&blocked, "not a directory").unwrap();

@@ -10,7 +10,8 @@ use std::time::SystemTime;
 pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS callbacks (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, ask TEXT);";
 
 // A receipt key contains this table's id, so it must never be reused after a flush. Check the
-// required columns and AUTOINCREMENT, allowing additional columns for newer writers.
+// required columns and declaration, allowing additional columns for newer writers. Publication
+// also proves actual sequence advancement: a word in a default or comment is not AUTOINCREMENT.
 const SHAPE: &str = r#"SELECT
     (SELECT count(*) FROM pragma_table_info('callbacks') WHERE name = 'id' AND upper(type) = 'INTEGER' AND pk = 1) = 1
     AND (SELECT count(*) FROM pragma_table_info('callbacks') WHERE pk > 0) = 1
@@ -104,27 +105,34 @@ fn publish_at(path: &Path, text: &str, ask: Option<&symphony_board::NewAsk>) -> 
     // Schema validation and insertion share one process and writer transaction. A file's
     // presence alone says nothing about whether its outbox can retain a replayable receipt.
     let insert = format!(
-        "BEGIN IMMEDIATE;\nCREATE TEMP TABLE callback_guard (ok INTEGER NOT NULL CONSTRAINT {SCHEMA_GUARD} CHECK (ok = 1));\nINSERT INTO callback_guard SELECT core AND asking FROM ({SHAPE});\nINSERT INTO callbacks(text, ask) VALUES ({}, {ask});\nCOMMIT;",
+        "BEGIN IMMEDIATE;\nCREATE TEMP TABLE callback_guard (ok INTEGER NOT NULL CONSTRAINT {SCHEMA_GUARD} CHECK (ok = 1), prior INTEGER);\nINSERT INTO callback_guard SELECT core AND asking, coalesce((SELECT seq FROM main.sqlite_sequence WHERE name = 'callbacks'), 0) FROM ({SHAPE});\nINSERT INTO callbacks(text, ask) VALUES ({}, {ask});\nINSERT INTO callback_guard(ok) SELECT EXISTS (SELECT 1 FROM main.sqlite_sequence WHERE name = 'callbacks' AND seq >= last_insert_rowid() AND last_insert_rowid() > (SELECT prior FROM callback_guard LIMIT 1));\nCOMMIT;",
         text_sql(text)
     );
     if let Some(connection) = AskStore::existing(path) {
         match connection.run(&insert) {
             Ok(_) => return Ok(()),
-            // A failed schema guard ran no outbox INSERT. Initialization handles an absent
-            // table or its legacy column, and refuses malformed shapes before writing an intent.
+            // A failed guard commits no intent: sqlite3's -bail closes and rolls back this
+            // transaction, including when the sequence check follows the outbox INSERT.
+            // Initialization handles an absent table or its legacy column.
             Err(error) if missing_schema(&error) => {}
             Err(error) => return Err(error.to_string()),
         }
     }
     let (connection, _) = database(path)?;
-    connection.run(&insert).map_err(|e| e.to_string())?;
+    connection.run(&insert).map_err(|error| {
+        if missing_schema(&error) {
+            invalid_schema(path)
+        } else {
+            error.to_string()
+        }
+    })?;
     // Native delivery belongs to the server clock, outside the save lock and HTTP writer.
     Ok(())
 }
 
 fn missing_schema(error: &crate::asks::AskError) -> bool {
     matches!(error, crate::asks::AskError::Store(why)
-        if why.contains(SCHEMA_GUARD))
+        if why.contains(SCHEMA_GUARD) || why.contains("no such table: main.sqlite_sequence"))
 }
 
 /// The shared, lease-holding server's journal reader. Private servers leave the journal alone,
