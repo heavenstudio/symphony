@@ -146,8 +146,12 @@ The board's server tests (`just test-rs -p symphony-board --test server`, and so
 need the machine's PostgreSQL 18 or later: the absolute folder `symphony.toml`'s `[board]
 postgresql` names, otherwise the first executable `postgres` on `PATH`, with `initdb`, `pg_ctl`
 and `psql` in that same folder. [The setup](docs/PROJECT_FILE.md#board) gives the portable
-Homebrew line; absent or incompatible tools fail with setup guidance. This repository has no
-hosted GitHub CI requirement.
+Homebrew line; absent or incompatible tools fail with setup guidance. The hosted board's check
+(`just hosted-check`, and so the release run) needs PostgreSQL 16's programs as well, in
+Homebrew's keg (`brew install postgresql@16`, which starts nothing and changes no `postgres` on
+`PATH`) or the folder `SYMPHONY_POSTGRESQL_16` names, and `openssl`
+([POSTGRESQL](docs/POSTGRESQL.md#a-hosted-board)). This repository has no hosted GitHub CI
+requirement.
 
 ## This repository as its own project
 
@@ -274,8 +278,8 @@ list), recorded as a test run, which is the `tests` stamp. Its assessor names `t
 no reviewer reads it. A setting the Symphony does not read yet is code, and `[project]`'s
 `cargo` and `default_branch`, `[plugins]`'s `crates` and `process`, `[verdicts]`, `[land]`,
 `[releases]`, `[stamps]` and `[board]`'s `on_review`, `on_land`, `machine_work_reader`,
-`postgresql` and `assessments` hold commands or programs the Symphony runs, or decide what
-lands: those keep `review`
+`postgresql`, `external_postgresql` and `assessments` hold commands or programs the Symphony
+runs, or decide what lands or where the board is kept: those keep `review`
 ([TASKS](docs/TASKS.md#needed-stamps), [PROJECT_FILE](docs/PROJECT_FILE.md#the-settings-check)).
 
 ## Agent integration

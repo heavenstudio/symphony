@@ -33,6 +33,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+pub mod external;
+#[cfg(feature = "hosted-postgresql")]
+pub mod hosted;
 mod wire;
 
 #[cfg(test)]
@@ -48,7 +51,7 @@ const TIMEOUT: Duration = Duration::from_secs(300);
 /// SQLSTATEs a write is tried again on: `serialization_failure` and `deadlock_detected`.
 const AGAIN: [&str; 2] = ["40001", "40P01"];
 /// SQLSTATE of `raise_exception`, the code of a statement's own `RAISE EXCEPTION`.
-const RAISED: &str = "P0001";
+pub(crate) const RAISED: &str = "P0001";
 /// SQLSTATE of `invalid_catalog_name`: the database a connection names is not there.
 const NO_DATABASE: &str = "3D000";
 /// SQLSTATE of `duplicate_database`.

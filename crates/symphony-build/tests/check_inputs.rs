@@ -226,6 +226,7 @@ fn every_step_and_lane_is_told_and_the_same_commit_tells_the_same() {
             "verify/client-check",
             "verify/crates-check",
             "verify/docs-audit",
+            "verify/hosted",
             "verify/lint",
             "verify/nextest-setup",
             "verify/semver-check",
@@ -280,6 +281,7 @@ fn a_change_inside_a_lanes_packages_changes_its_digest_and_one_outside_them_leav
     assert_eq!(
         changed(&base, &board),
         with_tree(&[
+            "verify/hosted",
             "verify/semver-check",
             "verify/size-check",
             "verify/tests/after_commit",

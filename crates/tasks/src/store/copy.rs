@@ -1,7 +1,6 @@
 //! The copy of a whole board: a dump (every row, table by table, [`Dump`]) written in one
 //! transaction, replacing what the board held, and read back in the same shape.
 
-use super::database::Database;
 use super::postgres::{self, Pg};
 use super::statement::both;
 use super::surreal::copy as sql;
@@ -143,8 +142,8 @@ impl Store {
         let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);
         let last_ask = dump.asks.iter().map(|a| a.id).max().unwrap_or(0);
         let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
-        if let Database::PostgreSql(client) = &self.db {
-            let limit = copy_limit(client.wait());
+        if let Some(wait) = self.db.postgresql_wait() {
+            let limit = copy_limit(wait);
             let generation =
                 self.copy_in_one(&tables, last, last_ts, last_task, last_ask, limit)?;
             return self.copied(&generation);

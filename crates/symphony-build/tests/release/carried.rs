@@ -101,6 +101,19 @@ impl Laned {
             use std::os::unix::fs::PermissionsExt as _;
             fs::set_permissions(&chrome, fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // The hosted check's PostgreSQL 16, in the folder the run is told by its variable.
+        fs::write(outside.join("sixteen"), "Stand-in PostgreSQL 16.1\n").unwrap();
+        fs::create_dir_all(outside.join("pg16")).unwrap();
+        let postgres = outside.join("pg16/postgres");
+        fs::write(
+            &postgres,
+            CHROME.replace("OUTSIDE/chrome", &format!("{at}/sixteen")),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&postgres, fs::Permissions::from_mode(0o755)).unwrap();
+        }
         fixture.write("steps.sh", &STEPS.replace("OUTSIDE", &at));
         if inputs {
             fixture.write("tools/check-inputs.sh", &INPUTS.replace("OUTSIDE", &at));
@@ -143,7 +156,11 @@ impl Laned {
         let mut line = vec!["--check", VERIFY];
         line.extend(args);
         let chrome = self.outside.join("chrome.sh");
-        let extra = [("SYMPHONY_CHROME", chrome.to_str().unwrap())];
+        let sixteen = self.outside.join("pg16");
+        let extra = [
+            ("SYMPHONY_CHROME", chrome.to_str().unwrap()),
+            ("SYMPHONY_POSTGRESQL_16", sixteen.to_str().unwrap()),
+        ];
         let (said, out, err) = self.fixture.release_with(now, &line, &extra);
         assert_eq!(
             said, code,
@@ -217,6 +234,11 @@ fn a_first_run_carries_nothing_and_records_its_inputs_and_what_it_ran_on() {
         ]
     );
     assert_eq!(first["environment"]["chrome"], "Stand-in Chrome 1");
+    // The hosted check's PostgreSQL 16 is the one in the folder its variable names.
+    assert_eq!(
+        first["environment"]["postgresql_16"],
+        "Stand-in PostgreSQL 16.1"
+    );
     for named in ["system", "postgresql"] {
         let said = first["environment"][named].as_str().unwrap();
         assert!(!said.is_empty(), "{named}: {first:#}");
@@ -505,6 +527,66 @@ fn a_green_of_another_environment_is_not_carried() {
     assert_eq!(laned.ran(), ["lint", "tests/a", "tests/b", "tests/all"]);
     let rerun = laned.fixture.runs().pop().unwrap();
     assert_eq!(rerun["environment"]["chrome"], "Stand-in Chrome 2");
+}
+
+#[test]
+fn a_green_of_another_postgresql_16_is_not_carried_though_all_else_is_the_same() {
+    let laned = Laned::new();
+    let (_, merge) = laned.fix(&[]);
+    let before = laned.first["environment"].clone();
+    fs::write(laned.outside.join("sixteen"), "Stand-in PostgreSQL 16.2\n").unwrap();
+    let out = laned.rerun(&merge, 0);
+    assert!(
+        out.contains(
+            "release: 3 greens of the candidate stood on another environment than this one ("
+        ) && out.contains("; the hosted check's PostgreSQL 16: Stand-in PostgreSQL 16.2): none")
+            && out.contains("Chrome: Stand-in Chrome 1; "),
+        "{out}"
+    );
+    assert!(!out.contains("carried green"), "{out}");
+    assert_eq!(laned.ran(), ["lint", "tests/a", "tests/b", "tests/all"]);
+    let rerun = laned.fixture.runs().pop().unwrap();
+    let after = &rerun["environment"];
+    assert_eq!(after["postgresql_16"], "Stand-in PostgreSQL 16.2");
+    for same in ["system", "chrome", "postgresql"] {
+        assert_eq!(after[same], before[same], "{same}");
+    }
+}
+
+#[test]
+fn a_green_whose_record_was_written_before_the_16_was_named_is_read_and_not_carried() {
+    let laned = Laned::new();
+    let (_, merge) = laned.fix(&[]);
+    // The first run's record as a release before this one wrote it: no PostgreSQL 16 in it.
+    let runs = laned.fixture.records().join("runs");
+    let mut rewritten = 0;
+    for entry in fs::read_dir(&runs).unwrap() {
+        let path = entry.unwrap().path();
+        let mut run: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let environment = run["environment"].as_object_mut().unwrap();
+        assert!(environment.remove("postgresql_16").is_some());
+        fs::write(&path, serde_json::to_string(&run).unwrap()).unwrap();
+        rewritten += 1;
+    }
+    assert_eq!(rewritten, 1);
+    // And the candidate's own record of what each green stood on, as that release said it.
+    let candidate = laned.fixture.records().join("candidate.json");
+    let kept = fs::read_to_string(&candidate).unwrap();
+    let named = "; the hosted check's PostgreSQL 16: Stand-in PostgreSQL 16.1";
+    assert!(kept.contains(named), "{kept}");
+    fs::write(&candidate, kept.replace(named, "")).unwrap();
+    // Nothing on the machine changed: the record is read, and its greens are of no
+    // environment a run runs on now.
+    let out = laned.rerun(&merge, 0);
+    assert!(
+        out.contains(
+            "release: 3 greens of the candidate stood on another environment than this one ("
+        ) && out.contains("; the hosted check's PostgreSQL 16: Stand-in PostgreSQL 16.1): none"),
+        "{out}"
+    );
+    assert!(!out.contains("carried green"), "{out}");
+    assert_eq!(laned.ran(), ["lint", "tests/a", "tests/b", "tests/all"]);
 }
 
 #[test]

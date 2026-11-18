@@ -47,6 +47,25 @@ sha2.workspace = true
 # cannot, runs it as a child (src/cli/recorder.rs); the machine id is read without following a link;
 # the free disk the board warns of is read by `statvfs` (src/board_health/disk.rs).
 libc.workspace = true
+# The hosted board's driver, linked by the `hosted-postgresql` feature alone (src/pg/hosted.rs;
+# docs/analysis/hosted-postgresql.md says why this one): PostgreSQL's protocol and SCRAM from
+# tokio-postgres, TLS from rustls, which verifies the chain and the name or does not connect, with
+# ring's primitives and no system library. tokio drives each pool's connections on one thread.
+tokio = { version = "1", features = ["rt", "time", "net", "sync"], optional = true }
+tokio-postgres = { version = "0.7", default-features = false, features = ["runtime"], optional = true }
+tokio-postgres-rustls = { version = "0.14", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+
+[features]
+# A board in a managed PostgreSQL reached over verified TLS (src/pg/hosted.rs,
+# docs/POSTGRESQL.md): off unless a hosted build asks for it, so no other build links its driver.
+hosted-postgresql = ["dep:tokio", "dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:rustls"]
+
+# The hosted board against real PostgreSQL 16 and 18 servers (tests/hosted/main.rs).
+[[test]]
+name = "hosted"
+path = "tests/hosted/main.rs"
+required-features = ["hosted-postgresql"]
 
 [build-dependencies]
 sha2.workspace = true

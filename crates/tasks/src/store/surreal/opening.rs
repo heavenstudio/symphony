@@ -12,6 +12,11 @@ pub(in crate::store) const BOARD_SCHEMA_VALUE: &str = board_schema!();
 /// [`BOARD_SCHEMA_VALUE`] as a read of its own.
 pub(in crate::store) const BOARD_SCHEMA: &str = concat!("RETURN ", board_schema!(), ";");
 
+/// The other half of a statement only PostgreSQL is asked: what its server's version is and
+/// what a hosted database already holds, which no SurrealDB board is read for.
+#[cfg(feature = "hosted-postgresql")]
+pub(in crate::store) const POSTGRESQL_ALONE: &str = "RETURN NONE;";
+
 /// A migration's one transaction: stale unless the board is still at `$was`, then `steps`, the
 /// version's own, and the board's record of `$version`.
 pub(in crate::store) fn migration(steps: &str) -> String {

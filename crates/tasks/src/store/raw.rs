@@ -7,7 +7,7 @@
 //! nothing; one that meets another's is sent again, as the store's own are. The board's commands
 //! never come here.
 
-use super::database::Database;
+use super::database::{Database, Postgres, Reach};
 use super::postgres::{Pg, raw as pg};
 use super::surreal::raw as sql;
 use super::transaction::on_postgres;
@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 #[derive(Clone, Copy)]
 enum On<'a> {
     SurrealDb(&'a Client),
-    PostgreSql(&'a crate::pg::Client),
+    PostgreSql(Postgres<'a>),
 }
 
 /// A board's rows, read and set as they are ([`Store::raw`], [`Raw::on`]).
@@ -43,7 +43,12 @@ enum Which {
 impl Store {
     /// This board's rows as they are, for a test's fixture and its look at what was written.
     pub fn raw(&self) -> Raw<'_> {
-        Raw::of(&self.db)
+        Raw {
+            client: match self.db.reach() {
+                Reach::SurrealDb(client) => On::SurrealDb(client),
+                Reach::PostgreSql(client) => On::PostgreSql(client),
+            },
+        }
     }
 }
 
@@ -60,7 +65,7 @@ impl<'a> Raw<'a> {
         Raw {
             client: match db {
                 Database::SurrealDb(client) => On::SurrealDb(client),
-                Database::PostgreSql(client) => On::PostgreSql(client),
+                Database::PostgreSql(client) => On::PostgreSql(Postgres::Socket(client)),
             },
         }
     }
