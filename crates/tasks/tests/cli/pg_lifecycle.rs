@@ -17,9 +17,7 @@ impl Board {
     fn new(name: &str) -> Self {
         let root = repository(&scratch(name));
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let programs = symphony_board::server::postgres::programs(&workspace)
-            .unwrap()
-            .unwrap();
+        let programs = symphony_board::server::postgres::discover_programs(&workspace).unwrap();
         std::fs::write(
             root.join("symphony.toml"),
             format!(

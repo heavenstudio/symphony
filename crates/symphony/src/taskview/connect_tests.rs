@@ -121,6 +121,14 @@ fn every_spelling_of_an_opening_is_found_and_a_name_ending_in_one_is_not() {
         ),
         ("Store::with(client, clock, probe, host)", "Store::with("),
         (
+            "Store::opening_on(db, clock, probe, host, how)",
+            "Store::opening_on(",
+        ),
+        (
+            "Store::reading_on(db, clock, probe, host, how)",
+            "Store::reading_on(",
+        ),
+        (
             "&symphony_board::Opening::write().of(None)",
             "Opening::write",
         ),
