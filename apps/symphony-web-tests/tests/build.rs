@@ -887,8 +887,8 @@ fn executable(path: &Path, script: &str) {
 }
 
 /// The justfile's own recipes: `symphony-ui-dist` runs the client's build script with OUT as
-/// given, from the workspace, and `lint-rs` runs Cargo's checks and then the client's, with no
-/// wasm32 pass.
+/// given, from the workspace, and `lint-rs` runs Cargo's checks, the build's two readings of the
+/// branch (its consumer notes, its published packages) and then the client's, with no wasm32 pass.
 #[test]
 fn the_justfile_builds_the_client_with_its_script_and_lints_it_with_its_checks() {
     let scratch = Scratch::new("recipes");
@@ -901,6 +901,11 @@ fn the_justfile_builds_the_client_with_its_script_and_lints_it_with_its_checks()
     executable(
         &tree.join("tools/cargo.sh"),
         "#!/bin/bash\nprintf 'cwd=%s\\n' \"$PWD\"\nprintf 'arg=%s\\n' \"$@\"\n",
+    );
+    // The launcher of the workspace's binaries, which the lint asks for the build's own.
+    executable(
+        &tree.join("tools/rs-bin.sh"),
+        "#!/bin/bash\nprintf 'bin cwd=%s\\n' \"$PWD\"\nprintf 'arg=%s\\n' \"$@\"\n",
     );
     // The client's build and its checks, which bash reads as data.
     executable(
@@ -942,6 +947,8 @@ fn the_justfile_builds_the_client_with_its_script_and_lints_it_with_its_checks()
                 "cwd={0}\narg=fmt\narg=--all\narg=--check\n",
                 "cwd={0}\narg=clippy\narg=--workspace\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
                 "cwd={0}\narg=clippy\narg=-p\narg=symphony-api\narg=--features\narg=typescript\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
+                "bin cwd={0}\narg=symphony-build\narg=consumer-notes\narg=--check\n",
+                "bin cwd={0}\narg=symphony-build\narg=crates-check\narg=--branch\narg=.\n",
                 "client-lint cwd={0}\n"
             ),
             tree.display()
