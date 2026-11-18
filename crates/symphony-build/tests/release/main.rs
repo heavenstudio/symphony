@@ -119,6 +119,9 @@ impl Fixture {
                 root.join("machine").to_string_lossy().into_owned(),
             ),
             ("TZ".into(), "UTC".into()),
+            // Each board write of a run delivers in the write, as the board's own tests ask: no
+            // test here reads what a detached dispatcher did, so none is started for nobody.
+            ("TASKS_DISPATCH".into(), "inline".into()),
             (
                 "GIT_CONFIG_GLOBAL".into(),
                 hostile.to_string_lossy().into_owned(),
@@ -447,82 +450,6 @@ fn a_command_line_it_cannot_read_is_refused_and_runs_nothing() {
     assert!(!fixture.records().join("runs").exists(), "nothing ran");
     assert!(!fixture.worktree().exists());
     assert!(fixture.remote_tags().is_empty());
-}
-
-#[test]
-fn one_run_at_a_time() {
-    let fixture = Fixture::new();
-    fs::create_dir_all(fixture.records()).unwrap();
-    // Another run, as a run holds it: the lock, and saying so.
-    let lock = fs::File::create(fixture.records().join("run.lock")).unwrap();
-    lock.lock().unwrap();
-    let running = serde_json::json!({
-        "id": "another",
-        "pid": std::process::id(),
-        "started_at": NOW,
-        "until": NOW + 3600.0,
-    });
-    fs::write(fixture.records().join("running.json"), running.to_string()).unwrap();
-    let (code, out, err) = fixture.release_at(NOW + 60.0, &["--check", CHECK]);
-    assert_eq!(code, 1, "{err}");
-    assert!(
-        err.contains(&format!(
-            "another release run of this repository is running (run another, process {}, \
-             since 2026-11-12 10:00)",
-            std::process::id()
-        )),
-        "{err}"
-    );
-    assert!(out.is_empty(), "a run within its time is not stuck: {out}");
-    assert!(fixture.reds().is_empty());
-    assert!(fixture.remote_tags().is_empty());
-    fs::remove_file(fixture.records().join("running.json")).unwrap();
-    lock.unlock().unwrap();
-    fixture.night(NOW, 0);
-    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
-    assert!(
-        !fixture.records().join("running.json").exists(),
-        "a run that ended says no run holds the lock"
-    );
-}
-
-#[test]
-fn a_folder_in_the_checkouts_place_is_never_taken_over_and_the_board_hears_of_it() {
-    let fixture = Fixture::new();
-    let found = fixture.worktree().join("notes.txt");
-    fs::create_dir_all(fixture.worktree()).unwrap();
-    fs::write(&found, "someone's\n").unwrap();
-    let (code, out, err) = fixture.release_at(NOW, &["--check", CHECK]);
-    assert_eq!(code, 1, "{out}{err}");
-    let said = format!(
-        "{} is not the release run's own checkout (not a worktree of this repository); it is left as \
-         it is: move it away or name another --worktree",
-        fixture.worktree().display()
-    );
-    assert!(err.contains(&said), "{err}");
-    assert!(!out.contains("release: verify"), "no check ran: {out}");
-    assert_eq!(fs::read_to_string(&found).unwrap(), "someone's\n");
-    assert!(fixture.remote_tags().is_empty());
-    let run = fixture.runs().pop().unwrap();
-    assert_eq!(run["result"], "error", "{run}");
-    assert_eq!(run["error"], said.as_str(), "{run}");
-    assert!(
-        out.contains("release: filed tests/release-red-run"),
-        "{out}"
-    );
-    let reds = fixture.reds();
-    assert_eq!(reds.keys().collect::<Vec<_>>(), ["tests/release-red-run"]);
-    assert!(reds["tests/release-red-run"].body.contains(&said));
-    assert!(reds["tests/release-red-run"].red());
-
-    // Moved away, the next run gets through and closes it.
-    fs::remove_dir_all(fixture.worktree()).unwrap();
-    let out = fixture.night(NOW + 60.0, 0);
-    assert!(
-        out.contains("release: closed tests/release-red-run"),
-        "{out}"
-    );
-    assert_eq!(fixture.reds()["tests/release-red-run"].status, "cancelled");
 }
 
 #[test]

@@ -158,6 +158,28 @@ pub(super) fn measure(
     before: &str,
 ) -> Option<Loads> {
     let mut browser = chrome()?;
+    Some(measure_in(
+        &mut browser,
+        site,
+        path,
+        ready,
+        width,
+        open,
+        before,
+    ))
+}
+
+/// [`measure`] in `browser`, its page as a launch leaves it: a fresh browser's, or a fresh
+/// context's in a browser that has made other visits.
+fn measure_in(
+    browser: &mut Chrome,
+    site: &Site,
+    path: &str,
+    ready: &str,
+    width: Width,
+    open: Option<Open>,
+    before: &str,
+) -> Loads {
     browser.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
@@ -167,10 +189,10 @@ pub(super) fn measure(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": format!("{held}\n{before}\n{RECORD}") }),
     );
-    let cold = load(&mut browser, site, path, ready, open);
+    let cold = load(browser, site, path, ready, open);
     browser.open("about:blank");
-    let warm = load(&mut browser, site, path, ready, open);
-    Some(Loads { cold, warm })
+    let warm = load(browser, site, path, ready, open);
+    Loads { cold, warm }
 }
 
 fn load(
@@ -427,15 +449,20 @@ pub(super) fn misses(
         let Some(loads) = measure(site, path, ready, width, open, before) else {
             return misses;
         };
-        eprintln!("{}", report(page, width, &loads));
-        for (kind, shifts) in [("cold", &loads.cold), ("warm", &loads.warm)] {
-            let score = cls(shifts);
-            if score >= CLS_LIMIT {
-                misses.push(format!("{page} {} {kind}: cls {score:.4}", width.name));
-            }
-        }
+        misses.extend(over_the_limit(page, width, &loads));
     }
     misses
+}
+
+/// Report `loads` of `page` at `width`, and say which of them miss the limit.
+fn over_the_limit(page: &str, width: Width, loads: &Loads) -> Vec<String> {
+    eprintln!("{}", report(page, width, loads));
+    [("cold", &loads.cold), ("warm", &loads.warm)]
+        .into_iter()
+        .map(|(kind, shifts)| (kind, cls(shifts)))
+        .filter(|(_, score)| *score >= CLS_LIMIT)
+        .map(|(kind, score)| format!("{page} {} {kind}: cls {score:.4}", width.name))
+        .collect()
 }
 
 #[test]
@@ -548,9 +575,10 @@ const GATES_FIRST: Order = Order {
     drawn: "document.querySelector('article.task .task-gates[data-gates=read]') !== null",
 };
 
-/// The score of a first visit to the task (a fresh profile) at `width`, its answers in `order`.
-fn first_visit(page: &str, site: &Site, width: Width, order: Order) -> Option<f64> {
-    let mut browser = chrome()?;
+/// The score of a first visit to the task (a fresh context of `browser`) at `width`, its answers
+/// in `order`.
+fn first_visit(browser: &mut Chrome, page: &str, site: &Site, width: Width, order: Order) -> f64 {
+    browser.fresh_context();
     browser.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
@@ -585,24 +613,28 @@ fn first_visit(page: &str, site: &Site, width: Width, order: Order) -> Option<f6
     );
     browser.eval(SETTLED);
     let loads = Loads {
-        cold: shifts(&mut browser, 0),
+        cold: shifts(browser, 0),
         warm: Vec::new(),
     };
     eprintln!(
         "{}",
         report(&format!("{page}, {},", order.name), width, &loads)
     );
-    Some(cls(&loads.cold))
+    cls(&loads.cold)
 }
 
-/// The first visits that reach `limit(width, order)` or more, in each order at each width.
-fn first_visit_misses(page: &str, site: &Site, limit: impl Fn(Width, Order) -> f64) -> Vec<String> {
+/// The first visits that reach `limit(width, order)` or more, in each order at each width, each
+/// in a fresh context of `browser`.
+fn first_visit_misses(
+    browser: &mut Chrome,
+    page: &str,
+    site: &Site,
+    limit: impl Fn(Width, Order) -> f64,
+) -> Vec<String> {
     let mut misses = Vec::new();
     for width in [PHONE, WIDE] {
         for order in [PAGE_FIRST, GATES_FIRST] {
-            let Some(score) = first_visit(page, site, width, order) else {
-                return misses;
-            };
+            let score = first_visit(browser, page, site, width, order);
             let limit = limit(width, order);
             if score >= limit {
                 misses.push(format!(
@@ -642,8 +674,17 @@ fn default_task() -> Site {
 #[test]
 fn a_task_holds_still_while_its_thread_loads() {
     let site = default_task();
-    let mut misses = misses("task", &site, TASK, TASK_READY, None, "");
-    misses.extend(first_visit_misses("task", &site, |_, _| CLS_LIMIT));
+    let Some(mut browser) = chrome() else { return };
+    let mut misses = Vec::new();
+    // Each width's cold and warm loads, then each first visit, in a context of its own.
+    for width in [PHONE, WIDE] {
+        browser.fresh_context();
+        let loads = measure_in(&mut browser, &site, TASK, TASK_READY, width, None, "");
+        misses.extend(over_the_limit("task", width, &loads));
+    }
+    misses.extend(first_visit_misses(&mut browser, "task", &site, |_, _| {
+        CLS_LIMIT
+    }));
     assert!(
         misses.is_empty(),
         "layout shift at or over {CLS_LIMIT}: {misses:#?}"
@@ -677,11 +718,11 @@ fn another_shape_limit(width: Width, order: Order) -> f64 {
 fn a_task_of_another_shape_moves_less_than_its_first_visits_limits() {
     let (sections, cards) = plain();
     let site = site("docs/PROBE.md", &sections, cards);
+    let Some(mut browser) = chrome() else { return };
     let mut misses = Vec::new();
     for width in [PHONE, WIDE] {
-        let Some(loads) = measure(&site, TASK, TASK_READY, width, None, "") else {
-            return;
-        };
+        browser.fresh_context();
+        let loads = measure_in(&mut browser, &site, TASK, TASK_READY, width, None, "");
         eprintln!("{}", report("task of another shape", width, &loads));
         // As the answers come, a first visit is one of the two orders or both in one frame.
         let limit =
@@ -702,6 +743,7 @@ fn a_task_of_another_shape_moves_less_than_its_first_visits_limits() {
         }
     }
     misses.extend(first_visit_misses(
+        &mut browser,
         "task of another shape",
         &site,
         another_shape_limit,
