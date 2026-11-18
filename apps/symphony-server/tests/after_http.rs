@@ -168,8 +168,21 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
             client.database(),
         ))
         .unwrap();
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        match test {
+            "native_low_disk_configured_threshold_notice" => {
+                command.env("SYMPHONY_LOW_DISK_GB", "1000000000000");
+            }
+            "native_low_disk_zero_threshold_notice" => {
+                command.env("SYMPHONY_LOW_DISK_GB", "0");
+            }
+            "native_low_disk_malformed_threshold_falls_back" => {
+                command.env("SYMPHONY_LOW_DISK_GB", "malformed-fixture");
+            }
+            _ => {}
+        }
         let done = symphony_board::sys::output(
-            Command::new(std::env::current_exe().unwrap())
+            command
                 .args(["--exact", test, "--nocapture"])
                 .env(CHILD, &tree.root)
                 .env("TASKS_SERVER", client.addr())
@@ -196,6 +209,9 @@ fn run_on(test: &str, made: fn() -> tree::Tree, exercise: fn(&Fixture)) {
             }
         }
         assert!(done.status.success(), "{out}\n{err}");
+        if test == "native_low_disk_malformed_threshold_falls_back" {
+            assert!(err.contains("SYMPHONY_LOW_DISK_GB=\"malformed-fixture\" is not a number of gigabytes: the pages warn under 20 GB free"), "{err}");
+        }
         assert!(
             out.contains("1 passed"),
             "exact child filter ran no assertions: {out}"
@@ -1573,4 +1589,35 @@ fn watcher(f: &Fixture) {
     assert!(gallery(f, "").contains("ROOT.item"));
     assert!(!gallery(f, SCOPE).contains("ROOT.item"));
     eprintln!("{PHASE}finished");
+}
+
+#[test]
+fn native_low_disk_configured_threshold_notice() {
+    run("native_low_disk_configured_threshold_notice", |f| {
+        let notice = f.server_notice("");
+        let expected = symphony_board::board_health::disk::Low::of(&f.root, 0, 1_000_000_000_000.0)
+            .unwrap()
+            .notice();
+        assert!(notice.contains(&expected), "{notice}");
+    });
+}
+
+#[test]
+fn native_low_disk_zero_threshold_notice() {
+    run("native_low_disk_zero_threshold_notice", |f| {
+        assert!(!f.server_notice("").contains("The disk has under"));
+    });
+}
+
+#[test]
+fn native_low_disk_malformed_threshold_falls_back() {
+    run("native_low_disk_malformed_threshold_falls_back", |f| {
+        let notice = f.server_notice("");
+        let low = symphony_board::board_health::disk::Low::check(&f.root, 20.0);
+        if let Some(low) = low {
+            assert!(notice.contains(&low.notice()), "{notice}");
+        } else {
+            assert!(!notice.contains("The disk has under"), "{notice}");
+        }
+    });
 }
