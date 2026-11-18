@@ -397,7 +397,9 @@ steer the rest with:
 - `TASKS_REAP_STATE`, where the idle sweep keeps what it saw;
 - `HC_BIN` and `HERDR_APP_BIN`, a fake hc and window: the crate's `fake-hc`, its terminals, the
   window's layout and what it shows in the JSON file `FAKE_HC_STATE` names, each call a line of
-  `FAKE_HC_LOG`, the calls `FAKE_HC_FAIL` names refused;
+  `FAKE_HC_LOG`, the calls `FAKE_HC_FAIL` names refused; a test that names none is given
+  `/usr/bin/false` by the test runs (`just test-rs`, `tools/test-lanes.sh`), so no case reads this
+  machine's terminals, where one named as a fixture's session would be taken for its pane;
 - `TASKS_PS_TABLE`, a file of `ps -axo pid=,ppid=,command=` lines read in place of `ps`, so no case
   reads this machine's process table; read only with a `TASKS_DATABASE` other than the live one;
 - `TASKS_SWEEP=on`, `TASKS_ON_REVIEW=on`, `TASKS_ON_LAND=on` and `TASKS_REGENERATE=on`, without
