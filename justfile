@@ -38,8 +38,11 @@ client-lint:
 client-wire:
     @bash apps/symphony-web/wire.sh
 
+# No test reads this machine's terminals: a test that names no hc of its own (HC_BIN) is given one
+# that answers nothing, as on a machine with none, so a terminal here named as a fixture's session
+# is never taken for its pane. The recorder keeps the caller's.
 test-rs *ARGS:
-    @{{record}} --pipeline test test "just test-rs $*" tools/cargo.sh test --locked "$@"
+    @{{record}} --pipeline test test "just test-rs $*" env HC_BIN="${HC_BIN:-/usr/bin/false}" tools/cargo.sh test --locked "$@"
 
 # The settings check (`symphony settings-check`, docs/PROJECT_FILE.md): symphony.toml read as the
 # Symphony reads it and judged on its shape alone, recorded as a test run, which is what a change

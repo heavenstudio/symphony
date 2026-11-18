@@ -548,9 +548,9 @@ fn a_recipe_records_through_the_script_and_runs_as_it_is_in_a_tree_without_it() 
     }
     executable(
         &tree.join("tools/cargo.sh"),
-        "#!/bin/sh\nprintf 'arg=<%s>\\n' \"$@\"\nexit 5\n",
+        "#!/bin/sh\nprintf 'arg=<%s>\\n' \"$@\"\nprintf 'hc=<%s>\\n' \"${HC_BIN-unset}\"\nexit 5\n",
     );
-    let recipe = |task: Option<&str>| {
+    let recipe = |task: Option<&str>, hc: Option<&str>| {
         let mut command = Command::of("just");
         command
             .args(["test-rs", "one argument"])
@@ -563,22 +563,32 @@ fn a_recipe_records_through_the_script_and_runs_as_it_is_in_a_tree_without_it() 
             .envs(UNREACHED)
             .env(SCALE_VAR, SCALE)
             .env(PROBE_WAIT_VAR, PROBE_WAIT)
-            .env_remove(recorded::PARENT_VAR);
+            .env_remove(recorded::PARENT_VAR)
+            .env_remove("HC_BIN");
         if let Some(task) = task {
             command.env("TASKS_TASK", task);
+        }
+        if let Some(hc) = hc {
+            command.env("HC_BIN", hc);
         }
         let done = output(command.stdin(Stdio::null())).unwrap();
         assert_eq!(done.status.code(), Some(5), "{done:?}");
         assert_eq!(
             String::from_utf8(done.stdout).unwrap(),
-            "arg=<test>\narg=<--locked>\narg=<one argument>\n"
+            format!(
+                "arg=<test>\narg=<--locked>\narg=<one argument>\nhc=<{}>\n",
+                hc.unwrap_or("/usr/bin/false")
+            )
         );
     };
     // No tools/record.sh here: the recipe runs as it is, its recorder never asked.
-    recipe(None);
+    // Its tests are named an hc that answers nothing, never this machine's, unless the caller
+    // names one.
+    recipe(None, None);
+    recipe(None, Some("/the/callers/hc"));
     assert_eq!(setup.logged(), "", "a tree without the script recorded");
     fs::copy(tool("record.sh"), tree.join("tools/record.sh")).unwrap();
-    recipe(Some("tools/recipe"));
+    recipe(Some("tools/recipe"), None);
     let logged = setup.logged();
     let runs: Vec<&str> = logged.lines().collect();
     assert_eq!(runs.len(), 2, "{logged}");
