@@ -38,7 +38,9 @@ lockfile written again, in a task of their own.
   `engine-strict`. `npm.sh ARGS` runs npm here on
   that Node after `npm ci` from the committed `package-lock.json` whenever `node_modules` was not
   installed from those very bytes, offline after the first fetch (`--prefer-offline`), two runs in
-  one checkout taking turns (`tools/check_lock.sh`). `.npmrc` saves exact versions, runs no
+  one checkout taking turns (`tools/check_lock.sh`); an install that succeeds says nothing, so a
+  first run's output is the command's alone, and one that fails says all it said on stderr.
+  `.npmrc` saves exact versions, runs no
   package's install script (`ignore-scripts`; `fsevents`, Vite's watcher on macOS, ships its
   binary built, and a script `npm run` names still runs) and asks no outside service anything but
   the registry.

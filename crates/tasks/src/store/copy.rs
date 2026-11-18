@@ -29,7 +29,10 @@ impl Store {
     }
 
     /// Make the board `dump`, replacing whatever was there. The rows go up in requests the server takes
-    /// and land in one transaction: a dump that cannot be written leaves the board as it was.
+    /// and land in one transaction: a dump that cannot be written leaves the board as it was. That
+    /// transaction replaces the board's recovery generation too ([`super::recovery`]), so a token
+    /// read before the copy is refused after it and one read before a copy that failed still
+    /// holds; the new generation is then published to this store's authority, when it has one.
     pub fn copy(&self, dump: &Dump) -> Result<(), Error> {
         let keyed = |rows: Vec<Value>, key: &dyn Fn(&Value) -> Value| -> Vec<Value> {
             rows.into_iter()
@@ -123,7 +126,8 @@ impl Store {
         let last_ask = dump.asks.iter().map(|a| a.id).max().unwrap_or(0);
         let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
         if self.db.is_postgresql() {
-            return self.copy_in_one(&tables, last, last_ts, last_task, last_ask);
+            let generation = self.copy_in_one(&tables, last, last_ts, last_task, last_ask)?;
+            return self.copied(&generation);
         }
         let staging = format!(
             "copy_{:016x}",
@@ -135,15 +139,16 @@ impl Store {
             let vars = json!({
                 "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
             });
-            self.retrying(|| self.transact::<Value>(&swap, vars.clone()))
-                .map(|_| ())
+            self.retrying(|| self.transact::<String>(&swap, vars.clone()))
         });
-        copied.map_err(|error| self.cleanup_staging(&sql::remove_staged(&staging, &names), error))
+        let generation = copied
+            .map_err(|error| self.cleanup_staging(&sql::remove_staged(&staging, &names), error))?;
+        self.copied(&generation)
     }
 
     /// On PostgreSQL, `tables` (each a table and its rows) into the emptied board in one guarded
     /// transaction, with the counters the dump's rows end at: the copy of a board one request
-    /// takes ([`postgres::copy`]).
+    /// takes ([`postgres::copy`]). Its answer is the recovery generation it made.
     fn copy_in_one(
         &self,
         tables: &[(&str, Vec<Value>)],
@@ -151,7 +156,7 @@ impl Store {
         last_ts: Option<f64>,
         last_task: i64,
         last_ask: i64,
-    ) -> Result<(), Error> {
+    ) -> Result<String, Error> {
         let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
         let mut vars = json!({
             "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
@@ -182,8 +187,7 @@ impl Store {
                 .collect(),
         );
         let copy = || both(sql::NOTHING_COPIED, postgres::copy::copy(&names));
-        self.retrying(|| self.run_transaction::<Value>(copy(), vars.clone(), Run::Staging))
-            .map(|_| ())
+        self.retrying(|| self.run_transaction(copy(), vars.clone(), Run::Staging))
     }
 
     /// Every row of `tables` into schemaless tables named `{staging}_{table}`, each request at most

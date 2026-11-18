@@ -46,9 +46,13 @@ It refuses an existing target cluster and a running source, and starts neither s
 The next start writes the target's own socket settings and lets PostgreSQL recover its WAL. The
 snapshot is unchanged. This is rehearsal and inspection, not an in-place rollback or acceptance
 of an older live schema; the highest-seen schema record remains outside the database.
-The identity selects an engine only. It contains no recovery generation, and this physical copy
-does not rotate task tokens or revoke already-open clients. A managed restore/rebind fence is a
-separate prerequisite for live recovery.
+The identity selects an engine only. The copied cluster holds the
+[recovery generation](TASKS.md#a-board-that-was-copied-or-restored) its source had, so the
+restore revokes every recovery binding of the target home before the data is in place, and
+publishes no data when that fails: the restored board refuses every bound write until `just tasks
+recovery rebind` gives it a generation of its own, and then takes no token read on its source.
+The source's own binding is not touched, and clients already open on the source keep writing the
+source.
 
 ## Free space and versions
 

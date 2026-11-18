@@ -17,7 +17,8 @@ use std::fmt::Write as _;
 
 /// The copy's one transaction: each of `tables` emptied and filled from `v -> table`, its rows as
 /// the dump gives them with their ids, each sender's last word made again by the messages'
-/// trigger, and the counters set to `last` and `last_ts` (messages), `last_task` and `last_ask`.
+/// trigger, the counters set to `last` and `last_ts` (messages), `last_task` and `last_ask`, and
+/// the board's recovery generation replaced ([`super::recovery::ROTATE`]), which is its answer.
 pub(in crate::store) fn copy(tables: &[&str]) -> Pg<'static> {
     let mut block = String::from("DELETE FROM said;\n");
     for table in tables {
@@ -35,7 +36,11 @@ INSERT INTO counter (id, last, ts) VALUES ('\"message\"', (v ->> 'last')::bigint
 INSERT INTO counter (id, last) VALUES ('\"task\"', (v ->> 'last_task')::bigint)
     ON CONFLICT (id) DO UPDATE SET last = EXCLUDED.last;
 INSERT INTO counter (id, last) VALUES ('\"ask\"', (v ->> 'last_ask')::bigint)
-    ON CONFLICT (id) DO UPDATE SET last = EXCLUDED.last;",
+    ON CONFLICT (id) DO UPDATE SET last = EXCLUDED.last;\n",
+    );
+    block.push_str(super::recovery::ROTATE);
+    block.push_str(
+        "\nboard_answer := (SELECT to_jsonb(generation) FROM recovery WHERE id = '\"board\"');",
     );
     Pg::script(block)
 }

@@ -46,6 +46,11 @@ impl Board {
         }
     }
 
+    /// The board's home, as its PostgreSQL was made on it.
+    fn home(&self) -> Home {
+        Home::new(&self.dir.join("board"), Path::new("/no/surreal"))
+    }
+
     /// What `sql` answers over the server's socket, through one connection of `psql`'s.
     fn psql(&self, serving: &Serving, sql: &str) -> String {
         let said = sys::output(
@@ -333,4 +338,132 @@ fn helper_starts_and_ends() {
         .ensure()
         .unwrap();
     println!("serving {}", serving.pid);
+}
+
+/// A store on `board`'s database `board`, answering to the board home's own recovery authority.
+fn bound_store(board: &Board, serving: &Serving) -> symphony_board::Store {
+    let client = symphony_board::pg::Client::new(&serving.socket, "board");
+    symphony_board::Store::opening_on(
+        client.into(),
+        Box::new(|| 1_800_000_000.0),
+        Box::new(|_| false),
+        "this-host",
+        &symphony_board::Opening::write(),
+    )
+    .unwrap()
+    .recovering(std::sync::Arc::new(board.home().recovery("board")))
+}
+
+#[test]
+fn a_restored_board_is_bound_to_no_generation_and_takes_no_token_of_its_source_once_rebound() {
+    use symphony_board::recovery::Authority as _;
+    use symphony_board::{Error, NewTask};
+    let refused = |result: Result<symphony_board::recovery::BoundTask, Error>| match result {
+        Err(Error::Refused(why)) => why,
+        other => panic!("not refused: {other:?}"),
+    };
+    let board = Board::new("bound-source");
+    let serving = board.pg.ensure().unwrap();
+    let store = bound_store(&board, &serving);
+    store.rebind().unwrap();
+    let new = |slug: &str| NewTask::new(slug, "Original", "owner");
+    store.create(&new("probe/original")).unwrap();
+    let kept = store.bound("probe/original").unwrap().bound;
+    drop(store);
+    board.pg.hold("amber-heron", "snapshot").unwrap();
+    let snapshot = board.pg.snapshot(1.0).unwrap();
+    board.pg.release("amber-heron", None).unwrap();
+    let resumed = board.pg.ensure().unwrap();
+    let store = bound_store(&board, &resumed);
+    let lost = store.create(&new("probe/lost")).unwrap();
+    let lost_at = store.bound("probe/lost").unwrap().bound;
+    let later = store
+        .amend_bound("probe/original", &kept, "After the snapshot", &[], "owner")
+        .unwrap()
+        .bound;
+
+    // A restore that cannot revoke the target's bindings publishes no data.
+    let blocked = Board::new("bound-blocked");
+    std::fs::create_dir_all(blocked.dir.join("board")).unwrap();
+    std::fs::write(blocked.dir.join("board/recovery"), "not a folder").unwrap();
+    let why = blocked.pg.restore(&snapshot).unwrap_err().to_string();
+    assert!(why.contains("recovery"), "{why}");
+    assert!(!blocked.pg.data().exists(), "nothing was published");
+    std::fs::remove_file(blocked.dir.join("board/recovery")).unwrap();
+    blocked.pg.restore(&snapshot).unwrap();
+    assert!(
+        blocked.pg.data().join("PG_VERSION").is_file(),
+        "retried whole"
+    );
+
+    // A binding the target home held, the very generation the snapshot carries, is revoked
+    // before the data is in place: the restored board is bound to none.
+    let recovered = Board::new("bound-target");
+    std::fs::create_dir_all(recovered.dir.join("board")).unwrap();
+    let authority = recovered.home().recovery("board");
+    authority.publish(&kept.generation).unwrap();
+    recovered
+        .home()
+        .recovery("other")
+        .publish("another")
+        .unwrap();
+    recovered.pg.restore(&snapshot).unwrap();
+    assert_eq!(authority.bound(), Ok(None));
+    assert_eq!(recovered.home().recovery("other").bound(), Ok(None));
+    assert_eq!(
+        board.home().recovery("board").bound(),
+        Ok(Some(kept.generation.clone())),
+        "the source's own binding is not touched"
+    );
+    let restored = recovered.pg.ensure().unwrap();
+    let again = bound_store(&recovered, &restored);
+    assert_eq!(
+        again.recovery_generation().unwrap(),
+        Some(kept.generation.clone()),
+        "the copied cluster holds the generation its source had"
+    );
+    for why in [
+        refused(again.bound("probe/original")),
+        refused(again.amend_bound("probe/original", &kept, "Before the rebind", &[], "owner")),
+    ] {
+        assert!(why.contains("bound to no recovery generation"), "{why}");
+    }
+
+    // Rebound, it holds a generation of its own: the snapshot's token, which names the same task
+    // at the same version here, and the tokens made after it are all refused.
+    let rebound = again.rebind().unwrap();
+    assert_ne!(rebound, kept.generation);
+    assert_eq!(authority.bound(), Ok(Some(rebound.clone())));
+    let replacement = again.create(&new("probe/replacement")).unwrap();
+    assert_eq!(
+        replacement.id, lost.id,
+        "the number given after the snapshot, given again"
+    );
+    let now = again.bound("probe/original").unwrap().bound;
+    assert_eq!((now.id, now.version), (kept.id, kept.version));
+    for (slug, at) in [
+        ("probe/original", &kept),
+        ("probe/original", &later),
+        ("probe/replacement", &lost_at),
+    ] {
+        let why = refused(again.amend_bound(slug, at, "From the source", &[], "owner"));
+        assert!(
+            why.contains("copied or restored since this was read"),
+            "{slug}: {why}"
+        );
+    }
+    assert_eq!(again.get("probe/original").unwrap().title, "Original");
+    again
+        .amend_bound(
+            "probe/original",
+            &now,
+            "On the restored board",
+            &[],
+            "owner",
+        )
+        .unwrap();
+    // The source goes on as it was, its own tokens its own.
+    store
+        .amend_bound("probe/original", &later, "Still the source", &[], "owner")
+        .unwrap();
 }

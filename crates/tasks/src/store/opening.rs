@@ -475,6 +475,7 @@ impl Store {
             inbox_pool: Mutex::new(None),
             limits: crate::limits::Held::default(),
             named_server: false,
+            authority: None,
         }
     }
 

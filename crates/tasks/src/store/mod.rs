@@ -45,6 +45,7 @@ mod pull_account;
 mod queued_lines;
 mod raw;
 mod reading;
+pub mod recovery;
 mod report_lines;
 mod resume;
 pub(crate) mod search;
@@ -246,6 +247,9 @@ pub struct Store {
     /// Whether `TASKS_SERVER` named the board's server, so the command that reaches the board again
     /// names it too ([`Store::board_command`]).
     named_server: bool,
+    /// The recovery authority it was handed ([`Store::recovering`]): none refuses every write
+    /// bound to a recovery generation ([`recovery`]).
+    authority: Option<std::sync::Arc<dyn recovery::Authority>>,
 }
 
 /// The command that reaches the board on `database` again: `just tasks`, naming the database when

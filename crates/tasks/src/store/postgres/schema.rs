@@ -122,7 +122,11 @@ use Kind::{Array, Bool, Float, Int, Object, Text};
 
 /// The board's tables, including `words` (the full-text indexes, [`WORDS`]) and `copied_fields`
 /// (the imported fields' numeric spellings, [`super::copy`]).
-pub(in crate::store) const TABLES: [Table; 24] = [
+pub(in crate::store) const TABLES: [Table; 25] = [
+    Table {
+        name: "recovery",
+        columns: &[req("generation", Text)],
+    },
     Table {
         name: "artifact_ledger",
         columns: &[req("revision", Int), req("body", Object)],
@@ -772,6 +776,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS task_slug ON task (slug);
 CREATE UNIQUE INDEX IF NOT EXISTS ask_sid ON ask (sid);
 ";
 
+/// The board's recovery generation, made once: a copy and a rebind replace it
+/// ([`super::recovery`]).
+const RECOVERY: &str = "
+INSERT INTO recovery (id, generation) VALUES ('\"board\"', gen_random_uuid()::text)
+    ON CONFLICT (id) DO NOTHING;
+";
+
 /// This build's steps on PostgreSQL: every table, index, function and trigger, each made if it is
 /// not there or replaced, so the steps run again on a board that has them change nothing.
 pub(in crate::store) fn define() -> String {
@@ -803,6 +814,7 @@ fn defined(analyzed: &str) -> String {
         sql.push_str(&create(table));
     }
     sql.push_str(UNIQUES);
+    sql.push_str(RECOVERY);
     sql.push_str(INDEXES);
     sql.push_str(FUNCTIONS);
     sql.push_str(analyzed);
@@ -899,7 +911,7 @@ mod tests {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 24);
+        assert_eq!(names.len(), 25);
         let defined = define();
         for name in names {
             assert!(

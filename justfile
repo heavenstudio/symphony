@@ -19,7 +19,11 @@ fmt:
 
 # Its last Rust step reads the branch against the default branch: red when it changes what a
 # consumer must do (the board schema, a consumer-API guard's call, a settings key) and no commit of
-# it says so in a `Consumer-Note` trailer (docs/RELEASES.md, "Its notes").
+# it says so in a `Consumer-Note` trailer (docs/RELEASES.md, "Its notes"). The step after it reads
+# the branch the same way for the published packages it changes, and runs the crates check on
+# those alone: red when one's sources moved while crates.io holds its version (docs/RELEASES.md,
+# "Packages on crates.io"). A branch that changes none reads nothing, and a crates.io that gives no
+# answer is said, the packages named as not checked, and no red.
 lint-rs:
     @{{record}} --pipeline lint --step lint build "just lint-rs" just --justfile {{quote(justfile())}} _lint-rs
 
@@ -30,6 +34,7 @@ _lint-rs:
     @tools/cargo.sh clippy -p symphony-api --features typescript --all-targets --locked -- -D warnings
     @tools/cargo.sh clippy -p symphony-board --features hosted-postgresql --all-targets --locked -- -D warnings
     @tools/rs-bin.sh symphony-build consumer-notes --check
+    @tools/rs-bin.sh symphony-build crates-check --branch .
     @just --justfile {{quote(justfile())}} client-lint
 
 # The web client's checks (apps/symphony-web/check.sh): its wire types against crates/symphony-api's

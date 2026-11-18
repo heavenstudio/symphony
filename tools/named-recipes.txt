@@ -24,6 +24,7 @@ prose published pushed ran so started successful the this to when written
 # which the release run cuts and no project runs, with the test targets a candidate red's task
 # reruns alone, and the client a release candidate's fix commits.
 own apps/symphony-server/src/api/client.rs symphony-ui-dist
+own crates/symphony-build/src/commands/crates_check.rs crates-check
 own crates/symphony-build/src/commands/size_budget.rs size-check
 own crates/symphony-build/src/release.rs release verify
 own crates/symphony-build/src/release/board.rs client-update release test-rs
@@ -37,7 +38,7 @@ own docs/CHECKS.md client-check client-lint client-update crates-check semver-ch
 own docs/POSTGRESQL.md hosted-check lint-rs
 own docs/PLUGIN_PROTOCOL.md test-rs
 own docs/PROJECT_FILE.md settings-check
-own docs/RELEASES.md client-update crates-check semver-check release test-rs verify
+own docs/RELEASES.md client-update crates-check semver-check lint-rs release test-rs verify
 own docs/TASKS.md client-update
 
 filed docs/CHECKS.md check-fast tools/check-fast

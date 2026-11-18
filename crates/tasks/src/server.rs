@@ -57,6 +57,8 @@ pub use left::{LEFT_STOPS, LeftReplay};
 pub mod postgres;
 pub use postgres::{Postgres, Serving};
 mod reclaim;
+mod recovery;
+pub use recovery::FileAuthority;
 mod scratch;
 pub mod snapshot;
 mod starters;

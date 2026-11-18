@@ -98,6 +98,8 @@ impl Postgres {
 
     /// Recover a snapshot into this new scratch board, without modifying or starting the source.
     /// Existing data is never replaced, and a failed or interrupted copy is retried from scratch.
+    /// The board is left bound to no recovery generation, revoked before its data is published:
+    /// a revoke that fails publishes nothing.
     pub fn restore(&self, snapshot: &Path) -> Result<(), ServerError> {
         self.scratch_only()?;
         let _locked = self.home.lock(Doing::Snapshotting)?;
@@ -131,6 +133,10 @@ impl Postgres {
             Err(why) if why.kind() == std::io::ErrorKind::NotFound => {}
             Err(why) => return Err(io("could not remove", &pid)(why)),
         }
+        // The copied cluster holds the recovery generation its source had. This home is bound to
+        // none before that data is in place, so nothing written here takes a token read on the
+        // source until a rebind replaces the generation (`crate::store::recovery`).
+        self.home.revoke_recoveries()?;
         fs::rename(&taking, &data).map_err(io("could not publish", &data))
     }
 

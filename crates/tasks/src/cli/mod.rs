@@ -17,6 +17,7 @@ mod migrate;
 pub mod probes;
 pub mod pull;
 pub(crate) mod recorder;
+pub mod recovery;
 mod schema;
 mod search;
 mod shape;
@@ -209,12 +210,20 @@ fn run(
     if args.first().is_some_and(|arg| arg == database::COMMAND) {
         return database::run(&args[1..], env, out, err);
     }
+    // Before the board's argument table too: its revoke opens no board, as it comes before
+    // restored data is served.
+    if args.first().is_some_and(|arg| arg == recovery::COMMAND) {
+        return recovery::run(&args[1..], env, out, err);
+    }
     let board = || connect(env).map(|store| detaching(store, env, program));
+    // The api's store answers to the board home's recovery authority, so its bound calls are
+    // taken; every other command makes none.
+    let bound = || board().map(|store| recovery::recovering(store, env));
     if args.len() == 1 && args[0] == "api" {
-        return api::run_in(input, out, board, Some(env));
+        return api::run_in(input, out, bound, Some(env));
     }
     if args.len() == 2 && args[0] == "api" && args[1] == "--lines" {
-        return api::serve_in(&mut std::io::BufReader::new(input), out, board, Some(env));
+        return api::serve_in(&mut std::io::BufReader::new(input), out, bound, Some(env));
     }
     // Every line the parse suggests begins with the command that reaches this board, however its
     // server and database were chosen, so typed again in any shell it reaches the same board.

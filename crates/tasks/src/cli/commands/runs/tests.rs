@@ -234,3 +234,78 @@ fn a_tip_named_with_tip_says_so() {
     });
     assert_eq!(shown[0], format!("TIP {TIP} (--tip)"));
 }
+
+/// A command its runner refused at the tip is named apart with the refusal's line, is no row of
+/// its command, and leaves the `tests` stamp and the check as the runs that ran left them.
+#[test]
+fn a_command_its_runner_refused_is_named_apart_with_its_line() {
+    let refusal = |mut run: Record, line: &str| {
+        let said = serde_json::json!({"pipeline": "test", "trigger": "owner", "refused": line});
+        run.run = Some(serde_json::from_value(said).unwrap());
+        run
+    };
+    let typed = "just test-rs --test hooks own_names owner_words";
+    let usage = "error: unexpected argument 'owner_words' found";
+    let runs = [
+        green(1, "just lint-rs", TIP),
+        green(2, "just test-rs --test hooks", TIP),
+        refusal(red(3, typed, TIP, 1), usage),
+        green(4, CHECK, TIP),
+        refusal(
+            run(5, "tools/x/work", CHECK, TIP, Step::Finished, 2),
+            "error: justfile does not contain recipe `symphony-cl`",
+        ),
+    ];
+    assert_eq!(
+        printed(&runs, Ok(CHECK))[1..],
+        [
+            "RUNS at 4be91c2, each command's newest run there:".to_string(),
+            format!(
+                "  green  build  just lint-rs                          {}  60 s  agent-1",
+                at(1060.0)
+            ),
+            format!(
+                "  green  test   just test-rs --test hooks             {}  60 s  agent-2",
+                at(2060.0)
+            ),
+            format!(
+                "  green  build  just symphony-cli docs-audit --check  {}  60 s  agent-4",
+                at(4060.0)
+            ),
+            "REFUSED at 4be91c2, each by its runner before it built or ran anything: no red and \
+             no green there"
+                .into(),
+            format!(
+                "  refused  test   {typed}  {}  agent-3  {usage}",
+                at(3060.0)
+            ),
+            format!(
+                "  refused  build  just symphony-cli docs-audit --check             {}  agent-5  \
+                 error: justfile does not contain recipe `symphony-cl`; for tools/x/work",
+                at(5060.0)
+            ),
+            "TESTS met: Green at 4be91c2: `just lint-rs`, `just test-rs --test hooks`, `just \
+             symphony-cli docs-audit --check`"
+                .into(),
+            format!(
+                "CHECK `{CHECK}`, the project's [verdicts] check: green at 4be91c2, {}, by agent-4",
+                at(4060.0)
+            ),
+        ]
+    );
+    // Alone at the tip it is no run there, and the stamp says what was typed.
+    assert_eq!(
+        printed(&[refusal(red(3, typed, TIP, 1), usage)], Ok(""))[1..],
+        [
+            "RUNS none at 4be91c2: no build or test of the task is recorded there".to_string(),
+            "REFUSED at 4be91c2, each by its runner before it built or ran anything: no red and \
+             no green there"
+                .into(),
+            format!("  refused  test  {typed}  {}  agent-3  {usage}", at(3060.0)),
+            format!(
+                "TESTS not met: No build or test ran at 4be91c2: `{typed}` was refused by its \
+                 runner and never ran ({usage})"
+            ),
+        ]
+    );
+}

@@ -4318,7 +4318,7 @@ version = "1.0.0"
 
 [[package]]
 name = "symphony-blocks"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4399,7 +4399,7 @@ dependencies = [
 
 [[package]]
 name = "symphony-docs"
-version = "1.0.0"
+version = "1.0.1"
 
 [[package]]
 name = "symphony-env"
@@ -4407,7 +4407,7 @@ version = "1.0.0"
 
 [[package]]
 name = "symphony-plugin"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",

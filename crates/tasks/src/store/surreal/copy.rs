@@ -61,8 +61,11 @@ pub(in crate::store) fn remove_staged(staging: &str, tables: &[&str]) -> String 
 }
 
 /// The copy's one transaction: each of `tables` emptied and filled from its staging table, which
-/// is removed, the caches of the board it replaces dropped, and the counters set to `$last` and
-/// `$last_ts` (messages), `$last_task` and `$last_ask`.
+/// is removed, the caches of the board it replaces dropped, the counters set to `$last` and
+/// `$last_ts` (messages), `$last_task` and `$last_ask`, and the board's recovery generation
+/// replaced ([`super::recovery::REBIND`]), which is its answer: the numbers and versions the copy
+/// gives name other tasks than the ones a token was read on, in the same transaction or not at
+/// all.
 pub(in crate::store) fn swap(staging: &str, tables: &[&str]) -> String {
     let mut swap = String::new();
     // Each sender's last word goes with the messages, before them, so their deletion
@@ -78,6 +81,6 @@ pub(in crate::store) fn swap(staging: &str, tables: &[&str]) -> String {
     // swap transaction, so a refused copy leaves those rows as they were.
     swap.push_str("DELETE task_chunk RETURN NONE; DELETE task_embedding_source RETURN NONE; DELETE task_embedding_checkpoint RETURN NONE;\n");
     swap.push_str("UPSERT counter:message SET last = $last, ts = $last_ts RETURN NONE;\nUPSERT counter:task SET last = $last_task RETURN NONE;\nUPSERT counter:ask SET last = $last_ask RETURN NONE;\n");
-    swap.push_str("RETURN NONE;");
+    swap.push_str(super::recovery::REBIND);
     swap
 }
