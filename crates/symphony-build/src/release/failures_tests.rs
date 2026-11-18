@@ -1043,3 +1043,27 @@ fn a_native_failure_printing_nextest_fixture_events_reruns_only_its_own_case() {
         ["-p p --test native -- native_case --exact"]
     );
 }
+
+#[test]
+fn nextest_after_a_native_binary_died_mid_block_is_recovered_at_the_logs_end() {
+    let fixture = include_str!("fixtures/tests-nextest-red.log");
+    let text = format!(
+        "     Running tests/native.rs (.target/debug/deps/native-1)\ntest native_case ... FAILED\n---- native_case stdout ----\nthread 'native_case' panicked at native.rs:1:2:\nouter failure\nerror: test failed, to rerun pass `-p p --test native`\n{fixture}"
+    );
+    let tree = Tree::new();
+    let log = rerun::read(&tree.write("cut-block.log", &text));
+    assert_eq!(
+        rerun::arguments(&log.targets),
+        [
+            "-p p --test native -- native_case --exact",
+            "-p runner-fixture --lib -- fails --exact",
+            "-p runner-fixture --lib -- timeout --exact",
+        ]
+    );
+    let quote = read_in(&text).quoted().unwrap();
+    assert!(quote.contains("test native_case ... FAILED"), "{quote}");
+    assert!(
+        quote.contains("test runner-fixture::runner_fixture timeout ... TIMED OUT"),
+        "{quote}"
+    );
+}

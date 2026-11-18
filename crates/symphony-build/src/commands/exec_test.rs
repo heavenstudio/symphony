@@ -80,6 +80,19 @@ mod tests {
     }
 
     #[test]
+    fn help_needs_no_selection_file_and_writes_only_stdout() {
+        for flag in ["-h", "--help"] {
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            assert_eq!(main(&[flag.into()], &mut out, &mut err), 0);
+            assert_eq!(
+                out,
+                b"usage: symphony-build exec-test-binary MAP BINARY [ARGS]...\n"
+            );
+            assert!(err.is_empty());
+        }
+    }
+
+    #[test]
     fn only_an_explicit_known_stateless_library_is_left_to_nextest() {
         let tree = Tree::new();
         let map = tree.write("map.json", r#"[{"binary":"/known stateless","shared":false},{"binary":"/shared missing","shared":true}]"#);

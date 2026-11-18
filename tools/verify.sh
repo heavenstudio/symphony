@@ -26,7 +26,7 @@
 # The tests serve the client the client check built in this same verify (SYMPHONY_UI_DIST). The
 # check's folder is cleared before it runs, so a client an earlier check left there is never served.
 # With none (the client check built nothing, or did not run), SYMPHONY_UI_DIST is unset and the
-# browser tests build the client themselves, red if that build fails; the tests' log and the
+# tests runner publishes one client before scheduling, red if that build fails; its log and the
 # summary say what the tests ran against.
 #
 # Bash 3.2 (macOS's /bin/bash) runs it.

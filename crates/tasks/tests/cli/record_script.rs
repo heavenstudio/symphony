@@ -694,8 +694,7 @@ const CLIENT_LINT: &str = "#!/bin/sh\nexit 0\n";
 
 /// The client's build's stand-in (`apps/symphony-web/build.sh`, which the `symphony-ui-dist`
 /// recipe runs): green, building nothing, as the client check's stand-in writes the client.
-const CLIENT_BUILD: &str =
-    "#!/bin/sh\nmkdir -p \"$1/public\"\nprintf client > \"$1/public/index.html\"\n";
+const CLIENT_BUILD: &str = "#!/bin/sh\nif [ \"$1\" = build/verified-client ] && [ -n \"${NO_CLIENT:-}\" ]; then exit 0; fi\nmkdir -p \"$1/public\"\nprintf client > \"$1/public/index.html\"\n";
 
 /// Cargo's stand-in: `fmt` red under `FAIL_LINT`, and held a minute under `HOLD_LINT`, once it has
 /// made the file that names; `metadata` saying no target, so the tests' lanes are the libraries'

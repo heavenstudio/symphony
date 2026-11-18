@@ -40,7 +40,7 @@ const COMMANDS: [(&str, &str); 6] = [
     ),
     (
         "synced",
-        "time each page from its open to synced on a returning browser",
+        "time each page from open to synced on a returning browser",
     ),
     (
         "exec-test-binary",

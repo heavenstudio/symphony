@@ -350,7 +350,13 @@ fn nextest_test(name: &str, output: &str) -> Test {
 /// What the log at `log` says failed; nothing when it cannot be read or says nothing it knows.
 pub(crate) fn read(log: &Path) -> Failures {
     let mut reading = Reading::default();
-    if each_line(log, |line| reading.line(line)).is_none() {
+    if each_line(log, |line| {
+        reading.line(line);
+        // The quote keeps each description, not the full captured output relayed to rerun.
+        reading.nextest_failures.clear();
+    })
+    .is_none()
+    {
         return Failures::default();
     }
     reading.end();

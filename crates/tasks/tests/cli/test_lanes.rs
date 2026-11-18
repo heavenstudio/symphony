@@ -158,64 +158,13 @@ impl Lanes {
             .env_remove("FAIL")
             .env_remove("DIE")
             .env_remove("SAY")
-            .env_remove("UNSAID")
+            .env_remove("SAY_STATUS")
+            .env_remove("FAIL_BUILD")
             .env_remove("HOLD")
             .envs(vars.iter().copied())
             .stdin(Stdio::null());
         command
     }
-    fn run(&self, args: &[&str], vars: &[(&str, &str)]) -> Output {
-        output(&mut self.command(args, vars)).unwrap()
-    }
-    fn logs(&self) -> PathBuf {
-        self.root.join("build/test-lanes")
-    }
-    /// A run with `vars` in a process group of its own, `signal` sent to the whole group once every
-    /// lane has started and holds: what it did.
-    fn stopped(&self, signal: libc::c_int, vars: &[(&str, &str)]) -> Output {
-        let hold = self.stand.join("held");
-        assert!(
-            output(Command::of("mkfifo").arg(&hold))
-                .unwrap()
-                .status
-                .success()
-        );
-        let mut vars = vars.to_vec();
-        vars.push(("HOLD", hold.to_str().unwrap()));
-        let mut child = self
-            .command(&[], &vars)
-            .process_group(0)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let held = || {
-            (fs::read_dir(&self.stand).unwrap())
-                .filter(|entry| {
-                    (entry.as_ref().unwrap().file_name().to_string_lossy()).starts_with("held.")
-                })
-                .count()
-        };
-        test_time::until_true(
-            "every lane held",
-            test_time::backstop(Duration::from_secs(120)),
-            || held() == LANES,
-        )
-        .unwrap();
-        let group = i32::try_from(child.id()).unwrap();
-        // SAFETY: kill reads nothing of ours; a pid below 0 names the group the child leads.
-        assert_eq!(unsafe { libc::kill(-group, signal) }, 0);
-        // Reap the leader while waiting, so its zombie cannot keep the group alive. A leader's
-        // exit alone says nothing about its lanes: no member may still write a log we read next.
-        test_time::until_true(
-            format!("lane process group ended after signal {signal}"),
-            test_time::backstop(Duration::ZERO),
-            || child.try_wait().unwrap().is_some() && !group_alive(child.id()),
-        )
-        .unwrap();
-        wait_output(child).unwrap()
-    }
-
     fn run(&self, args: &[&str], vars: &[(&str, &str)]) -> Output {
         output(&mut self.command(args, vars)).unwrap()
     }

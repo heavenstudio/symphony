@@ -19,13 +19,21 @@ const MODE: &str = "SYMPHONY_EXEC_TEST_MODE";
 #[ignore = "private subprocess used to observe the adapter's exec boundary"]
 fn execution_probe() {
     let destination = std::env::var(PROBE).expect("the parent named its observation file");
+    let environment = [
+        "HC_BIN",
+        "CARGO_MANIFEST_DIR",
+        "RUST_TEST_THREADS",
+        "DYLD_FALLBACK_LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+    ]
+    .into_iter()
+    .map(|name| (name, std::env::var(name).unwrap()))
+    .collect::<std::collections::BTreeMap<_, _>>();
     let observation = serde_json::json!({
         "pid": std::process::id(),
         "cwd": std::env::current_dir().unwrap(),
         "args": std::env::args().skip(1).collect::<Vec<_>>(),
-        "env": ["HC_BIN", "CARGO_MANIFEST_DIR", "RUST_TEST_THREADS",
-            "DYLD_FALLBACK_LIBRARY_PATH", "LD_LIBRARY_PATH"].into_iter()
-            .map(|name| (name, std::env::var(name).unwrap())).collect::<std::collections::BTreeMap<_, _>>(),
+        "env": environment,
     });
     let destination = PathBuf::from(destination);
     let pending = destination.with_extension("pending");
