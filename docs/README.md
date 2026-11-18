@@ -66,6 +66,9 @@ still await implementation; its approval alone does not make it current app beha
   Mac app.
 - [The slow tests, reviewed](analysis/slow-tests.md) — a time per test for the release run's six
   slowest binaries, what each slow test proves, and what is kept, made faster, merged or removed.
+- [The release pipeline, redesigned](analysis/release-pipeline.md) — a night of red release runs
+  read by run, a pre-certified CI proposal checked against the stamps, and the options, a hosted
+  run on GitHub among them.
 - [Naming inventory and superseded plan](analysis/own-names.md) — historical naming evidence,
   with pointers to the current naming rules and state paths.
 - [History](history/README.md) — retained records and superseded measurements.
