@@ -266,7 +266,7 @@ impl Place<'_> {
                 subs.push(name.to_string());
             });
         subs.retain(|name| !self.sub(name).shown().is_empty());
-        subs.sort_by_key(|name| name.to_lowercase());
+        symphony_board::order::sort_by_key(&mut subs, &|name| name.to_lowercase());
         subs
     }
 
@@ -322,7 +322,7 @@ impl Place<'_> {
     /// renderer draws), by lowercase name.
     pub(crate) fn media(&self) -> Vec<String> {
         let mut media = self.files(|renderer| renderer != MARKDOWN && renderer != HTML);
-        media.sort_by_key(|name| name.to_lowercase());
+        symphony_board::order::sort_by_key(&mut media, &|name| name.to_lowercase());
         media
     }
 }
@@ -474,4 +474,42 @@ pub fn headings(text: &str) -> Vec<Heading> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    use super::*;
+    use crate::test_tree::Tree;
+
+    #[test]
+    fn folder_and_media_outputs_match_the_previous_walk_and_stable_order() {
+        let tree = Tree::new();
+        tree.write(
+            "symphony.toml",
+            "[[entrypoints]]\nurl=\"/docs/\"\nfolder=\"docs\"\ntypes=[\"markdown\",\"media\"]\n",
+        );
+        for name in ["beta", "Alpha", "Éclair", "東京"] {
+            tree.write(&format!("docs/{name}/A.md"), "# A\n");
+            tree.write(&format!("docs/{name}.png"), "fixture");
+        }
+        tree.write("docs/empty/.keep", "");
+        let project = Project::of(&tree.root);
+        let place = Place::of(&tree.root, &project, "docs").unwrap();
+        let mut folders = Vec::new();
+        project.walk_folders(&tree.root, place.entry, &place.inside, &mut |name| {
+            folders.push(name.to_string())
+        });
+        folders.retain(|name| !place.sub(name).shown().is_empty());
+        folders.sort_by_key(|name| name.to_lowercase());
+        assert_eq!(place.subfolders(), folders);
+        let mut media = place.files(|renderer| {
+            renderer != crate::entrypoint::MARKDOWN && renderer != crate::entrypoint::HTML
+        });
+        media.sort_by_key(|name| name.to_lowercase());
+        assert_eq!(place.media(), media);
+        assert_eq!(media.len(), 4);
+        let empty = place.sub("empty");
+        assert!(empty.subfolders().is_empty());
+        assert!(empty.media().is_empty());
+    }
 }

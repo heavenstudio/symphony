@@ -159,6 +159,36 @@ impl Fixture {
         }
         Feed::Events(reader).subscribed()
     }
+    /// The initial server notice from the real non-test library's private HTTP server.
+    pub(super) fn server_notice(&self, scope: &str) -> String {
+        let path = self.feed_path(scope);
+        let mut stream = self.connect();
+        write!(
+            stream,
+            "GET {path} HTTP/1.0\r\nHost: {}\r\n\r\n",
+            self.address
+        )
+        .unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        assert!(line.starts_with("HTTP/1.0 200 "), "{line}");
+        let mut server = false;
+        loop {
+            line.clear();
+            assert!(
+                reader.read_line(&mut line).unwrap() > 0,
+                "feed closed before server notice"
+            );
+            if line.trim_end() == "event: server" {
+                server = true;
+            }
+            if server && let Some(data) = line.strip_prefix("data: ") {
+                return serde_json::from_str(data.trim_end()).unwrap();
+            }
+        }
+    }
+
     /// The feed in `scope` on a WebSocket, as the server's own page opens it: its Origin the
     /// server's.
     pub(super) fn socket(&self, scope: &str) -> Feed {

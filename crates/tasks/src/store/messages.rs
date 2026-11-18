@@ -10,6 +10,7 @@ use super::{
     repr,
 };
 use crate::health::{self, Health};
+use crate::maps::Collect as _;
 use crate::rows::{MessageRow, SessionRow};
 use crate::stages::ARROW;
 use serde::Deserialize;
@@ -506,7 +507,7 @@ impl Store {
         Ok(rows
             .into_iter()
             .map(|row| (row.sender.clone(), message(row)))
-            .collect())
+            .collect_map())
     }
 
     /// The slugs whose own thread carries a `landed <slug> on main` line (what `just land` says when

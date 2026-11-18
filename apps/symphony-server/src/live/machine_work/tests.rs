@@ -652,3 +652,112 @@ fn an_explicit_role_covers_native_package_cwds_but_never_siblings_or_traversal()
         );
     }
 }
+
+#[test]
+fn native_guidance_map_keeps_optional_zero_and_maximum_values_and_lexical_keys() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    std::fs::write(
+        root.join("symphony.toml"),
+        "[board.machine_wip.z]\nbuild=0\n[board.machine_wip.a]\ntest=4294967295\n",
+    )
+    .unwrap();
+    let f = Fixture::new(Seed::default());
+    let mut hub = Hub::new(&root, &root.join("build/client"));
+    let board = f.other_client();
+    hub.connect_reader = Box::new(move |_| Ok(crate::live::read_paths_tests::store_on(&board)));
+    hub.refresh_page("", &root).unwrap();
+    hub.board_read(&f.store).unwrap();
+    let expected = std::collections::BTreeMap::from([
+        (
+            "a".into(),
+            symphony_api::WorkGuidance {
+                build: None,
+                test: Some(u32::MAX),
+            },
+        ),
+        (
+            "z".into(),
+            symphony_api::WorkGuidance {
+                build: Some(0),
+                test: None,
+            },
+        ),
+    ]);
+    assert_eq!(
+        hub.agent_snapshot().unwrap().machine_work.guidance,
+        expected
+    );
+    let (shared, ask) = crate::live::read_paths_tests::served(&root, hub);
+    let (status, value) = ask("/api/agents");
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(
+        value["machine_work"]["guidance"],
+        serde_json::to_value(&expected).unwrap()
+    );
+    std::fs::write(root.join("symphony.toml"), "").unwrap();
+    let hub = shared.api.get().unwrap();
+    hub.board_read(&f.store).unwrap();
+    assert!(
+        hub.agent_snapshot()
+            .unwrap()
+            .machine_work
+            .guidance
+            .is_empty()
+    );
+    shared.stop();
+}
+
+#[test]
+fn guidance_and_signoff_map_payloads_keep_last_values_and_report_cost() {
+    fn compare<V: Clone + PartialEq + std::fmt::Debug>(name: &str, pairs: Vec<(String, V)>) {
+        for count in [0, 1, 32, 512] {
+            for reversed in [false, true] {
+                let mut input = pairs[..count].to_vec();
+                input.sort_by(|a, b| a.0.cmp(&b.0));
+                if reversed {
+                    input.reverse();
+                }
+                let old_input = input.clone();
+                let (old, old_cpu) =
+                    test_time::cpu::spent(|| old_input.into_iter().collect::<BTreeMap<_, _>>());
+                let (new, new_cpu) = test_time::cpu::spent(|| {
+                    let mut map = BTreeMap::new();
+                    for (k, v) in input {
+                        map.insert(k, v);
+                    }
+                    map
+                });
+                assert_eq!(new, old);
+                eprintln!(
+                    "{name} n={count},reversed={reversed}: standard_cpu={old_cpu:?},insert_cpu={new_cpu:?};no collection pair Vec/stable scratch in production insertion"
+                );
+            }
+        }
+    }
+    compare(
+        "guidance",
+        (0..512)
+            .map(|i| {
+                (
+                    format!("machine-{}", i % 37),
+                    symphony_api::WorkGuidance {
+                        build: (i % 3 != 0).then_some(i),
+                        test: (i % 2 == 0).then_some(u32::MAX - i),
+                    },
+                )
+            })
+            .collect(),
+    );
+    compare(
+        "signoff lane",
+        (0..512)
+            .map(|i| {
+                (
+                    format!("task-{}", i % 37),
+                    vec![format!("card-{i}"), "exact second card".into()],
+                )
+            })
+            .collect(),
+    );
+}

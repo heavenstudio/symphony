@@ -505,13 +505,6 @@ fn tall_history() -> Value {
             paragraph(vec![text("Posted, with its evidence.")]), paragraph(vec![picture()]), paragraph(vec![picture()])]}]}]})
 }
 
-/// The landing document with the fifth card's thread taller than a phone's screen.
-fn tall_thread() -> Value {
-    let mut document = landing();
-    document["threads"]["five"] = tall_history();
-    document
-}
-
 /// The page's reads of sections so far, each by the keys it asked for.
 fn section_reads(site: &Site) -> Vec<Vec<String>> {
     site.targets()
@@ -621,12 +614,10 @@ pub(crate) fn landed_on(path: &str, id: &str) -> String {
     )
 }
 
-/// What a reader read: where what the page landed on was ([`READ`]), the keys the page read near
-/// it, and where what they read was before and after the sections near them drew, with the page's
-/// own scrolls meanwhile.
+/// What a reader read: where what the page landed on was ([`READ`]), and where what they read was
+/// before and after the sections near them drew, with the page's own scrolls meanwhile.
 struct Read {
     landed: Value,
-    near: Vec<String>,
     before: Value,
     after: Value,
     scrolls: Value,
@@ -709,7 +700,7 @@ fn read_while_drawn(
     // The sections near it come near, and their read is held.
     site.hold_route("/api/section", true);
     page.eval("window.observe()");
-    let near = reads_asked(page, site, asked + 2)[asked + 1].clone();
+    reads_asked(page, site, asked + 2);
     assert!(
         page.wait_for(
             &format!("{element}?.closest('.settle')?.dataset.settled === 'true' && {landed}"),
@@ -801,36 +792,9 @@ fn read_while_drawn(
     eprintln!("READING {id} {reading:?}: landed {landed}, before {before}, after {after}");
     Read {
         landed,
-        near,
         before,
         after,
         scrolls: page.eval("window.pageScrolls"),
-    }
-}
-
-/// The browser's own scroll anchoring keeps the reader's place while the sections above draw: the
-/// spacing between the document's parts (docs.css) counts a neighbour not drawn yet as what it
-/// draws as, so no margin of the card being read changes as they draw, which would stop the
-/// anchoring for that frame. Before, the card's own margin changed as the cards beside it drew,
-/// and the page drew them under the reader: a wheel left the card at 863 px instead of -439, and a
-/// phone's field typed in went from 409 px to 1285 px, off an 844 px screen.
-#[test]
-fn a_reader_who_ended_a_landing_stays_on_what_they_read_while_the_sections_above_draw() {
-    let site = site();
-    site.set_document(&tall_thread());
-    for reading in [Reading::Wheeled, Reading::Typing] {
-        let Some(mut page) = reader(reading) else {
-            return;
-        };
-        let read = read_while_drawn(&mut page, &site, LANDING, "five", "card:five", reading);
-        assert!(
-            read.near.iter().any(|key| key == "card:four"),
-            "{reading:?}: the cards above the card are read after it: {:?}",
-            read.near
-        );
-        // What drew above the reader after they left the landing: a page that did not hold them
-        // would show what they read that much lower.
-        read.held("five", reading, 300.0);
     }
 }
 

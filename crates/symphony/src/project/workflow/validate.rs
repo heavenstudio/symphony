@@ -134,7 +134,11 @@ pub(super) fn validate(d: &Definition) -> Result {
         if e.label.trim().is_empty() || e.authority.is_empty() {
             return Err(format!("edge {} requires a label and authority", e.id));
         }
-        if e.authority.iter().collect::<BTreeSet<_>>().len() != e.authority.len() {
+        let mut authorities = BTreeSet::new();
+        for authority in &e.authority {
+            authorities.insert(authority);
+        }
+        if authorities.len() != e.authority.len() {
             return Err(format!("duplicate authority: {}", e.id));
         }
         if let Some(alias) = &e.alias {

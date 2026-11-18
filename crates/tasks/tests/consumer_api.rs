@@ -361,3 +361,12 @@ fn the_names_consumers_call_keep_their_shapes() {
 
 /// A type a consumer compares in `assert_eq!`, which prints both sides when they differ.
 fn asserted<T: PartialEq + std::fmt::Debug>() {}
+
+#[test]
+fn the_shared_ordering_helpers_keep_stable_ties_for_consuming_readers() {
+    let mut rows = [(2, "first"), (1, "middle"), (2, "last")];
+    symphony_board::order::sort_by_key(&mut rows, &|row| row.0);
+    assert_eq!(rows, [(1, "middle"), (2, "first"), (2, "last")]);
+    symphony_board::order::sort_by(&mut rows, &|a, b| b.0.cmp(&a.0));
+    assert_eq!(rows, [(2, "first"), (2, "last"), (1, "middle")]);
+}

@@ -1071,3 +1071,126 @@ fn hung_ways_in_answer_within_the_deadline() {
         .unwrap();
     }
 }
+
+#[test]
+fn session_map_keeps_first_agent_lookup_duplicate_handles_and_complete_destinations() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let hub = Hub::new(&root, &root.join("build/client"));
+    assert!(hub.sessions_of(["amber"]).is_empty());
+    let mut observed = agents();
+    let mut duplicate = observed[0].clone();
+    duplicate.go = observed
+        .iter()
+        .find(|a| a.handle == "web")
+        .unwrap()
+        .go
+        .clone();
+    observed.push(duplicate);
+    let mut later_bare = observed
+        .iter()
+        .find(|agent| agent.handle == "bare")
+        .unwrap()
+        .clone();
+    later_bare.go = observed
+        .iter()
+        .find(|agent| agent.handle == "web")
+        .unwrap()
+        .go
+        .clone();
+    observed.push(later_bare);
+    let handles = ["web", "missing", "bare", "amber", "sub", "web", "amber"];
+    let expected: std::collections::BTreeMap<_, _> = handles
+        .iter()
+        .filter_map(|handle| {
+            let agent = observed.iter().find(|agent| agent.handle == *handle)?;
+            Some((handle.to_string(), agent.go.clone()?))
+        })
+        .collect();
+    *hub.agents.lock().unwrap() = Some(symphony_api::Agents {
+        machine_work: symphony_api::MachineWork::default(),
+        generated: NOW,
+        probes: symphony_api::AgentProbes {
+            panes: "ok".into(),
+            slots: "ok".into(),
+        },
+        agents: observed,
+    });
+    assert_eq!(
+        serde_json::to_value(hub.sessions_of(handles)).unwrap(),
+        serde_json::to_value(&expected).unwrap()
+    );
+    assert_eq!(
+        hub.sessions_of(handles)
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["amber", "sub", "web"]
+    );
+    assert!(hub.sessions_of([]).is_empty());
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = hub.agents.lock().unwrap();
+        panic!("fixture poison");
+    }));
+    assert_eq!(
+        serde_json::to_value(hub.sessions_of(handles)).unwrap(),
+        serde_json::to_value(&expected).unwrap()
+    );
+}
+
+#[test]
+fn native_map_insertions_keep_last_duplicate_payload_and_report_cost() {
+    fn compare<V: Clone + std::fmt::Debug + serde::Serialize>(label: &str, rows: Vec<(String, V)>) {
+        for count in [0, 1, 32, 512] {
+            let pairs = rows[..count].to_vec();
+            let old_input = pairs.clone();
+            let new_input = pairs;
+            let (old, old_cpu) = test_time::cpu::spent(|| {
+                old_input
+                    .into_iter()
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            });
+            let (new, new_cpu) = test_time::cpu::spent(|| {
+                let mut map = std::collections::BTreeMap::new();
+                for (key, value) in new_input {
+                    map.insert(key, value);
+                }
+                map
+            });
+            assert_eq!(
+                serde_json::to_value(&new).unwrap(),
+                serde_json::to_value(&old).unwrap()
+            );
+            assert_eq!(
+                new.keys().collect::<Vec<_>>(),
+                old.keys().collect::<Vec<_>>()
+            );
+            eprintln!(
+                "{label} n={count}: standard_cpu={old_cpu:?}, insert_cpu={new_cpu:?}; no pair collection Vec/stable scratch; tree nodes only"
+            );
+        }
+    }
+    let destinations: Vec<_> = agents().into_iter().filter_map(|a| a.go).collect();
+    compare(
+        "SessionGo",
+        (0..512)
+            .map(|i| {
+                (
+                    format!("agent-{}", i % 37),
+                    destinations[i % destinations.len()].clone(),
+                )
+            })
+            .collect(),
+    );
+    compare(
+        "tree paths",
+        (0..512)
+            .map(|i| {
+                (
+                    format!("branch-{}", i % 37),
+                    std::path::PathBuf::from(format!("/tree/{i}")),
+                )
+            })
+            .collect(),
+    );
+}

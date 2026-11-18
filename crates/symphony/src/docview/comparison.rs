@@ -276,7 +276,7 @@ pub(super) fn apply(render: &Render, rel: &str, scope: &str, text: &str, doc: &m
         }
     }
     // Reverse insertion preserves both the branch's order and adjacent removed sections' order.
-    removed.sort_by_key(|(index, _)| *index);
+    symphony_board::order::sort_by_key(&mut removed, &|(index, _)| *index);
     for (index, section) in removed.into_iter().rev() {
         doc.sections.insert(index, section);
     }

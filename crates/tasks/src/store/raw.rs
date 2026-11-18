@@ -204,7 +204,7 @@ impl Rows<'_> {
         };
         vars.extend(more);
         let vars = Value::Object(vars);
-        retried(PATIENCE, || match self.client {
+        retried(PATIENCE, &mut || match self.client {
             On::SurrealDb(client) => {
                 let mut answers = client.query(surreal, vars.clone()).map_err(Failure::from)?;
                 Ok(answers.pop().unwrap_or(Value::Null))

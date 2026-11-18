@@ -941,3 +941,189 @@ fn a_task_board_search_reads_on_the_store_the_task_pages_share_and_drops_it_only
     );
     shared.stop();
 }
+
+#[test]
+fn agent_page_order_study_preserves_full_payload_filters_and_pagination() {
+    for count in [0, 1, 32, 512] {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let f = Fixture::new(Seed::default());
+        let mut hub = Hub::new(&root, &root.join("build/client"));
+        let board = f.other_client();
+        hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
+        hub.refresh_page("", &root).unwrap();
+        let mut rows: Vec<_> = (0..count)
+            .map(|i| {
+                let mut row = agent(&format!("agent-{i}"));
+                row.model = format!("model-{i}");
+                row.health = ["live", "lost", "left", "live", "stale"][i % 5].into();
+                row.worktree = format!("/private/fixture/{i}");
+                row.branch = format!("branch-{i}");
+                row.pane = Some(format!("pane-{i}"));
+                row.last_tool_call = Some(f64::from(u32::try_from(i).unwrap()));
+                row
+            })
+            .collect();
+        // The board supplies connected-time order rather than lexical handle order.
+        rows = (0..count).map(|i| rows[(i * 73) % count].clone()).collect();
+        let view = symphony_api::Agents {
+            machine_work: Default::default(),
+            generated: NOW,
+            probes: symphony_api::AgentProbes {
+                panes: "ok".into(),
+                slots: "ok".into(),
+            },
+            agents: rows,
+        };
+        hub.update_board(&f.store, f.store.board().unwrap(), view.clone())
+            .unwrap();
+        let (shared, ask) = served(&root, hub);
+        for (query, lost, after, offset) in [
+            ("", false, None, 0),
+            ("?offset=7", false, None, 7),
+            ("?cursor=agent-10", false, Some("agent-10"), 0),
+            ("?health=lost", true, None, 0),
+            (
+                "?health=lost&cursor=agent-10&offset=2",
+                true,
+                Some("agent-10"),
+                2,
+            ),
+        ] {
+            let mut expected = view.clone();
+            expected.agents.retain(|a| {
+                if lost {
+                    a.health == "lost"
+                } else {
+                    a.health != "lost" && a.health != "left"
+                }
+            });
+            let total = expected.agents.len();
+            let mut candidate = expected.agents.clone();
+            expected.agents.sort_by(|a, b| a.handle.cmp(&b.handle));
+            symphony_board::order::sort_by(
+                &mut candidate,
+                &|a: &symphony_api::Agent, b: &symphony_api::Agent| a.handle.cmp(&b.handle),
+            );
+            assert_eq!(
+                serde_json::to_value(&candidate).unwrap(),
+                serde_json::to_value(&expected.agents).unwrap()
+            );
+            if let Some(after) = after {
+                expected.agents.retain(|a| a.handle.as_str() > after);
+            }
+            expected.agents = expected.agents.into_iter().skip(offset).take(20).collect();
+            let next = expected
+                .agents
+                .last()
+                .filter(|_| expected.agents.len() == 20)
+                .map(|a| a.handle.clone());
+            let expected = symphony_api::AgentPage {
+                view: expected,
+                tasks: vec![],
+                total,
+                next,
+                local: true,
+            };
+            let (status, actual) = ask(&format!("/api/agent-page{query}"));
+            assert_eq!(status, StatusCode::OK, "{actual}");
+            assert_eq!(
+                actual,
+                serde_json::to_value(expected).unwrap(),
+                "count={count}, query={query}"
+            );
+        }
+        shared.stop();
+    }
+}
+
+#[test]
+fn activity_order_study_preserves_full_payload_stable_ties_and_truncate_boundary() {
+    for count in [0, 1, 32, 80, 512, 4096] {
+        let mut original: Vec<_> = (0..count)
+            .map(|i| symphony_api::ActivityItem {
+                id: format!("item-{}", i / 2),
+                kind: if i % 3 == 0 { "task message" } else { "reply" }.into(),
+                path: format!("docs/{i}.md"),
+                slug: format!("card-{i}"),
+                ts: format!("2026-09-{:02} 09:{:02}", (i / 2) % 28 + 1, (i / 2) % 60),
+                text: format!("Exact payload {i}"),
+                href: format!("/docs/{i}.md#card-{i}"),
+                answered: i % 2 == 0,
+            })
+            .collect();
+        original = (0..count)
+            .map(|i| original[(i * 73) % count].clone())
+            .collect();
+        let mut candidate = original.clone();
+        let mut live = symphony_api::Activity {
+            items: original.clone(),
+        };
+        original.sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
+        original.truncate(40);
+        symphony_board::order::sort_by(
+            &mut candidate,
+            &|a: &symphony_api::ActivityItem, b: &symphony_api::ActivityItem| {
+                (&b.ts, &b.id).cmp(&(&a.ts, &a.id))
+            },
+        );
+        candidate.truncate(40);
+        super::sort_activity(&mut live);
+        assert_eq!(candidate, original, "count={count}");
+        assert_eq!(live.items, original, "count={count}");
+    }
+}
+
+#[test]
+fn activity_order_study_keeps_native_forty_plus_forty_merge_and_refresh_payload() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let mut document = String::from("# Activity\n\n<!-- register:start -->\n");
+    for i in 0..40 {
+        document.push_str(&format!(
+            "- [ ] **card-{i:02}** — Question {i}.\n  [2026-09-25 09:{i:02}] agent — Posted {i}.\n"
+        ));
+    }
+    document.push_str("<!-- register:end -->\n");
+    tree.write("main/docs/TOPIC.md", &document);
+    let mut seed = Seed::default()
+        .session("amber")
+        .task("tools/open", "in_progress")
+        .role("tools/open", "amber", "executor");
+    for id in 1..=40 {
+        seed.dump.messages.push(symphony_board::rows::MessageRow {
+            id,
+            slug: "tools/open".into(),
+            sender: "amber".into(),
+            recipient: Some("owner".into()),
+            kind: "msg".into(),
+            text: format!("Task payload {id}"),
+            ts: NOW + f64::from(i32::try_from(id).unwrap()),
+        });
+    }
+    let f = Fixture::new(seed);
+    let mut hub = Hub::new(&root, &root.join("build/client"));
+    let board = f.other_client();
+    hub.connect_reader = Box::new(move |_| Ok(store_on(&board)));
+    hub.refresh_page("", &root).unwrap();
+    let mut expected = hub.pages.read().unwrap()[""].activity.items.clone();
+    assert_eq!(expected.len(), 40, "all document replies reach the merge");
+    let tasks = symphony::taskview::activity(&f.store).unwrap();
+    assert_eq!(tasks.len(), 40, "the board's bounded owner-message input");
+    expected.extend(tasks);
+    assert_eq!(expected.len(), 80);
+    expected.sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
+    expected.truncate(40);
+    observe(&hub, &f.store, &["amber"]);
+    assert_eq!(hub.pages.read().unwrap()[""].activity.items, expected);
+    hub.refresh_page("", &root).unwrap();
+    assert_eq!(hub.pages.read().unwrap()[""].activity.items, expected);
+    let (shared, ask) = served(&root, hub);
+    let (status, actual) = ask("/api/activity");
+    assert_eq!(status, StatusCode::OK, "{actual}");
+    assert_eq!(
+        actual,
+        serde_json::to_value(symphony_api::Activity { items: expected }).unwrap()
+    );
+    shared.stop();
+}

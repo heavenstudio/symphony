@@ -15,7 +15,7 @@ pub(in crate::store) fn read() -> Pg<'static> {
             'text', CASE WHEN m.kind = 'system' THEN left(m.text, {EVENT_TEXT})
                 WHEN m.kind = 'verdict' THEN left(m.text, 16) ELSE '' END,
             'cut', m.kind = 'system' AND length(m.text) > {EVENT_TEXT}) ORDER BY m.sid DESC)
-        FROM (SELECT * FROM message WHERE slug = v ->> 'slug'
+        FROM (SELECT message.* FROM message WHERE slug = v ->> 'slug'
             AND sid < (v ->> 'before')::bigint ORDER BY sid DESC LIMIT {}) m), '[]'))",
         THREAD_WINDOW_LIMIT + 1
     ))

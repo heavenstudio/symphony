@@ -267,7 +267,7 @@ pub fn changes(root: &Path, branch: &str, since: f64) -> Result<Vec<Change>, Str
         .into_iter()
         .filter(|(_, changed)| !changed.is_empty())
         .map(|(commit, mut changed)| {
-            changed.sort_by(|a, b| (rank(a), a).cmp(&(rank(b), b)));
+            symphony_board::order::sort_by(&mut changed, &|a, b| (rank(a), a).cmp(&(rank(b), b)));
             changed.dedup();
             Change { commit, changed }
         })

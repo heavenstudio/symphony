@@ -904,7 +904,7 @@ fn canonical_register(
     }) {
         return None;
     }
-    cards.sort_by(|a, b| {
+    symphony_board::order::sort_by(&mut cards, &|a, b| {
         order
             .get(&a.slug)
             .cmp(&order.get(&b.slug))
@@ -2313,9 +2313,9 @@ fn recover_outputs(
                     .or_default() += 1;
                 queued.push_back(Arc::new(Mutex::new(job)));
             }
-            queued
-                .make_contiguous()
-                .sort_by_key(|job| job.lock().unwrap_or_else(|e| e.into_inner()).path.clone());
+            symphony_board::order::sort_by_key(queued.make_contiguous(), &|job| {
+                job.lock().unwrap_or_else(|e| e.into_inner()).path.clone()
+            });
         }
         Err(error) => {
             let path = home(root)

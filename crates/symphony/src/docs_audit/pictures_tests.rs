@@ -134,3 +134,55 @@ fn the_servers_own_url_names_its_route() {
     assert_eq!(route("http://example.com/symphony/a.png"), None);
     assert_eq!(route("/artifacts/a.png"), None);
 }
+
+#[test]
+fn unicode_prefixes_keep_all_mixed_picture_fields_in_byte_offset_order() {
+    let text = "é猫 ![one](a.png) <img src='b.png'> ![ref][r] ![r][]\n[r]: c.png\n";
+    assert_eq!(
+        read(text),
+        [
+            at(0, "a.png"),
+            at(0, "b.png"),
+            Picture {
+                line: 0,
+                target: "c.png".into(),
+                defined: Some(1)
+            },
+            Picture {
+                line: 0,
+                target: "c.png".into(),
+                defined: Some(1)
+            },
+        ]
+    );
+    assert!(read("").is_empty());
+    assert_eq!(read("![solo](one.png)"), [at(0, "one.png")]);
+}
+
+#[test]
+fn picture_offset_ties_preserve_complete_payloads_and_report_cost() {
+    for count in [0, 1, 32, 512] {
+        let mut rows: Vec<_> = (0..count)
+            .map(|i| {
+                (
+                    i % 7,
+                    Picture {
+                        line: i,
+                        target: format!("猫-{i}.png"),
+                        defined: (i % 2 == 0).then_some(i + 1),
+                    },
+                )
+            })
+            .collect();
+        let mut old = rows.clone();
+        let (_, old_cpu) = test_time::cpu::spent(|| old.sort_by_key(|(start, _)| *start));
+        let (_, new_cpu) = test_time::cpu::spent(|| {
+            symphony_board::order::sort_by_key(&mut rows, &|(start, _)| *start)
+        });
+        assert_eq!(rows, old);
+        eprintln!(
+            "picture offsets n={count}: old_cpu={old_cpu:?},shared_cpu={new_cpu:?},positions={}bytes plus usize-sort scratch",
+            count * std::mem::size_of::<usize>()
+        );
+    }
+}

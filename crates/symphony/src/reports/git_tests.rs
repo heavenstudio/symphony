@@ -865,3 +865,37 @@ fn a_record_reads_its_fields_and_lines_and_skips_what_does_not_read() {
          with no change"
     );
 }
+
+#[test]
+fn instruction_changes_keep_rank_names_and_one_label_per_skill() {
+    let tree = Tree::new();
+    git(&tree.root, -1.0, &["init", "-q", "-b", "main"]);
+    commit(&tree, -1.0, "baseline", &[("README.md", "# Baseline\n")]);
+    assert!(changes(&tree.root, "main", midnight()).unwrap().is_empty());
+    commit(
+        &tree,
+        1.0,
+        "instructions",
+        &[
+            ("symphony.toml", "[land]\ncheck=false\n"),
+            ("RULES.md", "Rules\n"),
+            (".agents/skills/zeta/SKILL.md", "Z\n"),
+            (".agents/skills/zeta/details.md", "Details\n"),
+            (".agents/skills/alpha/SKILL.md", "A\n"),
+            (".agents/skills/Éclair/SKILL.md", "E\n"),
+        ],
+    );
+    let rows = changes(&tree.root, "main", midnight()).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].commit.subject, "instructions");
+    assert_eq!(
+        rows[0].changed,
+        [
+            "settings",
+            "rules",
+            "skill alpha",
+            "skill zeta",
+            "skill Éclair"
+        ]
+    );
+}
