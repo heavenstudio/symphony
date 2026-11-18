@@ -6,7 +6,11 @@ a plain project of every default. A table or key the Symphony does not know is r
 line where the project is loaded or linted (`just symphony-status --lint`), and left out, the rest
 read, where the Symphony runs with the file as it is. A file that does not load is run as the plain
 project: the server serves the project with the defaults, and every page of it says so and why,
-until it loads. The board reads its own keys (`[board]`'s
+until it loads. Three keys nothing acted on are gone (`[agents] transports`, `[board] export` and
+`[board] disposable`): a file that still writes one loads, the key ignored whatever it holds, and
+the load a server runs with, the lint and the settings check each say on stderr that it does
+nothing, by its line, failing nothing; the release after refuses it as any unknown key
+(`RETIRED` in `crates/symphony/src/project/file.rs`). The board reads its own keys (`[board]`'s
 commands and thresholds, `[limits]`, `[agents] launch`, `[agents.models]` and `[stamps]`) from the
 main checkout's copy, so a branch cannot change its own. A path is relative to the project's root
 and stays inside it, unless its key says otherwise.
@@ -192,7 +196,6 @@ neither serves no `.html` file, as its patterns serve none they leave out.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
-| `transports` | `["claude-uds", "codex-queue", "inbox"]` | the agent transports the project names; read and checked, acted on by nothing of the Symphony's own |
 | `panes` | `"none"` | what agents' terminals run in: `"hc"` (Herdr), whose panes the pages can show, or `"none"` |
 | `worktrees` | none: `symphony/tasks/land/` in the git common dir | the folder of a land's and the regenerator's worktrees; it may lie outside the project |
 | `launch` | below | the table `[agents.launch]` |
@@ -292,8 +295,6 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `machine_work_reader` | none | the project's own machine-work reader, an executable the server runs ([MACHINE_WORK](MACHINE_WORK.md)) |
 | `slot_locks` | none | the folder of the project's test-slot locks, which the agents view probes; under `.git/`, the git common dir |
 | `assessments` | none: an assessment is refused | the folder of the project's landing assessments; under `.git/`, the git common dir |
-| `export` | none | read and checked, acted on by nothing of the Symphony's own (`just tasks export` takes `--out`) |
-| `disposable` | `[]` | read and checked, acted on by nothing of the Symphony's own (the sweep keeps its own list) |
 
 PostgreSQL setup requires version 18 or later, installed by the machine's package manager.
 Without an explicit `postgresql`, discovery takes the first executable `postgres` on `PATH`;

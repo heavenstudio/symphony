@@ -47,7 +47,7 @@ use std::sync::Arc;
 
 use symphony::board::Doc;
 use symphony::plugins::Plugins;
-use symphony::project::{Entrypoint, Project, TRANSPORTS};
+use symphony::project::{Entrypoint, Project};
 use symphony::register::{Decision, Entry, Group, State, Who};
 use symphony::render::{Media, Render};
 use symphony::triage::{Bucket, Item};
@@ -73,7 +73,6 @@ use symphony_plugin::{
 fn the_names_consumers_call_keep_their_shapes() {
     // The project, its plugins and its generators.
     let _: &str = project::FILE;
-    let _: [&str; 3] = TRANSPORTS;
     let _: fn(&Path) -> Arc<Project> = Project::of;
     let _: fn(&Path) -> Result<Project, String> = Project::load;
     let _: fn(&Path) -> Project = Project::plain;
