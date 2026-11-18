@@ -355,3 +355,91 @@ fn cold_presentation_sorts_preserve_full_ties_and_report_cost() {
         |a, b| b.0.cmp(&a.0),
     );
 }
+
+#[test]
+fn native_document_and_register_orders_keep_full_owner_content_and_configured_priority() {
+    let tree = Tree::new();
+    assert!(symphony::board::documents(&tree.root).unwrap().is_empty());
+    assert!(symphony::board::register_files(&tree.root).is_empty());
+    tree.write("symphony.toml", "[project]\nregister=\"docs/Ω.md\"\n");
+    let mut expected = Vec::new();
+    for (name, slug) in [("zeta", "z"), ("Alpha", "a"), ("Ω", "omega")] {
+        let path = format!("docs/{name}.md");
+        let text = format!(
+            "# {name}\n\n<!-- register:start -->\n### Topic\n\n- [ ] **{slug}** — Exact owner question\n  [2026-09-25 09:00] owner — exact history {slug}\n<!-- register:end -->\n"
+        );
+        tree.write(&path, &text);
+        let lines = symphony::text::splitlines(&text);
+        expected.push(Doc {
+            path,
+            comments: symphony::callouts::parse_comments(&lines),
+            decisions: parse_decisions(&lines),
+        });
+    }
+    expected.sort_by(|a, b| a.path.cmp(&b.path));
+    assert_eq!(symphony::board::documents(&tree.root).unwrap(), expected);
+    // A cache hit must preserve every field and the same final route order.
+    assert_eq!(symphony::board::documents(&tree.root).unwrap(), expected);
+    assert_eq!(
+        symphony::board::register_files(&tree.root),
+        [
+            tree.root.join("docs/Ω.md"),
+            tree.root.join("docs/Alpha.md"),
+            tree.root.join("docs/zeta.md")
+        ]
+    );
+    let one = Tree::new();
+    one.write("docs/Only.md", "# Only\n");
+    assert_eq!(
+        symphony::board::documents(&one.root).unwrap(),
+        [Doc {
+            path: "docs/Only.md".into(),
+            comments: Vec::new(),
+            decisions: Vec::new()
+        }]
+    );
+    assert!(symphony::board::register_files(&one.root).is_empty());
+}
+
+#[test]
+fn document_and_lossy_path_ties_match_standard_order_and_report_cost() {
+    use std::os::unix::ffi::OsStringExt;
+    let register = std::path::PathBuf::from("/docs/Ω.md");
+    let fixtures = [
+        std::path::PathBuf::from(std::ffi::OsString::from_vec(b"/docs/a\x80.md".to_vec())),
+        std::path::PathBuf::from(std::ffi::OsString::from_vec(b"/docs/a\x81.md".to_vec())),
+        register.clone(),
+        "/docs/Éclair.md".into(),
+    ];
+    assert_eq!(fixtures[0].to_string_lossy(), fixtures[1].to_string_lossy());
+    for count in [0, 1, 32, 512] {
+        let mut paths: Vec<_> = (0..count)
+            .map(|i| fixtures[i % fixtures.len()].clone())
+            .collect();
+        let mut old = paths.clone();
+        let key =
+            |path: &std::path::PathBuf| (*path != register, path.to_string_lossy().to_string());
+        let (_, old_cpu) = test_time::cpu::spent(|| old.sort_by_key(&key));
+        let (_, new_cpu) =
+            test_time::cpu::spent(|| symphony_board::order::sort_by_key(&mut paths, &key));
+        assert_eq!(paths, old);
+        let mut docs: Vec<_> = (0..count)
+            .map(|i| Doc {
+                path: format!("docs/{}.md", i % 17),
+                comments: Vec::new(),
+                decisions: parse_decisions(&[&format!("- [ ] **card-{i}** — Exact payload")]),
+            })
+            .collect();
+        let mut expected = docs.clone();
+        let (_, doc_old_cpu) =
+            test_time::cpu::spent(|| expected.sort_by(|a, b| a.path.cmp(&b.path)));
+        let (_, doc_new_cpu) = test_time::cpu::spent(|| {
+            symphony_board::order::sort_by(&mut docs, &|a, b| a.path.cmp(&b.path))
+        });
+        assert_eq!(docs, expected);
+        eprintln!(
+            "board n={count}: paths old={old_cpu:?}/shared={new_cpu:?}; Doc old={doc_old_cpu:?}/shared={doc_new_cpu:?}; positions={} bytes per call plus usize-sort scratch",
+            count * std::mem::size_of::<usize>()
+        );
+    }
+}
