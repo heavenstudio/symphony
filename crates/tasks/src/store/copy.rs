@@ -1,7 +1,7 @@
 //! The copy of a whole board: a dump (every row, table by table, [`Dump`]) written in one
 //! transaction, replacing what the board held, and read back in the same shape.
 
-use super::postgres;
+use super::postgres::{self, Pg};
 use super::statement::both;
 use super::surreal::copy as sql;
 use super::transaction::Run;
@@ -14,8 +14,12 @@ use std::hash::{BuildHasher, RandomState};
 
 impl Store {
     /// Remove every copy's staging table (`copy_…`): what a copy killed while it staged leaves. Only for
-    /// a caller that knows no copy runs meanwhile.
+    /// a caller that knows no copy runs meanwhile. A board on PostgreSQL has none: its copy is one
+    /// request ([`postgres::copy`]).
     pub fn remove_staging(&self) -> Result<(), Error> {
+        if self.db.is_postgresql() {
+            return Ok(());
+        }
         let tables: Vec<String> = self.retrying(|| self.transact(sql::TABLES, json!({})))?;
         let staged = tables.iter().map(String::as_str).filter(|table| {
             table.starts_with("copy_")
@@ -164,6 +168,19 @@ impl Store {
                 .collect();
             vars[*table] = Value::Array(rows);
         }
+        vars["copied_fields"] = Value::Array(
+            tables
+                .iter()
+                .filter(|(table, _)| *table == "task")
+                .flat_map(|(_, rows)| rows)
+                .map(|row| {
+                    json!({
+                        "id": row["slug"], "original": row.get("fields")
+                            .map_or_else(|| "{}".to_string(), Value::to_string),
+                    })
+                })
+                .collect(),
+        );
         let copy = || both(sql::NOTHING_COPIED, postgres::copy::copy(&names));
         self.retrying(|| self.run_transaction::<Value>(copy(), vars.clone(), Run::Staging))
             .map(|_| ())
@@ -214,11 +231,91 @@ impl Store {
     }
 
     /// Every row of the board, in the shape the copy reads, each table in the order of its key: what a
-    /// copy wrote, read back.
+    /// copy wrote, read back. An object inside a task's fields has its keys in their order as text,
+    /// as SurrealDB keeps them, where PostgreSQL keeps the shorter first: a board's export is one text
+    /// in either database. PostgreSQL also restores a copied field's numeric spelling while that
+    /// value agrees with its saved JSON: jsonb alone expands exponents and forgets negative zero.
+    /// Every task-field setter updates `copied_fields` at the assigned path; replacements do not
+    /// inherit the old value's spelling. A copy replaces the text, and task deletion removes it.
     pub fn dump(&self) -> Result<Dump, Error> {
-        self.retrying(|| self.transact(sql::DUMP, json!({})))
+        let dump = || both(sql::DUMP, Pg::read(postgres::copy::DUMP.as_str()));
+        let mut dump: Dump = if self.db.is_postgresql() {
+            let (mut dump, copied): (Dump, Vec<(String, String, Value)>) =
+                self.retrying(|| self.transact(dump(), json!({})))?;
+            for (slug, original, normalized) in copied {
+                let original: Value = serde_json::from_str(&original)
+                    .map_err(|e| Error::Db(format!("copied fields: {e}")))?;
+                if let Some(task) = dump.tasks.iter_mut().find(|task| task.slug == slug) {
+                    for (namespace, fields) in &mut task.fields {
+                        for (name, value) in fields {
+                            restore_numbers(
+                                value,
+                                &original[namespace][name],
+                                &normalized[namespace][name],
+                            );
+                        }
+                    }
+                }
+            }
+            dump
+        } else {
+            self.retrying(|| self.transact(dump(), json!({})))?
+        };
+        let fields = (dump.tasks.iter_mut()).flat_map(|task| task.fields.values_mut());
+        for value in fields.flat_map(|namespace| namespace.values_mut()) {
+            value.sort_all_objects();
+        }
+        Ok(dump)
     }
 }
 
 /// The most a copy sends in one request: the server takes 4 MiB (`SURREAL_HTTP_MAX_RPC_BODY_SIZE`).
 pub(super) const CHUNK_BYTES: usize = 1 << 20;
+
+/// Restore numbers from the saved JSON, which field setters maintain at the assigned paths.
+/// Agreement with its jsonb form is a consistency check, not proof of element identity: an
+/// assignment must first replace the saved subtree, including an entire assigned array.
+fn restore_numbers(current: &mut Value, original: &Value, normalized: &Value) {
+    match current {
+        Value::Number(_) if original.is_number() && current == normalized => {
+            *current = original.clone()
+        }
+        Value::Object(fields) => {
+            for (name, value) in fields {
+                restore_numbers(value, &original[name], &normalized[name]);
+            }
+        }
+        Value::Array(items) => {
+            for (at, value) in items.iter_mut().enumerate() {
+                restore_numbers(value, &original[at], &normalized[at]);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn number_restoration_preserves_edits_and_walks_arrays_and_objects() {
+        let original: Value = serde_json::from_str(r#"{"same":1e30,"changed":1e30,"kind":1e30,"gone":1e30,"array":[1e18,-0.0,1e30],"old_object":{"x":1e30}}"#).unwrap();
+        let normalized: Value = serde_json::from_str(r#"{"same":1000000000000000000000000000000,"changed":1000000000000000000000000000000,"kind":1000000000000000000000000000000,"gone":1000000000000000000000000000000,"array":[1000000000000000000,0.0,1000000000000000000000000000000],"old_object":{"x":1000000000000000000000000000000}}"#).unwrap();
+        let mut current = normalized.clone();
+        current["changed"] = json!(7);
+        current["kind"] = json!("1e30");
+        current.as_object_mut().unwrap().remove("gone");
+        current["array"].as_array_mut().unwrap().truncate(2);
+        current["array"].as_array_mut().unwrap().push(json!(false));
+        current["array"].as_array_mut().unwrap().push(json!(8));
+        current["added"] = json!({"new": [null, true, 4]});
+        current["old_object"] = json!([1]);
+        let mut expected = current.clone();
+        expected["same"] = original["same"].clone();
+        expected["array"][0] = original["array"][0].clone();
+        expected["array"][1] = original["array"][1].clone();
+        restore_numbers(&mut current, &original, &normalized);
+        assert_eq!(current, expected);
+    }
+}

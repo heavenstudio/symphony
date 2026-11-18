@@ -151,6 +151,12 @@ back](../../docs/TASKS.md#a-board-that-went-back).
 
 `store/search.rs` and `cli/search.rs` are `tasks search`: by words alone, ranked by SurrealDB's
 full-text indexes over titles, briefs, slugs and threads, with no inference and no network request.
+On PostgreSQL the same analyzer's terms are counted by triggers into `words`
+(`store/postgres/schema.rs`) and scored by SurrealDB's own BM25 (`store/postgres/search.rs`), so a
+search finds and ranks alike on either, each score to the bit (`tests/store/search.rs`). Latin
+letters use deunicode's exceptions before decomposition, including letters outside Extended-A.
+Words in another script (including Arabic) differ: SurrealDB spells them in Latin letters and
+PostgreSQL keeps them. Letters newer than PostgreSQL's Unicode version are not letters there.
 The board had a search by meaning, deleted
 ([its card](../../docs/DECISIONS.md#board-search-by-meaning)): the tables it wrote (`task_chunk`,
 `task_embedding_source`, `task_embedding_checkpoint`) keep their definitions in `schema.rs`, since
@@ -397,7 +403,9 @@ steer the rest with:
 - `TASKS_REAP_STATE`, where the idle sweep keeps what it saw;
 - `HC_BIN` and `HERDR_APP_BIN`, a fake hc and window: the crate's `fake-hc`, its terminals, the
   window's layout and what it shows in the JSON file `FAKE_HC_STATE` names, each call a line of
-  `FAKE_HC_LOG`, the calls `FAKE_HC_FAIL` names refused;
+  `FAKE_HC_LOG`, the calls `FAKE_HC_FAIL` names refused; a test that names none is given
+  `/usr/bin/false` by the test runs (`just test-rs`, `tools/test-lanes.sh`), so no case reads this
+  machine's terminals, where one named as a fixture's session would be taken for its pane;
 - `TASKS_PS_TABLE`, a file of `ps -axo pid=,ppid=,command=` lines read in place of `ps`, so no case
   reads this machine's process table; read only with a `TASKS_DATABASE` other than the live one;
 - `TASKS_SWEEP=on`, `TASKS_ON_REVIEW=on`, `TASKS_ON_LAND=on` and `TASKS_REGENERATE=on`, without

@@ -23,7 +23,8 @@ const LANES: usize = 8;
 /// is a lane, which says its arguments, writes them to a file of its own in `$STAND/started` (and
 /// one in `$STAND/running` while it runs), and waits until `LANES` lanes have started (one run
 /// while too few others could would wait out its backstop and fail), then adds how many lanes run
-/// to `$STAND/at-once` and says the binaries it was named. With `HOLD`, each lane makes the file
+/// to `$STAND/at-once`, says the binaries it was named and adds the hc it was named (`HC_BIN`) to
+/// `$STAND/hc`. With `HOLD`, each lane makes the file
 /// `$HOLD.PID` once all started and it opened the FIFO `$HOLD` read/write, then holds in a builtin
 /// read with no child to fork after that mark. A signal ends it; a read that returns says the
 /// signal never reached it. A lane that runs a target `SAY` names as `TARGET:TEXT` writes
@@ -59,6 +60,7 @@ until [ "$(ls "$STAND/started" | wc -l)" -ge "$LANES" ]; do
 done
 ls "$STAND/running" | wc -l | tr -d ' ' >>"$STAND/at-once"
 printf 'binaries=%s\ntasks=%s\n' "${SYMPHONY_TEST_BINARIES-unset}" "${SYMPHONY_TEST_TASKS_BINARY-unset}"
+printf '%s\n' "${HC_BIN-unset}" >>"$STAND/hc"
 if [ -n "${HOLD:-}" ]; then
     exec 3<>"$HOLD"
     : >"$HOLD.$$"
@@ -212,6 +214,7 @@ impl Lanes {
             .env_remove("SYMPHONY_TEST_BINARIES")
             .env_remove("SYMPHONY_TEST_TASKS_BINARY")
             .env_remove("SYMPHONY_TEST_LANE_LOGS")
+            .env_remove("HC_BIN")
             .env_remove("FAIL")
             .env_remove("FAIL_BUILD")
             .env_remove("DIE")
@@ -441,6 +444,31 @@ fn the_lanes_are_named_the_builds_binaries_and_a_callers_names_win() {
     let said = String::from_utf8(done.stdout).unwrap();
     let named = "binaries=/the/callers\ntasks=/the/callers/tasks\n";
     assert_eq!(said.matches(named).count(), LANES, "{said}");
+}
+
+#[test]
+fn the_lanes_are_named_an_hc_that_answers_nothing_and_a_callers_hc_wins() {
+    // Whatever terminals this machine runs, no lane's tests read them.
+    for (name, vars, named) in [
+        ("test-lanes-hc", &[][..], "/usr/bin/false"),
+        (
+            "test-lanes-hc-empty",
+            &[("HC_BIN", "")][..],
+            "/usr/bin/false",
+        ),
+        (
+            "test-lanes-hc-named",
+            &[("HC_BIN", "/the/callers/hc")][..],
+            "/the/callers/hc",
+        ),
+    ] {
+        let lanes = Lanes::new(name);
+        let done = lanes.run(&[], vars);
+        assert!(done.status.success(), "{done:?}");
+        let said = fs::read_to_string(lanes.stand.join("hc")).unwrap();
+        let lines: Vec<&str> = said.lines().collect();
+        assert_eq!(lines, [named; LANES], "{name}");
+    }
 }
 
 #[test]

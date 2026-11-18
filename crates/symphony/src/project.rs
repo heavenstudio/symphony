@@ -21,6 +21,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 mod board;
 mod file;
+mod model_warnings;
 mod theme;
 pub mod workflow;
 
@@ -28,6 +29,7 @@ pub use crate::entrypoint::Entrypoint;
 use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::{Board, WipGuidance};
 use file::{File, FileEntrypoint};
+pub(crate) use model_warnings::warn as warn_models;
 pub use theme::Theme;
 
 /// The project file at a project's root.
