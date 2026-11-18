@@ -204,13 +204,19 @@ impl Rows<'_> {
         };
         vars.extend(more);
         let vars = Value::Object(vars);
-        retried(PATIENCE, || match self.client {
+        retried(PATIENCE, &mut || match self.client {
             On::SurrealDb(client) => {
                 let mut answers = client.query(surreal, vars.clone()).map_err(Failure::from)?;
                 Ok(answers.pop().unwrap_or(Value::Null))
             }
             On::PostgreSql(client) => {
-                on_postgres(client, &postgres, &vars, false).map_err(Failure::from)
+                let mut written = vars.clone();
+                // The protocol binds jsonb, so carry raw assignments as text inside it before
+                // PostgreSQL can normalize numeric tokens. Only the field setter reads this.
+                if matches!(postgres, Pg::Script(..)) {
+                    written["board_written"] = Value::String(vars.to_string());
+                }
+                on_postgres(client, &postgres, &written, false).map_err(Failure::from)
             }
         })
     }

@@ -893,6 +893,19 @@ nothing more, and a restore that lost it kills the terminal it started. A Codex 
 takes the thread its callback registered whichever is written first; one closed with no thread
 says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
 
+An initialized JavaScript REPL can retain `kernel.js` and `trusted-worker.js` under the
+ChatGPT app's bundled `node`. Their command lines do not distinguish waiting for a cell
+from executing JavaScript or a browser operation, so an agent's `idle` status alone does
+not make them safe to close. Coordinate recovery with the session's owner: finish or
+cancel its active work, then have that original session call its native
+`node_repl.js_reset` or `cua_repl.js_reset`, for the REPL it used. Reset discards its
+JavaScript bindings. Wait for the reset's result and read its process tree again before
+retrying `just tasks close SLUG HANDLE` and then `just tasks restore SLUG HANDLE` on
+that project's board; the close still checks the foreground, remaining children and
+the owner's window. If the original session cannot execute the reset, coordinate a
+normal exit from that session before retrying. An accepted message queue is no proof
+that a reset ran, and retained kernels are no reason to bypass a close refusal.
+
 A consuming project chooses its agent models (`[agents.models]`), staffing policy and terminal
 lifecycle. The board records those sessions and roles; it imposes no model preference.
 

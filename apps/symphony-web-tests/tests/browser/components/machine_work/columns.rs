@@ -1,4 +1,4 @@
-//! Machine activity opens from the waiting board rail, preserving complete counts, paging and
+//! Machine activity appears in full waiting board columns, preserving complete counts, paging and
 //! disconnected lifecycle fallback.
 
 use crate::{SHOWN, chrome, look_parity, site, wait_for_feed};
@@ -70,25 +70,18 @@ pub(super) fn reveal(chrome: &mut crate::Chrome, status: &str) {
     };
     if chrome.eval("innerWidth <= 760") == json!(true) {
         chrome.eval(&format!("[...document.querySelectorAll('.stage-tabs button')].find(button=>button.textContent.startsWith({})).click()",json!(label)));
-    } else {
-        chrome.eval("document.querySelector('.back-to-stages')?.click()");
-        if status != "in_progress" {
-            chrome.eval(&format!(
-                "document.querySelector('[data-open-stage={status}]').click()"
-            ));
-        }
     }
     assert!(chrome.wait_for(
         &format!("document.querySelector('.column[data-status={status}]') !== null"),
         SHOWN
     ));
     chrome.eval(&format!(
-        "document.querySelector('.column[data-status={status}]').scrollIntoView({{block:'start'}})"
+        "document.querySelector('.column[data-status={status}]').scrollIntoView({{block:'start',inline:'center'}})"
     ));
 }
 
 #[test]
-fn the_machine_rail_offers_build_and_test_once_a_machine_reports() {
+fn machine_columns_show_observations_once_a_machine_reports() {
     let site = site();
     let silent = look_parity::responses().remove("/api/task-board").unwrap();
     site.set_json("/api/task-board", &silent);
@@ -99,14 +92,14 @@ fn the_machine_rail_offers_build_and_test_once_a_machine_reports() {
     );
     chrome.open(&site.url("/tasks"));
     ready(&mut chrome);
-    assert_eq!(chrome.eval("document.querySelector('.column[data-status=build-test]') !== null && document.querySelector('.machine-rail button') === null"), json!(true));
+    assert_eq!(chrome.eval("document.querySelector('.column[data-status=build] .work-empty').textContent === 'No build observations reported.' && document.querySelector('.column[data-status=test] .work-empty').textContent === 'No test observations reported.'"), json!(true));
     let reporting = listing();
     site.set_json("/api/task-board", &reporting);
     site.set_json("/api/machine-work", &reporting["machine_work"]);
     chrome.open(&site.url("/tasks"));
     ready(&mut chrome);
     assert!(chrome.wait_for(
-        "document.querySelectorAll('.machine-rail button').length === 2",
+        "document.querySelector('.column[data-status=build] .count').textContent === '33' && document.querySelector('.column[data-status=test] .count').textContent === '1'",
         SHOWN
     ));
     reveal(&mut chrome, "test");

@@ -250,3 +250,47 @@ fn initial_preloads_choose_the_shells_kind_for_each_client_route() {
         assert_eq!(client_kind(&project, path), None, "{path}");
     }
 }
+
+#[test]
+fn terminal_search_score_maps_keep_last_float_bits_and_report_cost() {
+    let values = [
+        0.0,
+        -0.0,
+        f64::from_bits(0x7ff8000000000042),
+        f64::from_bits(0xfff8000000000033),
+        4.5,
+    ];
+    for count in [0, 1, 32, 512] {
+        let hits: Vec<_> = (0..count)
+            .map(|i| symphony_board::SearchHit {
+                slug: format!("task-{}", i % 13),
+                score: values[i % values.len()],
+            })
+            .collect();
+        let old_hits = hits.clone();
+        let (old, old_cpu) = test_time::cpu::spent(|| {
+            old_hits
+                .into_iter()
+                .map(|hit| (hit.slug, hit.score))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        });
+        let (new, new_cpu) = test_time::cpu::spent(|| {
+            let mut scores = std::collections::BTreeMap::new();
+            for hit in hits {
+                scores.insert(hit.slug, hit.score);
+            }
+            scores
+        });
+        assert_eq!(
+            new.iter()
+                .map(|(k, v)| (k, v.to_bits()))
+                .collect::<Vec<_>>(),
+            old.iter()
+                .map(|(k, v)| (k, v.to_bits()))
+                .collect::<Vec<_>>()
+        );
+        eprintln!(
+            "search-score n={count}: standard_cpu={old_cpu:?},insert_cpu={new_cpu:?}; no pair Vec or stable scratch"
+        );
+    }
+}

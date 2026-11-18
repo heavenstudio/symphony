@@ -1248,3 +1248,32 @@ fn a_hub_whose_project_was_removed_appends_no_hour_as_it_stops() {
         }
     }
 }
+
+#[test]
+fn low_disk_environment_map_keeps_filter_empty_and_last_duplicate_values() {
+    let name = symphony_env::LOW_DISK_GB.name;
+    for pairs in [
+        vec![],
+        vec![(name.to_string(), "0".to_string())],
+        vec![
+            (name.to_string(), "10".to_string()),
+            ("OTHER".to_string(), "999".to_string()),
+            (name.to_string(), "malformed".to_string()),
+        ],
+    ] {
+        let expected: std::collections::BTreeMap<_, _> = pairs
+            .clone()
+            .into_iter()
+            .filter(|(key, _)| key == name)
+            .collect();
+        let mut actual = std::collections::BTreeMap::new();
+        for (key, value) in pairs.into_iter().filter(|(key, _)| key == name) {
+            actual.insert(key, value);
+        }
+        assert_eq!(actual, expected);
+        assert_eq!(
+            symphony_board::board_health::disk::threshold(&actual),
+            symphony_board::board_health::disk::threshold(&expected)
+        );
+    }
+}

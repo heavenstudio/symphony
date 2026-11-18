@@ -219,10 +219,15 @@ fn held(docs: &[Doc], pages: &Pages) -> Held {
             .map(|card| ((path.clone(), card.slug.clone()), owner_said(card)))
             .collect::<Vec<_>>()
     };
-    docs.iter()
+    let mut held = BTreeMap::new();
+    for (key, at) in docs
+        .iter()
         .flat_map(|doc| cards(&doc.path, &doc.decisions))
         .chain(pages.iter().flat_map(|(path, shown)| cards(path, shown)))
-        .collect()
+    {
+        held.insert(key, at);
+    }
+    held
 }
 
 /// When the owner last wrote under `card`, by its dated lines.

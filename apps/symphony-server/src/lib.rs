@@ -19,6 +19,7 @@ pub mod front;
 pub mod gate;
 pub mod home;
 pub mod host;
+pub mod hosted;
 mod live;
 pub mod log;
 mod mark;

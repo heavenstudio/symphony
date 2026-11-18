@@ -401,7 +401,7 @@ impl Backend {
 /// its socket alone at the first test that asks for it, stopped and its folder removed at the
 /// binary's exit, and ended with the binary however that ends, as every board's PostgreSQL ends
 /// with the process that started it (`symphony_board::server::postgres`). Its programs are the
-/// ones the repository's project file names (`[board] postgresql`).
+/// ones the repository's project file names (`[board] postgresql`), otherwise discovered on PATH.
 struct PgServer {
     dir: PathBuf,
     pg: Postgres,
@@ -432,11 +432,7 @@ fn start_postgresql() -> PgServer {
         std::fs::remove_dir_all(&dir).unwrap();
     }
     std::fs::create_dir_all(&dir).unwrap();
-    let programs = symphony_board::server::postgres::programs(&project_root())
-        .unwrap()
-        .expect(
-            "the repository's symphony.toml names the machine's PostgreSQL ([board] postgresql)",
-        );
+    let programs = symphony_board::server::postgres::discover_programs(&project_root()).unwrap();
     let pg = Home::new(&dir.join("board"), Path::new("/no/surreal"))
         .telling(|_| {})
         .postgresql(&programs);

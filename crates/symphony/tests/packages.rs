@@ -529,6 +529,80 @@ fn the_servers_package_is_one_crates_io_takes() {
          it carries (apps/symphony-server/client/public) are to be cut to the newest \
          (docs/RELEASES.md, \"Packages on crates.io\")"
     );
+    // Every distributed client file, notices included, survives Cargo's include rules byte for
+    // byte. The client build target separately proves each build carries its required notices.
+    let unpacked = target.path("unpacked");
+    std::fs::create_dir(&unpacked).unwrap();
+    let unpack = Command::new("tar")
+        .arg("-xf")
+        .arg(target.path(&format!("package/{crate_file}")))
+        .arg("-C")
+        .arg(&unpacked)
+        .output()
+        .unwrap();
+    assert!(unpack.status.success(), "{unpack:?}");
+    let original = workspace().join("apps/symphony-server/client/public");
+    let packaged = unpacked.join(format!("symphony-server-{version}/client/public"));
+    assert_eq!(
+        client_files(&original),
+        client_files(&packaged),
+        "the source crate carries the complete client, including each build's notices"
+    );
+    // Compile the archive's actual build script and its generated include_bytes! manifest in
+    // isolation: installing the client needs neither Node nor files outside the source crate.
+    let crate_root = packaged.parent().unwrap().parent().unwrap();
+    let generator = target.path("embed-generator");
+    let compile = Command::new("rustc")
+        .arg("--edition=2024")
+        .arg(crate_root.join("build.rs"))
+        .arg("-o")
+        .arg(&generator)
+        .output()
+        .unwrap();
+    assert!(compile.status.success(), "{compile:?}");
+    let generated = target.path("generated");
+    std::fs::create_dir(&generated).unwrap();
+    let generate = Command::new(generator)
+        .env("CARGO_MANIFEST_DIR", crate_root)
+        .env("OUT_DIR", &generated)
+        .env_remove("SYMPHONY_CLIENT_BESIDE")
+        .output()
+        .unwrap();
+    assert!(generate.status.success(), "{generate:?}");
+    let probe = target.write("embedded.rs", &format!(
+        "mod client {{ include!({:?}); }}\nfn main() {{\nassert_eq!(client::FILES.len(), {});\nfor (name, bytes) in client::FILES {{ assert_eq!(*bytes, std::fs::read(std::path::Path::new({:?}).join(name)).unwrap(), \"{{name}}\"); }}\n}}\n",
+        generated.join("client.rs"), client_files(&original).len(), packaged,
+    ));
+    let binary = target.path("embedded");
+    let compile = Command::new("rustc")
+        .arg("--edition=2024")
+        .arg(probe)
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert!(compile.status.success(), "{compile:?}");
+    let embedded = Command::new(binary).output().unwrap();
+    assert!(embedded.status.success(), "{embedded:?}");
+}
+
+fn client_files(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut files = std::collections::BTreeMap::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(folder) = pending.pop() {
+        for entry in std::fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.insert(
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    std::fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+    files
 }
 
 #[test]

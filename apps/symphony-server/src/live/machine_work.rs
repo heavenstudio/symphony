@@ -395,20 +395,17 @@ impl Hub {
         let project = symphony::project::Project::of(&self.root);
         // Each agent's way into its session, its pane only where the project addresses panes.
         symphony_api::resolve_sessions(&mut agents.agents, project.agents.panes == "hc");
-        agents.machine_work.guidance = project
-            .board
-            .machine_wip
-            .iter()
-            .map(|(id, guidance)| {
-                (
-                    id.clone(),
-                    symphony_api::WorkGuidance {
-                        build: guidance.build,
-                        test: guidance.test,
-                    },
-                )
-            })
-            .collect();
+        let mut guidance = BTreeMap::new();
+        for (id, limits) in &project.board.machine_wip {
+            guidance.insert(
+                id.clone(),
+                symphony_api::WorkGuidance {
+                    build: limits.build,
+                    test: limits.test,
+                },
+            );
+        }
+        agents.machine_work.guidance = guidance;
         self.update_board(store, snapshot, agents)
     }
 
@@ -470,13 +467,14 @@ impl Hub {
         let Some(agents) = agents.as_ref() else {
             return std::collections::BTreeMap::new();
         };
-        handles
-            .into_iter()
-            .filter_map(|handle| {
-                let agent = agents.agents.iter().find(|a| a.handle == handle)?;
-                Some((handle.to_string(), agent.go.clone()?))
-            })
-            .collect()
+        let mut sessions = std::collections::BTreeMap::new();
+        for (handle, go) in handles.into_iter().filter_map(|handle| {
+            let agent = agents.agents.iter().find(|a| a.handle == handle)?;
+            Some((handle.to_string(), agent.go.clone()?))
+        }) {
+            sessions.insert(handle, go);
+        }
+        sessions
     }
 
     /// Where `handle`'s Go to session control goes now, or why there is nowhere: the agents

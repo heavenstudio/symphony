@@ -88,7 +88,7 @@ impl Postgres {
                 paths.push(entry.path());
             }
         }
-        paths.sort_by(|a, b| {
+        crate::order::sort_by(&mut paths, &|a, b| {
             let a = a.file_name().unwrap().to_str().unwrap();
             let b = b.file_name().unwrap().to_str().unwrap();
             order(b).cmp(&order(a))

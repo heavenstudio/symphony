@@ -120,6 +120,13 @@ fn open(page: &mut crate::Chrome, site: &Site, width: u32) {
         json!({"width":width,"height":if width <= 760 {844} else {900},"deviceScaleFactor":1,"mobile":width<=760}),
     );
     page.open(&site.url("/tasks"));
+    if width > 760 {
+        assert!(page.wait_for(
+            "document.querySelector('[data-slug=\"ready/decision\"]') !== null",
+            SHOWN
+        ));
+        page.eval("const board = document.querySelector('.waiting-columns'), column = board.querySelector('.column[data-status=review]'); board.scrollLeft += column.getBoundingClientRect().left - board.getBoundingClientRect().left");
+    }
     assert!(page.wait_for("document.querySelector('[data-slug=\"review/decision\"]') !== null && document.documentElement.dataset.navigation === 'ready'",SHOWN));
 }
 

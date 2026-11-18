@@ -154,14 +154,7 @@ impl Home {
 
     /// PostgreSQL programs for this board's project, with the project file's install guidance.
     pub fn project_postgresql(&self, root: &Path) -> Result<Postgres, ServerError> {
-        let programs = postgres::programs(root)
-            .map_err(ServerError::Io)?
-            .ok_or_else(|| {
-                ServerError::Io(format!(
-                    "{} needs [board] postgresql naming the machine's PostgreSQL programs",
-                    root.display()
-                ))
-            })?;
+        let programs = postgres::discover_programs(root).map_err(ServerError::Io)?;
         Ok(self.postgresql(&programs))
     }
 

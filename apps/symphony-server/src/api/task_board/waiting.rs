@@ -208,7 +208,7 @@ pub(super) fn project(
             Some((key, task))
         })
         .collect();
-    rows.sort_by(|(a, _), (b, _)| a.compare(b));
+    symphony_board::order::sort_by(&mut rows, &|(a, _), (b, _)| a.compare(b));
     if let Some(cursor) = cursor {
         rows.retain(|(key, _)| key.compare(&cursor) == Ordering::Greater);
     }
@@ -260,4 +260,144 @@ pub(super) fn project(
         unstarted: tasks.unstarted,
         waiting: Some(waiting),
     }))
+}
+
+#[cfg(test)]
+mod ordering_study {
+    use super::*;
+    use serde_json::json;
+
+    /// Original-sort oracle and measured shared ordering for the production Key+Task sort.
+    #[tokio::test]
+    async fn waiting_sort_study_preserves_full_key_payload_pages_and_reports_cost() {
+        async fn read(records: &[Task], query: &str) -> Vec<u8> {
+            let request = Request::builder()
+                .uri(format!("/api/task-board?view=waiting&{query}"))
+                .body(())
+                .unwrap();
+            let response = project(
+                &request,
+                Tasks {
+                    version: String::new(),
+                    tasks: records.to_vec(),
+                    sessions: vec![],
+                    orchestrators: vec![],
+                    unstarted: 0,
+                },
+                MachineWork::default(),
+                vec![],
+            );
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec()
+        }
+        for count in [32, 512, 4096] {
+            let records:Vec<Task>=(0..count).map(|i|serde_json::from_value(json!({
+                "slug":format!("tools/task-{i}"),"title":format!("Exact title {i}"),"body":"payload ".repeat(32),
+                "status":(["ready","blocked","review","done","cancelled"][i%5]),"from":"review","priority":i%4,"parent":null,"created_by":"owner","created":0.0,
+                "updated":i%13,"links":[],"depends":[],"roles":[],"instruction":false,
+                "waits_on":{"kind":(["decision","check","task","parked","working"][i%5]),"who":"named-thing","why":"exact reason","since":i%17}
+            })).unwrap()).collect();
+            for across in [false, true] {
+                let rows = || {
+                    records
+                        .iter()
+                        .map(|task| {
+                            let mut task = task.clone();
+                            normalize(&mut task);
+                            (
+                                key(&task, stage(&task, &MachineWork::default(), false), across),
+                                task,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let mut old_times = Vec::new();
+                let mut new_times = Vec::new();
+                let mut old = Vec::new();
+                let mut shared = Vec::new();
+                for sample in 0..10 {
+                    old = rows();
+                    shared = rows();
+                    let (old_cpu, new_cpu) = if sample % 2 == 0 {
+                        let (_, old_cpu) =
+                            test_time::cpu::spent(|| old.sort_by(|(a, _), (b, _)| a.compare(b)));
+                        let (_, new_cpu) = test_time::cpu::spent(|| {
+                            symphony_board::order::sort_by(&mut shared, &|(a, _), (b, _)| {
+                                a.compare(b)
+                            })
+                        });
+                        (old_cpu, new_cpu)
+                    } else {
+                        let (_, new_cpu) = test_time::cpu::spent(|| {
+                            symphony_board::order::sort_by(&mut shared, &|(a, _), (b, _)| {
+                                a.compare(b)
+                            })
+                        });
+                        let (_, old_cpu) =
+                            test_time::cpu::spent(|| old.sort_by(|(a, _), (b, _)| a.compare(b)));
+                        (old_cpu, new_cpu)
+                    };
+                    assert_eq!(
+                        serde_json::to_vec(&shared).unwrap(),
+                        serde_json::to_vec(&old).unwrap()
+                    );
+                    if sample >= 2 {
+                        old_times.push(old_cpu);
+                        new_times.push(new_cpu);
+                    }
+                }
+                old_times.sort_unstable();
+                new_times.sort_unstable();
+                let (old_cpu, new_cpu) = (old_times[4], new_times[4]);
+                assert_eq!(
+                    serde_json::to_vec(&shared).unwrap(),
+                    serde_json::to_vec(&old).unwrap()
+                );
+                let shared_tasks: Vec<_> = shared.into_iter().map(|(_, task)| task).collect();
+                let normalized: Vec<_> = records
+                    .iter()
+                    .map(|task| {
+                        let mut task = task.clone();
+                        normalize(&mut task);
+                        task
+                    })
+                    .collect();
+                for query in if count <= 512 {
+                    &[
+                        "all=1",
+                        "status=review",
+                        "status=ready&rows=65&offset=7",
+                        "wait=decision",
+                        "wait=parked",
+                        "counts=1",
+                        "activity=1",
+                    ][..]
+                } else {
+                    &[][..]
+                } {
+                    let first = read(&normalized, query).await;
+                    assert_eq!(read(&shared_tasks, query).await, first, "{query}");
+                    let value: serde_json::Value = serde_json::from_slice(&first).unwrap();
+                    if let Some(cursor) = value["next"].as_str() {
+                        let escaped: String = cursor.bytes().map(|b| format!("%{b:02X}")).collect();
+                        let next = format!("{query}&cursor={escaped}");
+                        assert_eq!(
+                            read(&shared_tasks, &next).await,
+                            read(&normalized, &next).await,
+                            "{next}"
+                        );
+                    }
+                }
+                eprintln!(
+                    "Waiting study n={count},across={across}: old_cpu_median={old_cpu:?},shared_cpu_median={new_cpu:?},old_range={:?},shared_range={:?}; Key+Task={}bytes,positions={}bytes plus usize scratch; existing signoff-guard scope unchanged",
+                    (old_times[0], old_times[7]),
+                    (new_times[0], new_times[7]),
+                    std::mem::size_of::<(Key, Task)>(),
+                    count * std::mem::size_of::<usize>()
+                );
+            }
+        }
+    }
 }

@@ -1143,6 +1143,15 @@ pub const PROJECT_FILE_REFERENCE: &str = concat!(
 /// What is left for the owner to do after a run at `root`, each one line: what init cannot do for
 /// the project. None left means agents can run the board.
 pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
+    steps_within(root, machine, crate::machine::command::LOOK)
+}
+
+/// [`steps`], with each front and board probe given `look` to connect and answer.
+pub(crate) fn steps_within(
+    root: &Path,
+    machine: &Machine,
+    look: std::time::Duration,
+) -> Vec<String> {
     let mut steps = Vec::new();
     let project = match crate::project::Project::load(root) {
         Ok(project) => Some(project),
@@ -1227,14 +1236,39 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
                 .to_string(),
         );
     }
-    if let Some(folder) = machine.folder
-        && !registered(root, folder)
-    {
-        steps.push(
-            "register the project with the machine's Symphony: `just symphony-cli project add` \
-             (a start of `just symphony` registers it too)"
-                .to_string(),
-        );
+    if let Some(folder) = machine.folder {
+        let registered = registered(root, folder);
+        if !registered {
+            steps.push(
+                "register the project with the machine's Symphony: `just symphony-cli project add` \
+                 (a start of `just symphony` registers it too)"
+                    .to_string(),
+            );
+        }
+        if let Some(front) = crate::machine::command::running_within(folder, None, look) {
+            if let Some(writer) = builds::find(root, "tasks", &machine.beyond())
+                && let Some((_, release)) = crate::machine::release::of_binary(&writer)
+                && release.serves.schema < front.schema
+            {
+                steps.push(format!(
+                    "link a compatible board command: {} selects {} at schema {}, but the \
+                     running host requires schema {}; after updating the project's writer, \
+                     `just tasks migrate` in its main checkout moves the board. Init never \
+                     changes the writer or migrates the board",
+                    writer.display(),
+                    release.release,
+                    release.serves.schema,
+                    front.schema
+                ));
+            }
+            if registered
+                && let Some(project) = &project
+                && let Err(why) =
+                    crate::machine::command::board_readiness_within(&front, &project.id, look)
+            {
+                steps.push(why);
+            }
+        }
     }
     steps
 }

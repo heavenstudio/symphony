@@ -61,6 +61,7 @@ mod task_diff;
 mod task_queries;
 mod task_stage;
 pub mod timeline;
+pub mod workflow;
 pub use agent_activity::{AGENT_ACTIVITY_SCHEMA, AgentHour, AgentLine};
 pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};

@@ -56,17 +56,22 @@ repository's own documents. `just symphony-cli` prints the document commands and
 
 ## On your own project
 
-A project runs four commands: `symphony`, `tasks`, `agent-send` and `symphony-server`. Their
-packages are made to be installed from crates.io with the line
-[RELEASES](docs/RELEASES.md#packages-on-cratesio) gives, but none is published yet. Until then,
-build them in a clone of this repository:
+A project runs four commands: `symphony`, `tasks`, `agent-send` and `symphony-server`. Install
+their published packages from crates.io:
+
+```sh
+cargo install --locked --config profile.release.strip=true --config profile.release.codegen-units=1 symphony-app symphony-board symphony-server
+```
+
+Each answers `--version`. [RELEASES](docs/RELEASES.md#packages-on-cratesio) lists the packages,
+versions and installation settings. To build them from source, clone this repository and run:
 
 ```sh
 cargo build --locked --release --bin symphony --bin tasks --bin agent-send --bin symphony-server
 ```
 
-They are left in `.target/release/`: put that folder on `PATH`, or link them where `symphony init`
-says. Each answers `--version`.
+A source build leaves them in `.target/release/`: put that folder on `PATH`, or link them where
+`symphony init` says.
 
 In the project's main checkout, a git repository, run `symphony init`. It installs the agents'
 skills, the recipes (`symphony.just`, which the project's justfile imports), the allow rules and
@@ -91,9 +96,10 @@ it prints.
 
 ## As a library
 
-A project with plugins of its own takes Symphony's libraries from this repository by Git, at a
-release tag, and commits the selected revision in its Cargo lockfile; its host supplies its
-plugins and its own verification, approval and landing policy
+A project with plugins of its own takes Symphony's versioned libraries from crates.io, or from
+this repository by Git at a release tag with the selected revision in its Cargo lockfile. Take
+the related packages from one source together; its host supplies its plugins and its own
+verification, approval and landing policy
 ([the plugin protocol](docs/PLUGIN_PROTOCOL.md), [releases](docs/RELEASES.md)).
 
 ## Working on Symphony
@@ -101,6 +107,18 @@ plugins and its own verification, approval and landing policy
 [The workspace guide](AGENTS.md) holds the commands, the checks and what each needs installed,
 [RULES.md](RULES.md) the standing rules, and [the server guide](apps/symphony-server/README.md)
 how the server is put together.
+
+The PostgreSQL tests need PostgreSQL 18 or later, installed with your package manager, with its
+`bin` folder on `PATH`. On a Mac with Homebrew:
+
+```sh
+brew install postgresql@18
+export PATH="$(brew --prefix postgresql@18)/bin:$PATH"
+```
+
+An explicit `[board] postgresql` absolute folder in `symphony.toml` overrides discovery. All
+tools come from that one installation; missing tools or an older server fail with setup guidance
+([the project setting](docs/PROJECT_FILE.md#board)). Tests start only their own scratch servers.
 
 ## License
 

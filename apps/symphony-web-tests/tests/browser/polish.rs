@@ -56,6 +56,7 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
             "document.querySelector('button[aria-label=\"Finished tasks\"]') !== null",
             SHOWN
         ));
+        super::components::board_filters(&mut page);
         page.eval("document.querySelector('button[aria-label=\"Finished tasks\"]').focus()");
         key(&mut page, " ", "Space", 32);
         popup_ready(&mut page);
@@ -1299,6 +1300,7 @@ fn a_task_card_opens_its_task_from_its_title() {
     let Some(mut page) = chrome() else { return };
     viewport(&mut page, 1280, 900);
     page.open(&site.url("/tasks"));
+    page.reveal("#column-review");
     let title = "[data-slug='tools/example'] .taskcard-title";
     assert!(
         page.wait_for(
@@ -1397,8 +1399,7 @@ fn the_tasks_filters_read_apart_and_a_chosen_window_moves_nothing() {
             "{width}px: {}",
             page.eval("document.querySelector('main')?.innerText")
         );
-        let phone = width <= 760;
-        if phone {
+        {
             page.eval("document.querySelector('.board-filters-toggle').click()");
             assert!(
                 page.wait_for(
@@ -1448,10 +1449,10 @@ fn separately_opened_backlog_and_cancelled_lists_take_the_height_of_their_own_ca
     viewport(&mut page, 1280, 900);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelector('button.backlog-rail') !== null",
+        "document.querySelector('button.board-backlog') !== null",
         SHOWN
     ));
-    page.eval("document.querySelector('.backlog-rail').click()");
+    page.eval("document.querySelector('.board-backlog').click()");
     assert!(page.wait_for(
         "document.querySelector('.column[data-status=backlog] .taskcard') !== null",
         SHOWN
@@ -1705,7 +1706,7 @@ fn the_waiting_stage_labels_start_alike_in_their_columns() {
     viewport(&mut page, 1280, 900);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelectorAll('.waiting-columns .column').length === 7",
+        "document.querySelectorAll('.waiting-columns .column').length === 8",
         SHOWN
     ));
     let labels = page.eval("[...document.querySelectorAll('.waiting-columns .column')].map(column => { const label = column.querySelector('h2'), words = document.createRange(); words.selectNodeContents(label.firstChild); return [column.dataset.status, Math.round(words.getBoundingClientRect().left - column.getBoundingClientRect().left), getComputedStyle(label, '::before').content]; })");
@@ -1726,6 +1727,7 @@ fn open_finished(page: &mut Chrome) {
         "document.querySelector('button[aria-label=\"Finished tasks\"]') !== null",
         SHOWN
     ));
+    super::components::board_filters(page);
     page.eval("document.querySelector('button[aria-label=\"Finished tasks\"]').focus()");
     key(page, " ", "Space", 32);
     popup_ready(page);

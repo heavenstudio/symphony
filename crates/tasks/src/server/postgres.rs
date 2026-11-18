@@ -1,7 +1,8 @@
 //! The board's PostgreSQL, beside its SurrealDB ([`Postgres`]): the machine's own, installed by its
-//! package manager, from the folder of programs the project file names (`[board] postgresql`,
-//! [`programs`]; [its card](../../../../docs/DECISIONS.md#postgresql-binary-source)). It serves
-//! only a board kept in a scratch place, whose server ends with the process that started it;
+//! package manager, from the folder of programs the project file names (`[board] postgresql`)
+//! or found on `PATH` ([`discover_programs`];
+//! [its card](../../../../docs/DECISIONS.md#postgresql-binary-source)). It serves only a board
+//! kept in a scratch place, whose server ends with the process that started it;
 //! [`Home::board_server`] selects it by the home's durable engine identity. No live home starts it.
 //!
 //! Its data is `postgresql/` in the board's folder, made by `initdb` at the first start in a folder
@@ -138,32 +139,7 @@ impl Postgres {
     /// The release of its programs, as `postgres --version` says it (`18.7`): refused when the
     /// programs are not there or older than [`OLDEST_MAJOR`].
     pub fn version(&self) -> Result<String, ServerError> {
-        let postgres = self.program("postgres");
-        if !postgres.is_file() {
-            return Err(ServerError::Io(format!(
-                "PostgreSQL is not at {} (`[board] {KEY}` in the project file names the folder of \
-                 its programs): install it with the machine's package manager, `brew install \
-                 postgresql@{OLDEST_MAJOR}` on a Mac, and name its programs' folder there",
-                self.programs.display()
-            )));
-        }
-        let said =
-            output(command(&postgres).arg("--version")).map_err(io("could not run", &postgres))?;
-        let text = String::from_utf8_lossy(&said.stdout);
-        let version = version_of(&text).ok_or_else(|| {
-            ServerError::Io(format!(
-                "{} --version said {:?}, no release of PostgreSQL",
-                postgres.display(),
-                text.trim()
-            ))
-        })?;
-        match major(&version) {
-            Some(major) if major >= OLDEST_MAJOR => Ok(version),
-            _ => Err(ServerError::Io(format!(
-                "{} is PostgreSQL {version}; the board runs on {OLDEST_MAJOR} or later",
-                postgres.display()
-            ))),
-        }
+        version_at(&self.programs).map_err(ServerError::Io)
     }
 
     /// Its server, answering: the one running on its data, else one started now. A board outside
@@ -487,6 +463,104 @@ pub fn programs(root: &Path) -> Result<Option<PathBuf>, String> {
                 toml::Value::Integer(number) => number.to_string(),
                 other => format!("a {}", other.type_str()),
             }
+        )),
+    }
+}
+
+/// The machine's PostgreSQL installation: the project file's explicit [`programs`] folder first,
+/// otherwise the first executable `postgres` on `PATH`. All tools come from that one folder;
+/// an invalid override or incompatible first installation is refused, never skipped. The server
+/// must be at least [`OLDEST_MAJOR`], and `initdb`, `pg_ctl` and `psql` must be executable there.
+/// This only inspects programs; it starts no database and writes no state.
+pub fn discover_programs(root: &Path) -> Result<PathBuf, String> {
+    discover_with_path(root, std::env::var_os("PATH").as_deref())
+}
+
+fn discover_with_path(root: &Path, path: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
+    let folder = match programs(root)? {
+        Some(folder) => folder,
+        None => {
+            let folder = path
+                .into_iter()
+                .flat_map(std::env::split_paths)
+                .find(|folder| executable(&folder.join("postgres")))
+                .ok_or_else(|| {
+                    format!(
+                        "{}: no executable postgres on PATH; {}",
+                        root.join(crate::project::FILE).display(),
+                        setup_help()
+                    )
+                })?;
+            std::path::absolute(&folder)
+                .map_err(|error| format!("cannot resolve {}: {error}", folder.display()))?
+        }
+    };
+    version_at(&folder)?;
+    for tool in ["initdb", "pg_ctl", "psql"] {
+        if !executable(&folder.join(tool)) {
+            return Err(format!(
+                "{} is missing or not executable; all PostgreSQL tools must be in {}; {}",
+                folder.join(tool).display(),
+                folder.display(),
+                setup_help()
+            ));
+        }
+    }
+    Ok(folder)
+}
+
+fn executable(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|file| file.is_file() && file.permissions().mode() & 0o111 != 0)
+}
+
+fn setup_help() -> String {
+    format!(
+        "install PostgreSQL {OLDEST_MAJOR} or later with the machine's package manager \
+         (`brew install postgresql@{OLDEST_MAJOR}` on a Mac); put its bin folder on PATH \
+         or set [board] {KEY} in symphony.toml to that absolute folder"
+    )
+}
+
+fn version_at(programs: &Path) -> Result<String, String> {
+    let postgres = programs.join("postgres");
+    if !executable(&postgres) {
+        return Err(format!(
+            "PostgreSQL is not at {} (postgres is missing or not executable); {}",
+            programs.display(),
+            setup_help()
+        ));
+    }
+    let said = output(command(&postgres).arg("--version")).map_err(|error| {
+        format!(
+            "could not run {}: {error}; {}",
+            postgres.display(),
+            setup_help()
+        )
+    })?;
+    if !said.status.success() {
+        return Err(format!(
+            "{} --version failed ({}): {}; {}",
+            postgres.display(),
+            said.status,
+            String::from_utf8_lossy(&said.stderr).trim(),
+            setup_help()
+        ));
+    }
+    let text = String::from_utf8_lossy(&said.stdout);
+    let version = version_of(&text).ok_or_else(|| {
+        format!(
+            "{} --version said {:?}, no release of PostgreSQL; {}",
+            postgres.display(),
+            text.trim(),
+            setup_help()
+        )
+    })?;
+    match major(&version) {
+        Some(major) if major >= OLDEST_MAJOR => Ok(version),
+        _ => Err(format!(
+            "{} is PostgreSQL {version}; the board runs on {OLDEST_MAJOR} or later; {}",
+            postgres.display(),
+            setup_help()
         )),
     }
 }

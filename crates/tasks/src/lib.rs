@@ -59,7 +59,7 @@ mod maps;
 pub mod on_land;
 pub mod on_review;
 pub mod orchestration;
-mod order;
+pub mod order;
 pub mod pg;
 pub mod port;
 pub mod project;
@@ -92,9 +92,10 @@ pub use store::{
     Callback, ChatSeat, CoveredLine, Database, Error, Filed, Given, HandOff, Held, KINDS,
     LANDS_FROM, LATE_SECONDS, Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, On, Opening,
     PIPELINE, PULLABLE, Pick, Presence, Program, ROLES, Raw, RawRows, ReportRead, ReportTask, Role,
-    SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task, TaskStamp, UNANSWERED_WAIT,
-    UNANSWERED_WAIT_VAR, Unfresh, WRITERS_RECENT, WRITERS_SINCE, Writer, approved, can_transition,
-    covered_by, covered_line, landing, reviewer_verdict,
+    SLOT_READS, STATUSES, SearchHit, SearchSource, Session, StageRecord, Store,
+    THREAD_WINDOW_LIMIT, Task, TaskStamp, ThreadWindow, UNANSWERED_WAIT, UNANSWERED_WAIT_VAR,
+    Unfresh, WRITERS_RECENT, WRITERS_SINCE, Writer, approved, can_transition, covered_by,
+    covered_line, landing, reviewer_verdict,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

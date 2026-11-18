@@ -539,7 +539,35 @@ fn a_plugins_process_gives_its_navigation_and_theme_from_its_declaration_with_no
         Some("Every")
     );
     assert_eq!(project.view().wordmark, "Every");
-    assert!(symphony::theme::problems(&project).is_empty());
+    let package = symphony::theme::Package::of(&project);
+    assert_eq!(package.css(), ":root{--background:white;--primary:red;}\n");
+    assert_eq!(
+        package.layouts,
+        std::collections::BTreeMap::from([("header".into(), "compact".into())])
+    );
+    assert_eq!(symphony::theme::problems(&project).len(), 2);
+    assert!(
+        symphony::theme::problems(&project)
+            .iter()
+            .any(|problem| problem.contains("unsafe"))
+    );
+    assert!(
+        symphony::theme::problems(&project)
+            .iter()
+            .any(|problem| problem.contains("unknown"))
+    );
+    let mut overridden = project.clone();
+    overridden
+        .theme
+        .tokens
+        .insert("primary".into(), "blue".into());
+    overridden
+        .theme
+        .layouts
+        .insert("header".into(), "default".into());
+    let package = symphony::theme::Package::of(&overridden);
+    assert_eq!(package.css(), ":root{--background:white;--primary:blue;}\n");
+    assert!(package.layouts.is_empty());
     assert!(lines(&symphony::plugins::record(&project, &tree.root)).is_empty());
 }
 
@@ -1232,4 +1260,28 @@ fn the_cost_of_a_register_read_linked_card_by_card_from_its_process_and_batched(
             line["round_trip_us"]
         );
     }
+}
+
+#[test]
+fn process_command_maps_keep_key_order_and_refuse_the_first_invalid_name() {
+    let root = Path::new("/r");
+    let valid = Project::parse(root, "[plugins]\ncrates = [\"z\", \"a\"]\n[plugins.process]\nz = [\"z\", \"--z\"]\na = [\"./bin/a\", \"--a\"]\n").unwrap();
+    assert_eq!(
+        valid
+            .plugin_processes
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["a", "z"]
+    );
+    assert_eq!(valid.plugin_processes["a"].command, ["/r/bin/a", "--a"]);
+    assert_eq!(valid.plugin_processes["z"].command, ["z", "--z"]);
+    let invalid = Project::parse(
+        root,
+        "[plugins]\ncrates = [\"z\", \"a\"]\n[plugins.process]\nz = []\na = []\n",
+    );
+    assert_eq!(
+        invalid.err().as_deref(),
+        Some("symphony.toml: [plugins.process] a names no program")
+    );
 }

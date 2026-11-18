@@ -25,10 +25,8 @@ and `--json` gives the same board as data.
 
 ## The web app
 
-The board is the front page: open items first, then the design docs and how
-many decisions wait in them. A document page renders the markdown; hovering any block shows a
-**+ comment** button, and clicking a decision card opens its verdict buttons
-and a note box. The app serves any file under the project, so a concept
+The product references describe [reading a document](product/DOCUMENT.md) and
+[using a card's verdict editor](product/CARDS.md). The app serves any file under the project, so a concept
 page's images, SVGs and galleries under `artifacts/` show inline, and once
 in-game captures exist under `artifacts/concept-renders/` they show the same
 way. It writes verdicts under `docs/` (and the owner's approval to land an owner-tier branch, in the landing store),
@@ -83,11 +81,14 @@ main's, or one main changed after the branch forked, is skipped.
   text or its lines, not main's), are not on disk in its worktree waits until they are: the server
   checks those files on a timer and posts the card when they land. `just symphony-cli docs-audit
   --check` refuses it ([below](#writing-a-card)).
-- **Live branches only.** A branch merged into main, or whose task the board says is done or cancelled
+- **Until a branch lands.** A branch merged into main posts nothing. A branch whose task the board
+  says is done or cancelled
   (every task that names the branch: the task named like it, and the tasks that record it as their
-  executor's branch), posts nothing. A reviewer's approval sets a task done before its branch lands, so
-  an approved branch's cards and answers leave the owner's view until the branch lands; what the owner
-  said there, and the answers under it, stay (below).
+  executor's branch) keeps its posted revisions of main's proposal text until it lands, as a live
+  branch does, including rewrites of options or body content under an unchanged heading. A plain
+  appended reply keeps the existing proposal. The page and the queue draw the same revised card,
+  and an answer saved from either belongs to that branch. Its other cards keep only what the
+  owner said there and the answers under it (below).
 - **One card.** A card main holds and a branch posted is one card wherever the owner reads it: the queue,
   main's page and the branch's page all show both copies' lines in time order, so the owner's line and the
   agent's answer show wherever either was written. Its mark is that of the copy whose latest verdict line
@@ -103,7 +104,8 @@ main's, or one main changed after the branch forked, is skipped.
   group, the register regrouped as a save would regroup it, each block still standing for the
   file's own lines, where a save or a comment from the page lands.
 - **The owner's word never disappears.** A line the owner saved in any worktree counts, whether the
-  branch is live or finished and whether the card is posted or a draft. On a card a live branch posted,
+  branch is live or finished and whether the card is posted or a draft. On a card a live branch posted
+  or a finished branch's posted revision of main's proposal text,
   it is laid on the branch's copy, which is one card with main's by the rule above. Otherwise (a card the
   branch did not post, a draft, a finished branch's thread) it is laid on main's copy of the card when
   main has it, else it stands as the card of the branch's page, waiting on an agent. Laid on main's copy,
@@ -254,9 +256,8 @@ enough; the link at the end of each card goes to the section that argues it.
 
 ### Settled cards
 
-**Settled cards fold away.** Resolved, dismissed and rejected cards show as one
-line in the app; click to see the card and its full history. `--tidy` also
-resolves an approval once an agent has answered its note, and moves every
+[Settled cards](product/CARDS.md#settled-cards) keep their full history behind a fold.
+`--tidy` also resolves an approval once an agent has answered its note, and moves every
 answered `> [!comment]` into `docs/history/review-ledger.md`, word for word, so
 pages keep only what is still open. Nothing is deleted: the cards stay in their
 register and the comments in the ledger.
@@ -367,12 +368,8 @@ information its judgement call needs, and nothing more (`RULES.md`
 ## Versions and waiting decisions
 
 A document has no status: it is always open to review, and what the owner has
-yet to answer is its undecided cards. Every document page and the docs index
-say **N decisions waiting** (the same count the next/previous buttons walk).
-Where a document stands in time is its git history: the page header shows when
-it last changed and the commit, and the commit links to the document's history,
-a list of each commit that touched it (date, subject), each opening that
-commit's diff of the document in the app.
+yet to answer is its undecided cards. The document reference describes
+[versions and branch comparisons](product/DOCUMENT.md#versions-and-branch-pages).
 
 Only the owner approves a card (`RULES.md` `docs/no-self-approval`), and an
 approved card stays closed: no agent reopens it with a question on it
@@ -503,12 +500,12 @@ checkout, and a chat callback names the full paths.
 
 ## On a phone
 
-The owner reviews on a phone over a mobile link, so the app is built to cost little there
-(`symphony::images` and `apps/symphony-web`; measured with Chrome at phone size).
+The product references show the [document](product/DOCUMENT.md#on-a-phone) and
+[card editor](product/CARDS.md#on-a-phone) on a phone. The app limits the cost of pictures over a
+mobile link (`symphony::images` and `apps/symphony-web`).
 
-- **A picture never moves the page.** Every local PNG the app draws carries its real `width` and
-  `height`, so its space is reserved before it arrives. Nothing is unhidden or reshaped after the first
-  paint: the contents list starts shut on a narrow screen.
+- **A picture reserves its space.** Every local PNG the app draws carries its real `width` and
+  `height`, so its space is reserved before it arrives.
 - **Pictures are drawn from small copies.** A PNG over 120 KB is shown from a cached JPEG at
   `/thumb/<width>/<token>/<path>.jpg`, made once into `artifacts/docs-thumbs/` (a cache the app
   writes, named by the picture's path, time and size, so it is never stale) with the system's `sips`;
@@ -533,11 +530,12 @@ The owner reviews on a phone over a mobile link, so the app is built to cost lit
 
 ## HTML mockups in cards
 
-A card line `![Flight HUD A](/ui/mockups/hud-a.html)` (an image whose target is an `.html` file, absolute or relative
-to the page) shows the mockup live, not a picture of it: a lazy, sandboxed `<iframe>` at the mockup's native
-1280x800, scaled to the card's width (`tools/static/mockups.js`) so it stays crisp on a phone. Tapping it or the
-*full size* link opens the page in a new tab. A plain link to an `.html` stays a link; a PNG keeps the picture path.
-The card's comparison row (Base, A, B, C above its lines) shows an `.html` candidate the same way.
+A card line `![Flight HUD A](/ui/mockups/hud-a.html)` (an image whose target is an `.html` file,
+absolute or relative to the page) embeds a mockup. A plain link to an `.html` stays a link; a PNG
+keeps the picture path. The document reference describes
+[pictures and mockups in the reader](product/DOCUMENT.md#pictures-and-mockups).
+The frame uses the mockup's native 1280x800 size; the card's comparison row (Base, A, B, C above
+its lines) uses the same embedding for an `.html` candidate.
 
 - **Sandbox.** The frame is `sandbox="allow-scripts"`: scripts run for animation, with no same-origin access to the
   app, no top navigation, no forms or popups. The server also sends `Content-Security-Policy: sandbox allow-scripts`

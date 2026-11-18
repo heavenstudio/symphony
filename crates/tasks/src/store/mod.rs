@@ -8,6 +8,7 @@
 //! optimistic conflict) or finds itself stale reads and decides again.
 
 use crate::health::{self, EXECUTING, Health};
+use crate::maps::Collect as _;
 pub(crate) use crate::quote::repr;
 use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
 use crate::rpc::{Client, DbError};
@@ -20,6 +21,7 @@ use std::hash::{BuildHasher, RandomState};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod artifacts;
 pub(crate) mod asks;
 mod beside;
 mod branches;
@@ -55,6 +57,7 @@ mod stage_lines;
 mod stamp;
 mod statement;
 mod surreal;
+mod thread_window;
 mod transaction;
 pub(crate) mod unanswered;
 mod waits;
@@ -79,10 +82,11 @@ pub use opening::Opening;
 pub use raw::{Raw, Rows as RawRows};
 use reading::native_health;
 pub use report_lines::{ReportRead, ReportTask};
-pub use search::SearchHit;
+pub use search::{SearchHit, SearchSource};
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
 pub use stamp::TaskStamp;
+pub use thread_window::{THREAD_WINDOW_LIMIT, ThreadWindow};
 pub use unanswered::{LOOKUP_WAIT as UNANSWERED_WAIT, LOOKUP_WAIT_VAR as UNANSWERED_WAIT_VAR};
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
@@ -434,7 +438,7 @@ impl Store {
                     .into_iter()
                     .map(|rows| rows.into_iter().map(message).collect()),
             )
-            .collect())
+            .collect_map())
     }
 
     /// Become the executor. Of any number of claims at once, one wins. A claim that starts ready
@@ -792,16 +796,17 @@ impl Store {
         TRIED_AGAIN.with(std::cell::Cell::get)
     }
 
-    fn retrying<T>(&self, once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
-        retried(PATIENCE, once)
+    fn retrying<T>(&self, mut once: impl FnMut() -> Result<T, Failure>) -> Result<T, Error> {
+        retried(PATIENCE, &mut once)
     }
 }
 
 /// `once` tried until it gives its result or refuses, again each time the board moved under it,
 /// for `patience` at most: each try again counted on this thread ([`Store::tried_again_here`]).
+#[inline(never)]
 fn retried<T>(
     patience: Duration,
-    mut once: impl FnMut() -> Result<T, Failure>,
+    once: &mut dyn FnMut() -> Result<T, Failure>,
 ) -> Result<T, Error> {
     let began = Instant::now();
     let mut attempt = 0;

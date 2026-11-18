@@ -419,6 +419,13 @@ addEventListener(
 );
 addEventListener("pagehide", clearTouchScroll);
 
+// Updates sharing a scrolling box share its original anchor until that hold ends. Starting a
+// second hold after a row moved would make the two correct toward different positions each frame.
+const placeHolds = new Map();
+addEventListener("pagehide", () => {
+  for (const held of placeHolds.values()) held.stop();
+});
+
 // A live update about to be drawn keeps what the reader looks at in place: the focused field on
 // the screen, else the first of `rows` on it. Only where the reader has scrolled: the box that
 // scrolls around it once it is off its top, else the page once it is. One at its top shows
@@ -453,14 +460,24 @@ window.reviewHoldPlace = (rows) => {
   const scroller = scrollerOf(anchor),
     page = scrollY > 0;
   if (scroller ? scroller.scrollTop <= 0 : !page) return;
+  const held = placeHolds.get(scroller);
+  if (held?.anchor.isConnected) {
+    held.renew();
+    return;
+  }
+  held?.stop();
   const top = anchor.getBoundingClientRect().top;
   let stopped = false,
     frame = 0,
     quiet = 0,
     stuck = 0;
-  const listening = onGesture(() => {
+  const stop = () => {
     stopped = true;
-  });
+    listening();
+    if (placeHolds.get(scroller)?.stop === stop) placeHolds.delete(scroller);
+  };
+  const listening = onGesture(stop);
+  placeHolds.set(scroller, { anchor, stop, renew: () => (quiet = 0) });
   const hold = () => {
     if (!stopped && anchor.isConnected) {
       const moved = anchor.getBoundingClientRect().top - top;
@@ -479,7 +496,7 @@ window.reviewHoldPlace = (rows) => {
       stuck = left;
       if (quiet < 4 && ++frame < 1800) return requestAnimationFrame(hold);
     }
-    listening();
+    stop();
   };
   requestAnimationFrame(hold);
 };

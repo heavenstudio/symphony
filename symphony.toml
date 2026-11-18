@@ -9,11 +9,13 @@ id = "symphony"
 [agents]
 panes = "hc"
 worktrees = "../symphony-wt"
-launch = { default = "codex", model = "gpt-6.1-sol" }
+launch = { default = "claude", model = "fable" }
 
 [agents.models]
-orchestrator = "gpt-6.1-sol"
-assessor = "gpt-6.1-sol"
+reviewer = "fable"
+executor = "fable"
+orchestrator = "fable"
+assessor = "haiku"
 
 # What a generated branch passes before it lands with no reviewer: the check closest to the
 # documents it changes. `just verify` is the release run's (docs/CHECKS.md).
@@ -48,9 +50,8 @@ guide = "docs/TASKS.md"
 # in its own checkout. The release run is `symphony-build`'s, a binary no project is given, never
 # the shipped `symphony`'s.
 on_land = [".target/bin/symphony-build", "release", "--due"]
-# The machine's PostgreSQL, Homebrew's (`brew install postgresql@18`), whose `opt` link holds
-# through its minor upgrades. Only a scratch board's server and its tests start it so far.
-postgresql = "/opt/homebrew/opt/postgresql@18/bin"
+# PostgreSQL 18 or later is discovered on PATH; [board] postgresql can name an absolute bin
+# folder instead (docs/PROJECT_FILE.md). Only scratch boards and their tests start it so far.
 
 # A release run every 20 landings, and a green release's refresh of the machine (docs/RELEASES.md).
 [releases]

@@ -729,12 +729,15 @@ impl Parser<'_> {
             };
             shapes.push(VectorShape {
                 kind,
-                attributes: shape
-                    .attrs
-                    .iter()
-                    .filter(|(key, _)| known_attribute(&shape.tag, key))
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
+                attributes: {
+                    let mut attributes = BTreeMap::new();
+                    for (key, value) in &shape.attrs {
+                        if known_attribute(&shape.tag, key) {
+                            attributes.insert(key.clone(), value.clone());
+                        }
+                    }
+                    attributes
+                },
             });
         }
         (shapes, unknown)
@@ -806,16 +809,18 @@ fn presentation(node: &Node, consumed: &[&str]) -> Presentation {
         class: get("class"),
         id: get("id"),
         title: get("title"),
-        attributes: node
-            .attrs
-            .iter()
-            .filter(|(k, _)| {
-                !["class", "id", "title"].contains(&k.as_str())
-                    && !consumed.contains(&k.as_str())
-                    && known_attribute(&node.tag, k)
-            })
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
+        attributes: {
+            let mut attributes = BTreeMap::new();
+            for (key, value) in &node.attrs {
+                if !["class", "id", "title"].contains(&key.as_str())
+                    && !consumed.contains(&key.as_str())
+                    && known_attribute(&node.tag, key)
+                {
+                    attributes.insert(key.clone(), value.clone());
+                }
+            }
+            attributes
+        },
     }
 }
 
@@ -1030,7 +1035,9 @@ pub fn census(root: &std::path::Path, out: &mut dyn std::io::Write) -> Result<()
         ("remaining-container", containers),
     ] {
         let mut pairs: Vec<_> = pairs.into_iter().collect();
-        pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        symphony_board::order::sort_by(&mut pairs, &|a, b| {
+            b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+        });
         for (pair, count) in pairs {
             writeln!(out, "{label}: {count} {pair}").map_err(|e| e.to_string())?;
         }
@@ -1176,5 +1183,58 @@ fn count(
             }
         }
         _ => (),
+    }
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    use crate::test_tree::Tree;
+    #[test]
+    fn census_pairs_keep_complete_count_and_label_order_and_report_cost() {
+        for count in [0, 1, 32, 512] {
+            let mut pairs: Vec<_> = (0..count)
+                .map(|i| (format!("div {{class:猫-{i}}}"), i % 11))
+                .collect();
+            let mut old = pairs.clone();
+            let compare = |a: &(String, usize), b: &(String, usize)| {
+                b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+            };
+            let (_, old_cpu) = test_time::cpu::spent(|| old.sort_by(&compare));
+            let (_, new_cpu) =
+                test_time::cpu::spent(|| symphony_board::order::sort_by(&mut pairs, &compare));
+            assert_eq!(pairs, old);
+            eprintln!(
+                "census pairs n={count}: old_cpu={old_cpu:?},shared_cpu={new_cpu:?},positions={}bytes plus usize-sort scratch",
+                count * std::mem::size_of::<usize>()
+            );
+        }
+    }
+    #[test]
+    fn census_keeps_every_deterministic_output_byte_with_count_and_label_ties() {
+        let tree = Tree::new();
+        tree.write("docs/CENSUS.md", "# Census\n\n<div class=\"z\"><p>Alpha</p></div>\n\n<section><p>Beta</p></section>\n\n<div class=\"a\"><p>Gamma</p></div>\n\n<div class=\"z\"><p>Delta</p></div>\n\n<aside><p>Epsilon</p></aside>\n\n<section><p>Zeta</p></section>\n");
+        let mut out = Vec::new();
+        super::census(&tree.root, &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        let (stable, elapsed) = out.rsplit_once("elapsed: ").unwrap();
+        // Golden captured with the unchanged native release census before the substitution.
+        assert_eq!(
+            stable,
+            "documents: 1\nblock.container: 6\nblock.heading: 1\nblock.paragraph: 6\nspan.text: 7\nraw-container: 2 div {\"class\":\"z\"}\nraw-container: 2 section {}\nraw-container: 1 aside {}\nraw-container: 1 div {\"class\":\"a\"}\nremaining-container: 2 div {\"class\":\"z\"}\nremaining-container: 2 section {}\nremaining-container: 1 aside {}\nremaining-container: 1 div {\"class\":\"a\"}\nUnknown: 0 {}\n"
+        );
+        let seconds: f64 = elapsed
+            .strip_suffix("s; no panic\n")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(seconds.is_finite() && seconds >= 0.0);
+        let empty = Tree::new();
+        let mut out = Vec::new();
+        super::census(&empty.root, &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(
+            out.rsplit_once("elapsed: ").unwrap().0,
+            "documents: 0\nUnknown: 0 {}\n"
+        );
     }
 }

@@ -539,7 +539,10 @@ fn a_worktree_whose_owner_answers_cannot_be_read_is_kept_and_read_again() {
     )
     .unwrap();
     let unread = sweep::git::answers(&wt, &docs(), None).unwrap_err();
-    assert!(unread.contains("docs/NEW.md could not be read"), "{unread}");
+    assert!(
+        unread.starts_with("git grep could not read in ") && unread.contains("docs/NEW.md"),
+        "{unread}"
+    );
     let result = r.sweep_with(|_| {});
     assert!(wt.exists());
     assert!(

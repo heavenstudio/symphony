@@ -21,7 +21,12 @@ const SOURCES: [&str; 3] = [
 
 /// Each struct a table is read into: the source holding it, from the workspace's root, its name,
 /// and the table as the reference's heading names it.
-const TABLES: [(&str, &str, &str); 16] = [
+const TABLES: [(&str, &str, &str); 17] = [
+    (
+        "crates/symphony-api/src/workflow.rs",
+        "Definition",
+        "[workflow]",
+    ),
     (FILE, "FileProject", "[project]"),
     (FILE, "FileEntrypoint", "[[entrypoints]]"),
     (FILE, "FilePlugins", "[plugins]"),

@@ -113,7 +113,7 @@ pub fn documents(root: &Path) -> Result<Vec<Doc>, ReviewError> {
         }
         docs.push(doc);
     }
-    docs.sort_by(|a, b| a.path.cmp(&b.path));
+    symphony_board::order::sort_by(&mut docs, &|a, b| a.path.cmp(&b.path));
     Ok(docs)
 }
 
@@ -328,7 +328,9 @@ pub fn register_files(root: &Path) -> Vec<PathBuf> {
         .into_iter()
         .filter(|path| read_text(path).is_ok_and(|text| splitlines(&text).contains(&REGION_START)))
         .collect();
-    found.sort_by_key(|path| (*path != register, path.to_string_lossy().to_string()));
+    symphony_board::order::sort_by_key(&mut found, &|path| {
+        (*path != register, path.to_string_lossy().to_string())
+    });
     found
 }
 
