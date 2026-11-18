@@ -4,12 +4,12 @@
 
 use crate::children::Child as _;
 use crate::common::{Backend, Fixture, NOW, Seed, client, server_addr, session, task};
+use std::time::Duration;
 use symphony_board::rows::{
     AskRow, BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, HeldRow, LinkRow, MessageRow, RoleRow,
     SessionRow, TaskRow, TaskSessionRow, UsageRow,
 };
 use symphony_board::sys::{self, Command};
-use std::time::Duration;
 use symphony_board::{Database, Error, Store, cli, copy_main};
 
 /// One row of every table, each optional column both set and not, in key order.
@@ -495,7 +495,11 @@ fn many_words() -> Dump {
     let mut messages: Vec<MessageRow> = (1..=40)
         .map(|id| {
             let slug = if id % 3 == 0 { "sim/b" } else { "sim/a" };
-            let sender = if id % 2 == 0 { "amber-heron" } else { "brisk-finch" };
+            let sender = if id % 2 == 0 {
+                "amber-heron"
+            } else {
+                "brisk-finch"
+            };
             line(id, slug, sender, "msg")
         })
         .collect();
@@ -567,7 +571,8 @@ fn postgresql_of(f: &Fixture) -> symphony_board::pg::Client {
 }
 
 /// A copy the server ends (as its limit ends one, here by a trigger that raises the same
-/// condition at the deliveries) is rolled back whole and says in one line how far it was.
+/// condition at a table of the test's choosing) is rolled back whole and says in one line how
+/// far it was: at its first table, in the middle, and past its last.
 #[test]
 fn a_postgresql_copy_the_server_ends_says_the_rows_it_reached_and_leaves_the_board() {
     let f = Fixture::on(Backend::PostgreSql, Seed { dump: many_words() });
@@ -576,27 +581,49 @@ fn a_postgresql_copy_the_server_ends_says_the_rows_it_reached_and_leaves_the_boa
         .simple(
             "CREATE FUNCTION fixture_ended() RETURNS trigger LANGUAGE plpgsql AS $$ \
              BEGIN RAISE EXCEPTION USING ERRCODE = 'query_canceled', \
-                 MESSAGE = 'canceling statement due to statement timeout'; END $$; \
-             CREATE TRIGGER fixture_ended BEFORE INSERT ON delivery \
-             FOR EACH STATEMENT EXECUTE FUNCTION fixture_ended();",
+                 MESSAGE = 'canceling statement due to statement timeout'; END $$;",
         )
         .unwrap();
     let generation = f.store.recovery_generation().unwrap();
     let words = said(&f, &["amber-heron", "brisk-finch"]);
-    match f.store.copy(&everything()) {
-        Err(Error::Db(why)) => assert_eq!(
-            why,
-            "the copy did not finish in 270 s and was ended, the board left as it was: it had \
-             copied 2 of task, 2 of link, 2 of session, 2 of role, 2 of message and was at the \
-             1 of delivery"
+    for (table, reached) in [
+        ("task", "it had copied no table and was at the 2 of task"),
+        (
+            "delivery",
+            "it had copied 2 of task, 2 of link, 2 of session, 2 of role, 2 of message and was \
+             at the 1 of delivery",
         ),
-        other => panic!("expected the copy ended, got {other:?}"),
+        (
+            "copied_fields",
+            "it had copied 2 of task, 2 of link, 2 of session, 2 of role, 2 of message, 1 of \
+             delivery, 1 of barred_key, 1 of task_session, 1 of delivery_key, 2 of ask, 2 of \
+             usage and was at its counters",
+        ),
+    ] {
+        client
+            .simple(&format!(
+                "CREATE TRIGGER fixture_ended BEFORE INSERT ON {table} \
+                 FOR EACH STATEMENT EXECUTE FUNCTION fixture_ended()"
+            ))
+            .unwrap();
+        match f.store.copy(&everything()) {
+            Err(Error::Db(why)) => assert_eq!(
+                why,
+                format!(
+                    "the copy did not finish in 270 s and was ended, the board left as it was: \
+                     {reached}"
+                )
+            ),
+            other => panic!("expected the copy ended at {table}, got {other:?}"),
+        }
+        assert_eq!(f.store.dump().unwrap(), many_words(), "{table}");
+        assert_eq!(said(&f, &["amber-heron", "brisk-finch"]), words);
+        assert_eq!(f.store.recovery_generation().unwrap(), generation);
+        client
+            .simple(&format!("DROP TRIGGER fixture_ended ON {table}"))
+            .unwrap();
     }
-    assert_eq!(f.store.dump().unwrap(), many_words());
-    assert_eq!(said(&f, &["amber-heron", "brisk-finch"]), words);
-    assert_eq!(f.store.recovery_generation().unwrap(), generation);
     // The board takes a copy as before once nothing ends it.
-    client.simple("DROP TRIGGER fixture_ended ON delivery").unwrap();
     f.store.copy(&everything()).unwrap();
     assert_eq!(f.store.dump().unwrap(), everything());
     assert_ne!(f.store.recovery_generation().unwrap(), generation);

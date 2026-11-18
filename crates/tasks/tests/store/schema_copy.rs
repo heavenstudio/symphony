@@ -111,6 +111,13 @@ fn stale_remove_staging_preserves_newer_tables_even_when_migration_follows_the_t
     let why = refused(writer.remove_staging());
     refusal(&why);
     assert_eq!(refused(writer.remove_staging()), why);
+    // Its copy, which clears what an earlier one left before it stages, is refused the same
+    // way and says what it was at.
+    let (Error::Refused(copying) | Error::Db(copying)) = writer.copy(&before).unwrap_err();
+    assert_eq!(
+        copying,
+        format!("{why}; staging left by an earlier copy could not be removed")
+    );
     assert_eq!(count(f.store.client(), "copy_abandoned"), json!(1));
     assert_table(f.store.client(), "copy_schema_probe");
     // A writer at the new version can clean both staging tables, preserving unrelated data.

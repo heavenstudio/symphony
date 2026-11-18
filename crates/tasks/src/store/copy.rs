@@ -1,11 +1,11 @@
 //! The copy of a whole board: a dump (every row, table by table, [`Dump`]) written in one
 //! transaction, replacing what the board held, and read back in the same shape.
 
+use super::database::Database;
 use super::postgres::{self, Pg};
 use super::statement::both;
 use super::surreal::copy as sql;
 use super::transaction::Run;
-use super::database::Database;
 use super::{Error, Store, values};
 use crate::cbor;
 use crate::rows::Dump;
@@ -149,7 +149,10 @@ impl Store {
             return self.copied(&generation);
         }
         self.remove_staging().map_err(|error| {
-            said_after(error, "; staging left by an earlier copy could not be removed")
+            said_after(
+                error,
+                "; staging left by an earlier copy could not be removed",
+            )
         })?;
         let staging = format!(
             "copy_{:016x}",
@@ -164,8 +167,7 @@ impl Store {
             self.retrying(|| self.transact::<String>(&swap, vars.clone()))
                 .map_err(|error| uncommitted(error, staged, &tables))
         });
-        let generation =
-            copied.map_err(|error| self.cleanup_staging(&staging, &names, error))?;
+        let generation = copied.map_err(|error| self.cleanup_staging(&staging, &names, error))?;
         self.copied(&generation)
     }
 
@@ -384,7 +386,10 @@ mod tests {
         assert_eq!(seconds(60), 30.0);
         assert_eq!(seconds(4), 2.0);
         assert_eq!(seconds(0), 0.0);
-        assert_eq!(copy_limit(Duration::from_millis(500)), Duration::from_millis(250));
+        assert_eq!(
+            copy_limit(Duration::from_millis(500)),
+            Duration::from_millis(250)
+        );
     }
 
     #[test]
@@ -394,8 +399,7 @@ mod tests {
             ("link", vec![]),
             ("message", vec![json!({}); 40]),
         ];
-        let Error::Db(said) = uncommitted(Error::Db(UNCOMMITTED.into()), 300 << 20, &tables)
-        else {
+        let Error::Db(said) = uncommitted(Error::Db(UNCOMMITTED.into()), 300 << 20, &tables) else {
             panic!("a failure of the database's");
         };
         assert_eq!(

@@ -634,6 +634,17 @@ ordinary write, and in no dump.
   replaces the rows, so a token read before a copy is refused after it, and one read before a
   copy that failed still holds. A build of a schema before 22 copies without replacing it, which
   is why the generation came with a schema step: such a build is refused the board.
+  A copy that cannot finish leaves the board as it was and says why in one line. On PostgreSQL
+  the copy is one request, which the server itself ends thirty seconds short of the wait of the
+  program that sent it (270 s of the client's 300), saying the rows of each table it had copied
+  and the table it was at: left to run past its caller's wait it would replace the board after
+  the caller was told it failed. On SurrealDB the copy stages its rows and swaps them in in one
+  transaction, which must fit the memtable of the server it runs on: one the server does not
+  commit is said with the rows and bytes it staged and the setting
+  (`SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`, 256 MiB on a server the board starts), and what it
+  staged is removed a table at a time, or by the next copy before it stages, so a copy made
+  while another stages ends the other. How large a board each takes is measured in
+  [the store's baseline](analysis/board-store-baseline.md#a-board-ten-times-the-size-measured-2026-11-18).
 
 The generation is a row of the database, so putting the database's files back puts it back too.
 What tells that apart is the board's **recovery binding**, outside the database's data: the

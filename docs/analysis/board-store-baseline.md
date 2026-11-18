@@ -276,7 +276,8 @@ observed peak is not an upper bound, and a median from few readings has limited 
 The November 15 memory table is RSS and must not be compared directly to this footprint table.
 Retries remain internal to each command: these runs report their cost and terminal failures,
 without measuring retry counts or separating contention from query cost. They exercise neither
-listening recipients nor durability under a crash, and do not establish performance at ten-times scale.
+listening recipients nor durability under a crash; the board ten times the size is measured
+[below](#a-board-ten-times-the-size-measured-2026-11-18).
 
 The retained JSON, invocations and frozen binaries are under `artifacts/tools/board-pg-lifecycle/solar-heron-274-final-paired-2026-11-18/`.
 The runtime source is `d2a39d23be553f82fe027377e3c7bc969d896601`; later comparison prose does not change those sources.
@@ -287,40 +288,130 @@ SHA-256 provenance:
 - board_load: `e27888377070deab5ad6363adb9f4c2017d53a07eb071f9fc56db6494349f874`.
 - Fixture/harness: `5a9b9c8033e9be01c505a43952d08da7ad42959313a00122a76d7442be252ba5`.
 
-## The ten-times seed, measured 2026-11-18
+## A board ten times the size, measured 2026-11-18
 
 The same day's export has 931 tasks, 13,067 messages, 1,412 sessions and 1,827 roles. The
 ten-times fixture duplicates the typed keys and references of all eleven exported tables,
 preserving document text and opaque plugin fields: 9,310 tasks, 130,670 messages, 14,120 sessions
-and 18,270 roles. Its SHA-256 is
-`9178df95ebaca7fbac0be6db3b28380a19e93a42e2ee7b295b87f1c394af871b`.
+and 18,270 roles, 31.8 million characters of thread text. Its SHA-256 is
+`9178df95ebaca7fbac0be6db3b28380a19e93a42e2ee7b295b87f1c394af871b`. Every figure below is one
+observation on a scratch board, from a development build, on a machine other agents were loading;
+the load averages are the one-minute ones.
 
-Neither engine seeded this fixture through the board's logical copy under shipped settings,
-so there is no paired workload number for it here. This is a copy/recovery limit found before
-the workload, not a command failure during a completed workload:
+### The copy on PostgreSQL
 
-- SurrealDB 3.3.0's seed transaction failed under `Storage::BOARD`'s 256 MiB memtable. Its owned
-  server log reported `transaction commit failed keys_written=2208845 bytes_written=617476954
-  write_ops=2208856`. Copy and logical dump restoration use that one transaction, which exceeds
-  this setting at this board size. A driver-only 1 GiB seed also failed; a 2 GiB seed succeeded.
-  That successful probe then stopped cleanly and restarted with the shipped 268,435,456-byte
-  memtable and unchanged 67,108,864-byte value-log threshold, verified from both processes'
-  actual settings. It ran no workload commands. No shipped storage setting changed.
-- PostgreSQL 18.7's copy of the identical fixture exceeded the client's existing 300-second
-  read wait, returning `Resource temporarily unavailable (os error 35)`. Closing the driver's
-  owned supervision lifeline stopped its server. The shutdown log places the interrupted
-  backend inside `board_said()`'s `INSERT ... ON CONFLICT` during the bulk message insert.
-  Repeated updates of the same sender's latest-message row are a candidate cause; this log
-  establishes the executing statement, not a complete cost attribution. The wait was not
-  widened and no copy optimization is included here.
+`Store::copy` takes the fixture in one request. The server gives it 270 s, thirty short of the
+300 s its client waits, and ends it there with the board as it was
+([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)).
 
-The failure logs, invocation records, scaled fixture and seed-settings observation are retained
-under `artifacts/tools/board-pg-lifecycle/`: `ten-times-surreal-shipped.log`,
-`ten-times-surreal-1gib.log`, `ten-times-postgresql-seed.log`, the paired pilot folder and
-`solar-heron-274-seed-probe-settings.json`. This finding concerns logical
-copy and dump restoration; it does not establish a limit on stopped-cluster physical recovery.
-The follow-up `tools/board-copy-at-ten-times` owns the repair and the paired ten-times workload.
-The lifecycle task's accepted comparison is solo, ten, thirty and empty, as scoped on its thread.
+| copy | load before → after | seconds |
+|---|---|---|
+| seed-only | 10.5 → 82.6 | 141.8 |
+| seed-only | 27.7 → 13.6 | 83.5 |
+| seed-only | 11.9 → 12.9 | 87.1 |
+| before the paired workload | 14.7 → 56.8 | 78.5 |
+
+The time is the search's, not the copy's own: the messages' terms are counted a row at a time by
+the `message_words` trigger and written to a GIN-indexed table. `EXPLAIN ANALYZE` of the insert
+of the 130,672 messages alone, every trigger on, at load 11 to 10:
+
+| part | seconds |
+|---|---|
+| the insert, whole | 70.7 |
+| `message_words` (the terms of each message's text) | 61.8 |
+| `said` (each sender's last word) | 2.2 |
+| `message_made` (the marker) | 0.5 |
+
+Set apart, tokenizing the 31.8 million characters with no write took 26 to 31 s, and writing the
+130,672 rows of terms with their index kept 19.5 s; the row-at-a-time trigger adds about ten
+over the two. Each is work in proportion to the text. The sender with most words has 4,920 and
+the next 937, so `said` rewrites no long chain: filling `said` once before the insert, tried back
+to back with the unchanged copy, changed nothing that the load did not (93.4 s at load 13,
+262.2 s as the load went from 82 to 28) and was not kept.
+
+So the copy fits the wait on a machine at load 10 to 15 with about three times to spare, and
+the spare is the machine's: at load 82 the same copy took 262 s of a 300 s wait, and a run of
+the lifecycle task's that day passed it. At 83 s for ten times today's board, a copy on a
+machine as quiet as these runs found it meets the server's 270 s at about thirty-two times
+today's board: some 420,000 messages, or 100 million characters of thread text. A loaded
+machine meets it sooner, at any size. No wait was changed.
+
+Without that limit a copy that outlasts its caller's wait is reported failed and then replaces
+the board: the request is sent whole, so the server finishes it after the client has gone.
+`a_postgresql_copy_that_outlasts_its_callers_wait_never_replaces_the_board`
+(`crates/tasks/tests/store/copy.rs`) holds a copy at its first insert by a lock, lets its client
+stop waiting, lets the lock go and reads the board once every other backend is idle; with the
+server's limit taken out it reads the new board.
+
+### The copy on SurrealDB
+
+The copy stages its rows (178.8 MiB for the fixture) and swaps them in in one transaction, which
+must fit the memtable of the server it runs on. Under `Storage::BOARD`'s 256 MiB the server does
+not commit it: the server's log in the lifecycle task's run says `transaction commit failed
+keys_written=2208845 bytes_written=617476954`, 3.3 times the staged bytes. The copy then refuses
+in one line, about 70 s into the run, with the rows and bytes it staged and the setting, the
+board as it was and its staging removed. A 1 GiB memtable failed the same way in that task's
+runs and 2 GiB took it, so a copy asks for a memtable of more than five and a half times what
+it stages and at most eleven and a half. `board_load
+--seed-memtable-mib 2048` gives a scratch server that memtable for the copy alone and measures
+on a restart under the shipped one; the copy took 68.1 s there. No shipped storage setting
+changed, so a board of this size is copied into a server started with a larger memtable, which
+only `server::Home::storage` gives today.
+
+A swap whose client stops waiting does not commit afterwards, as PostgreSQL's did: the server
+drops the statement with its connection. The probe held the swap at its first task insert by an
+event asking a listener of the test's every 5 ms, with a client waiting 4 s: the listener was
+asked 524 times while the client waited and not once in the 2 s after it gave up, and 20 s
+after the listener said to go on the board was the old one with no staging table left. To
+repeat it: `DEFINE EVENT … ON task WHEN $event = 'CREATE' THEN { … }` with the wait of
+`crates/tasks/tests/store/gate.rs`, a store over a client `waiting` 4 s, `copy`, then count the
+listener's questions. It is kept as a measurement and not as a test, since what it shows is an
+absence, which only a clock can wait out.
+
+### Paired board work on it
+
+Thirty sessions of forty calls, seed 1, the command mix of the paired runs above, from one
+frozen development build at `135f89987`; SurrealDB seeded under the 2 GiB memtable and measured
+under the shipped one. All 6,000 commands succeeded and every session's beats were verified.
+
+| engine | commands / writes | failed | wall | tasks CPU | server CPU | store grew | load before → after |
+|---|---|---|---|---|---|---|---|
+| SurrealDB | 3,000 / 2,787 | 0 | 61.5 s | 336.5 s | 246.5 s | -281.2 MB | 24.1 → 75.7 |
+| PostgreSQL | 3,000 / 2,787 | 0 | 72.1 s | 322.8 s | 297.5 s | 2.2 MB | 9.8 → 56.8 |
+
+Memory, as `server_memory_mib` in MiB with the RSS sum's peak last:
+
+| engine | opened | median | peak | after | samples | RSS peak |
+|---|---|---|---|---|---|---|
+| SurrealDB | 539.3 | 2,451.3 | 3,284.8 | 1,970.6 | 181 | 3,591.9 |
+| PostgreSQL | 198.0 | 6,353.2 | 14,817.3 | 217.9 | 119 | 13,938.9 |
+
+Per command, mean CPU of the command's process, and median / 99th percentile wall:
+
+| command | count | SurrealDB tasks CPU | PostgreSQL tasks CPU | SurrealDB wall | PostgreSQL wall |
+|---|---|---|---|---|---|
+| beat | 2,400 | 5.9 ms | 4.9 ms | 19.5 / 78.6 ms | 18.4 / 557.9 ms |
+| inbox | 172 | 57.2 ms | 41.4 ms | 476.8 / 1741.7 ms | 172.6 / 382.1 ms |
+| say | 129 | 7.1 ms | 5.9 ms | 32.7 / 163.0 ms | 31.3 / 137.9 ms |
+| show | 100 | 10.0 ms | 8.0 ms | 102.4 / 320.3 ms | 55.6 / 116.2 ms |
+| cycle | 86 | 456.0 ms | 398.8 ms | 1024.3 / 3950.5 ms | 1417.3 / 6789.9 ms |
+| list | 38 | 1374.3 ms | 1282.3 ms | 4739.4 / 6543.9 ms | 6281.4 / 8949.9 ms |
+| next | 38 | 26.6 ms | 24.5 ms | 583.6 / 2917.0 ms | 85.9 / 300.0 ms |
+| pull | 37 | 5894.1 ms | 5905.5 ms | 15804.2 / 30371.0 ms | 27525.0 / 42350.9 ms |
+| all | 3,000 | 112.2 ms | 107.6 ms | 22.4 / 9665.1 ms | 19.7 / 10526.4 ms |
+
+Against the thirty-session run on today's board above, a `list` and a `pull` cost about ten
+times the command's CPU on either engine and a `cycle`'s step five. PostgreSQL's observed peak
+was 14.8 GiB against SurrealDB's 3.3 GiB, and it fell back to 218 MiB where SurrealDB kept
+2.0 GiB; nobody has looked for what holds it. SurrealDB's folder was smaller after the run than
+before it. These are single observations under load and not a cap, a rate or a latency
+promise.
+
+The reports, invocations, loads and frozen binaries are under
+`artifacts/tools/board-copy-at-ten-times/`, with the copy timings, the trigger profile and both
+probes' output. SHA-256: tasks
+`89e1089d9f2e0e6ab6a0f6557a53c16ba43a5a11049420eacc6156abb8be628b`, board_load
+`ec0ffb7055e1b0431dfdb0786bd6ab15a1aa6d3efae39f91a2e672ce8ebeec01`.
 
 ## PostgreSQL's replacement for the plan checks
 
@@ -347,9 +438,6 @@ are separate from the CPU and memory comparison: explaining every statement chan
 
 ## What this does not measure
 
-- **A workload on the ten-times board.** The original November 15 runs use the export or an
-  empty board. The November 18 seed failures above precede workload measurement; their repair
-  and paired workload belong to `tools/board-copy-at-ten-times`.
 - **How often a write was retried.** A retry is inside its command; the run sees its cost (the
   claim's CPU and its tail), not its count.
 - **Delivery to listening sessions.** The run's sessions register no callback, and the copied

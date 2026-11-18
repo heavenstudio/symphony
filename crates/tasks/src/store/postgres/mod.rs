@@ -398,8 +398,7 @@ mod tests {
         assert_eq!(steps.len(), 5);
         assert_eq!(binding(&steps), [0]);
         assert_eq!(
-            steps[2].0,
-            "SELECT FROM set_config('statement_timeout', '270000', true)",
+            steps[2].0, "SELECT FROM set_config('statement_timeout', '270000', true)",
             "the bound is set after the guard and right before the block it bounds"
         );
         assert!(steps[3].0.contains("\nNULL;\n"), "{}", steps[3].0);

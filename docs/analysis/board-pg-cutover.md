@@ -34,7 +34,7 @@ tasks, 13,067 messages) and one build. The tables, the method and their limits a
   194, a `show` 45 against 100), and the two heaviest later (`list` 1.0 s against 0.4, `pull` 3.8 s
   against 2.7). Walls are stretched by the machine's load, 75 to 168 that day.
 
-Not measured: a board ten times this size, a crash's durability, delivery to listening sessions,
+Not measured: a crash's durability, delivery to listening sessions,
 days at rest.
 
 ## What is not ready
@@ -50,7 +50,7 @@ Each is needed before a live board moves. None is built by this page.
 | The cutover command: hold, export, copy, compare, switch, with each failure leaving the board as it was | not built |
 | Restoring a PostgreSQL snapshot over the board it was taken from | not built: a snapshot restores into a new scratch home only |
 | The release refresh on a PostgreSQL board: its snapshot before a schema move is SurrealDB's export | not built |
-| A copy of a board ten times today's size | fails on both engines under shipped settings (`tools/board-copy-at-ten-times`). Today's boards copy; this bounds growth, not the cutover |
+| A copy of a board ten times today's size | PostgreSQL takes it in 84 to 142 s of the 270 s its server gives a copy, the time going with the machine's load; SurrealDB refuses it in one line under the shipped 256 MiB memtable and takes it under 2 GiB ([the numbers](board-store-baseline.md#a-board-ten-times-the-size-measured-2026-11-18)). Today's boards copy on both; this bounds growth, not the cutover |
 
 ## The order
 
