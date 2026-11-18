@@ -1172,7 +1172,12 @@ fn a_cold_release_target_is_provisioned_before_tests_and_a_setup_red_starts_no_t
         let steps = listed(&recipes.tree.join("build/verify"));
         let names: Vec<_> = steps.iter().map(|step| (step.0.as_str(), step.1)).collect();
         if fails {
-            assert_eq!(names, [("nextest-setup", 2)]);
+            assert_eq!(
+                names,
+                [("nextest-setup", 2), ("tests", -1)],
+                "the tests are listed as not run, never left out: a rerun must know of them"
+            );
+            assert!(steps[1].2.ends_with("nextest-setup.log"), "{steps:?}");
             assert!(
                 !recipes.tree.join("build/verify/tests.log").exists(),
                 "tests log: {:?}; verify: {done:?}",
@@ -1373,7 +1378,12 @@ fn listed_with_parts(folder: &Path) -> (Listed, Listed) {
             );
             (
                 fields[0].to_string(),
-                fields[1].parse().unwrap(),
+                // A step listed as not run (`-`) reads as -1 here.
+                if fields[1] == "-" {
+                    -1
+                } else {
+                    fields[1].parse().unwrap()
+                },
                 PathBuf::from(fields[3]),
                 fields[4].to_string(),
             )

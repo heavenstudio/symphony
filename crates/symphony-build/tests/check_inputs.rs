@@ -126,6 +126,10 @@ fn workspace() -> Tree {
     tree.write("justfile", "verify:\n    @true\n");
     tree.write("docs/README.md", "A document.\n");
     tree.write("apps/symphony-web/src/main.ts", "export {};\n");
+    tree.write(
+        "crates/symphony-build/src/release/fixtures/tests-nextest-red.log",
+        "a log\n",
+    );
     git(&tree.root, &["init", "-q", "-b", "main"]);
     commit(&tree, "the workspace");
     tree
@@ -332,6 +336,24 @@ fn a_change_inside_a_lanes_packages_changes_its_digest_and_one_outside_them_leav
         changed(&client, &unrelated),
         with_tree(&["verify/semver-check"])
     );
+
+    // A fixture of the build package that the cli lane's tests read: that lane, declared beside
+    // it, with the lanes that build with the package, and no other lane of the board.
+    let fixture = after(
+        &tree,
+        "crates/symphony-build/src/release/fixtures/tests-nextest-red.log",
+        "another log\n",
+    );
+    assert_eq!(
+        changed(&unrelated, &fixture),
+        with_tree(&[
+            "verify/semver-check",
+            "verify/tests/cli",
+            "verify/tests/fixture",
+            "verify/tests/release",
+        ])
+    );
+    let unrelated = fixture;
 
     // The server's package: what builds with it or runs its binary, never the board's lanes.
     let server = after(&tree, "apps/symphony-server/src/lib.rs", "// changed\n");

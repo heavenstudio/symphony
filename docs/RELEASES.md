@@ -649,8 +649,14 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   candidate, on the environment the rerun runs on ([below](#what-a-run-ran-on)), and either that
   run's commit holds the tip's tree, or the digest of its inputs there is the one the tip's tree
   tells ([its inputs](#a-steps-inputs)). Anything else runs: a red, a step or lane whose digest
-  changed, one the tip names that no run of the candidate listed, and one whose inputs cannot be
-  told. So a check that lists its steps reruns those alone (`just verify lint tests/browser`),
+  changed, one the tip names that no run of the candidate listed (a step known only by its lanes
+  among them), one its check listed as not run, and one whose inputs cannot be told. The tests a
+  red `nextest-setup` kept from starting are such a step: `just verify` lists them as not run, no
+  red of their own and no task, so the rerun runs them with the setup, and no rerun of the setup
+  alone releases a commit whose tests never ran. A check that lists its steps lists every one,
+  run or not: that list is all a rerun knows of a tree that tells no inputs. A step or check
+  green in a rerun that ran only some of its parts stands green by those parts, each on the
+  commit and run it was green on, never as if run whole there. So a check that lists its steps reruns those alone (`just verify lint tests/browser`),
   and one that lists none, or whose red was beyond its steps, runs whole. The commit tagged is
   then not itself run in full, the trade the candidate's design names
   ([the analysis](analysis/release-candidate.md#the-trades)), bounded by the candidate: no green

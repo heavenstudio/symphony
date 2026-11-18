@@ -17,12 +17,16 @@ const VERIFY: &str = "verify=sh steps.sh";
 /// A stand-in verify with the steps `lint` and `tests`, the tests in the lanes `a`, `b` and `all`,
 /// each listed after the step as a part of it. Named `lint`, `tests` or `tests/LANE`, it runs
 /// those alone. Lint and each lane are red while their folder (`src-NAME`) holds `red`, and each
-/// that runs is written in `OUTSIDE/ran`.
+/// that runs is written in `OUTSIDE/ran`. While `OUTSIDE/red-setup` is there, a step `setup` runs
+/// before the tests, red, and the tests do not start: they are listed as not run, or, while
+/// `OUTSIDE/unlisted` is there too, not at all, as a verify from before that state lists them.
 const STEPS: &str = r#"d="$SYMPHONY_CHECK_STEPS"
 code=0
 line() { printf '%s\t%s\t1\t%s\tsh steps.sh %s\n' "$1" "$2" "$3" "$1" >> "$d/steps.tsv"; }
 status() { if [ -e "src-$1/red" ]; then echo 1; else echo 0; fi; }
 args="${*:-lint tests}"
+setup=''
+case " $args " in *" tests "* | *" tests/"*) setup=1 ;; esac
 case " $args " in
 *" lint "*)
     echo lint >> "OUTSIDE/ran"
@@ -36,6 +40,13 @@ case " $args " in
 *" tests "*) lanes='a b all' ;;
 *) for arg in $args; do case "$arg" in tests/*) lanes="$lanes ${arg#tests/}" ;; esac; done ;;
 esac
+if [ -n "$setup" ] && [ -e "OUTSIDE/red-setup" ]; then
+    echo setup >> "OUTSIDE/ran"
+    echo "setup red" > "$d/setup.log"
+    line setup 1 setup.log
+    [ -e "OUTSIDE/unlisted" ] || line tests - setup.log
+    exit 1
+fi
 if [ -n "$lanes" ]; then
     tests=0
     for lane in $lanes; do
@@ -76,7 +87,9 @@ struct Laned {
 }
 
 impl Laned {
-    fn new() -> Laned {
+    /// The stand-in tree landed, with its inputs script when `inputs`, and nothing run: the
+    /// fixture and its folder outside the tree.
+    fn tree(inputs: bool) -> (Fixture, PathBuf) {
         let fixture = holding("");
         let outside = fixture.root.join("outside");
         fs::create_dir_all(&outside).unwrap();
@@ -89,10 +102,18 @@ impl Laned {
             fs::set_permissions(&chrome, fs::Permissions::from_mode(0o755)).unwrap();
         }
         fixture.write("steps.sh", &STEPS.replace("OUTSIDE", &at));
-        fixture.write("tools/check-inputs.sh", &INPUTS.replace("OUTSIDE", &at));
+        if inputs {
+            fixture.write("tools/check-inputs.sh", &INPUTS.replace("OUTSIDE", &at));
+        }
         for folder in ["src-lint", "src-a", "src-b"] {
             fixture.write(&format!("{folder}/source"), "1\n");
         }
+        fixture.land("src-b/more", Some("1\n"), "the stand-in tree");
+        (fixture, outside)
+    }
+
+    fn new() -> Laned {
+        let (fixture, outside) = Laned::tree(true);
         fixture.land("src-a/red", Some("red"), "the lane a turns red");
         let red = git(&fixture.main, &["rev-parse", "HEAD"]);
         let laned = Laned {
@@ -377,6 +398,82 @@ fn inputs_that_cannot_be_told_carry_nothing_and_a_name_left_out_is_run_each_said
         "{out}"
     );
     assert_eq!(laned.ran(), ["lint", "tests/a", "tests/b", "tests/all"]);
+}
+
+/// The red task of the stand-in verify's setup step.
+const SETUP: &str = "tests/release-red-verify-setup";
+
+/// A candidate held red in its setup step alone, the tests never started, in a tree with its
+/// inputs script when `inputs`, whose verify lists the tests as not run unless `unlisted`; then
+/// the setup put right outside the repository and its red's task cancelled.
+fn held_before_its_tests(inputs: bool, unlisted: bool) -> Laned {
+    let (fixture, outside) = Laned::tree(inputs);
+    fs::write(outside.join("red-setup"), "").unwrap();
+    if unlisted {
+        fs::write(outside.join("unlisted"), "").unwrap();
+    }
+    let red = git(&fixture.main, &["rev-parse", "HEAD"]);
+    let laned = Laned {
+        fixture,
+        outside,
+        red,
+        first: serde_json::Value::Null,
+    };
+    let out = laned.run(NOW, &[], 1);
+    assert!(
+        out.contains("release: red: verify/setup; no release\n"),
+        "the setup's red alone, the tests no red of their own:\n{out}"
+    );
+    assert_eq!(laned.ran(), ["lint", "setup"]);
+    assert_eq!(
+        laned.fixture.reds().keys().collect::<Vec<_>>(),
+        [SETUP],
+        "one task, and none for tests that did not run"
+    );
+    let first = laned.fixture.runs().pop().unwrap();
+    let steps = first["checks"][0]["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), if unlisted { 2 } else { 3 }, "{first:#}");
+    if !unlisted {
+        assert_eq!(steps[2]["name"], "verify/tests");
+        assert!(steps[2]["exit_code"].is_null(), "{first:#}");
+        assert_eq!(steps[2]["error"], "a step it needs was red");
+    }
+    fs::remove_file(laned.outside.join("red-setup")).unwrap();
+    let hands = hands(&laned.fixture);
+    let store = laned.fixture.store();
+    (store.take_role(SETUP, &hands.orchestrator, "orchestrator")).unwrap();
+    store
+        .move_with(
+            SETUP,
+            "cancelled",
+            &hands.orchestrator,
+            Some("fixed outside this repository"),
+        )
+        .unwrap();
+    Laned { first, ..laned }
+}
+
+#[test]
+fn tests_a_red_setup_kept_from_starting_run_at_the_rerun_and_no_setup_alone_releases() {
+    // The verify lists the tests as not run, in a tree that tells its inputs and in one that
+    // tells none; and a verify that leaves them out of its list, in a tree that tells its lanes.
+    for (inputs, unlisted) in [(true, false), (false, false), (true, true)] {
+        let laned = held_before_its_tests(inputs, unlisted);
+        let out = laned.run(NOW + 60.0, &["--rerun"], 0);
+        assert!(
+            out.contains(
+                "release: `verify` reruns setup, tests, the rest carried green from this tree\n"
+            ),
+            "inputs {inputs}, unlisted {unlisted}:\n{out}"
+        );
+        assert_eq!(
+            laned.ran(),
+            ["tests/a", "tests/b", "tests/all"],
+            "every lane ran before the release (inputs {inputs}, unlisted {unlisted})"
+        );
+        assert_eq!(laned.carried(), ["verify/lint"]);
+        assert_eq!(laned.fixture.tagged("release-2026-11-12"), laned.red);
+    }
 }
 
 #[test]

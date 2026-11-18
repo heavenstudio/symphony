@@ -139,12 +139,17 @@ pub(crate) struct Standing {
 }
 
 /// A step a check listed: its name (`CHECK/STEP`), the commit it was last green on, and each part
-/// it listed (`CHECK/STEP/PART`, a lane of the tests) the same way.
+/// it listed (`CHECK/STEP/PART`, a lane of the tests) the same way. A step green in a rerun that
+/// ran some of its parts alone stands green by those parts, never of itself: it was not run whole
+/// there, and what the rerun carried keeps the commit and run it was green on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct StepStanding {
     pub(crate) name: String,
     #[serde(default)]
     pub(crate) green: Option<On>,
+    /// Whether it was last red beyond the parts it listed: red, and none of them red.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) beyond: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) parts: Vec<StepStanding>,
 }
@@ -195,9 +200,8 @@ impl Tip<'_> {
         let Some(inputs) = self.inputs else {
             return Vec::new();
         };
-        (inputs.under(parent))
+        (inputs.under(parent).into_iter())
             .filter(|name| !known.iter().any(|step| step.name == *name))
-            .map(str::to_string)
             .collect()
     }
 }
@@ -406,10 +410,17 @@ impl Candidate {
                 self.standing.len() - 1
             }
         };
+        // What this run kept green of it instead of running it: a check or step it ran in part
+        // is green by its parts, each on the commit and run it was green on.
+        let carried = run.rerun.as_ref().map(|rerun| rerun.carried.as_slice());
+        let in_part = |name: &str| {
+            let under = format!("{name}/");
+            carried.is_some_and(|carried| carried.iter().any(|c| c.name.starts_with(&under)))
+        };
         let standing = &mut self.standing[index];
-        standing.green = ran.green().then(|| on(&ran.name));
+        standing.green = (ran.green() && !in_part(&ran.name)).then(|| on(&ran.name));
         standing.beyond = steps::beyond(ran);
-        stand_each(&mut standing.steps, &ran.steps, &on);
+        stand_each(&mut standing.steps, &ran.steps, &on, &in_part);
     }
 
     /// After a red rerun: dropped at `now` once it has had as many red reruns as `bounds` allow.
@@ -497,9 +508,10 @@ impl Candidate {
     /// kept is carried whole. Else each step whose green is kept is carried, and each other runs:
     /// whole, or, when it listed parts and its red is theirs, by the parts that are not kept
     /// (`STEP/PART`), the rest of them carried. A step or part the tip tells inputs for that no
-    /// run of the candidate listed runs too, so nothing a run never reached is passed over. With
-    /// nothing kept the check runs whole; with nothing to run it is carried whole when it was
-    /// green, and runs whole otherwise.
+    /// run of the candidate listed runs too, a step told only by its parts among them (the tests
+    /// step a run red in the runner's setup never listed), so nothing a run never reached is
+    /// passed over. With nothing kept the check runs whole; with nothing to run it is carried, by
+    /// its own green or by each step and part kept.
     pub(crate) fn plan(&self, name: &str, tip: &Tip<'_>) -> (Planned, Vec<Carried>) {
         let whole = (Planned::Whole, Vec::new());
         let Some(standing) = self.standing.iter().find(|s| s.name == name) else {
@@ -520,10 +532,9 @@ impl Candidate {
                 carried.push(kept);
                 continue;
             }
-            // Its red is its parts' when it listed some and is green or one of them is red; a
-            // red none of them holds is its own, and it runs whole.
-            let theirs = !step.parts.is_empty()
-                && (step.green.is_some() || step.parts.iter().any(|part| part.green.is_none()));
+            // It is judged by its parts when it listed some, unless it was red beyond them: a red
+            // none of them holds is its own, and it runs whole.
+            let theirs = !step.parts.is_empty() && !step.beyond;
             let mut kept: Vec<Carried> = Vec::new();
             let mut parts: Vec<String> = Vec::new();
             if theirs {
@@ -550,11 +561,10 @@ impl Candidate {
         if carried.is_empty() {
             return whole;
         }
+        // Nothing to run: every step it listed is kept, so none was red, and its red was not
+        // beyond them. It was green, whole or by its steps, and is carried by them.
         if run.is_empty() {
-            return match standing.green {
-                Some(_) => (Planned::Carried, carried),
-                None => whole,
-            };
+            return (Planned::Carried, carried);
         }
         (Planned::Steps(run), carried)
     }
@@ -759,23 +769,33 @@ pub(crate) enum Planned {
 }
 
 /// Each of `listed`, standing in `known` as it ended, its green as `on` says it for its name; one
-/// not listed keeps what it had, and so do the parts of one that listed none this time.
-fn stand_each(known: &mut Vec<StepStanding>, listed: &[Ran], on: &dyn Fn(&str) -> On) {
+/// not listed keeps what it had, and so do the parts of one that listed none this time. One the
+/// run ran `in_part`, some of its parts carried, stands green by its parts alone.
+fn stand_each(
+    known: &mut Vec<StepStanding>,
+    listed: &[Ran],
+    on: &dyn Fn(&str) -> On,
+    in_part: &dyn Fn(&str) -> bool,
+) {
     for step in listed {
-        let green = step.green().then(|| on(&step.name));
+        let green = (step.green() && !in_part(&step.name)).then(|| on(&step.name));
         let index = match known.iter().position(|s| s.name == step.name) {
             Some(index) => index,
             None => {
                 known.push(StepStanding {
                     name: step.name.clone(),
                     green: None,
+                    beyond: false,
                     parts: Vec::new(),
                 });
                 known.len() - 1
             }
         };
         known[index].green = green;
-        stand_each(&mut known[index].parts, &step.steps, on);
+        stand_each(&mut known[index].parts, &step.steps, on, in_part);
+        // Red while no part it listed is, of a step that has parts: its red is its own.
+        known[index].beyond =
+            !step.green() && !known[index].parts.is_empty() && step.steps.iter().all(Ran::green);
     }
 }
 

@@ -165,11 +165,13 @@ fn a_red_run_holds_its_commit_each_red_and_how_each_check_stood() {
                 StepStanding {
                     name: "verify/lint".into(),
                     green: on.clone(),
+                    beyond: false,
                     parts: Vec::new(),
                 },
                 StepStanding {
                     name: "verify/tests".into(),
                     green: None,
+                    beyond: false,
                     parts: Vec::new(),
                 },
             ],
@@ -640,7 +642,13 @@ fn a_step_red_beyond_its_lanes_runs_whole_and_a_check_all_carried_is_carried_who
         ("verify/tests/browser", "b2"),
         ("verify/tests/perf", "p1"),
     ];
-    candidate.decided(&run_told("r2", &b, vec![partial], &again));
+    let mut second = run_told("r2", &b, vec![partial], &again);
+    second.rerun = Some(record::Rerun {
+        first: a.clone(),
+        round: 2,
+        carried: carried.clone(),
+    });
+    candidate.decided(&second);
     let lanes = &candidate.standing[0].steps[1].parts;
     assert_eq!(
         lanes[0].green.as_ref().map(|on| on.run.as_str()),
@@ -656,6 +664,169 @@ fn a_step_red_beyond_its_lanes_runs_whole_and_a_check_all_carried_is_carried_who
     );
     let lint = &candidate.standing[0].steps[0];
     assert_eq!(lint.green.as_ref().map(|on| on.run.as_str()), Some("r1"));
+}
+
+#[test]
+fn a_tests_step_no_run_listed_is_run_though_the_tip_tells_only_its_lanes() {
+    // The runner's setup red: the verify lists no tests step, and so no lane of it.
+    let a = "a".repeat(40);
+    let said = environment().said();
+    let step = |name: &str, code: i32| ran(name, code, Vec::new());
+    let first = ran(
+        "verify",
+        1,
+        vec![step("verify/lint", 0), step("verify/nextest-setup", 2)],
+    );
+    let inputs = [
+        ("verify/lint", "l1"),
+        ("verify/nextest-setup", "n1"),
+        ("verify/tests/browser", "b1"),
+        ("verify/tests/perf", "p1"),
+    ];
+    let candidate = Candidate::of(&run_told("r1", &a, vec![first], &inputs));
+    let tip = told(&inputs);
+    // On another tree that tells every digest as it was, and on the same tree.
+    for same in [false, true] {
+        let same_tree = move |_: &str| same;
+        let (planned, carried) = candidate.plan(
+            "verify",
+            &Tip {
+                same: &same_tree,
+                inputs: Some(&tip),
+                environment: Some(&said),
+            },
+        );
+        assert_eq!(
+            planned,
+            Planned::Steps(vec!["nextest-setup".into(), "tests".into()]),
+            "the tests never ran on this candidate: they run whole (same tree: {same})"
+        );
+        let names: Vec<&str> = carried.iter().map(|kept| kept.name.as_str()).collect();
+        assert_eq!(names, ["verify/lint"]);
+    }
+}
+
+#[test]
+fn a_green_of_a_rerun_that_ran_it_in_part_stands_by_its_parts_each_on_its_own_run() {
+    let (a, b) = ("a".repeat(40), "b".repeat(40));
+    let said = environment().said();
+    // r1 on a: lint and the browser lane red, the perf lane green.
+    let mut candidate = Candidate::of(&run_told("r1", &a, vec![laned(false, false, true)], &ALL));
+    // r2 on b ran lint, red again, and the browser lane alone, green; perf was carried from a.
+    let perf = Carried {
+        name: "verify/tests/perf".into(),
+        commit: a.clone(),
+        run: "r1".into(),
+        digest: Some("p1".into()),
+    };
+    let browser = ran("verify/tests/browser", 0, Vec::new());
+    let tests = ran("verify/tests", 0, vec![browser]);
+    let partial = ran("verify", 1, vec![ran("verify/lint", 1, Vec::new()), tests]);
+    let again = [
+        ("verify/lint", "l2"),
+        ("verify/tests/browser", "b2"),
+        ("verify/tests/perf", "p1"),
+    ];
+    let mut second = run_told("r2", &b, vec![partial], &again);
+    second.rerun = Some(record::Rerun {
+        first: a.clone(),
+        round: 2,
+        carried: vec![perf.clone()],
+    });
+    candidate.decided(&second);
+    let tests = &candidate.standing[0].steps[1];
+    assert_eq!(
+        (tests.green.as_ref(), tests.beyond),
+        (None, false),
+        "green in r2 by its lanes, never of itself: it was not run whole on b"
+    );
+
+    // A rerun on the tree of b: the tests are carried lane by lane, perf still from a in r1.
+    let inputs = told(&again);
+    let this_tree = |commit: &str| commit == b;
+    let (planned, carried) = candidate.plan(
+        "verify",
+        &Tip {
+            same: &this_tree,
+            inputs: Some(&inputs),
+            environment: Some(&said),
+        },
+    );
+    assert_eq!(planned, Planned::Steps(vec!["lint".into()]));
+    assert_eq!(
+        carried,
+        [
+            Carried {
+                name: "verify/tests/browser".into(),
+                commit: b.clone(),
+                run: "r2".into(),
+                digest: None,
+            },
+            perf.clone(),
+        ]
+    );
+    let notes = candidate.notes(&carried);
+    assert_eq!(
+        notes[notes.len() - 4..],
+        [
+            "Carried green from a commit whose tree is this one's:",
+            "- verify/tests/browser: green on bbbbbbbbbbbb in the run r2",
+            "Carried green from a run of this candidate, not run on this commit: its inputs' \
+             digest is the one it was green on:",
+            "- verify/tests/perf: green on aaaaaaaaaaaa in the run r1, inputs p1",
+        ]
+    );
+
+    // A check green in a rerun that carried a step of it stands by its steps the same way, and
+    // with nothing left to run it is carried by them, each named.
+    let mut whole = Candidate::of(&run_told(
+        "r1",
+        &a,
+        vec![laned(true, false, true), ran("docs", 1, Vec::new())],
+        &ALL,
+    ));
+    let lint = Carried {
+        name: "verify/lint".into(),
+        commit: a.clone(),
+        run: "r1".into(),
+        digest: Some("l1".into()),
+    };
+    let rest = ran("verify", 0, vec![laned(true, true, true).steps.remove(1)]);
+    let all_again = [
+        ("verify/lint", "l1"),
+        ("verify/tests/browser", "b2"),
+        ("verify/tests/perf", "p2"),
+    ];
+    let mut second = run_told("r2", &b, vec![rest, ran("docs", 1, Vec::new())], &all_again);
+    second.rerun = Some(record::Rerun {
+        first: a.clone(),
+        round: 2,
+        carried: vec![lint.clone()],
+    });
+    whole.decided(&second);
+    assert_eq!(whole.standing[0].green, None, "verify ran in part on b");
+    let tests = &whole.standing[0].steps[1];
+    assert_eq!(
+        tests.green.as_ref().map(|on| on.run.as_str()),
+        Some("r2"),
+        "the tests step ran whole on b"
+    );
+    let inputs = told(&all_again);
+    let (planned, carried) = whole.plan(
+        "verify",
+        &Tip {
+            same: &this_tree,
+            inputs: Some(&inputs),
+            environment: Some(&said),
+        },
+    );
+    assert_eq!(planned, Planned::Carried);
+    assert_eq!(carried.len(), 2, "{carried:?}");
+    assert_eq!(carried[0], lint, "lint is still the green of a in r1");
+    assert_eq!(
+        (carried[1].name.as_str(), carried[1].run.as_str()),
+        ("verify/tests", "r2")
+    );
 }
 
 #[test]

@@ -19,7 +19,7 @@
 # Each is recorded as a step of the verify run (docs/MACHINE_WORK.md) and writes its output to a
 # log of its own, STEP.log in the folder SYMPHONY_CHECK_STEPS names (the release run names one for
 # each check it runs), else build/verify, which steps.tsv there lists as each step ends: its name, exit
-# status, seconds, log and command, and the machine's load as it ended (its load averages over 1, 5
+# status (`-` for the tests when a red nextest-setup kept them from starting), seconds, log and command, and the machine's load as it ended (its load averages over 1, 5
 # and 15 minutes and its processors, space-separated; empty where the system does not say),
 # tab-separated (crates/symphony-build/src/release/steps.rs reads it). Named STEPs run alone, in the
 # order above. An interrupt (Ctrl-C) stops it once the step it reached ends, exiting 130.
@@ -215,6 +215,9 @@ for step in "${chosen[@]}"; do
         case " ${red[*]-} " in
         *" nextest-setup "*)
             printf 'verify: tests not started: nextest-setup is red; see %s/nextest-setup.log\n' "$logs"
+            # Listed as not run (`-`), never as a red of its own: whoever reads the list knows
+            # the step is there and did not run, so no rerun of the setup alone passes for it.
+            printf 'tests\t-\t0\t%s\t%s\t%s\n' "$logs/nextest-setup.log" tools/test-lanes.sh "$(load)" >>"$summary"
             continue
             ;;
         esac

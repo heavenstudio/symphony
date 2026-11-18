@@ -53,12 +53,22 @@ impl Inputs {
             .map(|input| input.digest.as_str())
     }
 
-    /// The names told that are directly under `parent`: `PARENT/NAME`, NAME holding no `/`.
-    pub(crate) fn under<'a>(&'a self, parent: &'a str) -> impl Iterator<Item = &'a str> {
-        self.told.iter().filter_map(move |input| {
-            let rest = input.name.strip_prefix(parent)?.strip_prefix('/')?;
-            (!rest.is_empty() && !rest.contains('/')).then_some(input.name.as_str())
-        })
+    /// The names directly under `parent` that the names told say there are, `PARENT/NAME`, once
+    /// each in the order told: one told itself, and one known only by what is told under it, as a
+    /// step is by its parts (`verify/tests` by `verify/tests/browser`).
+    pub(crate) fn under(&self, parent: &str) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for input in &self.told {
+            let rest = (input.name.strip_prefix(parent)).and_then(|rest| rest.strip_prefix('/'));
+            let Some(first) = rest.and_then(|rest| rest.split('/').next()) else {
+                continue;
+            };
+            let name = format!("{parent}/{first}");
+            if !first.is_empty() && !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
     }
 }
 
@@ -272,15 +282,22 @@ mod tests {
         };
         assert_eq!(inputs.of("verify/tests/perf"), Some("3"));
         assert_eq!(inputs.of("verify/size-check"), None);
+        assert_eq!(inputs.under("verify"), ["verify/lint", "verify/tests"]);
         assert_eq!(
-            inputs.under("verify").collect::<Vec<_>>(),
-            ["verify/lint", "verify/tests"]
-        );
-        assert_eq!(
-            inputs.under("verify/tests").collect::<Vec<_>>(),
+            inputs.under("verify/tests"),
             ["verify/tests/browser", "verify/tests/perf"]
         );
-        assert_eq!(inputs.under("verify/lint").count(), 0);
+        assert!(inputs.under("verify/lint").is_empty());
+        // A step told only by its parts is a name under its check all the same, once.
+        let lanes = Inputs {
+            told: vec![
+                input("verify/tests/browser", "2"),
+                input("verify/tests/perf", "3"),
+                input("verify/", "4"),
+            ],
+            error: None,
+        };
+        assert_eq!(lanes.under("verify"), ["verify/tests"]);
     }
 
     #[test]

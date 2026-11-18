@@ -392,7 +392,9 @@ red ones. `just verify STEP...` runs those steps alone, in that order; `tests/LA
 `tests` runs that lane of the tests alone, which is how a release candidate's rerun runs what a
 fix changed and carries the green of the rest ([RELEASES](RELEASES.md#a-steps-inputs)). What each
 step reads is said beside it in `tools/verify.sh` (`reads`), and a step that reads a path outside
-the packages it names, or outside the root's other entries, says so there. An interrupt (Ctrl-C) stops
+the packages it names, or outside the root's other entries, says so there. The tests a red
+`nextest-setup` keeps from starting are listed all the same, their status `-`: not run, no red of
+their own, and run by the next rerun. An interrupt (Ctrl-C) stops
 it once the step running ends: it runs none after it, says where it stopped and exits 130. The tests serve the client
 the client check built in the same verify (`SYMPHONY_UI_DIST`), and the check's folder
 (`build/verified-client`) is cleared before it runs, so a client an earlier check left there is

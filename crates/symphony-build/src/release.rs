@@ -2086,7 +2086,12 @@ fn night(
     let ran = |name: &str| record.checks.iter().any(|ran| ran.name == name);
     let checked: Vec<String> = (options.checks.iter())
         .map(|step| step.name.clone())
-        .filter(|name| ran(name) || carried.iter().any(|kept| kept.name == *name))
+        .filter(|name| {
+            // Carried whole, by its own green or by each step and part it listed.
+            let under = format!("{name}/");
+            let kept = |kept: &record::Carried| kept.name == *name || kept.name.starts_with(&under);
+            ran(name) || carried.iter().any(kept)
+        })
         .collect();
     let held_notes = held.map(|held| held.notes(&carried)).unwrap_or_default();
     // What it publishes on crates.io once pushed: each package whose version crates.io lacks now.

@@ -18,6 +18,18 @@ use std::path::{Path, PathBuf};
 use super::board;
 use super::checks::{self, Load, Ran, Step, Within};
 
+/// What a list says in place of an exit status for a step the check did not run because a step
+/// it needs was red (verify's tests after a red runner setup): the step is listed, so the run
+/// knows it is there and not run, it is no red of its own, and a rerun always runs it.
+pub(crate) const NOT_RUN: &str = "-";
+/// Why such a step did not run, as its record says it.
+const NEEDED: &str = "a step it needs was red";
+
+/// Whether the step `ran` is one its check listed as not run ([`NOT_RUN`]).
+pub(crate) fn not_run(ran: &Ran) -> bool {
+    ran.exit_code.is_none() && ran.signal.is_none() && ran.error.as_deref() == Some(NEEDED)
+}
+
 /// What names the folder a check lists its steps in, set for each check the run starts.
 pub(crate) const VAR: &str = "SYMPHONY_CHECK_STEPS";
 /// The list in that folder: a line for each step as it ended, its name, exit status, seconds, log
@@ -25,6 +37,7 @@ pub(crate) const VAR: &str = "SYMPHONY_CHECK_STEPS";
 /// load field reads, its steps' load none. A log named by a relative path is in the folder. A
 /// step named `STEP/PART` is a part of the step STEP listed before it (a lane of the tests): it is
 /// kept in that step, whose red stays one red, and a release candidate's rerun can run it alone.
+/// A step the check did not run for a red step before it is listed too, [`NOT_RUN`] its status.
 pub(crate) const FILE: &str = "steps.tsv";
 
 /// The folder the check `name` lists its steps in, among the run's `logs`: `KEY.steps`, beside its
@@ -146,15 +159,20 @@ fn parse(line: &str, folder: &Path, check: &str) -> Option<Ran> {
     if name.trim().is_empty() || log.is_empty() || !seconds.is_finite() || seconds < 0.0 {
         return None;
     }
+    let skipped = exit == NOT_RUN;
     Some(Ran {
         name: format!("{check}/{name}"),
         command: command.to_string(),
-        exit_code: Some(exit.parse().ok()?),
+        exit_code: if skipped {
+            None
+        } else {
+            Some(exit.parse().ok()?)
+        },
         signal: None,
         seconds,
         log: folder.join(log),
         steps: Vec::new(),
-        error: None,
+        error: skipped.then(|| NEEDED.to_string()),
         timed_out: false,
         interrupted: false,
         load,
@@ -196,7 +214,7 @@ pub(crate) fn beyond(ran: &Ran) -> bool {
         && !ran.interrupted
         && ran.signal.is_none()
         && ran.exit_code.is_some();
-    !(ended && ran.steps.iter().any(|step| !step.green()))
+    !(ended && ran.steps.iter().any(|step| !step.green() && !not_run(step)))
 }
 
 /// The reds of the check `ran` as the run tells them: the check itself when its red is
@@ -206,7 +224,7 @@ pub(crate) fn reds(ran: &Ran) -> Vec<&Ran> {
     if beyond(ran) {
         reds.push(ran);
     }
-    reds.extend(ran.steps.iter().filter(|step| !step.green()));
+    reds.extend((ran.steps.iter()).filter(|step| !step.green() && !not_run(step)));
     reds
 }
 
@@ -365,6 +383,40 @@ mod tests {
         let unreadable = tree.path("folder-as-list");
         fs::create_dir_all(unreadable.join(FILE)).unwrap();
         assert!(read(&unreadable, "verify").is_err());
+    }
+
+    #[test]
+    fn a_step_listed_as_not_run_is_known_and_red_in_nothing_of_its_own() {
+        let tree = Tree::new();
+        tree.write(
+            FILE,
+            "lint\t0\t1\tlint.log\tjust lint-rs\n\
+             nextest-setup\t2\t1\tsetup.log\tjust nextest-setup\n\
+             tests\t-\t0\tsetup.log\ttools/test-lanes.sh\n",
+        );
+        let steps = read(&tree.root, "verify").unwrap();
+        assert_eq!(steps.len(), 3);
+        let tests = &steps[2];
+        assert_eq!(
+            (tests.name.as_str(), tests.exit_code),
+            ("verify/tests", None)
+        );
+        assert!(not_run(tests) && !tests.green());
+        assert_eq!(tests.ended(), "did not run: a step it needs was red");
+        assert!(!not_run(&steps[0]) && !not_run(&steps[1]));
+        // The check's red is its setup's alone: one red, and not beyond its steps.
+        let verify = check("verify", 1, steps);
+        assert!(!beyond(&verify));
+        let reds: Vec<&str> = reds(&verify).iter().map(|red| red.name.as_str()).collect();
+        assert_eq!(reds, ["verify/nextest-setup"]);
+        // Red with nothing but a step not run to show for it: the check's own red.
+        let mut alone = verify.clone();
+        alone.steps.remove(1);
+        assert!(beyond(&alone));
+        // A check that never ran for another reason is not this.
+        let mut never = verify.steps[2].clone();
+        never.error = Some("cannot start sh".into());
+        assert!(!not_run(&never));
     }
 
     #[test]

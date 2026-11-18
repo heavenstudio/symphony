@@ -90,6 +90,8 @@ reads() {
         # The server's binary over the client built from its sources.
         browser) printf 'test browser\npackage symphony-server\npath apps/symphony-web\n' ;;
         after_http) printf 'test after_http\npath apps/symphony-web\n' ;;
+        # Its tests of this script read a log the release readers keep as a fixture.
+        cli) printf 'test cli\npath crates/symphony-build/src/release/fixtures\n' ;;
         libraries)
             printf 'package %s\n' "${shared_libraries[@]}"
             printf 'path apps/symphony-web\n'
