@@ -50,6 +50,115 @@ fn a_model_nobody_has_heard_of_passes_as_any_text_does() {
 }
 
 #[test]
+fn recognizable_cross_agent_models_warn_by_key_and_line_but_pass() {
+    let tree = Tree::new();
+    let root = folder(&tree, "lamps");
+    for (text, key, line, model, agent, launch) in [
+        (
+            "[agents.models]\nexecutor = 'fable'\n",
+            "executor",
+            2,
+            "fable",
+            "claude",
+            "codex",
+        ),
+        (
+            "[agents]\nlaunch = { default = 'codex' }\n[agents.models]\nreviewer = 'sonnet'\n",
+            "reviewer",
+            4,
+            "sonnet",
+            "claude",
+            "codex",
+        ),
+        (
+            "agents.launch.default = 'codex'\nagents.models.assessor = 'haiku'\n",
+            "assessor",
+            2,
+            "haiku",
+            "claude",
+            "codex",
+        ),
+        (
+            "agents = { models = { orchestrator = 'opus' } }\n",
+            "orchestrator",
+            1,
+            "opus",
+            "claude",
+            "codex",
+        ),
+        (
+            "[agents.launch]\ndefault = 'claude'\n[agents.models]\nexecutor = 'gpt-6.1-sol'\n",
+            "executor",
+            4,
+            "gpt-6.1-sol",
+            "codex",
+            "claude",
+        ),
+        (
+            "[agents.models]\nexecutor = 'claude-sonnet-4-5'\n",
+            "executor",
+            2,
+            "claude-sonnet-4-5",
+            "claude",
+            "codex",
+        ),
+    ] {
+        let (code, out, err) = check(&root, text);
+        assert_eq!(code, 0, "{err}");
+        assert!(out.starts_with("✔ symphony.toml:"), "{out}");
+        assert_eq!(
+            err,
+            format!(
+                "warning: {}: [agents.models] {key} (line {line}) model {model:?} names {agent}, but [agents.launch] default is {launch:?}\n",
+                root.join(FILE).display()
+            )
+        );
+    }
+}
+
+#[test]
+fn warnings_report_every_mismatch_and_ignore_compatible_or_unrecognized_names() {
+    let tree = Tree::new();
+    let root = folder(&tree, "lamps");
+    let (code, _, err) = check(
+        &root,
+        "[agents.models]\nreviewer = 'fable'\nassessor = 'haiku'\n",
+    );
+    assert_eq!(code, 0);
+    assert_eq!(err.lines().count(), 2);
+    assert!(err.contains("reviewer (line 2)"), "{err}");
+    assert!(err.contains("assessor (line 3)"), "{err}");
+    for text in [
+        "[agents.models]\nexecutor = 'gpt-6.1-sol'\n",
+        "[agents.launch]\ndefault = 'claude'\n[agents.models]\nreviewer = 'fable'\nassessor = 'haiku'\n",
+        "[agents.models]\nexecutor = 'a model nobody knows'\nassessor = ''\n",
+        "[agents.launch]\ndefault = 'future-agent'\n[agents.models]\nexecutor = 'fable'\n",
+        "[agents.launch]\ndefault = ''\n[agents.models]\nexecutor = 'gpt-6.1-sol'\n",
+    ] {
+        let (code, _, err) = check(&root, text);
+        assert_eq!((code, err.as_str()), (0, ""), "{text}");
+    }
+}
+
+#[test]
+fn a_mismatched_launch_fallback_also_warns_with_its_own_key_and_line() {
+    let tree = Tree::new();
+    let root = folder(&tree, "lamps");
+    let (code, _, err) = check(
+        &root,
+        "[agents]\nlaunch = { default = 'claude', model = 'gpt-6.1-sol' }\n",
+    );
+    assert_eq!(code, 0);
+    assert_eq!(
+        err,
+        format!(
+            "warning: {}: [agents.launch] model (line 2) model \"gpt-6.1-sol\" names codex, but [agents.launch] default is \"claude\"\n",
+            root.join(FILE).display()
+        )
+    );
+}
+
+#[test]
 fn a_value_of_the_wrong_type_is_refused_naming_the_file() {
     let tree = Tree::new();
     let root = folder(&tree, "lamps");

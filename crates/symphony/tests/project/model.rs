@@ -152,3 +152,66 @@ fn literal_help_flags_and_del_round_trip_through_the_binary_and_settings_readers
         );
     }
 }
+
+#[test]
+fn one_command_switches_main_to_claude_with_fable_and_a_haiku_assessor() {
+    let tree = Tree::new();
+    let (main, linked) = layouts::repository(&tree.root);
+    let machine = tree.path("machine");
+    let file = main.join("symphony.toml");
+    let before = "# keep\n[agents]\nlaunch = { default = 'codex', model = 'gpt-6.1-sol', effort = 'high' } # launch\n[agents.models] # roles\nreviewer = 'gpt-6.1-sol' # review\nexecutor = 'gpt-6.1-sol'\norchestrator = 'gpt-6.1-sol'\nassessor = 'gpt-6.1-sol'\n";
+    std::fs::write(&file, before).unwrap();
+    let args = ["all", "fable", "--agent", "claude", "--assessor", "haiku"];
+    let (code, out, err) = model(&linked.join("docs"), &machine, &args);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    assert!(out.contains("launch agent set to \"claude\""), "{out}");
+    assert!(out.contains("assessor model set to \"haiku\""), "{out}");
+    let after = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        after,
+        before
+            .replace("'codex'", "\"claude\"")
+            .replace("'gpt-6.1-sol'", "\"fable\"")
+            .replace("assessor = \"fable\"", "assessor = \"haiku\"")
+    );
+    let defaults = Defaults::configured(&main).unwrap();
+    for role in symphony_board::launch::defaults::ROLES {
+        let resolved = defaults.resolve_as(Some(role), None, None);
+        assert_eq!(resolved.agent, "claude");
+        assert_eq!(
+            resolved.model,
+            if role == "assessor" { "haiku" } else { "fable" }
+        );
+    }
+    let (code, out, err) = model(&main, &machine, &args);
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert!(out.contains("already"), "{out}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), after);
+}
+
+#[test]
+fn the_editor_warns_on_changes_and_noops_without_refusing_or_touching_other_settings() {
+    let tree = Tree::new();
+    let (main, _) = layouts::repository(&tree.root);
+    let machine = tree.path("machine");
+    let file = main.join("symphony.toml");
+    std::fs::write(&file, "[agents.models]\nexecutor = 'gpt-6.1-sol'\n").unwrap();
+    for _ in 0..2 {
+        let (code, out, err) = model(&main, &machine, &["executor", "fable"]);
+        assert_eq!(code, 0, "{out}: {err}");
+        assert_eq!(
+            err,
+            format!(
+                "warning: {}: [agents.models] executor (line 2) model \"fable\" names claude, but [agents.launch] default is \"codex\"\n",
+                file.display()
+            )
+        );
+    }
+    let (code, _, err) = model(&main, &machine, &["executor", "unknown-model"]);
+    assert_eq!((code, err.as_str()), (0, ""));
+    let before = std::fs::read_to_string(&file).unwrap();
+    let (code, out, err) = model(&main, &machine, &["all", "fable", "--agent", "future"]);
+    assert_eq!((code, out.as_str()), (2, ""));
+    assert!(err.contains("unknown agent \"future\""), "{err}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+}

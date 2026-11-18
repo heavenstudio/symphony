@@ -33,7 +33,8 @@ key the Symphony does not know, a value of the wrong type (a number where a text
 required value left out (an entrypoint's `url` or `folder`) are each named on stderr, exit 1; a
 file that loads is exit 0. It judges no name against a list: a model, an agent or a recipe is any
 text, so a model nobody has heard of passes. Unlike the lint it reads no document and asks no
-build which plugins it holds.
+build which plugins it holds. A role or launch fallback model recognizable as the other agent's warns on
+stderr with its key and line, without changing the check's exit code.
 
 A change of the values a project file gives settings the Symphony already reads lands on this
 check green at its tip, recorded as a test run, with no reviewer
@@ -159,10 +160,18 @@ limits` prints what holds and where it came from.
 ## `[agents.models]`
 
 `just symphony-cli model ROLE MODEL` sets one role's model in the main checkout's file;
-`all` sets all four. It preserves comments and order, adds missing keys, accepts any string
-as the model and refuses unknown roles. It reports the edit; checking and landing follow the
-project's settings-only policy. `just tasks limits` prints the resulting models and their sources.
-A resumed agent keeps the model it started on.
+`all` sets all four. With `all`, `--agent codex|claude` also sets `[agents.launch] default` and its
+fallback `model`; `--assessor MODEL` sets a separate assessor model. For example,
+`just symphony-cli model all fable --agent claude --assessor haiku` switches to Claude on Fable
+for the orchestrator, executor and reviewer, and Haiku for the assessor, in one edit.
+
+The command preserves comments and order, adds missing keys, accepts any string as the model
+and refuses unknown roles and agents. The model command and settings check warn on stderr for a
+role or launch fallback model recognizable as the other agent's: `gpt-` names Codex; `claude-`, `fable`, `opus`,
+`sonnet` and `haiku` name Claude. The warning names the key and line and never refuses the file;
+unrecognized model text is accepted without warning. Checking and landing follow the project's
+settings-only policy. `just tasks limits` prints the launch agent, resulting models and their
+sources. A resumed agent keeps the model it started on.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
