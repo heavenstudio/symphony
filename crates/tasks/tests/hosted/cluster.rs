@@ -29,10 +29,11 @@ pub enum Certificate {
     OtherName,
     /// Signed by that authority, for the right names, and expired.
     Expired,
+    /// None: the server speaks no TLS.
+    None,
 }
 
 pub struct Cluster {
-    pub major: u32,
     pub port: u16,
     pub socket: PathBuf,
     /// The authority's certificate, which a client trusts.
@@ -40,7 +41,7 @@ pub struct Cluster {
     /// Another authority's, which signed nothing here.
     pub other_ca: PathBuf,
     dir: PathBuf,
-    _shell: Mutex<symphony_board::sys::Child>,
+    shell: Mutex<symphony_board::sys::Child>,
 }
 
 /// Each server started, or why it did not start: a start that failed is not tried again.
@@ -174,12 +175,30 @@ fn server_certificate(dir: &Path, certificate: Certificate) {
 /// The server of `major` that presents `certificate`, started once for the binary.
 pub fn cluster_with(major: u32, certificate: Certificate) -> &'static Cluster {
     let mut clusters = CLUSTERS.lock().unwrap_or_else(|held| held.into_inner());
+    static AT_EXIT: std::sync::Once = std::sync::Once::new();
+    AT_EXIT.call_once(|| crate::store::on_exit(stop));
     let started = clusters
         .entry((major, certificate))
         .or_insert_with(|| start(major, certificate).map(|cluster| &*Box::leak(Box::new(cluster))));
     match started {
         Ok(cluster) => cluster,
         Err(why) => panic!("{why}"),
+    }
+}
+
+/// At the test binary's exit: each server stopped, by its shell's input closed, and its folders
+/// removed.
+extern "C" fn stop() {
+    let clusters = CLUSTERS.lock().unwrap_or_else(|held| held.into_inner());
+    for cluster in clusters.values().flatten() {
+        let mut shell = cluster
+            .shell
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        drop(shell.stdin.take());
+        let _ = shell.wait();
+        let _ = std::fs::remove_dir_all(&cluster.dir);
+        let _ = std::fs::remove_dir_all(&cluster.socket);
     }
 }
 
@@ -228,12 +247,16 @@ fn start(major: u32, certificate: Certificate) -> Result<Cluster, String> {
         held.local_addr().unwrap().port()
     };
     let at = |name: &str| dir.join(name).display().to_string();
+    let (tls, host) = match certificate {
+        Certificate::None => ("off", "host"),
+        _ => ("on", "hostssl"),
+    };
     std::fs::write(
         data.join("postgresql.conf"),
         format!(
             "listen_addresses = '127.0.0.1'\nport = {port}\n\
              unix_socket_directories = '{}'\nmax_connections = 60\n\
-             ssl = on\nssl_cert_file = '{}'\nssl_key_file = '{}'\n\
+             ssl = {tls}\nssl_cert_file = '{}'\nssl_key_file = '{}'\n\
              password_encryption = 'scram-sha-256'\nfsync = off\n\
              log_connections = on\nlog_line_prefix = '%m [%p] %u@%d '\n",
             socket.display(),
@@ -248,10 +271,10 @@ fn start(major: u32, certificate: Certificate) -> Result<Cluster, String> {
         data.join("pg_hba.conf"),
         format!(
             "local all {} trust\n\
-             hostssl all weak_trust 127.0.0.1/32 trust\n\
-             hostssl all weak_md5 127.0.0.1/32 md5\n\
-             hostssl all weak_password 127.0.0.1/32 password\n\
-             hostssl all all 127.0.0.1/32 scram-sha-256\n",
+             {host} all weak_trust 127.0.0.1/32 trust\n\
+             {host} all weak_md5 127.0.0.1/32 md5\n\
+             {host} all weak_password 127.0.0.1/32 password\n\
+             {host} all all 127.0.0.1/32 scram-sha-256\n",
             pg::USER
         ),
     )
@@ -277,13 +300,12 @@ fn start(major: u32, certificate: Certificate) -> Result<Cluster, String> {
         .stderr(std::fs::File::create(dir.join("server.log")).unwrap());
     let shell = crate::store::spawn_with_input(&mut shell).unwrap();
     let cluster = Cluster {
-        major,
         port,
         socket,
         ca: dir.join("ca.pem"),
         other_ca: dir.join("other.pem"),
         dir,
-        _shell: Mutex::new(shell),
+        shell: Mutex::new(shell),
     };
     let up = test_time::wait::until_true("the hosted tests' PostgreSQL to answer", READY, || {
         cluster
@@ -337,18 +359,25 @@ impl Cluster {
             std::process::id(),
             NAMES.fetch_add(1, Ordering::SeqCst)
         );
+        self.project_of(
+            &name,
+            "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
+            "ENCODING 'UTF8'",
+        )
+    }
+
+    /// [`Cluster::project`], the login `name` made with `role`'s words and its database with
+    /// `database`'s.
+    pub fn project_of(&'static self, name: &str, role: &str, database: &str) -> Project {
         let password = format!("pw-{name}-%/@:?# é");
         self.operate(
             "postgres",
-            &format!(
-                "CREATE ROLE {name} LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB \
-                 NOCREATEROLE NOREPLICATION NOBYPASSRLS"
-            ),
+            &format!("CREATE ROLE {name} LOGIN PASSWORD '{password}' {role}"),
         );
         // CREATE DATABASE runs in no transaction block: a query of its own.
         self.operate(
             "postgres",
-            &format!("CREATE DATABASE {name} OWNER {name} ENCODING 'UTF8' TEMPLATE template0"),
+            &format!("CREATE DATABASE {name} OWNER {name} {database} TEMPLATE template0"),
         );
         self.operate(
             "postgres",
@@ -356,7 +385,7 @@ impl Cluster {
         );
         Project {
             cluster: self,
-            name,
+            name: name.to_string(),
             password,
         }
     }
@@ -440,8 +469,14 @@ impl Project {
 
     /// The environment of a process of `class` that reaches this project.
     pub fn environment(&self, class: &str) -> Box<Environment> {
+        self.environment_at("localhost", class)
+    }
+
+    /// [`Project::environment`], the server named `host`: a pool of its own, as another
+    /// process of the deployment has.
+    pub fn environment_at(&self, host: &str, class: &str) -> Box<Environment> {
         environment(&[
-            ("URL", self.url()),
+            ("URL", self.url_at(host)),
             ("CA", self.cluster.ca.display().to_string()),
             ("CLASS", class.to_string()),
         ])

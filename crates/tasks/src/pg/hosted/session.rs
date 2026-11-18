@@ -133,12 +133,18 @@ fn unconnected(error: &tokio_postgres::Error) -> Refusal {
                 "the database is not there: the platform makes it, and nothing here does",
             ),
             "53300" => Refusal::Capacity("the server has no connection left for the login"),
+            "42501" => Refusal::Unavailable("the login may not connect to the database"),
             _ => refused(server, 0),
         };
     }
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
     while let Some(cause) = source {
-        if let Some(tls) = cause.downcast_ref::<rustls::Error>() {
+        // The handshake's own error is what an I/O error carries, not its source.
+        let carried = cause
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::get_ref)
+            .and_then(|inner| inner.downcast_ref::<rustls::Error>());
+        if let Some(tls) = cause.downcast_ref::<rustls::Error>().or(carried) {
             return Refusal::Unavailable(match tls {
                 rustls::Error::InvalidCertificate(rustls::CertificateError::NotValidForName)
                 | rustls::Error::InvalidCertificate(

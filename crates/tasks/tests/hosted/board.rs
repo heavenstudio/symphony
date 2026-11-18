@@ -302,7 +302,10 @@ fn one_projects_login_reaches_no_other_projects_board() {
         let why = crate::cluster::refused(
             client.request(&[symphony_board::pg::Step::bare("SELECT count(*) FROM task")]),
         );
-        assert!(why.contains("SQLSTATE 42501"), "PostgreSQL {major}: {why}");
+        assert!(
+            why.contains("the login may not connect to the database"),
+            "PostgreSQL {major}: {why}"
+        );
         assert!(
             !why.contains(&ours.password) && !why.contains(&theirs.name),
             "{why}"

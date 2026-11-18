@@ -47,8 +47,17 @@ fn class(list: &str) -> String {
     class
 }
 
+/// What opens the body of the analyzer's function, and what closes it.
+const OPENS: &str = "LANGUAGE sql IMMUTABLE STRICT AS $f$\n";
+const CLOSES: &str = "\n$f$;";
+/// The analyzer's lowering and its letters, which 16 has neither of.
+const LOWERED: &str = "lower(input COLLATE pg_c_utf8), '[[:alpha:]]+|";
+
 /// `words`, the analyzer's definition, as PostgreSQL 16 takes it: its lowering, its letters and
-/// its decomposition from the data.
+/// its decomposition from the data. A text of ASCII alone, which most of a board's is, needs
+/// none of the data, so it is analyzed by a query of its own, ASCII's letters lowered and
+/// matched; and the function is PL/pgSQL's there, which plans each query once a session, where
+/// SQL's would read the data's thousands of literals again at every call.
 pub(super) fn words(words: &str) -> String {
     let (mut alpha, mut lower, mut marks) = (String::new(), None, None);
     let mut decomposed = "LATIN".to_string();
@@ -70,18 +79,26 @@ pub(super) fn words(words: &str) -> String {
         assert!(words.contains(from), "the analyzer no longer says {from}");
         words.replace(from, to)
     };
-    let words = replaced(
-        words,
-        "normalize(LATIN, NFKD)",
-        &format!(
-            "translate(normalize(translate({decomposed}, '{marks}', '{standins}'), NFKD), \
-             '{standins}', '{marks}')"
+    let lost = || panic!("the analyzer no longer says {OPENS}");
+    let (head, rest) = words.split_once(OPENS).unwrap_or_else(lost);
+    let (body, tail) = rest.split_once(CLOSES).unwrap_or_else(lost);
+    let ascii = replaced(body, LOWERED, "lower(input COLLATE \"C\"), '[a-z]+|");
+    let wide = replaced(
+        &replaced(
+            body,
+            "normalize(LATIN, NFKD)",
+            &format!(
+                "translate(normalize(translate({decomposed}, '{marks}', '{standins}'), NFKD), \
+                 '{standins}', '{marks}')"
+            ),
         ),
-    );
-    replaced(
-        &words,
-        "lower(input COLLATE pg_c_utf8), '[[:alpha:]]+|",
+        LOWERED,
         &format!("translate(input, '{upper}', '{lowered}') COLLATE \"C\", '[{alpha}]+|"),
+    );
+    format!(
+        "{head}LANGUAGE plpgsql IMMUTABLE STRICT AS $f$\n#variable_conflict use_column\nBEGIN\n\
+         IF octet_length(input) = char_length(input) THEN RETURN QUERY {ascii};\n\
+         ELSE RETURN QUERY {wide};\nEND IF;\nEND{CLOSES}{tail}"
     )
 }
 
@@ -129,8 +146,13 @@ mod tests {
             seen.into_iter().collect::<Vec<_>>(),
             [("alpha", 1), ("lower", 1), ("mark", 1), ("nfkd", 56)]
         );
-        let defined =
-            words("normalize(LATIN, NFKD) lower(input COLLATE pg_c_utf8), '[[:alpha:]]+|");
+        let defined = words(&format!(
+            "before {OPENS}normalize(LATIN, NFKD) {LOWERED}'{CLOSES} after"
+        ));
+        assert!(defined.starts_with("before LANGUAGE plpgsql ") && defined.ends_with("$f$; after"));
+        assert!(defined.contains(
+            "THEN RETURN QUERY normalize(LATIN, NFKD) lower(input COLLATE \"C\"), '[a-z]+|';"
+        ));
         assert!(defined.contains("COLLATE \"C\", '[\\x41-\\x5a\\x61-\\x7a\\xaa"));
         // ASCII's own capitals are in the mapping: nothing else lowers them here.
         assert!(defined.contains("translate(input, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
