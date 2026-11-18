@@ -5,23 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### GitHub delivery
-
-- [ ] **github-delivery-proof-setup** — Landing by pull request, which you approved, can be turned on only once GitHub is shown to refuse a pull request whose evidence is missing. Showing that needs two things that do not exist yet: a small GitHub App that writes a task's evidence as checks, and a throwaway repository to try the rules on, so nothing is tried on the real one. Who sets them up? A: you create the App, and an agent creates the throwaway repository with this machine's GitHub login and runs the proof there. B: you create both and name the repository on the task. C: neither for now, and pull-request landing stays off. Recommended: A, because an App can only be made in your browser and the repository is one command. Approve and say A, B or C in the note, or comment. [[analysis/github-pr-landing#Permissions and protection]]
-  [2026-11-18 20:06] agent — Posted for the board task `tools/github-pr-verified-activation`, whose read of both repositories found no rule on either default branch and no App that could write the checks.
-
-    **The App,** under A or B: made in the public repository's organization, with the permissions Checks (read and write) and Metadata (read) and no other, no webhook, installed on the throwaway repository alone. Its private key stays in a file of yours outside every checkout, readable by you alone. The task needs the App's number and nothing else: no key, token or path to one goes on this card or on the board.
-
-    **The repository:** public, because the organization's plan applies branch rules to public repositories only, and holding a few scratch commits and nothing of Symphony's or anyone's private work. The login here cannot delete a repository, so removing it after the proof is yours under either option.
-
-    **What is tried there:** that GitHub refuses the merge while the check is missing, failed or written by anything but the App, refuses a push straight to the default branch, and squashes once the check passes; and what a person can still merge by hand after a task's evidence is withdrawn.
-
-    **Not asked here:** installing the App on the real repository and turning delivery on, which follow the proof as steps of their own. The private copy a consuming project keeps is its own organization's to set up, by its own decision.
-
-    **Earlier verdicts checked.** **github-outbound-pr-delivery**, approved, and your word on `tools/github-pr-delivery` settle that tasks land by pull request with their evidence enforced on GitHub. Neither says who creates an App or a repository in your organization, and no agent has been allowed to.
-
 ## Auto-approved: spot-check
 
 ### Releases
