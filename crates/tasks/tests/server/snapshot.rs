@@ -9,7 +9,8 @@ use crate::children::Child as _;
 use crate::common::{Scratch, gone, signal};
 use crate::home_fixture::healthy_server;
 use std::convert::Infallible;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use symphony_board::port::{ATTEMPTS, Start, listens, start_on_free_port};
 use symphony_board::rpc::{self, Client};
@@ -86,6 +87,33 @@ fn fill(store: &Store, from: usize, count: usize) {
     }
 }
 
+/// A store at rest, made once: five tasks and their threads at this build's schema. Each case
+/// gets its own copy and the counts read before the seed's clean stop.
+fn resting(s: &Scratch) -> (i64, i64) {
+    struct Seed {
+        data: PathBuf,
+        held: (i64, i64),
+    }
+    static SEED: OnceLock<Seed> = OnceLock::new();
+    let seed = SEED.get_or_init(|| {
+        let setup = Scratch::new("snapshot-seed-setup");
+        let home = setup.home().snapshotting(false);
+        let store = board(&home.ensure().unwrap());
+        fill(&store, 0, 5);
+        let held = (count(&store, "task"), count(&store, "message"));
+        assert_eq!(held.0, 5);
+        assert!(held.1 >= 5, "{held:?}");
+        home.stop().unwrap();
+        assert!(!holds_log(&setup.dir.join("data")), "the seed is at rest");
+        Seed {
+            data: crate::stores::keep(&setup, "snapshot-seed"),
+            held,
+        }
+    });
+    crate::stores::clone_data(&seed.data, &s.dir.join("data"));
+    seed.held
+}
+
 fn names(home: &Home) -> Vec<String> {
     home.snapshots()
         .unwrap()
@@ -97,7 +125,7 @@ fn names(home: &Home) -> Vec<String> {
 #[test]
 fn a_snapshot_is_taken_only_while_no_server_runs_and_the_newest_three_are_kept() {
     let s = Scratch::new("snapshot-taken");
-    let home = s.home().snapshotting(false);
+    let home = Home::new(&s.dir, &healthy_server(&s.dir)).snapshotting(false);
     assert_eq!(
         home.snapshot(T0),
         Err(format!(
@@ -105,8 +133,8 @@ fn a_snapshot_is_taken_only_while_no_server_runs_and_the_newest_three_are_kept()
             s.dir.join("data").display()
         ))
     );
+    resting(&s);
     let running = home.ensure().unwrap();
-    fill(&board(&running), 0, 2);
     let refused = home.snapshot(T0).unwrap_err();
     assert_eq!(
         refused,
@@ -167,8 +195,7 @@ fn a_snapshot_is_taken_only_while_no_server_runs_and_the_newest_three_are_kept()
 fn a_snapshot_is_refused_while_a_server_has_the_store_open_by_any_spelling_of_its_path() {
     let s = Scratch::new("snapshot-spelled");
     let home = s.home().snapshotting(false);
-    fill(&board(&home.ensure().unwrap()), 0, 1);
-    home.stop().unwrap();
+    resting(&s);
     let data = s.dir.join("data");
     std::os::unix::fs::symlink(&data, s.dir.join("link")).unwrap();
     let lock = data.join("LOCK");
@@ -223,8 +250,14 @@ fn a_snapshot_whose_log_holds_writes_is_never_pruned_and_the_others_are_kept_by_
         ("2026-11-12T07-45-00Z", true)
     );
     // The next start replays it, and a clean stop leaves the log empty.
-    let store = board(&home.ensure().unwrap());
+    let again = home.ensure().unwrap();
+    assert_ne!(again.pid, running.pid);
+    let store = board(&again);
     assert_eq!(count(&store, "task"), 2, "replayed");
+    assert_eq!(
+        store.get("snap/t0").unwrap().title,
+        "A task the snapshot holds"
+    );
     home.stop().unwrap();
     assert!(!holds_log(&data), "a clean stop empties the log");
 
@@ -264,12 +297,9 @@ fn a_snapshot_whose_log_holds_writes_is_never_pruned_and_the_others_are_kept_by_
 fn a_store_put_back_from_a_snapshot_opens_at_its_schema_with_what_it_held() {
     let s = Scratch::new("snapshot-restored");
     let home = s.home().snapshotting(false);
-    let store = board(&home.ensure().unwrap());
-    fill(&store, 0, 5);
-    let held = (count(&store, "task"), count(&store, "message"));
+    let held = resting(&s);
     assert_eq!(held.0, 5);
     assert!(held.1 >= 5, "{held:?}");
-    home.stop().unwrap();
     let taken = home.snapshot(T0).unwrap();
     // The board moves on after the snapshot.
     let store = board(&home.ensure().unwrap());
@@ -357,8 +387,7 @@ fn a_snapshot_that_cannot_be_cloned_takes_none_and_never_keeps_the_server_from_s
     use std::os::unix::fs::PermissionsExt;
     let s = Scratch::new("snapshot-refused");
     let home = s.home().snapshotting(true);
-    fill(&board(&home.ensure().unwrap()), 0, 1);
-    home.stop().unwrap();
+    resting(&s);
     // A folder no clone can be made in: the clone is refused, and no plain copy stands in for it.
     let folder = home.snapshots_folder();
     std::fs::create_dir_all(&folder).unwrap();
