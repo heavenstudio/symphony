@@ -409,6 +409,14 @@ workspace Cargo before concurrent batches. Its missing runner is a failure, neve
 nextest filter excludes that case, so it is neither omitted nor run twice. Cargo keeps the same
 workspace features, profile and environment as the one build for this invocation too.
 
+To run that live fixture after setup, select it explicitly. The recipe supplies `--locked`:
+
+```sh
+just test-rs --config 'profile.dev.build-override.debug="line-tables-only"' \
+  --workspace --no-fail-fast --lib -- --ignored --exact \
+  release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test --nocapture
+```
+
 Nextest runs six cases at once (the caller's `RUST_TEST_THREADS` wins), with groups capping Chrome
 and database cases at two each (`.config/nextest.toml`). Retries are explicitly zero. Every nextest case
 has its duration in the log, and a per-case timeout ends a stalled case and its children. A timeout
