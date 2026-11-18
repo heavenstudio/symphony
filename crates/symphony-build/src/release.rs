@@ -1972,7 +1972,6 @@ fn night(
     // run carries nothing, and says nothing of either.
     record.environment = Some(inputs::Environment::now(&repo.root, until));
     record.inputs = inputs::ask(&place.checkout, until);
-    told_to_stop(until, "before its first check started")?;
     record::so_far(&logs, record);
     let environment = record.environment.as_ref().map(inputs::Environment::said);
     let same = |commit: &str| candidate::same_tree(&repo.root, commit, &candidate);
