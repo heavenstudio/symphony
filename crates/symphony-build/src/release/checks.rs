@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use super::group::{self, Bound};
 use super::record::Checking;
+use super::span::Span;
 use symphony::children::command;
 use symphony_board::sys::Stdio;
 
@@ -107,6 +108,7 @@ pub(crate) struct Ran {
     pub(crate) command: String,
     pub(crate) exit_code: Option<i32>,
     pub(crate) signal: Option<i32>,
+    /// How long it took by the wall clock, a sleep of the machine counted ([`super::span`]).
     pub(crate) seconds: f64,
     /// Its whole output.
     pub(crate) log: PathBuf,
@@ -276,7 +278,7 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
     for (name, value) in &step.set {
         child.env(name, value);
     }
-    let started = Instant::now();
+    let started = Span::begin();
     let mut child = match child.spawn() {
         Ok(child) => child,
         Err(e) => return Ran::never(step, log, format!("cannot start {}: {e}", line[0])),
@@ -320,7 +322,8 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
     if let Some(running) = within.running {
         running(None);
     }
-    let seconds = started.elapsed().as_secs_f64();
+    // By the wall clock, as its log's times and its steps' own seconds are.
+    let seconds = started.took().seconds;
     let why = if interrupted {
         Some("the run was told to stop")
     } else if timed_out {

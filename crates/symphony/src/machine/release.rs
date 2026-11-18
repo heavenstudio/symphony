@@ -26,6 +26,9 @@ pub use symphony_board::builds::CURRENT;
 pub const RELEASES: &str = "releases";
 /// A release's manifest, in its folder.
 pub const MANIFEST: &str = "manifest.json";
+/// What a project changes to take each release up to this one, oldest first, in its folder: one
+/// `## release-NAME` heading a release ([`noted`]).
+pub const NOTES: &str = "notes.md";
 /// The binaries a release holds, in `bin/`: the server, the board's commands, the messages between
 /// agents and the document command line.
 pub const BINARIES: [&str; 4] = [SERVER, "tasks", "agent-send", "symphony"];
@@ -151,6 +154,119 @@ pub fn installed(machine: &Path, name: &str) -> Result<Option<Manifest>, String>
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
+/// A release's day and its number that day, by which releases sort (`release-2026-11-12.10` after
+/// `release-2026-11-12.9`), or none for a name that is no release's.
+fn order(name: &str) -> Option<(&str, u32)> {
+    let rest = name.strip_prefix("release-")?;
+    let (day, number) = match rest.split_once('.') {
+        None => (rest, 1),
+        Some((day, number)) => (day, number.parse().ok().filter(|n| *n >= 2)?),
+    };
+    let dated = day.len() == 10
+        && day.bytes().enumerate().all(|(at, byte)| match at {
+            4 | 7 => byte == b'-',
+            _ => byte.is_ascii_digit(),
+        });
+    dated.then_some((day, number))
+}
+
+/// Whether `name` is a release's: `release-YYYY-MM-DD`, or `release-YYYY-MM-DD.N` with N from 2.
+pub fn named(name: &str) -> bool {
+    order(name).is_some()
+}
+
+/// The newest release installed in `machine` that holds [`NOTES`]: its name and their text. None
+/// when no installed release holds any.
+pub fn noted(machine: &Path) -> Option<(String, String)> {
+    let mut found: Vec<String> = fs::read_dir(machine.join(RELEASES))
+        .ok()?
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| order(name).is_some())
+        .collect();
+    found.sort_by(|a, b| order(b).cmp(&order(a)));
+    found.into_iter().find_map(|name| {
+        let text = fs::read_to_string(folder(machine, &name).join(NOTES)).ok()?;
+        Some((name, text))
+    })
+}
+
+/// Each release the notes `text` ([`NOTES`]) hold, oldest first: its name, its commit (empty where
+/// its section names none) and the line its section starts at.
+fn sections(text: &str) -> Vec<(&str, &str, usize)> {
+    let mut found: Vec<(&str, &str, usize)> = Vec::new();
+    for (at, line) in text.lines().enumerate() {
+        if let Some(name) = line.strip_prefix("## ").map(str::trim)
+            && named(name)
+        {
+            found.push((name, "", at));
+        } else if let (Some(commit), Some(last)) = (line.strip_prefix("Commit: "), found.last_mut())
+            && last.1.is_empty()
+        {
+            last.1 = commit.trim();
+        }
+    }
+    found
+}
+
+/// Where among `sections` the release `bound` names is: by its name, or by its commit, whole or
+/// its first seven characters or more.
+fn bound(sections: &[(&str, &str, usize)], bound: &str) -> Result<usize, String> {
+    let held = match (sections.first(), sections.last()) {
+        (Some(first), Some(last)) => format!("they hold {} to {}", first.0, last.0),
+        _ => "they hold no release".to_string(),
+    };
+    if named(bound) {
+        return (sections.iter())
+            .position(|(name, ..)| *name == bound)
+            .ok_or_else(|| format!("the notes say nothing of {bound}: {held}"));
+    }
+    let hex = bound.len() >= 7 && bound.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !hex {
+        return Err(format!(
+            "{bound:?} names no release (release-YYYY-MM-DD, release-YYYY-MM-DD.N or a \
+             release's commit)"
+        ));
+    }
+    let bound = bound.to_ascii_lowercase();
+    (sections.iter())
+        .position(|(_, commit, _)| !commit.is_empty() && commit.starts_with(&bound))
+        .ok_or_else(|| {
+            format!(
+                "{bound} is the commit of no release the notes hold ({held}): name the newest \
+                 release that commit holds, which `git describe --tags --match 'release-*' \
+                 --abbrev=0 {bound}` says in a clone of the Symphony's repository"
+            )
+        })
+}
+
+/// The part of the notes `text` ([`NOTES`]) for the releases after `from` (none: from the first)
+/// up to `to` (none: to the last), oldest first, each from its `## release-NAME` heading. Each
+/// bound is a release's name or its commit. Empty when no release is after `from`.
+///
+/// # Errors
+///
+/// When a bound names no release, or one the notes do not hold: a project is never handed a part
+/// of the steps as if it were all of them.
+pub fn notes_between(text: &str, from: Option<&str>, to: Option<&str>) -> Result<String, String> {
+    let sections = sections(text);
+    let after = match from {
+        Some(from) => bound(&sections, from)? + 1,
+        None => 0,
+    };
+    let through = match to {
+        Some(to) => bound(&sections, to)? + 1,
+        None => sections.len(),
+    };
+    let Some(first) = sections.get(after).filter(|_| after < through) else {
+        return Ok(String::new());
+    };
+    let end = sections.get(through).map(|section| section.2);
+    let lines: Vec<&str> = text.lines().collect();
+    let part = &lines[first.2..end.unwrap_or(lines.len())];
+    Ok(part.join("\n").trim_end().to_string() + "\n")
+}
+
 /// A folder removed when dropped, unless it was kept: an install's temporary one.
 struct Staging {
     path: PathBuf,
@@ -174,6 +290,20 @@ impl Drop for Staging {
 /// never written into), a binary is missing or does not run, the client's build has no page, or a
 /// file cannot be written. Nothing is left of an install that fails.
 pub fn install(machine: &Path, built: &Built<'_>) -> Result<Manifest, String> {
+    install_noted(machine, built, None)
+}
+
+/// [`install`], the release's folder holding `notes` as [`NOTES`] beside its manifest when there
+/// are any: what a project changes to take each release, which `symphony release-notes` prints.
+///
+/// # Errors
+///
+/// As [`install`].
+pub fn install_noted(
+    machine: &Path,
+    built: &Built<'_>,
+    notes: Option<&str>,
+) -> Result<Manifest, String> {
     let name = built.release;
     if !plain(name) {
         return Err(format!("{name:?} names no release folder"));
@@ -245,6 +375,10 @@ pub fn install(machine: &Path, built: &Built<'_>) -> Result<Manifest, String> {
     let text = serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())? + "\n";
     let path = staging.path.join(MANIFEST);
     fs::write(&path, text).map_err(|error| at(&path, &error))?;
+    if let Some(notes) = notes {
+        let path = staging.path.join(NOTES);
+        fs::write(&path, notes).map_err(|error| at(&path, &error))?;
+    }
     fs::rename(&staging.path, &place).map_err(|error| at(&place, &error))?;
     staging.kept = true;
     Ok(manifest)

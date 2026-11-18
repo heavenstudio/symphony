@@ -61,6 +61,7 @@ const STILL_SENDS: [(&str, &str); 42] = [
     ("tests/store/messages/inbox.rs", LIBRARY),
     ("tests/store/open_read.rs", ENGINE),
     ("tests/store/pg_client.rs", ENGINE),
+    ("tests/store/quiet_pull.rs", ENGINE),
     ("tests/store/round_trip.rs", ENGINE),
     ("tests/store/schema.rs", ENGINE),
     ("tests/store/schema_copy.rs", ENGINE),

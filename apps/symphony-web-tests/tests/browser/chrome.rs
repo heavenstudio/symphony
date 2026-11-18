@@ -1,6 +1,8 @@
 //! Headless Chrome for these cases: the shared driver (crates/chrome-devtools), one browser per
 //! test on a profile of its own, leashed by this test binary so it dies with the test process
-//! however that ends. A driver failure fails the case with the driver's message.
+//! however that ends. A test of several first visits takes a fresh context for each in its one
+//! browser ([`Chrome::fresh_context`]), never a browser another test drives: a wait's allowance
+//! is the work of the browser's whole process group. A driver failure fails the case with the driver's message.
 
 use std::time::Duration;
 
@@ -35,6 +37,14 @@ impl Chrome {
             chrome.profile().display()
         );
         Chrome(chrome)
+    }
+
+    /// Leave the page for a blank one in a browser context of its own, as a launch leaves it: a
+    /// first visit again (no cookie, storage or cache entry of the pages before) without another
+    /// Chrome started, what was set on the page before set again by the test. A context keeps
+    /// what it holds in memory, so a next visit in it is still a return visit.
+    pub fn fresh_context(&mut self) {
+        self.0.fresh_context().asserted();
     }
 
     /// Emulate a mid phone on a tailnet link: CPU slowed 4x, 10 Mbit/s each way, 40 ms round trip.

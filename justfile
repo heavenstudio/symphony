@@ -17,6 +17,9 @@ record := if path_exists(justfile_directory() / "tools/record.sh") == "true" { "
 fmt:
     @tools/cargo.sh fmt --all
 
+# Its last Rust step reads the branch against the default branch: red when it changes what a
+# consumer must do (the board schema, a consumer-API guard's call, a settings key) and no commit of
+# it says so in a `Consumer-Note` trailer (docs/RELEASES.md, "Its notes").
 lint-rs:
     @{{record}} --pipeline lint --step lint build "just lint-rs" just --justfile {{quote(justfile())}} _lint-rs
 
@@ -25,6 +28,7 @@ _lint-rs:
     @tools/cargo.sh fmt --all --check
     @tools/cargo.sh clippy --workspace --all-targets --locked -- -D warnings
     @tools/cargo.sh clippy -p symphony-api --features typescript --all-targets --locked -- -D warnings
+    @tools/rs-bin.sh symphony-build consumer-notes --check
     @just --justfile {{quote(justfile())}} client-lint
 
 # The web client's checks (apps/symphony-web/check.sh): its wire types against crates/symphony-api's
