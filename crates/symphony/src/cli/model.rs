@@ -14,7 +14,7 @@ use symphony_board::local;
 use toml::de::DeTable;
 
 const USAGE: &str = "usage: symphony model ROLE MODEL [--local]";
-const LOCAL: &str = "local";
+const LOCAL: &str = "--local";
 
 pub(super) fn main(
     args: &[String],

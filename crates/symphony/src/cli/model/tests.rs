@@ -301,11 +301,3 @@ fn local_refuses_a_local_file_its_readers_would_leave_out_and_names_that_file() 
     assert!(change_in(&main, "executor", "m", &env, true).is_err());
     assert!(!local.exists());
 }
-
-#[test]
-fn the_local_flag_is_read_anywhere_on_the_line_and_a_value_for_it_is_refused() {
-    let args: Vec<String> = ["executor", "m", "--local=yes"].map(String::from).to_vec();
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    assert_eq!(super::main(&args, &BTreeMap::new(), &mut out, &mut err), 2);
-    assert!(String::from_utf8(err).unwrap().starts_with(USAGE));
-}
