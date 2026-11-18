@@ -1,3 +1,9 @@
+//! Consumer call shapes beyond the kit/helpers semver check: argument and return types, field
+//! types, cross-crate type identity and known consumers that must migrate across two releases.
+//! Vocabulary inventories wider than known consumer calls are left to `just semver-check`.
+//! Known names, including name-only references, remain for the two-release migration rule.
+//! The product remains guarded in full.
+//!
 //! The public names of `symphony`, `symphony_plugin`, `symphony_api`, `symphony_docs`,
 //! `symphony_schema` and `symphony_args` that consuming projects' code calls, each in the shape it
 //! calls it: a signature pinned by coercing the function to its pointer type, or a call written as
@@ -10,18 +16,9 @@
 //! over every target), so a change that would break a consumer in what this file holds fails a
 //! task's gate rather than a run later.
 //!
-//! Each enum whose variants are held here, but the kit's that grow in a minor (below), is also
-//! matched by every variant, with no `_` arm. That
-//! match is this repository's own choice, wider than a consumer's use unless it matches the enum
-//! whole (a plugin's route test matches `Reply` so): a tripwire, so a variant added fails this file
-//! and whoever adds it reads what the consumers do with that enum. One that matches it whole
-//! breaks, and the variant waits for a consumer release plan; otherwise the match takes the new
-//! variant. A variant that only the match names may be renamed or removed along with it; one built,
-//! compared or matched beside it is a consumer's. The kit's enums that grow in a minor (`Block`,
-//! `Span`, `Media`, the words they carry and `Drawing`, `docs/PLUGIN_PROTOCOL.md`, *Versions*) are
-//! `#[non_exhaustive]`, so a match outside the kit, a consumer's too, ends with `_` and a variant
-//! added breaks none: theirs here ends with `_` as well, and still fails for a variant renamed or
-//! removed. `Reply` is not marked, as a consumer's route test matches it whole.
+//! Exhaustive product enums are matched by every variant as a tripwire for new cases. The kit's
+//! vocabulary inventories are checked against crates.io by the semver check. Its `Reply` match stays: a known consumer matches it whole, so its migration
+//! must precede a new variant even when a major version bump would satisfy semver.
 //!
 //! The guards are this file and `tests/consumer_api.rs` in `crates/tasks` (`symphony_board`),
 //! `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`: every package a
@@ -288,9 +285,9 @@ fn the_names_consumers_call_keep_their_shapes() {
     // each by every field as a variant is, with the variants of `FigureSize`, `ContainerKind` and
     // `InlineKind` it builds them with, and the structs they hold by the fields it names
     // (`Presentation` over `Default`, or by `Presentation::class`, its class read); the variants it
-    // matches, as it matches them; `Block` and `Span` compared in `assert_eq!`. Its plugin names them
+    // matches, as it matches them. Its plugin names them
     // through `symphony_plugin::vocabulary` and its tests through `symphony_api`: one type by either
-    // path. Each enum then matched whole, the header's tripwire.
+    // path. These calls retain the field types the semver tool does not compare.
     let _ = |text: String, spans: Vec<Span>, blocks: Vec<Block>, items: Vec<GalleryItem>| {
         let presentation = Presentation {
             title: text.clone(),
@@ -381,15 +378,6 @@ fn the_names_consumers_call_keep_their_shapes() {
             Span::Blocks { blocks },
         ]
     };
-    let _ = [
-        FigureSize::Small,
-        FigureSize::Row,
-        FigureSize::Large,
-        FigureSize::Tile,
-        FigureSize::Cell,
-        FigureSize::Slot,
-        FigureSize::Wide,
-    ];
     let _ = |block: &Block| {
         matches!(block, Block::Heading { anchor, .. } if anchor.is_empty())
             || matches!(block, Block::Component { kind, blocks }
@@ -413,94 +401,9 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(FigureSize) -> vocabulary::FigureSize = std::convert::identity;
     let _: fn(ContainerKind) -> vocabulary::ContainerKind = std::convert::identity;
     let _: fn(InlineKind) -> vocabulary::InlineKind = std::convert::identity;
-    let _ = |block: Block| match block {
-        Block::Heading { .. }
-        | Block::Paragraph { .. }
-        | Block::List { .. }
-        | Block::Table { .. }
-        | Block::Code { .. }
-        | Block::Quote { .. }
-        | Block::Rule
-        | Block::Callout { .. }
-        | Block::Card { .. }
-        | Block::Component { .. }
-        | Block::Media { .. }
-        | Block::Image { .. }
-        | Block::Figure { .. }
-        | Block::Caption { .. }
-        | Block::Comparison { .. }
-        | Block::Group { .. }
-        | Block::Container { .. }
-        | Block::Details { .. }
-        | Block::SettledCard { .. }
-        | Block::Thread { .. }
-        | Block::Comment { .. }
-        | Block::Unknown { .. } => {}
-        _ => {}
-    };
-    let _ = |span: Span| match span {
-        Span::Text { .. }
-        | Span::Emphasis { .. }
-        | Span::Strong { .. }
-        | Span::Code { .. }
-        | Span::Link { .. }
-        | Span::WikiLink { .. }
-        | Span::LineBreak
-        | Span::Image { .. }
-        | Span::Media { .. }
-        | Span::Component { .. }
-        | Span::Icon { .. }
-        | Span::Styled { .. }
-        | Span::Graphic { .. }
-        | Span::Blocks { .. }
-        | Span::Unknown { .. } => {}
-        _ => {}
-    };
-    let _ = |media: Media| match media {
-        Media::Mockup { .. } | Media::Viewer { .. } | Media::Gallery { .. } => {}
-        _ => {}
-    };
-    let _ = |size: FigureSize| match size {
-        FigureSize::Small
-        | FigureSize::Row
-        | FigureSize::Large
-        | FigureSize::Tile
-        | FigureSize::Cell
-        | FigureSize::Slot
-        | FigureSize::Wide => {}
-        _ => {}
-    };
-    let _ = |tag: ContainerKind| match tag {
-        ContainerKind::Div
-        | ContainerKind::Section
-        | ContainerKind::Figure
-        | ContainerKind::Figcaption
-        | ContainerKind::Aside
-        | ContainerKind::Header
-        | ContainerKind::Footer
-        | ContainerKind::Address
-        | ContainerKind::Center => {}
-        _ => {}
-    };
-    let _ = |kind: InlineKind| match kind {
-        InlineKind::Span
-        | InlineKind::Small
-        | InlineKind::Sub
-        | InlineKind::Sup
-        | InlineKind::Time
-        | InlineKind::Mark
-        | InlineKind::Kbd
-        | InlineKind::Samp
-        | InlineKind::Delete
-        | InlineKind::Insert
-        | InlineKind::Underline
-        | InlineKind::Abbreviation => {}
-        _ => {}
-    };
-
     // What its route and its renderer answer: its route builds `Reply::File`, and its route's test
     // matches a `Reply` whole, a file by its path and JSON by what it prints; its renderer builds
-    // `Drawing::Viewer`, and `Drawing` is matched whole as the header's tripwire.
+    // `Drawing::Viewer`. The field types remain checked here.
     let _ = |path: PathBuf, viewer: Viewer| (Reply::File(path), Drawing::Viewer(viewer));
     let _ = |reply: Reply| match reply {
         Reply::File(path) => Some(path),
@@ -508,10 +411,6 @@ fn the_names_consumers_call_keep_their_shapes() {
             let _: &dyn std::fmt::Display = &json;
             None
         }
-    };
-    let _ = |drawing: Drawing| match drawing {
-        Drawing::Blocks(_) | Drawing::Viewer(_) => {}
-        _ => {}
     };
     let _ = |text: &'static str| Card {
         slug: text,

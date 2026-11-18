@@ -10,6 +10,7 @@
 #     docs-audit    the docs audit, `symphony docs-audit --check`
 #     crates-check  the crates-check recipe: each published package whose version crates.io holds
 #                   packaged from the same sources (docs/RELEASES.md, "Packages on crates.io")
+#     semver-check  the kit/helper APIs against crates.io, with their actual version moves
 #     tests         every test target of the workspace, the browser tests among them, built once and
 #                   run in lanes side by side (tools/test-lanes.sh), each lane's log in tests-lanes/
 #                   beside the step's log (SYMPHONY_TEST_LANE_LOGS), named in it as the lanes start
@@ -40,7 +41,7 @@ CDPATH='' cd "$(dirname "$justfile")" || exit 2
 interrupted=''
 trap 'interrupted=1' INT
 
-steps=(lint client-check size-check docs-audit crates-check tests)
+steps=(lint client-check size-check docs-audit crates-check semver-check tests)
 chosen=()
 for arg in "$@"; do
     known=''
@@ -149,6 +150,11 @@ for step in "${chosen[@]}"; do
         run crates-check "just crates-check" \
             tools/record.sh --step crates-check test "crates check" \
             just --justfile "$justfile" crates-check
+        ;;
+    semver-check)
+        run semver-check "just semver-check" \
+            tools/record.sh --step semver-check test "semver check" \
+            just --justfile "$justfile" semver-check
         ;;
     tests)
         tests=(tools/test-lanes.sh)

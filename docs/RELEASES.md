@@ -161,6 +161,31 @@ reads crates.io and publishes nothing, so it is cheap enough for the evidence of
 task that changes a published package; in the release run, its red is a step's
 (`tests/release-red-verify-crates-check`).
 
+**The API decides the size of a bump.** `just semver-check`, the `semver-check` step of release
+verification, runs [cargo-semver-checks](https://github.com/obi1kenobi/cargo-semver-checks) 0.51.0
+on the three kit packages and five helpers, with all features and each manifest's actual version.
+It compares each with the latest eligible published version from crates.io, including the current
+version when already published. Removals, added constructor arguments and other detected breaks
+require a major; additive changes require the tool's minor where applicable. There is no
+`--release-type` override. A missing baseline, failed download or failed rustdoc build is red.
+The product's five packages, below 1.0, keep their consumer guards instead.
+
+`tools/semver.sh` fetches the checksum-pinned upstream executable for Intel or ARM macOS or glibc
+Linux into the checkout's build folder (`CARGO_TARGET_DIR`, else `.target`), under
+`tools/cargo-semver-checks/0.51.0/`. It writes nothing to the user's tool installation. It needs
+Bash, curl, tar and `sha256sum` or `shasum`; a missing download or unsupported host fails with setup
+guidance. The pinned tool supports this workspace's Rust 1.99.0. The registry baseline and its
+rustdoc JSON are cached by the tool in that build folder's `semver-checks/`.
+
+Release verification already needs crates.io for the source comparison and does not run wholly
+offline. The semver step likewise retrieves its baseline from crates.io on a cold cache: HTTPS
+access and the dependencies of both versions are required. The caches avoid repeated builds;
+offline release verification is not supported. A registry lookup or baseline build that fails is
+red. No vendored rustdoc snapshot needs updating at each publication. The checker does not
+compare arbitrary argument, return or field types, serialization behaviour or the two-release
+consumer migration rule: the typed guards and review still hold those
+([consumer API changes](CHECKS.md#consumer-api-changes)).
+
 **How a bump cascades.** A package names a published sibling at exactly the version the sibling is
 at (`crates/symphony/tests/packages.rs`), so a sibling's new version changes the manifest of each
 published package that builds with it. That package then packages other sources at its own
@@ -312,16 +337,16 @@ project is given and neither the library nor the shipped `symphony` compiles
    functions and methods it names, most by signature (coerced to their pointer type), some by a
    call written as a consumer writes it, and a few, a generic one among them, by name alone; the
    structs a consumer builds by the fields it builds them with; the variants a consumer builds,
-   compares or matches, as it does, the blocks' among them; and the plugin traits by the methods a
+   compares or matches, as it does; and the plugin traits by the methods a
    plugin writes. Each enum whose variants a guard holds is also matched there by every variant, the
    guards' own choice: a variant added fails the guard, and waits for a consumer release plan only
    where a consumer matches that enum whole, while a variant that only that match names goes or
-   changes with it. The kit's enums that grow in a minor
-   ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#versions)) are matched there by every variant and `_`,
-   as any match outside the kit is: a variant added to one passes the guard, as it breaks no
-   consumer, and one renamed or removed still fails it. The signature of a function a guard names alone, and a field read or a method
-   called on a value that no guard names, are the project's to meet when it moves its pin: its own
-   gate builds it on the new one.
+   changes with it. Vocabulary variant inventories wider than known consumer calls are left
+   to the semver step. Known names remain for the two-release rule. Their guards retain typed consumer calls and cross-crate type identity,
+   which the checker does not compare, and the kit's `Reply` exhaustive match because a known
+   consumer matches it whole. A major bump never waives the two-release migration rule.
+   A field read or method called on a value that no guard names is the project's to meet when it
+   moves its pin: its own gate builds it on the new one.
 5. **Red:** no tag. Each red check, and each red step of a check that lists them (step 3), is a
    task on this repository's board, `tests/release-red-NAME`, filed at p0 and marked red, so it
    takes no orchestrator slot and is offered before other work of its priority
