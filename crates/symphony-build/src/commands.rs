@@ -53,7 +53,7 @@ const COMMANDS: [(&str, &str); 8] = [
     ),
     (
         "consumer-notes",
-        "what a project changes to take each release, or check a branch",
+        "show release notes for projects, or check a branch",
     ),
     (
         "release",
