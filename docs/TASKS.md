@@ -640,12 +640,14 @@ ordinary write, and in no dump.
   the copy is one request, which the server itself ends thirty seconds short of the wait of the
   program that sent it (270 s of the client's 300), saying the rows of each table it had copied
   and the table it was at: left to run past its caller's wait it would replace the board after
-  the caller was told it failed. On SurrealDB the copy stages its rows and swaps them in in one
+  the caller was told it failed, which only a copy whose commit and answer take those thirty
+  seconds still can. On SurrealDB the copy stages its rows and swaps them in in one
   transaction, which must fit the memtable of the server it runs on: one the server does not
   commit is said with the rows and bytes it staged and the setting
   (`SURREAL_SURREALKV_MAX_MEMTABLE_SIZE`, 256 MiB on a server the board starts), and what it
-  staged is removed a table at a time, or by the next copy before it stages, so a copy made
-  while another stages ends the other. How large a board each takes is measured in
+  staged is removed a table at a time, or by the next copy before it stages. So a copy made
+  while another stages takes the other's staging, and the other is refused at its swap, which
+  first counts each staging table against the rows it sent: the later copy is the one kept. How large a board each takes is measured in
   [the store's baseline](analysis/board-store-baseline.md#a-board-ten-times-the-size-measured-2026-11-18).
 
 The generation is a row of the database, so putting the database's files back puts it back too.

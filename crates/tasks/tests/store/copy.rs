@@ -629,12 +629,12 @@ fn a_postgresql_copy_the_server_ends_says_the_rows_it_reached_and_leaves_the_boa
     assert_ne!(f.store.recovery_generation().unwrap(), generation);
 }
 
-/// A copy that outlasts its caller's wait is ended by the server before the caller stops
-/// waiting, so it never replaces the board after the caller was told it failed. The copy is held
+/// A copy still running at its caller's wait is ended by the server before the caller stops
+/// waiting, so it does not replace the board after the caller was told it failed. The copy is held
 /// at its first insert by a lock the test holds, for as long as the test holds it; once the lock
 /// is let go and no backend is at work, the board is the one it was.
 #[test]
-fn a_postgresql_copy_that_outlasts_its_callers_wait_never_replaces_the_board() {
+fn a_postgresql_copy_held_past_its_callers_wait_is_ended_and_does_not_replace_the_board() {
     let f = Fixture::on(Backend::PostgreSql, Seed { dump: everything() });
     let holder = postgresql_of(&f);
     holder

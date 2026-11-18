@@ -17,9 +17,10 @@ use std::time::Duration;
 impl Store {
     /// Remove every copy's staging table (`copy_…`): what a copy killed while it staged leaves, or
     /// one whose cleanup failed. Every copy starts with it, so a copy made while another stages
-    /// takes the other's staging away and the other's swap fails, the board left to the later
-    /// copy: two copies of one board at once were never both kept. A board on PostgreSQL has
-    /// none: its copy is one request ([`postgres::copy`]).
+    /// takes the other's staging away, and the other's swap, which counts what it staged before
+    /// it writes ([`sql::swap`]), is refused: the board is left to the later copy, as two copies
+    /// of one board at once were never both kept. A board on PostgreSQL has none: its copy is
+    /// one request ([`postgres::copy`]).
     pub fn remove_staging(&self) -> Result<(), Error> {
         if self.db.is_postgresql() {
             return Ok(());
@@ -161,8 +162,12 @@ impl Store {
         let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
         let copied = self.stage(&staging, &tables).and_then(|staged| {
             let swap = sql::swap(&staging, &names);
+            let sent: serde_json::Map<String, Value> = (tables.iter())
+                .map(|(table, rows)| ((*table).to_string(), json!(rows.len())))
+                .collect();
             let vars = json!({
                 "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
+                "sent": sent,
             });
             self.retrying(|| self.transact::<String>(&swap, vars.clone()))
                 .map_err(|error| uncommitted(error, staged, &tables))
@@ -344,8 +349,9 @@ fn uncommitted(error: Error, staged: u64, tables: &[(&str, Vec<Value>)]) -> Erro
 
 /// How long the server gives a copy that is one request, of a client that waits `wait` for it:
 /// thirty seconds short of the wait, or half of a wait under a minute, so the server's own word
-/// that it ended the copy reaches the caller before the caller stops waiting. No copy is ended
-/// after its caller gave up, which is when one could still commit.
+/// that it ended the copy reaches the caller before the caller stops waiting. A copy still
+/// running when its caller gives up would commit afterwards; what is left is a copy that
+/// finished inside the limit and whose commit and answer then took longer than the difference.
 fn copy_limit(wait: Duration) -> Duration {
     wait - (wait / 2).min(Duration::from_secs(30))
 }

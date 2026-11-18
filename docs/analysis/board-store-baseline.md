@@ -338,10 +338,12 @@ machine meets it sooner, at any size. No wait was changed.
 
 Without that limit a copy that outlasts its caller's wait is reported failed and then replaces
 the board: the request is sent whole, so the server finishes it after the client has gone.
-`a_postgresql_copy_that_outlasts_its_callers_wait_never_replaces_the_board`
+`a_postgresql_copy_held_past_its_callers_wait_is_ended_and_does_not_replace_the_board`
 (`crates/tasks/tests/store/copy.rs`) holds a copy at its first insert by a lock, lets its client
 stop waiting, lets the lock go and reads the board once every other backend is idle; with the
-server's limit taken out it reads the new board.
+server's limit taken out it reads the new board. The limit narrows that window and does not
+close it: a copy that finishes inside the 270 s and whose commit and answer then take more than
+the thirty left still replaces the board after its caller gave up.
 
 ### The copy on SurrealDB
 
@@ -362,11 +364,30 @@ A swap whose client stops waiting does not commit afterwards, as PostgreSQL's di
 drops the statement with its connection. The probe held the swap at its first task insert by an
 event asking a listener of the test's every 5 ms, with a client waiting 4 s: the listener was
 asked 524 times while the client waited and not once in the 2 s after it gave up, and 20 s
-after the listener said to go on the board was the old one with no staging table left. To
-repeat it: `DEFINE EVENT … ON task WHEN $event = 'CREATE' THEN { … }` with the wait of
-`crates/tasks/tests/store/gate.rs`, a store over a client `waiting` 4 s, `copy`, then count the
-listener's questions. It is kept as a measurement and not as a test, since what it shows is an
-absence, which only a clock can wait out.
+after the listener said to go on the board was the old one with no staging table left. It is
+kept as a measurement and not as a test, since what it shows is an absence, which only a clock
+can wait out. To repeat it, in a test of `crates/tasks/tests/store/`, on a board seeded with
+one dump and copied with another:
+
+```rust
+let gate = crate::gate::Gate::new();
+f.other_client().write(
+    &format!(
+        "DEFINE EVENT fixture_held ON task WHEN $event = 'CREATE' THEN {{ {} }};",
+        gate.wait_here()
+    ),
+    serde_json::json!({}),
+)?;
+// A store over `f.other_client().waiting(Duration::from_secs(4))`:
+let copied = impatient.copy(&other_dump); // the client's "no answer within 4s"
+// Count the listener's questions now and again 2 s later (`Gate`'s `reached`), then:
+gate.open();
+// and read `f.store.dump()` until it is `other_dump`, or 20 s have passed.
+```
+
+`gate.wait_here()` is the event's body: `FOR $look IN 0..N { IF
+http::get('http://127.0.0.1:PORT/gate') == 'open' { BREAK; }; sleep(5ms); };`, the listener
+answering `wait` until the test opens it.
 
 ### Paired board work on it
 
