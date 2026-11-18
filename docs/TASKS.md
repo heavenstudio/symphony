@@ -1309,7 +1309,7 @@ reads with their JSON types, so a change that would break one fails its own task
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
 task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
 review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes. The current API is 2.1.
+keep their shapes. The current API is 2.2.
 
 ### What a program outside the board keeps
 
@@ -1349,6 +1349,27 @@ its store the board home's ([above](#a-board-that-was-copied-or-restored)), so o
 and every other call is as it was. What the token does not tell apart is said there too, and the
 api claims no more: a program that finds its token refused reads the task again and reconciles
 what it kept, never writing on the number alone.
+
+### The evidence of a task at its head
+
+Minor 2 adds one read, for the program that makes a task's evidence public
+([a land delivered by a pull request](#a-land-delivered-by-a-pull-request)).
+
+- **`evidence`**, `{"slug": S}` with an optional `"head"`: the task's evidence at the tip of the
+  branch named as it in the main checkout, refused when `head` is given and is not that tip. It
+  writes nothing and names no host. Its answer is one snapshot
+  (`crates/tasks/src/land/evidence.rs`): `version` (1), `slug`, `task` (the task's `id`),
+  `status`, `head`, `branch` (the default branch), `policy` and `catalogue` (digests of the
+  committed project file and of the stamps' catalogue), `assessment` (who assessed, the commit
+  read, why, the stamps named) and `assessed` (whether it read the head), `stamps` (every stamp of
+  the catalogue, each `met`, `waived` or `missing` with its reader's line and the runs or thread
+  lines it stands on), `blocking` (each reason it is not eligible), `eligible`, and `revision`, a
+  digest of all of it: two snapshots of one revision say the same.
+
+It is the reading the land itself goes by, one function, and stricter than the default land in
+what ties evidence to the head: the assessment is of the head, so one of another commit or of the
+brief waives nothing and none is no waiver; the approve names the head, never covering it by
+time; and every stamp is said, a waived one with who waived it and why.
 
 ## The agents API
 
@@ -2414,10 +2435,79 @@ stamp still needs one test run green at the tip. Nobody marks a real red as not 
 land takes no waiver: a refusal is what the run's own log says, read by its recorder as it ended
 ([MACHINE_WORK](MACHINE_WORK.md#a-command-its-runner-refused)).
 
+### A land delivered by a pull request
+
+With `[land] delivery` naming a command ([PROJECT_FILE](PROJECT_FILE.md#land)), `just land SLUG`
+makes no merge and no push of the default branch: the host of the project's repository squashes
+the task's head into one commit there, and the main checkout follows it. With no such key the
+land is the one above, and nothing here is reached. This repository sets none.
+
+The board names no host. The command is the project's own program, run in the main checkout as
+`COMMAND VERB --request FILE`, FILE one JSON object and its standard output another whose `state`
+says what it came to; [`symphony-github deliver`](GITHUB.md#delivering-a-land) is one. Its four
+verbs are `publish`, `merge`, `result` and `landed` (`crates/tasks/src/land/delivery.rs`), and it
+decides nothing: what a task needs and whether it stands is
+[the evidence](#the-evidence-of-a-task-at-its-head) the land reads and hands it.
+
+A land keeps a journal of the delivery in the lands' folder, written before each step:
+
+1. **Prepared.** The remote default branch is fetched, and the project file it commits must be
+   the one committed here. A head that changes a generator's outputs is refused, as is one that
+   merges a commit the remote default does not hold: an import of another history, which a squash
+   would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). A task that is not eligible at
+   its head is refused before anything is published.
+2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
+   which the task is bound to from then on. The evidence is read again: of another revision, it is
+   published again or refused, never merged as it was.
+3. **Merge requested.** One `merge`, a squash of that pull request at that head.
+4. **Merged remotely.** The commit the host made is proved by git alone: on the fetched default
+   branch, of one parent, its tree the merge of that parent and the head. A receipt of the head
+   and the commit is kept for good (`receipts/` in the lands' folder), and the head stays
+   reachable under `refs/symphony/delivered/SLUG`, since a squash leaves it in no history; a head
+   with a receipt does not go back to review.
+5. **Reconciled.** A clean main checkout whose default branch the remote's descends from is
+   fast-forwarded. A dirty or diverged one is left as it is, the land answering "landed remotely,
+   reconciliation pending" once on the thread, and a land run again closes the task once the
+   checkout can follow. Nothing here is reset, merged or pushed for it.
+6. **Closed**, then what follows a land, each once: the landed line names the commit, the head and
+   the pull request, `landed` tells the program, and `[board] on_land` runs with the commit.
+
+| What the land finds | What it does |
+| --- | --- |
+| The merge refused (a conflict, a moved head, checks, permission) | the task stays open, the refusal goes to who acts on it, and the next land validates again before asking again |
+| No answer to the merge | it reads the pull request (`result`): merged at the head, the commit is proved and adopted; open, the next land asks again; unknown, the land says so and the next one reads it first |
+| A commit that is not the squash of the head (a merge commit, another tree), or the pull request closed unmerged | held for reconciliation: said once to the orchestrator, nothing closed, no receipt |
+| A land run again after it closed | refused: the task landed once |
+
+One limit holds by design: evidence withdrawn after the last reading and before the host acts on
+a request already made does not recall it. The receipt names the revision that was read.
+
+What else writes the default branch lands nothing there while the key is set, each refused by
+name: the regenerator, and a save of a document from the app. A release candidate is not
+advanced over a squash, which its reader does not see as a landing, and the sweep keeps the
+worktree and branch of a squashed head, which it finds in no history.
+
+### A delivery whose host is gone
+
+Once a land has journaled a merge as requested, no land merges that task here, whatever
+`[land] delivery` says by then: with the key removed the land refuses and names the journal. That
+is not fallen back from by a flag. With the host back, set the key again and run the land, which
+reads the pull request. With the host gone for good, a person does this by hand:
+
+1. Fetch what remains of the remote and look for the commit: one parent on the default branch,
+   its tree the merge of that parent and the journal's head (`git merge-tree --write-tree PARENT
+   HEAD`).
+2. If it is there, the head landed: fast-forward the main checkout to it and close the task with
+   the board's ordinary commands, saying on its thread the commit it landed as.
+3. If it is not, nothing landed: remove the journal by its name (`rm -f` of the path the refusal
+   gives), and the next land without the key merges here.
+
 ### The regenerator
 
 What a project's `[land] generators` make (this repository's client distribution) is
-made after a land, never on its path. One build for main runs at a time, and once it is
+made after a land, never on its path. Where the project
+[delivers by pull request](#a-land-delivered-by-a-pull-request) it is not started and lands
+nothing: a commit of its own on the default branch is one the host never made. One build for main runs at a time, and once it is
 built the next is main's newest tip: a build in progress is never cancelled but let
 finish, and there is no queue, so some merges are never built on their own. A land that
 closed its task starts

@@ -117,6 +117,9 @@ leaf `crates/process-cwd/`. `on_review.rs` and `on_land.rs` start `[board] on_re
 `tasks land`, the default landing ([TASKS](../../docs/TASKS.md#the-default-landing)): `needs.rs`
 what it requires, `check_paths.rs` which tests and checks a branch changes, `moving.rs` how it moves
 the main checkout, `regenerate.rs` the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)).
+`delivery.rs` is a land delivered by a hosted pull request and `evidence.rs` the one reading of a
+task's evidence it and `tasks api` go by
+([TASKS](../../docs/TASKS.md#a-land-delivered-by-a-pull-request)).
 `covering.rs` with `store/work/covered.rs` is a close covered by another landing
 ([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
 the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `red.rs` the red mark.

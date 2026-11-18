@@ -241,8 +241,9 @@ pub(super) fn left(folder: &Path, slug: &str, default: &str) -> Result<(), Strin
         "{slug} has a delivery by pull request under way ({}), and [land] delivery is no longer \
          set on {default}: nothing is merged here over it. Set it again and run the land, which \
          reads the pull request; with the host gone for good, see docs/TASKS.md, \"A delivery \
-         whose host is gone\"",
-        journal.said()
+         whose host is gone\" (its journal is {})",
+        journal.said(),
+        Journal::path(folder, slug).display()
     ))
 }
 

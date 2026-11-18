@@ -1,14 +1,16 @@
-# GitHub issue exchange
+# GitHub issue exchange and pull request delivery
 
-`symphony-github` exchanges selected tasks with the issues of one GitHub.com repository. It is
-optional and turned off: a project that never commits its settings file runs none of it, and its
+`symphony-github` exchanges selected tasks with the issues of one GitHub.com repository, and
+answers [a land delivered by a pull request](#delivering-a-land) there. It is optional and turned
+off: a project that never commits its settings file runs none of it, and its
 board, its pages and its landing are as they are without it.
 
 It is a program of its own (`crates/symphony-github`). It reaches the board through
 [`tasks api`](TASKS.md#the-tasks-api) and nothing else, GitHub through `curl`, and keeps what it
 must remember in the folder the board names for it. No other package of the workspace builds with
-it, which `crates/symphony-github/tests/boundary.rs` holds. Nothing starts it but an operator:
-there is no schedule, no webhook and no page that runs it. The design it follows, and what of
+it, which `crates/symphony-github/tests/boundary.rs` holds. Nothing starts it but an operator,
+and a land where the project's `[land] delivery` names it: there is no schedule, no webhook and
+no page that runs it. The design it follows, and what of
 that design is not built, is [the proposal](analysis/github-integration.md).
 
 ## Turning it on
@@ -26,14 +28,17 @@ refusal as turned off.
 | `enabled` | `false` | whether anything is read from or written to GitHub |
 | `repository` | none | `"OWNER/NAME"` on GitHub.com, the one repository reached; never a URL or another host |
 | `issues` | `"off"` | `"import"`, `"export"` or `"exchange"` (both) |
-| `pull_requests` | `"off"` | `"track"` or `"publish"` are read and held to their words; this build serves neither and says so |
+| `pull_requests` | `"off"` | `"publish"` answers [a land's delivery](#delivering-a-land); `"track"` is read and held to its word, and this build tracks none and says so |
 | `token_file` | none | the absolute path of a file holding the token |
 | `import_labels` | `[]` | the labels that select an open issue for import |
 | `import_comments` | `false` | whether the comments of a mapped issue become notes on its task |
 | `export_label` | none | a label put on each issue the adapter creates |
+| `checks_token_file` | none | the absolute path of a file holding the token that writes a delivery's checks, never `token_file` |
+| `checks_app_id` | none | the number of the GitHub App that token is of: a check by any other is not read as the adapter's |
+| `close_issues` | `false` | whether a delivered task's mapped issue is closed once the board closed the task |
 
-`enabled = true` needs `repository` and `token_file`, and an `issues` that imports needs
-`import_labels`. The settings are read again before every operation that writes GitHub or the
+`enabled = true` needs `repository` and `token_file`, an `issues` that imports needs
+`import_labels`, and `pull_requests = "publish"` needs `checks_token_file` and `checks_app_id`. The settings are read again before every operation that writes GitHub or the
 board, so a landing that turns the adapter off stops a run at its next dispatch.
 
 The issues are listed from where the last listing ended, and that place holds only under the
@@ -58,6 +63,14 @@ A fine-grained token scoped to the one repository is enough: issues read for `im
 read and write for `export` and `exchange`. A token that GitHub refuses (401) pauses the
 exchange with everything kept; the next preview that succeeds lifts the pause.
 
+A delivery uses two tokens, each held by the same rules. `token_file`'s opens and merges the pull
+request: pull requests read and write, contents read and write, and issues write where
+`close_issues` is set. `checks_token_file`'s writes the checks: an installation token of the one
+GitHub App `checks_app_id` names, with checks read and write and nothing else. GitHub takes a
+check from an App alone, so what merges cannot say the evidence stands. The adapter mints no
+token: whoever installs the App keeps a current one in the file. The head itself is pushed by the
+checkout's own git, with the credentials a person's `git push` there uses.
+
 ## The commands
 
 Each is run in a checkout of the project. `--tasks PROGRAM` names the board's program, which is
@@ -76,6 +89,8 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
   are made as.
 - **`resolve SLUG local|remote`** keeps one side of a conflict, or takes up a suspended mapping
   again. It writes only the adapter's own folder; the next preview shows what follows.
+- **`deliver VERB --request FILE`** answers one verb of [a land's delivery](#delivering-a-land).
+  A land runs it; an operator has no reason to.
 
 ## What is exchanged
 
@@ -129,6 +144,8 @@ no worktree and no commit, and backed up with the repository's common dir or not
 - `state.json`: the repository bound by its number, a mapping for each task exchanged (the
   task's number with the board's recovery generation, the issue's number and ids, each side's
   digest), the curated texts, and what pauses the exchange.
+- `state.json` holds as well the pull request each delivered task is bound to, with the task's
+  number and, once it landed, the commit.
 - `preview.json`: the preview that waits.
 - `journal.jsonl`: a line before each operation is dispatched (its id, target, the digest of
   what it writes, what it expects to find, the settings' revision, who ran it) and a line with
@@ -168,10 +185,48 @@ A reconcile is safe to run again and to interrupt.
 | The state folder was lost | the next preview maps again what both sides still show (a proposal by its slug and issue line) and imports none of it twice; a publication is named with its issue and mapped again once `publish` opts its task in, found by its marker and not published twice |
 | Issues moved between pages while they were listed | what was read is used and the cursor stays, so the next preview lists from it again |
 
+## Delivering a land
+
+A project whose `symphony.toml` commits `[land] delivery = ["symphony-github", "deliver"]` lands
+its tasks by pull request ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)): the land runs
+`symphony-github deliver VERB --request FILE` for each of four verbs and reads one line of JSON.
+The adapter answers only `enabled` settings whose `pull_requests` is `"publish"`; under any other
+it answers `refused` and asks GitHub nothing. It decides nothing: the land hands it the task's
+evidence, and it reads no board for it.
+
+- **`publish`** pushes the head to the branch named as the task, never forced, and only when
+  `origin` is the settings' repository on GitHub.com. It finds the open pull request of that
+  branch into the default branch before it opens one, then writes the evidence as checks on the
+  head: `symphony/assessment`, `symphony/NAME` for each stamp (success where it stands, neutral
+  where the assessment waived it, failure where it is missing) and `symphony/eligible`. That last
+  one is what a branch's protection requires, from the App `checks_app_id` names. It is written
+  last when it passes and first when it fails, so it never passes over a stamp not yet written,
+  and the checks are read back as that App's before `published` is answered.
+- **`merge`** asks GitHub once for a squash of the bound pull request at the head it is given,
+  which GitHub refuses for any other head. A pull request already merged is answered as merged,
+  with no second request.
+- **`result`** reads the bound pull request: open, merged with its commit, or closed.
+- **`landed`** keeps the commit, and closes the task's mapped issue where `close_issues` says.
+
+The pull request's title and text, and the squash commit's title, are the task's curated text
+(`publish SLUG`) or, with none, its slug. The title and brief the land hands over, the thread,
+the handles and the reasons in the evidence are sent nowhere: a check says a stamp's name and
+where it stands, and no more.
+
+Every write is journaled before it is made and looked for before it is made again: a pull
+request by its branch, a check by its name, its conclusion and the evidence's revision, a merge
+by the pull request's own state. A lost answer is answered `unavailable` or `unknown`, and the
+next run finds what was made. Evidence of another revision rewrites the checks of that head.
+
+Protecting the default branch (the required check, its App, squash alone, no bypass) is the
+repository owner's act on GitHub. The adapter edits no protection, rule or visibility, and
+nothing here turns delivery on.
+
 ## Checking it
 
 `just test-rs -p symphony-github` runs its tests: each module's own, the exchange on a board
 and a repository held in memory with every failure above planted, and the exchange on a real
 scratch board through `tasks api` with its requests made by a real `curl` to a loopback server.
-None needs a GitHub repository or a credential. A run against GitHub itself needs a disposable
+The delivery's verbs are asked of the same repository in memory, which answers pull requests,
+their merge and a commit's checks. None needs a GitHub repository or a credential. A run against GitHub itself needs a disposable
 repository and a token its owner supplies, and is nobody's to start without that word.
