@@ -19,6 +19,9 @@ the evidence behind decisions are under [Design and history](#design-and-history
   with its default.
 - [Releases](RELEASES.md) — how a release is cut by the release run or out of cycle, named and
   read, and the release run's schedule.
+- [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
+  public repository into a private copy with its ancestry kept, the export of selected reusable
+  changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.
 - [Machine build and test work](MACHINE_WORK.md) — observed build/test phases, the board's build
   and test recorder (`tasks run`), and advisory machine targets.
 - [Runs](RUNS.md) — the day files of a project's runs and their steps: the line each writes,
