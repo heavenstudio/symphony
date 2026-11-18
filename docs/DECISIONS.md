@@ -29,45 +29,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### Board
 
-- [x] **board-pg-cutover** — PostgreSQL now passes the board's tests on scratch boards, and no live board has moved. Moving one means holding it, so nobody can write to it, while it is copied and compared; going back after it has been written to takes a second hold. Side by side, PostgreSQL failed nothing and answers most commands sooner, but its server used 1.7 times the CPU and its memory peaked at 1,752 MiB with thirty sessions writing at once, against the 512 MiB target the move was approved with. When may the live boards move? A: once the missing pieces are built and a rehearsal on a copy is clean. B: as A, and only after a task finds why memory peaks that high and brings it under the target, or shows it cannot be. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/board-pg-cutover#The choice]]
-  [2026-11-18 15:06] agent — Posted for the board task `docs/board-pg-cutover-card`. Nothing live moves before you answer.
-
-    **The order, under either.**
-    1. A release whose programs read either store is installed. No board moves.
-    2. A rehearsal: this repository's board is exported, copied into a scratch PostgreSQL, compared table by table and timed.
-    3. This repository's board moves first, and runs a few days.
-    4. Each of the two other projects takes that release by its own pin, then its board moves. A board never moves ahead of its pin: a pinned build speaks only SurrealDB.
-
-    **One board's move:** hold, export, copy, compare, switch, release. A difference in the compare stops it with the board still on SurrealDB. The old store and the export are kept, nothing is deleted.
-
-    **How long it cannot be written.** Not timed yet. The copy alone is under five minutes for today's board; the rehearsal gives the whole figure before any live board is held.
-
-    **The way back.** Before anyone writes on PostgreSQL: put the old store back, nothing lost. After: the same move in reverse, a second hold of about the same length. The round trip is tested on a generated board of the live one's shape. Search for words not in Latin letters can rank differently on the two.
-
-    **What the comparison showed,** thirty sessions, 3,000 commands, same export and build, 2026-11-18:
-
-    | | SurrealDB | PostgreSQL |
-    |---|---|---|
-    | failed | 0 | 0 |
-    | server CPU | 34.5 s | 60.0 s |
-    | memory, peak | 448 MiB | 1,752 MiB |
-    | memory, afterwards | 392 MiB | 53 MiB |
-    | a command, median | 41 ms | 28 ms |
-
-    One run each, sessions back to back: a ceiling, not the usual rate. No improvement in CPU is claimed.
-
-    **A second memory figure, measured since,** on a generated board ten times today's size (9,310 tasks, 130,670 messages), the same thirty sessions and 3,000 commands, nothing failed: PostgreSQL's server peaked at 14.8 GiB against SurrealDB's 3.3 GiB, and afterwards held 218 MiB against 2.0 GiB. One run each on a loaded machine, and nobody has looked for the cause ([[analysis/board-store-baseline#Paired board work on it]], from the board task `tools/board-copy-at-ten-times`).
-
-    **Not built yet, needed under either:** the cutover command itself, PostgreSQL starting for a board that is not a scratch one, restoring a PostgreSQL snapshot over its own board, and the release's snapshot before a schema move.
-
-    **Built since this card was posted.** The copy's guard against reused task numbers (`tools/board-recovery-generation`, landed, board schema 22): every copy of a whole board, the cutover's among them, gives the board a new recovery generation, and a write that names a task read before the copy is refused ([[TASKS#A board that was copied or restored]]).
-
-    **A board ten times today's size** was measured by `tools/board-copy-at-ten-times`, landed ([[analysis/board-store-baseline#A board ten times the size, measured 2026-11-18]]). PostgreSQL copied it in 78.5 to 141.8 s over four runs, the time going with the machine's load. Its server now ends a copy at 270 s with the board as it was, which a quiet machine reaches at about 32 times today's board and a loaded one sooner. Before that limit a copy reported failed could still replace the board; now only one whose commit and answer take the last thirty seconds can. SurrealDB refuses the same copy in one line under the 256 MiB memtable its server ships with, the board as it was, and copied it in 68.1 s under 2 GiB, which no shipped setting gives. Today's boards copy on both, so this bounds growth and the way back for a board that has grown, not the first move.
-
-    **Why B.** The memory target was part of what you approved, the run misses it by more than three times, and nobody knows why yet: a setting, or the price of one connection per command. B delays only the last step: the missing pieces and the rehearsal go ahead meanwhile.
-
-    **Earlier verdicts checked.** Your approval of PostgreSQL for the board (2026-11-09, recorded on the board task `tools/board-postgresql`) chose the store and one connection per command; that task's brief keeps the cutover for your review, which is this card. **postgresql-binary-source** (C) says where the program comes from. Neither says when a live board moves, or what happens when the measured memory misses the target.
-  [2026-11-18 18:01] owner · approved — B sounds great
 - [x] **postgresql-binary-source** — The board is moving from SurrealDB to PostgreSQL, so every machine that runs a board needs the PostgreSQL program. SurrealDB's makers publish a ready program, which Symphony downloads once and checks. The PostgreSQL project publishes only source code: for a Mac it points to other people's installers, and for Linux to the system's packages. Nothing on the board's pages changes under any option. Where should the program come from? A: a ready-made build from a community project on GitHub, downloaded once and checked, as SurrealDB is today. B: PostgreSQL's own source code from postgresql.org, downloaded, checked and compiled once on each machine. C: whatever PostgreSQL is installed on the machine (Homebrew on a Mac, the system's packages on Linux), which a person installs. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/postgresql-binary-source#The options]]
   [2026-11-15 12:05] agent — Posted for the board task `docs/postgresql-binary-source-card`. Each source was read today, and B was tried on this Mac; the pages read are listed in the analysis.
 
@@ -88,51 +49,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     And those can be documented to be further explored later. For now however, a computer based install using whatever is available should be setup, by having an agent do it and add settings to connect to the symphony.toml settings
   [2026-11-15 12:33] owner · approved — Ah, and do use the latest version locally in homebrew, update it if needed.
-
-### Releases
-
-- [x] **release-run-on-github** — As you asked, the release's checks could run on GitHub's machines once the GitHub plugin is in, so a busy or sleeping laptop no longer decides a release. A project without the plugin keeps today's local run unchanged. Is this the design? One workflow, started only by `just release` for one commit, runs that commit's own checks on GitHub's macOS runners. `just release` waits, reads the result, files any red here, and on green tags and refreshes from this machine as today. No secret goes to GitHub. If GitHub does not answer, the run checks locally and says so. Approve, or comment with what to change. [[analysis/release-pipeline#The hosted run on GitHub]]
-  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
-
-    **Cost.** No money while the repository is public: GitHub's standard runners are free there. Time is an estimate until tried: 45 to 90 minutes for a whole run on 3-core runners, against 21 to 54 here under load, and 10 to 20 for a rerun of what a fix touched.
-
-    **First step once approved:** a trial of the workflow on one commit, by hand, to measure it and to see that the browser and store tests fit a runner's 7 GB.
-
-    **It waits for** `tools/github-pr-delivery`, whose GitHub credential it uses.
-
-    **Earlier verdicts checked.** **github-outbound-pr-delivery** and the landing design keep a task's checks local with no hosted job per pull request; this runs the release's checks only, never a task's. No earlier card decides where the release run runs.
-  [2026-11-18 12:54] owner · approved — Yes, correct
-- [-] **release-accepts-task-runs** — A pasted proposal (Buildmark) suggests accepting a signed record of a run already made in place of running it again. A task already records its lint, docs check and tests at its tip. Should the release run skip a step when a task's recorded run of that same step, on the same inputs, was green? A: no; the release accepts only a green of a release run, its own or a hosted one. B: yes, for the lint, the docs check and the client check. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#E. Runs accepted in place of running again]]
-  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
-
-    **B saves** one to four minutes of a run of 21 to 54: the long step, the tests, is never one task's run. **B costs** letting the run of a task's own executor stand for the release's.
-
-    **The rest of the proposal** is answered in the analysis: tasks here already land on recorded runs with no server running them again, and its signature and outside verifier only matter once a second machine runs, which the hosted run brings with GitHub's own.
-
-    **Earlier verdicts checked.** **needed-stamps** decides what a land needs, not what a release accepts. **release-candidate-process** (A) carries a green of the release run's own across commits; it says nothing of a task's runs.
-  [2026-11-18 12:51] owner · rejected — If it doesn't save enough time there's not much purpose to it. 1 to 4 against 21 to 54 saves nothing. Unless this could be applied to the more demanding aspects like the tests in a way that more drastically reduces load.
-- [-] **release-main-judged-in-steps** — The full run looks at main once every 20 landed tasks, and not at all while a release candidate is being fixed. Yesterday's two first runs covered 36 and 55 landed tasks each: one found 20 real failures at once, the other a size overrun that took 8 hours 46 minutes to trace through 257 commits. Should main also be checked in small steps, after each land and never holding one? A: as today. B: after a land, in the background, a round checks main's newest tip, running only the checks the landed changes can reach; ten lands during a round are one next round; a red is a task naming the one to five lands it can come from; it also runs while a candidate is open. The full run before a release stays. Recommended: B, built once the release can run on GitHub, since on this machine it adds load. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#C. Main judged in smaller steps]]
-  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
-
-    **Nothing waits on it.** No land is held and nothing queues: the round starts after the land, as the client's rebuild does today.
-
-    **Its cost** is machine time: at yesterday evening's 12 lands an hour a round would run most of the time. On a hosted runner that costs this machine nothing; here it would make the load worse, hence the order.
-
-    **Earlier verdicts checked.** **release-main-while-candidate-open** (A) says no run of main's tip while a candidate is open; B here changes that, so this is a new card and not a question on that one. Its option C was the full run taking turns with the candidate's reruns in one checkout; B here is a partial round apart from them. **land-tests-changed-packages** (rejected) refuses anything a land waits on or queues behind; B runs after the land and holds none.
-  [2026-11-18 12:49] owner · rejected — No. This will lead to the issue of having a million running ones. It should run one based somewhat on how long it takes to run it anyway. If takes one hour to run, maybe one running every say 30 minutes could be reasonable (in Github) but not locally due to load. The current approach based on number of tasks is mostly a control for that, so the machine isn't always under load.
-- [x] **release-run-reruns-alone** — Since last night the release run was red eight times and released nothing. Two of those runs were red only in tests that pass when run by themselves, and 11 such tests were deleted to get past them, each costing a round of about an hour. Should the run itself run each failed test again alone before it calls the release red? A: as today; the run is red, an agent reruns the test, deletes it if it passes alone, and the run starts again. B: the run reruns each failed test alone, up to 12. One that fails again is red, as today. One that passes alone does not hold the release: the run says both results, and files one task to find out why and then fix, rewrite or delete the test. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#B. The run reruns each failure alone]]
-  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
-
-    **What B would have done.** A release at about 22:40 last night (run 2026-11-17T2211-98626, red in one test that passed alone), and that candidate never dropped. Failing that, one at about 10:00 today (run 2026-11-18T0931-12491, two such tests).
-
-    **What B changes.** Today a test that fails beside the others and passes alone is deleted before the release. Under B the release is tagged with that test still there, and its task follows. Nothing is run less: the test runs twice.
-
-    **Why B.** Passing alone does not prove load. Three of the 11 deleted tests failed on one line (`idle=1` for `idle=0`) that turned out the next morning to be the tests reading this machine's own terminals, which was fixed with nothing deleted. Under B they would have been looked at, not removed.
-
-    **It also settles the candidate's limit of three red reruns:** a rerun red only in tests that pass alone would no longer count, so neither of yesterday's candidates would have been dropped.
-
-    **Earlier verdicts checked.** **release-candidate-process** (A) holds a commit and reruns what was red; it does not say what makes a rerun red. Your rule that a test red on load is discarded says what happens to the test, and B keeps it; it does not say whether the run or an agent makes the run alone.
-  [2026-11-18 12:47] owner · approved — B
 
 ### The built client
 
@@ -156,6 +72,46 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-15 11:38] owner · approved — A
 
 ## Rejected and replaced
+
+### Releases
+
+- [-] **release-accepts-task-runs** — A pasted proposal (Buildmark) suggests accepting a signed record of a run already made in place of running it again. A task already records its lint, docs check and tests at its tip. Should the release run skip a step when a task's recorded run of that same step, on the same inputs, was green? A: no; the release accepts only a green of a release run, its own or a hosted one. B: yes, for the lint, the docs check and the client check. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#E. Runs accepted in place of running again]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
+
+    **B saves** one to four minutes of a run of 21 to 54: the long step, the tests, is never one task's run. **B costs** letting the run of a task's own executor stand for the release's.
+
+    **The rest of the proposal** is answered in the analysis: tasks here already land on recorded runs with no server running them again, and its signature and outside verifier only matter once a second machine runs, which the hosted run brings with GitHub's own.
+
+    **Earlier verdicts checked.** **needed-stamps** decides what a land needs, not what a release accepts. **release-candidate-process** (A) carries a green of the release run's own across commits; it says nothing of a task's runs.
+  [2026-11-18 12:51] owner · rejected — If it doesn't save enough time there's not much purpose to it. 1 to 4 against 21 to 54 saves nothing. Unless this could be applied to the more demanding aspects like the tests in a way that more drastically reduces load.
+  [2026-11-18 18:12] agent — Dropped: the release accepts no task's recorded run, and no replacement card is proposed.
+
+    **On the tests, where you say it could pay.** No task ever runs the release's tests step, so there is no task's run to accept for it. The saving there comes from the release run's own greens, and two tasks hold it:
+
+    - `tools/release-steps-carry-by-inputs`, in progress: a candidate's rerun does not run again a step or a group of tests whose inputs the fix left alone. A fix of the browser tests alone would have rerun about 12 minutes of a 22-minute tests step.
+    - `tools/nextest-runs-the-tests`, landed: one scheduler over every test, with a time and a timeout for each, so the slow ones are named and the run stops loading itself.
+
+    A candidate's first run stays whole. Running it off this machine is **release-run-on-github**, approved.
+
+    [[analysis/release-pipeline#E. Runs accepted in place of running again]] says this now.
+- [-] **release-main-judged-in-steps** — The full run looks at main once every 20 landed tasks, and not at all while a release candidate is being fixed. Yesterday's two first runs covered 36 and 55 landed tasks each: one found 20 real failures at once, the other a size overrun that took 8 hours 46 minutes to trace through 257 commits. Should main also be checked in small steps, after each land and never holding one? A: as today. B: after a land, in the background, a round checks main's newest tip, running only the checks the landed changes can reach; ten lands during a round are one next round; a red is a task naming the one to five lands it can come from; it also runs while a candidate is open. The full run before a release stays. Recommended: B, built once the release can run on GitHub, since on this machine it adds load. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#C. Main judged in smaller steps]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
+
+    **Nothing waits on it.** No land is held and nothing queues: the round starts after the land, as the client's rebuild does today.
+
+    **Its cost** is machine time: at yesterday evening's 12 lands an hour a round would run most of the time. On a hosted runner that costs this machine nothing; here it would make the load worse, hence the order.
+
+    **Earlier verdicts checked.** **release-main-while-candidate-open** (A) says no run of main's tip while a candidate is open; B here changes that, so this is a new card and not a question on that one. Its option C was the full run taking turns with the candidate's reruns in one checkout; B here is a partial round apart from them. **land-tests-changed-packages** (rejected) refuses anything a land waits on or queues behind; B runs after the land and holds none.
+  [2026-11-18 12:49] owner · rejected — No. This will lead to the issue of having a million running ones. It should run one based somewhat on how long it takes to run it anyway. If takes one hour to run, maybe one running every say 30 minutes could be reasonable (in Github) but not locally due to load. The current approach based on number of tasks is mostly a control for that, so the machine isn't always under load.
+  [2026-11-18 18:12] agent — Applied as you wrote it; no new card, since your note gives the direction.
+
+    - **No round after each land.** Removed from the design.
+    - **On this machine nothing changes:** a run starts once 20 tasks have landed, which keeps the machine from being always under a run.
+    - **On GitHub, later:** once the hosted run exists (**release-run-on-github**, approved) and its trial has measured a run, a whole run of main may start on a clock set from that length, by your example a run of an hour about every half hour, so at most two at once. It is one more task, handed to the orchestrator to file after the trial; the interval is a setting taken from the measurement, not a card.
+
+    **Left as you approved it:** no run of main while a release candidate is open (**release-main-while-candidate-open**, A). If the hosted clock should run through a candidate, that is a new card then, not assumed.
+
+    [[analysis/release-pipeline#C. Main judged in smaller steps]] is rewritten to this.
 
 ### Task page, in pictures
 
@@ -368,6 +324,317 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 19:13] agent — Done on `tools/orphan-processes`: the Symphony no longer looks for copies of itself or for test databases. The census, the notice at the top of every page, the `symphony-server orphans` command and the starter's line about leftovers are gone, with their tests and docs; no notice moved to the live feed. The repairs at the source stay: the database of a board in the temporary folder or under `artifacts/` ends when the process that started it ends, even when that process is killed, and the two test fixtures that start a database themselves end it the same way. The server's status still sends `orphans`, always 0, so a starter built before this can still read it.
 
 ## Resolved
+
+### Board
+
+- [r] **board-pg-cutover** — PostgreSQL now passes the board's tests on scratch boards, and no live board has moved. Moving one means holding it, so nobody can write to it, while it is copied and compared; going back after it has been written to takes a second hold. Side by side, PostgreSQL failed nothing and answers most commands sooner, but its server used 1.7 times the CPU and its memory peaked at 1,752 MiB with thirty sessions writing at once, against the 512 MiB target the move was approved with. When may the live boards move? A: once the missing pieces are built and a rehearsal on a copy is clean. B: as A, and only after a task finds why memory peaks that high and brings it under the target, or shows it cannot be. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/board-pg-cutover#The choice]]
+  [2026-11-18 15:06] agent — Posted for the board task `docs/board-pg-cutover-card`. Nothing live moves before you answer.
+
+    **The order, under either.**
+    1. A release whose programs read either store is installed. No board moves.
+    2. A rehearsal: this repository's board is exported, copied into a scratch PostgreSQL, compared table by table and timed.
+    3. This repository's board moves first, and runs a few days.
+    4. Each of the two other projects takes that release by its own pin, then its board moves. A board never moves ahead of its pin: a pinned build speaks only SurrealDB.
+
+    **One board's move:** hold, export, copy, compare, switch, release. A difference in the compare stops it with the board still on SurrealDB. The old store and the export are kept, nothing is deleted.
+
+    **How long it cannot be written.** Not timed yet. The copy alone is under five minutes for today's board; the rehearsal gives the whole figure before any live board is held.
+
+    **The way back.** Before anyone writes on PostgreSQL: put the old store back, nothing lost. After: the same move in reverse, a second hold of about the same length. The round trip is tested on a generated board of the live one's shape. Search for words not in Latin letters can rank differently on the two.
+
+    **What the comparison showed,** thirty sessions, 3,000 commands, same export and build, 2026-11-18:
+
+    | | SurrealDB | PostgreSQL |
+    |---|---|---|
+    | failed | 0 | 0 |
+    | server CPU | 34.5 s | 60.0 s |
+    | memory, peak | 448 MiB | 1,752 MiB |
+    | memory, afterwards | 392 MiB | 53 MiB |
+    | a command, median | 41 ms | 28 ms |
+
+    One run each, sessions back to back: a ceiling, not the usual rate. No improvement in CPU is claimed.
+
+    **A second memory figure, measured since,** on a generated board ten times today's size (9,310 tasks, 130,670 messages), the same thirty sessions and 3,000 commands, nothing failed: PostgreSQL's server peaked at 14.8 GiB against SurrealDB's 3.3 GiB, and afterwards held 218 MiB against 2.0 GiB. One run each on a loaded machine, and nobody has looked for the cause ([[analysis/board-store-baseline#Paired board work on it]], from the board task `tools/board-copy-at-ten-times`).
+
+    **Not built yet, needed under either:** the cutover command itself, PostgreSQL starting for a board that is not a scratch one, restoring a PostgreSQL snapshot over its own board, and the release's snapshot before a schema move.
+
+    **Built since this card was posted.** The copy's guard against reused task numbers (`tools/board-recovery-generation`, landed, board schema 22): every copy of a whole board, the cutover's among them, gives the board a new recovery generation, and a write that names a task read before the copy is refused ([[TASKS#A board that was copied or restored]]).
+
+    **A board ten times today's size** was measured by `tools/board-copy-at-ten-times`, landed ([[analysis/board-store-baseline#A board ten times the size, measured 2026-11-18]]). PostgreSQL copied it in 78.5 to 141.8 s over four runs, the time going with the machine's load. Its server now ends a copy at 270 s with the board as it was, which a quiet machine reaches at about 32 times today's board and a loaded one sooner. Before that limit a copy reported failed could still replace the board; now only one whose commit and answer take the last thirty seconds can. SurrealDB refuses the same copy in one line under the 256 MiB memtable its server ships with, the board as it was, and copied it in 68.1 s under 2 GiB, which no shipped setting gives. Today's boards copy on both, so this bounds growth and the way back for a board that has grown, not the first move.
+
+    **Why B.** The memory target was part of what you approved, the run misses it by more than three times, and nobody knows why yet: a setting, or the price of one connection per command. B delays only the last step: the missing pieces and the rehearsal go ahead meanwhile.
+
+    **Earlier verdicts checked.** Your approval of PostgreSQL for the board (2026-11-09, recorded on the board task `tools/board-postgresql`) chose the store and one connection per command; that task's brief keeps the cutover for your review, which is this card. **postgresql-binary-source** (C) says where the program comes from. Neither says when a live board moves, or what happens when the measured memory misses the target.
+  [2026-11-18 18:01] owner · approved — B sounds great
+  [2026-11-18 18:12] agent — B it is, and the work is handed on: the orchestrator files its board tasks from the paragraphs posted on the board task `docs/apply-owner-verdicts-2026-11-18`. No live board moves until every one of them is done.
+
+    **Goes ahead now,** none waiting for the memory answer:
+
+    1. PostgreSQL starting for a board that is not a scratch one.
+    2. The cutover command: hold, export, copy, compare, switch, each failure leaving the board as it was.
+    3. Restoring a PostgreSQL snapshot over its own board.
+    4. The release's snapshot before a schema move, on a PostgreSQL board.
+    5. The rehearsal on a copy of this repository's board, timed, its result on the board.
+
+    **The one B adds.** A task finds why PostgreSQL's server peaks at 1,752 MiB with thirty sessions (14.8 GiB on a board ten times the size) and brings it under the 512 MiB target, or shows it cannot be, measured by the same driver on scratch boards. If it cannot be brought under, you get that result here before anything moves.
+
+    **Then** this repository's board moves first and runs a few days; each other project's board follows its own pin.
+
+    `tools/hosted-postgresql-adapter`, in progress, is the managed-database connection and covers none of these.
+
+    [[analysis/board-pg-cutover#The choice]] now reads as decided.
+  [2026-11-18 18:12] agent · resolved
+- [r] **board-search-by-meaning** — The board can find tasks by what they mean as well as by their words, with a small language model that runs on this machine: you asked for tasks to be searchable by meaning, and chose the model. Nothing calls it today: the board page searches by words, no skill or document names it but the board's own guide and help, and the consuming project's tools never call it. It costs 153 of the 189 packages the board is built from, a 133 MB download for each project, and a pass every minute on the server for each project, 13 hours of it on this repository's board since 2026-11-14. What becomes of it? A: delete it; the board searches by words alone. B: move the model into a program of its own, as an approved branch that never landed does: the board and the server build without it, and search by meaning works where that program is built. C: keep it in the board behind a build switch that is off by default. D: keep it as it is. Recommended: B. Approve and say A, B, C or D in the note, or comment. [[analysis/code-review-2026-11#4. Eight tenths of the board's dependencies serve a search mode nothing calls]]
+  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
+
+    **Who uses it**, read today. `just tasks search` searches by words unless `--mode vector`, `hybrid` or `exact` is given (`crates/tasks/src/cli/search.rs`). The board page's search is by words (`apps/symphony-server/src/api.rs`, `store.search`). Of the shipped skills and the documents only the board's guide (`crates/tasks/AGENTS.md`) names those modes, and of the consuming project's tracked files only one analysis. Whether an agent has typed them is not known: the board records no search.
+
+    **What it finds.** The consuming project's database card (2026-10-06) measured 0.82 of the top five results on target over ten real queries, against 0.76 for keywords. The later study with the model you chose, in that project's port plan, gave 0.82 for words and meaning together against 0.80 for words alone and 0.74 for meaning alone: one more useful result in fifty.
+
+    **What it costs:**
+    - *Packages:* `cargo tree -p symphony-board -e normal,build --prefix none --no-dedupe | sort -u` lists 189, and 36 with `--prune tract-onnx --prune tract-linalg --prune tokenizers` before the sort. Every build of the board, the server, `symphony` and `agent-send` compiles them.
+    - *The model:* 133 MB in each project's `symphony/models/`, in its git common dir; two copies on this machine.
+    - *The server's pass*, counted in its log (`grep -E 'task embedding catch-up( of [a-z-]+)? ended after'` on `server.log` in the machine folder) up to 07:30 UTC on 2026-11-15: 6,262 passes since 2026-11-11, 15.9 hours in all, 0.9 s at the median. 3,578 are from before the log named each pass's project (2.5 hours), 1,655 the consuming project's (0.4 hours) and 1,029 this repository's (13.0 hours). On 2026-11-14 this repository's passes ran 9.5 hours back to back: two stopped at the 4-hour limit ("failed: no answer within 14400 s", at 07:52 and 11:52 UTC) and the third embedded 1,792 chunks in 89 minutes. From 01:00 to 07:30 UTC on 2026-11-15, 172 of its 332 passes embedded something, each 2 s to 4.6 minutes, 43 s at the median: 2.9 of those 6.5 hours. Each pass loads the model again (7.8 s on average) and runs it on one thread at low priority (`nice -n 10 tasks embed --maintenance --threads 1`, `apps/symphony-server/src/front/embeddings.rs`); by its own count, 832 chunks took 8,756 s. Its CPU is not measured.
+    - *Bytes:* the release run's build of `tasks` at hand is 20,337,280; without the model it is not measured today. On B's branch, at its thread's last measure (2026-11-12), `tasks` went from 24,293,376 to 8,484,176 bytes with the model's program at 16,641,552; its first measure took a cold build of `tasks` from 769 to 183 s of CPU.
+
+    **A, delete it.** It removes what you asked for and chose a model for. The three modes, `tasks embed`, the server's pass and its hours, the download and the three packages go: about 1,150 lines of source (`crates/tasks/src/embedding.rs` and `cli/embedding.rs` less their tests, `store/embeddings.rs`, half of `cli/search.rs`, the server's `front/embeddings.rs`), about 800 of tests and two benchmarks (`examples/search_bench.rs`, `examples/embedding_cpu.rs`). The model's tables can stay in the board's schema, unused, so no board need move to a new schema for it. B's branch is dropped.
+
+    **B, a program of its own.** `tasks-embed` holds the model, and `tasks embed` and a search by meaning start it. Where it is not built, those searches say what to build, and searching by words is unchanged. The branch (`perf/embedding-in-its-own-binary`, `c7142edd`, approved by its reviewer on 2026-11-12; no land of it was tried) adds about 3,500 lines. It is 704 commits behind main and conflicts with it in 14 files, so its cost is bringing it up to main and a second review. A consuming project then builds `tasks-embed` from its own board package, as the branch's guide says; until it does, its pass fails each minute there is a change to embed. B leaves the pass's hours as they are: the server already runs the pass as a process of its own, and under B that process starts the model's program, which loads the model each pass as today.
+
+    **C, a build switch.** One package as now; the default build leaves the model out, and the modes say which build has it. The build with the model has its tests to run somewhere too, in the release run at least.
+
+    **D, as today.** Nothing changes.
+
+    **What would end the pass's hours**, short of A: a change to the pass itself, such as running it less often or only once a search by meaning is asked for, or keeping the model loaded between passes. That is a task of its own under B, C or D.
+
+    **Why B.** It keeps what you asked for and the model you chose, and takes the 153 packages out of `tasks`, the server, `symphony` and `agent-send`, as your words below ask; it is built and approved, so its cost is a merge and a second review rather than new work. A is smaller and ends the pass too, but it removes a feature you asked for to save what B saves.
+
+    **Earlier verdicts checked.** No card here asks about search by meaning. In the consuming project's register, from before this repository was split from it: its port plan records that you asked for tasks to be searchable by meaning, and your approval of `tasks-search-embedding-model` (A, 2026-10-29) chose bge-small and authorized "a local Rust inference runtime in a follow-up", which `crates/tasks/Cargo.toml` cites for the three packages. That card chose the model, not whether the feature stays, and B, C and D keep it. The board's database card (2026-10-06) offered search by meaning under both databases, and your approval chose the database. Your words of 2026-11-12, "we should really have separate crates that have lower binary sizes", are what B's task was filed on: A, B and C each meet them and D does not.
+  [2026-11-15 06:48] owner · approved — A for now.
+  [2026-11-15 11:13] agent — Recorded: A, for now. Search by meaning is deleted and the board searches by words alone: the board task `tools/board-search-by-words-alone` removes the model, its three modes, `tasks embed`, the server's pass and the packages they bring, and the branch built for B is dropped. The model's tables stay in the schema, unused, so no board moves for it. Bringing it back later would be a new card. The board's guide now tells agents to build nothing on it.
+  [2026-11-15 11:14] agent · resolved
+- [r] **projects-health** — The Projects page warns only while a board's callbacks or sweep fail. At 19:10 today the consuming project's board took 3 s to answer a write, left 48 requests unanswered in the hour and had its one orchestrator stale, and its row read like Symphony's. Proposed: a dot per project for its worst signal (green, amber, red); only when it is not green, one short line saying why; and counts that say what they count, `18 decision cards waiting on you`, then `41 blocked, 9 of them on you`. Approve, or comment with what to change. [[analysis/board-design#The projects page]]
+  [2026-11-11 19:42] agent — Base: the Projects page today, on a phone, from the shared server at 19:09. ![Projects today, on a phone](analysis/board-design/projects-now-phone.png)
+  [2026-11-11 19:42] agent — Proposed, on a phone and wide: ![Projects with health, on a phone](analysis/board-design/projects-health-phone.png) ![Projects with health, wide](analysis/board-design/projects-health-wide.png)
+  [2026-11-11 19:42] agent — Red keeps today's words for failing callbacks or sweep. Amber is a board slow over the last hour (writes over a second at p90, or any request unanswered) or no live orchestrator while work waits to start (`orchestrator stale`, or `no orchestrator` when none is there: a stale session is still there, one rule for the card line, the board's banner and this page); the build sets the thresholds. The blocked counts come from the same line as board-at-a-glance. The fresh reviewer's finding that "18 waiting on you" and "9 on you" read as two answers to one question is fixed by naming the 18 as decision cards. Filed in design, waiting on this card: app/projects-health.
+  [2026-11-11 21:53] owner · approved
+  [2026-11-11 22:02] agent · resolved
+- [r] **board-at-a-glance** — A task board should say what is stuck, on whom and for how long. The consuming project's board says none of it: 41 tasks are blocked, a median of 10 days, and no card says why; 110 of the 117 role chips on them name sessions that have left. Under every option, each card ends in one line: who it waits on, why in a few words, and how long it has been in its stage (red from a week). Roles that left and document chips leave the card, review rounds become one mark, and a banner says once when no orchestrator is live. Where does the waiting work go? A: a Blocked lane above today's columns, grouped by what lifts each block. B: no Blocked column; a blocked task stays first in the column it stopped in, every stage fits a wide screen, and a phone shows one stage at a time. C: no columns; one list grouped by who has to act next, oldest first, under a bar of the stages' counts. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/board-design#The options]]
+  [2026-11-11 19:42] agent — Base: the board today, wide, from the shared server at 19:10. ![The board today, wide](analysis/board-design/board-now-wide.png)
+  [2026-11-11 19:42] agent — Posted for the board task `tools/board-design-review`. The three options at 1440 wide: ![The board, option A](analysis/board-design/board-a-wide.png) ![The board, option B](analysis/board-design/board-b-wide.png) ![The board, option C](analysis/board-design/board-c-wide.png)
+  [2026-11-11 19:42] agent — The options are mock-ups on the board's own colours, filled with the consuming project's 86 open tasks as they stood at 19:10. Queued and parked work, which waits by design, is drawn quieter and never red. All four pictures carry today's header, filters and buttons: the header's rows and names are app/header-names' card, not this choice.
+
+    **On a phone**, today first (its first card mid-screen, under the three-row header, the filters and the scroll hint), then A, B and C: ![Today on a phone](analysis/board-design/board-now-phone.png) ![Option A on a phone](analysis/board-design/board-a-phone.png) ![Option B on a phone](analysis/board-design/board-b-phone.png) ![Option C on a phone](analysis/board-design/board-c-phone.png)
+
+    **A, a Blocked lane.** Removes the Blocked column, role and document chips, and the scroll hint. Keeps columns that scroll sideways, so Review and Done stay off the first screen wide, the Status filter and the prev, next and top pager. Cost: the least.
+
+    **B, stuck in place.** Removes the lower row, sideways scrolling, the Status filter, the prev, next and top pager, role and document chips, and the scroll hint. Keeps the pipeline as columns, and a column's head shows where work piles up (Review 1, +18 blocked). Cost: stage tabs on a phone.
+
+    **C, who acts next.** Removes columns, sideways scrolling, the lower row, the Status filter, the prev, next and top pager, role and document chips, and the scroll hint. The pipeline becomes the bar on top, and each row names its stage. Cost: a new page layout.
+
+    All three keep search and the finished window with their labels, Who is connected and the + button.
+
+    **Why C.** C orders all 86 open tasks by who has to act, oldest first, with the age at the right, the same wide and on a phone and with no sideways scroll. A orders only the 41 blocked tasks, above columns that still scroll sideways. In B the by-who order is a strip filter you tap. B is the pick if columns matter more than who acts.
+
+    **Fresh review.** A reviewer saw the three before this card went up. Its three blocking findings were fixed and checked again, and the task's reviewer also picked C. The first reviewer's verdict: "Its single list grouped by who acts next, with 'On you' first and ages on the right, answers what is stuck, on whom and for how long in one top-to-bottom read, and it looks the same wide and on the phone."
+
+    Filed in design, waiting on this card: tools/task-waits-on (the line's data, for any option) and app/board-at-a-glance (the chosen option only).
+  [2026-11-11 20:06] agent — Corrected after the task's review, before any answer. Two counts were wrong: 23 ready tasks wait only on an orchestrator, not 25 (two wait on a blocked subtask), and 6 blocked tasks wait on nobody, not 7 (one waits on its orchestrator, which is stale, so still there). The cards no longer repeat the missing orchestrator; the banner says it once. A now shows the Status filter it keeps. Every picture now has today's header and controls, and each option lists what it drops. C's phone rows keep the slug. The pictures above are the corrected ones.
+  [2026-11-11 21:52] owner · approved — B. They shoild be blocked on a decision (not a person). There should not be a blocked on nothing, a card that is blocked on nothing is not blocked.
+  [2026-11-11 21:55] agent — B it is: no Blocked column, a blocked task stays first in the column it stopped in. Your two rules go into the build: a block names what it waits on, a decision card, a task or a check, and where that is yours it reads `On your decision NAME`, never a person alone; and a task whose block names nothing is not drawn or counted as blocked, it goes back to the stage it stopped in and the board lists it once for its orchestrator to give a reason or release. Carried on the board tasks `app/board-at-a-glance` and `tools/task-waits-on`.
+  [2026-11-11 22:02] agent · resolved
+
+### Releases
+
+- [r] **release-run-on-github** — As you asked, the release's checks could run on GitHub's machines once the GitHub plugin is in, so a busy or sleeping laptop no longer decides a release. A project without the plugin keeps today's local run unchanged. Is this the design? One workflow, started only by `just release` for one commit, runs that commit's own checks on GitHub's macOS runners. `just release` waits, reads the result, files any red here, and on green tags and refreshes from this machine as today. No secret goes to GitHub. If GitHub does not answer, the run checks locally and says so. Approve, or comment with what to change. [[analysis/release-pipeline#The hosted run on GitHub]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
+
+    **Cost.** No money while the repository is public: GitHub's standard runners are free there. Time is an estimate until tried: 45 to 90 minutes for a whole run on 3-core runners, against 21 to 54 here under load, and 10 to 20 for a rerun of what a fix touched.
+
+    **First step once approved:** a trial of the workflow on one commit, by hand, to measure it and to see that the browser and store tests fit a runner's 7 GB.
+
+    **It waits for** `tools/github-pr-delivery`, whose GitHub credential it uses.
+
+    **Earlier verdicts checked.** **github-outbound-pr-delivery** and the landing design keep a task's checks local with no hosted job per pull request; this runs the release's checks only, never a task's. No earlier card decides where the release run runs.
+  [2026-11-18 12:54] owner · approved — Yes, correct
+  [2026-11-18 18:12] agent — The design stands as written, and the work is handed on: the orchestrator files its board tasks from the paragraphs posted on the board task `docs/apply-owner-verdicts-2026-11-18`. Your answer reached no agent until 18:05: the machine's server was one board schema behind and delivered nothing.
+
+    1. **The trial.** The workflow file, started by hand for one commit, measured: how long a run takes, and whether the browser and store tests fit a runner's 7 GB. It tags nothing and starts on no push or pull request.
+    2. **The hosted run in `just release`.** It starts the workflow, waits, believes the result only for the bound repository, main's workflow file and the exact commit, files reds here, tags and refreshes here, and checks locally when GitHub does not answer. Off unless a project turns it on.
+    3. **Its clock,** from your note on **release-main-judged-in-steps**: once a run is measured, a run of main on GitHub at an interval set from its length. Never on this machine.
+
+    **They wait for** `tools/github-pr-delivery`, in progress, for its GitHub credential and repository binding. `tools/github-pr-verified-activation` turns on pull-request landing only and covers none of this.
+
+    Turning the hosted run on for this repository is a `[releases]` setting, and stays your word.
+  [2026-11-18 18:12] agent · resolved
+- [r] **release-run-reruns-alone** — Since last night the release run was red eight times and released nothing. Two of those runs were red only in tests that pass when run by themselves, and 11 such tests were deleted to get past them, each costing a round of about an hour. Should the run itself run each failed test again alone before it calls the release red? A: as today; the run is red, an agent reruns the test, deletes it if it passes alone, and the run starts again. B: the run reruns each failed test alone, up to 12. One that fails again is red, as today. One that passes alone does not hold the release: the run says both results, and files one task to find out why and then fix, rewrite or delete the test. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#B. The run reruns each failure alone]]
+  [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
+
+    **What B would have done.** A release at about 22:40 last night (run 2026-11-17T2211-98626, red in one test that passed alone), and that candidate never dropped. Failing that, one at about 10:00 today (run 2026-11-18T0931-12491, two such tests).
+
+    **What B changes.** Today a test that fails beside the others and passes alone is deleted before the release. Under B the release is tagged with that test still there, and its task follows. Nothing is run less: the test runs twice.
+
+    **Why B.** Passing alone does not prove load. Three of the 11 deleted tests failed on one line (`idle=1` for `idle=0`) that turned out the next morning to be the tests reading this machine's own terminals, which was fixed with nothing deleted. Under B they would have been looked at, not removed.
+
+    **It also settles the candidate's limit of three red reruns:** a rerun red only in tests that pass alone would no longer count, so neither of yesterday's candidates would have been dropped.
+
+    **Earlier verdicts checked.** **release-candidate-process** (A) holds a commit and reruns what was red; it does not say what makes a rerun red. Your rule that a test red on load is discarded says what happens to the test, and B keeps it; it does not say whether the run or an agent makes the run alone.
+  [2026-11-18 12:47] owner · approved — B
+  [2026-11-18 18:12] agent — B is the design now, and the work is handed on: the orchestrator files one board task for it, from the paragraph posted on the board task `docs/apply-owner-verdicts-2026-11-18`. Your answer reached no agent until 18:05: the machine's server was one board schema behind and delivered nothing.
+
+    **What gets built.** The release run reruns each failed test alone, up to 12, in the same checkout and build. One that fails again is red, as today. One that passes alone does not hold the release: the run records both results and the load at each, and files one task to find out why, then fix, rewrite or delete the test. More than 12 failures is a red with no reruns. A candidate's rerun counts against its limit of three only when something in it fails alone.
+
+    **Until it lands** the run behaves as today, and [[RELEASES#The release run]] says so. That task rewrites it, and the rule that a test passing alone is deleted in the red's own fix.
+
+    **It waits for** `tools/release-steps-carry-by-inputs`, in progress, which edits the same files of the run.
+
+    [[analysis/release-pipeline#B. The run reruns each failure alone]] now reads as chosen.
+  [2026-11-18 18:12] agent · resolved
+- [r] **kit-new-block-version** — Before the plugin kit goes to crates.io at 1.0.0, one thing about it cannot be changed later without a new major version: what happens to its version when Symphony adds a new kind of block (or a new kind of text span or media) to the vocabulary plugins draw with. A: a new block is a small update (1.1.0): a plugin written for 1.0.0 keeps building and gets the update by itself. B: a new block is a new major version (2.0.0): every plugin's author must change its requirement by hand before it can use any later kit. Recommended: A. Approve and say A or B in the note, or comment. [[RELEASES#Packages on crates.io]]
+  [2026-11-14 02:12] agent — Posted for the board tasks `tools/kit-version-lines` and `tools/release-publishes-to-crates-io`; nothing is published yet, and nothing will be until you say so.
+
+    **What it is in the code.** The vocabulary is three lists in `symphony-blocks`: `Block`, `Span` and `Media`. Rust lets a list be marked as one that may grow. Marked, adding to it is a small update. Unmarked, as today, adding to it is a breaking change, because code elsewhere may have listed every case.
+
+    **A, marked as growing.** A plugin only makes blocks, it does not list them, so nothing changes for a plugin. The cost is in Symphony's own client, the one place that lists every block to draw it: the compiler no longer refuses a build where a new block has no drawing, so a test does that instead (it goes through every block and fails on one the client does not draw).
+
+    **B, as today.** The compiler keeps checking the client. Every new block, span or media kind makes the kit 2.0.0, 3.0.0 and so on, and each consuming project and plugin author moves by hand each time.
+
+    **Why A.** New blocks are how the product grows, so under B the kit's major version would move often and mean little. The check B keeps can be kept by a test. Choosing A after 1.0.0 is published would itself be a new major version, so now is the cheap moment.
+  [2026-11-14 06:29] owner · approved — A
+  [2026-11-15 11:14] agent — Recorded: A, a new kind of block, text span or media is a small update of the kit. It is not in the code yet: the three lists are still unmarked, and the plugin protocol's document said a new kind was a new major. That document now says the rule you chose and that the lists get marked, with a test that the client draws every kind, before the kit's first publication. The task that does it is asked of the orchestrator on the board task `docs/owner-answers-applied`; nothing is published before it lands. [[PLUGIN_PROTOCOL#Versions]]
+  [2026-11-15 11:14] agent · resolved
+- [r] **consumer-contract-versioning** — A consuming project could take Symphony's parts one at a time, each when it is ready, and Symphony's releases would stop waiting on that project's whole test suite; how much can be phased depends on how far the contract goes. Today the project takes all of Symphony at one commit, and the machine's one server is built from it. How far should the contract go? A: the process boundary only: a project links nothing of Symphony, its plugin is a program of its own speaking the versioned plugin protocol, and the machine runs one Symphony release for the server, the board commands and the client. B: A, plus a few packages with version numbers of their own that a project may keep linking at the version it names: the plugin kit (its seams, blocks and doc checks) as one, and each small helper (child processes, schema checks, arguments, the repository reader). C: every one of the 14 packages versioned on its own, a project linking what it links today. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/consumer-contract#The options]]
+  [2026-11-13 18:42] agent — Posted for the board task `docs/consumer-contract-analysis`, from your comment on **conciliation-consumer-own-reds**.
+
+    **What a project can stay behind on:**
+    - A: its plugin program, while the machine's server speaks that program's protocol major (how many releases a major lasts is a number to set), and its scripts and tools that call `tasks api` or Symphony's commands, within those versions.
+    - B: A's, plus its plugin kit's version, and each helper for as long as it likes, since nothing on the machine shares them.
+    - C: any package, within what the others' versions accept.
+    - None of them: a server, board commands or a board schema older than the machine's. Those stay one per machine and move together at its update, as you chose for the board: "C makes sense to improve upon A. while we don't have a dedicated build service."
+
+    **What Symphony must keep working:**
+    - A: every minor of the plugin protocol, and the previous major for that window; the board's `tasks api` calls; command names and outputs; settings keys (the server already leaves out one it does not know and reads the rest; the lint and registration would warn of a retired one for the window rather than refuse it).
+    - B: A's, plus the kit's and the helpers' Rust names within a major, a check against the previous version's tag saying when a change needs a new one. Last week 0 to 13 commits touched these parts' sources.
+    - C: the Rust names of every package, the library and the board included, whose sources 198 and 270 commits touched last week (commits, not counted changes to public names); and a package registry, since with Git pins two versions of this repository bring two copies of every package they share (tried here), whose types do not match (from Cargo's documentation; not compiled).
+
+    **The work:**
+    - Here, A and B: finish the plugin path you chose ("Let's go with B first, measure results against the current approach for a post change comparison."): every seam answered from a process, and the release installed on the machine instead of built by a project; then checks of the contract in place of the conciliation. B adds the kit split out of the wire types, and its version tags. C adds the registry, version checks for every package, and tests across the versions a project may combine.
+    - On the consuming project's board, A and B: its host is no longer built (4 files); its plugin becomes a process and leaves the library's internals (27 of the 44 of its files that name the library); its review tool writes the board through `tasks api` rather than the board's library. Two other users of the library need an answer: an art tool (9 files), which runs Symphony's status, triage and page rendering with its plugin installed, and its review tool's landing (4 files), which takes the landing's checks and the lock it shares with the server. Under A both reach those through the machine's commands or copy them, and the project also copies the helpers it links, one of them in 132 of its files. Under B the analysis proposes the art tool through the machine's commands, and the landing on the library at the kit's own tag, which promises nothing, so a break there is the project's own, found by its gate.
+
+    **What changes for releases, under A and B:** a release is judged by checks this repository owns (the plugin protocol, `tasks api`, the kit's version check), never by a project's whole suite, so a project's own reds stay on its own board. The release is installed on the machine and moves no project's pin; each project moves its kit and helpers through its own landing. Until that is built, **conciliation-consumer-own-reds** decides what holds a release.
+
+    **Why B.** It phases what a project's own code can phase, and promises stability only where little changes. A makes the project copy code it links today, and possibly change its plugin at whatever kit it rebuilds with, for no promise in return. C promises stability on the packages that change most, needs a registry, and still cannot phase the server or a board.
+
+    **Earlier verdicts checked.** **plugin-delivery-choice** (B), **release-delivery** (C) and **board-schema-at-update** (C) chose how plugins, releases and boards reach the machine: A and B build on them, and C leaves them as they are. **symphony-update-command** (B) has projects follow release tags, which every option keeps. **consumer-api-break-release** (A) keeps an old name beside the new for a release, which B keeps for its kit. None says whether packages are versioned apart, so none decides this card.
+
+    This card is the only change. The build is filed after your verdict. [[analysis/consumer-contract#Why B]]
+  [2026-11-13 19:39] owner · approved — There are multiple A/B/Cs here. No way to decide on all things. Those are separate decisions. For the original question, I agree with approach B
+  [2026-11-13 20:27] agent — Recorded: B, for the question this card asked. A project links nothing of Symphony but the plugin kit (its seams, blocks and doc checks) and the small helpers (child processes, schema checks, arguments, the repository reader), each at the version it names; its plugin is a program of its own speaking the versioned plugin protocol; and the machine runs one Symphony release for the server, the board commands and the client.
+
+    **What B decides, so none of it is asked:**
+    - **Where versions live:** this card gives B "its version tags" and the registry to C, so the kit and each helper get a line of tags in this repository, cut by the release run; Git is enough. The kit and the helpers start at 1.0.0: for a pinned tag Cargo reads 0.x and 1.0 alike.
+    - **The board's rules:** under every option the board commands "stay one per machine and move together at its update", so a changed rule reaches every project at the machine's update, the release's notes saying so, and a project's test that relied on the old rule is that project's to update. `tasks api` promises what its calls take and answer, not the rules behind them.
+    - **An old protocol major:** the protocol is on its first major and no setting or command is retired, so how long an old one is kept is asked by the task that first plans a second.
+
+    **The one choice left** is a card of its own: **contract-tool-route**, how the project's art tool and landing tool get what they use of the library today.
+
+    **The build, in order on the board:** the release candidate's red already under way takes the consuming project's suite out of the release run, so its own reds no longer hold a release. Then the refresh leaves a project's own refusals to it; `tasks api` answers its version; the kit leaves the wire types, carries what a plugin uses and gets its tags; every seam a plugin declares answers from a process; and last the release is built and run on the machine, from which a release moves no project's pin.
+  [2026-11-13 20:43] agent · resolved
+  [2026-11-13 21:25] agent — The owner, 2026-11-13, after this verdict: "I would like to publish crates (MIT license) to crates.io as the pacakge manager". So under B the kit's and the helpers' versions live on crates.io, not on tag lines in this repository: this replaces the record's "Git is enough" (board task `tools/publish-to-crates-io`). The record's "The kit and the helpers start at 1.0.0" was the agent's, not your words; it holds only because the kit's blocks have now left the app's wire types (board task `tools/kit-vocabulary-leaves-the-wire-types`), as with them inside it nearly every release would need a new major. So the kit, its three packages at one version, and each helper start at 1.0.0, and the app's wire types (`symphony-api`) at 0.1.0, which promises no name.
+- [~] **conciliation-consumer-own-reds** — Today a Symphony release waits until every test of the consuming project's packages that use Symphony passes against it, even tests that already fail on that project's own main with no Symphony change. So a red on that project's own main holds every Symphony release, and with it the machine's refresh (each project's pin, its board and the shared server moved to the release), as it does now: today's release waits on 31 of its tests, all failing on its own main, none caused here. Before it tags, the release run builds and tests each consuming project's packages that use Symphony against the release, in a scratch copy: the conciliation. What should make that check red? A: any failing test, as today; the release and the refresh wait until the project's main is green. B: only a test or a build that passes at the project's own pinned Symphony and fails with the release; tests already failing at its pin are listed in the release's notes as the project's own, and the release and the refresh go ahead. C: any failing test but those on a list kept by hand for each project in `symphony.toml`. Recommended: B. Approve and say A, B or C in the note, or comment. [[RELEASES#The release run]]
+  [2026-11-13 17:53] agent — Posted for the board task `docs/conciliation-baseline-card`.
+
+    **What happened today.** The release candidate, first judged at 09:00, was rerun at 15:29. Its other red has since been fixed and landed; the conciliation's red is the one left, on 31 tests of the consuming project in 7 test targets. Each was run again alone, with the release and with the project's own pin (no Symphony change at all): all 31 fail both ways, at the same line with the same message. None is caused by the release and none is load: a missing file, a missing entry in its budget table, 11 fixtures that its own landing rules refuse, and 8 that the rules of Symphony's board already in its pin refuse (a subtask is never moved to review, a reviewer cannot judge a task it filed, a draft card is not listed). That pin is a commit of main moved by hand, which no release run has judged: there is no release yet. Each is the project's to fix, and its board has a task for each. A rerun now would be red on the same 31 and spend the second of the candidate's three, so the red is held open until the project's fixes land or you answer.
+
+    **A, any failing test, as today.**
+    - When a release ships: once the consuming project's main is green, after its own tasks for these tests land there, and again after any later red on its main. Until then each rerun is red on the same tests; the candidate is dropped at its 24-hour bound (09:00 on 2026-11-14) or after three red reruns, and the run of main's tip that follows meets the same reds.
+    - When the machine refreshes: only after that release. Meanwhile the project's pin, its board's schema and the shared server stay where they are.
+    - Cost: nothing to build. The project's own reds are filed here as a release red, one task for the check whatever the number of tests, which nothing here can fix.
+    - What it cannot see: nothing broken is released, but it cannot tell the project's own reds from a break the release makes.
+
+    **B, judged against the project's own pin.** In the scratch copy the project's tests run twice: at its own committed lock, and with the lock moved to the release. The check is red only for a test or a build that passes at the pin and fails with the release. Tests already red at the pin are listed in the run's record and the release's notes as the project's own, with its board's tasks where known, and nothing is filed here for them.
+    - When a release ships: at the first run after B is built in which the release breaks nothing new. Today's 31 would not hold it.
+    - When the machine refreshes: right after that release, so the project's pin moves while its own main is still red. Its own commit gate and hooks still decide whether the move lands there; if they refuse it, the release stands and the move waits for that project's own landing, as today.
+    - Cost: a task here to build it. About twice the project's test time on a run where its commit or lock changed since the last baseline (its conciliation took 13, 90 and 23 minutes in the last three runs); a rerun against an unchanged project reuses the baseline and runs once.
+    - What it cannot see: the baseline is whatever the project's pin is. A break that came in with a pin no conciliation judged, as today's pin is, is listed as the project's own: 8 of today's 31 fail on Symphony board rules that came in with that pin. And a test already red at the pin for a reason of the project's that the release also breaks for another: that break shows only once the project fixes the first, and then on its own board, as its own red.
+
+    **C, a list of tests to skip.** Each consuming project gets a list of its tests in this repository's `symphony.toml`, which the conciliation leaves out.
+    - When a release ships: once a task here lists today's 31 and lands. Each later red on the project's main holds the release again until it is listed.
+    - When the machine refreshes: as under B.
+    - Cost: no extra run time. An edit and a land here for each red there, and another to take a test off the list once the project fixes it, which nothing reminds anyone to do.
+    - What it cannot see: anything the release breaks in a listed test, for as long as it stays listed. B and C both turn today's red check green while the 31 still fail; the difference is that B still runs every test and is red on anything the release newly breaks, while C stops running the listed tests.
+
+    **Your words that bear on it:**
+    - 2026-11-11, on how projects take a newer Symphony: "New releases can be pushed for urgent bugfixes, but generally should be generated based on nightly builds that would do a full verification cycle and conciliation." What makes the conciliation red was left open then; this card asks it.
+    - 2026-11-12: "also nightly fixes should be prioritized, like bugfixes are since they block releases. Meaning express path line followed up by another run". Under A, a red nothing here can fix blocks the release all the same.
+    - 2026-11-11: "tests that are failing in main should be handled by an orchestrator as a separate task in order for individual tasks not to be blocked by it and have a single dedicated owner to solve it." The consuming project's own reds have that owner on its own board.
+    - 2026-11-12: "yes, a green release should refresh".
+
+    **Why B.** The conciliation is there to tell whether a release breaks a consuming project, and B answers exactly that: what the release breaks is red, and the project's own reds stay with their owner on its board, as your words above have it for a red main, instead of holding every Symphony release and refresh. A ties Symphony's releases to another project's main being green. C stays blind to what it lists and needs a land here for every red there.
+
+    **Earlier verdicts checked.** **symphony-update-command** (B) asks for a conciliation, not for what makes it red: A, B and C each keep one. **consumer-api-break-release** (A, a deliberate break in two releases) stands under each, since a test the release breaks passes at the pin and fails with the release: A and B see it, and C sees it unless the test is listed. Neither decides this card.
+
+    This card is the only change. The option you choose is built by a task filed after your verdict.
+  [2026-11-13 18:15] owner · question — There should be proper isolation against a contract, so that each package/crate of symphony can be released and versioned on its own. Consumers could list an outdated package u til they are ready to update, allowing a phased update approach. Thoughts?
+  [2026-11-13 18:24] agent · question — On your comment (contract isolation, each package released and versioned on its own, consumers staying on an older one until ready): I think it is the right end state, and it removes this question rather than answering it. With a contract, a release is judged by contract tests this repository owns, never by the consumer's whole suite, so a consumer's own reds cannot hold a release, and the refresh becomes each consumer's own phased move. What it needs, as I read the code today: (1) the contract named and versioned: the plugin protocol and block vocabulary, the wire types, the board's schema and CLI, the installed recipes; (2) consumers reaching Symphony across a boundary that tolerates two versions: the plugin process protocol already is one, while a plugin crate linked into the host is not, since two versions of the wire types in one binary are different types; (3) the two things one machine shares, the server and each board's schema, taking a consumer one version behind, which the schema does not do today (it only moves forward with the pin). That is a design with real choices (which packages version apart, how far back the server and schema reach), so I would put it to you as its own analysis and card, not build it from a comment. It does not ship before the candidate's bound (09:00 on 2026-11-14), so this card still needs A, B or C for the releases until then; my recommendation stays B as the bridge, with the contract design filed now. Say the word (or just approve with A, B or C) and I file the contract analysis either way.
+  [2026-11-13 19:39] owner · dismissed
+- [r] **consumer-api-break-release** — A release reaches a consumer by a pin move that may change only `Cargo.toml` and `Cargo.lock`, and is cut only when the consumer's default branch, as committed, builds and tests against it. So a change here that removes or reshapes a public item a consumer uses can never be released: the consumer's code cannot change until its pin moves. Tonight's first run found one such break in the consuming project, and its fix found a second behind it; both were accidents, now being put back. How is a deliberate one released? A: in two releases: the change keeps the old item working beside the new (no `#[deprecated]` mark, which the consuming project's lint would turn red), the consumer moves over through a task of its own, and a later task here removes the old item, which that run's conciliation proves. B: in one: the consumer prepares its side on a branch the conciliation builds in place of its default branch, and after the release its owner lands the pin's move with it through the consumer's own landing. Recommended: A: nothing in the run or the refresh changes, and no consumer's main breaks or waits on a person; its cost is the old item kept for a release or more. Approve and say A or B in the note, or comment. [[analysis/release-candidate#A deliberate break of a consumer's API]]
+  [2026-11-12 19:22] agent — Posted for the board task `design/release-candidate-branch`, from the review of the release candidate design you approved.
+  [2026-11-12 20:26] owner · approved — I don't fully understand this issue. So pick whatever choice makes sense to you.
+  [2026-11-12 21:14] agent — Chosen as A by the orchestrator under your words, "pick whatever choice makes sense to you", and filed as the board task `tools/consumer-api-break-in-two-releases`. In plain words: when Symphony changes something a project's code uses, the old version keeps working until the release after its replacement is out, so a project is never broken by taking a release.
+  [2026-11-12 21:15] agent · resolved
+- [r] **release-candidate-name** — Your words, 2026-11-12: "we can also move from calling this "nightly" to release candidate", then "just release ? (would do tests and release, if fails then won't do release and agents has to fix?)". Read literally, "release candidate" names the run. The design you approved gives it to the commit the run holds while its reds are fixed, and calls the run a release run, which `just release` starts; its card listed those names without pointing out the difference. What does "release candidate" name? A: the commit held: a candidate red, a candidate rerun, and the run is a release run. B: the run: a release candidate run, its reds release candidate reds, and the commit held is just the candidate. Either way the rest stands unless you comment: `just release`; `just nightly` answering one line pointing to it until the first release it cuts; `--commit COMMIT` for `--release COMMIT`; reds filed as `tests/release-red-NAME`. Recommended: A, since a release candidate is the build that may become the release, and the command already names the run. Approve and say A or B in the note, or comment. [[analysis/release-candidate#The vocabulary]]
+  [2026-11-12 19:22] agent — Posted for the board task `design/release-candidate-branch`, from the review of the release candidate design you approved.
+  [2026-11-12 20:25] owner · approved — A. should also had been auto approved.
+  [2026-11-12 21:14] agent — A it is, and you are right that it should not have been asked: the process card you approved already called the commit the run holds the release candidate. Recorded for the board task `tools/release-rename`: "release candidate" names that held commit, a red there is a candidate red and its rerun a candidate rerun, and the run itself is a release run, started by `just release`.
+  [2026-11-12 21:15] agent · resolved
+- [r] **release-main-while-candidate-open** — While a release candidate is open, the run judges nothing on main's tip, up to its 24-hour bound. Main's newest landings are checked only by their own evidence and by the regenerator's client check and docs audit each round; a break they bring is found by the first run after the release, and the release lacks what landed since the candidate. Should main's tip also get a run? A: no, as designed; the first landing after the release starts one when 20 or more have landed since the candidate, which a busy day reaches. B: a run of main's tip right after each candidate's release, whatever the count: one more full run per candidate on a quiet day. C: runs of main's tip at the cadence while the candidate is open, taking turns with its reruns, since only one run holds the lock at a time: a run of main holding it when a rerun is due delays the release by up to a whole run (the first run took an hour and never reached the tests) and spends the 24-hour bound, and the reds of two trees share one series. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/release-candidate#Main while a candidate is open]]
+  [2026-11-12 19:22] agent — Posted for the board task `design/release-candidate-branch`, from the review of the release candidate design you approved.
+  [2026-11-12 20:24] owner · approved — A. this should had been auto approve/triaged, its basically what was decided in the other card.
+  [2026-11-12 21:14] agent — A it is, and you are right that it should not have been asked: the release-candidate process A you approved at 19:05 already holds the run on the candidate, so main's tip gets no full run while a candidate is open, and B or C would have changed that. Recorded for the board task `tools/release-candidate-held`, which builds it: the first landing after a release starts a run of main's tip once 20 or more have landed since the candidate.
+  [2026-11-12 21:15] agent · resolved
+- [r] **release-candidate-process** — The full run judges main's tip, and main gains 2 to 8 landings an hour. So a red's fix reaches the next run with everything that landed since, and that run can be red again: a release may never come. Your words, 2026-11-12: "release candidate branch process? bugfix - rerun failures then release once green. Then update main with bugfixed changes. Open to suggestions on how". How is a red fixed and the release cut? A: the run holds the commit it judged; each fix starts there, never merges main, and lands on main as any task does; the fix's tip, on main from then on, becomes the candidate, and a rerun of what was red releases it. B: the fix lands on main first, and the run copies it onto the candidate (a cherry-pick). C: the fix lands on the candidate only, and the candidate is merged into main after the release. D: no candidate; each run judges main's newest tip, reusing the green of each step whose inputs did not change. Recommended: A. Approve and say A, B, C or D in the note, or comment. [[analysis/release-candidate#The options]]
+  [2026-11-12 18:45] agent — Base: today, each run judges main's newest tip. ![Today: each run judges main's newest tip](analysis/release-candidate/today.svg)
+  [2026-11-12 18:45] agent — Posted for the board task `design/release-candidate-branch`. A, the recommendation, drawn: ![A: the fix's own tip is the release candidate](analysis/release-candidate/proposed.svg)
+
+    **Tonight's first run**, 17:28 to 18:27, was red twice. `just verify` stopped at its size check, two binaries past their budgets, so none of its tests ran. And the consuming project no longer builds against it. Main gained 3 landings meanwhile. Under every option, "rerun failures" first needs the run split into steps that each run on their own: the first part of the stamps task.
+
+    **A, the fix's own tip.** Main has each fix from its land, nothing is merged back, and the tree released is the tree a reviewer approved. `just land` does not change, and neither does what a release is. Cost: a fix is written on a tree up to a day old, so it conflicts with main more often; a conflict drops the candidate, and the next run judges main's tip. A second red's fix merges the first before its review. A fix that changes the client commits its own build of it.
+
+    **B, picked onto the candidate.** Cost: the pick conflicted in two of three trials. The release is a commit nobody reviewed and main lacks, so what a release is must change, and the run builds and commits the candidate's client itself.
+
+    **C, merged back after the release.** Your words read literally. Cost: main lacks every fix until the release, so every agent on main meets the same red. The release is a commit main lacks until the merge back, which can conflict after the release is cut (tried).
+
+    **D, no candidate.** What is being built now. Cost: today 38 of 56 landings changed the board's or the symphony crate, so the run after a fix reruns nearly everything, and each landing since can bring a red of its own. A release comes only when main is quiet.
+
+    **Why A.** It is the one option in which the tree judged changes only by the fixes, so a release comes however fast main moves. It updates main earlier than your "Then", at each fix's land. It works before the stamps land, and is faster with them. A red that passes when run alone is fixed as you said, rewritten or taken out of the run, never rerun until it passes.
+
+    **Names, unless your note says otherwise.** `just release` runs it, as you proposed; today's `just nightly` answers one line pointing to it until the first release it cuts. The commit it holds is the release candidate, and a red there is a candidate red, filed as `tests/release-red-NAME`. `--release COMMIT` becomes `--commit COMMIT`. Everything moves in one step, the first task, as you chose for the last rename ("B - just remove the bandaid quickly"). The whole vocabulary: [[analysis/release-candidate#The vocabulary]]
+
+    Approve and say A, B, C or D in the note, or comment. [[analysis/release-candidate#Why A]]
+  [2026-11-12 19:05] owner · approved — A
+  [2026-11-12 19:22] agent · question — A it is. Its review on the board task found four things to correct in what you approved, and two trades the card did not state. The design now says each, and the three choices they leave open are cards of their own: **release-main-while-candidate-open**, **release-candidate-name** and **consumer-api-break-release**.
+
+    **Corrected:**
+    - **Only a red's own fix moves the candidate.** As written, any task started at the candidate's commit would have moved it, and main sits at that commit for minutes (tried). It now moves only on the land of a red's own task.
+    - **A conflict no longer drops the candidate.** When a fix's land conflicts, its executor merges main and asks for a fresh review, as for any task. The commit approved before that merge is on main once the fix lands, and holds only the candidate and the fix, so it becomes the candidate (tried).
+    - **The refresh moves a pin only forward.** A pin moved by hand to a commit of main while a candidate is open is neither before nor after the release, and moving it would drop what it had, a newer board schema among them (tried). Such a pin is left and named until a release descends from it.
+    - **B's "two of three trials" was not a rate:** the same fix conflicts the same way under A (tried); B's other costs stand. And D's release comes when a run of main's tip finds no new red, not only when main is quiet.
+
+    **The two trades A makes:**
+    - **Main's tip gets no full run while a candidate is open**, up to the 24-hour bound. A break landed meanwhile is found by the first run after the release, and the release lacks what landed since the candidate. The regenerator still checks main each round. Whether main gets a run too: **release-main-while-candidate-open**.
+    - **Once stamps land, the commit tagged is not run in full.** The steps that were red, did not run or that a fix reaches run on it; the rest keep their green from the candidate's first commit, whose inputs for them are the same. That is your "Nightly can also use the stamp based approach for things that did not change so it's faster", and it holds under every option, D included. Before stamps, the rerun is the whole verification.
+
+    **Your words the card did not quote**, 2026-11-12:
+    - "also nightly fixes should be prioritized, like bugfixes are since they block releases. Meaning express path line followed up by another run. Nightly can also use the stamp based approach for things that did not change so it's faster": the express path stands for a red's fix, and the candidate's rerun is the run that follows it. The express path's own "a fix's land starts another run of main's tip" is dropped.
+    - "we can also move from calling this "nightly" to release candidate" and "just release ? (would do tests and release, if fails then won't do release and agents has to fix?)": the card's names gave "release candidate" to the commit held, not to the run, without saying so: **release-candidate-name**.
+
+    Tonight's first run also showed that a deliberate break of a consumer's API has no way to a release: **consumer-api-break-release**.
+
+    Since these change what you approved: do the corrections stand? Approve again to keep A with them, or comment. [[analysis/release-candidate#The trades]]
+  [2026-11-12 19:38] agent · question — One more change under your A, the same correction to D: the Base picture's last label, "and so on, until main is quiet", now reads "and so on, until a run finds no new red". Approve again to keep A with the corrections, or comment.
+  [2026-11-12 20:35] agent — Your A stands, with the corrections and the two trades above: they follow from it and are not new choices, so they are auto-approved as you say, and both questions above are withdrawn. Nothing on this card waits on you. Your words, 2026-11-12: "release-candidate-proccess is weird. the card was approved, then another question to decide came, but the decision remains in approved? this should had been a seaparate card no the same one. I also don't really get why those similar questions about things that were already been approved are being asked. They are consequences of the previous decision and should be auto-approved"
+  [2026-11-12 20:35] agent · resolved
 
 ### Historical paths
 
@@ -842,68 +1109,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-15 11:13] agent — Recorded: A, the hand-over stays. Nothing changes.
   [2026-11-15 11:14] agent · resolved
 
-### Board
-
-- [r] **board-search-by-meaning** — The board can find tasks by what they mean as well as by their words, with a small language model that runs on this machine: you asked for tasks to be searchable by meaning, and chose the model. Nothing calls it today: the board page searches by words, no skill or document names it but the board's own guide and help, and the consuming project's tools never call it. It costs 153 of the 189 packages the board is built from, a 133 MB download for each project, and a pass every minute on the server for each project, 13 hours of it on this repository's board since 2026-11-14. What becomes of it? A: delete it; the board searches by words alone. B: move the model into a program of its own, as an approved branch that never landed does: the board and the server build without it, and search by meaning works where that program is built. C: keep it in the board behind a build switch that is off by default. D: keep it as it is. Recommended: B. Approve and say A, B, C or D in the note, or comment. [[analysis/code-review-2026-11#4. Eight tenths of the board's dependencies serve a search mode nothing calls]]
-  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
-
-    **Who uses it**, read today. `just tasks search` searches by words unless `--mode vector`, `hybrid` or `exact` is given (`crates/tasks/src/cli/search.rs`). The board page's search is by words (`apps/symphony-server/src/api.rs`, `store.search`). Of the shipped skills and the documents only the board's guide (`crates/tasks/AGENTS.md`) names those modes, and of the consuming project's tracked files only one analysis. Whether an agent has typed them is not known: the board records no search.
-
-    **What it finds.** The consuming project's database card (2026-10-06) measured 0.82 of the top five results on target over ten real queries, against 0.76 for keywords. The later study with the model you chose, in that project's port plan, gave 0.82 for words and meaning together against 0.80 for words alone and 0.74 for meaning alone: one more useful result in fifty.
-
-    **What it costs:**
-    - *Packages:* `cargo tree -p symphony-board -e normal,build --prefix none --no-dedupe | sort -u` lists 189, and 36 with `--prune tract-onnx --prune tract-linalg --prune tokenizers` before the sort. Every build of the board, the server, `symphony` and `agent-send` compiles them.
-    - *The model:* 133 MB in each project's `symphony/models/`, in its git common dir; two copies on this machine.
-    - *The server's pass*, counted in its log (`grep -E 'task embedding catch-up( of [a-z-]+)? ended after'` on `server.log` in the machine folder) up to 07:30 UTC on 2026-11-15: 6,262 passes since 2026-11-11, 15.9 hours in all, 0.9 s at the median. 3,578 are from before the log named each pass's project (2.5 hours), 1,655 the consuming project's (0.4 hours) and 1,029 this repository's (13.0 hours). On 2026-11-14 this repository's passes ran 9.5 hours back to back: two stopped at the 4-hour limit ("failed: no answer within 14400 s", at 07:52 and 11:52 UTC) and the third embedded 1,792 chunks in 89 minutes. From 01:00 to 07:30 UTC on 2026-11-15, 172 of its 332 passes embedded something, each 2 s to 4.6 minutes, 43 s at the median: 2.9 of those 6.5 hours. Each pass loads the model again (7.8 s on average) and runs it on one thread at low priority (`nice -n 10 tasks embed --maintenance --threads 1`, `apps/symphony-server/src/front/embeddings.rs`); by its own count, 832 chunks took 8,756 s. Its CPU is not measured.
-    - *Bytes:* the release run's build of `tasks` at hand is 20,337,280; without the model it is not measured today. On B's branch, at its thread's last measure (2026-11-12), `tasks` went from 24,293,376 to 8,484,176 bytes with the model's program at 16,641,552; its first measure took a cold build of `tasks` from 769 to 183 s of CPU.
-
-    **A, delete it.** It removes what you asked for and chose a model for. The three modes, `tasks embed`, the server's pass and its hours, the download and the three packages go: about 1,150 lines of source (`crates/tasks/src/embedding.rs` and `cli/embedding.rs` less their tests, `store/embeddings.rs`, half of `cli/search.rs`, the server's `front/embeddings.rs`), about 800 of tests and two benchmarks (`examples/search_bench.rs`, `examples/embedding_cpu.rs`). The model's tables can stay in the board's schema, unused, so no board need move to a new schema for it. B's branch is dropped.
-
-    **B, a program of its own.** `tasks-embed` holds the model, and `tasks embed` and a search by meaning start it. Where it is not built, those searches say what to build, and searching by words is unchanged. The branch (`perf/embedding-in-its-own-binary`, `c7142edd`, approved by its reviewer on 2026-11-12; no land of it was tried) adds about 3,500 lines. It is 704 commits behind main and conflicts with it in 14 files, so its cost is bringing it up to main and a second review. A consuming project then builds `tasks-embed` from its own board package, as the branch's guide says; until it does, its pass fails each minute there is a change to embed. B leaves the pass's hours as they are: the server already runs the pass as a process of its own, and under B that process starts the model's program, which loads the model each pass as today.
-
-    **C, a build switch.** One package as now; the default build leaves the model out, and the modes say which build has it. The build with the model has its tests to run somewhere too, in the release run at least.
-
-    **D, as today.** Nothing changes.
-
-    **What would end the pass's hours**, short of A: a change to the pass itself, such as running it less often or only once a search by meaning is asked for, or keeping the model loaded between passes. That is a task of its own under B, C or D.
-
-    **Why B.** It keeps what you asked for and the model you chose, and takes the 153 packages out of `tasks`, the server, `symphony` and `agent-send`, as your words below ask; it is built and approved, so its cost is a merge and a second review rather than new work. A is smaller and ends the pass too, but it removes a feature you asked for to save what B saves.
-
-    **Earlier verdicts checked.** No card here asks about search by meaning. In the consuming project's register, from before this repository was split from it: its port plan records that you asked for tasks to be searchable by meaning, and your approval of `tasks-search-embedding-model` (A, 2026-10-29) chose bge-small and authorized "a local Rust inference runtime in a follow-up", which `crates/tasks/Cargo.toml` cites for the three packages. That card chose the model, not whether the feature stays, and B, C and D keep it. The board's database card (2026-10-06) offered search by meaning under both databases, and your approval chose the database. Your words of 2026-11-12, "we should really have separate crates that have lower binary sizes", are what B's task was filed on: A, B and C each meet them and D does not.
-  [2026-11-15 06:48] owner · approved — A for now.
-  [2026-11-15 11:13] agent — Recorded: A, for now. Search by meaning is deleted and the board searches by words alone: the board task `tools/board-search-by-words-alone` removes the model, its three modes, `tasks embed`, the server's pass and the packages they bring, and the branch built for B is dropped. The model's tables stay in the schema, unused, so no board moves for it. Bringing it back later would be a new card. The board's guide now tells agents to build nothing on it.
-  [2026-11-15 11:14] agent · resolved
-- [r] **projects-health** — The Projects page warns only while a board's callbacks or sweep fail. At 19:10 today the consuming project's board took 3 s to answer a write, left 48 requests unanswered in the hour and had its one orchestrator stale, and its row read like Symphony's. Proposed: a dot per project for its worst signal (green, amber, red); only when it is not green, one short line saying why; and counts that say what they count, `18 decision cards waiting on you`, then `41 blocked, 9 of them on you`. Approve, or comment with what to change. [[analysis/board-design#The projects page]]
-  [2026-11-11 19:42] agent — Base: the Projects page today, on a phone, from the shared server at 19:09. ![Projects today, on a phone](analysis/board-design/projects-now-phone.png)
-  [2026-11-11 19:42] agent — Proposed, on a phone and wide: ![Projects with health, on a phone](analysis/board-design/projects-health-phone.png) ![Projects with health, wide](analysis/board-design/projects-health-wide.png)
-  [2026-11-11 19:42] agent — Red keeps today's words for failing callbacks or sweep. Amber is a board slow over the last hour (writes over a second at p90, or any request unanswered) or no live orchestrator while work waits to start (`orchestrator stale`, or `no orchestrator` when none is there: a stale session is still there, one rule for the card line, the board's banner and this page); the build sets the thresholds. The blocked counts come from the same line as board-at-a-glance. The fresh reviewer's finding that "18 waiting on you" and "9 on you" read as two answers to one question is fixed by naming the 18 as decision cards. Filed in design, waiting on this card: app/projects-health.
-  [2026-11-11 21:53] owner · approved
-  [2026-11-11 22:02] agent · resolved
-- [r] **board-at-a-glance** — A task board should say what is stuck, on whom and for how long. The consuming project's board says none of it: 41 tasks are blocked, a median of 10 days, and no card says why; 110 of the 117 role chips on them name sessions that have left. Under every option, each card ends in one line: who it waits on, why in a few words, and how long it has been in its stage (red from a week). Roles that left and document chips leave the card, review rounds become one mark, and a banner says once when no orchestrator is live. Where does the waiting work go? A: a Blocked lane above today's columns, grouped by what lifts each block. B: no Blocked column; a blocked task stays first in the column it stopped in, every stage fits a wide screen, and a phone shows one stage at a time. C: no columns; one list grouped by who has to act next, oldest first, under a bar of the stages' counts. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/board-design#The options]]
-  [2026-11-11 19:42] agent — Base: the board today, wide, from the shared server at 19:10. ![The board today, wide](analysis/board-design/board-now-wide.png)
-  [2026-11-11 19:42] agent — Posted for the board task `tools/board-design-review`. The three options at 1440 wide: ![The board, option A](analysis/board-design/board-a-wide.png) ![The board, option B](analysis/board-design/board-b-wide.png) ![The board, option C](analysis/board-design/board-c-wide.png)
-  [2026-11-11 19:42] agent — The options are mock-ups on the board's own colours, filled with the consuming project's 86 open tasks as they stood at 19:10. Queued and parked work, which waits by design, is drawn quieter and never red. All four pictures carry today's header, filters and buttons: the header's rows and names are app/header-names' card, not this choice.
-
-    **On a phone**, today first (its first card mid-screen, under the three-row header, the filters and the scroll hint), then A, B and C: ![Today on a phone](analysis/board-design/board-now-phone.png) ![Option A on a phone](analysis/board-design/board-a-phone.png) ![Option B on a phone](analysis/board-design/board-b-phone.png) ![Option C on a phone](analysis/board-design/board-c-phone.png)
-
-    **A, a Blocked lane.** Removes the Blocked column, role and document chips, and the scroll hint. Keeps columns that scroll sideways, so Review and Done stay off the first screen wide, the Status filter and the prev, next and top pager. Cost: the least.
-
-    **B, stuck in place.** Removes the lower row, sideways scrolling, the Status filter, the prev, next and top pager, role and document chips, and the scroll hint. Keeps the pipeline as columns, and a column's head shows where work piles up (Review 1, +18 blocked). Cost: stage tabs on a phone.
-
-    **C, who acts next.** Removes columns, sideways scrolling, the lower row, the Status filter, the prev, next and top pager, role and document chips, and the scroll hint. The pipeline becomes the bar on top, and each row names its stage. Cost: a new page layout.
-
-    All three keep search and the finished window with their labels, Who is connected and the + button.
-
-    **Why C.** C orders all 86 open tasks by who has to act, oldest first, with the age at the right, the same wide and on a phone and with no sideways scroll. A orders only the 41 blocked tasks, above columns that still scroll sideways. In B the by-who order is a strip filter you tap. B is the pick if columns matter more than who acts.
-
-    **Fresh review.** A reviewer saw the three before this card went up. Its three blocking findings were fixed and checked again, and the task's reviewer also picked C. The first reviewer's verdict: "Its single list grouped by who acts next, with 'On you' first and ages on the right, answers what is stuck, on whom and for how long in one top-to-bottom read, and it looks the same wide and on the phone."
-
-    Filed in design, waiting on this card: tools/task-waits-on (the line's data, for any option) and app/board-at-a-glance (the chosen option only).
-  [2026-11-11 20:06] agent — Corrected after the task's review, before any answer. Two counts were wrong: 23 ready tasks wait only on an orchestrator, not 25 (two wait on a blocked subtask), and 6 blocked tasks wait on nobody, not 7 (one waits on its orchestrator, which is stale, so still there). The cards no longer repeat the missing orchestrator; the banner says it once. A now shows the Status filter it keeps. Every picture now has today's header and controls, and each option lists what it drops. C's phone rows keep the slug. The pictures above are the corrected ones.
-  [2026-11-11 21:52] owner · approved — B. They shoild be blocked on a decision (not a person). There should not be a blocked on nothing, a card that is blocked on nothing is not blocked.
-  [2026-11-11 21:55] agent — B it is: no Blocked column, a blocked task stays first in the column it stopped in. Your two rules go into the build: a block names what it waits on, a decision card, a task or a check, and where that is yours it reads `On your decision NAME`, never a person alone; and a task whose block names nothing is not drawn or counted as blocked, it goes back to the stage it stopped in and the board lists it once for its orchestrator to give a reason or release. Carried on the board tasks `app/board-at-a-glance` and `tools/task-waits-on`.
-  [2026-11-11 22:02] agent · resolved
-
 ### The look
 
 - [r] **symphony-mark** — Symphony would get a mark and a name of its own, at the start of the header, on the browser's tab and on a phone's home screen. They show on the machine's own pages (the project list and the pages the server draws) and on every project with no theme name or icon of its own; a project's own theme name and icon take their place on its pages. Today the header shows neither, the tab shows no icon or a generic ♫, and the icon the browser asks the server for by itself is the consuming project's star. Which mark and wordmark should Symphony's own look carry? A: the note-card, a note whose head is a task card. B: the podium, the orchestra's seats round two maestros. C: the fermata, the sign where the music holds for the maestro. D: the two-stroke S, one stroke for you and one for the orchestrator agents. Recommended: D. Approve and say A, B, C or D in the note, or comment. [[analysis/symphony-mark#The options]]
@@ -1052,154 +1257,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-14 08:32] owner · approved — Should be moved ro React. Typescript. Will need linting and type checking tooling, as well as vite.
   [2026-11-15 11:13] agent — Recorded: React, TypeScript and Vite, so no card on Preact or React is asked. It is under way: the React client (`apps/symphony-web`) takes the pages over from the Dioxus one a page kind at a time, with Biome for linting and formatting and `tsc` for types, both run by `just lint-rs`.
   [2026-11-15 11:14] agent · resolved
-
-### Releases
-
-- [r] **kit-new-block-version** — Before the plugin kit goes to crates.io at 1.0.0, one thing about it cannot be changed later without a new major version: what happens to its version when Symphony adds a new kind of block (or a new kind of text span or media) to the vocabulary plugins draw with. A: a new block is a small update (1.1.0): a plugin written for 1.0.0 keeps building and gets the update by itself. B: a new block is a new major version (2.0.0): every plugin's author must change its requirement by hand before it can use any later kit. Recommended: A. Approve and say A or B in the note, or comment. [[RELEASES#Packages on crates.io]]
-  [2026-11-14 02:12] agent — Posted for the board tasks `tools/kit-version-lines` and `tools/release-publishes-to-crates-io`; nothing is published yet, and nothing will be until you say so.
-
-    **What it is in the code.** The vocabulary is three lists in `symphony-blocks`: `Block`, `Span` and `Media`. Rust lets a list be marked as one that may grow. Marked, adding to it is a small update. Unmarked, as today, adding to it is a breaking change, because code elsewhere may have listed every case.
-
-    **A, marked as growing.** A plugin only makes blocks, it does not list them, so nothing changes for a plugin. The cost is in Symphony's own client, the one place that lists every block to draw it: the compiler no longer refuses a build where a new block has no drawing, so a test does that instead (it goes through every block and fails on one the client does not draw).
-
-    **B, as today.** The compiler keeps checking the client. Every new block, span or media kind makes the kit 2.0.0, 3.0.0 and so on, and each consuming project and plugin author moves by hand each time.
-
-    **Why A.** New blocks are how the product grows, so under B the kit's major version would move often and mean little. The check B keeps can be kept by a test. Choosing A after 1.0.0 is published would itself be a new major version, so now is the cheap moment.
-  [2026-11-14 06:29] owner · approved — A
-  [2026-11-15 11:14] agent — Recorded: A, a new kind of block, text span or media is a small update of the kit. It is not in the code yet: the three lists are still unmarked, and the plugin protocol's document said a new kind was a new major. That document now says the rule you chose and that the lists get marked, with a test that the client draws every kind, before the kit's first publication. The task that does it is asked of the orchestrator on the board task `docs/owner-answers-applied`; nothing is published before it lands. [[PLUGIN_PROTOCOL#Versions]]
-  [2026-11-15 11:14] agent · resolved
-- [r] **consumer-contract-versioning** — A consuming project could take Symphony's parts one at a time, each when it is ready, and Symphony's releases would stop waiting on that project's whole test suite; how much can be phased depends on how far the contract goes. Today the project takes all of Symphony at one commit, and the machine's one server is built from it. How far should the contract go? A: the process boundary only: a project links nothing of Symphony, its plugin is a program of its own speaking the versioned plugin protocol, and the machine runs one Symphony release for the server, the board commands and the client. B: A, plus a few packages with version numbers of their own that a project may keep linking at the version it names: the plugin kit (its seams, blocks and doc checks) as one, and each small helper (child processes, schema checks, arguments, the repository reader). C: every one of the 14 packages versioned on its own, a project linking what it links today. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/consumer-contract#The options]]
-  [2026-11-13 18:42] agent — Posted for the board task `docs/consumer-contract-analysis`, from your comment on **conciliation-consumer-own-reds**.
-
-    **What a project can stay behind on:**
-    - A: its plugin program, while the machine's server speaks that program's protocol major (how many releases a major lasts is a number to set), and its scripts and tools that call `tasks api` or Symphony's commands, within those versions.
-    - B: A's, plus its plugin kit's version, and each helper for as long as it likes, since nothing on the machine shares them.
-    - C: any package, within what the others' versions accept.
-    - None of them: a server, board commands or a board schema older than the machine's. Those stay one per machine and move together at its update, as you chose for the board: "C makes sense to improve upon A. while we don't have a dedicated build service."
-
-    **What Symphony must keep working:**
-    - A: every minor of the plugin protocol, and the previous major for that window; the board's `tasks api` calls; command names and outputs; settings keys (the server already leaves out one it does not know and reads the rest; the lint and registration would warn of a retired one for the window rather than refuse it).
-    - B: A's, plus the kit's and the helpers' Rust names within a major, a check against the previous version's tag saying when a change needs a new one. Last week 0 to 13 commits touched these parts' sources.
-    - C: the Rust names of every package, the library and the board included, whose sources 198 and 270 commits touched last week (commits, not counted changes to public names); and a package registry, since with Git pins two versions of this repository bring two copies of every package they share (tried here), whose types do not match (from Cargo's documentation; not compiled).
-
-    **The work:**
-    - Here, A and B: finish the plugin path you chose ("Let's go with B first, measure results against the current approach for a post change comparison."): every seam answered from a process, and the release installed on the machine instead of built by a project; then checks of the contract in place of the conciliation. B adds the kit split out of the wire types, and its version tags. C adds the registry, version checks for every package, and tests across the versions a project may combine.
-    - On the consuming project's board, A and B: its host is no longer built (4 files); its plugin becomes a process and leaves the library's internals (27 of the 44 of its files that name the library); its review tool writes the board through `tasks api` rather than the board's library. Two other users of the library need an answer: an art tool (9 files), which runs Symphony's status, triage and page rendering with its plugin installed, and its review tool's landing (4 files), which takes the landing's checks and the lock it shares with the server. Under A both reach those through the machine's commands or copy them, and the project also copies the helpers it links, one of them in 132 of its files. Under B the analysis proposes the art tool through the machine's commands, and the landing on the library at the kit's own tag, which promises nothing, so a break there is the project's own, found by its gate.
-
-    **What changes for releases, under A and B:** a release is judged by checks this repository owns (the plugin protocol, `tasks api`, the kit's version check), never by a project's whole suite, so a project's own reds stay on its own board. The release is installed on the machine and moves no project's pin; each project moves its kit and helpers through its own landing. Until that is built, **conciliation-consumer-own-reds** decides what holds a release.
-
-    **Why B.** It phases what a project's own code can phase, and promises stability only where little changes. A makes the project copy code it links today, and possibly change its plugin at whatever kit it rebuilds with, for no promise in return. C promises stability on the packages that change most, needs a registry, and still cannot phase the server or a board.
-
-    **Earlier verdicts checked.** **plugin-delivery-choice** (B), **release-delivery** (C) and **board-schema-at-update** (C) chose how plugins, releases and boards reach the machine: A and B build on them, and C leaves them as they are. **symphony-update-command** (B) has projects follow release tags, which every option keeps. **consumer-api-break-release** (A) keeps an old name beside the new for a release, which B keeps for its kit. None says whether packages are versioned apart, so none decides this card.
-
-    This card is the only change. The build is filed after your verdict. [[analysis/consumer-contract#Why B]]
-  [2026-11-13 19:39] owner · approved — There are multiple A/B/Cs here. No way to decide on all things. Those are separate decisions. For the original question, I agree with approach B
-  [2026-11-13 20:27] agent — Recorded: B, for the question this card asked. A project links nothing of Symphony but the plugin kit (its seams, blocks and doc checks) and the small helpers (child processes, schema checks, arguments, the repository reader), each at the version it names; its plugin is a program of its own speaking the versioned plugin protocol; and the machine runs one Symphony release for the server, the board commands and the client.
-
-    **What B decides, so none of it is asked:**
-    - **Where versions live:** this card gives B "its version tags" and the registry to C, so the kit and each helper get a line of tags in this repository, cut by the release run; Git is enough. The kit and the helpers start at 1.0.0: for a pinned tag Cargo reads 0.x and 1.0 alike.
-    - **The board's rules:** under every option the board commands "stay one per machine and move together at its update", so a changed rule reaches every project at the machine's update, the release's notes saying so, and a project's test that relied on the old rule is that project's to update. `tasks api` promises what its calls take and answer, not the rules behind them.
-    - **An old protocol major:** the protocol is on its first major and no setting or command is retired, so how long an old one is kept is asked by the task that first plans a second.
-
-    **The one choice left** is a card of its own: **contract-tool-route**, how the project's art tool and landing tool get what they use of the library today.
-
-    **The build, in order on the board:** the release candidate's red already under way takes the consuming project's suite out of the release run, so its own reds no longer hold a release. Then the refresh leaves a project's own refusals to it; `tasks api` answers its version; the kit leaves the wire types, carries what a plugin uses and gets its tags; every seam a plugin declares answers from a process; and last the release is built and run on the machine, from which a release moves no project's pin.
-  [2026-11-13 20:43] agent · resolved
-  [2026-11-13 21:25] agent — The owner, 2026-11-13, after this verdict: "I would like to publish crates (MIT license) to crates.io as the pacakge manager". So under B the kit's and the helpers' versions live on crates.io, not on tag lines in this repository: this replaces the record's "Git is enough" (board task `tools/publish-to-crates-io`). The record's "The kit and the helpers start at 1.0.0" was the agent's, not your words; it holds only because the kit's blocks have now left the app's wire types (board task `tools/kit-vocabulary-leaves-the-wire-types`), as with them inside it nearly every release would need a new major. So the kit, its three packages at one version, and each helper start at 1.0.0, and the app's wire types (`symphony-api`) at 0.1.0, which promises no name.
-- [~] **conciliation-consumer-own-reds** — Today a Symphony release waits until every test of the consuming project's packages that use Symphony passes against it, even tests that already fail on that project's own main with no Symphony change. So a red on that project's own main holds every Symphony release, and with it the machine's refresh (each project's pin, its board and the shared server moved to the release), as it does now: today's release waits on 31 of its tests, all failing on its own main, none caused here. Before it tags, the release run builds and tests each consuming project's packages that use Symphony against the release, in a scratch copy: the conciliation. What should make that check red? A: any failing test, as today; the release and the refresh wait until the project's main is green. B: only a test or a build that passes at the project's own pinned Symphony and fails with the release; tests already failing at its pin are listed in the release's notes as the project's own, and the release and the refresh go ahead. C: any failing test but those on a list kept by hand for each project in `symphony.toml`. Recommended: B. Approve and say A, B or C in the note, or comment. [[RELEASES#The release run]]
-  [2026-11-13 17:53] agent — Posted for the board task `docs/conciliation-baseline-card`.
-
-    **What happened today.** The release candidate, first judged at 09:00, was rerun at 15:29. Its other red has since been fixed and landed; the conciliation's red is the one left, on 31 tests of the consuming project in 7 test targets. Each was run again alone, with the release and with the project's own pin (no Symphony change at all): all 31 fail both ways, at the same line with the same message. None is caused by the release and none is load: a missing file, a missing entry in its budget table, 11 fixtures that its own landing rules refuse, and 8 that the rules of Symphony's board already in its pin refuse (a subtask is never moved to review, a reviewer cannot judge a task it filed, a draft card is not listed). That pin is a commit of main moved by hand, which no release run has judged: there is no release yet. Each is the project's to fix, and its board has a task for each. A rerun now would be red on the same 31 and spend the second of the candidate's three, so the red is held open until the project's fixes land or you answer.
-
-    **A, any failing test, as today.**
-    - When a release ships: once the consuming project's main is green, after its own tasks for these tests land there, and again after any later red on its main. Until then each rerun is red on the same tests; the candidate is dropped at its 24-hour bound (09:00 on 2026-11-14) or after three red reruns, and the run of main's tip that follows meets the same reds.
-    - When the machine refreshes: only after that release. Meanwhile the project's pin, its board's schema and the shared server stay where they are.
-    - Cost: nothing to build. The project's own reds are filed here as a release red, one task for the check whatever the number of tests, which nothing here can fix.
-    - What it cannot see: nothing broken is released, but it cannot tell the project's own reds from a break the release makes.
-
-    **B, judged against the project's own pin.** In the scratch copy the project's tests run twice: at its own committed lock, and with the lock moved to the release. The check is red only for a test or a build that passes at the pin and fails with the release. Tests already red at the pin are listed in the run's record and the release's notes as the project's own, with its board's tasks where known, and nothing is filed here for them.
-    - When a release ships: at the first run after B is built in which the release breaks nothing new. Today's 31 would not hold it.
-    - When the machine refreshes: right after that release, so the project's pin moves while its own main is still red. Its own commit gate and hooks still decide whether the move lands there; if they refuse it, the release stands and the move waits for that project's own landing, as today.
-    - Cost: a task here to build it. About twice the project's test time on a run where its commit or lock changed since the last baseline (its conciliation took 13, 90 and 23 minutes in the last three runs); a rerun against an unchanged project reuses the baseline and runs once.
-    - What it cannot see: the baseline is whatever the project's pin is. A break that came in with a pin no conciliation judged, as today's pin is, is listed as the project's own: 8 of today's 31 fail on Symphony board rules that came in with that pin. And a test already red at the pin for a reason of the project's that the release also breaks for another: that break shows only once the project fixes the first, and then on its own board, as its own red.
-
-    **C, a list of tests to skip.** Each consuming project gets a list of its tests in this repository's `symphony.toml`, which the conciliation leaves out.
-    - When a release ships: once a task here lists today's 31 and lands. Each later red on the project's main holds the release again until it is listed.
-    - When the machine refreshes: as under B.
-    - Cost: no extra run time. An edit and a land here for each red there, and another to take a test off the list once the project fixes it, which nothing reminds anyone to do.
-    - What it cannot see: anything the release breaks in a listed test, for as long as it stays listed. B and C both turn today's red check green while the 31 still fail; the difference is that B still runs every test and is red on anything the release newly breaks, while C stops running the listed tests.
-
-    **Your words that bear on it:**
-    - 2026-11-11, on how projects take a newer Symphony: "New releases can be pushed for urgent bugfixes, but generally should be generated based on nightly builds that would do a full verification cycle and conciliation." What makes the conciliation red was left open then; this card asks it.
-    - 2026-11-12: "also nightly fixes should be prioritized, like bugfixes are since they block releases. Meaning express path line followed up by another run". Under A, a red nothing here can fix blocks the release all the same.
-    - 2026-11-11: "tests that are failing in main should be handled by an orchestrator as a separate task in order for individual tasks not to be blocked by it and have a single dedicated owner to solve it." The consuming project's own reds have that owner on its own board.
-    - 2026-11-12: "yes, a green release should refresh".
-
-    **Why B.** The conciliation is there to tell whether a release breaks a consuming project, and B answers exactly that: what the release breaks is red, and the project's own reds stay with their owner on its board, as your words above have it for a red main, instead of holding every Symphony release and refresh. A ties Symphony's releases to another project's main being green. C stays blind to what it lists and needs a land here for every red there.
-
-    **Earlier verdicts checked.** **symphony-update-command** (B) asks for a conciliation, not for what makes it red: A, B and C each keep one. **consumer-api-break-release** (A, a deliberate break in two releases) stands under each, since a test the release breaks passes at the pin and fails with the release: A and B see it, and C sees it unless the test is listed. Neither decides this card.
-
-    This card is the only change. The option you choose is built by a task filed after your verdict.
-  [2026-11-13 18:15] owner · question — There should be proper isolation against a contract, so that each package/crate of symphony can be released and versioned on its own. Consumers could list an outdated package u til they are ready to update, allowing a phased update approach. Thoughts?
-  [2026-11-13 18:24] agent · question — On your comment (contract isolation, each package released and versioned on its own, consumers staying on an older one until ready): I think it is the right end state, and it removes this question rather than answering it. With a contract, a release is judged by contract tests this repository owns, never by the consumer's whole suite, so a consumer's own reds cannot hold a release, and the refresh becomes each consumer's own phased move. What it needs, as I read the code today: (1) the contract named and versioned: the plugin protocol and block vocabulary, the wire types, the board's schema and CLI, the installed recipes; (2) consumers reaching Symphony across a boundary that tolerates two versions: the plugin process protocol already is one, while a plugin crate linked into the host is not, since two versions of the wire types in one binary are different types; (3) the two things one machine shares, the server and each board's schema, taking a consumer one version behind, which the schema does not do today (it only moves forward with the pin). That is a design with real choices (which packages version apart, how far back the server and schema reach), so I would put it to you as its own analysis and card, not build it from a comment. It does not ship before the candidate's bound (09:00 on 2026-11-14), so this card still needs A, B or C for the releases until then; my recommendation stays B as the bridge, with the contract design filed now. Say the word (or just approve with A, B or C) and I file the contract analysis either way.
-  [2026-11-13 19:39] owner · dismissed
-- [r] **consumer-api-break-release** — A release reaches a consumer by a pin move that may change only `Cargo.toml` and `Cargo.lock`, and is cut only when the consumer's default branch, as committed, builds and tests against it. So a change here that removes or reshapes a public item a consumer uses can never be released: the consumer's code cannot change until its pin moves. Tonight's first run found one such break in the consuming project, and its fix found a second behind it; both were accidents, now being put back. How is a deliberate one released? A: in two releases: the change keeps the old item working beside the new (no `#[deprecated]` mark, which the consuming project's lint would turn red), the consumer moves over through a task of its own, and a later task here removes the old item, which that run's conciliation proves. B: in one: the consumer prepares its side on a branch the conciliation builds in place of its default branch, and after the release its owner lands the pin's move with it through the consumer's own landing. Recommended: A: nothing in the run or the refresh changes, and no consumer's main breaks or waits on a person; its cost is the old item kept for a release or more. Approve and say A or B in the note, or comment. [[analysis/release-candidate#A deliberate break of a consumer's API]]
-  [2026-11-12 19:22] agent — Posted for the board task `design/release-candidate-branch`, from the review of the release candidate design you approved.
-  [2026-11-12 20:26] owner · approved — I don't fully understand this issue. So pick whatever choice makes sense to you.
-  [2026-11-12 21:14] agent — Chosen as A by the orchestrator under your words, "pick whatever choice makes sense to you", and filed as the board task `tools/consumer-api-break-in-two-releases`. In plain words: when Symphony changes something a project's code uses, the old version keeps working until the release after its replacement is out, so a project is never broken by taking a release.
-  [2026-11-12 21:15] agent · resolved
-- [r] **release-candidate-name** — Your words, 2026-11-12: "we can also move from calling this "nightly" to release candidate", then "just release ? (would do tests and release, if fails then won't do release and agents has to fix?)". Read literally, "release candidate" names the run. The design you approved gives it to the commit the run holds while its reds are fixed, and calls the run a release run, which `just release` starts; its card listed those names without pointing out the difference. What does "release candidate" name? A: the commit held: a candidate red, a candidate rerun, and the run is a release run. B: the run: a release candidate run, its reds release candidate reds, and the commit held is just the candidate. Either way the rest stands unless you comment: `just release`; `just nightly` answering one line pointing to it until the first release it cuts; `--commit COMMIT` for `--release COMMIT`; reds filed as `tests/release-red-NAME`. Recommended: A, since a release candidate is the build that may become the release, and the command already names the run. Approve and say A or B in the note, or comment. [[analysis/release-candidate#The vocabulary]]
-  [2026-11-12 19:22] agent — Posted for the board task `design/release-candidate-branch`, from the review of the release candidate design you approved.
-  [2026-11-12 20:25] owner · approved — A. should also had been auto approved.
-  [2026-11-12 21:14] agent — A it is, and you are right that it should not have been asked: the process card you approved already called the commit the run holds the release candidate. Recorded for the board task `tools/release-rename`: "release candidate" names that held commit, a red there is a candidate red and its rerun a candidate rerun, and the run itself is a release run, started by `just release`.
-  [2026-11-12 21:15] agent · resolved
-- [r] **release-main-while-candidate-open** — While a release candidate is open, the run judges nothing on main's tip, up to its 24-hour bound. Main's newest landings are checked only by their own evidence and by the regenerator's client check and docs audit each round; a break they bring is found by the first run after the release, and the release lacks what landed since the candidate. Should main's tip also get a run? A: no, as designed; the first landing after the release starts one when 20 or more have landed since the candidate, which a busy day reaches. B: a run of main's tip right after each candidate's release, whatever the count: one more full run per candidate on a quiet day. C: runs of main's tip at the cadence while the candidate is open, taking turns with its reruns, since only one run holds the lock at a time: a run of main holding it when a rerun is due delays the release by up to a whole run (the first run took an hour and never reached the tests) and spends the 24-hour bound, and the reds of two trees share one series. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/release-candidate#Main while a candidate is open]]
-  [2026-11-12 19:22] agent — Posted for the board task `design/release-candidate-branch`, from the review of the release candidate design you approved.
-  [2026-11-12 20:24] owner · approved — A. this should had been auto approve/triaged, its basically what was decided in the other card.
-  [2026-11-12 21:14] agent — A it is, and you are right that it should not have been asked: the release-candidate process A you approved at 19:05 already holds the run on the candidate, so main's tip gets no full run while a candidate is open, and B or C would have changed that. Recorded for the board task `tools/release-candidate-held`, which builds it: the first landing after a release starts a run of main's tip once 20 or more have landed since the candidate.
-  [2026-11-12 21:15] agent · resolved
-- [r] **release-candidate-process** — The full run judges main's tip, and main gains 2 to 8 landings an hour. So a red's fix reaches the next run with everything that landed since, and that run can be red again: a release may never come. Your words, 2026-11-12: "release candidate branch process? bugfix - rerun failures then release once green. Then update main with bugfixed changes. Open to suggestions on how". How is a red fixed and the release cut? A: the run holds the commit it judged; each fix starts there, never merges main, and lands on main as any task does; the fix's tip, on main from then on, becomes the candidate, and a rerun of what was red releases it. B: the fix lands on main first, and the run copies it onto the candidate (a cherry-pick). C: the fix lands on the candidate only, and the candidate is merged into main after the release. D: no candidate; each run judges main's newest tip, reusing the green of each step whose inputs did not change. Recommended: A. Approve and say A, B, C or D in the note, or comment. [[analysis/release-candidate#The options]]
-  [2026-11-12 18:45] agent — Base: today, each run judges main's newest tip. ![Today: each run judges main's newest tip](analysis/release-candidate/today.svg)
-  [2026-11-12 18:45] agent — Posted for the board task `design/release-candidate-branch`. A, the recommendation, drawn: ![A: the fix's own tip is the release candidate](analysis/release-candidate/proposed.svg)
-
-    **Tonight's first run**, 17:28 to 18:27, was red twice. `just verify` stopped at its size check, two binaries past their budgets, so none of its tests ran. And the consuming project no longer builds against it. Main gained 3 landings meanwhile. Under every option, "rerun failures" first needs the run split into steps that each run on their own: the first part of the stamps task.
-
-    **A, the fix's own tip.** Main has each fix from its land, nothing is merged back, and the tree released is the tree a reviewer approved. `just land` does not change, and neither does what a release is. Cost: a fix is written on a tree up to a day old, so it conflicts with main more often; a conflict drops the candidate, and the next run judges main's tip. A second red's fix merges the first before its review. A fix that changes the client commits its own build of it.
-
-    **B, picked onto the candidate.** Cost: the pick conflicted in two of three trials. The release is a commit nobody reviewed and main lacks, so what a release is must change, and the run builds and commits the candidate's client itself.
-
-    **C, merged back after the release.** Your words read literally. Cost: main lacks every fix until the release, so every agent on main meets the same red. The release is a commit main lacks until the merge back, which can conflict after the release is cut (tried).
-
-    **D, no candidate.** What is being built now. Cost: today 38 of 56 landings changed the board's or the symphony crate, so the run after a fix reruns nearly everything, and each landing since can bring a red of its own. A release comes only when main is quiet.
-
-    **Why A.** It is the one option in which the tree judged changes only by the fixes, so a release comes however fast main moves. It updates main earlier than your "Then", at each fix's land. It works before the stamps land, and is faster with them. A red that passes when run alone is fixed as you said, rewritten or taken out of the run, never rerun until it passes.
-
-    **Names, unless your note says otherwise.** `just release` runs it, as you proposed; today's `just nightly` answers one line pointing to it until the first release it cuts. The commit it holds is the release candidate, and a red there is a candidate red, filed as `tests/release-red-NAME`. `--release COMMIT` becomes `--commit COMMIT`. Everything moves in one step, the first task, as you chose for the last rename ("B - just remove the bandaid quickly"). The whole vocabulary: [[analysis/release-candidate#The vocabulary]]
-
-    Approve and say A, B, C or D in the note, or comment. [[analysis/release-candidate#Why A]]
-  [2026-11-12 19:05] owner · approved — A
-  [2026-11-12 19:22] agent · question — A it is. Its review on the board task found four things to correct in what you approved, and two trades the card did not state. The design now says each, and the three choices they leave open are cards of their own: **release-main-while-candidate-open**, **release-candidate-name** and **consumer-api-break-release**.
-
-    **Corrected:**
-    - **Only a red's own fix moves the candidate.** As written, any task started at the candidate's commit would have moved it, and main sits at that commit for minutes (tried). It now moves only on the land of a red's own task.
-    - **A conflict no longer drops the candidate.** When a fix's land conflicts, its executor merges main and asks for a fresh review, as for any task. The commit approved before that merge is on main once the fix lands, and holds only the candidate and the fix, so it becomes the candidate (tried).
-    - **The refresh moves a pin only forward.** A pin moved by hand to a commit of main while a candidate is open is neither before nor after the release, and moving it would drop what it had, a newer board schema among them (tried). Such a pin is left and named until a release descends from it.
-    - **B's "two of three trials" was not a rate:** the same fix conflicts the same way under A (tried); B's other costs stand. And D's release comes when a run of main's tip finds no new red, not only when main is quiet.
-
-    **The two trades A makes:**
-    - **Main's tip gets no full run while a candidate is open**, up to the 24-hour bound. A break landed meanwhile is found by the first run after the release, and the release lacks what landed since the candidate. The regenerator still checks main each round. Whether main gets a run too: **release-main-while-candidate-open**.
-    - **Once stamps land, the commit tagged is not run in full.** The steps that were red, did not run or that a fix reaches run on it; the rest keep their green from the candidate's first commit, whose inputs for them are the same. That is your "Nightly can also use the stamp based approach for things that did not change so it's faster", and it holds under every option, D included. Before stamps, the rerun is the whole verification.
-
-    **Your words the card did not quote**, 2026-11-12:
-    - "also nightly fixes should be prioritized, like bugfixes are since they block releases. Meaning express path line followed up by another run. Nightly can also use the stamp based approach for things that did not change so it's faster": the express path stands for a red's fix, and the candidate's rerun is the run that follows it. The express path's own "a fix's land starts another run of main's tip" is dropped.
-    - "we can also move from calling this "nightly" to release candidate" and "just release ? (would do tests and release, if fails then won't do release and agents has to fix?)": the card's names gave "release candidate" to the commit held, not to the run, without saying so: **release-candidate-name**.
-
-    Tonight's first run also showed that a deliberate break of a consumer's API has no way to a release: **consumer-api-break-release**.
-
-    Since these change what you approved: do the corrections stand? Approve again to keep A with them, or comment. [[analysis/release-candidate#The trades]]
-  [2026-11-12 19:38] agent · question — One more change under your A, the same correction to D: the Base picture's last label, "and so on, until main is quiet", now reads "and so on, until a run finds no new red". Approve again to keep A with the corrections, or comment.
-  [2026-11-12 20:35] agent — Your A stands, with the corrections and the two trades above: they follow from it and are not new choices, so they are auto-approved as you say, and both questions above are withdrawn. Nothing on this card waits on you. Your words, 2026-11-12: "release-candidate-proccess is weird. the card was approved, then another question to decide came, but the decision remains in approved? this should had been a seaparate card no the same one. I also don't really get why those similar questions about things that were already been approved are being asked. They are consequences of the previous decision and should be auto-approved"
-  [2026-11-12 20:35] agent · resolved
 
 ### Product specs
 
