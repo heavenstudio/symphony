@@ -13,7 +13,9 @@ pub(in crate::store) fn set_field(acts: bool) -> Pg<'static> {
 IF NOT EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug') THEN \
     RAISE EXCEPTION '%', v ->> 'missing'; \
 END IF; \
-UPDATE task SET fields = board_set(fields, ARRAY[p.key, n.key], n.value), version = version + 1 \
+UPDATE task SET fields = CASE WHEN (fields #> ARRAY[p.key, n.key]) IS NOT DISTINCT FROM n.value \
+    THEN fields ELSE board_fields(id, fields, ARRAY[p.key, n.key], n.value, \
+    (CASE WHEN jsonb_typeof(n.value) = 'number' THEN v ->> 'shown' ELSE n.value::text END)::json) END, version = version + 1 \
     FROM jsonb_each(v -> 'patch') AS p, jsonb_each(p.value) AS n WHERE slug = v ->> 'slug'; \
 {}",
         said("(v ->> 'actor') || ' set ' || (v ->> 'label') || ' to ' || (v ->> 'shown')")
