@@ -129,6 +129,10 @@ pub(crate) struct Carried {
 /// What a refresh step ends as when its project finishes it (writers of its board to rebuild, a
 /// board from before the writer record): green here, filed nowhere (docs/RELEASES.md).
 pub(crate) const THEIRS: &str = "the project's to finish";
+/// What a step that is its project's to finish is said with: the command that says what taking the
+/// release asks of the project.
+pub(crate) const TAKES: &str =
+    "`just symphony-cli release-notes` in the project says what taking the release asks of it";
 
 /// A release's refresh: the release, its install's step and one for each project whose board it
 /// judged, what it said, the machine's server's line last, and the steps among them that are their
@@ -655,7 +659,8 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
 /// What `--status` says of the newest refresh among `runs` at `now`: its release, which run made
 /// it and when, and how many of its steps are left to their projects, then each line it said (the
 /// install, the switch, each board, `current` and the machine's server), each red step with how it
-/// ended and each step that is its project's to finish, then what finishes those ([`BY_HAND`]).
+/// ended and each step that is its project's to finish, then what finishes those ([`BY_HAND`],
+/// [`takes`]).
 pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
     let Some((run, refresh)) =
         (runs.iter().rev()).find_map(|run| Some((run, run.refreshed.as_ref()?)))
@@ -696,6 +701,7 @@ pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
     }
     if !refresh.theirs.is_empty() {
         text.push_str(BY_HAND);
+        text.push_str(&takes());
     }
     text
 }
@@ -728,6 +734,12 @@ const BY_HAND: &str = "  by hand: each writer named behind the release is rebuil
                        run once, which records it; a board from before the writer record is \
                        brought up by its own `just tasks migrate` in its main checkout; then an \
                        orchestrator's `just release --refresh` finishes the rest\n";
+
+/// Where a project left a step reads what taking the release asks of it, which `--status` says
+/// under [`BY_HAND`].
+fn takes() -> String {
+    format!("  {TAKES}\n")
+}
 
 /// The push that delivers the release `tag` to `remote`, and nothing else.
 pub(crate) fn push_line(remote: &str, tag: &str) -> String {
@@ -1259,7 +1271,9 @@ mod tests {
         let by_hand = "  by hand: each writer named behind the release is rebuilt at its schema \
                        and run once, which records it; a board from before the writer record is \
                        brought up by its own `just tasks migrate` in its main checkout; then an \
-                       orchestrator's `just release --refresh` finishes the rest\n";
+                       orchestrator's `just release --refresh` finishes the rest\n  `just \
+                       symphony-cli release-notes` in the project says what taking the release \
+                       asks of it\n";
         assert_eq!(
             refresh_status(&[older, newer.clone(), after], NOW),
             format!(

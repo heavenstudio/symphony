@@ -14,7 +14,8 @@
 //! and its `tasks api` version (`tasks api`, the method `version`).
 //!
 //! Then it installs them as `releases/NAME/` in the machine folder, whole
-//! ([`symphony::machine::release::install`]). A build or an install that fails leaves no folder and
+//! ([`symphony::machine::release::install_noted`]), with what a project changes to take it and
+//! each release before it (`notes.md`, [`super::consumer::document_at`]). A build or an install that fails leaves no folder and
 //! `current` where it was, and is the refresh's red, filed on the Symphony's board; `just release
 //! --refresh` is the retry. A release already installed whole from the same commit is not built
 //! again. The install points nothing: the refresh points `current` at the release ([`point`]) only
@@ -153,8 +154,17 @@ pub(crate) fn install(install: &Install<'_>) -> Installed {
         };
     }
     let binaries = target.join("release");
+    // What a project changes to take it, and each release before it, from the checkout's history:
+    // a checkout git cannot read installs the release without them, which its log says.
+    let notes = match super::consumer::document_at(install.checkout, install.tag, install.commit) {
+        Ok(notes) => Some(notes),
+        Err(why) => {
+            append(&log, &format!("no {}: {why}", release::NOTES));
+            None
+        }
+    };
     let made = serves(&binaries, install).and_then(|serves| {
-        release::install(
+        release::install_noted(
             install.machine,
             &Built {
                 release: install.tag,
@@ -163,6 +173,7 @@ pub(crate) fn install(install: &Install<'_>) -> Installed {
                 binaries: &binaries,
                 client: &install.checkout.join(CLIENT),
             },
+            notes.as_deref(),
         )
     });
     let manifest = match made {

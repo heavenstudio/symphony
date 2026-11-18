@@ -34,6 +34,7 @@ mod board;
 pub(crate) mod cadence;
 mod candidate;
 mod checks;
+pub(crate) mod consumer;
 pub(crate) mod crates;
 mod failures;
 mod git;
@@ -2057,6 +2058,14 @@ fn night(
         }
         _ => Vec::new(),
     };
+    // A tag is never held back for its notes: one git cannot read is said, and left out.
+    let taking = consumer::taking(&repo.root, &name, &candidate).unwrap_or_else(|why| {
+        let _ = writeln!(
+            out,
+            "release: {name}'s message says nothing of what a project does to take it: {why}"
+        );
+        Vec::new()
+    });
     let message = notes::message(
         &name,
         &candidate,
@@ -2065,6 +2074,7 @@ fn night(
         &checked,
         &publishes,
         &held_notes,
+        &taking,
         &changes,
     );
     if let Err(problem) = git_until(

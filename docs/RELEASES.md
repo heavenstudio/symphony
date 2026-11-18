@@ -18,8 +18,8 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
   `Pin N` line, each saying whether it changed since the release before (`Board schema 17,
   changed since release-2026-11-12.2 (16 then).`, `Pin 1, unchanged since …`), then the checks it
   passed, what it publishes on crates.io while the project publishes
-  ([the packages](#packages-on-cratesio)), and the commits on main's first-parent line since that
-  release. The first release says so instead. The schema is `VERSION` in
+  ([the packages](#packages-on-cratesio)), what a project does to take it ([its notes](#its-notes)),
+  and the commits on main's first-parent line since that release. The first release says so instead. The schema is `VERSION` in
   `crates/tasks/src/schema.rs` and the pin `PIN` in `crates/symphony/src/machine.rs`, read at the
   tagged commit.
 - **Reading one:** `git ls-remote --tags origin 'release-*'` lists them, and
@@ -34,6 +34,57 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
   "release-…" }` in place of `symphony = { git = "https://github.com/heavenstudio/symphony", tag =
   "release-…" }`. Until it does, that project's own move of its pin to such a release fails to
   resolve the package (the refresh moves no project's pin, [the refresh](#the-refresh)).
+
+### Its notes
+
+A release says what a project does to take it, for the agent that moves the project's pin
+(`crates/symphony-build/src/release/consumer.rs`). Its sections, each left out when it says
+nothing, and who writes each:
+
+| Section | Derived from git at the two releases' commits | Said by a landing |
+| --- | --- | --- |
+| Cargo.toml and Cargo.lock | the line that names the release, as a tag or as the full commit for a project that pins one, the lock following it, and each workspace package whose version moves in `Cargo.lock` | `manifest`: any other line a project's manifest changes |
+| Board | the schema's move (`crates/tasks/src/schema.rs`) with the steps the [writer rule](TASKS.md#who-writes-a-board) asks (the project's own build at the new schema first, each writer rebuilt and run, `just tasks migrate`, whose refusal is the one list of the writers, `--leave-behind` for a writer that cannot be rebuilt where it was, and a server's writes refused until it runs the new schema), and the pin's | `board`: what the move changes for a project |
+| Public Rust items a consumer calls | the [consumer-API guards](CHECKS.md#consumer-api-changes) that changed | `api`: `OLD => NEW` for a replacement shipped beside the old item, `removed OLD => NEW` for a removal |
+| symphony.toml | the keys [PROJECT_FILE](PROJECT_FILE.md)'s tables list anew, and those they list no more | `settings`: what a project writes instead, a file or a command's arguments |
+| Installed recipes, skills, hooks and rules | the files under `crates/symphony/shipped/` that changed, which `symphony init` rewrites | `init` |
+| Tools | the Rust toolchain (`rust-toolchain.toml`), SurrealDB (`tools/surreal.sh`), Node (`apps/symphony-web/.node-version`) and the oldest PostgreSQL the board's server runs on (`crates/tasks/src/server/postgres.rs`), each when it changed | `tools`: any other |
+| Run once | | `once` |
+
+- **An entry** is a trailer of a commit on the landing's own branch, one line each, which git
+  reads from the message's last paragraph: `Consumer-Note: SECTION: TEXT`. The land's merge keeps
+  the branch's commits, so a release reads the entries of the commits between it and the release
+  before, and no branch edits a file another does. Notes are written for what a consumer can
+  see, and nothing is written by hand at release time.
+- **Composed.** An `api` entry `OLD => NEW` in one release and `removed OLD => NEW` in a later one
+  read as one instruction: the first says "move to `NEW` before" the release that removes `OLD`,
+  and the removal says since which release `NEW` has been there.
+- **A check at the landing's tip.** A task's lint runs `symphony-build consumer-notes --check`
+  ([CHECKS](CHECKS.md#what-a-landing-tells-a-consumer)): red
+  when the branch, against the commit it left the default branch at (its own commits and their
+  difference, however often it merged main), moves the board schema with no `board` entry, stops
+  holding a call in a consumer-API guard with no `api` entry, or takes a key out of the settings
+  reference with no `settings` entry, and for a trailer that reads as no entry. A guard's call
+  that moved, was wrapped anew or gained a comment is the same call, and one added beside the old
+  owes nothing. `Consumer-Note: api: none: WHY` answers for a guard changed with no consumer to
+  move, and is left out of the notes.
+- **After a release is cut**, what its landings left unsaid is said by a later commit naming it,
+  `Consumer-Note: release-NAME SECTION: TEXT`. No tag and no installed release is rewritten: the
+  entry is read as that release's in every notes file written from then on, marked with the commit
+  that said it and the release that commit came in, for a project still behind the release it
+  names. It is said again in the release whose commits hold it, in that release's section of the
+  notes file and in its tag's message, under a heading that names the earlier release, so a
+  project already at or past the one it names reads it when it takes the next. It answers nothing
+  for the branch that says it.
+- **Where they are read.** A release's own section is in its tag's message, after the checks and
+  before the commits. Every release's, oldest first, each under `## release-NAME` with its commit,
+  is `notes.md` in the release's folder on the machine ([the install](#the-install)), written from
+  the history of the commit installed. `just symphony-cli release-notes [FROM] [TO]` prints the
+  sections after FROM up to TO from the newest installed release that holds the file, with no
+  clone and no network, so a project several releases behind reads one list in order. FROM is a
+  release's name or its commit, by default the tag, else the commit, the project's `Cargo.toml`
+  pins. A bound the notes do not hold is refused with what they hold, never answered with a part
+  of the steps. `symphony-build consumer-notes [ROOT]` prints the same file from a clone.
 
 ## Packages on crates.io
 
@@ -767,7 +818,9 @@ Each step ends in one of three:
   then an orchestrator's `just release --refresh` moves the board); or its board is below schema
   18 (`cd ROOT && just tasks migrate`, its own, brings it up). Green here and filed nowhere: it
   files no task and closes none, and the run's exit is not changed by it. The step says which, with
-  what finishes it, in the run's output (`release: refresh: ID: the project's to finish: …`, then
+  what finishes it and the command that says what taking the release asks of the project (`just
+  symphony-cli release-notes`, [its notes](#its-notes)), in the run's output (`release: refresh:
+  ID: the project's to finish: …`, then
   `release: refresh-ID the project's to finish`), the run's record (the step named in
   `refreshed.theirs`, its line in `refreshed.said`) and `--status`.
 - **Red**: the refresh's own work failed. The registry cannot be read; a board's database is not
@@ -810,6 +863,7 @@ releases/release-2026-11-20/
   manifest.json        the release and its commit, the board schema, the plugin protocol, the
                        tasks api version and the Symphony pin it serves, each artifact's path
                        and size
+  notes.md             what a project changes to take each release up to this one
   bin/symphony-server
   bin/tasks
   bin/agent-send
@@ -983,7 +1037,8 @@ machine: the switch to release-2026-11-12 is held: consumer names the linked plu
 It names each red step and its log, and each step that is its project's to finish (`refresh-ID
 the project's to finish, filed nowhere here; log …`), counted on its first line (`last refresh:
 green, 1 step left to its project, of …`), then, under one of those, what stays by hand (*The
-refresh*, above). The next run is `due` once the count is reached, or the release
+refresh*, above) and the command that says what taking the release asks of the project (`just
+symphony-cli release-notes`, [its notes](#its-notes)). The next run is `due` once the count is reached, or the release
 candidate's rerun or drop makes it so, `held for the release candidate` while a red of it waits,
 `in progress` while a run holds the lock, or `off` when `every_landings` is 0. It reads the record
 and this checkout's tags and refs, fetches nothing and writes nothing, so a land the candidate has

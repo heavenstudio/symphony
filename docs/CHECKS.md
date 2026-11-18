@@ -85,6 +85,30 @@ This overlap does not replace the kit's and helpers' major-version requirements
 [`tasks api` contract](TASKS.md#the-tasks-api). Symphony's release checks build no consumer:
 consumer-owned landing gates meet the new pin, and releases run this repository's checks alone.
 
+## What a landing tells a consumer
+
+A release's notes say what a project does to take it ([RELEASES](RELEASES.md#its-notes)), and
+what git cannot derive is said by the landing that causes it. A branch owes an entry, a trailer
+of one of its commits (`Consumer-Note: SECTION: TEXT`), when a project that takes the release
+must change or run something because of it:
+
+- `manifest`: a project's `Cargo.toml` changes more than the line that names the release (a
+  package renamed, a feature a project must name).
+- `board`: it moves the board schema: what the move changes for a project beyond the migrate.
+- `api`: it ships a replacement beside a public item a consumer calls (`OLD => NEW`), or removes
+  or changes one (`removed OLD => NEW`), the two steps of the rule above.
+- `settings`: a `symphony.toml` key is read anew, ignored or refused, a file beside it is read, or
+  a command a project runs for its settings takes other arguments.
+- `init`: a project must do more than run `symphony init` again for the installed recipes, skills,
+  hooks and rules.
+- `tools`: it needs a tool, or a version of one, that the derived pins do not name.
+- `once`: something a project runs once.
+
+A change a consumer cannot see owes none. `just lint-rs` is red at the branch's own tip for a
+schema move, a call a consumer-API guard stopped holding, or a key the settings reference lists
+no more, each without its entry, and for a trailer that reads as no entry; a reviewer reads the
+rest, and that an entry says what a project does, not what the change was.
+
 ## Evidence by kind of change
 
 - **A pure function** (a parser, a formatter, a state transition): unit tests of its edge cases

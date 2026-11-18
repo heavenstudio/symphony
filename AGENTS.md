@@ -30,6 +30,12 @@ old item without `#[deprecated]`, then remove the old item in a separate later t
 consumer migrations are proved. Keep the compile guards in step with those calls; kit and helper
 major-version requirements still apply.
 
+A landing that changes what a project must do to take the next release (the board schema, such an
+item, a `symphony.toml` key, something to run once) says so in a `Consumer-Note: SECTION: TEXT`
+trailer of one of its own commits, which the release's notes carry to the agent that moves a
+project's pin ([when a landing owes one](docs/CHECKS.md#what-a-landing-tells-a-consumer),
+[RELEASES](docs/RELEASES.md#its-notes)); `just lint-rs` is red on the ones git can see left unsaid.
+
 ### Where each part is said
 
 - **A project's settings** are its `symphony.toml`, every table and key in

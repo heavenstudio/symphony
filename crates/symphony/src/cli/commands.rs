@@ -8,10 +8,11 @@
 use std::io::Write;
 
 mod attach;
+mod release_notes;
 mod shot;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
-const OWN: [(&str, &str); 15] = [
+const OWN: [(&str, &str); 16] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
@@ -50,6 +51,10 @@ const OWN: [(&str, &str); 15] = [
     (
         "init",
         "install or refresh the agents' skills, recipes and hooks here",
+    ),
+    (
+        "release-notes",
+        "what a project changes to take each release after its own",
     ),
     (
         "project",
@@ -166,6 +171,9 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
     }
     if name == "attach" {
         return attach::main(args, out, err);
+    }
+    if name == "release-notes" {
+        return release_notes::main(args, out, err);
     }
     // Measured as the project the command runs in says, the nearest above the current folder.
     match crate::plugins::command(name, here().as_deref()) {
@@ -402,7 +410,11 @@ mod tests {
             ("hlep", shipped("hlep", "; did you mean \"help\"?")),
             // The build's commands are `symphony-build`'s (crates/symphony-build), not this one's.
             ("size-budget", shipped("size-budget", "")),
-            ("release", shipped("release", "")),
+            // Its nearest here is what a project reads of a release, which it does have.
+            (
+                "release",
+                shipped("release", "; did you mean \"release-notes\"?"),
+            ),
         ] {
             assert_eq!(unknown(&SYMPHONY, name), said);
         }
