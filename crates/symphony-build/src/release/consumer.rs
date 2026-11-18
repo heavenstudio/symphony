@@ -858,14 +858,14 @@ pub(crate) enum Checked {
     Owed(Vec<String>),
 }
 
-/// What `symphony-build release-notes` heads the commits since the newest release with: no
+/// What `symphony-build consumer-notes` heads the commits since the newest release with: no
 /// release's name, so nothing reads it as one.
 const UNRELEASED: &str = "unreleased";
 
-/// The usage of `symphony-build release-notes`.
-pub(crate) const USAGE: &str = "usage: symphony-build release-notes [--check] [ROOT]";
+/// The usage of `symphony-build consumer-notes`.
+pub(crate) const USAGE: &str = "usage: symphony-build consumer-notes [--check] [ROOT]";
 
-/// `symphony-build release-notes [--check] [ROOT]`: the notes of every release ROOT's repository
+/// `symphony-build consumer-notes [--check] [ROOT]`: the notes of every release ROOT's repository
 /// tags, as the next install would write them ([`document`]), the commits since the newest under
 /// [`UNRELEASED`]; with `--check`, whether the branch
 /// checked out there says what it owes a consumer ([`check`]), exit 1 when it does not. Its exit
@@ -881,14 +881,17 @@ pub(crate) fn main(
         match arg.as_str() {
             "--check" => checking = true,
             flag if flag.starts_with('-') => {
-                let _ = writeln!(err, "{USAGE}\nsymphony-build release-notes: unknown {flag}");
+                let _ = writeln!(
+                    err,
+                    "{USAGE}\nsymphony-build consumer-notes: unknown {flag}"
+                );
                 return 2;
             }
             path if root.is_none() => root = Some(std::path::PathBuf::from(path)),
             more => {
                 let _ = writeln!(
                     err,
-                    "{USAGE}\nsymphony-build release-notes: unexpected {more}"
+                    "{USAGE}\nsymphony-build consumer-notes: unexpected {more}"
                 );
                 return 2;
             }
@@ -910,7 +913,7 @@ pub(crate) fn main(
                 0
             }
             Err(why) => {
-                let _ = writeln!(err, "symphony-build release-notes: {why}");
+                let _ = writeln!(err, "symphony-build consumer-notes: {why}");
                 2
             }
         };
@@ -923,19 +926,19 @@ pub(crate) fn main(
         Ok(Checked::NoBase) => {
             let _ = writeln!(
                 out,
-                "release-notes: this checkout has no {default} to compare with: nothing checked"
+                "consumer-notes: this checkout has no {default} to compare with: nothing checked"
             );
             0
         }
         Ok(Checked::Owed(owed)) if owed.is_empty() => 0,
         Ok(Checked::Owed(owed)) => {
             for line in &owed {
-                let _ = writeln!(err, "release-notes: {line} ({WHERE})");
+                let _ = writeln!(err, "consumer-notes: {line} ({WHERE})");
             }
             1
         }
         Err(why) => {
-            let _ = writeln!(err, "symphony-build release-notes: {why}");
+            let _ = writeln!(err, "symphony-build consumer-notes: {why}");
             2
         }
     }

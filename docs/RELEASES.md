@@ -59,7 +59,7 @@ nothing, and who writes each:
 - **Composed.** An `api` entry `OLD => NEW` in one release and `removed OLD => NEW` in a later one
   read as one instruction: the first says "move to `NEW` before" the release that removes `OLD`,
   and the removal says since which release `NEW` has been there.
-- **A check at the landing's tip.** A task's lint runs `symphony-build release-notes --check`
+- **A check at the landing's tip.** A task's lint runs `symphony-build consumer-notes --check`
   ([CHECKS](CHECKS.md#what-a-landing-tells-a-consumer)): red
   when the branch, against the commit it left the default branch at (its own commits and their
   difference, however often it merged main), moves the board schema with no `board` entry, stops
@@ -81,7 +81,7 @@ nothing, and who writes each:
   clone and no network, so a project several releases behind reads one list in order. FROM is a
   release's name or its commit, by default the tag, else the commit, the project's `Cargo.toml`
   pins. A bound the notes do not hold is refused with what they hold, never answered with a part
-  of the steps. `symphony-build release-notes [ROOT]` prints the same file from a clone.
+  of the steps. `symphony-build consumer-notes [ROOT]` prints the same file from a clone.
 
 ## Packages on crates.io
 

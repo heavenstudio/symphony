@@ -42,7 +42,7 @@ const COMMANDS: [(&str, &str); 6] = [
         "time each page from its open to synced on a returning browser",
     ),
     (
-        "release-notes",
+        "consumer-notes",
         "what a project changes to take each release, or check a branch",
     ),
     (
@@ -74,7 +74,7 @@ const PLAIN: [(&str, &str, &str); 4] = [
          read is exit 2.\n",
     ),
     (
-        "release-notes",
+        "consumer-notes",
         crate::release::consumer::USAGE,
         "ROOT is the repository (default: the current folder). It prints the notes of\n\
          every release tagged there, oldest first, as a release's install writes\n\
@@ -102,7 +102,7 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         Some("size-budget") => size_budget::main(rest, out, err),
         Some("crates-check") => crates_check::main(rest, out, err),
         Some("synced") => synced::main(rest, out, err),
-        Some("release-notes") => crate::release::consumer::main(rest, out, err),
+        Some("consumer-notes") => crate::release::consumer::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => {
             let _ = writeln!(err, "{}", unknown(name));
@@ -281,6 +281,7 @@ mod tests {
                 "size-budget",
                 "crates-check",
                 "synced",
+                "consumer-notes",
                 "release",
             ]
         );

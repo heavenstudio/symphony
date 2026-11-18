@@ -28,7 +28,7 @@ _lint-rs:
     @tools/cargo.sh fmt --all --check
     @tools/cargo.sh clippy --workspace --all-targets --locked -- -D warnings
     @tools/cargo.sh clippy -p symphony-api --features typescript --all-targets --locked -- -D warnings
-    @tools/rs-bin.sh symphony-build release-notes --check
+    @tools/rs-bin.sh symphony-build consumer-notes --check
     @just --justfile {{quote(justfile())}} client-lint
 
 # The web client's checks (apps/symphony-web/check.sh): its wire types against crates/symphony-api's

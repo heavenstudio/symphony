@@ -820,7 +820,7 @@ fn the_command_prints_every_releases_notes_and_checks_a_branch() {
     let (code, out, err) = run(&["ROOT", "--check"]);
     assert_eq!((code, out.as_str()), (1, ""));
     assert!(
-        err.starts_with("release-notes: the board schema moves from 20 to 21")
+        err.starts_with("consumer-notes: the board schema moves from 20 to 21")
             && err
                 .trim_end()
                 .ends_with("(docs/RELEASES.md, \"Its notes\")"),
@@ -854,7 +854,7 @@ fn the_command_prints_every_releases_notes_and_checks_a_branch() {
     }
     let (code, _, err) = run(&[&tree.path("nowhere").to_string_lossy()]);
     assert_eq!(code, 2);
-    assert!(err.starts_with("symphony-build release-notes: "), "{err}");
+    assert!(err.starts_with("symphony-build consumer-notes: "), "{err}");
 }
 
 #[test]
@@ -894,7 +894,7 @@ fn a_landed_trailer_that_reads_as_no_entry_is_said_as_written_and_a_checkout_wit
     assert_eq!(main(&args, &mut out, &mut err), 0);
     assert_eq!(
         String::from_utf8(out).unwrap(),
-        "release-notes: this checkout has no main to compare with: nothing checked\n"
+        "consumer-notes: this checkout has no main to compare with: nothing checked\n"
     );
     assert!(err.is_empty());
 }
