@@ -1,3 +1,8 @@
+//! Argument and return types, field types and downstream call compatibility remain here:
+//! cargo-semver-checks does not compare arbitrary types or enforce the two-release migration
+//! rule. `just semver-check` holds public names and the version bump; these typed calls cover
+//! what it leaves out. No name-only inventory is kept here.
+//!
 //! The public names of `process_cwd` that consuming projects' code calls, each in the shape it calls
 //! it: a signature pinned by coercing the function to its pointer type, a trait method pinned on the
 //! type it is called on, the `Command` and `Child` methods a consumer calls called. Nothing here

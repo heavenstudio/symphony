@@ -162,12 +162,14 @@ can read (below), and `.claude/settings.json` denies Edit there as well.
 `reviewer`, `assessor`), which a board launch takes and `just tasks limits` prints with where
 each came from ([TASKS](docs/TASKS.md#limits-and-models)). Each runs on the model `just tasks limits`
 names for the role. `just symphony-cli model ROLE MODEL` sets a role's model in the main checkout,
-or `all` for all four roles, preserving comments and order; the change follows the settings-only
-landing below. A machine's own choice needs no landing: `symphony.local.toml` beside the main
-checkout's `symphony.toml`, which git does not version, overrides the launch agent, the models and
-`[limits]` there and nothing else (`just symphony-cli model ROLE MODEL --local` writes a role's
-model in it), and `just tasks limits` names it for each setting it overrides
-([PROJECT_FILE](docs/PROJECT_FILE.md#the-local-settings-file)). An Agent launch passes the
+or `all` for all four roles, preserving comments and order. `just symphony-cli model all fable
+--agent claude --assessor haiku` also sets the launch agent and its fallback model, with a separate
+assessor model. Recognizable cross-agent model names warn without refusing arbitrary text; the
+change follows the settings-only landing below. A machine's own choice needs no landing:
+`symphony.local.toml` beside the main checkout's `symphony.toml`, which git does not version,
+overrides the launch agent, the models and `[limits]` there and nothing else (`--local` on the
+model command writes it there instead), and `just tasks limits` names it for each setting it
+overrides ([PROJECT_FILE](docs/PROJECT_FILE.md#the-local-settings-file)). An Agent launch passes the
 model `just tasks limits` names for the role (a subagent otherwise inherits its orchestrator's
 model). A resumed agent keeps the model it started on. The work-in-progress limits are settings
 the same way, in `[limits]`.

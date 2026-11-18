@@ -73,7 +73,12 @@ wire types, docs, schema and args), `apps/symphony-server`, `crates/process-cwd`
 `crates/repository-read` ([what they hold](RELEASES.md#the-release-run), step 4). Run the affected
 compile guards and `just lint-rs`; a reviewer checks every public-item removal or signature
 change in a crate a consumer links against these lists and the release and migration evidence.
-The guards' headers say what they leave to a consumer's own gate.
+The guards' headers say what they leave to a consumer's own gate. `just semver-check` holds
+the kit/helpers' public names, constructors' arity, exhaustive variants and derived traits
+against crates.io. Their guards keep arbitrary argument, return and field types, cross-crate
+type identity and known-consumer migration requirements: the tool does not compare arbitrary
+types, and a major bump alone does not satisfy the two-release rule. Known consumer names stay
+for that rule; vocabulary variant inventories wider than those calls are left to the semver check.
 
 This overlap does not replace the kit's and helpers' major-version requirements
 ([packages on crates.io](RELEASES.md#packages-on-cratesio)), or the separate versioned
@@ -143,16 +148,17 @@ consumer-owned landing gates meet the new pin, and releases run this repository'
   (`crates/symphony/tests/packages.rs`), which fails a kit package that builds with a member
   outside the kit and a helper that builds with one outside the helpers. The reviewer reads what no
   test holds: that no public item shows a type of a member outside the package's line (rustc's lint
-  for a private dependency's type is unstable), that a struct added to `symphony_plugin::protocol`
+  for a private dependency's type is unstable), and that a struct added to `symphony_plugin::protocol`
   comes with a constructor (its `#[non_exhaustive]` the protocol's tests hold, as they hold
-  `Request`'s and name each enum there left exhaustive), that a field added to a call is a new major
-  unless `new` leaves it out ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#versions)), and that a name
-  removed or changed, or a field added to a seam type or the vocabulary, is a new major of the
-  package's line. A variant added to a list of the vocabulary is a minor: the kit's tests hold
-  each list `#[non_exhaustive]` and name the two left exhaustive, to which a variant added is a
-  new major (`crates/symphony-plugin/tests/vocabulary.rs`), and
+  `Request`'s and name each enum there left exhaustive). `just semver-check` compares all eight
+  kit/helper packages with crates.io, requiring the version move their public API needs, including
+  a new argument to a request's `new`. The kit's tests hold vocabulary lists `#[non_exhaustive]`
+  and name the two left exhaustive (`crates/symphony-plugin/tests/vocabulary.rs`), and
   `crates/symphony-api/tests/vocabulary_drawn.rs` holds every kind to an arm in each match of
-  this workspace, in the compiler's place.
+  this workspace, in the compiler's place. Serialization compatibility and arbitrary type changes
+  still need the package tests, typed consumer guards and review. Review also checks that a new
+  vocabulary variant moves the kit's minor: the tool allows an addition to a non-exhaustive enum
+  even in a patch, while this project's contract requires a minor.
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
@@ -344,7 +350,7 @@ never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it 
 records and how it is scheduled: [RELEASES](RELEASES.md#the-release-run).
 
 **Every step runs.** `just verify` runs its steps in order, lint, the client check, the size
-budgets, the docs audit, the crates check and the tests (`tools/verify.sh`), each whatever the
+budgets, the docs audit, the crates and semver checks and the tests (`tools/verify.sh`), each whatever the
 ones before it did, and is red when any is, so a red step never hides the ones after it. Each step
 is recorded as a step
 of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,

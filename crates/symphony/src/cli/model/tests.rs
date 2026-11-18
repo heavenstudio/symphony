@@ -5,6 +5,44 @@ use symphony_board::launch::Defaults;
 
 const MODELS: &str = "# settings\n[agents]\nlaunch = { default = 'claude', model = 'base' } # launch\n\n[agents.models] # roles\nreviewer = 'r' # review\nexecutor = \"e\"\norchestrator = '''o'''\nassessor = 'a'\n\n[limits]\nlow_volume = 2\n";
 
+fn roles<'a>(role: &'a str, model: &'a str) -> Edit<'a> {
+    Edit {
+        role,
+        model,
+        agent: None,
+        assessor: None,
+        local: false,
+    }
+}
+
+fn edited(text: &str, role: &str, model: &str) -> Result<String, String> {
+    super::edited(text, &roles(role, model))
+}
+
+fn change(
+    here: &Path,
+    role: &str,
+    model: &str,
+    env: &BTreeMap<String, String>,
+) -> Result<String, String> {
+    super::change(here, &roles(role, model), env, &mut Vec::new())
+}
+
+/// The edit of one role in the local settings file when `local`.
+fn change_in(
+    here: &Path,
+    role: &str,
+    model: &str,
+    env: &BTreeMap<String, String>,
+    local: bool,
+) -> Result<String, String> {
+    let edit = Edit {
+        local,
+        ..roles(role, model)
+    };
+    super::change(here, &edit, env, &mut Vec::new())
+}
+
 fn defaults(text: &str) -> Defaults {
     let tree = Tree::new();
     tree.write("symphony.toml", text);
@@ -42,6 +80,130 @@ fn all_sets_all_four_roles_without_changing_the_launch_defaults() {
 }
 
 #[test]
+fn one_edit_switches_agent_models_and_assessor_preserving_comments_and_order() {
+    let before = MODELS.replace("'claude'", "'codex'");
+    let edit = Edit {
+        agent: Some("claude"),
+        assessor: Some("haiku"),
+        local: false,
+        ..roles("all", "fable")
+    };
+    let after = super::edited(&before, &edit).unwrap();
+    let expected = before
+        .replace("'codex'", "\"claude\"")
+        .replace("'base'", "\"fable\"")
+        .replace("'r'", "\"fable\"")
+        .replace("\"e\"", "\"fable\"")
+        .replace("'''o'''", "\"fable\"")
+        .replace("'a'", "\"haiku\"");
+    assert_eq!(after, expected);
+    let defaults = defaults(&after);
+    assert_eq!(defaults.agent, Some("claude"));
+    assert_eq!(defaults.model.as_deref(), Some("fable"));
+    for role in ROLES {
+        assert_eq!(
+            defaults.resolve_as(Some(role), None, None).model,
+            if role == ASSESSOR { "haiku" } else { "fable" }
+        );
+    }
+    assert_eq!(super::edited(&after, &edit).unwrap(), after);
+}
+
+#[test]
+fn switching_agent_fills_missing_tables_and_keys_in_all_table_forms() {
+    for before in [
+        "",
+        "# settings",
+        "[agents]\npanes = 'hc'\n",
+        "[agents.models]\nexecutor = 'gpt-6.1-sol'\n",
+        "[agents.launch] # launch\r\ndefault = 'codex' # agent\r\n",
+        "[agents.launch]\nmodel = 'gpt-6.1-sol'\neffort = 'high'\n",
+        "agents = {}\n",
+        "agents = { launch = {}, models = {} }\n",
+        "[agents]\nlaunch = { model = 'gpt-6.1-sol', }\n",
+        "agents.launch.default = 'codex'\n",
+        "[agents]\nlaunch.default = 'codex'\n",
+    ] {
+        for agent in AGENTS {
+            let edit = Edit {
+                agent: Some(agent),
+                assessor: Some("small-model"),
+                local: false,
+                ..roles("all", "any-model")
+            };
+            let after = super::edited(before, &edit).unwrap();
+            let defaults = defaults(&after);
+            assert_eq!(defaults.agent, Some(agent), "{after}");
+            assert_eq!(defaults.model.as_deref(), Some("any-model"), "{after}");
+            assert_eq!(
+                defaults.models.assessor.as_deref(),
+                Some("small-model"),
+                "{after}"
+            );
+            for role in &ROLES[..3] {
+                assert_eq!(defaults.models.of(role), Some("any-model"), "{after}");
+            }
+            let old: toml::Table = before.parse().unwrap();
+            let new: toml::Table = after.parse().unwrap();
+            assert_eq!(
+                old.get("agents")
+                    .and_then(|a| a.get("launch"))
+                    .and_then(|l| l.get("effort")),
+                new["agents"]["launch"].get("effort")
+            );
+            assert_eq!(super::edited(&after, &edit).unwrap(), after);
+        }
+    }
+}
+
+#[test]
+fn optional_flags_keep_all_literal_and_accept_arbitrary_assessor_text() {
+    let agent_only = Edit {
+        agent: Some("codex"),
+        ..roles("all", "unknown-model")
+    };
+    let after = super::edited(MODELS, &agent_only).unwrap();
+    for role in ROLES {
+        assert_eq!(defaults(&after).models.of(role), Some("unknown-model"));
+    }
+    for model in ["", "--help", "\"\\\n\u{7f}模型"] {
+        let edit = Edit {
+            assessor: Some(model),
+            local: false,
+            ..roles("all", "shared")
+        };
+        let after = super::edited(MODELS, &edit).unwrap();
+        let file: toml::Table = after.parse().unwrap();
+        assert_eq!(file["agents"]["models"]["assessor"].as_str(), Some(model));
+        assert_eq!(file["agents"]["launch"]["model"].as_str(), Some("base"));
+        assert_eq!(file["agents"]["launch"]["default"].as_str(), Some("claude"));
+    }
+}
+
+#[test]
+fn a_switch_that_fails_after_editing_launch_keeps_the_original_file() {
+    let tree = Tree::new();
+    let (main, _) = repository(&tree.root);
+    let file = main.join("symphony.toml");
+    for before in [
+        "[agents]\nlaunch = 1\n",
+        "[agents.launch]\ndefault = 1\n",
+        "[agents.launch]\nmodel = 1\n",
+        "[agents]\nlaunch = { default = 'codex' }\n[agents.models]\nassessor = 3\n",
+    ] {
+        std::fs::write(&file, before).unwrap();
+        let edit = Edit {
+            agent: Some("claude"),
+            ..roles("all", "fable")
+        };
+        let mut err = Vec::new();
+        assert!(super::change(&main, &edit, &BTreeMap::new(), &mut err).is_err());
+        assert!(err.is_empty());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+    }
+}
+
+#[test]
 fn missing_tables_and_keys_work_in_every_toml_table_form() {
     for before in [
         "",
@@ -61,11 +223,31 @@ fn missing_tables_and_keys_work_in_every_toml_table_form() {
         "[agents.models.extra]\nkey = 'keep'\n",
     ] {
         let after = edited(before, "all", "new").unwrap();
-        let defaults = defaults(&after);
+        let configured = defaults(&after);
         for role in ROLES {
-            assert_eq!(defaults.models.of(role), Some("new"), "{after}");
+            assert_eq!(configured.models.of(role), Some("new"), "{after}");
         }
         let old: toml::Table = before.parse().unwrap();
+        let new: toml::Table = after.parse().unwrap();
+        assert_eq!(old.get("project"), new.get("project"), "{after}");
+
+        let switch = Edit {
+            agent: Some("claude"),
+            assessor: Some("haiku"),
+            local: false,
+            ..roles("all", "fable")
+        };
+        let after = super::edited(before, &switch).unwrap();
+        let defaults = defaults(&after);
+        assert_eq!(defaults.agent, Some("claude"), "{after}");
+        assert_eq!(defaults.model.as_deref(), Some("fable"), "{after}");
+        for role in ROLES {
+            assert_eq!(
+                defaults.models.of(role),
+                Some(if role == ASSESSOR { "haiku" } else { "fable" }),
+                "{after}"
+            );
+        }
         let new: toml::Table = after.parse().unwrap();
         assert_eq!(old.get("project"), new.get("project"), "{after}");
     }
@@ -212,6 +394,17 @@ fn argument_refusals_name_the_problem_before_reading_any_file() {
         vec!["executor", "m", "extra"],
         vec!["worker", "m"],
         vec!["executor", "--bogus"],
+        vec!["all", "m", "--agent", "future"],
+        vec!["all", "m", "--agent"],
+        vec!["all", "m", "--assessor"],
+        vec!["executor", "m", "--agent", "claude"],
+        vec!["assessor", "m", "--assessor", "haiku"],
+        vec!["all", "m", "--agent", "unknown"],
+        vec!["all", "m", "--agent", ""],
+        vec!["all", "m", "--agent"],
+        vec!["all", "m", "--assessor"],
+        vec!["executor", "m", "--agent", "claude"],
+        vec!["reviewer", "m", "--assessor", "haiku"],
     ] {
         let args: Vec<String> = args.into_iter().map(str::to_string).collect();
         let (mut out, mut err) = (Vec::new(), Vec::new());

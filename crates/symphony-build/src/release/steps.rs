@@ -1,6 +1,6 @@
 //! The steps a check lists: a check of the run is given a folder of its own among the run's logs
 //! ([`VAR`] names it), and one that lists the steps it ran there ([`FILE`]), as `verify` does its
-//! lint, client check, size budgets, docs audit, crates check and tests (tools/verify.sh), is told
+//! lint, client check, size budgets, docs audit, crates and semver checks and tests (tools/verify.sh), is told
 //! by its steps.
 //! Each listed step is a check of its own in the run's record, under the check (`verify/tests`),
 //! with its own status and log, and so on the board ([`super::board`]): a red step is a task of its
