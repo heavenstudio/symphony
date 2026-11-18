@@ -841,10 +841,7 @@ fn the_named_live_fixture_is_not_retried_or_hidden_when_it_fails() {
         1,
         "{said}"
     );
-    assert!(
-        said.contains("the explicit runner fixture failed (exit 101)"),
-        "{said}"
-    );
+    assert!(said.contains("the explicit runner fixture is red (exit 101), to rerun pass `-p symphony-build --lib -- --ignored release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test --exact`"), "{said}");
     assert_eq!(
         fs::read_dir(lanes.stand.join("started")).unwrap().count(),
         LANES

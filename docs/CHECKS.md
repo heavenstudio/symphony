@@ -407,7 +407,8 @@ Focused `just test-rs` uses Cargo and needs no nextest. The live success/failure
 explicitly ignored in that default run; the tests step selects it once by its exact name through
 workspace Cargo before concurrent batches. Its missing runner is a failure, never a skip. The
 nextest filter excludes that case, so it is neither omitted nor run twice. Cargo keeps the same
-workspace features, profile and environment as the one build for this invocation too.
+workspace features, profile and environment as the one build for this invocation too. A failure's
+narrow rerun retains `--ignored` for this case, so it executes the fixture again.
 
 To run that live fixture after setup, select it explicitly. The recipe supplies `--locked`:
 

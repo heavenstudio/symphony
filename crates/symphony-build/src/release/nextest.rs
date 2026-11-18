@@ -4,6 +4,10 @@
 
 use std::collections::HashMap;
 
+/// The live case the release selects explicitly; a narrow rerun must keep its ignored flag.
+pub(super) const LIVE_FIXTURE: &str =
+    "release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Failure {
     pub(super) target: String,
@@ -190,10 +194,7 @@ mod tests {
         let tree = crate::test_tree::Tree::new();
         let target = tree.path("target-with-no-tools");
         let done = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test",
-            ])
+            .args(["--exact", LIVE_FIXTURE])
             .env("CARGO_TARGET_DIR", &target)
             .output()
             .unwrap();

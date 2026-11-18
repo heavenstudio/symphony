@@ -21,6 +21,7 @@
 //! each lane's log), while which lanes: their outputs follow one another in the log, but they ran
 //! at the same time, so the target before in the log's order is no target that ran before.
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -399,15 +400,43 @@ pub(super) fn target(line: &str) -> Option<String> {
 
 /// The cargo test arguments that rerun each failure of `failed` alone: `ARGS -- NAME --exact` for
 /// each test it named, and `ARGS` for a target that named none, but one that failed for files of
-/// its build gone, which no rerun of its own explains.
+/// its build gone, which no rerun of its own explains. The live fixture's explicit selection
+/// supersedes its library fallback; duplicate commands appear once and it keeps `--ignored`.
 pub(crate) fn arguments(failed: &[Failed]) -> Vec<String> {
     let mut each = Vec::new();
+    let mut seen = HashSet::new();
+    let live_selection = format!(
+        "-p symphony-build --lib -- --ignored {} --exact",
+        super::nextest::LIVE_FIXTURE
+    );
+    let mut add = |args: String| {
+        if seen.insert(args.clone()) {
+            each.push(args);
+        }
+    };
     for target in failed {
         if target.tests.is_empty() && target.gone.is_empty() {
-            each.push(target.target.clone());
+            // The explicit fixture's runner names its failed selection even if the process died
+            // without naming a case. Other targets retain their ordinary whole-target fallback.
+            let live = target.target == "-p symphony-build --lib"
+                && failed.iter().any(|other| other.target == live_selection);
+            if !live {
+                add(target.target.clone());
+            }
         }
         for test in &target.tests {
-            each.push(format!("{} -- {} --exact", target.target, quoted(test)));
+            let ignored = if target.target == "-p symphony-build --lib"
+                && test == super::nextest::LIVE_FIXTURE
+            {
+                "--ignored "
+            } else {
+                ""
+            };
+            add(format!(
+                "{} -- {ignored}{} --exact",
+                target.target,
+                quoted(test)
+            ));
         }
     }
     each
@@ -1097,6 +1126,55 @@ error: extern location for q does not exist: /t/debug/deps/libq-1.rlib
                 target("-p symphony --doc", &["src/lib.rs - f (line 1)"]),
             ],
             "the summary's repeat of the targets adds none"
+        );
+    }
+
+    #[test]
+    fn the_explicit_live_fixture_keeps_ignored_in_its_narrow_rerun() {
+        let live = super::super::nextest::LIVE_FIXTURE;
+        let log = read_in(&format!(
+            "     Running unittests src/lib.rs (.target/debug/deps/symphony_build-01)\n\
+             test {live} ... FAILED\n\
+             error: test failed, to rerun pass `-p symphony-build --lib`\n"
+        ));
+        assert_eq!(
+            arguments(&log.targets),
+            [format!(
+                "-p symphony-build --lib -- --ignored {live} --exact"
+            )]
+        );
+        let selection = format!("-p symphony-build --lib -- --ignored {live} --exact");
+        let runner = format!(
+            "error: the explicit runner fixture is red (exit 101), to rerun pass `{selection}`\n"
+        );
+        for named in [true, false] {
+            let log = read_in(&format!(
+                "     Running unittests src/lib.rs (.target/debug/deps/symphony_build-01)\n{}\
+                 error: test failed, to rerun pass `-p symphony-build --lib`\n{runner}",
+                if named {
+                    format!("test {live} ... FAILED\n")
+                } else {
+                    String::new()
+                }
+            ));
+            assert_eq!(arguments(&log.targets), [selection.clone()], "{log:?}");
+        }
+        assert_eq!(
+            arguments(&[target("-p symphony-build --lib", &[])]),
+            ["-p symphony-build --lib"]
+        );
+        // The flag belongs to that selected case, not another package, target or ordinary test.
+        assert_eq!(
+            arguments(&[
+                target("-p other --lib", &[live]),
+                target("-p symphony-build --test integration", &[live]),
+                target("-p symphony-build --lib", &["ordinary"]),
+            ]),
+            [
+                format!("-p other --lib -- {live} --exact"),
+                format!("-p symphony-build --test integration -- {live} --exact"),
+                "-p symphony-build --lib -- ordinary --exact".to_string(),
+            ]
         );
     }
 

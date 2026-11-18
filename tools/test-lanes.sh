@@ -106,7 +106,8 @@ if jq -e '."rust-binaries" | to_entries[] | select(.key == "symphony-build" and 
     if [ -n "$interrupted" ]; then exit "$interrupted"; fi
     if [ "$fixture_code" -ne 0 ]; then
         if [ "$first" -eq 0 ]; then first="$fixture_code"; fi
-        printf 'test-lanes: the explicit runner fixture failed (exit %s)\n' "$fixture_code"
+        printf 'error: the explicit runner fixture is red (exit %s), to rerun pass `-p symphony-build --lib -- --ignored %s --exact`\n' \
+            "$fixture_code" "$live_fixture"
         failed+=('    `-p symphony-build --lib`')
     fi
 fi
