@@ -48,6 +48,11 @@ sha2.workspace = true
 # the free disk the board warns of is read by `statvfs` (src/board_health/disk.rs).
 libc.workspace = true
 
+[features]
+# A board in a managed PostgreSQL reached over verified TLS (src/pg/hosted.rs,
+# docs/POSTGRESQL.md): off unless a hosted build asks for it, so no other build links its driver.
+hosted-postgresql = []
+
 [build-dependencies]
 sha2.workspace = true
 

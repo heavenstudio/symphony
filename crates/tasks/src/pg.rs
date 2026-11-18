@@ -33,6 +33,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+pub mod external;
+#[cfg(feature = "hosted-postgresql")]
+pub mod hosted;
 mod wire;
 
 #[cfg(test)]
