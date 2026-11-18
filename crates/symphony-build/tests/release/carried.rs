@@ -453,27 +453,39 @@ fn held_before_its_tests(inputs: bool, unlisted: bool) -> Laned {
     Laned { first, ..laned }
 }
 
+/// The rerun of a candidate [`held_before_its_tests`]: it runs the setup and every lane of the
+/// tests before it releases, and no rerun of the setup alone releases the commit.
+fn the_rerun_runs_the_tests(inputs: bool, unlisted: bool) {
+    let laned = held_before_its_tests(inputs, unlisted);
+    let out = laned.run(NOW + 60.0, &["--rerun"], 0);
+    assert!(
+        out.contains(
+            "release: `verify` reruns setup, tests, the rest carried green from this tree\n"
+        ),
+        "{out}"
+    );
+    assert_eq!(
+        laned.ran(),
+        ["tests/a", "tests/b", "tests/all"],
+        "every lane ran before the release"
+    );
+    assert_eq!(laned.carried(), ["verify/lint"]);
+    assert_eq!(laned.fixture.tagged("release-2026-11-12"), laned.red);
+}
+
 #[test]
-fn tests_a_red_setup_kept_from_starting_run_at_the_rerun_and_no_setup_alone_releases() {
-    // The verify lists the tests as not run, in a tree that tells its inputs and in one that
-    // tells none; and a verify that leaves them out of its list, in a tree that tells its lanes.
-    for (inputs, unlisted) in [(true, false), (false, false), (true, true)] {
-        let laned = held_before_its_tests(inputs, unlisted);
-        let out = laned.run(NOW + 60.0, &["--rerun"], 0);
-        assert!(
-            out.contains(
-                "release: `verify` reruns setup, tests, the rest carried green from this tree\n"
-            ),
-            "inputs {inputs}, unlisted {unlisted}:\n{out}"
-        );
-        assert_eq!(
-            laned.ran(),
-            ["tests/a", "tests/b", "tests/all"],
-            "every lane ran before the release (inputs {inputs}, unlisted {unlisted})"
-        );
-        assert_eq!(laned.carried(), ["verify/lint"]);
-        assert_eq!(laned.fixture.tagged("release-2026-11-12"), laned.red);
-    }
+fn tests_listed_as_not_run_are_run_at_the_rerun_in_a_tree_that_tells_its_inputs() {
+    the_rerun_runs_the_tests(true, false);
+}
+
+#[test]
+fn tests_listed_as_not_run_are_run_at_the_rerun_in_a_tree_that_tells_no_inputs() {
+    the_rerun_runs_the_tests(false, false);
+}
+
+#[test]
+fn tests_a_verify_left_out_of_its_list_are_run_at_the_rerun_by_the_lanes_the_tip_tells() {
+    the_rerun_runs_the_tests(true, true);
 }
 
 #[test]
