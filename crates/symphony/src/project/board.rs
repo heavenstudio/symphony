@@ -1,5 +1,4 @@
-//! The project file's `[board]` table: the board's export, what a finished worktree may hold, the
-//! guide task messages render as part of, what the board starts when a task moves to review and
+//! The project file's `[board]` table: the guide task messages render as part of, what the board starts when a task moves to review and
 //! once one lands, the cap on an orchestrator's open tasks, when the pipeline alarm raises, the
 //! size past which the sweep asks for a check of the evidence it set aside, the folder of the
 //! machine's PostgreSQL programs, and the project's own tools the board reads beside its own: a
@@ -21,10 +20,6 @@ pub struct WipGuidance {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Board {
-    /// Where the board's export is written, project-relative; `None` writes none.
-    pub export: Option<String>,
-    /// What a finished worktree may hold and still be removed.
-    pub disposable: Vec<String>,
     /// The board's guide, project-relative: task messages' links and pictures resolve from it as
     /// they do on its own page. `None` is [`Board::GUIDE`].
     pub guide: Option<String>,
@@ -116,8 +111,6 @@ impl Board {
             ));
         }
         Ok(Board {
-            export: inside("[board] export", file.export)?,
-            disposable: file.disposable,
             guide: inside("[board] guide", file.guide)?,
             on_review: file.on_review,
             on_land: file.on_land,
@@ -137,8 +130,6 @@ impl Board {
 #[derive(Default, Deserialize)]
 #[serde(default)]
 pub(super) struct FileBoard {
-    export: Option<String>,
-    disposable: Vec<String>,
     guide: Option<String>,
     on_review: Vec<String>,
     on_land: Vec<String>,
