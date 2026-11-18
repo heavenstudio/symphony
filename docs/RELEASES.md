@@ -37,8 +37,8 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
 
 ## Packages on crates.io
 
-The plugin kit, the helpers and the product are made to be published on crates.io, each by its
-version, under MIT: crates.io is the package manager their versions live in
+The plugin kit, the helpers and the product are published on crates.io, each by its version,
+under MIT: crates.io is the package manager their versions live in
 ([its card](DECISIONS.md#consumer-contract-versioning)).
 
 - **The kit:** `symphony-plugin`, `symphony-blocks` and `symphony-docs`
@@ -90,8 +90,7 @@ readme and LICENSE: no `tests/` folder or fixtures, and none of the binaries onl
 runs: `symphony-test-plugin`, `fake-hc`, `symphony-shelf`; `symphony-build`
 is a package of its own, unpublished).
 Its LICENSE is a copy of the root's, never a link, which a package cannot carry out of the
-workspace. Its readme stands alone, with no link into
-this repository, which is private; the server's is `CRATE.md`, as its `README.md` is its guide. It
+workspace. Its readme stands alone; the server's is `CRATE.md`, as its `README.md` is its guide. It
 names a published sibling by `path` and `version`, and an unpublished one only as a development
 dependency, by `path` alone, which publishing drops. A file a package's code reads from outside it
 is a copy in the package, since the package must build alone: the server's `board.css` and
@@ -101,27 +100,27 @@ the source root by it). `crates/symphony/tests/packages.rs` holds which members 
 each carries all of this, that each copy is its file byte for byte, and that the server's `.crate`
 is one crates.io takes.
 
-A version is published once: crates.io can yank it but never removes or reuses it. So nothing here
-has been published yet. The first publication is the owner's act, or runs on the owner's word,
-with the owner's crates.io token in the owner's environment; no agent logs in or reads a token. It
-waits on one more answer of the owner's, asked on the board task `tools/publish-to-crates-io`: each
-manifest names this repository as its `repository`, which answers 404 to anyone but the owner while
-the repository is private, so either the repository is made public first or the packages are
-published with no `repository` line. Up to then, the packages are proven by `cargo publish
---dry-run` naming the thirteen together, which packages them in dependency order and builds each
-against the others as packaged, before any is on crates.io.
+The thirteen packages were first published on 17 November 2026 from
+[`d44d0e7d9fbb42160f047d5bd7b787a1933a6967`](https://github.com/heavenstudio/symphony/commit/d44d0e7d9fbb42160f047d5bd7b787a1933a6967):
+the kit and helpers at 1.0.0, the product at 0.1.0. All thirteen downloaded registry archives match
+the verified package checksums from that source. The installation settings above were checked
+for 0.1.0 with `--version '=0.1.0'` and an empty private `--root`, using Rust 1.99.0 on macOS
+arm64. All four commands answered `--version`; the installed server's static client assets and
+notices also matched the published archive over HTTP.
 
-One more thing that answer touches: `symphony init`'s `Next:` names the project file's reference,
-docs/PROJECT_FILE.md, by its github.com URL in this repository (`init::PROJECT_FILE_REFERENCE`),
-true while a clone is the only way to the binaries. Once the packages are on crates.io with the
-repository still private, that link answers 404 to whoever installed them, so the reference then
-travels in `symphony-app`'s package or the binary prints it.
+A version is published once: crates.io can yank it but never removes or reuses it. Publication
+runs on the owner's word, using Cargo's supported authentication; no agent logs in or reads a
+token. Before upload, `cargo publish --dry-run --locked` naming the thirteen together packages
+them in dependency order and builds each against the others as packaged. An interrupted
+publication resumes with only the versions the index still lacks, respecting the registry's
+retry time; the archives and source stay fixed. See
+[crates.io's publishing rate limits](https://crates.io/docs/rate-limits).
 
 **A release publishes them** only on the project's word: `[releases] publish = true` in
-`symphony.toml`, off when unsaid. This repository's `symphony.toml` leaves it off, so turning it on
-is the owner's word for the first publication. While it is off, a green release says
-`release: crates.io: not published: [releases] publish is off`, its record and `--status` say the
-same, and no `cargo publish` runs (`crates/symphony-build/src/release/crates.rs`). While it is on, a
+`symphony.toml`, off when unsaid. This repository's `symphony.toml` leaves recurring publication
+off; the owner's one-time first publication did not turn it on. While it is off, a green release
+says `release: crates.io: not published: [releases] publish is off`, and its record and `--status`
+say the same. No `cargo publish` runs (`crates/symphony-build/src/release/crates.rs`). While it is on, a
 green release, once its tag is pushed and before [the refresh](#the-refresh), publishes from its
 own checkout brought to the release's commit, within an hour, the packages of the workspace that
 publish (`publish` unset, or naming `crates-io`) whose version crates.io's index lacks. A version
@@ -169,14 +168,12 @@ version, and the crates check is red for it until its version moves too, and so 
 that builds with it in turn. A helper's new version so moves each kit or product package that names
 it, the kit's three together and the product's five together, each line by its own version.
 
-Nothing is on crates.io yet, so a project takes all of Symphony from Git at its pin: today the
-consuming project names each package at a release tag (`tag = "release-…"`) and its `Cargo.lock`
-binds that tag's commit, which its own landing moves to a newer release, never the refresh
-([the refresh](#the-refresh)). Its one line for the library changes with the rename, in that same
-move ([a release](#a-release), what a project's manifest changes). Once every package it
-names is published, it can take them all from crates.io in one edit; not before: a kit from
-crates.io beside a library from Git would be two copies of the kit, whose types do not match
-([the analysis](analysis/consumer-contract.md#two-references-two-copies)).
+A consuming project can keep its Git release tag and Cargo lockfile pin, or take the published
+packages together from crates.io. Change the complete Symphony dependency group in one edit: a
+kit from crates.io beside a library from Git would be two copies of the kit, whose types do not
+match ([the analysis](analysis/consumer-contract.md#two-references-two-copies)). A project's own
+landing moves its Git pin; the machine refresh never does
+([the refresh](#the-refresh)).
 
 ## The release run
 
