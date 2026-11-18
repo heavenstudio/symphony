@@ -654,7 +654,11 @@ fn held_card_selection_prefers_main_then_first_lexical_equal_rank() {
 }
 
 /// The ask the rows of `agent` are told from `open`, on a page holding `held`.
-fn noted(mut agent: Vec<QueueItem>, open: &[Ask], held: Reading) -> Vec<Option<symphony_api::QueueAsk>> {
+fn noted(
+    mut agent: Vec<QueueItem>,
+    open: &[Ask],
+    held: Reading,
+) -> Vec<Option<symphony_api::QueueAsk>> {
     note(&mut agent, open, &held.held);
     agent.into_iter().map(|item| item.ask).collect()
 }
@@ -673,7 +677,11 @@ fn a_card_waiting_on_an_agent_says_its_open_ask_who_holds_it_and_since_when() {
     let nobody = card(None);
     let agent = vec![item("docs/A.md", "lamp-a", "")];
     assert_eq!(
-        noted(agent.clone(), std::slice::from_ref(&nobody), reading(vec![], &[])),
+        noted(
+            agent.clone(),
+            std::slice::from_ref(&nobody),
+            reading(vec![], &[])
+        ),
         [told(7, 900, None)],
         "held by nobody is said as that"
     );
@@ -762,7 +770,11 @@ fn a_branchs_ask_is_said_on_its_branchs_page_and_on_mains_only_with_the_owners_l
         ]
     };
     assert_eq!(
-        noted(rows(), std::slice::from_ref(&branch), reading(vec![], &[("docs/A.md", "lamp-a")])),
+        noted(
+            rows(),
+            std::slice::from_ref(&branch),
+            reading(vec![], &[("docs/A.md", "lamp-a")])
+        ),
         [told(7, 900, None), None],
         "main's copy without the owner's line is another card"
     );

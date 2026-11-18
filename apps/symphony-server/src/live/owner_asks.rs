@@ -42,9 +42,13 @@ impl Hub {
             let mut agent = page.queue.agent.clone();
             owner_asks::note(&mut agent, &open, &page.held);
             let mut changes = Vec::new();
-            super::diff_items(&mut changes, "agent-queue", &page.queue.agent, &agent, |c| {
-                c.href.clone()
-            });
+            super::diff_items(
+                &mut changes,
+                "agent-queue",
+                &page.queue.agent,
+                &agent,
+                |c| c.href.clone(),
+            );
             page.queue.agent = agent;
             self.publish(page, changes);
         }

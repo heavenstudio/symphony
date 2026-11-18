@@ -521,7 +521,10 @@ fn a_tick_tells_the_agent_queues_cards_their_open_asks_and_a_document_read_keeps
     // The documents read again: the rows are built anew and still say the ask.
     private.refresh_docs(None).unwrap();
     assert_eq!(
-        told(&private)[0].1.as_ref().and_then(|ask| ask.holder.clone()),
+        told(&private)[0]
+            .1
+            .as_ref()
+            .and_then(|ask| ask.holder.clone()),
         Some(worker.clone())
     );
 
