@@ -384,6 +384,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     [[analysis/board-pg-cutover#The choice]] now reads as decided.
   [2026-11-18 18:12] agent · resolved
+  [2026-11-18 18:16] agent — Filed: perf/board-pg-memory-peak (started now), tools/board-pg-cutover-pieces, tools/board-pg-cutover-rehearsal, tools/board-pg-this-board-moves. No live board moves before the memory result and the rehearsal are on the board.
 - [r] **board-search-by-meaning** — The board can find tasks by what they mean as well as by their words, with a small language model that runs on this machine: you asked for tasks to be searchable by meaning, and chose the model. Nothing calls it today: the board page searches by words, no skill or document names it but the board's own guide and help, and the consuming project's tools never call it. It costs 153 of the 189 packages the board is built from, a 133 MB download for each project, and a pass every minute on the server for each project, 13 hours of it on this repository's board since 2026-11-14. What becomes of it? A: delete it; the board searches by words alone. B: move the model into a program of its own, as an approved branch that never landed does: the board and the server build without it, and search by meaning works where that program is built. C: keep it in the board behind a build switch that is off by default. D: keep it as it is. Recommended: B. Approve and say A, B, C or D in the note, or comment. [[analysis/code-review-2026-11#4. Eight tenths of the board's dependencies serve a search mode nothing calls]]
   [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
 
@@ -467,6 +468,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     Turning the hosted run on for this repository is a `[releases]` setting, and stays your word.
   [2026-11-18 18:12] agent · resolved
+  [2026-11-18 18:16] agent — Filed: tools/release-hosted-trial (the hand-dispatched trial, after tools/github-pr-delivery), then tools/release-runs-hosted, then tools/release-hosted-clock for the interval you described on release-main-judged-in-steps.
 - [r] **release-run-reruns-alone** — Since last night the release run was red eight times and released nothing. Two of those runs were red only in tests that pass when run by themselves, and 11 such tests were deleted to get past them, each costing a round of about an hour. Should the run itself run each failed test again alone before it calls the release red? A: as today; the run is red, an agent reruns the test, deletes it if it passes alone, and the run starts again. B: the run reruns each failed test alone, up to 12. One that fails again is red, as today. One that passes alone does not hold the release: the run says both results, and files one task to find out why and then fix, rewrite or delete the test. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/release-pipeline#B. The run reruns each failure alone]]
   [2026-11-18 11:26] agent — Posted for the board task `docs/release-pipeline-redesign`.
 
@@ -490,6 +492,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     [[analysis/release-pipeline#B. The run reruns each failure alone]] now reads as chosen.
   [2026-11-18 18:12] agent · resolved
+  [2026-11-18 18:16] agent — Filed: tools/release-reruns-failures-alone, which starts once tools/release-steps-carry-by-inputs lands (same files).
 - [r] **kit-new-block-version** — Before the plugin kit goes to crates.io at 1.0.0, one thing about it cannot be changed later without a new major version: what happens to its version when Symphony adds a new kind of block (or a new kind of text span or media) to the vocabulary plugins draw with. A: a new block is a small update (1.1.0): a plugin written for 1.0.0 keeps building and gets the update by itself. B: a new block is a new major version (2.0.0): every plugin's author must change its requirement by hand before it can use any later kit. Recommended: A. Approve and say A or B in the note, or comment. [[RELEASES#Packages on crates.io]]
   [2026-11-14 02:12] agent — Posted for the board tasks `tools/kit-version-lines` and `tools/release-publishes-to-crates-io`; nothing is published yet, and nothing will be until you say so.
 
