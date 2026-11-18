@@ -1035,7 +1035,9 @@ pub fn census(root: &std::path::Path, out: &mut dyn std::io::Write) -> Result<()
         ("remaining-container", containers),
     ] {
         let mut pairs: Vec<_> = pairs.into_iter().collect();
-        pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        symphony_board::order::sort_by(&mut pairs, &|a, b| {
+            b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+        });
         for (pair, count) in pairs {
             writeln!(out, "{label}: {count} {pair}").map_err(|e| e.to_string())?;
         }
@@ -1181,5 +1183,29 @@ fn count(
             }
         }
         _ => (),
+    }
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    #[test]
+    fn census_pairs_keep_complete_count_and_label_order_and_report_cost() {
+        for count in [0, 1, 32, 512] {
+            let mut pairs: Vec<_> = (0..count)
+                .map(|i| (format!("div {{class:猫-{i}}}"), i % 11))
+                .collect();
+            let mut old = pairs.clone();
+            let compare = |a: &(String, usize), b: &(String, usize)| {
+                b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+            };
+            let (_, old_cpu) = test_time::cpu::spent(|| old.sort_by(&compare));
+            let (_, new_cpu) =
+                test_time::cpu::spent(|| symphony_board::order::sort_by(&mut pairs, &compare));
+            assert_eq!(pairs, old);
+            eprintln!(
+                "census pairs n={count}: old_cpu={old_cpu:?},shared_cpu={new_cpu:?},positions={}bytes plus usize-sort scratch",
+                count * std::mem::size_of::<usize>()
+            );
+        }
     }
 }
