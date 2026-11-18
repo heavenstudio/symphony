@@ -124,7 +124,9 @@ the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), 
 ([TASKS](../../docs/TASKS.md#slots)); `orchestration.rs` with `store/work/given.rs` one orchestrator
 per task, and the limit on the open tasks one holds
 ([TASKS](../../docs/TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)); `limits.rs` the project's `[limits]` and the alarm's thresholds, read again when the file
-changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `alarm.rs` and `alarm/` the pipeline
+changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `local.rs` the one reader of the local settings
+file over them and over a launch's agent and models
+([PROJECT_FILE](../../docs/PROJECT_FILE.md#the-local-settings-file)); `alarm.rs` and `alarm/` the pipeline
 alarm, `cli/pull/pipeline.rs` as PULL says it ([TASKS](../../docs/TASKS.md#the-pipeline-alarm));
 `store/work/moves.rs` a move that names where it goes from; `health.rs` a session's health, derived
 and never stored; `stages.rs` where a task's time went

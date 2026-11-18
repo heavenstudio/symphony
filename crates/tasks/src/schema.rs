@@ -96,7 +96,10 @@ pub const BOARD_MARKER: &str = "((SELECT VALUE last FROM ONLY counter:board_stru
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Schema {
     version: i64,
-    steps: String,
+    /// What its steps run after [`DEFINE`]: nothing for this build's own schema. Held apart from
+    /// it, so a program that opens a board without ever migrating one (a reader) links and
+    /// copies none of `DEFINE`'s text.
+    after: String,
     /// On PostgreSQL, what the steps add to this build's tables, which every migration there
     /// makes first: nothing for this build's own schema.
     postgres: String,
@@ -107,7 +110,7 @@ impl Schema {
     pub fn this_build() -> Schema {
         Schema {
             version: VERSION,
-            steps: DEFINE.into(),
+            after: String::new(),
             postgres: String::new(),
         }
     }
@@ -121,7 +124,7 @@ impl Schema {
     pub fn then_each(&self, surreal: &str, postgres: &str) -> Schema {
         Schema {
             version: self.version + 1,
-            steps: format!("{}\n{surreal}", self.steps),
+            after: format!("{}\n{surreal}", self.after),
             postgres: format!("{}\n{postgres}", self.postgres),
         }
     }
@@ -140,8 +143,9 @@ impl Schema {
         }
     }
 
-    pub(crate) fn steps(&self) -> &str {
-        &self.steps
+    /// The steps: [`DEFINE`], then what this schema runs after it. Only a migration reads them.
+    pub(crate) fn steps(&self) -> String {
+        format!("{DEFINE}{}", self.after)
     }
 
     /// What the steps add on PostgreSQL to this build's tables.

@@ -1,6 +1,7 @@
 //! `limits`: the limits a command run here is held to and the model each role runs on, each with
 //! where it came from, the project's `symphony.toml` as it is now ([`crate::limits`],
-//! [`Defaults::model_of`]). What an agent reads before it starts a subagent, and what tells a
+//! [`Defaults::model_of`]), or the local file beside it for one that file overrides
+//! ([`crate::local`]). What an agent reads before it starts a subagent, and what tells a
 //! project its edit was taken.
 
 use super::{Context, Stop};
@@ -10,6 +11,7 @@ use crate::launch::defaults::{Chosen, ROLES};
 use crate::launch::hc::Binary;
 use crate::launch::{Defaults, Machine, running};
 use crate::limits::{self, LOW, MACHINE_AGENTS, Read, SLOTS, TASKS};
+use crate::local::Local;
 use std::path::Path;
 
 /// The width of a setting's name, the longest (`review_alarm_clear_hours`) and a space.
@@ -36,7 +38,18 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     if let Err(problem) = &models {
         let _ = writeln!(c.err, "⚠ {problem}");
     }
-    for line in lines(file.as_deref(), &text, &read, models.ok().as_ref(), running) {
+    // What is wrong with a local file the store's own read of the limits said already.
+    let local = file
+        .as_deref()
+        .and_then(|path| crate::local::beside(path).ok().flatten());
+    for line in lines(
+        file.as_deref(),
+        &text,
+        &read,
+        models.ok().as_ref(),
+        running,
+        local.as_ref(),
+    ) {
         c.say(&line);
     }
     Ok(())
@@ -45,18 +58,30 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
 /// What `limits` prints: the limits `read` holds from `file` (none outside a repository) whose
 /// `text` names their lines, then the model each role runs on as `models` says (none when the file
 /// cannot be read for them), then the keys of `[limits]` left out. `running` is the machine's count
-/// of agents, made only under a limit on it.
+/// of agents, made only under a limit on it. Where `read` and `models` hold what the local file
+/// `local` writes over `file` ([`crate::local`]), that file is named under the project file, and a
+/// model it writes, as the agent it names, is said to come from it, with its line.
 pub fn lines(
     file: Option<&Path>,
     text: &str,
     read: &Read,
     models: Option<&Defaults>,
     running: Option<Result<usize, crate::Error>>,
+    local: Option<&Local>,
 ) -> Vec<String> {
     let mut lines = vec![match file {
         Some(path) => format!("LIMITS from {}", path.display()),
         None => "LIMITS: no project file outside a repository, so every default".into(),
     }];
+    if let Some(local) = local {
+        lines.push(format!(
+            "LOCAL  over it {}, which git does not version",
+            local.path.display()
+        ));
+    }
+    // A value the local file writes that is not empty: one written empty is none, and its source
+    // is whatever stands in its place.
+    let wrote = |written: Option<&str>| written.is_some_and(|value| !value.trim().is_empty());
     let source = |key: &str| {
         read.written
             .get(key)
@@ -98,22 +123,35 @@ pub fn lines(
     match models {
         Some(defaults) => {
             let (agent, _, _) = defaults.model_of(ROLES[0]);
-            lines.push(format!("MODELS of {agent}"));
+            const LAUNCH: [&str; 2] = ["agents", "launch"];
+            lines.push(
+                match local.filter(|local| wrote(local.launch[0].as_deref())) {
+                    Some(local) => format!(
+                        "MODELS of {agent}, from {}",
+                        local
+                            .written("[agents] launch default", &LAUNCH, "default")
+                            .said()
+                    ),
+                    None => format!("MODELS of {agent}"),
+                },
+            );
             for role in ROLES {
                 let (_, model, chosen) = defaults.model_of(role);
                 let from = match chosen {
-                    Chosen::Role => written(
-                        text,
-                        format!("[agents.models] {role}"),
-                        &["agents", "models"],
-                        role,
-                    ),
-                    Chosen::Launch => written(
-                        text,
-                        "[agents] launch model".into(),
-                        &["agents", "launch"],
-                        "model",
-                    ),
+                    Chosen::Role => {
+                        let at = format!("[agents.models] {role}");
+                        match local.filter(|local| wrote(local.model_of(role))) {
+                            Some(local) => local.written(&at, &["agents", "models"], role).said(),
+                            None => written(text, at, &["agents", "models"], role),
+                        }
+                    }
+                    Chosen::Launch => {
+                        let at = "[agents] launch model";
+                        match local.filter(|local| wrote(local.launch[1].as_deref())) {
+                            Some(local) => local.written(at, &LAUNCH, "model").said(),
+                            None => written(text, at.into(), &LAUNCH, "model"),
+                        }
+                    }
                     Chosen::Board => format!("the board's own for {agent}"),
                     Chosen::Smallest => format!("the smallest {agent} offers"),
                     Chosen::Starter => "whoever starts one chooses".into(),
