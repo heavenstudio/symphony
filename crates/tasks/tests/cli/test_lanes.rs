@@ -34,14 +34,20 @@ pub(super) fn mock_nextest(root: &Path) {
     let script = fs::read_to_string(&path).unwrap();
     let guard = "if [ \"${BASH_SOURCE[0]}\" = \"$0\" ]; then main \"$@\"; fi";
     assert!(script.contains(guard));
+    let digest = |bytes: &[u8]| {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    };
     fs::write(
         path,
         script.replace(
             guard,
             &format!(
-                "binary_sha256() {{ echo {:x}; }}\narchive_sha256() {{ echo {:x}; }}\nmain \"$@\"",
-                Sha256::digest(MOCK_TOOL),
-                Sha256::digest(fs::read(&archive).unwrap())
+                "binary_sha256() {{ echo {}; }}\narchive_sha256() {{ echo {}; }}\nmain \"$@\"",
+                digest(MOCK_TOOL.as_bytes()),
+                digest(&fs::read(&archive).unwrap())
             ),
         ),
     )
@@ -611,6 +617,58 @@ fn setup_fetches_one_verified_archive_without_a_cargo_install_and_reuses_it_offl
         1
     );
     assert!(!lanes.stand.join("built").exists());
+}
+
+#[test]
+fn the_launcher_and_scheduler_share_the_pin_and_only_supported_hosts_are_selected() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let script = root.join("tools/nextest.sh");
+    assert!(
+        fs::read_to_string(&script)
+            .unwrap()
+            .lines()
+            .any(|line| line == format!("version={VERSION}"))
+    );
+    assert!(
+        fs::read_to_string(root.join(".config/nextest.toml"))
+            .unwrap()
+            .lines()
+            .any(|line| line == format!("nextest-version = \"{VERSION}\""))
+    );
+    for (system, machine, expected) in [
+        ("Darwin", "arm64", Some("universal-apple-darwin")),
+        ("Darwin", "x86_64", Some("universal-apple-darwin")),
+        ("Linux", "aarch64", Some("aarch64-unknown-linux-gnu")),
+        ("Linux", "x86_64", Some("x86_64-unknown-linux-gnu")),
+        ("Other", "x86_64", None),
+        ("Linux", "other", None),
+    ] {
+        let done = output(
+            Command::of("bash")
+                .args([
+                    "-c",
+                    "source \"$1\"; platform_name \"$2\" \"$3\"",
+                    "fixture",
+                ])
+                .arg(&script)
+                .args([system, machine]),
+        )
+        .unwrap();
+        assert_eq!(
+            done.status.code(),
+            Some(if expected.is_some() { 0 } else { 2 }),
+            "{done:?}"
+        );
+        if let Some(expected) = expected {
+            assert_eq!(String::from_utf8(done.stdout).unwrap().trim(), expected);
+        } else {
+            assert!(
+                String::from_utf8(done.stderr)
+                    .unwrap()
+                    .contains("no pinned cargo-nextest")
+            );
+        }
+    }
 }
 
 #[test]
