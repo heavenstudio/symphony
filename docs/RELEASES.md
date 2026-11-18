@@ -58,7 +58,8 @@ nothing, and who writes each:
 - **Composed.** An `api` entry `OLD => NEW` in one release and `removed OLD => NEW` in a later one
   read as one instruction: the first says "move to `NEW` before" the release that removes `OLD`,
   and the removal says since which release `NEW` has been there.
-- **A check at the landing's tip.** `just lint-rs` runs `symphony-build release-notes --check`: red
+- **A check at the landing's tip.** A task's lint runs `symphony-build release-notes --check`
+  ([CHECKS](CHECKS.md#what-a-landing-tells-a-consumer)): red
   when the branch, against the commit it left the default branch at (its own commits and their
   difference, however often it merged main), moves the board schema with no `board` entry, stops
   holding a call in a consumer-API guard with no `api` entry, or takes a key out of the settings
