@@ -363,7 +363,9 @@ project is given and neither the library nor the shipped `symphony` compiles
    - the command and how it ended;
    - its log, and the load average when it ended (over 1, 5 and 15 minutes, with the processor
      count): a step's, the one its line says it ended under; a check's, the run's reading, kept in
-     its record;
+     its record; and under it, when the machine slept under the run, for how long ([its
+     time](#the-release-run)), as a wait or a timeout that failed across a sleep failed on the
+     sleep and not on load;
    - what the log names failed (`crates/symphony-build/src/release/failures.rs`), then a few of its last
      lines; its last 40 lines alone when it names nothing it knows, and for a check that listed its
      steps, whose log is its own lines and its steps' tails. A test run's, a log in which cargo
@@ -461,6 +463,15 @@ holds later runs off for its run's time). A check still running then is stopped 
 group sent `TERM`, then `KILL` after 10 s) and red, as is each check not yet started. A git
 command stops at the run's time or after 15 minutes, whichever is sooner. A run whose checks all
 ended green within its time keeps 5 more minutes to tag and push.
+That time is counted while the machine is awake, and what a record says a check or a run took is
+the wall clock's, as a log's times and a step's own seconds are: a sleep of the machine takes none
+of the run's time and is counted in what it took. What the wall clock counted of a run past the
+awake one, once it is 5 s, is how long the machine slept under it, kept in its record (`slept`,
+in seconds; left out of a run that did not sleep) and said by the run, by
+[`--status`](#status) and in each red it files (`crates/symphony-build/src/release/span.rs`); no
+power log is read. On macOS a run holds an assertion against idle sleep for as long as its
+process lives (`caffeinate -i -w PID`), which changes no power setting; a closed lid on battery
+sleeps all the same.
 A run told to stop (`HUP`, `INT` or `TERM`, as launchd's stop or a terminal sends them) stops its
 check's group the same way, and its git, records why, files the red `run` (the stopped check is no
 check's red) and releases the lock. A signal it was started ignoring stays ignored, and `KILL`
@@ -923,7 +934,7 @@ main's tip.
 ## Status
 
 `just release --status` prints the newest release, the last run (its result, when, how long ago,
-what was red and the tasks filed), a later out-of-cycle release when there is one, the last
+how long the machine slept under it when it did, what was red and the tasks filed), a later out-of-cycle release when there is one, the last
 interrupted run while its logs are kept, the last green run, and the releases here that the last
 run found missing from the remote, with the push that delivers one, and, in a project with
 `[land] generators`, where the regenerator stands (`regenerator: …`). A release run older than 36

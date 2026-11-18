@@ -68,6 +68,10 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
         "the record keeps the load the check ended under: {run}"
     );
     assert!(!red.body.contains("not recorded"), "{}", red.body);
+    // The machine stayed awake under it: neither the run, its record nor its red says a sleep.
+    assert!(!out.contains("slept"), "{out}");
+    assert!(run.get("slept").is_none(), "{run}");
+    assert!(!red.body.contains("slept"), "{}", red.body);
     for said in [
         format!(
             "The Symphony release run is red in `verify` on main at {}",
@@ -306,5 +310,46 @@ fn a_board_that_cannot_be_reached_fails_the_run_but_the_record_stays() {
             .unwrap()
             .contains("cannot run /no/such/tasks"),
         "{run}"
+    );
+}
+
+#[test]
+fn a_run_the_machine_slept_under_counts_the_sleep_and_says_it_in_its_record_status_and_red() {
+    let fixture = Fixture::new();
+    fixture.land("red", Some("planted"), "a change that turns the check red");
+    // The tests' sleep: 26 min 29 s under each span the run times.
+    let slept = [("SYMPHONY_RELEASE_SLEPT", "1589")];
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &slept);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains("release: the machine slept 26 min under this run, which its time counts"),
+        "{out}"
+    );
+    let run = fixture.runs().last().unwrap().clone();
+    // The two clocks are read one after the other, so the sleep is the tests' to within what the
+    // run takes for the wall clock's own correction (5 s), which only a stall reaches.
+    let recorded = run["slept"].as_f64().unwrap();
+    assert!((recorded - 1589.0).abs() < 5.0, "{run}");
+    let took = run["ended_at"].as_f64().unwrap() - run["started_at"].as_f64().unwrap();
+    assert!(took >= 1584.0, "the run's time counts the sleep: {run}");
+    let check = run["checks"][0]["seconds"].as_f64().unwrap();
+    assert!(
+        check >= 1584.0 && check <= took + 5.0,
+        "the check's seconds count the sleep, within the run's: {run}"
+    );
+    let reds = fixture.reds();
+    let body = &reds["tests/release-red-verify"].body;
+    let at = |said: &str| {
+        body.find(said)
+            .unwrap_or_else(|| panic!("{said:?} in:\n{body}"))
+    };
+    assert!(
+        at("Load average when it ended: ") < at("\nThe machine slept 26 min under this run"),
+        "{body}"
+    );
+    let (_, status, _) = fixture.release_at(NOW + 60.0, &["--status"]);
+    assert!(
+        status.contains("; the machine slept 26 min under it; red: verify (exit 1)"),
+        "{status}"
     );
 }

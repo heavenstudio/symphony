@@ -142,6 +142,16 @@ fn static_board_worker() {
     store::on_exit(require_stopped_before_descriptors_close);
     let held = board::board();
     assert!(rpc::healthy(&held.addr));
+    assert_eq!(
+        held.copied,
+        serde_json::json!({
+            "task": 3, "link": 0, "session": 0, "role": 0, "message": 0, "delivery": 0,
+            "barred_key": 0, "task_session": 0, "delivery_key": 0, "ask": 0, "staging": [],
+        }),
+        "the cleanup worker needs only a few rows on the static board"
+    );
+    assert!(held.listeners.paths.is_empty());
+    assert!(held.first_looks.is_empty());
     EXIT_ADDRESS
         .set((held.addr.clone(), record.with_extension("stopped")))
         .unwrap();

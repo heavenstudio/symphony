@@ -15,8 +15,10 @@ use crate::store;
 use serde_json::{Value, json};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::process::Output;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
+use symphony_board::rows::{Dump, TaskRow};
 use symphony_board::rpc::Client;
 use symphony_board::sys::{self, Command};
 use symphony_board::{NAMESPACE, Store};
@@ -150,6 +152,9 @@ pub fn program() -> PathBuf {
 
 impl Board {
     fn make() -> Board {
+        // Only the private cleanup worker receives this record path. It exercises the same
+        // static, server and exit callback with a few rows and no recipients' first looks.
+        let cleanup_worker = std::env::var_os("SYMPHONY_PERF_CLEANUP_RECORD").is_some();
         // Short: the recipients' sockets live here, and a socket's path has room for 104 bytes.
         let temp = std::env::temp_dir();
         remove_ended_runs(&temp);
@@ -169,47 +174,71 @@ impl Board {
             &sys::hostname(),
         )
         .unwrap();
-        let (wall, copied) = (quiet.bill(|| {
-            let began = Instant::now();
-            store.copy(&dump()).unwrap();
-            began.elapsed()
-        }))
-        .unwrap_or_else(|why| panic!("perf: {why}"));
-        // Seconds of the server's work, which any meter reads: one reading none reads another
-        // process, and every bound a test of the board states would hold at none.
-        cpu::worked("the board's copy, on its server", copied)
+        if cleanup_worker {
+            // Cleanup checks no cost, and this copy can be too small for a coarse CPU meter.
+            let rows = Dump {
+                tasks: (0..3)
+                    .map(|id| TaskRow {
+                        id: id + 1,
+                        slug: format!("cleanup/task-{id}"),
+                        title: "A cleanup worker's task".into(),
+                        status: "ready".into(),
+                        created_by: "owner".into(),
+                        ..TaskRow::default()
+                    })
+                    .collect(),
+                ..Dump::default()
+            };
+            store.copy(&rows).unwrap();
+        } else {
+            let (wall, copied) = (quiet.bill(|| {
+                let began = Instant::now();
+                store.copy(&dump()).unwrap();
+                began.elapsed()
+            }))
             .unwrap_or_else(|why| panic!("perf: {why}"));
-        eprintln!("perf: the board copied in {wall:.1?}, {copied:.1?} of its server's CPU");
+            // Seconds of the server's work, which any meter reads: one reading none reads another
+            // process, and every bound a test of the board states would hold at none.
+            cpu::worked("the board's copy, on its server", copied)
+                .unwrap_or_else(|why| panic!("perf: {why}"));
+            eprintln!("perf: the board copied in {wall:.1?}, {copied:.1?} of its server's CPU");
+        }
         let copied = store
             .client()
             .query(COPIED, json!({}))
             .unwrap_or_else(|why| panic!("perf: the copied board's rows: {why}"))
             .remove(0);
-        let recipients = recipients();
+        let recipients = if cleanup_worker {
+            Vec::new()
+        } else {
+            recipients()
+        };
         let listeners = Listeners::new(&dir, &recipients);
         let path = |handle: &str| format!("uds:{}", listeners.paths[handle].display());
         // One registration through the store, for the listener's identity as the store records it;
         // the rest as rows like it, so no registration dispatches to those before it.
-        store
-            .callback(&recipients[0], Some(&path(&recipients[0])), false, false)
-            .unwrap();
-        let owner = (store.raw().row("callback_state", json!(recipients[0])))
-            .field("owner")
-            .unwrap();
-        let rows: Vec<Value> = (recipients[1..].iter())
-            .map(|handle| {
-                json!({"handle": handle, "address": path(handle), "host": sys::hostname(), "owner": owner,
-                    "confirmed_until": 0, "chat": false, "chat_fallback": false, "chat_resume": false,
-                    "registration_revision": 1})
-            })
-            .collect();
-        store
-            .client()
-            .query(
-                "FOR $row IN $rows { UPSERT type::record('callback_state', $row.handle) CONTENT $row RETURN NONE; }; RETURN NONE;",
-                json!({"rows": rows}),
-            )
-            .unwrap();
+        if let Some((first, rest)) = recipients.split_first() {
+            store
+                .callback(first, Some(&path(first)), false, false)
+                .unwrap();
+            let owner = (store.raw().row("callback_state", json!(first)))
+                .field("owner")
+                .unwrap();
+            let rows: Vec<Value> = (rest.iter())
+                .map(|handle| {
+                    json!({"handle": handle, "address": path(handle), "host": sys::hostname(), "owner": owner,
+                        "confirmed_until": 0, "chat": false, "chat_fallback": false, "chat_resume": false,
+                        "registration_revision": 1})
+                })
+                .collect();
+            store
+                .client()
+                .query(
+                    "FOR $row IN $rows { UPSERT type::record('callback_state', $row.handle) CONTENT $row RETURN NONE; }; RETURN NONE;",
+                    json!({"rows": rows}),
+                )
+                .unwrap();
+        }
         let mut board = Board {
             addr,
             engine,
@@ -221,6 +250,9 @@ impl Board {
             unclaimed: ready(),
             _server: server,
         };
+        if cleanup_worker {
+            return board;
+        }
         // Every recipient's first look, through the relay: what a write, and the dispatch it makes
         // to recipients not seen before, sends.
         let relay = Proxy::to(&board.addr);
@@ -255,6 +287,26 @@ impl Board {
     /// keeps it: what a write costs is what its command takes. Its cost in CPU is the process's
     /// own and what the board's server took for it, from quiet to quiet again ([`Board::bill`]).
     pub fn run(&self, server: &str, args: &[&str], input: &str) -> Ran {
+        let ((said, tasks_cpu, wall), server_cpu) = self.bill(|| self.execute(server, args, input));
+        Ran {
+            code: said.status.code().unwrap_or(-1),
+            out: String::from_utf8_lossy(&said.stdout).into_owned(),
+            err: String::from_utf8_lossy(&said.stderr).into_owned(),
+            wall,
+            tasks_cpu,
+            server_cpu,
+        }
+    }
+
+    /// The same command as [`Self::run`], without billing the server or waiting for quiet: a
+    /// plan check needs its requests and output, not its cost.
+    pub fn run_unbilled(&self, server: &str, args: &[&str], input: &str) -> Output {
+        self.execute(server, args, input).0
+    }
+
+    /// Start, feed and reap one command. Both callers keep the same environment and process
+    /// handling; only [`Self::run`] wraps this work in the server's bill.
+    fn execute(&self, server: &str, args: &[&str], input: &str) -> (Output, Duration, Duration) {
         use std::io::Write as _;
         let mut command = Command::of(program());
         command
@@ -273,23 +325,13 @@ impl Board {
             .env("TASKS_PS_TABLE", self.dir.join("ps"))
             .env("HERDR_BIN", "/usr/bin/false")
             .current_dir(&self.dir);
-        let ((said, tasks_cpu, wall), server_cpu) = self.bill(|| {
-            let began = Instant::now();
-            let mut child = sys::spawn_piped(&mut command).expect("the tasks binary starts");
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(input.as_bytes()).unwrap();
-            }
-            let (said, tasks_cpu) = cpu::reaped(child);
-            (said, tasks_cpu, began.elapsed())
-        });
-        Ran {
-            code: said.status.code().unwrap_or(-1),
-            out: String::from_utf8_lossy(&said.stdout).into_owned(),
-            err: String::from_utf8_lossy(&said.stderr).into_owned(),
-            wall,
-            tasks_cpu,
-            server_cpu,
+        let began = Instant::now();
+        let mut child = sys::spawn_piped(&mut command).expect("the tasks binary starts");
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(input.as_bytes()).unwrap();
         }
+        let (said, tasks_cpu) = cpu::reaped(child);
+        (said, tasks_cpu, began.elapsed())
     }
 
     /// A client of the board, straight to its server.

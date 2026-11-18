@@ -367,8 +367,9 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         listing.join("\n")
     );
     let mut entries = Vec::new();
-    // Each kind gets a fresh browser profile, including when kinds share CSS. A cached
-    // sibling must not make an oversized entry pass. Keep that profile for the return visit.
+    let Some(mut chrome) = chrome() else { return };
+    // Each kind gets a fresh browser context, including when kinds share CSS. A cached
+    // sibling must not make an oversized entry pass. Keep that context for the return visit.
     for (path, kind, ready, cap) in [
         ("/", "review", ".hero-title", Some(HOME_FIRST_VISIT_BYTES)),
         (
@@ -391,7 +392,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ("/docs/look-parity.md", "docs", ".doc-card", None),
     ] {
         preload::serve_page(&site, path, kind);
-        let Some(mut chrome) = chrome() else { return };
+        chrome.fresh_context();
         if kind == "board" {
             // The fixture is Ready; the phone now mounts only its selected Review stage.
             // Measure the same loaded lifecycle board as the established byte baseline.
@@ -473,7 +474,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             entries.push((path, cap, bytes, again));
         }
     }
-    let Some(mut chrome) = chrome() else { return };
+    chrome.fresh_context();
     chrome.open(&site.url("/"));
     wait_for_board(&mut chrome);
     let (_, idle) = panel_open::settled(&mut chrome);
