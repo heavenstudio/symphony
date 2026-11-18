@@ -602,8 +602,9 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
 
 - **Held.** Its record is `candidate.json` beside the runs (`.git/symphony/release/`): the commit
   it holds now (its tip), the commit first judged and by which run, the runs of it that decided
-  (its rounds), each red with its task and how it was answered, each check and step with the
-  commit it was last green on, the advances, and, once it ends, how. The local branch
+  (its rounds), each red with its task and how it was answered, each check, step and lane with the
+  commit and run it was last green on, the digest of its inputs there and the environment of that
+  run, the advances, and, once it ends, how. The local branch
   `release-candidate` names its tip. Only the run moves that branch, and only from the commit it
   last set it to: one moved by someone else, or checked out in a worktree, is left as it is and
   said. Nothing pushes it, and it goes when the candidate ends. One candidate at a time. A run
@@ -643,18 +644,68 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   land that answered the last red, else by the next landing's, the next scheduled run, or `just
   release --rerun`, an orchestrator's retry. It waits for no regenerator, as a fix commits the
   client its own sources make. Of each check it runs what was red, what did not run and what a fix
-  changed. Until the stamps give a step inputs of its own, a step's
-  inputs are the whole tree: a check or step green on a commit whose tree is the tip's keeps that
-  green and is not run (*carried*, named in the run's record and the release's message), and any
-  other runs. So a check that lists its steps reruns its red ones alone (`just verify tests`) when
-  the tree is the same, as when every red was answered outside this repository, and runs whole
-  otherwise; one that lists none runs whole. Green, it tags the tip and refreshes the machine as
+  changed, and keeps the green of the rest without running it (*carried*). A check, a step it
+  listed or a part of a step (a lane of the tests) is carried when it was green in a run of this
+  candidate, on the environment the rerun runs on ([below](#what-a-run-ran-on)), and either that
+  run's commit holds the tip's tree, or the digest of its inputs there is the one the tip's tree
+  tells ([its inputs](#a-steps-inputs)). Anything else runs: a red, a step or lane whose digest
+  changed, one the tip names that no run of the candidate listed, and one whose inputs cannot be
+  told. So a check that lists its steps reruns those alone (`just verify lint tests/browser`),
+  and one that lists none, or whose red was beyond its steps, runs whole. The commit tagged is
+  then not itself run in full, the trade the candidate's design names
+  ([the analysis](analysis/release-candidate.md#the-trades)), bounded by the candidate: no green
+  is carried from before it, from another candidate, from a task's own recorded run or from
+  another machine, and its first run is whole. Green, it tags the tip and refreshes the machine as
   any release; red, it is one more round, its reds filed as any run's and their tasks saying the
   candidate again.
 - **Its release notes** say, between the checks and the changes, the commit first judged and by
   which run, how many reruns it took, each red's task and how it was answered (the commit it
-  advanced to, the landing that covered it, or outside this repository), and what was carried green
-  from which run.
+  advanced to, the landing that covered it, or outside this repository), and each green carried:
+  its commit and run where that commit's tree is the release's, and its commit, run and the digest
+  of its inputs where it was carried by them, under a line that says it was not run on this
+  commit. The run's record names them the same way (`rerun.carried`).
+
+### A step's inputs
+
+The tree says what its checks read: `tools/check-inputs.sh`, which the run asks in its checkout
+before the checks of every run (`crates/symphony-build/src/release/inputs.rs`), prints a line for
+each step of `just verify` and each lane of its tests, `verify/STEP` or `verify/tests/LANE`, with
+a digest of its inputs at that commit. The run's record keeps them (`inputs`), and a candidate's
+green stands with the digest it was green on.
+
+- **What each reads** is said beside it, never in a list of its own: `tools/verify.sh` for its
+  steps and `tools/test-lanes.sh` for its lanes (`reads`; `--inputs` prints them). A lane's
+  packages are derived: the packages that hold its test target, and every package of the workspace
+  they depend on by path, from `cargo metadata`, each by its folder. A lane whose tests run another
+  package's binary names that package (the browser tests, the server's), and a path its tests read
+  outside those is declared (the client's sources).
+- **Every digest** holds the tree outside `apps/` and `crates/` as well, each entry of the root:
+  the check itself (`tools/`, the justfile, the lock file, the toolchain pin, the Cargo and nextest
+  configuration, `symphony.toml`) and every document, guide and skill, which any test may read.
+  It holds the toolchain installed too, as `rustc` and `cargo` say their versions. So a change to
+  `tools/verify.sh`, `tools/check-inputs.sh`, the justfile, the lock file or the toolchain pin
+  carries nothing.
+- **The whole tree** is what lint (it reads the branch's commits), the docs audit, the crates
+  check, the nextest lane (every target that is no lane of its own), the doctests and the hooks
+  tests declare: those are carried only from a commit of the same tree, as every step was before
+  a step had inputs.
+- **What cannot be told is run.** A tree with no such script, a script that fails (a package or
+  a target no manifest names, a cargo that does not answer) or prints what does not read, and a
+  name it leaves out carry nothing by a digest, and the rerun says which. The digest is the tree's
+  own word, never computed by the run, so a tip whose script differs from the green's has other
+  digests.
+
+Its one risk is a path a test reads that no input names: its green is carried across a change
+that broke it. A test that reads a file outside its packages and outside the root's other entries
+declares it beside its lane.
+
+### What a run ran on
+
+No tree pins the system, Chrome or PostgreSQL the checks run on, so each run's record names them
+(`environment`): the system and its version (`sw_vers` where there is one, and `uname -srm`), and
+Chrome and PostgreSQL each as it says its own version (the Chrome the tests find, the `postgres`
+of `[board] postgresql`, else the first on `PATH`), or that none was found. A candidate's green
+stands with the environment of its run, and a rerun on another carries none of them and says so.
 
 ### Its bounds
 

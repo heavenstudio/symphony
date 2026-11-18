@@ -16,7 +16,7 @@ const RED: &str = "tests/release-red-verify";
 
 /// The fixture holding release candidates, with `releases` more lines of its `[releases]` table
 /// (its bounds the project's defaults unless they say).
-fn holding(releases: &str) -> Fixture {
+pub(super) fn holding(releases: &str) -> Fixture {
     let fixture = Fixture::new();
     let releases = if releases.contains("candidate_") {
         releases.to_string()
@@ -49,7 +49,7 @@ fn held(fixture: &Fixture) -> String {
 }
 
 /// The candidate's record.
-fn record(fixture: &Fixture) -> serde_json::Value {
+pub(super) fn record(fixture: &Fixture) -> serde_json::Value {
     let text = fs::read_to_string(fixture.records().join("candidate.json")).unwrap();
     serde_json::from_str(&text).unwrap()
 }
@@ -68,13 +68,13 @@ fn branch(fixture: &Fixture) -> Option<String> {
 }
 
 /// The sessions that staff a red on the board: its orchestrator, its executor and a fresh reviewer.
-struct Hands {
-    orchestrator: String,
+pub(super) struct Hands {
+    pub(super) orchestrator: String,
     executor: String,
     reviewer: String,
 }
 
-fn hands(fixture: &Fixture) -> Hands {
+pub(super) fn hands(fixture: &Fixture) -> Hands {
     let store = fixture.store();
     let handle = |kind: &str| store.register(&NewSession::new(kind)).unwrap().row.handle;
     Hands {
@@ -86,7 +86,7 @@ fn hands(fixture: &Fixture) -> Hands {
 
 /// The red task `slug` approved naming `commit`, as a red filed unmarked is: claimed by its
 /// executor the `first` time, in review, and a fresh reviewer's approve.
-fn approve(fixture: &Fixture, hands: &Hands, slug: &str, commit: &str, first: bool) {
+pub(super) fn approve(fixture: &Fixture, hands: &Hands, slug: &str, commit: &str, first: bool) {
     let store = fixture.store();
     if first {
         store
@@ -123,7 +123,7 @@ fn fix(fixture: &Fixture, slug: &str, file: &str, text: Option<&str>) -> String 
 }
 
 /// `slug` landed on main as `just land` merges it, and pushed when `push`: the merge.
-fn land(fixture: &Fixture, slug: &str, push: bool) -> String {
+pub(super) fn land(fixture: &Fixture, slug: &str, push: bool) -> String {
     git(&fixture.main, &["checkout", "-q", "main"]);
     git(
         &fixture.main,
