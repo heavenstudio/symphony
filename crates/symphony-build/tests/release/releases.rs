@@ -606,3 +606,24 @@ fn the_tests_clock_never_pushes_a_release_off_this_machine() {
     );
     assert!(fixture.remote_tags().is_empty());
 }
+
+#[test]
+fn what_a_landing_says_of_a_release_already_cut_is_in_the_next_releases_message() {
+    let fixture = Fixture::new();
+    fixture.night(NOW, 0);
+    fixture.land(
+        "notes.txt",
+        Some("said late"),
+        "Say it\n\nConsumer-Note: release-2026-11-12 once: run it\nConsumer-Note: tools: a new one",
+    );
+    fixture.night(NOW + 3600.0, 0);
+    let message = fixture.message("release-2026-11-12.2");
+    assert!(
+        message.contains(
+            "updated.\nTools:\n- a new one\nSaid with this release of an earlier one, for a \
+             project already at or past it:\n- Of release-2026-11-12, Run once: run it\n\nChanges \
+             on main since release-2026-11-12 (1):\n"
+        ),
+        "{message}"
+    );
+}

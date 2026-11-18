@@ -65,11 +65,18 @@ fn pinned(root: &Path) -> Option<String> {
         text.lines()
             .filter(|line| !line.trim_start().starts_with('#'))
     };
+    // The key as a key: after a space, a brace or a comma, and before its `=`, so a name that
+    // holds its letters (`…-review`) is passed over.
     let value = |line: &str, key: &str| {
-        let (_, after) = line.split_once(key)?;
-        let value = after.trim_start().strip_prefix('=')?.trim_start();
-        let (value, _) = value.strip_prefix('"')?.split_once('"')?;
-        Some(value.to_string())
+        line.match_indices(key).find_map(|(at, _)| {
+            let before = line[..at].chars().next_back();
+            if before.is_some_and(|c| !matches!(c, ' ' | '\t' | '{' | ',')) {
+                return None;
+            }
+            let value = line[at + key.len()..].trim_start().strip_prefix('=')?;
+            let (value, _) = value.trim_start().strip_prefix('"')?.split_once('"')?;
+            Some(value.to_string())
+        })
     };
     lines()
         .find_map(|line| value(line, "tag").filter(|tag| release::named(tag)))

@@ -732,6 +732,8 @@ fn the_notes_of_two_releases_come_from_git_and_the_commits_between_them() {
         Some((late.clone(), "release-2026-11-19".to_string())),
         "the correction says where it was said"
     );
+    assert_eq!(history[2].late, [history[1].entries[2].clone()]);
+    assert_eq!(history[1].late, []);
 
     let document = document_at(&repo.root, "release-2026-11-19", &tip).unwrap();
     assert!(document.contains(&format!(
@@ -757,7 +759,9 @@ fn the_notes_of_two_releases_come_from_git_and_the_commits_between_them() {
              release-2026-11-18.\n\nCargo.toml and Cargo.lock:\n{}\nPublic Rust items a \
              consumer calls:\n- `Store::opening_on` is removed: call `Store::reading_on`. \
              `Store::reading_on` has been there since release-2026-11-18.\n- The calls a \
-             consumer's code is held to changed in: crates/tasks/tests/consumer_api.rs.\n",
+             consumer's code is held to changed in: crates/tasks/tests/consumer_api.rs.\nSaid \
+             with this release of an earlier one, for a project already at or past it:\n- Of \
+             release-2026-11-18, symphony.toml: `symphony.local.toml` is read\n",
             named("release-2026-11-18", &second),
             schema_steps(20, 21),
             named("release-2026-11-19", &tip),
@@ -769,7 +773,31 @@ fn the_notes_of_two_releases_come_from_git_and_the_commits_between_them() {
     assert_eq!(taking[0], TAKING);
     assert_eq!(taking[1], "Cargo.toml and Cargo.lock:");
     assert_eq!(taking[3], "Public Rust items a consumer calls:");
-    assert_eq!(taking.len(), 6, "{taking:?}");
+    // What its commits said of the release before is in its message too.
+    assert_eq!(
+        taking[6..],
+        [
+            "Said with this release of an earlier one, for a project already at or past it:",
+            "- Of release-2026-11-18, symphony.toml: `symphony.local.toml` is read"
+        ],
+        "{taking:?}"
+    );
+    // A project at the release corrected reads the correction when it takes the next, from the
+    // notes alone; one behind both reads it under each.
+    let at = symphony::machine::release::notes_between;
+    let next = at(&document, Some("release-2026-11-18"), None).unwrap();
+    assert!(next.starts_with("## release-2026-11-19\n"), "{next}");
+    assert_eq!(
+        next.matches("`symphony.local.toml` is read").count(),
+        1,
+        "{next}"
+    );
+    let both = at(&document, Some("release-2026-11-17"), None).unwrap();
+    assert_eq!(
+        both.matches("`symphony.local.toml` is read").count(),
+        2,
+        "{both}"
+    );
 
     // Once it is tagged, the same notes: the tag is not read twice.
     repo.release("release-2026-11-19");
@@ -838,7 +866,8 @@ fn the_command_prints_every_releases_notes_and_checks_a_branch() {
             && out.contains("that unreleased holds: not in its tag's message)\n\n## unreleased\n")
             && out.ends_with(&format!(
                 "From release-2026-11-17.\n\nCargo.toml and Cargo.lock:\n{}\nBoard:\n- {}\n- a \
-                 table\n",
+                 table\nSaid with this release of an earlier one, for a project already at or \
+                 past it:\n- Of release-2026-11-17, Run once: run it\n",
                 named("unreleased", &repo.git(&["rev-parse", "HEAD"])),
                 schema_steps(20, 21)
             )),

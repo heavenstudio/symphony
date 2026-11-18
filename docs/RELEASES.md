@@ -71,8 +71,11 @@ nothing, and who writes each:
 - **After a release is cut**, what its landings left unsaid is said by a later commit naming it,
   `Consumer-Note: release-NAME SECTION: TEXT`. No tag and no installed release is rewritten: the
   entry is read as that release's in every notes file written from then on, marked with the commit
-  that said it and the release that commit came in. It answers nothing for the branch that says
-  it.
+  that said it and the release that commit came in, for a project still behind the release it
+  names. It is said again in the release whose commits hold it, in that release's section of the
+  notes file and in its tag's message, under a heading that names the earlier release, so a
+  project already at or past the one it names reads it when it takes the next. It answers nothing
+  for the branch that says it.
 - **Where they are read.** A release's own section is in its tag's message, after the checks and
   before the commits. Every release's, oldest first, each under `## release-NAME` with its commit,
   is `notes.md` in the release's folder on the machine ([the install](#the-install)), written from

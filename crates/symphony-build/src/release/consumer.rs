@@ -12,7 +12,8 @@
 //!   its branch's commits, `Consumer-Note: SECTION: TEXT` ([`parse`]), which the `--no-ff` land
 //!   keeps on main, so the release reads them between two releases' commits ([`entries`]). One
 //!   that names a release already cut (`Consumer-Note: release-NAME SECTION: TEXT`) is read as
-//!   that release's: what a landing left unsaid is said by a later commit.
+//!   that release's, and said again in the release whose commits hold it, for the project already
+//!   past the one it names: what a landing left unsaid is said by a later commit.
 //!
 //! A landing that changes the board schema, or takes a call out of a guard, and says nothing is
 //! red at its own tip ([`check`], a step of `just lint-rs`), not at the release. The notes of every
@@ -401,6 +402,9 @@ pub(crate) struct Notes {
     pub(crate) previous: Option<String>,
     pub(crate) derived: Derived,
     pub(crate) entries: Vec<Entry>,
+    /// The entries its commits say of a release cut before it: said here too, for the project
+    /// already at or past that release, which reads this one's notes and not that one's again.
+    pub(crate) late: Vec<Entry>,
     /// The trailers that read as no entry, each as written: said in the notes all the same.
     pub(crate) unread: Vec<String>,
 }
@@ -408,7 +412,8 @@ pub(crate) struct Notes {
 /// The notes of each of `releases` (a name and its commit, oldest first) in the repository at
 /// `root`: what git derives between each and the one before, and the entries its commits say, an
 /// entry naming another of them moved to that one, with the commit that said it and the release
-/// that commit came in.
+/// that commit came in, and kept as that release's late entry as well, so a project behind the
+/// named release and one already past it each read it.
 pub(crate) fn history(root: &Path, releases: &[(String, String)]) -> Result<Vec<Notes>, String> {
     let mut all: Vec<Notes> = Vec::new();
     let mut said: Vec<(usize, String, Entry)> = Vec::new();
@@ -438,6 +443,7 @@ pub(crate) fn history(root: &Path, releases: &[(String, String)]) -> Result<Vec<
             .filter(|named| *named != found);
         if named.is_some() {
             entry.after = Some((by, all[found].release.clone()));
+            all[found].late.push(entry.clone());
         }
         all[named.unwrap_or(found)].entries.push(entry);
     }
@@ -612,6 +618,24 @@ pub(crate) fn section(history: &[Notes], at: usize) -> Vec<String> {
             lines.push(format!("{}:", section.title()));
             lines.extend(said.into_iter().map(|said| format!("- {said}")));
         }
+    }
+    let late: Vec<String> = (notes.late.iter())
+        .filter(|entry| !entry.nothing())
+        .filter_map(|entry| {
+            let of = entry.release.as_ref()?;
+            let named = history.iter().position(|notes| notes.release == *of)?;
+            Some(format!(
+                "- Of {of}, {}: {}",
+                entry.section.title(),
+                said(history, named, entry)
+            ))
+        })
+        .collect();
+    if !late.is_empty() {
+        lines.push(
+            "Said with this release of an earlier one, for a project already at or past it:".into(),
+        );
+        lines.extend(late);
     }
     if !notes.unread.is_empty() {
         lines.push("Said without a section:".into());

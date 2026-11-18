@@ -139,6 +139,16 @@ fn the_release_a_project_is_at_is_the_tag_its_manifest_names() {
         "[dependencies]\nsymphony = { git = \"u\", rev = \"1b07a67d6be2\" }\n",
     );
     assert_eq!(pinned(&tree.path("by-commit")), Some("1b07a67d6be2".into()));
+    // A dependency whose name holds a key's letters is read past, to the key itself.
+    tree.write(
+        "named/Cargo.toml",
+        "[dependencies]\nsymphony-review = { git = \"u\", rev = \"abcdef1234\" }\nmetag = { \
+         git = \"u\", tag = \"release-2026-11-17\" }\n",
+    );
+    assert_eq!(
+        pinned(&tree.path("named")),
+        Some("release-2026-11-17".into())
+    );
     tree.write(
         "elsewhere/Cargo.toml",
         "[dependencies]\nother = { git = \"u\", rev = \"1b07a67d6be2\" }\n",
