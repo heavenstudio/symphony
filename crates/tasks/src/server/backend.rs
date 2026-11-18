@@ -23,7 +23,29 @@ pub enum Engine {
 #[serde(deny_unknown_fields)]
 struct Identity {
     format: u32,
+    #[serde(deserialize_with = "engine_name")]
     engine: Engine,
+}
+
+/// The identity file's engine is a string, rather than Serde's other enum representations.
+fn engine_name<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Engine, D::Error> {
+    struct Name;
+    impl<'de> serde::de::Visitor<'de> for Name {
+        type Value = Engine;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a backend engine name")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Engine, E> {
+            match value {
+                "surrealdb" => Ok(Engine::SurrealDb),
+                "postgresql" => Ok(Engine::PostgreSql),
+                _ => Err(E::unknown_variant(value, &["surrealdb", "postgresql"])),
+            }
+        }
+    }
+    deserializer.deserialize_str(Name)
 }
 
 impl Home {
@@ -34,6 +56,12 @@ impl Home {
             Err(why) if why.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(why) => return Err(io("could not read backend identity", &path)(why)),
         };
+        if !text.trim_start().starts_with('{') {
+            return Err(ServerError::Io(format!(
+                "{} is not a backend identity object",
+                path.display()
+            )));
+        }
         let identity: Identity = serde_json::from_str(&text).map_err(|why| {
             ServerError::Io(format!(
                 "{} is not a known backend identity: {why}",
@@ -225,6 +253,13 @@ mod tests {
             r#"{"format":2,"engine":"postgresql"}"#,
             r#"{"format":1,"engine":"other"}"#,
             r#"{"format":1,"engine":"postgresql","extra":1}"#,
+            r#"{"format":1,"engine":"postgresql","engine":"surrealdb"}"#,
+            r#"{"format":1,"format":1,"engine":"postgresql"}"#,
+            r#"{"format":1,"engine":1}"#,
+            r#"{"format":1,"engine":{"postgresql":null}}"#,
+            r#"[1,"postgresql"]"#,
+            r#"{"format":1}"#,
+            r#"{"engine":"postgresql"}"#,
         ] {
             fs::write(board.home.dir.join(FILE), text).unwrap();
             assert!(board.home.backend().is_err(), "{text}");
@@ -245,6 +280,24 @@ mod tests {
         board.home.initialize_backend(Engine::PostgreSql).unwrap();
         fs::create_dir(board.home.dir.join(super::super::DATA)).unwrap();
         assert!(board.home.backend().is_err(), "both data folders conflict");
+    }
+
+    #[test]
+    fn engine_names_accept_json_escapes_and_either_field_order() {
+        let board = Board::new("escaped");
+        for (text, engine) in [
+            (
+                r#"{"engine":"postgre\u0073ql","format":1}"#,
+                Engine::PostgreSql,
+            ),
+            (
+                r#"{"format":1,"engine":"surreal\u0064b"}"#,
+                Engine::SurrealDb,
+            ),
+        ] {
+            fs::write(board.home.dir.join(FILE), text).unwrap();
+            assert_eq!(board.home.backend().unwrap(), engine);
+        }
     }
 
     #[test]
