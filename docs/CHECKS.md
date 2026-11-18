@@ -360,40 +360,55 @@ never served. When the client check is red on a client it built, the tests run a
 when it built none, or did not run, the browser tests build the client themselves, red if that
 build fails too. The tests' log and the summary say which.
 
-**The tests side by side.** The tests step (`tools/test-lanes.sh`) builds every test of the
-workspace once, then runs them in lanes side by side, each lane one `cargo test --workspace` over
-the targets it names: `perf`, `sweep`, `browser`, the board's heavy targets, the server's `after_*`
-targets, the libraries' and binaries' own tests, the rest, and the doc tests
-(`tools/test-lanes.sh --list` prints them); cargo running the targets one after another made the
-step 35 to 42 minutes. A test target no lane names runs in the rest, so a new heavy target gets a
-lane by its name. At most half the processors online run lanes at once (`getconf
-_NPROCESSORS_ONLN`; one when the system says no number), each taking the next lane none has taken.
-The build and every lane give build scripts and proc macros the rest of the build's debug info, so
-every lane's units are the build's and no lane builds or links anything while the others run.
+**The tests side by side.** The tests step (`tools/test-lanes.sh`) builds the workspace's test
+binaries once with cargo-nextest 0.9.152, then reuses that binary metadata for one nextest scheduler.
+Run `just nextest-setup` once to install the pinned runner under `tools/.nextest/`; it can copy an
+existing install of that exact version, otherwise it installs the locked package. A tests step
+never installs or downloads nextest: a missing or different local copy fails before the build,
+naming that setup command. Focused `just test-rs` commands continue to use Cargo.
 
-Each lane writes its log as it runs, `tests-lanes/NAME.log` beside the step's log
-(`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), and the step's log names each
-before any lane starts: a run the release run stops, with SIGTERM and then SIGKILL, leaves every
-lane's output where the step's log said. SIGTERM, SIGHUP and an interrupt end the lanes, and the
-step prints what they wrote. Once every lane has ended, each lane's output follows the one before it
-whole in the step's log, then every red lane's targets that failed as one list in cargo's words,
-the last the release run's reader keeps. A lane is green only when it said the exit status 0. A red
-lane's targets are the list cargo ended its log with on failed targets (exit 101); any other red
-lane (killed by a signal, its cargo failing before any target, its status unsaid or none) is listed
-whole, `--workspace` and its targets, and named after its output by a line in cargo's words
-(`error: the lane NAME is red …, to rerun pass` and those arguments), which the reader reruns as a
-target that failed.
+Nextest runs six cases at once (the caller's `RUST_TEST_THREADS` wins), with groups capping Chrome
+and database cases at two each (`.config/nextest.toml`). Retries are explicitly zero. Every case
+has its duration in the log, and a per-case timeout ends a stalled case and its children. A timeout
+is a failure, never a pass, and replaces none of the tests' own assertions. The runner emits both
+its status lines and libtest-json-plus 0.1 events: the release readers use the events to name each
+failed or timed-out case and the exact Cargo command that reruns it alone. Captured output stays
+inside an event, so a command a fixture prints is no failure of the release run.
 
-The lanes share no port or store: every server, store and browser a test starts takes a port the
-system picks and a folder of its own. The one target writing the build folder (the
-client's `build`, which links `symphony-build` there again) runs in the rest with every `symphony-build` and
-`symphony-app` target and `standalone`, which copies that folder. The browser lane writes it too
-when `SYMPHONY_UI_DIST` names no client: its own client build
-(`apps/symphony-web/build.sh`, which runs `tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again
-while the rest runs it. Verify names the client its client check built, so only a verify whose
-client check built none leaves it to the browser lane. The binaries a test would build for itself under its case's clock
-are the build's own, named by `SYMPHONY_TEST_TASKS_BINARY` and `SYMPHONY_TEST_BINARIES` (a target
-run alone builds them as before).
+The suites with shared fixtures retain one libtest process: the board's `perf`, `sweep`, `cli`,
+`server`, `store` and `launch`; the app's `after_commit`, `after_publication`, `after_worktrees`,
+`hooks`, `picks` and `project`; the server's `after_http`; the build package's `release`; and the
+browser suite. They share the store fixture's database server (including its transitive imports),
+perf's generated board, sweep's repository template or the browser's build gzip cache. Each
+integration target is one Cargo batch. The `symphony-app`, `symphony-board` and `symphony-server`
+library tests share that store fixture too: a Cargo library batch uses the build command's Rust
+exec adapter to run exactly those three metadata-listed images, leaving the stateless libraries
+to nextest. Cargo supplies the package working directory, environment and dynamic-library paths;
+the adapter changes none and replaces itself with the selected image, preserving arguments,
+process identity, signals and status. An artifact absent from the metadata is refused.
+
+Cargo also runs the doc tests, which nextest does not run. These exceptions, rather than a table
+partitioning every target, are the runner's list (`tools/test-lanes.sh --list`); other binaries,
+new targets included, belong to nextest. The shared-process exceptions keep their libtest suite
+measurements and test assertions; they acquire no nextest per-case timing or timeout. A path or
+metadata cache and an executable's warmup do not require a shared process: each nextest case can
+prepare its own from the supplied build outputs.
+
+The client's `build` test runs before scheduling: it may relink `symphony-build`, which other
+targets execute or copy (`standalone`). When the client check supplied no build, the runner
+publishes one client before scheduling, so no browser case builds or relinks while other tests
+run. Every test receives the build's binaries through `SYMPHONY_TEST_TASKS_BINARY` and
+`SYMPHONY_TEST_BINARIES`; a caller's values win. Each Cargo call keeps the workspace build's
+feature graph and its build-script/proc-macro debug info, so no concurrent batch relinks anything.
+Every server, store and browser still takes its own folder and a port the system picks.
+
+Nextest and the Cargo batches keep live logs in `tests-lanes/` beside the step's log
+(`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), with the binary metadata beside
+them. The step names each log before scheduling. At most half the processors online run batches
+at once (at least one); each batch's output follows whole in the step's log once they all end.
+Signals reach the foreground batches, which are waited for before the runner exits, and a forced
+stop leaves their live output at the named paths. Native failures retain Cargo's target lists;
+nextest failures retain their own events. A batch is green only on an explicit exit status of zero.
 
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
