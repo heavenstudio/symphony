@@ -1157,7 +1157,11 @@ error: extern location for q does not exist: /t/debug/deps/libq-1.rlib
                     String::new()
                 }
             ));
-            assert_eq!(arguments(&log.targets), [selection.clone()], "{log:?}");
+            assert_eq!(
+                arguments(&log.targets),
+                std::slice::from_ref(&selection),
+                "{log:?}"
+            );
         }
         assert_eq!(
             arguments(&[target("-p symphony-build --lib", &[])]),
