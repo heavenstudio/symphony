@@ -859,6 +859,7 @@ fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
         ),
         next_id: 0,
         session: None,
+        context: None,
         observer: None,
         events: Vec::new(),
         arrivals: Vec::new(),
@@ -1644,6 +1645,7 @@ fn with_peer<T: Send + 'static>(
         socket: WebSocket::from_raw_socket(MaybeTlsStream::Plain(stream), Role::Client, None),
         next_id: 0,
         session: Some("page".into()),
+        context: None,
         observer: observer.then(|| "observer".into()),
         events: Vec::new(),
         arrivals: Vec::new(),
@@ -4565,4 +4567,289 @@ fn a_deadline_ends_every_wait_soon_after_it_with_an_error_that_says_so() {
         .unwrap_err();
     assert!(!thrown.past_deadline(), "{thrown}");
     drop(silent);
+}
+
+#[test]
+fn a_fresh_context_is_a_page_as_a_launch_leaves_it_and_ends_the_one_before_with_what_it_made() {
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        // Every command but the observer's turns and the page's probes: its session, its method and
+        // its parameters.
+        let (mut seen, mut made) = (Vec::new(), 0);
+        while let Some(command) = peer.next() {
+            if marker(&command) || command["params"]["expression"] == "0" {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+                continue;
+            }
+            seen.push((
+                command["sessionId"].as_str().unwrap_or("").to_string(),
+                command["method"].as_str().unwrap_or("").to_string(),
+                command["params"].clone(),
+            ));
+            let result = match command["method"].as_str() {
+                Some("Target.createBrowserContext") => {
+                    made += 1;
+                    json!({"browserContextId": format!("context-{made}")})
+                }
+                Some("Target.createTarget") => json!({"targetId": format!("target-{made}")}),
+                Some("Target.attachToTarget") => json!({"sessionId": format!("session-{made}")}),
+                // The page before ends as its context does, told of before the reply.
+                Some("Target.closeTarget" | "Target.disposeBrowserContext") => {
+                    let before = if made == 1 {
+                        "page".to_string()
+                    } else {
+                        format!("session-{}", made - 1)
+                    };
+                    peer.send(json!({"method": "Target.detachedFromTarget",
+                        "params": {"sessionId": before}}));
+                    json!({})
+                }
+                _ => json!({}),
+            };
+            peer.reply(&command, result);
+        }
+        seen
+    });
+    chrome.follow_frames().unwrap();
+    chrome.keep_in_front().unwrap();
+    chrome.dismiss_dialogs();
+    chrome.enable_in_frames(&["Runtime.enable"]);
+    let deadline = Some(Instant::now() + Duration::from_secs(3600));
+    chrome.set_deadline(deadline);
+    chrome.frame = Some("left".into());
+    chrome.fresh_context().unwrap();
+    assert_eq!(chrome.session.as_deref(), Some("session-1"));
+    assert_eq!(
+        chrome.context,
+        Some(("context-1".into(), "target-1".into()))
+    );
+    assert_eq!(chrome.own_pages, ["observer-target", "target-1"]);
+    assert!(!chrome.following && !chrome.fronting && !chrome.dismissing);
+    assert!(chrome.frame_domains.is_empty() && chrome.frame.is_none());
+    assert_eq!(chrome.deadline, deadline);
+    // The page before closing is not this page's end, and none of its events is kept.
+    assert_eq!(chrome.gone, None);
+    assert!(chrome.events().is_empty(), "{:?}", chrome.events());
+    chrome.fresh_context().unwrap();
+    assert_eq!(chrome.session.as_deref(), Some("session-2"));
+    assert_eq!(chrome.own_pages, ["observer-target", "target-2"]);
+    assert_eq!(chrome.gone, None);
+    drop(chrome);
+    let command = |session: &str, method: &str, params: Value| {
+        (session.to_string(), method.to_string(), params)
+    };
+    let seen = peer.join().unwrap();
+    let from = seen
+        .iter()
+        .position(|(_, method, params)| {
+            method == "Target.setDiscoverTargets" && params["discover"] == false
+        })
+        .expect("the browser is asked to tell of no target any more");
+    let fresh = |made: usize, end: (String, String, Value)| {
+        let session = format!("session-{made}");
+        [
+            command("", "Target.createBrowserContext", json!({})),
+            command(
+                "",
+                "Target.createTarget",
+                json!({"url": "about:blank", "browserContextId": format!("context-{made}")}),
+            ),
+            command(
+                "",
+                "Target.attachToTarget",
+                json!({"targetId": format!("target-{made}"), "flatten": true}),
+            ),
+            command(&session, "Page.enable", json!({})),
+            command(&session, "Network.enable", json!({})),
+            end,
+        ]
+    };
+    let expected: Vec<_> = [command(
+        "",
+        "Target.setDiscoverTargets",
+        json!({"discover": false, "filter": []}),
+    )]
+    .into_iter()
+    // The launch's own page is closed; a context this made is disposed of, its pages with it.
+    .chain(fresh(
+        1,
+        command(
+            "",
+            "Target.closeTarget",
+            json!({"targetId": "page-target"}),
+        ),
+    ))
+    .chain(fresh(
+        2,
+        command(
+            "",
+            "Target.disposeBrowserContext",
+            json!({"browserContextId": "context-1"}),
+        ),
+    ))
+    .collect();
+    assert_eq!(seen[from..], expected);
+}
+
+/// A server of one page, `/`, never kept, which asks for `/kept.js`, kept for an hour by any
+/// cache that takes it: its address, and how many times each path was asked for.
+fn caching_server() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{BufRead, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/", listener.local_addr().unwrap());
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = asked.clone();
+    std::thread::spawn(move || {
+        for connection in listener.incoming() {
+            let Ok(connection) = connection else {
+                return;
+            };
+            let seen = seen.clone();
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(connection.try_clone().unwrap());
+                let mut head = String::new();
+                while reader.read_line(&mut head).is_ok_and(|read| read > 2) {}
+                let path = head.split(' ').nth(1).unwrap_or("/").to_string();
+                let (kind, keep, body) = if path == "/kept.js" {
+                    ("text/javascript", "max-age=3600", "window.kept = true;")
+                } else {
+                    (
+                        "text/html",
+                        "no-store",
+                        "<!doctype html><script src=/kept.js></script>",
+                    )
+                };
+                seen.lock().unwrap().push(path);
+                let _ = write!(
+                    &connection,
+                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nCache-Control: {keep}\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            });
+        }
+    });
+    (base, asked)
+}
+
+/// What a visit to `base` finds its browser holds of an earlier one (a cookie, a stored item, an
+/// IndexedDB database), whether its script came from the cache, and how many times the server
+/// has been asked for that script by then; it then leaves all three for the next visit.
+fn visit_keeping(
+    chrome: &mut Chrome,
+    base: &str,
+    asked: &std::sync::Mutex<Vec<String>>,
+) -> (Value, bool, usize) {
+    chrome.open("about:blank").unwrap();
+    chrome.open(base).unwrap();
+    assert!(
+        chrome.wait_for("window.kept === true", PROTOCOL_CPU).unwrap(),
+        "the page's script never ran"
+    );
+    let script = format!("{base}kept.js");
+    let requests = requests_until(chrome, "the page's script answered", |requests| {
+        request(requests, &script).is_some_and(|request| request.finished || request.from_cache)
+    });
+    let held = chrome
+        .eval(
+            "(async () => { const held = [document.cookie, localStorage.getItem('seen'), \
+             (await indexedDB.databases()).map(database => database.name)]; \
+             document.cookie = 'seen=1; max-age=3600'; localStorage.setItem('seen', '1'); \
+             await new Promise((resolve, reject) => { const open = indexedDB.open('seen'); \
+             open.onsuccess = () => { open.result.close(); resolve(); }; open.onerror = reject; }); \
+             return held; })()",
+        )
+        .unwrap();
+    let count = asked
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|path| *path == "/kept.js")
+        .count();
+    (held, request(&requests, &script).unwrap().from_cache, count)
+}
+
+#[test]
+fn a_fresh_context_shares_no_cookie_storage_or_cache_entry_and_keeps_its_own_between_visits() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let (base, asked) = caching_server();
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    let nothing = json!(["", null, []]);
+    let kept = json!(["seen=1", "1", ["seen"]]);
+    // The launch's own profile, then a context after it, then a context after a context: each
+    // first visit holds nothing and asks the server, each next visit holds its own and asks none.
+    let mut visits = Vec::new();
+    for context in 0..3 {
+        if context > 0 {
+            chrome.fresh_context().unwrap();
+        }
+        visits.push(visit_keeping(&mut chrome, &base, &asked));
+        visits.push(visit_keeping(&mut chrome, &base, &asked));
+    }
+    assert_eq!(
+        visits,
+        [
+            (nothing.clone(), false, 1),
+            (kept.clone(), true, 1),
+            (nothing.clone(), false, 2),
+            (kept.clone(), true, 2),
+            (nothing, false, 3),
+            (kept, true, 3),
+        ]
+    );
+}
+
+/// The browser's pages but the observer's, each `(target, context)`, and its contexts but the
+/// profile's own.
+fn pages_and_contexts(chrome: &mut Chrome) -> (Vec<(String, String)>, Vec<String>) {
+    let text = |value: &Value| value.as_str().unwrap_or("").to_string();
+    let targets = chrome.browser_call("Target.getTargets", json!({})).unwrap();
+    let pages = targets["targetInfos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|target| target["type"] == "page" && target["targetId"] != chrome.own_pages[0])
+        .map(|target| (text(&target["targetId"]), text(&target["browserContextId"])))
+        .collect();
+    let contexts = chrome
+        .browser_call("Target.getBrowserContexts", json!({}))
+        .unwrap();
+    let contexts = contexts["browserContextIds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(text)
+        .collect();
+    (pages, contexts)
+}
+
+#[test]
+fn a_context_left_for_a_fresh_one_leaves_no_target_and_the_page_runs_on_in_the_new_one() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let (base, _asked) = caching_server();
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    chrome.open(&base).unwrap();
+    let (launched, none) = pages_and_contexts(&mut chrome);
+    assert_eq!((launched.len(), none), (1, Vec::<String>::new()));
+    let mut before = launched;
+    for _ in 0..2 {
+        chrome.fresh_context().unwrap();
+        let (pages, contexts) = pages_and_contexts(&mut chrome);
+        let (context, target) = chrome.context.clone().unwrap();
+        // The one page is the new context's, and neither the page before nor its context is left.
+        assert_eq!(pages, [(target, context.clone())]);
+        assert_eq!(contexts, [context]);
+        assert_ne!(pages, before);
+        // The page is one to drive: it opens, answers and waits as a launch's does.
+        chrome.open(&base).unwrap();
+        assert!(chrome.wait_for("window.kept === true", PROTOCOL_CPU).unwrap());
+        assert_eq!(chrome.eval("1 + 1").unwrap(), json!(2));
+        before = pages;
+    }
 }

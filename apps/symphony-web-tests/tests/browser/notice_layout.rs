@@ -441,6 +441,7 @@ const ON_SCREEN: &str = "[...document.querySelectorAll('.page-notices:not([hidde
 #[test]
 fn on_a_phone_the_pages_without_a_composer_keep_their_notices_on_screen() {
     let floating = json!({"position": "fixed", "foot": 132, "left": 16, "toasts": true});
+    let Some(mut chrome) = chrome() else { return };
     for page in ["/tasks", "/", "/queue", "/agents", "/docs/"] {
         let site = site();
         if page == "/docs/" {
@@ -458,7 +459,8 @@ fn on_a_phone_the_pages_without_a_composer_keep_their_notices_on_screen() {
                         "entries": [{"kind": "document", "path": "docs/PROBE.md", "title": "Probe", "docs": 1, "waiting": 0, "summary": ""}]}),
             );
         }
-        let Some(mut chrome) = chrome() else { return };
+        // Each page a first visit, on a stand-in and in a browser context of its own.
+        chrome.fresh_context();
         chrome.call(
             "Emulation.setDeviceMetricsOverride",
             json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
