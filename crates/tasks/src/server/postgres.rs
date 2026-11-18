@@ -448,12 +448,15 @@ impl Postgres {
 /// macOS's [`SOCKET_PATH_MAX`], and two boards never share one.
 pub fn socket_folder(data: &Path) -> PathBuf {
     use sha2::{Digest as _, Sha256};
+    use std::fmt::Write as _;
+    const PREFIX: &str = "symphony-pg-";
     let digest = Sha256::digest(data.as_os_str().as_encoded_bytes());
-    let hex: String = digest[..8]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    Path::new(SOCKETS).join(format!("symphony-pg-{hex}"))
+    let mut name = String::with_capacity(PREFIX.len() + 16);
+    name.push_str(PREFIX);
+    for byte in &digest[..8] {
+        write!(name, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    Path::new(SOCKETS).join(name)
 }
 
 /// The folder of the machine's PostgreSQL programs the project file at the main checkout `root`

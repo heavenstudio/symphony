@@ -5,6 +5,25 @@
 use super::*;
 use std::fs;
 
+#[test]
+fn digest_comparison_requires_the_exact_lowercase_sha256() {
+    const EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    assert!(has_digest("", EMPTY));
+    assert!(has_digest("abc", ABC));
+    assert!(!has_digest("abc", EMPTY));
+    for wrong in [
+        String::new(),
+        ABC[..63].to_string(),
+        format!("{ABC}0"),
+        ABC.to_uppercase(),
+        "z".repeat(64),
+        "λ".repeat(32),
+    ] {
+        assert!(!has_digest("abc", &wrong), "{wrong:?}");
+    }
+}
+
 /// A folder of the test's own, removed when it ends.
 struct Scratch(PathBuf);
 

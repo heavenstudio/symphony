@@ -62,10 +62,15 @@ fn is_own(source: &str) -> bool {
 
 fn has_digest(source: &str, expected: &str) -> bool {
     use sha2::{Digest as _, Sha256};
-    let digest: String = (Sha256::digest(source.as_bytes()).iter())
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    digest == expected
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(source.as_bytes());
+    expected.len() == digest.len() * 2
+        && digest
+            .iter()
+            .zip(expected.as_bytes().chunks_exact(2))
+            .all(|(&byte, digits)| {
+                digits[0] == HEX[usize::from(byte >> 4)] && digits[1] == HEX[usize::from(byte & 15)]
+            })
 }
 
 /// What Cargo sets for every process it runs, tests and examples included: the package's folder.

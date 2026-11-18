@@ -5,6 +5,27 @@
 use super::*;
 
 #[test]
+fn socket_hash_names_keep_the_same_bytes_for_ascii_unicode_and_non_utf8_paths() {
+    use std::os::unix::ffi::OsStrExt as _;
+    for (path, hash) in [
+        ("", "e3b0c44298fc1c14"),
+        ("/tmp/board/postgresql", "370cac515b3de492"),
+        ("/tmp/board-ç/postgresql", "c4e39f5fe8ac7408"),
+    ] {
+        assert_eq!(
+            socket_folder(Path::new(path)),
+            Path::new("/tmp").join(format!("symphony-pg-{hash}"))
+        );
+    }
+    assert_eq!(
+        socket_folder(Path::new(std::ffi::OsStr::from_bytes(
+            b"/tmp/board-\xff/postgresql"
+        ))),
+        Path::new("/tmp/symphony-pg-721bd79b650bfba4")
+    );
+}
+
+#[test]
 fn a_socket_is_short_and_its_own_whatever_the_boards_folder() {
     let long = PathBuf::from(format!(
         "/private/tmp/{}/checkout/artifacts/tools/board-pg-server/run-1/board/postgresql",
