@@ -33,7 +33,7 @@ were met. Every cell below is the same test run against both majors, in
 | Functions, DO blocks and triggers; privileges | pass | pass | `board.rs` `a_made_board_is_its_logins_own_with_no_definer_function_extension_or_other_schema` |
 | JSONB and paired store semantics | pass | pass | `board.rs` `the_same_work_is_answered_alike_on_hosted_16_hosted_18_and_the_local_board`; `transactions.rs` `a_request_is_one_repeatable_read_transaction_with_variables_of_its_own` |
 | Text search and order | pass | pass | `analyzer.rs` `every_code_points_terms_on_16_are_18s_alone_and_inside_a_word`, `a_boards_search_reads_the_same_words_on_16_and_18`; hits and scores in the paired test above |
-| Protocol and transaction state | pass | pass | `transactions.rs`, all eight |
+| Protocol and transaction state | pass | pass | `transactions.rs`, all ten |
 | Schema concurrency and fencing | pass | pass | `board.rs` `two_migrations_at_once_make_the_board_once`, `a_writer_behind_holds_the_migration_and_a_board_moved_on_refuses_it`; `transactions.rs` `a_write_that_met_anothers_since_its_snapshot_is_a_conflict_to_decide_again` |
 | TLS and login | pass | pass | `refusals.rs`, all eight; `capacity.rs` `a_rotated_secret_is_read_again_and_the_connections_made_with_the_old_one_are_retired` |
 | Topology and capacity | pass | pass | `capacity.rs` `a_pool_lends_its_share_and_refuses_the_line_past_its_length_and_its_wait`, `the_deployments_budget_is_counted_in_the_database_across_processes_and_by_class`, `the_servers_cap_for_the_login_is_a_refusal_of_capacity`, each counting the server's own sessions |
@@ -91,5 +91,5 @@ every code point in five places (1,112,063 code points, the two results' MD5 the
 `c654be222e69edfc973d6cc36a1e5ba3`); the test compares every code point in three places and
 every pair of ASCII characters at each run.
 
-The whole hosted target, 39 tests on both majors with its eight servers started and stopped,
-took 42 seconds.
+The whole hosted target, 41 tests on both majors with its eight servers started and stopped,
+took 36 seconds.

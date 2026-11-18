@@ -9,8 +9,8 @@
 //! combining mark 18 orders by its class where 16 takes it for a starter, with a mark of the same
 //! class 16 knows, which is no letter and no decomposition's part, so it stands in for it while
 //! 16 orders the term and is put back after. Code points are hexadecimal. The hosted matrix
-//! compares the data with a running 18 and the terms of every code point on a running 16
-//! (`tests/hosted/analyzer.rs`).
+//! compares the terms of every code point on a running 16 with a running 18's
+//! (`tests/hosted/analyzer.rs`), so a datum that no longer says what 18 does fails there.
 
 use std::fmt::Write as _;
 

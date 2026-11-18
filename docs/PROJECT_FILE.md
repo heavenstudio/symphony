@@ -326,15 +326,19 @@ the table is read by the library's hosted opening alone.
 | `url_env` | one of the two | the variable holding the PostgreSQL URI: one host, the project's own database and login, a password; TLS is always verified, whatever it asks |
 | `url_file_env` | one of the two | the variable holding the path of a mounted file of that URI |
 | `ca_file_env` | required | the variable holding the path of the certificate authority's PEM file: the only authority trusted |
-| `client_cert_file_env`, `client_key_file_env` | none | the variables holding the paths of a client certificate and its key, both or neither |
+| `client_cert_file_env` | none | the variable holding the path of a client certificate, where the endpoint asks for one; with `client_key_file_env` or not at all |
+| `client_key_file_env` | none | the variable holding the path of that certificate's key |
 | `class_env` | required | the variable holding this process's class, one of the budget's |
 | `connect_timeout_seconds` | `10` | how long a connection may take to be made |
 | `acquire_timeout_seconds` | `10` | how long a request waits for a connection of the pool |
 | `request_timeout_seconds` | `300` | how long a request may take once it has its connection |
 | `queue_max` | `16` | the requests that may wait for a connection at once; one more is refused at once |
+| `budget` | required | `[board.external_postgresql.budget]`, the deployment's connections, as below |
 
-`[board.external_postgresql.budget]` is required: the deployment's whole use of the login
-role, counted for every process that can be alive at once.
+## `[board.external_postgresql.budget]`
+
+The deployment's whole use of the login role, counted for every process that can be alive at
+once. A hosted board's table without it is refused.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
@@ -342,12 +346,22 @@ role, counted for every process that can be alive at once.
 | `other_users` | `0` | the role's connections that are not the board's |
 | `maintenance` | required, at least 1 | the connections of a migration or an export, the class `maintenance` |
 | `headroom` | required | the connections left free |
-| `classes` | required, at least one | `[board.external_postgresql.budget.classes]`: each class's `processes` (old and new revisions during a rollout, draining instances, each process of an instance) and `pool_max`, a process's pool |
+| `classes` | required, at least one | `[board.external_postgresql.budget.classes.CLASS]`, a class of process by its name, as below |
 
 Every class's `processes` times its `pool_max`, with `other_users`, `maintenance` and
 `headroom`, is at most `role_connection_cap`, or the table is refused. Each connection takes
 one of its class's slots in the database, so a class never passes its total whatever each
 process counts.
+
+## `[board.external_postgresql.budget.classes.CLASS]`
+
+One class of process, named in lower-case letters, digits, `-` and `_`; `maintenance` is the
+budget's own and no class's name.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `processes` | required, at least 1 | the processes of the class that can be alive at once: old and new revisions during a rollout, draining instances, each process of an instance |
+| `pool_max` | required, at least 1 | the connections one process of the class holds at most: its pool |
 
 ## `[board.machine_wip.MACHINE]`
 
