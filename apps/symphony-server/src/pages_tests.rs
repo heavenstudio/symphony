@@ -89,7 +89,7 @@ fn a_machine_page_wears_the_client_frame_and_the_symphony_icon() {
     // unlit, and its crumb says what it is.
     assert!(
         page.contains(&format!(
-            "<header class=\"app-header\" id=\"top\">{SYMPHONYS}<nav class=\"app-pages\" \
+            "<header class=\"app-header\" id=\"top\">{SYMPHONYS}<nav class=\"app-pages scroll-row\" \
              aria-label=\"Pages\"><a href=\"/\">Projects</a></nav><nav class=\"crumbs\" \
              aria-label=\"Breadcrumbs\"><span>not found</span></nav></header>"
         )),
@@ -105,7 +105,7 @@ fn the_machine_list_lights_its_one_page_and_has_no_crumb() {
     let page = machine("Symphony", "", "", "<ul class=\"projects\"></ul>");
     assert!(
         page.contains(&format!(
-            "<header class=\"app-header\" id=\"top\">{SYMPHONYS}<nav class=\"app-pages\" \
+            "<header class=\"app-header\" id=\"top\">{SYMPHONYS}<nav class=\"app-pages scroll-row\" \
              aria-label=\"Pages\"><a href=\"/\" class=\"active\" \
              aria-current=\"page\">Projects</a></nav></header>"
         )),
@@ -149,7 +149,7 @@ fn a_project_page_takes_its_theme_and_the_header_its_client_pages_draw_under_its
             "<header class=\"app-header\" id=\"top\"><span class=\"app-brand\"><img \
              class=\"app-mark\" src=\"/lantern/look/icon.svg?v={version}\" alt=\"\"><span \
              class=\"app-name\">Lantern &lt;Works&gt;</span></span><a href=\"/\" \
-             class=\"project-switch\">Projects</a><nav class=\"app-pages\" \
+             class=\"project-switch\">Projects</a><nav class=\"app-pages scroll-row\" \
              aria-label=\"Pages\"><a href=\"/lantern/\">Home</a><a \
              href=\"/lantern/queue\">Queue</a><a href=\"/lantern/docs/\">Docs</a><a \
              href=\"/lantern/tasks\">Board</a><a href=\"/lantern/reports\">Reports</a><a \
@@ -167,7 +167,7 @@ fn a_project_page_takes_its_theme_and_the_header_its_client_pages_draw_under_its
     assert!(!page.contains(">Projects<"), "{page}");
     assert!(
         page.contains(&format!(
-            "<header class=\"app-header\" id=\"top\">{SYMPHONYS}<nav class=\"app-pages\""
+            "<header class=\"app-header\" id=\"top\">{SYMPHONYS}<nav class=\"app-pages scroll-row\""
         )),
         "{page}"
     );
@@ -366,7 +366,7 @@ fn a_phones_header_is_the_clients() {
         .find("@media (max-width:760px) {\n  .app-header")
         .expect("the frame's phone header");
     assert!(
-        style[frame..].contains(".app-pages { order:10; flex-basis:100%;"),
+        style[frame..].contains(".app-pages { order:10; flex-basis:100%; gap:clamp("),
         "the pages' row of its own"
     );
     assert!(!PAGES.contains(".app-header"), "{PAGES}");

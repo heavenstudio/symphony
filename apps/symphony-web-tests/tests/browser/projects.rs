@@ -1140,18 +1140,17 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
     );
     // On a phone the mark and the name, the switch and the two buttons share the first row, the
     // pages under them, at every width from the suite's narrowest phone up: two rows and never
-    // more. The name gives way first, cut short in the room the row leaves, the mark whole
-    // beside it. Whether a name is cut is asserted where no font's width decides it: the
-    // wordmark whole at 390, every name cut at 320.
+    // more. The name shows whole down to 320 wide, where the bell is drawn alone to leave it the
+    // room, a name longer than the row's room on a second line of it, the mark whole beside it.
     for (width, id, cut) in [
-        (320, "alpha", Some(true)),
-        (320, "lantern", Some(true)),
-        (360, "alpha", None),
-        (360, "lantern", None),
-        (375, "alpha", None),
-        (375, "lantern", None),
+        (320, "alpha", Some(false)),
+        (320, "lantern", Some(false)),
+        (360, "alpha", Some(false)),
+        (360, "lantern", Some(false)),
+        (375, "alpha", Some(false)),
+        (375, "lantern", Some(false)),
         (390, "alpha", Some(false)),
-        (390, "lantern", None),
+        (390, "lantern", Some(false)),
     ] {
         browser.call(
             "Emulation.setDeviceMetricsOverride",
@@ -1160,7 +1159,7 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
         browser.open(&server.url(&format!("/{id}/")));
         assert!(browser.wait_for(client, SHOWN), "{id} at {width}");
         let seen = browser.eval(
-            "(name => name.scrollWidth > name.clientWidth)(document.querySelector('.app-brand span'))",
+            "(name => name.scrollWidth > name.clientWidth || name.scrollHeight > name.clientHeight + 1)(document.querySelector('.app-brand span'))",
         );
         if let Some(cut) = cut {
             assert_eq!(seen, json!(cut), "{id} at {width}: the name cut");

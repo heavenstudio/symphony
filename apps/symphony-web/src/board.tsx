@@ -35,6 +35,7 @@ import { Button } from "./button";
 import { href } from "./project";
 import { said } from "./request";
 import { useAnchor } from "./route";
+import { useScrollRow } from "./scrollrow";
 import { SelectField } from "./select";
 import { load, save } from "./storage";
 import { isTask } from "./task";
@@ -648,6 +649,9 @@ export function TaskBoard({
     onFilter(search, days, next);
   };
   const machine = work.machines.length > 0;
+  // A phone's two rows of choices scroll across: each keeps its chosen one whole in view.
+  const waits = useScrollRow(wait);
+  const tabs = useScrollRow(`${opened}:${selected}`);
   return (
     <div className="waiting-board">
       {slug !== "" && known === undefined && linkError !== "" && (
@@ -711,7 +715,11 @@ export function TaskBoard({
           wait === "" && search === "" ? (meta("ready")?.ordinary ?? count("ready")) : undefined
         }
       />
-      <nav className="wait-strip" aria-label="Filter tasks by what they wait on">
+      <nav
+        ref={waits}
+        className="wait-strip scroll-row"
+        aria-label="Filter tasks by what they wait on"
+      >
         <button
           type="button"
           className="open-count"
@@ -737,7 +745,7 @@ export function TaskBoard({
         ))}
       </nav>
       {wait === "" && (
-        <nav className="stage-tabs" aria-label="Task stages">
+        <nav ref={tabs} className="stage-tabs scroll-row" aria-label="Task stages">
           {PHONE_STAGES.map((stage) => (
             <button
               key={stage}

@@ -56,6 +56,7 @@ mod panel_open;
 mod persistent;
 mod phone;
 mod phone_board;
+mod phone_labels;
 mod polish;
 mod preload;
 mod projects;

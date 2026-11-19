@@ -332,9 +332,25 @@
     display: block;
     margin: 0 0 8px;
   }
-  .wait-strip {
-    gap: 4px;
-    margin: 0 0 10px;
+  /* One row each for the wait strip and the stage tabs, so the cards start higher: what does not
+     fit scrolls across (.scroll-row, frame.css). Each row's own padding is the room its chosen
+     one's outline and a focused one's need, taken back from the board around it. */
+  .wait-strip,
+  .stage-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    white-space: nowrap;
+    gap: 6px;
+    padding: 4px;
+    margin: 0 -4px 6px;
+  }
+  .waiting-ghost .wait-strip {
+    overflow: hidden;
+  }
+  .wait-strip > *,
+  .stage-tabs > * {
+    flex: none;
   }
   .wait-chip {
     font-size: 0.75rem;
@@ -344,15 +360,6 @@
   .wait-chip::before {
     width: 6px;
     height: 6px;
-  }
-  .stage-tabs {
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
-    margin: 0 0 10px;
-    padding: 2px 0 4px;
-    white-space: nowrap;
-    mask-image: linear-gradient(to right, #000 92%, transparent);
   }
   .stage-tabs button {
     font: inherit;
@@ -368,6 +375,7 @@
   .stage-tabs button[aria-current="page"] {
     color: var(--primary);
     border-color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 10%, var(--card));
   }
   .stage-tabs i {
     font-style: normal;

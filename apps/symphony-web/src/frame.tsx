@@ -16,6 +16,7 @@ import { Button } from "./button";
 import { crumbs, headerLinks, here, href, project, scoped } from "./project";
 import { getJson, said } from "./request";
 import type { Route } from "./route";
+import { useScrollRow } from "./scrollrow";
 import { field, list, publish, remember, snapshot, useWindowEvents } from "./shared";
 import { keepsPanelBaseline, MetadataReads } from "./state";
 import { load, save } from "./storage";
@@ -298,6 +299,8 @@ export function Frame({ route, children }: FrameProps) {
   const view = project();
   const links = headerLinks(view, route.path, route.document);
   const trail = crumbs(view, route.path);
+  // On a phone the pages scroll across where they do not all fit: the one shown is kept in view.
+  const pages = useScrollRow(links.find((link) => link.active)?.href ?? "");
   return (
     <FrameContext.Provider value={frame}>
       <RefreshedContext.Provider value={refreshed}>
@@ -309,7 +312,7 @@ export function Frame({ route, children }: FrameProps) {
                 {PAGE_NAMES.PROJECTS}
               </a>
             )}
-            <nav className="app-pages" aria-label="Pages">
+            <nav ref={pages} className="app-pages scroll-row" aria-label="Pages">
               {links.map((link) => (
                 <a
                   key={link.href}
@@ -373,7 +376,8 @@ export function Frame({ route, children }: FrameProps) {
               }}
             >
               <BellIcon />
-              {" Activity"}
+              {/* Its name on every screen; a narrow phone draws the bell alone (frame.css). */}
+              <span className="bell-label"> Activity</span>
               {/* An image role names the dot: a plain span's label is no name a reader gives. */}
               {unread() && <span className="dot ok" role="img" aria-label="Unread activity" />}
             </Button>

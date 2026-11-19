@@ -264,8 +264,10 @@ class names the markup uses, and the kind's own sheet, imported by its module
 (`src/queue.css`, `src/docs.css`; the menus' `src/overlay.css`: the popup's and the dialog's rules
 as the components' sheets wrote them, their CSS-module suffixes gone, and the picture viewer's,
 moved there from the media sheet; the panel's `src/panel.css`: the `+` sheet's tabs and its
-collapse button's tip as the components' tabs and tooltip sheets write them, the sheets' own rules
-being the shared sheet's). The media sheet,
+collapse button's tip as the components' tabs and tooltip sheets write them, and what the sheets
+hold once the panel has mounted, the chat's thread and composer, the activity list, the toasts and
+the appearance panel; the boxes the shell draws before that are the shared sheet's, which every
+first visit pays for). The media sheet,
 `src/styles/media.css`, which the shared sheet leaves out, is the media layer's,
 imported by `media-layer.ts`, so home, the documents, a task's page and the chat take it as one
 file under the layer's name. The task board imports its own layout sheet
@@ -765,7 +767,15 @@ What holds on every page, and each page's contract where its section above names
   Search and filters, collapsed initially at every width.
   A focused card that moves keeps its title focused, opening its destination where needed;
   unrelated moves keep the chosen stage. At 760 px and below one stage is mounted, Review
-  first, with the chosen tab saved per project (`board-waiting-stage`, `src/storage.ts`). The
+  first, with the chosen tab saved per project (`board-waiting-stage`, `src/storage.ts`). There
+  the header's pages, the wait strip and the stage tabs are each one row that scrolls across what
+  does not fit it (`src/scrollrow.ts`, `.scroll-row` in `src/styles/frame.css`): the chosen one,
+  and one that takes the focus, is brought whole into view; an edge fades only while the row
+  continues past it, the row itself and no colour over it; and a choice not whole in the row's
+  window is drawn as its empty shape, so no label is read in part
+  (`apps/symphony-web-tests/tests/browser/phone_labels.rs`, at 320 and 390 px). The Symphony's
+  seven pages fit at both widths, and below 375 px the bell is drawn alone, leaving the first row
+  to the project's name. The
   complete wait-kind strip filters to one paged list across stages; there is no Blocked column,
   sign-off lane, Status select or column pager. Search and the finished window remain.
   `/api/task-board?view=waiting` supplies complete facets and per-column ordinary/blocked counts;
