@@ -38,7 +38,24 @@ symphony-server = 17_430_000
 # Scratch PostgreSQL startup (+33,104 bytes) and main's release-notes/retired-key paths
 # (+33,056) each fit the former symphony line alone; together they weigh 11,914,192.
 # The combined line is that size plus 4%, rounded down to 10,000; independent review is required.
-symphony = 12_390_000
+# The board's operations on tasks a workflow holds (tools/workflow-operations) add 33,072 bytes to
+# symphony: 12,360,592 on main at 2210c94be, 12,393,664 with them, each built as `just size-check`
+# builds the four binaries. On main its text stood 3.7 KB short of a 16 KB page; this adds 32,734
+# bytes of text, two pages. By the two link maps: PULL listing a held task by the edges leaving its
+# position and the role it staffs (pull::digest_on 5,772, workflow::operate 2,540), the alarm's
+# transitions and a held task's position read by field (store::workflow 6,308, task_position 572),
+# the cap counting a held task by its position's slot policy (cap and its ledger 1,968, and serde_core
+# 4,024 in the cap's row and read decoders), settling wherever the board gives (admission 724,
+# callbacks 640), with unwind and constant data in proportion (4,822). Taken back first, one page,
+# 16,528 bytes of the file (a4c15da2e): a recorded transition, a held task's position and the cap's
+# positions read by field with no decoder of their own, and the transitions read in the order asked
+# with no sort; then about 1.9 KB of text (c1b839b53), no serializer or list reader of values. The
+# second page needs 12.9 KB more of text, some 40% of what is left, and what is left is the
+# operations themselves. Elsewhere in what symphony links, measured and left to a follow-up of its
+# own: encoding_rs (its Big5 tables and encoder, about 72 KB), which gix-filter brings with gix's
+# attributes, and the symphony.toml decoder (project::file::File, 73.5 KB). Measured 12,393,664 at
+# c1b839b53; the line is that plus 4%, rounded down to 10,000. Independent review is required.
+symphony = 12_880_000
 # PostgreSQL board selection and lifecycle add 66,176 bytes to tasks and 49,632 to agent-send.
 # agent-send links no snapshot/recovery command body. Canonical four-binary
 # measurement: 6,479,680 / 3,037,536 bytes; each line is that plus 4%, rounded down to 10,000.
