@@ -326,7 +326,11 @@ project is given and neither the library nor the shipped `symphony` compiles
    process found is listed again for up to 5 s, and counts only if it is still there, so one on
    its way out is not counted. This look sees a process only while it works in the checkout or
    holds a file there open. One that moved elsewhere (a daemon that changed to `/`) and writes
-   into the checkout by path is not seen.
+   into the checkout by path is not seen. The board's recorder of a check, which goes on writing
+   its record after the check ended, is by design none it counts: it works at the root and
+   writes nothing in the checkout
+   ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so the time a loaded machine
+   takes over a record never stops a run.
 3. **The full verification** runs there: `just verify`, which is lint, the real client check, the
    size budgets ([CHECKS](CHECKS.md#size-budgets)), the docs audit, the crates check
    ([the packages](#packages-on-cratesio)) and every test target of the workspace, the board's

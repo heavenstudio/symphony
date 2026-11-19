@@ -20,6 +20,7 @@ mod delivered;
 mod install;
 mod places;
 mod publish;
+mod recorder;
 mod reds;
 mod refresh;
 mod regenerated;
