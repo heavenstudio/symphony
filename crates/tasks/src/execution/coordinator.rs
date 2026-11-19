@@ -352,12 +352,12 @@ impl<'a> Coordinator<'a> {
                 entry.task, task.status
             )));
         }
-        // Where the workflow holds the task now: the position the attempt's ending is proposed
-        // from, and only while the task stands there.
+        // Where the workflow holds the task now, its pair and revision alone: the position the
+        // attempt's ending is proposed from, and only while the task stands there.
         let workflow = (task.fields.get("_board"))
             .and_then(|board| board.get("workflow"))
             .filter(|position| !position.is_null())
-            .cloned();
+            .map(|p| json!({"phase": p["phase"], "state": p["state"], "revision": p["revision"]}));
         let scope = &self.profile.scope;
         let principal = grant.principal().clone();
         let digest = keys::digest(&json!({

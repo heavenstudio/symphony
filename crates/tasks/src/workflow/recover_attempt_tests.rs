@@ -110,7 +110,8 @@ fn dropped(rows: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// A transition of sim/a at `revision`: by `edge`, or the exhaustion of `exhausted`'s bound.
+/// A transition of sim/a at `revision`: the board's take of `edge` on an attempt's failure, or the
+/// exhaustion of `exhausted`'s bound, which sends it to verify/stuck.
 fn past(revision: u64, edge: Option<&str>, exhausted: Option<&str>) -> Transition {
     Transition {
         id: Transition::id_of("sim/a", revision),
@@ -122,15 +123,18 @@ fn past(revision: u64, edge: Option<&str>, exhausted: Option<&str>) -> Transitio
         operation: None,
         activation: None,
         from: None,
-        to: pair("build", "available"),
+        to: match exhausted {
+            Some(_) => pair("verify", "stuck"),
+            None => pair("build", "available"),
+        },
         resume: None,
         status: "ready".into(),
         principal: board_service("recovery"),
         effects: Vec::new(),
         key: None,
-        recovery: exhausted.map(|edge| Recovered {
-            exhausted: Some(edge.into()),
-            ..answered(Trigger::AttemptFailure, true)
+        recovery: (edge.is_some() || exhausted.is_some()).then(|| Recovered {
+            exhausted: exhausted.map(str::to_string),
+            ..answered(Trigger::AttemptFailure, exhausted.is_some())
         }),
         accepted: None,
         at: 1.0,
@@ -273,7 +277,46 @@ fn a_failed_check_takes_the_automatic_edge_until_its_bound_is_exhausted() {
     ];
     assert_eq!(rework(&since), Ok(edge.clone()));
     let other = [past(2, None, Some("other")), past(3, Some("rework"), None)];
-    assert_eq!(rework(&other), Ok(edge));
+    assert_eq!(rework(&other), Ok(edge.clone()));
+    // Whoever brought the task to the bound's pair starts the count again: a person, or an
+    // activation that mapped it there.
+    for arrived in [
+        Transition {
+            to: pair("verify", "stuck"),
+            principal: crate::workflow::local_owner(),
+            ..past(4, None, None)
+        },
+        Transition {
+            to: pair("verify", "stuck"),
+            activation: Some(2),
+            ..past(4, None, None)
+        },
+    ] {
+        let since = [
+            past(2, Some("rework"), None),
+            past(3, Some("rework"), None),
+            arrived,
+            past(5, Some("unstick"), None),
+            past(6, Some("rework"), None),
+        ];
+        assert_eq!(rework(&since), Ok(edge.clone()));
+    }
+    // A caller's take of an edge of that id, where an earlier definition had it no automatic
+    // edge, is no take of the board's.
+    let caller = |revision| Transition {
+        recovery: None,
+        principal: crate::workflow::local_owner(),
+        ..past(revision, Some("rework"), None)
+    };
+    assert_eq!(rework(&[caller(2), caller(3)]), Ok(edge.clone()));
+    assert!(matches!(
+        rework(&[
+            caller(2),
+            past(3, Some("rework"), None),
+            past(4, Some("rework"), None)
+        ]),
+        Ok(Proposal::Recovery(_))
+    ));
 }
 
 #[test]

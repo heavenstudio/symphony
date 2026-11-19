@@ -143,7 +143,7 @@ on_both! {
             refused(&f.store),
             format!(
                 "workflow: {TASK} runs execution attempt {}, and activation would \
-                 move it or change its staffing; an attempt drains first (let it end, or cancel \
+                 change its position or its staffing; an attempt drains first (let it end, or cancel \
                  it), and is never rebound to another position",
                 jump.id
             )

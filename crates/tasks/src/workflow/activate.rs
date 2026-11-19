@@ -116,9 +116,11 @@ fn unsupported_dependency(dependency: Dependency) -> Option<&'static str> {
 /// Why the board could not take `edge`, an automatic edge of `d`, on an attempt's failure at its
 /// source pair (docs/WORKFLOW.md, "Attempts"), none where it can: another automatic edge leaves
 /// that pair, so the board could not choose; it asks inputs, which the board has none of to give;
-/// it gives a role, which only an agent session holds; or none of its authorities is a capability
-/// `host` grants the board's recovery service, which takes it. Each reason is fixed text, the
-/// edge named by the refusal that carries it.
+/// it gives a role, which only an agent session holds, or prepares or finalizes an effect, which
+/// only its adapter takes; its retry bound is exhausted to the pair it leaves or enters, where the
+/// count of its takes would restart at each ([`super::recover::observed`]); or none of its
+/// authorities is a capability `host` grants the board's recovery service, which takes it. Each
+/// reason is fixed text, the edge named by the refusal that carries it.
 fn automatic(d: &Definition, edge: &Edge, host: &Host) -> Option<&'static str> {
     let service = super::board_service("recovery");
     let authorized = edge.authority.iter().any(|authority| match authority {
@@ -132,6 +134,12 @@ fn automatic(d: &Definition, edge: &Edge, host: &Host) -> Option<&'static str> {
         Some("an automatic edge asks for inputs, which the board has none of to give")
     } else if (edge.effects.iter()).any(|e| matches!(e, Effect::AcquireRole { .. })) {
         Some("an automatic edge gives a role, which only an agent session takes")
+    } else if super::effect::external(&edge.effects).is_some() {
+        Some("an automatic edge prepares or finalizes an effect, which only its adapter takes")
+    } else if (edge.retry.as_ref())
+        .is_some_and(|r| r.exhausted == edge.from || r.exhausted == edge.to)
+    {
+        Some("an automatic edge's retry is exhausted to a pair it leaves or enters")
     } else if !authorized {
         Some(
             "no authority of this automatic edge is a capability the host grants the board's recovery service",
@@ -240,9 +248,11 @@ pub fn plan(
         let accepted =
             super::admit::accepted_after(Some(source), destination, task.accepted.as_deref(), None);
         let changes = moves || accepted != task.accepted;
-        if moves || source.staffing != destination.staffing {
-            drained(task)?;
-        }
+        drained(
+            task,
+            changes,
+            moves || source.staffing != destination.staffing,
+        )?;
         if !changes {
             plan.kept.push((slug.clone(), task.version));
             continue;
@@ -276,23 +286,24 @@ pub fn plan(
     Ok(plan)
 }
 
-/// Refused while `task`, which activation would move or restaff, runs work that has not drained:
-/// an execution attempt no cancel was asked of, which activation never rebinds to another
-/// position (let it end, or cancel it), or a live executor or reviewer, whose local session is no
-/// attempt the board sees until local launches are recorded as attempts
-/// (tools/local-provider-attempts).
-fn drained(task: &Standing) -> Result<(), String> {
+/// Refused while `task` runs work that has not drained: an execution attempt no cancel was asked
+/// of, where activation `changes` its position (records it a transition, which leaves the
+/// attempt's ending pinned to a revision the task no longer stands at) or `restaffs` it, as an
+/// attempt is never rebound to another position (let it end, or cancel it); or a live executor or
+/// reviewer where it moves or restaffs it, whose local session is no attempt the board sees until
+/// local launches are recorded as attempts (tools/local-provider-attempts).
+fn drained(task: &Standing, changes: bool, restaffs: bool) -> Result<(), String> {
     let slug = &task.slug;
-    if let Some(live) = task.attempts.iter().find(|a| !a.cancelled) {
+    if let Some(live) = (task.attempts.iter()).find(|a| !a.cancelled && (changes || restaffs)) {
         return Err(format!(
-            "{slug} runs execution attempt {}, and activation would move it or change its \
+            "{slug} runs execution attempt {}, and activation would change its position or its \
              staffing; an attempt drains first (let it end, or cancel it), and is never \
              rebound to another position",
             live.attempt
         ));
     }
     if let Some((handle, role, _)) = (task.roles.iter())
-        .find(|(_, role, holds)| *holds && (role == "executor" || role == "reviewer"))
+        .find(|(_, role, holds)| restaffs && *holds && (role == "executor" || role == "reviewer"))
     {
         return Err(format!(
             "{slug} is held by {handle} as its {role}, and activation would move it or change \

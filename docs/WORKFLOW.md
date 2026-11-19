@@ -79,15 +79,19 @@ generation, which moves no task whose pair it still declares.
 The whole activation is refused, nothing written and the previous workflow left active, and the
 command says why on stderr and runs on: a capability, adapter or guard the host does not support
 (every guard, until revision-bound guards); an automatic edge that another automatic edge leaves
-its pair beside, that asks for inputs or gives a role, or that no authority of which the host
-grants the board's recovery service, which alone takes it ([attempts](#attempts)); a retry bound
-on an edge a caller takes, as the board counts only its own takes;
+its pair beside, that asks for inputs, gives a role or prepares or finalizes an effect (which
+admission refuses every taker, the board among them), whose retry bound is exhausted to the pair
+it leaves or enters (where the count of its takes would restart at each), or that no authority of
+which the host grants the board's recovery service, which alone takes it ([attempts](#attempts));
+a retry bound on an edge a caller takes, as the board counts only its own takes;
 `landed` dependencies and parent integration; a prepare or finalize of an
 adapter the host does not register; a
 pair or resume pair neither declared nor mapped; a mapping onto a position recording an outcome, satisfied dependants or a completion its
-source lacks; and a task it would move or restaff while it has a live execution attempt no cancel
-was asked of (`Store::live_attempts`), or a live executor or reviewer, whose local session is no
-attempt the board sees until local launches are recorded as attempts
+source lacks; a task it would record a transition for (a move, or an output it supersedes where
+it stays) or restaff while it has a live execution attempt no cancel was asked of
+(`Store::live_attempts`), as that attempt's ending would be pinned to a revision the task no
+longer stands at; and a task it would move or restaff while a live executor or reviewer holds it,
+whose local session is no attempt the board sees until local launches are recorded as attempts
 (`tools/local-provider-attempts`). An attempt is never rebound to another position: it drains
 (let it end) or is invalidated (cancel it, after which no result of it is eligible), and a task
 activation keeps where it stands keeps its attempts. A file that drops `[workflow]`
@@ -292,8 +296,11 @@ again, as often as it likes, for an attempt whose worker died first.
 
 - An attempt that ended failed or rejected with no cancel asked of it is an attempt failure. The
   automatic edge leaving the task's pair is taken through the one [admission](#admission), as the
-  recovery service under the key `attempt/ID`, while its retry bound allows: its takes are counted
-  since a recovery last recorded that bound exhausted. At the bound, or with no automatic edge,
+  recovery service under the key `attempt/ID`, while its retry bound allows: the board's own takes
+  of it, each answering an attempt, are counted since the task last stood at the bound's
+  `exhausted` pair, whoever brought it there (the bound, a person or an activation), and a
+  caller's take of an edge of that id under an earlier definition counts nothing. At the bound,
+  or with no automatic edge,
   the position's `attempt_failure` action answers it as a holder's exit is answered
   ([recovery](#recovery)), the attempt's session its holder. At the bound its target is the
   bound's `exhausted` pair, where it waits on a person; a position that declares no recovery goes

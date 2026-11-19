@@ -315,6 +315,41 @@ fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
         .unwrap_err()
         .starts_with("unsupported edge rework: an automatic edge gives a role")
     );
+    // Nor an adapter's effect, which admission refuses every taker, the board among them.
+    assert_eq!(
+        supports(&|d| {
+            d.adapters.push("default_land".into());
+            let edge = rework(d);
+            edge.operation = symphony_api::workflow::Operation::PrepareExternal;
+            edge.effects.push(Effect::Prepare {
+                adapter: "default_land".into(),
+            });
+        }),
+        Err(
+            "unsupported edge rework: an automatic edge prepares or finalizes an effect, which \
+             only its adapter takes"
+                .into()
+        )
+    );
+    // Its bound is exhausted to a pair it neither leaves nor enters, where the count of its takes
+    // would restart at each.
+    let exhausted_to = |phase: &'static str, state: &'static str| {
+        move |d: &mut Definition| {
+            let edge = rework(d);
+            edge.to = pair("verify", "stuck");
+            edge.retry.as_mut().unwrap().exhausted = pair(phase, state);
+        }
+    };
+    for (phase, state) in [("verify", "checking"), ("verify", "stuck")] {
+        assert_eq!(
+            supports(&exhausted_to(phase, state)),
+            Err(
+                "unsupported edge rework: an automatic edge's retry is exhausted to a pair it \
+                 leaves or enters"
+                    .into()
+            )
+        );
+    }
     // One automatic edge out of a pair, so the board never chooses.
     let twice = supports(&|d| {
         let mut again = rework(d).clone();
@@ -366,9 +401,9 @@ fn a_live_attempt_keeps_its_task_from_moving_until_it_ends_or_is_cancelled() {
     assert_eq!(
         planned(&two, None, &[working.clone()]),
         Err(
-            "sim/working runs execution attempt bb22, and activation would move it or change its \
-             staffing; an attempt drains first (let it end, or cancel it), and is never rebound \
-             to another position"
+            "sim/working runs execution attempt bb22, and activation would change its position \
+             or its staffing; an attempt drains first (let it end, or cancel it), and is never \
+             rebound to another position"
                 .into()
         )
     );
@@ -775,11 +810,32 @@ fn an_activation_carries_an_accepted_output_supersedes_it_where_none_stands_and_
     position_mut(&mut unsatisfied, &pair("verify", "approved")).satisfies_dependencies = false;
     let mut held = approved.clone();
     held.roles = vec![("amber".into(), "executor".into(), true)];
-    let superseded = only(replanned(unsatisfied, Vec::new(), &held).unwrap());
+    let superseded = only(replanned(unsatisfied.clone(), Vec::new(), &held).unwrap());
     assert_eq!(superseded.from.as_ref(), Some(&superseded.to));
     assert_eq!(
         (superseded.status.as_str(), superseded.accepted),
         ("done", None)
+    );
+    // That transition leaves the task at another revision, where a live attempt's ending, pinned
+    // to the one before, would answer nothing: it drains first, or is cancelled.
+    let mut running = held.clone();
+    running.attempts = vec![Live {
+        attempt: "bb22".into(),
+        cancelled: false,
+    }];
+    assert_eq!(
+        replanned(unsatisfied.clone(), Vec::new(), &running),
+        Err(
+            "sim/approved runs execution attempt bb22, and activation would change its position \
+             or its staffing; an attempt drains first (let it end, or cancel it), and is never \
+             rebound to another position"
+                .into()
+        )
+    );
+    running.attempts[0].cancelled = true;
+    assert_eq!(
+        only(replanned(unsatisfied, Vec::new(), &running).unwrap()).accepted,
+        None
     );
 
     // A pair kept that comes to satisfy dependants is refused, as ever: a mapping accepts nothing.

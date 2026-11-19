@@ -242,9 +242,9 @@ pub enum Proposal {
 /// workflow no longer declares; and a position that declares no action for it, where the task
 /// stays as it was.
 ///
-/// A failure takes the automatic edge leaving the pair while it has been taken fewer times than
-/// its retry bound since that bound was last exhausted; past it, the position's `attempt_failure`
-/// action, sent to the bound's `exhausted` pair to wait on a person. With no automatic edge, a
+/// A failure takes the automatic edge leaving the pair while the board has taken it fewer times
+/// than its retry bound since the task last stood at the bound's `exhausted` pair; past it, the
+/// position's `attempt_failure` action, sent to that pair to wait on a person. With no automatic edge, a
 /// failure is the position's `attempt_failure` action, and an acknowledged cancel its
 /// `cancellation_acknowledged` one. An action releases the position's staffed role, whoever
 /// holds it, and every reservation, as it says.
@@ -315,7 +315,7 @@ pub fn observed(
             let failure = actions.map(|a| a.attempt_failure.clone());
             match automatic.first() {
                 Some(edge) => match &edge.retry {
-                    Some(retry) if taken(transitions, &edge.id) >= retry.maximum => {
+                    Some(retry) if taken(transitions, edge, &retry.exhausted) >= retry.maximum => {
                         // Exhausted: the failure's own action, sent where the bound says.
                         answered.exhausted = Some(edge.id.clone());
                         RecoveryAction {
@@ -375,20 +375,19 @@ pub fn observed(
     })))
 }
 
-/// How many times the board took the automatic edge `edge` of the task whose `transitions` these
-/// are, since a recovery last exhausted its retry bound.
-fn taken(transitions: &[Transition], edge: &str) -> u32 {
-    let mut taken = 0;
-    for transition in transitions.iter().rev() {
-        let recovered = transition.recovery.as_ref();
-        if recovered.and_then(|r| r.exhausted.as_deref()) == Some(edge) {
-            break;
-        }
-        if transition.edge.as_deref() == Some(edge) {
-            taken += 1;
-        }
-    }
-    taken
+/// How many times the board took the automatic edge `edge` on an attempt's ending, of the task
+/// whose `transitions` these are, since the task last stood at `exhausted`, where its retry bound
+/// sends it: whoever brought it there (the bound itself, a person or an activation), its next
+/// failures start a fresh count. A caller's take of an edge of that id, under a definition where
+/// it was not automatic, is no take of the board's. Activation keeps `exhausted` off the pairs the
+/// edge leaves and enters ([`super::activate::supported`]), so a take never restarts the count.
+fn taken(transitions: &[Transition], edge: &Edge, exhausted: &Pair) -> u32 {
+    let board = |t: &&Transition| {
+        t.edge.as_deref() == Some(edge.id.as_str())
+            && t.recovery.as_ref().is_some_and(|r| r.attempt.is_some())
+    };
+    let since = (transitions.iter().rev()).take_while(|t| t.to != *exhausted);
+    since.filter(board).count() as u32
 }
 
 fn undeclared(slug: &str, here: &Pair, trigger: Trigger) -> Refusal {
