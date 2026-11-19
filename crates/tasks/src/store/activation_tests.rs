@@ -856,6 +856,75 @@ fn the_activation_write_is_refused_as_stale_after_another_write_and_planned_agai
 }
 
 #[test]
+fn the_return_write_is_refused_as_stale_after_another_write() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        f.store
+            .activate_workflow(&mapped(), &Host::local())
+            .unwrap();
+        let before = f.store.dump().unwrap();
+        let back = |vars: Value| {
+            f.store.retrying(|| {
+                (f.store).transact::<Value>(
+                    both(sql::RETURN_DEFAULT, pg::return_default()),
+                    vars.clone(),
+                )
+            })
+        };
+        let empty = json!({
+            "expected": 2, "generation": 3, "moved": [], "kept": [], "at": 1.0,
+            "activation": {"generation": 3, "digest": "builtin-v1", "returned": true},
+        });
+        // Planned under a generation that is not the active one any more.
+        assert_eq!(
+            refused(back(empty.clone())),
+            "stale_workflow: the active generation is 1, not 2",
+            "{backend:?}"
+        );
+        // A task it only fenced, or one it moves, changed since it was read.
+        let mut kept = empty.clone();
+        kept["expected"] = json!(1);
+        kept["kept"] = json!([{"slug": "sim/ready", "version": 99}]);
+        assert_eq!(
+            refused(back(kept)),
+            "stale_task: sim/ready changed while its workflow returned"
+        );
+        let version = (f.store.raw().row("task", "sim/ready").field("version"))
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        let mut moved = empty;
+        moved["expected"] = json!(1);
+        moved["moved"] = json!([{
+            "slug": "sim/ready", "version": version, "expected": 7,
+            "transition": {"revision": 8, "status": "ready"}, "retired": {"revision": 8},
+        }]);
+        assert_eq!(
+            refused(back(moved)),
+            "stale_task: sim/ready changed while its workflow returned",
+            "{backend:?}"
+        );
+        assert_eq!(f.store.dump().unwrap(), before, "{backend:?}");
+
+        // After a return none is active, and an activation planned as a generation another
+        // took is stale too.
+        f.store.return_to_default(&dropped(BACK)).unwrap();
+        let taken = json!({
+            "expected": 0, "generation": 2, "digest": "d2", "definition": {},
+            "activation": {}, "moved": [], "kept": [], "at": 1.0,
+        });
+        let activate = f.store.retrying(|| {
+            (f.store).transact::<Value>(both(sql::ACTIVATE, pg::activate()), taken.clone())
+        });
+        assert_eq!(
+            refused(activate),
+            "stale_workflow: generation 2 is activated already",
+            "{backend:?}"
+        );
+    }
+}
+
+#[test]
 fn a_copy_of_an_activated_board_keeps_its_workflow() {
     for backend in BACKENDS {
         let f = board(backend);
