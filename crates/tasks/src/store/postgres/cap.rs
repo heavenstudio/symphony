@@ -6,10 +6,21 @@ use super::branches::{ON_BRANCHES, of_tasks};
 
 /// A task `t` as the cap reads it, with its red mark ([`crate::red`]).
 const ROW: &str = "jsonb_build_object('slug', t.slug, 'parent', t.parent, 'status', t.status, \
-    'instruction', t.instruction, 'red', t.fields #> '{_board,red}')";
+    'instruction', t.instruction, 'red', t.fields #> '{_board,red}', \
+    'position', t.fields #> '{_board,workflow}')";
 
-/// An open task `t`.
-const OPEN: &str = "t.status IN (SELECT jsonb_array_elements_text(v -> 'slot_statuses'))";
+/// A task `t` in a status a task holding a slot may be in (`slot_statuses`, [`lets`]).
+const OPEN: &str = "t.status IN (SELECT status FROM slot_statuses)";
+
+/// Twin of `super::super::surreal::cap::SLOT_POSITIONS`: the CTEs `slot_positions` and
+/// `slot_statuses`.
+const SLOT_POSITIONS: &str = "slot_positions AS (SELECT p -> 'at' ->> 'phase' AS phase, \
+        p -> 'at' ->> 'state' AS state, p ->> 'slot' AS slot, p ->> 'legacy' AS legacy \
+        FROM workflow d CROSS JOIN LATERAL jsonb_array_elements(d.body -> 'definition' -> 'positions') p \
+        WHERE d.id = jsonb_build_array('definition', \
+            (SELECT body ->> 'digest' FROM workflow WHERE id = '[\"active\"]'::jsonb))), \
+    slot_statuses AS (SELECT jsonb_array_elements_text(v -> 'slot_statuses') AS status \
+        UNION SELECT legacy FROM slot_positions WHERE slot <> 'release')";
 
 /// The tasks the holds name, `counter:['hold', SLUG]`, as rows of one text.
 const HELD: &str = "SELECT c.id ->> 1 FROM counter c WHERE c.id ->> 0 = 'hold'";
@@ -35,7 +46,8 @@ pub(in crate::store) fn counted() -> Pg<'static> {
 /// The CTE `slot_wanted`: the open tasks, the held ones and `wanted` (rows of `slug`).
 pub(in crate::store) fn lets(wanted: &str) -> String {
     format!(
-        "slot_wanted AS (SELECT t.slug FROM task t WHERE {OPEN} OR t.slug IN ({HELD}) UNION {wanted})"
+        "{SLOT_POSITIONS}, \
+    slot_wanted AS (SELECT t.slug FROM task t WHERE {OPEN} OR t.slug IN ({HELD}) UNION {wanted})"
     )
 }
 
@@ -49,7 +61,9 @@ pub(in crate::store) fn field() -> String {
             ORDER BY t.slug) FROM task t WHERE t.slug IN ({HELD})), '[]'), \
         'roles', {ROLES_OF}, \
         'counted', {}, \
-        'reds', {}),",
+        'reds', {}, \
+        'positions', coalesce((SELECT jsonb_agg(jsonb_build_object('phase', phase, 'state', state, \
+            'slot', slot, 'legacy', legacy)) FROM slot_positions), '[]')),",
         counters("hold", "ts"),
         counters("slots", "last"),
         counters("red", "last")

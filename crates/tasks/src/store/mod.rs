@@ -240,6 +240,10 @@ pub struct Store {
     /// Whether its delivering passes give the open tasks no orchestrator holds first: a detached
     /// dispatcher's ([`Store::giving`]).
     giving: bool,
+    /// What its delivering passes settle of the tasks a custom workflow holds, after the give:
+    /// [`Store::settle_held_if_due`], installed by [`Store::giving`] alone, which says why it is a
+    /// pointer.
+    settling: Option<fn(&Store, &Board) -> bool>,
     /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
     inbox_pool: Mutex<Option<pool::Pool>>,
     /// What it holds its starts and its PULL digests to ([`crate::limits`]): the open tasks an
@@ -1280,11 +1284,13 @@ struct Change {
 }
 
 impl Change {
-    /// Whether it moves the task, blocks it, or adds or drops an executor, a reviewer or a
-    /// reservation: what a custom workflow's edges alone do to a task it holds. The orchestrator's
-    /// role is the board's coordination, which its writers keep.
+    /// Whether it moves the task, blocks it, or adds or drops an executor or a reviewer: what a
+    /// custom workflow's edges alone do to a task it holds. The orchestrator's role and a
+    /// reservation are the board's coordination, which its writers keep: a launch reserves the
+    /// work it starts a session for, and admission honours the reservation, and consumes it, when
+    /// that session takes the edge (docs/WORKFLOW.md, "Operations").
     fn moves_or_staffs(&self) -> bool {
-        let staffing = |role: &str| role != "orchestrator";
+        let staffing = |role: &str| role != "orchestrator" && role != "reserved";
         self.status.is_some()
             || self.blocked.is_some()
             || self.add.as_ref().is_some_and(|r| staffing(&r.role))
@@ -1310,6 +1316,9 @@ struct Opens {
     by: Vec<String>,
     /// What the refusal says cannot happen.
     what: String,
+    /// For a task a custom workflow holds, whether the position it moves to holds a slot by its
+    /// slot policy ([`crate::slots::Entry::slot`]).
+    slot: Option<bool>,
 }
 
 struct Say {
