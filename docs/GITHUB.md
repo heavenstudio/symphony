@@ -271,7 +271,7 @@ everyone only when its ruleset's bypass list was read and is empty. What must ho
 | No force push, no deletion | `non_fast_forward` and `deletion` rules nobody bypasses |
 | Only the landing App updates the branch | an `update` rule whose ruleset's one bypass actor is the App `landing_app_id` (`Integration`) |
 | Squash and no other method | the repository's merge settings narrowed by the pull request rules nobody bypasses; no `merge_queue` rule and no auto-merge |
-| What merges cannot change the rules | the repository does not say the token administers it |
+| The merging token is not said to administer | the repository's `permissions.admin` for the token is `false`; absent or anything else is unknown and refused |
 
 The two halves are two rulesets, since one ruleset has one bypass list: the requirements with
 nobody on theirs, and the update restriction with the landing App alone on its own. Without the
@@ -300,6 +300,12 @@ is no repository passes with a landing token of the rights above: delivery stays
   read names the App an installation token is of. A token of anyone else is refused the merge
   by GitHub itself under the update restriction, which this adapter relies on and does not
   prove.
+- Configured, not verified: that what merges cannot change the rules it is held to. No read
+  proves it. `permissions.admin` is what the repository says of the token and does not measure
+  write access to a ruleset, which an App's administration permission or a custom role that
+  edits repository rules gives. And since a bypass list is shown only to who may write its
+  ruleset, a pass whose lists were read with `token_file` means that token may write those
+  rulesets: `token_file` is never given more rights to reach a pass.
 - Not established: how GitHub applies the two rulesets together to a merge by the landing App,
   which a disposable repository proves and no read does; and that the rules stay as read. A
   repository administrator can change a rule between the adapter's read and GitHub's own act on

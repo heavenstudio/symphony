@@ -17,7 +17,8 @@
 //! (it shows it only to who may write the ruleset) is not known to be empty. What must hold:
 //!
 //! - **identity**: the repository is the one bound, by its number, and the base is its default
-//!   branch; it is not archived, and the token does not administer it;
+//!   branch; it is not archived, and it says the token does not administer it, which is not
+//!   proof the token cannot edit a ruleset;
 //! - **a pull request** is required, by a rule nobody bypasses;
 //! - **the check** [`crate::deliver::ELIGIBLE`] is required from the one App that writes it, by
 //!   a rule nobody bypasses, and not with the branch held up to date, which a delivery's one
@@ -350,12 +351,18 @@ fn identity(repository: &Value, wanted: &Wanted<'_>, missing: &mut Vec<String>) 
     if repository["archived"] != json!(false) {
         missing.push("the repository is archived, or does not say it is not".into());
     }
-    if repository["permissions"]["admin"] == json!(true) {
-        missing.push(
+    match repository["permissions"]["admin"].as_bool() {
+        Some(false) => {}
+        Some(true) => missing.push(
             "the merging token administers the repository: what merges must not be able to \
              change the rules it is held to"
                 .into(),
-        );
+        ),
+        None => missing.push(
+            "whether the merging token administers the repository is not shown: the repository \
+             does not say it does not"
+                .into(),
+        ),
     }
     if repository["allow_auto_merge"] != json!(false) {
         missing.push(

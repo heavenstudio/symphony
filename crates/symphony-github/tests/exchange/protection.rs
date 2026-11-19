@@ -166,7 +166,7 @@ fn each_rule_a_delivery_needs_is_missed_by_name() {
 
 #[test]
 fn what_the_repository_permits_beside_a_delivery_is_missed_by_name() {
-    let cases: [(&str, Change, &str); 8] = [
+    let cases: [(&str, Change, &str); 10] = [
         (
             "a merge commit permitted beside the squash",
             |d| {
@@ -231,6 +231,22 @@ fn what_the_repository_permits_beside_a_delivery_is_missed_by_name() {
             "archived",
             |d| d.rig.github.set_repository(&json!({"archived": true})),
             "the repository is archived",
+        ),
+        (
+            "a repository that does not say what the token may do",
+            |d| {
+                d.rig.github.set_repository(&json!({"permissions": null}));
+            },
+            "whether the merging token administers the repository is not shown",
+        ),
+        (
+            "a token whose administration is not a plain no",
+            |d| {
+                d.rig
+                    .github
+                    .set_repository(&json!({"permissions": {"push": true}}));
+            },
+            "whether the merging token administers the repository is not shown",
         ),
         (
             "a token that administers",

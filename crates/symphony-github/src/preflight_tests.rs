@@ -59,9 +59,47 @@ fn another_repository_or_one_that_says_nothing_of_itself_is_not_the_one_bound() 
     );
     // An answer that holds none of what is read is missed on every count, never passed.
     let missing = judge(&json!({}), &rules(), &bypasses(), &WANTED);
-    assert_eq!(missing.len(), 5, "{missing:?}");
+    assert_eq!(missing.len(), 6, "{missing:?}");
     assert!(missing[2].starts_with("the repository is archived, or does not say it is not"));
-    assert!(missing[3].starts_with("auto-merge is allowed, or the repository's merge settings"));
+    assert!(missing[3].starts_with("whether the merging token administers the repository is not"));
+    assert!(missing[4].starts_with("auto-merge is allowed, or the repository's merge settings"));
+}
+
+#[test]
+fn a_token_is_no_administrator_only_where_the_repository_says_so() {
+    let judged = |admin: Value| {
+        let mut repository = repository();
+        repository["permissions"]["admin"] = admin;
+        judge(&repository, &rules(), &bypasses(), &WANTED)
+    };
+    assert_eq!(judged(json!(false)), Vec::<String>::new());
+    assert_eq!(
+        judged(json!(true)),
+        [
+            "the merging token administers the repository: what merges must not be able to change \
+          the rules it is held to"
+        ]
+    );
+    // What is not a plain no is not known, whatever it reads as.
+    for admin in [
+        json!(null),
+        json!("false"),
+        json!(0),
+        json!({}),
+        json!([false]),
+    ] {
+        assert_eq!(
+            judged(admin.clone()),
+            [
+                "whether the merging token administers the repository is not shown: the repository \
+              does not say it does not"
+            ],
+            "{admin}"
+        );
+    }
+    let mut none = repository();
+    none.as_object_mut().unwrap().remove("permissions");
+    assert_eq!(judge(&none, &rules(), &bypasses(), &WANTED).len(), 1);
 }
 
 #[test]
