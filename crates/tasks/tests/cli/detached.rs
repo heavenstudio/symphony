@@ -418,3 +418,57 @@ fn an_api_changes_verdict_brings_the_orchestrators_callback_the_verdict_and_the_
         "{lines:?}"
     );
 }
+
+/// The project's cap holds in a detached dispatcher as in the write that started it. A PULL the
+/// write queued is built again as the dispatcher delivers it, so a dispatcher that knew no cap
+/// told an orchestrator its slots had gone (`slots=none (was 1/8)`) and the next capped writer
+/// that they were back: a change said each time the two took turns, with none on the board.
+#[test]
+fn a_detached_dispatcher_counts_slots_against_the_cap_its_writer_holds_to() {
+    let (case, _root) =
+        crate::slots::in_project("detached-cap", "[limits]\norchestrator_slots = 8\n");
+    let listener = Listener::new("capped");
+    let orch = case.register("orchestrator");
+    let worker = case.register("worker");
+    let writer = case.register("worker");
+    case.ok(&orch, &["create", "work/0", "Work"]);
+    case.ok(&worker, &["claim", "work/0"]);
+    case.store()
+        .callback(
+            &orch,
+            Some(&format!("uds:{}", listener.path.display())),
+            false,
+            false,
+        )
+        .unwrap();
+    let first = listener.queued();
+    assert!(
+        first
+            .iter()
+            .any(|line| line.starts_with("PULL ") && line.ends_with(" slots=1/8")),
+        "the first digest counts its slots against the cap: {first:?}"
+    );
+    // A program that starts and does nothing: the write queues its lines and leaves them there.
+    let idle = Path::new("/usr/bin/true");
+    let made = run_as(
+        &case.env,
+        idle,
+        &["create", "work/1", "More", "--as", &writer],
+    );
+    assert_eq!(made.code, 0, "{}", made.err);
+    assert!(listener.queued().is_empty(), "the write delivered nothing");
+    let dispatched = run_as(&case.env, idle, &["dispatch"]);
+    assert_eq!(dispatched.code, 0, "{}", dispatched.err);
+    let lines = listener.queued();
+    let pull = lines
+        .iter()
+        .find(|line| line.starts_with("PULL "))
+        .unwrap_or_else(|| panic!("the new work's digest is delivered: {lines:?}"));
+    // New work, and the slots it holds as they were: counted against the cap, never as none.
+    assert!(pull.contains("ready_unstaffed=1 (was 0)"), "{lines:?}");
+    assert!(!pull.contains("slots="), "{lines:?}");
+    assert!(
+        lines.iter().all(|line| !line.contains("cap=none")),
+        "{lines:?}"
+    );
+}

@@ -150,10 +150,20 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged(backend: Bac
             "an idle tick takes no lease and writes no rows"
         );
     }
+    // Past the lost line the run still holds it: its parent is told no LOST, so no takeover.
+    f.advance(600.0);
+    f.store.dispatch_callbacks().unwrap();
+    assert_eq!(
+        callback_state(&f, "parent")["seen"]["children"]["child"],
+        "Live"
+    );
     slot.unlock().unwrap();
     f.store.dispatch_callbacks().unwrap();
+    // Ending the test restores raw health: lost, said once the run no longer holds it.
     assert!(
-        o.text().contains("STALE child"),
+        std::iter::repeat_with(|| o.text())
+            .take(2)
+            .any(|text| text.contains("LOST child — its work is claimable: tools/child")),
         "ending the test restores raw health"
     );
 }

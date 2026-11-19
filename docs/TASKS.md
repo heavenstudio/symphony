@@ -735,7 +735,12 @@ one a host at a time, which makes one more pass for each write that commits
 while it runs. One that finds another running waits until that pass has ended,
 and takes over if the other's lease lapses first.
 The shared Symphony server schedules PULL digests and STALE/LOST transitions and
-retries failed deliveries. Per-recipient leases prevent concurrent writers
+retries failed deliveries. After the machine sleeps, its clock judges no session until a round of
+the idle sweep begun after the wake has ended, answered or failed, or a round's timeout of awake
+time has passed: the sleep's gap is nobody's silence, and the sweep first confirms each listener
+that still answers, so a quiet child whose listener answers is not said lost again at every wake,
+while one the round finds gone is said lost once (`apps/symphony-server/src/live/presence.rs`).
+Per-recipient leases prevent concurrent writers
 from sending the same queued event. A successful native send acknowledges the
 inbox; failure retries three times, is recorded on the task thread, and retains
 the event in the inbox. As with any external queue, a process crash after the
