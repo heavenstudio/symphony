@@ -5,6 +5,8 @@ use super::hc::{self, Binary, Hc, text_of};
 use super::{Ask, Defaults, Machine, Resolved, launch, prompt_text};
 use crate::cli::{Env, agents, probes};
 use crate::health::{EXECUTING, FINISHED};
+use crate::workflow::operate::Operating;
+use symphony_api::workflow::Role;
 use crate::sys::FileLock;
 use crate::{Board, Error, Health, Held, NewLaunch, Store, Task, git};
 use serde::Deserialize;
@@ -121,12 +123,44 @@ fn orchestrator<'a>(task: &'a Task, board: &'a Board) -> Option<&'a str> {
     None
 }
 
-fn eligible(task: &Task, board: &Board, config: &Config) -> bool {
+/// The role `task` wants staffed, its prerequisites met. On a task a custom workflow holds, the
+/// one an edge leaving its position gives (an executor's before a reviewer's) whose dependency
+/// predicate is met, never by the status the position projects to; on any other, an executor for
+/// ready work and a reviewer for work in review, every prerequisite done.
+fn wanted(task: &Task, board: &Board, operating: Option<&Operating>) -> Option<&'static str> {
+    if crate::store::workflow::position_held(&task.fields) {
+        let operating = operating?;
+        let placed = operating.placed(task)?;
+        if placed.finished() {
+            return None;
+        }
+        let find = |slug: &str| board.tasks.iter().find(|t| t.slug == slug);
+        let mut claims = placed.claims();
+        claims.retain(|c| operating.dependencies_met(task, c.edge, find));
+        return [Role::Executor, Role::Reviewer]
+            .into_iter()
+            .find(|role| claims.iter().any(|c| c.role == *role))
+            .map(|role| if role == Role::Executor { "executor" } else { "reviewer" });
+    }
     let role = match task.status.as_str() {
         "ready" => "executor",
         "review" => "reviewer",
-        _ => return false,
+        _ => return None,
     };
+    let done = |slug: &String| (board.tasks.iter()).any(|t| t.slug == *slug && t.status == "done");
+    task.depends.iter().all(done).then_some(role)
+}
+
+/// The role a staffing pass would start on `task` ([`wanted`]), where nothing stops it: no
+/// owner-only mark, a live orchestrator above it, inside `config`'s scope, nobody there holding
+/// or reserving that role, and no executor at work on a task under it.
+fn eligible(
+    task: &Task,
+    board: &Board,
+    config: &Config,
+    operating: Option<&Operating>,
+) -> Option<&'static str> {
+    let role = wanted(task, board, operating)?;
     if owner_only(task)
         || orchestrator(task, board).is_none()
         || (!config.only.is_empty()
@@ -134,21 +168,15 @@ fn eligible(task: &Task, board: &Board, config: &Config) -> bool {
                 .only
                 .iter()
                 .any(|s| task.slug == *s || task.slug.starts_with(&format!("{s}/"))))
-        || !task.depends.iter().all(|d| {
-            board
-                .tasks
-                .iter()
-                .any(|t| t.slug == *d && t.status == "done")
-        })
         || task
             .roles
             .iter()
             .any(|r| (r.role == role || r.role == "reserved") && r.health.holds())
     {
-        return false;
+        return None;
     }
     // Work on a child already staffs the parent. Never dispatch an overlapping executor/review.
-    !board.tasks.iter().any(|child| {
+    let overlapping = board.tasks.iter().any(|child| {
         if !EXECUTING.contains(&child.status.as_str()) {
             return false;
         }
@@ -168,7 +196,8 @@ fn eligible(task: &Task, board: &Board, config: &Config) -> bool {
                 .and_then(|t| t.parent.as_deref());
         }
         false
-    })
+    });
+    (!overlapping).then_some(role)
 }
 
 /// Available memory, including reclaimable inactive pages on macOS (MemAvailable on Linux).
@@ -291,7 +320,12 @@ fn pass_inner(
     // names for the role, else the board's own.
     let defaults = Defaults::configured(&machine.root).map_err(refused)?;
     let mut candidates = store.board()?.tasks;
-    candidates.retain(|t| matches!(t.status.as_str(), "ready" | "review"));
+    // The custom workflow by whose edges the tasks it holds are staffed, read once for the pass.
+    let operating = store.operating_for(&candidates)?;
+    candidates.retain(|t| {
+        crate::store::workflow::position_held(&t.fields)
+            || matches!(t.status.as_str(), "ready" | "review")
+    });
     candidates.sort_unstable_by(|a, b| {
         a.priority
             .cmp(&b.priority)
@@ -306,11 +340,11 @@ fn pass_inner(
         let Some(task) = board.tasks.iter().find(|t| t.slug == candidate.slug) else {
             continue;
         };
-        if !eligible(task, &board, &config) {
+        let Some(role) = eligible(task, &board, &config, operating.as_ref()) else {
             continue;
-        }
+        };
         let actor = orchestrator(task, &board).expect("eligible has a live orchestrator");
-        let review = if task.status == "review" {
+        let review = if role == "reviewer" {
             match review_target(store, task, &machine) {
                 Ok(target) => Some(target),
                 Err(problem) => {
@@ -329,11 +363,6 @@ fn pass_inner(
         }
         // The cap counts every agent of the machine, whoever started it.
         let live = super::running::counted(&view.agents, &hc.live()?) + projected;
-        let role = if task.status == "review" {
-            "reviewer"
-        } else {
-            "executor"
-        };
         let launching = defaults.resolve_as(Some(role), None, None);
         // Who may not review it, by the rule the verdict and the land hold (`Held::unfresh`).
         let held = if role == "reviewer" {
@@ -343,7 +372,17 @@ fn pass_inner(
         };
         // A review whose recorded reviewer still runs fails here as its launch would, in a dry run
         // too.
-        let job = job_for(store, &hc, &view.agents, &board, task, role, &used, &held);
+        let job = job_for(
+            store,
+            &hc,
+            &view.agents,
+            &board,
+            task,
+            role,
+            &used,
+            &held,
+            operating.as_ref(),
+        );
         let (resuming, idle) = job
             .as_ref()
             .map_or((None, None), |(resuming, idle)| (resuming.clone(), *idle));
@@ -440,7 +479,14 @@ fn idle_for<'a>(
     role: &str,
     used: &HashSet<String>,
     held: &Held,
+    operating: Option<&Operating>,
 ) -> Option<&'a agents::Agent> {
+    // Open work by its recorded facts: a task a custom workflow holds until its position is
+    // terminal, one the board does not show by its status.
+    let open = |t: &agents::Held| match board.tasks.iter().find(|task| task.slug == t.slug) {
+        Some(task) => !crate::workflow::operate::finished(operating, task),
+        None => !FINISHED.contains(&t.status.as_str()),
+    };
     agents.iter().find(|a| {
         !used.contains(&a.handle)
             && a.state == "idle"
@@ -452,10 +498,7 @@ fn idle_for<'a>(
                 } else {
                     "worker"
                 }
-            && !a
-                .tasks
-                .iter()
-                .any(|t| !FINISHED.contains(&t.status.as_str()))
+            && !a.tasks.iter().any(open)
             && !board.tasks.iter().any(|t| {
                 t.roles
                     .iter()
@@ -468,7 +511,7 @@ fn idle_for<'a>(
                     && other
                         .tasks
                         .iter()
-                        .any(|t| t.role == "executor" && !FINISHED.contains(&t.status.as_str()))
+                        .any(|t| t.role == "executor" && open(t))
             })
             && if role == "reviewer" {
                 a.branch.is_empty()
@@ -499,13 +542,14 @@ fn job_for<'a>(
     role: &str,
     used: &HashSet<String>,
     held: &Held,
+    operating: Option<&Operating>,
 ) -> Result<(Option<String>, Option<&'a agents::Agent>), Error> {
     if role == "reviewer"
         && let Some(record) = super::restore::reviewer_to_resume(store, hc, &task.slug)?
     {
         return Ok((Some(record.handle), None));
     }
-    Ok((None, idle_for(agents, board, task, role, used, held)))
+    Ok((None, idle_for(agents, board, task, role, used, held, operating)))
 }
 
 /// Whether `handle` is a fresh reviewer of `task`, `held` its [`Store::ever_held`]: one that
@@ -602,9 +646,9 @@ fn reuse(
     }
     store.revive(handle)?;
     // A reviewer never reserves the task it judges: it takes the role ([`Store::take_role`] refuses
-    // one the board would take no verdict from).
+    // one the board would take no verdict from, and on held work admission does).
     if role == "reviewer" {
-        store.take_role(&task.slug, handle, "reviewer")?;
+        super::take_reviewer(store, &task.slug, handle, None)?;
     } else {
         store.reserve(&task.slug, handle, crate::health::RESERVE_SECONDS)?;
     }

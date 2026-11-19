@@ -568,35 +568,42 @@ fn agent_kind(ask: &Ask) -> &'static str {
 }
 
 /// The new session takes its part on the task: an executor reserves it, a reviewer takes the
-/// reviewer role, beside one still there only when the launch says why. A refusal naming how one
-/// joins beside it names the launch's own `--beside`, not `tasks role`'s.
-///
-/// On a task a custom workflow holds, the reviewer takes its role by the one edge leaving the
-/// task's position that gives it, as the new session, through admission, which judges it fresh
-/// ([`Store::claim_by_workflow`]); no reviewer joins beside another there, as the edge gives the
-/// role to one session. An executor reserves it as on any task, and claims its edge when it starts.
+/// reviewer role ([`take_reviewer`]), beside one still there only when the launch says why. A
+/// refusal naming how one joins beside it names the launch's own `--beside`, not `tasks role`'s.
+/// An executor of a task a custom workflow holds reserves it as on any task, and claims its edge
+/// when it starts.
 fn take_up(store: &Store, ask: &Ask, handle: &str) -> Result<(), Error> {
     let slug = ask.slug.as_str();
-    let beside = ask.beside.as_deref();
-    if ask.role == "reviewer" && crate::store::workflow::position_held(&store.get(slug)?.fields) {
+    if ask.role == "executor" {
+        store.reserve(slug, handle, RESERVE_SECONDS)?;
+        return Ok(());
+    }
+    let board = store.board_command();
+    take_reviewer(store, slug, handle, ask.beside.as_deref()).map_err(|problem| match problem {
+        Error::Refused(text) => Error::Refused(text.replace(
+            &format!("{board} role {slug} reviewer --beside WHY"),
+            &format!("{board} launch {slug} --role reviewer --beside WHY"),
+        )),
+        problem => problem,
+    })
+}
+
+/// `handle` takes the reviewer's role on `slug`: on a task a custom workflow holds, by the one edge
+/// leaving its position that gives it, as that session, through admission, which judges it fresh
+/// ([`Store::claim_by_workflow`]); on any other, as the board's role, beside one still there only
+/// when `beside` says why ([`Store::take_role_beside`]).
+pub(super) fn take_reviewer(
+    store: &Store,
+    slug: &str,
+    handle: &str,
+    beside: Option<&str>,
+) -> Result<(), Error> {
+    if crate::store::workflow::position_held(&store.get(slug)?.fields) {
         let principal = crate::workflow::agent_session(handle);
         let role = symphony_api::workflow::Role::Reviewer;
         store.claim_by_workflow(slug, &principal, &crate::workflow::Host::local(), role)?;
-        return Ok(());
-    }
-    if ask.role == "executor" {
-        store.reserve(slug, handle, RESERVE_SECONDS)?;
     } else {
-        let board = store.board_command();
-        store
-            .take_role_beside(slug, handle, "reviewer", beside)
-            .map_err(|problem| match problem {
-                Error::Refused(text) => Error::Refused(text.replace(
-                    &format!("{board} role {slug} reviewer --beside WHY"),
-                    &format!("{board} launch {slug} --role reviewer --beside WHY"),
-                )),
-                problem => problem,
-            })?;
+        store.take_role_beside(slug, handle, "reviewer", beside)?;
     }
     Ok(())
 }
