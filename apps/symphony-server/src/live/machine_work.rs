@@ -312,11 +312,12 @@ impl Sampler {
 }
 
 impl Hub {
-    /// One tick's read of the board on `store`. On a board ahead of this build's schema
-    /// ([`Hub::read_ahead`]) it reads alone: no chat journal, owner's asks, callbacks or gives are
-    /// written, as the schema rule would refuse each.
+    /// One tick's read of the board on `store`. On a board ahead of this build's schema that its
+    /// store may not write ([`Hub::read_only_ahead`]) it reads alone: no chat journal, owner's
+    /// asks, callbacks or gives are written, as the schema guard would refuse each. On one ahead
+    /// that it may, it does all it does at its own.
     pub(crate) fn board_read(&self, store: &symphony_board::Store) -> Result<(), String> {
-        let ahead = self.read_ahead(store).is_some();
+        let ahead = self.read_only_ahead(store).is_some();
         if !ahead
             && let Some(callbacks) = self
                 .callbacks

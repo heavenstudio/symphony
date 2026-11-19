@@ -61,33 +61,19 @@ fn catalogue(db: &Database) -> String {
     let mut lines = BTreeSet::new();
     match db {
         Database::SurrealDb(client) => {
-            let info = |sql: &str| -> Value {
-                client.query(sql, json!({})).unwrap().pop().unwrap()
-            };
-            let each = |of: &Value, mut add: Box<dyn FnMut(&str, &str, &str) + '_>| {
-                for (kind, named) in of.as_object().unwrap() {
-                    for (name, definition) in named.as_object().into_iter().flatten() {
-                        add(kind, name, definition.as_str().unwrap());
-                    }
-                }
-            };
+            let info =
+                |sql: &str| -> Value { client.query(sql, json!({})).unwrap().pop().unwrap() };
             let mut database = info("RETURN INFO FOR DB;");
             let tables = database.as_object_mut().unwrap().remove("tables").unwrap();
-            each(
-                &database,
-                Box::new(|kind, name, definition| {
-                    lines.insert(line("", kind, name, definition));
-                }),
-            );
+            for (kind, name, definition) in definitions(&database) {
+                lines.insert(line("", kind, name, definition));
+            }
             for (table, definition) in tables.as_object().unwrap() {
                 lines.insert(line(table, "table", table, definition.as_str().unwrap()));
                 let of = info(&format!("RETURN INFO FOR TABLE {table};"));
-                each(
-                    &of,
-                    Box::new(|kind, name, definition| {
-                        lines.insert(line(table, kind, name, definition));
-                    }),
-                );
+                for (kind, name, definition) in definitions(&of) {
+                    lines.insert(line(table, kind, name, definition));
+                }
             }
         }
         Database::PostgreSql(client) => {
@@ -135,6 +121,18 @@ fn catalogue(db: &Database) -> String {
     lines.into_iter().map(|line| line + "\n").collect()
 }
 
+/// Each definition a SurrealDB `INFO FOR` answer names: its kind, its name and its text.
+fn definitions(info: &Value) -> impl Iterator<Item = (&str, &str, &str)> {
+    info.as_object()
+        .into_iter()
+        .flatten()
+        .flat_map(|(kind, named)| {
+            (named.as_object().into_iter().flatten()).map(move |(name, definition)| {
+                (kind.as_str(), name.as_str(), definition.as_str().unwrap())
+            })
+        })
+}
+
 /// A catalogue's lines, by the table each defines ("" for the database's own).
 fn by_table(catalogue: &str) -> BTreeMap<&str, BTreeSet<&str>> {
     let mut tables: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
@@ -161,8 +159,14 @@ fn kept(before: &str, after: &str) -> Result<(), String> {
             _ => now.difference(was).collect(),
         };
         if !gone.is_empty() || !added.is_empty() {
-            let named = if table.is_empty() { "the database's own" } else { table };
-            changed.push(format!("{named}: removed or changed {gone:?}, added {added:?}"));
+            let named = if table.is_empty() {
+                "the database's own"
+            } else {
+                table
+            };
+            changed.push(format!(
+                "{named}: removed or changed {gone:?}, added {added:?}"
+            ));
         }
     }
     match changed.is_empty() {
@@ -184,7 +188,8 @@ const KEEPING: [Twin; 2] = [
         surreal: "DEFINE TABLE IF NOT EXISTS fixture_own SCHEMAFULL;
                   DEFINE FIELD IF NOT EXISTS name ON fixture_own TYPE string;
                   DEFINE INDEX IF NOT EXISTS fixture_own_name ON fixture_own FIELDS name;",
-        postgres: "CREATE TABLE IF NOT EXISTS fixture_own (id jsonb PRIMARY KEY, name text NOT NULL);
+        postgres:
+            "CREATE TABLE IF NOT EXISTS fixture_own (id jsonb PRIMARY KEY, name text NOT NULL);
                    CREATE INDEX IF NOT EXISTS fixture_own_name ON fixture_own (name);",
     },
     Twin {

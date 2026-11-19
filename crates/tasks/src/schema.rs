@@ -118,9 +118,15 @@ pub const VERSION: i64 = 24;
 /// store's catalogue test holds a listed version to that on the database (`tests/store/catalogue.rs`,
 /// over the committed definitions of each version); what it cannot see, a rule held in code that
 /// the older Symphony's writes would skip, is its reviewer's to read against the line
-/// ([CHECKS](../../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). Schema 24,
-/// which brought this list and the record it writes, changed `meta` and is not listed.
+/// ([CHECKS](../../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The schema
+/// that brought this list and the record it writes ([`WRITABLE_FROM_SINCE`]) changed `meta` and is
+/// not listed.
 pub const COMPATIBLE: &[(i64, &str)] = &[];
+
+/// The schema whose step brought `meta:schema`'s `writable_from`: a Symphony below it never reads
+/// the record, and refuses every write on a board ahead of it whatever the record says.
+pub const WRITABLE_FROM_SINCE: i64 = 24;
+const _: () = assert!(WRITABLE_FROM_SINCE <= VERSION);
 
 /// Whether `version`'s step keeps a Symphony one schema behind writing ([`COMPATIBLE`]).
 pub fn keeps_writes(version: i64) -> bool {

@@ -72,8 +72,9 @@ impl Opening {
         Opening { scratch, ..self }
     }
 
-    /// This build's schema, to read: a board one version ahead is read, never written, and one
-    /// behind, or not made yet, is refused, never moved forward or made.
+    /// This build's schema, to read: a board one version ahead is read, and written only where the
+    /// record its migration wrote lets this build ([`crate::schema::COMPATIBLE`]), and one behind,
+    /// or not made yet, is refused, never moved forward or made.
     pub fn read() -> Opening {
         Opening {
             access: Access::Read,
@@ -440,7 +441,12 @@ impl Store {
     /// schema write it ([`schema::COMPATIBLE`]). One read, which defines and writes nothing; the
     /// guard still reads the record again in each write's own transaction.
     pub fn board_standing(&self) -> Result<Standing, Error> {
-        let read = || both(sql::opening::BOARD_STANDING, postgres::opening::BOARD_STANDING);
+        let read = || {
+            both(
+                sql::opening::BOARD_STANDING,
+                postgres::opening::BOARD_STANDING,
+            )
+        };
         let record = self.retrying(|| match self.request(read(), json!({})) {
             Ok(mut found) => Ok(found.pop().unwrap_or(Value::Null)),
             Err(DbError::Failed(said)) if self.db.undefined(&said) => Ok(Value::Null),

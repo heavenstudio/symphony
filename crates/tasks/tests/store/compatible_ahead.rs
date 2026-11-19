@@ -33,12 +33,25 @@ fn opened(db: Database, how: &Opening) -> Result<Store, Error> {
 /// The store the Symphony opens on `db`: the reader's own entry ([`Store::reading_on`]).
 fn reader(db: &Database, schema: Schema) -> Store {
     let how = Opening::read().at(schema).of(Some("alpha"));
-    Store::reading_on(db.another(), Box::new(|| NOW), Box::new(|_| false), HOST, &how).unwrap()
+    Store::reading_on(
+        db.another(),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        HOST,
+        &how,
+    )
+    .unwrap()
 }
 
 /// A store taken unchecked on `db` by `how`: no opening read, so no role but the schema.
 fn unchecked(db: &Database, how: &Opening) -> Store {
-    Store::unchecked_on(db.another(), Box::new(|| NOW), Box::new(|_| false), HOST, how)
+    Store::unchecked_on(
+        db.another(),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        HOST,
+        how,
+    )
 }
 
 /// The board on `db` moved to `schema` by a writer of it.

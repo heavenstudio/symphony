@@ -263,6 +263,14 @@ keeps running against a newer board for a while, and a change keeps what it read
   by moving its `seen` back by hand); and the Symphony, which opens its board to read, stays
   uncounted: it takes a new schema only by its reload after the move, so counting it would refuse
   every refresh's migrate (`store/writers.rs`; `tests/store/writers.rs`).
+- each schema's definitions are committed, one file per engine
+  (`tests/store/catalogue/ENGINE-VERSION.txt`, written with `TASKS_CATALOGUE=write`), and a
+  version in `schema::COMPATIBLE` keeps every table of the one before as that version's file has
+  it (`tests/store/catalogue.rs`). Only a store opened to read through the rule has the reader's
+  role (`Store::reader`, set in `store/opening.rs`), and only its ordinary write may take a board
+  one ahead whose `meta:schema` record lets it: a writer's, an unchecked store's, a copy's staging
+  and a recovery's rebind are held to their own schema (`store/transaction.rs`'s `Run`;
+  `tests/store/compatible_ahead.rs`, [CHECKS](../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)).
 
 ### Its contracts
 

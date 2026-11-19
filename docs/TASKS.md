@@ -175,6 +175,20 @@ says so in the server's notice, and that a verdict or a message saved meanwhile 
 reaches no agent until then. A server two schemas behind
 reads nothing of its board.
 
+The exception is a step declared to keep the Symphony writing
+([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). Its migration records beside
+the version that the Symphony one schema behind may write the board (`meta:schema`'s
+`writable_from`), and a store the Symphony opened to read then writes the board as at its own
+schema. That covers its tick's chat journal, owner's asks, callbacks and gives, and the owner's
+saves. Its pages say nothing of the schema. The guard reads the record in each write, so a later
+step that is not declared stops those writes at once, even for a store opened before it. That role
+is only the Symphony's reader's, the one `symphony::taskview::connect` opens. Every other program
+is refused a board one schema ahead as before: `tasks`, `agent-send`, `tasks-copy`, a project's
+own program, a copy's staging, a recovery's rebind, and a store opened unchecked. A record that is
+missing, or not an integer, grants nothing, and neither does a board two schemas ahead. The
+record arrives with schema 25. A Symphony older than that does not read it and refuses every write
+one schema ahead.
+
 The record arrives with schema 18, a raise of its own, and a build below it keeps no line, so the
 move to 18 names no one: a board at 17 has no table of writers to read. In this repository main's
 build moves the board at its first board command once the raise lands, as for any schema here,

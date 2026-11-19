@@ -10,8 +10,10 @@
 //! project has less free than `SYMPHONY_LOW_DISK_GB` ([`symphony_board::board_health::disk`]),
 //! every page says that too. None of it reads the board. While the project's settings do not load,
 //! every page says so and why, as the project is served with the defaults ([`Hub::tell_project`]).
-//! While the board is at a schema ahead of this build's, which it reads and never writes, every
-//! page says so ([`Hub::read_ahead`]); while this project holds the machine's server on a
+//! While the board is at a schema ahead of this build's that it reads and may not write, every
+//! page says so ([`Hub::read_only_ahead`]); one ahead whose step keeps this build writing
+//! ([`symphony_board::schema::COMPATIBLE`]) it writes as its own, and the pages say nothing of the
+//! schema. While this project holds the machine's server on a
 //! project's build, the one server tells its pages so ([`Hub::tell_machine`]).
 //!
 //! The project picker and `/api/projects` read one judgement of the board ([`Hub::standing`]): red
@@ -38,8 +40,8 @@ pub(crate) struct Notices {
     disk: String,
     /// What the machine's server is to this project ([`Hub::tell_machine`]).
     machine: String,
-    /// The board's schema while it is ahead of this build's, and what the pages say of it
-    /// ([`Hub::read_ahead`]).
+    /// The board's schema while it is ahead of this build's and read only, and what the pages say
+    /// of it ([`Hub::read_only_ahead`]).
     ahead: (Option<i64>, String),
     /// The project file and its local settings file as the hub last found them ([`stamps`]): an
     /// edit to either renders main's documents again, whether the settings still load or not
@@ -206,17 +208,20 @@ impl Hub {
         }
     }
 
-    /// The board's schema when it is ahead of this build's, read on `store` once a tick: the hub
-    /// then reads it and writes nothing to it, as the schema rule refuses a reader's every write
-    /// on it ([`symphony_board::Store`]), and every page says so, until it is not. A read that
-    /// fails keeps what the last one found.
-    pub(crate) fn read_ahead(&self, store: &symphony_board::Store) -> Option<i64> {
-        let found = store.board_version();
+    /// The board's schema when it is ahead of this build's and `store`'s writes may not take it,
+    /// read on `store` once a tick: the hub then reads it and writes nothing to it, as the schema
+    /// guard would refuse each write ([`symphony_board::Store::board_standing`]), and every page
+    /// says so, until it is not. A board one ahead whose record lets the store write it
+    /// ([`symphony_board::schema::COMPATIBLE`]) is none: the hub writes it as its own, and the
+    /// guard reads the record again in each write. A read that fails keeps what the last one found.
+    pub(crate) fn read_only_ahead(&self, store: &symphony_board::Store) -> Option<i64> {
+        let found = store.board_standing();
         let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
         let Ok(found) = found else {
             return notices.ahead.0;
         };
-        let ahead = found.filter(|found| *found > symphony_board::SCHEMA);
+        let ahead =
+            (found.version).filter(|version| *version > symphony_board::SCHEMA && !found.writes);
         if notices.ahead.0 != ahead {
             notices.ahead = (ahead, ahead.map(read_only).unwrap_or_default());
             self.server_notice.send_replace(notices.said());
@@ -364,8 +369,8 @@ pub(crate) fn unstaffed(tasks: &symphony_api::Tasks) -> Option<&'static str> {
     })
 }
 
-/// What a page says of a board at `schema`, ahead of this build's, which it reads and never writes:
-/// and what that does to the owner's words, which are saved in the documents while the asks and the
+/// What a page says of a board at `schema`, ahead of this build's, which it reads and may not
+/// write: and what that does to the owner's words, which are saved in the documents while the asks and the
 /// chat they open wait in the journal ([`symphony::callbacks`]).
 pub(crate) fn read_only(schema: i64) -> String {
     format!(

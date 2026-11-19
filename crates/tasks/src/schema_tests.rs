@@ -224,7 +224,10 @@ fn a_write_passes_at_its_own_schema_and_one_ahead_only_when_it_may_and_the_recor
         assert!(!writes(found, &json!(-100), 11, true), "{found:?}");
     }
     assert!(!writes(Some(i64::MIN), &json!(0), i64::MAX, true));
-    assert!(!writes(None, &json!(0), i64::MAX, true), "no board is never one ahead");
+    assert!(
+        !writes(None, &json!(0), i64::MAX, true),
+        "no board is never one ahead"
+    );
 }
 
 /// A schema's record of the oldest Symphony that may write a board it moved: its own version unless
@@ -233,7 +236,10 @@ fn a_write_passes_at_its_own_schema_and_one_ahead_only_when_it_may_and_the_recor
 #[test]
 fn a_schema_names_the_oldest_symphony_that_may_write_the_board_it_moved() {
     let this = Schema::this_build();
-    assert_eq!(this.writable_from(), VERSION - i64::from(keeps_writes(VERSION)));
+    assert_eq!(
+        this.writable_from(),
+        VERSION - i64::from(keeps_writes(VERSION))
+    );
     let next = this.then("DEFINE TABLE IF NOT EXISTS later SCHEMALESS;");
     assert_eq!(next.writable_from(), VERSION + 1);
     let keeping = next.clone().keeping_writes();
@@ -250,16 +256,20 @@ fn a_schema_names_the_oldest_symphony_that_may_write_the_board_it_moved() {
     assert_eq!(this.before().writable_from(), VERSION - 1);
 }
 
-/// The list starts empty: schema 24, which brought it and the record, changed `meta` and keeps the
-/// Symphony one behind read-only. Each version is listed once, with its reason, and none ahead of
-/// this build's.
+/// The list starts empty: the schema that brought it and the record changed `meta` and keeps the
+/// Symphony one behind read-only. Each version is listed once, with its reason, and none at or
+/// before that schema or ahead of this build's.
 #[test]
 fn the_compatible_versions_are_each_listed_once_with_a_reason_and_none_ahead_of_this_build() {
-    assert!(!keeps_writes(24), "the mechanism's own step changed meta");
+    assert!(
+        !keeps_writes(WRITABLE_FROM_SINCE),
+        "the mechanism's own step changed meta"
+    );
     let mut seen = std::collections::BTreeSet::new();
     for (version, why) in COMPATIBLE {
         assert!(seen.insert(*version), "{version} listed twice");
-        assert!(*version > 24 && *version <= VERSION, "{version}");
+        assert!(*version > WRITABLE_FROM_SINCE, "{version}");
+        assert!(*version <= VERSION, "{version}");
         assert!(why.split_whitespace().count() >= 5, "{version}: {why}");
         assert!(keeps_writes(*version));
     }
