@@ -26,8 +26,7 @@ validation or a host prerequisite check is not activation. The
 [graph design](analysis/configurable-delivery-workflow.md) describes the remaining system:
 configured staffing, PULL, recovery and attempts (`tools/workflow-operations`,
 `tools/workflow-attempt-integration`), the app's reading of phases and actions
-(`app/workflow-actions`), landing adapters, guards and accepted outputs each have a task of their
-own; artifact policy receipts and execution attempts retain their separate ownership.
+(`app/workflow-actions`), guards and accepted outputs each have a task of their own; artifact policy receipts and execution attempts retain their separate ownership.
 
 ## Activation and mappings
 
@@ -46,7 +45,9 @@ declaration mints nothing, and an unknown capability fails the prerequisites. A 
 `symphony_plugin::execution::Principal`, built by the host from what it authenticated (an agent
 session by its handle, the local owner, a board service), never read from a request. The local
 host's policy is fixed in code (`Host::local`): the local owner holds `owner`, the board's
-recovery service holds `recovery`, and no adapter is registered. A hosted board brings its own
+recovery service holds `recovery`, and the two landing adapters are registered: `default_land`,
+the default landing, and `project_land`, a project's own ([external effects](#external-effects)).
+A hosted board brings its own
 `Host`, built from the principals its ingress authenticated; nothing in a project file or a
 request extends it.
 
@@ -76,8 +77,8 @@ The whole activation is refused, nothing written and the previous workflow left 
 command says why on stderr and runs on: a capability, adapter or guard the host does not support
 (every guard, until revision-bound guards); recovery on attempt failure or cancellation
 acknowledgement that moves work, automatic edges and retry bounds, which need durable attempts;
-`accepted_output` and `landed` dependencies, parent integration, and an adapter's prepare or
-finalize, as no adapter runs here yet and a prepared intent never completes on a caller's word; a
+`accepted_output` and `landed` dependencies and parent integration; a prepare or finalize of an
+adapter the host does not register; a
 pair or resume pair neither declared nor mapped; a mapping onto a position recording an outcome, satisfied dependants or a completion its
 source lacks; and a task whose live executor or reviewer it would move or restaff. A live holder
 stands in for a live attempt until durable attempts are read here. A file that drops `[workflow]`
@@ -98,8 +99,9 @@ Admission reads the active workflow, the task, its role rows, the tasks it depen
 key's receipt in one read, then refuses, by its code, in this order: a request naming another
 project than the board's, or a task no workflow holds (`unknown_id`); a request whose digest, generation, workflow revision or pair is not the task's now
 (`stale_workflow`, `stale_activation`, `stale_task`); an edge the definition does not declare, or
-one that leaves another pair (`unknown_id`); an automatic edge (`unsupported_writer`); a prepare,
-finalize or parent integration, which no host-verified adapter runs yet (`unsupported_adapter`);
+one that leaves another pair (`unknown_id`); an automatic edge (`unsupported_writer`); a parent
+integration, or a prepare or finalize of an adapter the host does not register
+(`unsupported_adapter`);
 any guard (`guard_unavailable`); a human wait taken by anyone but a person (`human_wait`); a
 principal meeting none of the edge's authorities (`unauthorized`); an input the edge does not
 declare (`unknown_id`), one it declares and the request lacks, an `acquire_role` taken by anyone
@@ -146,6 +148,66 @@ unstaffed, orphaned or unreviewed (a working one counts as executing), and the b
 a dependant whose prerequisite was cancelled leaves one to its edges' dependency predicates.
 Staffing and the launcher do not read the workflow yet (`tools/workflow-operations`).
 
+## External effects
+
+An edge whose effect is `prepare` or `finalize` changes something outside the board (a merge), and
+is taken only through its adapter's boundary (`symphony_board::workflow::effect`,
+`Store::prepare_effect`, `dispatch_effect`, `finalize_effect`), never by a plain operation: an
+operation naming one is refused as `explicit_action_required`, so a prepared effect never completes
+on a caller's word. The host registers each adapter by name (`Host::adapters`), and the adapter
+itself answers what its system holds (`effect::Adapter`): its bindings as they are now, and the
+result of an effect it reads back.
+
+- **Prepare** admits the prepare edge as any operation is admitted and, in the same write as its
+  transition, records the effect's intent (`['intent', SLUG, REVISION]`, the workflow revision the
+  prepare made, which is the operation's key from there on): the adapter, the request's
+  idempotency key and principal, the workflow generation and digest, and what the effect is bound
+  to: the project and task, the repository, the pull request where there is one, the exact head,
+  the revision of the landing policy, the revision of the evidence as read, and the destination.
+  The same key again answers the same intent, and with other bindings is refused.
+- **Dispatch** comes before anything is sent. The intent stands only while the task is still at
+  the revision the prepare made, under the generation that admitted it, with every binding the
+  adapter reads now equal to the one recorded. Otherwise it is withdrawn, for good, and the
+  dispatch refused as `stale_input` naming what moved: a task taken out of its prepared pair by
+  another edge cancels its reservation this way. An adapter then checks the real head once more
+  as it acts, by merging the bound commit itself and never a branch name.
+- **Finalize** takes the finalize edge only on a result the adapter read back from its system
+  for an intent that was dispatched: with none, it is refused, and no receipt a request carries is
+  believed. The result (the merge commit) is recorded on the intent and given as the edge's
+  `receipt` input where it declares one. Asked again, it answers what it recorded and takes no
+  second transition, so a process killed between the effect and this step is finished by the next
+  one that asks, under the same intent.
+
+An effect that happened is recorded whatever moved while it was in flight, as it was authorized,
+with the recovery it owes said to the orchestrator on the thread and kept on the intent
+(`recovery`). Where the landing policy or the evidence was another when the effect happened than
+when it was prepared, the finalize edge is still taken, since the task did land, and the record
+never says the policy now in force accepts it. Where the task left its prepared pair, the
+workflow was activated again or left the board, or the edge refuses its principal, the result is
+recorded and no edge is taken: a person recovers the task by its graph, and a later finalize by
+who may take the edge takes it.
+
+**The default landing** (`just land SLUG`, [TASKS](TASKS.md#the-default-landing)) is the adapter
+`default_land` (`symphony_board::land::adapter`). On a task a workflow holds it lands by the
+graph alone: it takes the `prepare_land` edge of `default_land` leaving the task's pair, and
+refuses, before anything is merged, a task at a pair no such edge leaves. The stamps the task
+needs are read at its tip by the board's readers, as for any land. Its review is read from the
+workflow: an approve edge writes no verdict message, so the approve standing is the task's last
+review transition, and the head it read is the `head` input of that transition's request, kept on
+its receipt (`Store::reviewed`); a tip that is not that head is refused before the prepare. The
+landing binds the repository's common folder, the branch's tip, the project file the default
+branch commits as the policy revision, a digest of the stamps needed and standing with that
+review as the evidence revision, and the default branch. After the merge it reads back its own
+record of it, a merge of the bound head the default branch holds, and finalizes with that commit.
+A land run again finishes an interrupted one from its intent, merging nothing twice. A managed
+task is not delivered by a pull request (`[land] delivery`) yet.
+
+**A project's own landing** takes the same three calls under the name `project_land`, with an
+`effect::Adapter` of its own that reads its repository and pull request: its `land` recipe decides
+its evidence and policy as before, and the board holds it to what it bound.
+
+A guarded landing edge stays refused until revision-bound guards.
+
 ## Recovery
 
 A holder's exit from a task a custom workflow holds is answered by the position's configured
@@ -180,7 +242,9 @@ attempts (`tools/workflow-operations`, `tools/workflow-attempt-integration`).
 From board schema 24 a custom workflow's records are one `workflow` table in both stores, each a
 `kind` and a `body` under a compound id: the active generation (`['active']`), each definition by
 its digest, each activation by its generation, and each transition of a task by its slug and the
-workflow revision it made (`['event', SLUG, REVISION]`). A task the workflow holds keeps its
+workflow revision it made (`['event', SLUG, REVISION]`), and each external effect's intent by the
+revision its prepare made (`['intent', SLUG, REVISION]`, which moves by its stages until its
+finalize edge is taken). A task the workflow holds keeps its
 position in `fields._board.workflow`: its pair, the pair a blocked task resumes to, the generation
 and digest it was last moved under, and its workflow revision, which only its own transitions move.
 The position, and the status it projects to, change only in the one write that records their
@@ -197,6 +261,61 @@ activation recorded for it. `Store::raw` refuses the table. A board with no cust
 none of these records, its export is the text it was, and every other write runs as before. The
 whole-board copy carries the records before the tasks, so a copy that lost them cannot restore a
 task the workflow holds. A reader one schema behind keeps and ignores the position.
+
+## The app
+
+A board with no custom workflow draws as it always has: its listing names no workflow, and the
+client fetches none of what follows, so its seven columns, its phone's tabs and its Build and
+Test overlays are those of the board's own writers, and its first visit carries nothing more.
+
+**What the wire carries.** `GET /api/workflow` (`WORKFLOW_PATH`) answers `BoardWorkflow`: the
+board's project and its active `WorkflowRead` (definition, revision and generation), or none. A
+task the workflow holds carries `workflow`, its `TaskPlace`, on its page and in every listing:
+its phase and state IDs, the pair a blocked task resumes to, its workflow revision, and the
+recovery by hand it waits on (`manual`: whose `release` or `lost_holder` left it, in which role).
+A task the board's own writers keep carries none, and its wire is the text it was.
+`GET /api/workflow-actions?slug=SLUG` (`WORKFLOW_ACTIONS_PATH`) answers that task's
+`NextActions` for the local owner, a preview and never a permit; a hosted visitor is refused it,
+as the apply route refuses one.
+
+**The board.** The [waiting listing](TASKS.md#what-a-task-waits-on) puts a task the workflow holds
+in its phase's column, keyed `phase:ID` so a phase never takes a status's key or an overlay's,
+unless its machine work puts it in Build or Test; blocked, it stays in its phase, and
+`status=phase:ID` selects one there; every other listing counts and selects a held task by its
+status, as before. The waiting listing's `waiting` adds `workflow`, the active generation,
+absent on a board with none, and `states`, `[state, count]` for the open tasks the workflow
+holds, by state ID in its order, counted after search and window and before `wait`;
+`wait=state:ID` lists one state's open tasks across their phases, as a wait kind's are. The
+board loads the workflow's
+chunk (`apps/symphony-web/src/flow.tsx`) only once a listing names a generation, reads the
+definition, and reads it again when the generation moves. It draws the phases that are columns
+by their `order`, then Build and Test, then any status the board's own writers still hold a task
+in; on a phone, a tab for every phase by its `phone_order`; on a desk, a button for each phase
+that is no column, which opens it as a list as Backlog opens; and a chip for each state with
+open tasks, which chooses its facet. A card names its place by its phase's and state's labels.
+The phone tab the board keeps for a project is the phase's stable key, never its label, so a
+relabel keeps it, and a phase no longer drawn falls back to the first tab. The state facet
+chosen is the page's own and is not kept. A definition the board cannot draw leaves it as its
+own writers draw it.
+
+**The task page.** A task with a place loads the next-actions chunk
+(`apps/symphony-web/src/nextactions.tsx`). It says the place, the pair a blocked task resumes to
+and the recovery by hand it waits on, then each action by its label and destination, with the
+inputs it needs and, where it is unavailable now, why and whose it is (the authorities the edge
+names). Taking one posts its edge, the snapshot the actions named and a fresh idempotency key to
+`/api/workflow-apply`, the same key again only for the same request after an answer that never
+came. A refusal says its words; a `stale_*` one says the task moved since and offers to read its
+actions again, and they are read again whenever the task's revision moves.
+
+**The timeline and the Agents page.** A task's timeline (`/api/task-timeline`) carries `places`,
+one for each transition recorded for it (`Store::workflow_transitions`, a read of its own events'
+keys alone), each named by the definition its move was made under, with the status it projects
+to, who moved it and by which edge; a task no workflow held carries none. The page draws a Phase
+lane and a State lane under the stages, a row for each place on a phone, and the time spent in
+each phase and in each state in the heading: the clock's time there, told apart from the
+machine's time on runs. The Agents page says a held task's place where it says another task's
+status, by the definition's names, which it reads through the board's workflow chunk only once a
+task it lists has a place.
 
 ## Definition format 1
 
@@ -247,7 +366,8 @@ the board records them.
 Operations are `create`, `claim`, `release`, `advance`, `request_review`, `approve`, `changes`,
 `block`, `resume`, `retry`, `cancel`, `complete_subtask`, `close_covered`, `prepare_land`,
 `confirm_land`, `prepare_external`, `confirm_external`. Creation away from the initial position
-requires an explicit route. External operations use declared adapters; no operation executes
+requires an explicit route. External operations use declared adapters
+([external effects](#external-effects)); no operation executes
 project code while validating a definition.
 
 Effects are tagged by `kind` with these exact parameters:

@@ -229,7 +229,8 @@ export function readChanges(value: unknown, searching: boolean): Change[] | null
       const slugs = searching ? null : readSlugs(data);
       if (!searching && slugs === null) return null;
       read.push({ region, slugs });
-    } else if (region === "task-counts" || region === "task-recent-counts") {
+    } else if (["task-counts", "task-recent-counts", "workflow"].includes(region as string)) {
+      // A workflow activated: the counts say its generation, by which the board reads it.
       read.push({ region: "counts" });
     } else if (region === "tasks-status") {
       const available = field(data, "available");

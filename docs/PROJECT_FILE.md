@@ -283,6 +283,7 @@ What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASK
 | `keys` | none | a generator's name, then the command printing its key: a tip whose key passed before runs nothing |
 | `check_paths` | the list in [TASKS](TASKS.md#the-default-landing) | what holds the project's tests and checks, which a red's fix its orchestrator approves may not change |
 | `delivery` | none: the land merges and pushes here | the command that delivers a task by a hosted pull request in place of that merge and push, a list of words run as `COMMAND VERB --request FILE` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); it decides what lands, so a change of it is reviewed |
+| `upstream` | none: no import is delivered | `[land.upstream]`, the repository this one imports from, as below |
 
 ## `[land.upstream]`
 

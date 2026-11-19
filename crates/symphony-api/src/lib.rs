@@ -543,6 +543,11 @@ pub struct Task {
     /// and its [`WaitsOn`] says no reason is recorded (docs/TASKS.md, what a task waits on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    /// Where a custom workflow holds it ([`workflow::TaskPlace`]): none for a task the board's own
+    /// writers keep, every task of a board with no custom workflow among them, and from a server
+    /// before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<workflow::TaskPlace>,
 }
 
 /// What an open task waits on, why, and since when: the one line the board's card ends in, read by
@@ -1161,6 +1166,9 @@ pub struct TaskFields {
     /// Present only when the status it was blocked from changes. Empty string clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    /// Present only when its place in a custom workflow changes; a place is never taken away.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<workflow::TaskPlace>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

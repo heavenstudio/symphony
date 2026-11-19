@@ -4,7 +4,7 @@
 //! The budgets are the owner's (tools/python-zero/ui-board), and a miss is reported, never
 //! loosened. They are absolute; the measurement they were set against is in
 //! docs/engineering/analysis/python-zero.md ("Today's app, measured for mobile").
-//! - a first visit loads at most 115 KB gzipped to `/`, 125 KB to `/tasks` and 145 KB to a task's
+//! - a first visit loads at most 115 KB gzipped to `/`, 150 KB to `/tasks` and 145 KB to a task's
 //!   page (each lowered from the owner's 300 KB as the pages and the chat moved to React),
 //!   everything the page needs (shell, the React client's scripts, CSS, API data, the feed's head
 //!   and messages), each independently.
@@ -76,6 +76,7 @@ mod task_gates;
 mod timeline;
 mod touch;
 mod waiting_board;
+mod workflow_board;
 
 use std::time::Duration;
 
@@ -90,8 +91,9 @@ use site::Site;
 const HOME_FIRST_VISIT_BYTES: f64 = 115_000.0;
 /// The task board's first-visit cap (`/tasks`): lowered from the owner's 300,000 to 150,000 when
 /// the board moved to the React client, and to 125,000 once the chat moved and no kind was left
-/// to move (121,492 bytes on the fixture then); never raised.
-const TASKS_FIRST_VISIT_BYTES: f64 = 125_000.0;
+/// to move (121,492 bytes on the fixture then); raised to 150,000 by the owner on 2026-11-19
+/// ("raise budget to 150"), with 44 bytes left and a custom workflow's board to draw.
+const TASKS_FIRST_VISIT_BYTES: f64 = 150_000.0;
 /// A task's page's first-visit cap (`/task/SLUG`), its timeline loaded after it and reported
 /// beside it: lowered from the owner's 300,000 to 160,000 when the page moved to the React client
 /// (546,351 bytes on main's Dioxus build at f56bde5), and to 145,000 once the chat moved and no

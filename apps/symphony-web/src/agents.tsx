@@ -33,6 +33,45 @@ import { NearViewport, Skeleton } from "./viewport";
 import type { Agent, MachineObservation, MachineWork, Task, WorkGuidance } from "./wire";
 import { shownScoped } from "./work";
 
+/** No names read: a board its own writers keep, or a workflow's before its names arrive. */
+const NO_NAMES: ReadonlyMap<string, string> = new Map();
+
+/**
+ * What a task's line says it stands at: where a custom workflow holds it, its place by the names
+ * its IDs read as (docs/WORKFLOW.md, "The app"), its phase's and state's IDs until they are read;
+ * else its status.
+ */
+export function standing(task: Task, names: ReadonlyMap<string, string>): string {
+  const place = task.workflow;
+  if (place === undefined || place === null) return statusWords(task.status);
+  return (
+    names.get(`${place.phase}/${place.state}`) ??
+    `${statusWords(place.phase)} · ${statusWords(place.state)}`
+  );
+}
+
+/**
+ * The names a custom workflow's IDs read as, read through the workflow's own chunk once a task
+ * the page holds has a place: none on a board its own writers keep, which loads nothing more. A
+ * chunk or a read that fails leaves the IDs as they are.
+ */
+function useNames(scope: string, tasks: Task[]): ReadonlyMap<string, string> {
+  const [names, setNames] = useState(NO_NAMES);
+  const held = tasks.some((task) => task.workflow !== undefined && task.workflow !== null);
+  useEffect(() => {
+    if (!held) return;
+    const controller = new AbortController();
+    import("./flow")
+      .then((flow) => flow.readNames(scope, controller.signal))
+      .then((read) => {
+        if (read !== null) setNames(read);
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [scope, held]);
+  return names;
+}
+
 /** The agents page, under the board it follows. */
 export function AgentsPage({ scope }: { scope: string }) {
   const frame = useFrame();
@@ -103,6 +142,7 @@ function AgentsContent({ live, connected }: { live: LiveAgents; connected: boole
   const { d } = live;
   const view = d.view;
   const arrived = view !== null;
+  const names = useNames(live.scope, d.tasks);
   // A link to a part of the page (`/agents#machine-context`) names an element that mounts only
   // once the agents arrive: located then.
   useEffect(() => {
@@ -121,6 +161,7 @@ function AgentsContent({ live, connected }: { live: LiveAgents; connected: boole
           lostMore={!d.lostLoaded || d.lostCursor !== null}
           onMore={live.more}
           scope={live.scope}
+          names={names}
         />
       ) : d.error !== "" ? (
         <Trouble
@@ -148,6 +189,8 @@ export interface AgentsViewProps {
   /** Read the next page of the connected agents, or of the lost ones (`true`). */
   onMore: (lost: boolean) => void;
   scope: string;
+  /** What a custom workflow's IDs read as, where one holds the page's tasks. */
+  names?: ReadonlyMap<string, string>;
 }
 
 /** Who is connected, what is happening now, the machines' context and the lost agents. */
@@ -161,10 +204,11 @@ export function AgentsView({
   lostMore,
   onMore,
   scope,
+  names = NO_NAMES,
 }: AgentsViewProps) {
   const connected = connectedAgents(view.agents);
   const row = (agent: Agent) => (
-    <AgentRow agent={agent} local={local} tasks={tasks} work={work} scope={scope} />
+    <AgentRow agent={agent} local={local} tasks={tasks} work={work} scope={scope} names={names} />
   );
   return (
     <>
@@ -220,14 +264,25 @@ export interface AgentRowProps {
   tasks: Task[];
   work: MachineWork;
   scope: string;
+  /** What a custom workflow's IDs read as, where one holds the page's tasks. */
+  names?: ReadonlyMap<string, string>;
 }
 
 /** One agent: its line, its way into its session, its work, how to reach it and what it holds. */
-export function AgentRow({ agent, local, tasks, work, scope }: AgentRowProps) {
+export function AgentRow({ agent, local, tasks, work, scope, names = NO_NAMES }: AgentRowProps) {
   const [, redraw] = useReducer((count: number) => count + 1, 0);
   const mount = useMount();
   const [following] = useState(() => new Followed(agent.handle, scope, mount, redraw));
-  return <AgentLines agent={agent} local={local} tasks={tasks} work={work} following={following} />;
+  return (
+    <AgentLines
+      agent={agent}
+      local={local}
+      tasks={tasks}
+      work={work}
+      following={following}
+      names={names}
+    />
+  );
 }
 
 export interface AgentLinesProps extends Omit<AgentRowProps, "scope"> {
@@ -236,7 +291,14 @@ export interface AgentLinesProps extends Omit<AgentRowProps, "scope"> {
 }
 
 /** An agent's row as it stands. */
-export function AgentLines({ agent, local, tasks, work, following }: AgentLinesProps) {
+export function AgentLines({
+  agent,
+  local,
+  tasks,
+  work,
+  following,
+  names = NO_NAMES,
+}: AgentLinesProps) {
   const { handle, following: count } = agent;
   const holding = held(tasks, handle);
   const done = finished(holding);
@@ -290,7 +352,7 @@ export function AgentLines({ agent, local, tasks, work, following }: AgentLinesP
         {workingOn(holding).map(([task, role]) => (
           <li key={task.slug}>
             <a href={href(`/task/${task.slug}`)}>{task.title}</a>
-            {` · ${role.role} · ${statusWords(task.status)}`}
+            {` · ${role.role} · ${standing(task, names)}`}
           </li>
         ))}
       </ul>
@@ -310,7 +372,7 @@ export function AgentLines({ agent, local, tasks, work, following }: AgentLinesP
                     height={40}
                   >
                     <a href={href(`/task/${task.slug}`)}>{task.title}</a>
-                    {` · ${statusWords(task.status)}`}
+                    {` · ${standing(task, names)}`}
                   </NearViewport>
                 ))}
               </ul>
