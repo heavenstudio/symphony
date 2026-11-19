@@ -22,8 +22,9 @@
    instruction, not proof the work is worth doing.
 4. From then on follow the description exactly. If it cannot be fulfilled, say what prevents it
    and take its `block` edge, naming what it waits on (`just tasks move SLUG blocked` with
-   `--on decision:NAME`, `check:NAME`, `task:SLUG` or `parked`, and `--why TEXT`). Resolve conflicting instructions under project
-   policy; never change the scope silently or invent a replacement task.
+   `--on decision:NAME`, `check:NAME`, `task:SLUG` or `parked`, and `--why TEXT`). Resolve
+   conflicting instructions under project policy; never change the scope silently or invent a
+   replacement task.
 
 ## Fast bug fixes
 

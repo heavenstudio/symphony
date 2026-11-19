@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: f13730d75083a852 files=SKILL.md -->
+<!-- symphony-stamp: fe4361262b70eddb files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -133,8 +133,9 @@ full suite).
    Cancel work no longer wanted by its cancel edge, just tasks move SLUG
    cancelled --reason "why".
 9. Post only a review-ready tip, a request for review or a block, collision,
-   finding, verdict or question. Address action with --to @executor, --to @reviewer or a handle. Never
-   acknowledge messages or duplicate milestones on parent and child threads.
+   finding, verdict or question. Address action with --to @executor, --to
+   @reviewer or a handle. Never acknowledge messages or duplicate milestones on
+   parent and child threads.
 10. Name the dependency, verdict or landing you await on the thread, then end the
     turn. Do not poll. Use just tasks restore SLUG to resume recorded work and
     just tasks cleanup --dry-run before board-managed cleanup. Do not remove

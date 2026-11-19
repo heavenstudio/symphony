@@ -2,7 +2,7 @@
 name: review-task
 description: Review one task waiting on its review, independently of its author: read its diff against its recorded evidence, run only what that leaves open and record a verdict naming the tip read. A reviewer's whole prompt is `/review-task SLUG HANDLE` (Codex `$review-task SLUG HANDLE`), never /work. Trigger on /review-task SLUG or $review-task SLUG.
 ---
-<!-- symphony-stamp: ad371d72c845811d files=SKILL.md -->
+<!-- symphony-stamp: 6f8549e54a33f03b files=SKILL.md -->
 
 # /review-task SLUG HANDLE
 
@@ -53,8 +53,9 @@ standing instructions for a reviewer. Read them before step 3.
 6. Record the verdict on SLUG, a round of its review: its `approve` edge, `just tasks verdict
    SLUG approve "FULL_SHA: why" --as HANDLE`, naming the whole tip you read (the approve is the
    task's stamp: it completes SLUG, and the default landing lands that commit and no other), or
-   its `changes` edge, `just tasks verdict SLUG changes "what and where" --as HANDLE`. The board refuses the verdict
-   of a session that ever executed SLUG or a slice of it (a subtask without `--instruction`).
+   its `changes` edge, `just tasks verdict SLUG changes "what and where" --as HANDLE`. The board
+   refuses the verdict of a session that ever executed SLUG or a slice of it (a subtask without
+   `--instruction`).
    Never judge a task you executed, and never fix the branch yourself: a defect is a changes.
    The verdict's text lists what you checked, what you ran with its result, and each defect with
    its file and line and why it matters. Approve only what you would land; a nit is a follow-up
@@ -64,11 +65,12 @@ standing instructions for a reviewer. Read them before step 3.
    thread since your verdict and judge that tip from step 2.
 
 Where a custom workflow holds SLUG, `just tasks role` and `verdict` refuse it as
-`explicit_action_required`: `just tasks workflow actions SLUG --as HANDLE` names each edge that leaves where it stands (`--json` adds
-its operation), and `just tasks workflow apply SLUG EDGE --revision N --as HANDLE` takes one, N
-the workflow revision those actions named: the edge that gives you the reviewer role, then its
-`approve` or `changes` edge, the verdict's text as the input that edge names
-(`--input NAME=TEXT`). One refused as `stale_task` moved since: read its actions again.
+`explicit_action_required`: `just tasks workflow actions SLUG --as HANDLE` names each edge that
+leaves where it stands (`--json` adds its operation), and `just tasks workflow apply SLUG EDGE
+--revision N --as HANDLE` takes one, N the workflow revision those actions named: the edge that
+gives you the reviewer role, then its `approve` or `changes` edge, the verdict's text as the
+input that edge names (`--input NAME=TEXT`). One refused as `stale_task` moved since: read its
+actions again.
 
 An in-process reviewer reads `just tasks inbox --as HANDLE` between steps; an owner's `MOVE`
 ending `it moves no further: stop work on it` means stop. Post the verdict, never an
