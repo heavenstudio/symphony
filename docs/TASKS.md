@@ -2696,10 +2696,13 @@ is one commit on that tip, of the generators' outputs alone, and it becomes a ta
   key is the one recorded, and for a generator with no key no path outside the generators'
   outputs changed.
 - **Stale is cancelled, and never delivered.** A round that finds other inputs cancels the task,
-  saying why, and makes the newest tip, a task of its own. A pull request the cancelled task was
+  saying why, and makes the newest tip, a task of its own. One the board never took (a run cut
+  short before it filed it) has no task to cancel: its branch is deleted with the record, where
+  it is still at the commit made. A pull request the cancelled task was
   bound to is told by a snapshot that blocks, so the check the host requires fails there, unless it was closed or merged meanwhile; while
   that could not be told (`regenerate.withdrawn` names the task) its checks may still pass,
-  the round says so, and each later round tells it again. A task whose merge was asked for is
+  the round says so and why (the host's reason, or the task's status where its evidence still
+  stands, as it does for one named and not yet cancelled), and each later round tells it again. A task whose merge was asked for is
   never cancelled: the host may hold its commit, and its land settles it.
 - **What the land checks.** A task the record names is delivered only as made: its branch at the
   recorded commit, that commit one commit on the recorded tip, which the remote default branch
@@ -2807,7 +2810,8 @@ build, its output appended to `symphony/tasks/land/regenerate.log` (set aside as
   It is part of the round, under its lock, and never cut short because main moved: only
   its time limit or a signal ends it, and a signal ends the regenerator with it, nothing
   judged. A round discarded as stale, or one that stopped, is not checked: the round after
-  it checks the newer tip. A check that fails, runs past its time or cannot run files
+  it checks the newer tip. Nor is a commit the same check last passed on, which a round
+  whose generated task waits for its pull request takes again at each start. A check that fails, runs past its time or cannot run files
   `tests/main-red-check` at p0, marked red, a task of its own beside the generators' reds,
   or adds a line to the one open while it stays red; its text says no more than is known
   (one past its time or one that could not run neither passed nor failed). A later round
