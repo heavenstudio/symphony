@@ -295,8 +295,11 @@ fn a_phones_pages_show_whole_and_the_row_fades_only_where_it_continues() {
         cued(&row, "end", &what);
         chosen(&row, "Board", &what);
         // The keyboard: the first, a middle and the last, each scrolled to as it is focused.
-        for (at, name, sides) in [(0, "Home", "end"), (3, "Board", "end"), (7, "⬡ lamps", "start")]
-        {
+        for (at, name, sides) in [
+            (0, "Home", "end"),
+            (3, "Board", "end"),
+            (7, "⬡ lamps", "start"),
+        ] {
             page.eval(&format!(
                 "document.querySelectorAll('.app-pages a')[{at}].focus()"
             ));
@@ -313,7 +316,11 @@ fn a_phones_pages_show_whole_and_the_row_fades_only_where_it_continues() {
         // The project's own page, the last, is in view when it is the one shown.
         open(&mut page, &site, "/lamps", "#appearance");
         page.eval(MEASURES);
-        let row = rests(&mut page, ".app-pages", &format!("{what}, the last page shown"));
+        let row = rests(
+            &mut page,
+            ".app-pages",
+            &format!("{what}, the last page shown"),
+        );
         chosen(&row, "⬡ lamps", &what);
         cued(&row, "start", &format!("{what}, the last page shown"));
         // With the Symphony's pages alone nothing is past either edge, and nothing fades.
@@ -382,12 +389,16 @@ fn a_phones_stage_tabs_keep_the_chosen_stage_whole_with_its_count_and_its_outlin
             }
         }
         // The keyboard alone: each tab focused in turn is scrolled to, its outline uncut.
-        for at in 0..TABS.len() {
+        for (at, tab) in TABS.iter().enumerate() {
             page.eval(&format!(
                 "document.querySelectorAll('.stage-tabs button')[{at}].focus()"
             ));
-            let row = rests(&mut page, ".stage-tabs", &format!("{what}, tab {at} focused"));
-            ringed(&row, TABS[at], &what);
+            let row = rests(
+                &mut page,
+                ".stage-tabs",
+                &format!("{what}, tab {at} focused"),
+            );
+            ringed(&row, tab, &what);
         }
         page.eval("document.activeElement.blur()");
         // A touch's scroll let go between two labels rests on one's start.
@@ -395,10 +406,21 @@ fn a_phones_stage_tabs_keep_the_chosen_stage_whole_with_its_count_and_its_outlin
             page.eval(&format!(
                 "document.querySelector('.stage-tabs').scrollTo({{left: {left}}})"
             ));
-            let row = rests(&mut page, ".stage-tabs", &format!("{what}, scrolled to {left}"));
-            cued(&row, row["real"].as_str().unwrap(), &format!("{what} at {left}"));
+            let row = rests(
+                &mut page,
+                ".stage-tabs",
+                &format!("{what}, scrolled to {left}"),
+            );
+            cued(
+                &row,
+                row["real"].as_str().unwrap(),
+                &format!("{what} at {left}"),
+            );
             // What fades at an edge the row continues past is a choice's shape.
-            assert!(row["shapes"].as_u64().unwrap() >= 1, "{what} at {left}: {row}");
+            assert!(
+                row["shapes"].as_u64().unwrap() >= 1,
+                "{what} at {left}: {row}"
+            );
         }
     }
 }
@@ -464,7 +486,9 @@ fn a_phones_wait_strip_is_one_row_that_keeps_the_pressed_filter_in_view() {
         cued(&row, "start", &format!("{what}, Parked pressed"));
         shot(&mut page, &format!("{width}-{scheme}-parked"));
         // Back to every open task: the stages return with the stage chosen before.
-        page.eval("(count => { count.focus(); count.click(); })(document.querySelector('.open-count'))");
+        page.eval(
+            "(count => { count.focus(); count.click(); })(document.querySelector('.open-count'))",
+        );
         assert!(
             page.wait_for(
                 "document.querySelector('.stage-tabs [aria-current=page]') !== null",
