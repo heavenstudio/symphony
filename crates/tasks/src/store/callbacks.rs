@@ -149,6 +149,32 @@ pub struct Callback {
     live_orchestrator: bool,
 }
 
+/// The sessions of `view` with no terminal, their listeners answering, that `heard` lists idle,
+/// each with the beat it rests since, as text: its last tool call, else when it connected.
+fn resting(
+    view: Option<&crate::cli::agents::View>,
+    board: &crate::Board,
+    heard: &BTreeSet<(String, String)>,
+) -> BTreeMap<String, String> {
+    let agents = view.map_or(&[][..], |view| view.agents.as_slice());
+    (agents.iter())
+        .filter(|a| a.pane.is_none() && a.confirmed)
+        .filter(|a| heard.contains(&("idle".to_string(), a.handle.clone())))
+        .filter_map(|a| board.sessions.iter().find(|s| s.row.handle == a.handle))
+        .map(|s| {
+            let beat = s.row.last_tool.unwrap_or(s.row.connected);
+            (s.row.handle.clone(), beat.to_string())
+        })
+        .collect()
+}
+
+impl Callback {
+    /// Whether the idle sweep's last evidence still confirms this listener at `now`.
+    pub(crate) fn confirmed(&self, now: f64) -> bool {
+        self.confirmed_until >= now
+    }
+}
+
 /// What hc says of the machine's Codex agents, for [`Store::callback_presence`]: the live
 /// terminals running Codex, and the threads known to run in one of them (a recorded launch's).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -434,7 +460,7 @@ impl Store {
         Ok(self
             .cached_callbacks()?
             .into_iter()
-            .filter(|c| c.confirmed_until >= self.now())
+            .filter(|c| c.confirmed(self.now()))
             .map(|c| c.handle)
             .collect())
     }
@@ -645,6 +671,12 @@ impl Store {
             *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
             (board, sequence) = self.callback_board()?;
         }
+        // Then what the tasks a workflow holds need of the board itself, as a PULL's reader settles
+        // it ([`Store::settle_held_if_due`]): a look is `tasks wait`'s, never `agent-send`'s.
+        if self.settle_held_if_due(&board) {
+            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            (board, sequence) = self.callback_board()?;
+        }
         let holdings = (callback.session.kind == "orchestrator")
             .then(|| self.slot_holdings())
             .transpose()?;
@@ -716,8 +748,17 @@ impl Store {
     /// one that stays could take them ([`Store::give_if_due`]): a detached dispatcher's, which
     /// every command-line write starts while a channel is registered, so a board whose
     /// orchestrators listen on channels alone gives at the next write's dispatch.
+    ///
+    /// Its passes then settle what the tasks a custom workflow holds need of the board itself
+    /// ([`Store::settle_held_if_due`]: a lost holder recovered, a dependant cancelled by its
+    /// position's policy), so the PULL they push says what is true. That pass is a pointer set
+    /// here, never a call in the pass: `agent-send` delivers what it sends through the same pass
+    /// (on a store never built with this), and a call there would link the board's admission and
+    /// its write into it, which nothing it does needs (tools/size-budget.toml). Named only here,
+    /// it links only into the programs that build a giving store, `tasks dispatch`'s.
     pub fn giving(mut self) -> Store {
         self.giving = true;
+        self.settling = Some(Store::settle_held_if_due);
         self
     }
 
@@ -799,6 +840,14 @@ impl Store {
         // orchestrator holds first, so its recipients hear the give; an observing one keeps the
         // board as its write left it.
         if pass == Pass::Deliver && self.giving && self.give_if_due(&board) {
+            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            (board, sequence) = self.callback_board()?;
+        }
+        // Then what the tasks a workflow holds need of the board itself ([`Store::giving`]).
+        if pass == Pass::Deliver
+            && let Some(settle) = self.settling
+            && settle(self, &board)
+        {
             *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
             (board, sequence) = self.callback_board()?;
         }
@@ -1120,6 +1169,12 @@ impl Store {
             let entries = digest.entries();
             let digest = digest.only_for(board, handle);
             let heard = digest.entries();
+            // A session with no terminal told idle stays told while it rests on the same beat,
+            // whatever a dispatcher that does not list it recorded since.
+            let mut idle_told = state.recall_idle(&resting(view.as_ref(), board, &heard));
+            idle_told.retain(|child, _| {
+                (board.sessions.iter()).any(|s| s.row.handle == *child && s.row.left_at.is_none())
+            });
             // Once it acknowledged a PULL this generation queued, it hears what changed since.
             let told = super::pull_account::told(&state, &entries);
             let baseline = super::pull_account::baseline(&state, &heard);
@@ -1134,7 +1189,10 @@ impl Store {
             pull_text = (lines.iter().map(|l| event_line(l)))
                 .collect::<Vec<_>>()
                 .join("\n");
-            pull_said = Some(digest.said_after(baseline));
+            pull_said = Some(pull::Said {
+                idle: idle_told,
+                ..digest.said_after(baseline)
+            });
             account = Some(match legacy_upgrade {
                 true => Account::upgrade(&state, &entries, &heard),
                 false => Account::of(&state, &queued, &entries, &heard),

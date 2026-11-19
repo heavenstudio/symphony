@@ -68,6 +68,7 @@
 //! that moved, the rows added and the rows resolved. `tasks pull --as HANDLE` prints the whole
 //! digest ([`Digest::lines`]) on demand.
 
+mod held;
 mod pipeline;
 mod recovery;
 
@@ -128,6 +129,12 @@ pub struct Said {
     pub counts: BTreeMap<String, String>,
     pub entries: BTreeSet<(String, String)>,
     pub liveness_unknown: Vec<String>,
+    /// Each session with no terminal it listed idle, and the beat it rested since, as text (its
+    /// last tool call, else when it connected): what keeps that entry told while the session
+    /// rests on that beat, though a dispatcher that does not list it forgot the entry
+    /// (`State::recall_idle` in the store). Older dispatchers keep it with the record.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub idle: BTreeMap<String, String>,
 }
 
 /// One look at the board.
@@ -289,6 +296,7 @@ impl Digest {
                 .collect_map(),
             entries: self.entries(),
             liveness_unknown: self.liveness_unknown.clone(),
+            idle: BTreeMap::new(),
         }
     }
 
@@ -653,8 +661,10 @@ pub(crate) fn viewed(
 /// however quiet the board says they are. Orchestrators and the chat are never idle rows, nor is a
 /// session the recipient is told went quiet (`told`, the sessions its look follows and their
 /// health): the view calls one with no terminal idle once its board health is, and its STALE, LOST
-/// or LIVENESS UNKNOWN line says it. The dispatch, the legacy monitor and `tasks pull` all read
-/// idleness here, so they agree.
+/// or LIVENESS UNKNOWN line says it. No such line is said of a session whose listener answers
+/// (`confirmed`), whose health moves with each round of the sweep: it is listed whatever its
+/// health, so its entry stays while it rests and is said once. The dispatch, the legacy monitor
+/// and `tasks pull` all read idleness here, so they agree.
 pub(crate) fn idle_and_busy(
     view: Option<&crate::cli::agents::View>,
     told: &BTreeMap<String, Health>,
@@ -665,7 +675,7 @@ pub(crate) fn idle_and_busy(
             busy.push(a.handle.clone());
         } else if a.state == "idle"
             && !matches!(a.kind.as_str(), "orchestrator" | "chat")
-            && !told.get(&a.handle).is_some_and(|health| health.quiet())
+            && (a.confirmed || !told.get(&a.handle).is_some_and(|health| health.quiet()))
         {
             idle.push(a.handle.clone());
         }
@@ -679,6 +689,11 @@ pub fn heard_now(store: &Store, env: &crate::cli::Env, handle: &str) -> Result<D
     let mut board = store.board()?;
     // A PULL gives what no orchestrator holds first, when one that stays could take it.
     if store.give_if_due(&board) {
+        board = store.board()?;
+    }
+    // Then what the tasks a workflow holds need of the board itself: a lost holder recovered, a
+    // dependant cancelled by its position's policy ([`Store::settle_held`]).
+    if store.settle_held_if_due(&board) {
         board = store.board()?;
     }
     let holdings = store.slot_holdings()?;
@@ -789,14 +804,32 @@ pub(crate) fn digest_on(
             found.entry("unanswered").or_default().push(t.clone());
         }
     }
+    // The workflow a held task stands on, read once and only where the board holds one.
+    let operating = store.operating_for(tasks)?;
+    let find = |slug: &str| look.task(slug);
     for t in tasks {
-        // A task a custom workflow holds is staffed and moved by its edges and its recovery alone
-        // (docs/WORKFLOW.md): no list here offers it to the board's own claims and handovers, and
-        // its executor at work counts as executing.
+        // A task a custom workflow holds is listed by the edges leaving its position and the role
+        // that position staffs (`pull/held.rs`), never by the board's own claims and handovers.
         if crate::store::workflow::position_held(&t.fields) {
-            if t.status == "in_progress" && staffed(t) {
+            let placed = operating.as_ref().and_then(|o| o.placed(t).map(|p| (o, p)));
+            let Some((operating, placed)) = placed else {
+                continue;
+            };
+            let judged = held::judged(operating, &placed, t, find, now);
+            if judged.executing {
                 executing += 1;
                 running.push(t.slug.clone());
+            }
+            for listed in judged.listed {
+                found.entry(listed.category).or_default().push(t.clone());
+                if let Some(note) = listed.note {
+                    (notes.entry(t.slug.clone()))
+                        .and_modify(|said: &mut String| {
+                            said.push_str("; ");
+                            said.push_str(&note);
+                        })
+                        .or_insert(note);
+                }
             }
             continue;
         }

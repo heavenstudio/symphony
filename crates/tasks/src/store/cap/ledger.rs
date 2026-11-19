@@ -13,6 +13,8 @@ pub(super) struct Observation {
     rows: HashMap<String, Row>,
     roles: Vec<RoleRead>,
     branches: Vec<Recorded>,
+    /// The active custom workflow's positions, by whose slot policy a task it holds is counted.
+    positions: Value,
 }
 
 impl Observation {
@@ -30,6 +32,10 @@ impl Observation {
                 instruction: Some(row.instruction),
                 red: crate::red::marked(&row.fields).then_some(Value::Bool(true)),
                 updated: None,
+                position: (row.fields.get("_board"))
+                    .and_then(|board| board.get("workflow"))
+                    .cloned()
+                    .unwrap_or_default(),
                 held: false,
             });
         }
@@ -37,7 +43,20 @@ impl Observation {
             rows,
             roles: read.roles.clone(),
             branches: view.snap.branches.clone(),
+            positions: read.positions.clone(),
         }
+    }
+
+    /// Whether `row`, a task a custom workflow holds, holds a slot by its position's slot policy;
+    /// none for a task no workflow holds, or one at a pair the active definition does not declare.
+    fn slot(&self, row: &Row) -> Option<bool> {
+        let (phase, state) = (
+            row.position.get("phase")?.as_str()?,
+            row.position.get("state")?.as_str()?,
+        );
+        (self.positions.as_array()?.iter())
+            .find(|at| at["phase"] == phase && at["state"] == state)
+            .map(|at| at["slot"] != "release")
     }
 
     /// Admission's scoped observation needs the ancestors and paired tasks absent from its
@@ -101,6 +120,7 @@ impl Observation {
             orchestrators: orchestrators.remove(row.slug.as_str()).unwrap_or_default(),
             executors: executors.remove(row.slug.as_str()).unwrap_or_default(),
             red: row.red.as_ref().is_some_and(|what| !what.is_null()),
+            slot: self.slot(row),
         });
         let parents = view
             .snap

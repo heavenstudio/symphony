@@ -1,10 +1,12 @@
 //! Repository discovery and lifecycle commands choose a scratch board's durable PostgreSQL
 //! identity. No address override is involved, so these are the machine reader's selection path.
 
+use crate::children::Child as _;
 use crate::{repository, run, scratch};
 use std::path::{Path, PathBuf};
 use symphony_board::cli::Env;
 use symphony_board::server::{Engine, Home, Postgres};
+use symphony_board::sys::{self, Command};
 use symphony_board::{NewSession, NewTask, Store};
 
 struct Board {
@@ -122,6 +124,55 @@ fn repository_commands_hold_snapshot_release_and_reclaim_the_selected_postgresql
         "Kept by lifecycle"
     );
     assert!(!board.home.dir().join("data").exists());
+}
+
+/// `program ARGS` as a process of its own in `board`'s repository, which reaches the board by
+/// discovery alone: its exit code, what it said and what it refused.
+fn process(board: &Board, program: &str, args: &[&str]) -> (Option<i32>, String, String) {
+    let mut command = Command::of(program);
+    command.args(args).current_dir(&board.root);
+    for name in [
+        "TASKS_SERVER",
+        "TASKS_DATABASE",
+        "TASKS_SESSION",
+        "TASKS_TASK",
+    ] {
+        command.env_remove(name);
+    }
+    for (name, value) in &board.env.vars {
+        command.env(name, value);
+    }
+    let ran = sys::output(&mut command).unwrap();
+    (
+        ran.status.code(),
+        String::from_utf8(ran.stdout).unwrap(),
+        String::from_utf8(ran.stderr).unwrap(),
+    )
+}
+
+/// A scratch board's PostgreSQL ends with the command that started it, so each command of a run
+/// meets the server of the one before on its way out. Every one answers, a write, reads and the
+/// whole-board export alike, and the export is one document however often it is read.
+#[test]
+fn commands_back_to_back_on_a_scratch_postgresql_board_each_answer() {
+    const TASKS: &str = env!("CARGO_BIN_EXE_tasks");
+    const COPY: &str = env!("CARGO_BIN_EXE_tasks-copy");
+    let board = Board::new("pg-lifecycle-back-to-back");
+    let (code, out, err) = process(&board, TASKS, &["register", "--kind", "worker"]);
+    assert_eq!(code, Some(0), "{out}{err}");
+    let mut exports = Vec::new();
+    for round in 0..6 {
+        let (code, out, err) = process(&board, TASKS, &["list"]);
+        assert_eq!(code, Some(0), "list {round}: {out}{err}");
+        let (code, out, err) = process(&board, TASKS, &["schema"]);
+        assert_eq!(code, Some(0), "schema {round}: {out}{err}");
+        let (code, out, err) = process(&board, COPY, &["--board", "--out"]);
+        assert_eq!(code, Some(0), "export {round}: {err}");
+        exports.push(out);
+    }
+    let dump = symphony_board::rows::Dump::from_json(&exports[0]).unwrap();
+    assert_eq!(dump.sessions.len(), 1, "the session the first command made");
+    assert!(exports.iter().all(|export| export == &exports[0]));
 }
 
 #[test]

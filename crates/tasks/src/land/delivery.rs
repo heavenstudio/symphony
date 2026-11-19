@@ -567,7 +567,7 @@ impl Landing<'_> {
         match said {
             "open" => {
                 if let Some(snapshot) = snapshot.filter(|snapshot| !snapshot.eligible) {
-                    self.withdraw(slug, &journal, &binding, &tip, &snapshot);
+                    let _ = self.withdraw(slug, &journal, &binding, &tip, &snapshot);
                 }
                 None
             }
@@ -605,7 +605,8 @@ impl Landing<'_> {
 
     /// Publish `snapshot`, which is not eligible, to the pull request `binding`: the head the
     /// branch is at now and checks that fail, the one the host requires first. What the land
-    /// refuses with follows; a publication that fails is said and changes none of it.
+    /// refuses with follows; a publication that fails is said and changes none of it, and its
+    /// reason is the error.
     fn withdraw(
         &mut self,
         slug: &str,
@@ -613,37 +614,29 @@ impl Landing<'_> {
         binding: &Binding,
         tip: &str,
         snapshot: &Snapshot,
-    ) -> bool {
+    ) -> Result<(), String> {
         let request = json!({
             "verb": "publish", "slug": slug, "by": self.actor, "head": tip,
             "branch": self.settings.default_branch, "title": journal.title,
             "body": journal.body, "snapshot": snapshot,
         });
-        let asked = self.ask("publish", &delivering(request, journal));
-        let told = matches!(&asked, Ok(answer) if state(answer).0 == "published");
-        let said = match asked {
-            Ok(_) if told => format!(
-                "land {slug}: its evidence does not stand at {}, and pull request #{} of {} says \
-                 so now",
-                short(tip),
-                binding.pull,
-                binding.name
-            ),
-            Ok(answer) => format!(
-                "land {slug}: its evidence does not stand at {}, and pull request #{} was not \
-                 told ({}): its checks may still say it does",
-                short(tip),
-                binding.pull,
-                state(&answer).1
+        let told = match self.ask("publish", &delivering(request, journal)) {
+            Ok(answer) if state(&answer).0 == "published" => Ok(()),
+            Ok(answer) => Err(state(&answer).1.to_string()),
+            Err(why) => Err(why),
+        };
+        let stands = format!("land {slug}: its evidence does not stand at {}", short(tip));
+        self.say(&match &told {
+            Ok(()) => format!(
+                "{stands}, and pull request #{} of {} says so now",
+                binding.pull, binding.name
             ),
             Err(why) => format!(
-                "land {slug}: its evidence does not stand at {}, and pull request #{} was not \
-                 told ({why}): its checks may still say it does",
-                short(tip),
+                "{stands}, and pull request #{} was not told ({why}): its checks may still say it \
+                 does",
                 binding.pull
             ),
-        };
-        self.say(&said);
+        });
         told
     }
 
@@ -654,7 +647,7 @@ impl Landing<'_> {
     /// # Errors
     ///
     /// The pull request could not be read or told, or the task's evidence still reads as
-    /// standing: its checks may still pass.
+    /// standing, its status said: its checks may still pass.
     pub(super) fn retract(&mut self, slug: &str) -> Result<(), String> {
         let Some(journal) = Journal::read(&self.folder, slug) else {
             return Ok(());
@@ -667,19 +660,24 @@ impl Landing<'_> {
             "repository": binding.repository, "pull": binding.pull,
         });
         let result = self.ask("result", &request)?;
-        let (said, why) = state(&result);
-        if said == "closed" || said == "merged" {
-            return Ok(());
+        match state(&result) {
+            ("closed" | "merged", _) => return Ok(()),
+            ("open", _) => {}
+            (_, why) => return Err(why.to_string()),
         }
-        let told = said == "open" && {
-            let task = self.store.get(slug).map_err(|error| error.to_string())?;
-            let thread = self.store.thread(slug).map_err(|error| error.to_string())?;
-            let tip = &journal.head;
-            let snapshot =
-                evidence::snapshot(self.store, self.env, &self.main, &task, &thread, tip)?;
-            !snapshot.eligible && self.withdraw(slug, &journal, &binding, tip, &snapshot)
-        };
-        if told { Ok(()) } else { Err(why.to_string()) }
+        let task = self.store.get(slug).map_err(|error| error.to_string())?;
+        let thread = self.store.thread(slug).map_err(|error| error.to_string())?;
+        let tip = &journal.head;
+        let snapshot = evidence::snapshot(self.store, self.env, &self.main, &task, &thread, tip)?;
+        // A task named before it was cancelled, and not cancelled yet, may still read as standing.
+        if snapshot.eligible {
+            return Err(format!(
+                "{slug} is {} and its evidence stands at {}",
+                task.status,
+                short(tip)
+            ));
+        }
+        self.withdraw(slug, &journal, &binding, tip, &snapshot)
     }
 
     /// Deliver the task's `tip`, found ready as `judged`, by its pull request.
@@ -820,9 +818,9 @@ impl Landing<'_> {
             let now = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
             let again = (self.committed(&now)).and_then(|()| {
                 self.generated(&now, tip).unwrap_or_else(|| {
-                    Err(Refusal::here(
-                        "no longer what the regenerator delivers: no merge asked".into(),
-                    ))
+                    Err(Refusal::here(format!(
+                        "{slug} is no longer what the regenerator delivers: no merge asked"
+                    )))
                 })
             });
             again.map_err(|refusal| self.refuse(refusal))?;

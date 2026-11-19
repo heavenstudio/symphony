@@ -235,7 +235,7 @@ fn told(handle: &str) -> String {
     format!("IF pull_ IS NOT NULL THEN
 UPDATE callback_state SET doc = jsonb_strip_nulls((doc - ARRAY['pull_awaiting','pull_queued']) || jsonb_build_object(
 'pull_unanswered', coalesce((SELECT jsonb_agg(entry ORDER BY first_) FROM (SELECT entry, min(at_) first_ FROM jsonb_array_elements(coalesce(doc -> 'pull_unanswered', '[]') || coalesce((SELECT jsonb_agg(e) FROM jsonb_array_elements(pull_ -> 'pull_entries') e WHERE e ->> 0 = 'unanswered' AND NOT coalesce(pull_ -> 'pull_withheld', '[]') @> jsonb_build_array(e)), '[]')) WITH ORDINALITY x(entry, at_) GROUP BY entry) united_), '[]'),
-'pull_entries', pull_ -> 'pull_entries', 'pull_withheld', coalesce(pull_ -> 'pull_withheld', '[]'), 'pull_said', pull_ -> 'pull_said')) WHERE id = {handle};
+'pull_entries', pull_ -> 'pull_entries', 'pull_withheld', coalesce(pull_ -> 'pull_withheld', '[]'), 'pull_said', pull_ -> 'pull_said', 'pull_idle', coalesce(pull_ #> '{{pull_said,idle}}', doc -> 'pull_idle'))) WHERE id = {handle};
 END IF;")
 }
 pub(in crate::store) fn ack() -> Pg<'static> {
