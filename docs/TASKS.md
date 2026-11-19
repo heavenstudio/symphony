@@ -2521,15 +2521,16 @@ With `[land] delivery` set, [the regenerator](#the-regenerator) makes the output
 branch's tip as it does anywhere, and then commits nothing there and pushes nothing. What it made
 is one commit on that tip, of the generators' outputs alone, and it becomes a task:
 
-- **A record first.** `symphony/tasks/land/regenerate-pending.json` names the task, the tip, the
+- **A record first.** `symphony/tasks/land/regenerate.pending` names the task, the tip, the
   commit and each generator's key, and is written before anything else. Then the branch
-  `generated/outputs-at-TIP` is pointed at the commit (the tip's first twelve letters, or the
-  whole tip where another branch or task has that name) and the task of that name is filed,
+  `generated/outputs-at-TIP-COMMIT` is pointed at the commit (the tip's first twelve letters and
+  the commit's first seven, so no two generations share a name; a branch of that name at another
+  commit stops the round, which says so) and the task of that name is filed,
   claimed by the session that files it and moved to review. Each step is made only where it is
   not there, so a run cut short at any of them is gone on from by the next, which makes nothing
   again.
 - **Assessed as any task.** The regenerator names no stamp and waives none. An assessor reads the
-  head, the catalogue decides what it needs, and `just land generated/outputs-at-TIP` delivers
+  head, the catalogue decides what it needs, and `just land generated/outputs-at-TIP-COMMIT` delivers
   it: the same journal, the same squash, the same proof and receipt, whose `operation` says
   `generated`. The host is asked nothing a task's land does not ask.
 - **One generation for one set of inputs.** While the record stands, a round whose tip holds the
@@ -2538,8 +2539,8 @@ is one commit on that tip, of the generators' outputs alone, and it becomes a ta
   outputs changed.
 - **Stale is cancelled, and never delivered.** A round that finds other inputs cancels the task,
   saying why, and makes the newest tip, a task of its own. A pull request the cancelled task was
-  bound to is told by a snapshot that blocks, so the check the host requires fails there; while
-  that could not be told (`regenerate-withdrawn.json` names the task) its checks may still pass,
+  bound to is told by a snapshot that blocks, so the check the host requires fails there, unless it was closed or merged meanwhile; while
+  that could not be told (`regenerate.withdrawn` names the task) its checks may still pass,
   the round says so, and each later round tells it again. A task whose merge was asked for is
   never cancelled: the host may hold its commit, and its land settles it.
 - **What the land checks.** A task the record names is delivered only as made: its branch at the

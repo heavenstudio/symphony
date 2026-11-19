@@ -462,7 +462,7 @@ impl Landing<'_> {
         match said {
             "open" => {
                 if let Some(snapshot) = snapshot.filter(|snapshot| !snapshot.eligible) {
-                    self.withdraw(&journal, &binding, &tip, &snapshot);
+                    self.withdraw(slug, &journal, &binding, &tip, &snapshot);
                 }
                 None
             }
@@ -503,12 +503,12 @@ impl Landing<'_> {
     /// refuses with follows; a publication that fails is said and changes none of it.
     fn withdraw(
         &mut self,
+        slug: &str,
         journal: &Journal,
         binding: &Binding,
         tip: &str,
         snapshot: &Snapshot,
     ) -> bool {
-        let slug = self.slug;
         let request = json!({
             "verb": "publish", "slug": slug, "by": self.actor, "head": tip,
             "branch": self.settings.default_branch, "title": journal.title,
@@ -542,17 +542,15 @@ impl Landing<'_> {
         told
     }
 
-    /// For a task that will not be delivered (cancelled as stale): the pull request a land bound
+    /// For the task `slug`, which will not be delivered (cancelled as stale): the pull request a land bound
     /// it to is told its evidence no longer stands, by the snapshot that blocks. Done where it is
-    /// bound to none, where the pull request is closed, and where it was merged all the same,
-    /// which is held for a person as any merge nobody read is.
+    /// bound to none, and where the pull request is no longer open.
     ///
     /// # Errors
     ///
     /// The pull request could not be read or told, or the task's evidence still reads as
     /// standing: its checks may still pass.
-    pub(super) fn retract(&mut self) -> Result<(), String> {
-        let slug = self.slug;
+    pub(super) fn retract(&mut self, slug: &str) -> Result<(), String> {
         let Some(journal) = Journal::read(&self.folder, slug) else {
             return Ok(());
         };
@@ -564,41 +562,19 @@ impl Landing<'_> {
             "repository": binding.repository, "pull": binding.pull,
         });
         let result = self.ask("result", &request)?;
-        match state(&result).0 {
-            "closed" => Ok(()),
-            "merged" => {
-                let what = format!(
-                    "pull request #{} was merged though {slug} was cancelled as stale",
-                    binding.pull
-                );
-                let _ = self.hold(journal, what);
-                Ok(())
-            }
-            "open" => {
-                let tip = rev(&self.main, &format!("refs/heads/{slug}"))
-                    .unwrap_or_else(|| journal.head.clone());
-                let task = self.store.get(slug).map_err(|error| error.to_string())?;
-                let thread = self.store.thread(slug).map_err(|error| error.to_string())?;
-                let snapshot =
-                    evidence::snapshot(self.store, self.env, &self.main, &task, &thread, &tip)?;
-                if snapshot.eligible {
-                    return Err(format!("the evidence of {slug} still reads as standing"));
-                }
-                if self.withdraw(&journal, &binding, &tip, &snapshot) {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "pull request #{} took no publication",
-                        binding.pull
-                    ))
-                }
-            }
-            _ => Err(format!(
-                "pull request #{} answered {}",
-                binding.pull,
-                state(&result).1
-            )),
+        let (said, why) = state(&result);
+        if said == "closed" || said == "merged" {
+            return Ok(());
         }
+        let told = said == "open" && {
+            let task = self.store.get(slug).map_err(|error| error.to_string())?;
+            let thread = self.store.thread(slug).map_err(|error| error.to_string())?;
+            let tip = &journal.head;
+            let snapshot =
+                evidence::snapshot(self.store, self.env, &self.main, &task, &thread, tip)?;
+            !snapshot.eligible && self.withdraw(slug, &journal, &binding, tip, &snapshot)
+        };
+        if told { Ok(()) } else { Err(why.to_string()) }
     }
 
     /// Deliver the task's `tip`, found ready as `judged`, by its pull request.

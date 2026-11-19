@@ -5,7 +5,7 @@
 use super::*;
 use std::time::Duration;
 use symphony_board::land::RECIPE;
-use symphony_board::land::regenerate::{self, PENDING, Pending, WITHDRAWN};
+use symphony_board::land::regenerate::{self, Pending, WITHDRAWN};
 
 /// How many times the bundle was made.
 fn made(r: &Repo) -> usize {
@@ -81,7 +81,10 @@ fn a_round_files_what_it_made_as_a_task_and_commits_nothing_to_the_default_branc
     let tip = head(&r.root, "main");
     let (said, result) = round(&r, None);
     let made_as = pending(&r).unwrap();
-    assert_eq!(made_as.slug, format!("generated/outputs-at-{}", &tip[..12]));
+    assert_eq!(
+        made_as.slug,
+        format!("generated/outputs-at-{}-{}", &tip[..12], &made_as.head[..7])
+    );
     assert_eq!(made_as.tip, tip);
     assert_eq!(
         result.unwrap(),
@@ -339,10 +342,7 @@ fn a_head_that_is_not_what_the_regenerator_made_is_refused_by_name() {
         assess(r, &made_as.slug, &assessor, &[], &tip);
         landed(r, &made_as.slug, &orch, &host).1.unwrap_err()
     };
-    let keep = |pending: &Pending| {
-        let text = serde_json::to_string(pending).unwrap();
-        fs::write(lands(&r).join(PENDING), text).unwrap();
-    };
+    let keep = |pending: &Pending| pending.write(&lands(&r)).unwrap();
     // A commit of somebody's on its branch: not the commit made.
     let tree = head(&r.root, &format!("{}^{{tree}}", made_as.head));
     let more = git(
@@ -353,7 +353,7 @@ fn a_head_that_is_not_what_the_regenerator_made_is_refused_by_name() {
     let line = refused(&r);
     assert!(
         line.ends_with(&format!(
-            "'s branch is at {}, not the commit the regenerator made ({})",
+            "'s head {} is not the commit the regenerator made ({})",
             &more[..7],
             &made_as.head[..7]
         )),
@@ -494,42 +494,6 @@ fn a_round_cut_after_its_branch_or_its_task_goes_on_from_there() {
 }
 
 #[test]
-fn a_name_another_branch_or_task_has_is_never_taken() {
-    let (r, _bare) = generating(true);
-    let tip = head(&r.root, "main");
-    // The short name is somebody's branch: the whole tip names it.
-    let short = format!("refs/heads/generated/outputs-at-{}", &tip[..12]);
-    git(&r.root, &["update-ref", &short, &tip]);
-    round(&r, None).1.unwrap();
-    let made_as = pending(&r).unwrap();
-    assert_eq!(made_as.slug, format!("generated/outputs-at-{tip}"));
-    assert_eq!(head(&r.root, &short), tip, "left as it was");
-    assert_eq!(status(&r, &made_as.slug), "review");
-    // Both taken: nothing is recorded, and the round says what is in the way.
-    let (r, _bare) = generating(true);
-    let tip = head(&r.root, "main");
-    let short = format!("generated/outputs-at-{}", &tip[..12]);
-    r.board
-        .store
-        .create(&symphony_board::NewTask::new(&short, "Another", "owner"))
-        .unwrap();
-    git(
-        &r.root,
-        &[
-            "update-ref",
-            &format!("refs/heads/generated/outputs-at-{tip}"),
-            &tip,
-        ],
-    );
-    let stopped = round(&r, None).1.unwrap_err();
-    assert!(
-        stopped.contains("is another branch or task already"),
-        "{stopped}"
-    );
-    assert!(pending(&r).is_none());
-}
-
-#[test]
 fn the_host_merging_onto_a_base_that_gained_an_input_is_never_taken_as_current() {
     let (r, bare) = generating(true);
     let (first, orch) = assessed(&r);
@@ -551,7 +515,7 @@ fn the_host_merging_onto_a_base_that_gained_an_input_is_never_taken_as_current()
     let (said, result) = round(&r, None);
     assert!(
         said.contains(&format!(
-            "{} was delivered as {} by pull request #3, onto {} where ",
+            "{} was delivered as {}, onto {} where ",
             first.slug,
             &squash[..7],
             &receipt.parent[..7]
@@ -587,9 +551,8 @@ fn a_pull_request_that_could_not_be_told_is_told_by_a_later_round() {
             && said.contains("its checks may still pass; the next round tells it"),
         "{said}"
     );
-    let named: Vec<String> =
-        serde_json::from_str(&fs::read_to_string(lands(&r).join(WITHDRAWN)).unwrap()).unwrap();
-    assert_eq!(named, std::slice::from_ref(&first.slug));
+    let named = fs::read_to_string(lands(&r).join(WITHDRAWN)).unwrap();
+    assert_eq!(named, first.slug);
     // A later round, of the same tip or another, tells it, once.
     let asked = host.verbs().len();
     round(&r, Some(&host)).1.unwrap();
@@ -649,9 +612,7 @@ fn a_land_of_a_delivered_task_run_again_starts_the_regenerator_it_never_started(
     assert!(again.verbs().is_empty(), "nothing asked of the host");
     assert!(
         said.contains(&format!(
-            "land {SLUG}: delivered already, as {} by pull request #3; the regenerator makes the \
-             bundle in the background",
-            &squash[..7]
+            "land {SLUG}: delivered already; the regenerator makes the bundle in the background"
         )),
         "{said}"
     );
@@ -871,16 +832,17 @@ fn a_record_whose_branch_moved_or_whose_generators_changed_is_not_gone_on_from()
     // A generator the project no longer has made it: cancelled, and the tip made by today's.
     let mut renamed = made_as.clone();
     renamed.made[0].generator = "another".into();
-    fs::write(
-        lands(&r).join(PENDING),
-        serde_json::to_string(&renamed).unwrap(),
-    )
-    .unwrap();
+    renamed.write(&lands(&r)).unwrap();
     let (said, result) = round(&r, None);
-    // The same tip names the same short branch, which the cancelled task has: the whole tip.
+    // The same tip, another commit made of it: a name of its own, the cancelled task's left.
     let again = pending(&r).unwrap();
     assert!(result.unwrap().contains(&again.slug), "{said}");
-    assert_eq!(again.slug, format!("generated/outputs-at-{}", made_as.tip));
+    assert_ne!(again.slug, made_as.slug);
+    assert!(
+        again
+            .slug
+            .starts_with(&format!("generated/outputs-at-{}-", &made_as.tip[..12]))
+    );
     assert_eq!(
         (made(&r), status(&r, &made_as.slug).as_str()),
         (2, "cancelled")
@@ -904,7 +866,7 @@ fn withdrawn_untold() -> (Repo, PathBuf, Pending) {
 }
 
 #[test]
-fn a_cancelled_tasks_pull_request_is_forgotten_only_once_it_is_told_closed_or_held() {
+fn a_cancelled_tasks_pull_request_is_forgotten_only_once_it_is_told_or_no_longer_open() {
     // Closed on the host: nothing is left to tell.
     let (r, bare, _) = withdrawn_untold();
     let host = Host::new(&r, &bare);
@@ -912,21 +874,14 @@ fn a_cancelled_tasks_pull_request_is_forgotten_only_once_it_is_told_closed_or_he
     round(&r, Some(&host)).1.unwrap();
     assert_eq!(host.verbs(), ["result"]);
     assert!(!lands(&r).join(WITHDRAWN).exists());
-    // Merged all the same, by a person: held for one, said once on its thread, and forgotten.
+    // Merged all the same, by a person: nothing is left to tell, and nothing is published to it.
     let (r, bare, first) = withdrawn_untold();
     let host = Host::new(&r, &bare);
     *host.pull.borrow_mut() = (Some(first.head.clone()), Some(first.head.clone()), false);
     round(&r, Some(&host)).1.unwrap();
+    assert_eq!(host.verbs(), ["result"]);
     assert!(!lands(&r).join(WITHDRAWN).exists());
-    assert!(
-        (r.board.said(&first.slug).iter())
-            .any(|line| line.contains("was merged though")
-                && line.contains("was cancelled as stale")),
-        "{:?}",
-        r.board.said(&first.slug)
-    );
-    let held = Journal::read(&lands(&r), &first.slug).unwrap().held;
-    assert!(held.is_some_and(|what| what.contains("was merged though")));
+    assert_eq!(status(&r, &first.slug), "cancelled");
     // The host takes no publication, or answers what is no state: still to tell, and said.
     for answer in [
         (
