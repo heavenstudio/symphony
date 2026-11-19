@@ -178,7 +178,8 @@ The write is fenced on the active workflow, the task's version, each role it rel
 and, for a lost holder, the holder's session as it was read: a holder that beats again, or takes
 an edge first, wins, and the recovery decides again from where it left the task. The orchestrator
 role is never a workflow's: a release or leave of it is the board's own. The board recovers a
-lost holder by itself as well, before a PULL lists anything ([Operations](#operations)); attempt
+lost holder by itself as well, wherever it gives open work an orchestrator
+([Operations](#operations)); attempt
 failure and cancellation acknowledgement wait on durable attempts
 (`tools/workflow-attempt-integration`).
 
@@ -200,13 +201,19 @@ whether a principal may take an edge stays admission's question.
   prerequisite that ended without success (an outcome of cancellation or failure, or the board's
   cancelled) blocks it, naming its position's `unsuccessful_dependency`; its staffed executor at
   work is executing. `just tasks next` offers a held task whose executor's claim edge admission's
-  preview shows nothing stopping, unless another's live reservation stands on it.
-- **Settling.** Before a PULL lists anything, and in an orchestrator's monitor, the board settles
-  what no session asks for (`Store::settle_held`): each staffed holder lost or gone is recovered
-  by its position's `lost_holder` action as the recovery service, once, a stay that waits on a
-  person recorded no second time; and a task with a prerequisite that ended without success, at a
-  position whose policy is `cancel`, takes the one cancel edge leaving its pair the recovery
-  service may take. `block` and `manual` move nothing.
+  preview shows nothing stopping, unless another's live reservation stands on it, whatever status
+  the claim's position projects to: its read takes those statuses beside the pullable ones, and a
+  task no workflow holds only in a pullable one.
+- **Settling.** Wherever the board gives open work an orchestrator, it then settles what no
+  session asks for (`Store::settle_held`): before `tasks pull` lists anything, in an
+  orchestrator's monitor, in a look of `tasks wait`, in a write's detached dispatcher (`tasks
+  dispatch`) and on the server's clock, under its give's retry. Each staffed holder lost or gone
+  is recovered by its position's `lost_holder` action as the recovery service, once, a stay that
+  waits on a person recorded no second time; and a task with a prerequisite that ended without
+  success, at a position whose policy is `cancel`, takes the one cancel edge leaving its pair the
+  recovery service may take. `block` and `manual` move nothing. A move admission refuses is said
+  on stderr each time it is tried, and writes nothing. `agent-send` delivers what it sends through
+  the dispatcher's pass but neither gives nor settles, so it links none of admission's write.
 - **Launching and staffing.** A launch on a held task starts only a role an edge leaving its
   position gives, refused before anything starts otherwise: its executor reserves the task and
   claims the edge when it starts, and its reviewer takes the edge as the new session, through

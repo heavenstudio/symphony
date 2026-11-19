@@ -17,10 +17,12 @@ use symphony_api::workflow::{
 };
 use symphony_plugin::execution::Principal;
 
-/// What one pass of [`Store::settle_held`] did, each line as the pass says it.
+/// What one pass of [`Store::settle_held`] did, each line as the pass says it: what it wrote, and
+/// what it tried and was refused, which the next pass tries again.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Settled {
     pub lines: Vec<String>,
+    pub refused: Vec<String>,
 }
 
 impl Store {
@@ -48,16 +50,42 @@ impl Store {
         Ok(crate::workflow::operate::finished(operating.as_ref(), task))
     }
 
-    /// [`Store::settle_held`] where `board` holds anything to settle, its failure said on stderr:
-    /// what a PULL and an orchestrator's monitor run beside the board's gives. Whether it wrote.
+    /// [`Store::settle_held`] where `board` holds anything to settle, each refusal and its failure
+    /// said on stderr: what each reader that gives runs beside the board's give (a PULL, an
+    /// orchestrator's monitor, `tasks wait`'s look and a write's detached dispatcher). Whether it
+    /// wrote, so its caller reads the board again only then.
     pub fn settle_held_if_due(&self, board: &Board) -> bool {
-        match self.settle_held(board) {
-            Ok(settled) => !settled.lines.is_empty(),
-            Err(error) => {
-                eprintln!("settling the tasks a workflow holds deferred: {error}");
+        self.settle_held_saying(board, &mut |line| eprintln!("{line}"))
+    }
+
+    /// [`Store::settle_held_if_due`], each refusal and its failure said by `say`.
+    pub(crate) fn settle_held_saying(&self, board: &Board, say: &mut dyn FnMut(&str)) -> bool {
+        self.try_settle_held_saying(board, say)
+            .unwrap_or_else(|error| {
+                say(&format!(
+                    "settling the tasks a workflow holds deferred: {error}"
+                ));
                 false
-            }
+            })
+    }
+
+    /// [`Store::settle_held_if_due`] for a caller that retries a failure its own way (the
+    /// server's clock, under its give's retry): each refusal said on stderr, as the next pass
+    /// tries it again; a failure to read or write the board its error.
+    pub fn try_settle_held_if_due(&self, board: &Board) -> Result<bool, Error> {
+        self.try_settle_held_saying(board, &mut |line| eprintln!("{line}"))
+    }
+
+    fn try_settle_held_saying(
+        &self,
+        board: &Board,
+        say: &mut dyn FnMut(&str),
+    ) -> Result<bool, Error> {
+        let settled = self.settle_held(board)?;
+        for refused in &settled.refused {
+            say(&format!("settling the tasks a workflow holds: {refused}"));
         }
+        Ok(!settled.lines.is_empty())
     }
 
     /// What the board does by itself for the tasks a custom workflow holds on `board`, each by the
@@ -92,32 +120,35 @@ impl Store {
                 if placed.waits_on_person_for(holder) {
                     continue;
                 }
-                let line = match self.recover_holder(&task.slug, holder, BOARD, &host) {
-                    Ok(_) => format!("recovered {holder} on {}", task.slug),
-                    Err(error) => format!("{holder} on {} not recovered: {error}", task.slug),
-                };
-                settled.lines.push(line);
+                match self.recover_holder(&task.slug, holder, BOARD, &host) {
+                    Ok(_) => (settled.lines).push(format!("recovered {holder} on {}", task.slug)),
+                    Err(error) => (settled.refused)
+                        .push(format!("{holder} on {} not recovered: {error}", task.slug)),
+                }
             }
             if placed.declared.unsuccessful_dependency == UnsuccessfulDependency::Cancel
                 && !operating.unsuccessful(task, find).is_empty()
-                && let Some(line) = self.cancel_dependant(&operating, &placed, task, &host)
+                && let Some(done) = self.cancel_dependant(&operating, &placed, task, &host)
             {
-                settled.lines.push(line);
+                match done {
+                    Ok(line) => settled.lines.push(line),
+                    Err(line) => settled.refused.push(line),
+                }
             }
         }
         Ok(settled)
     }
 
     /// `task` cancelled by the one cancel edge leaving its pair whose authority the board's
-    /// recovery service holds, as that service; none where no such edge leaves it, which PULL
-    /// then lists for a person.
+    /// recovery service holds, as that service: the line said of it, or of its refusal; none where
+    /// no such edge leaves it, which PULL then lists for a person.
     fn cancel_dependant(
         &self,
         operating: &Operating,
         placed: &Placed<'_>,
         task: &crate::Task,
         host: &Host,
-    ) -> Option<String> {
+    ) -> Option<Result<String, String>> {
         let service = board_service("recovery");
         let edges: Vec<_> = (placed.cancels().into_iter())
             .filter(|edge| {
@@ -154,11 +185,14 @@ impl Store {
             expected: snapshot,
         };
         Some(match self.apply_operation(&service, host, &request) {
-            Ok(result) => format!(
+            Ok(result) => Ok(format!(
                 "cancelled {} by {} ({}): a prerequisite ended without success",
                 task.slug, edge.id, result.transition
-            ),
-            Err(error) => format!("{} not cancelled by {}: {error}", task.slug, edge.id),
+            )),
+            Err(error) => Err(format!(
+                "{} not cancelled by {}: {error}",
+                task.slug, edge.id
+            )),
         })
     }
 

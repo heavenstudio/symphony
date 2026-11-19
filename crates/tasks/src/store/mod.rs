@@ -237,6 +237,10 @@ pub struct Store {
     /// Whether its delivering passes give the open tasks no orchestrator holds first: a detached
     /// dispatcher's ([`Store::giving`]).
     giving: bool,
+    /// What its delivering passes settle of the tasks a custom workflow holds, after the give:
+    /// [`Store::settle_held_if_due`], installed by [`Store::giving`] alone, which says why it is a
+    /// pointer.
+    settling: Option<fn(&Store, &Board) -> bool>,
     /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
     inbox_pool: Mutex<Option<pool::Pool>>,
     /// What it holds its starts and its PULL digests to ([`crate::limits`]): the open tasks an

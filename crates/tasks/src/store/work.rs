@@ -1039,7 +1039,11 @@ impl Store {
                     continue;
                 };
                 Some(edge)
-            } else if waiting.contains(task.slug.as_str()) {
+            } else if waiting.contains(task.slug.as_str())
+                // The read takes a held task's claim statuses too: one the board's writers keep
+                // is offered only in a pullable status.
+                || !PULLABLE.contains(&task.status.as_str())
+            {
                 continue;
             } else {
                 None

@@ -645,6 +645,12 @@ impl Store {
             *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
             (board, sequence) = self.callback_board()?;
         }
+        // Then what the tasks a workflow holds need of the board itself, as a PULL's reader settles
+        // it ([`Store::settle_held_if_due`]): a look is `tasks wait`'s, never `agent-send`'s.
+        if self.settle_held_if_due(&board) {
+            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            (board, sequence) = self.callback_board()?;
+        }
         let holdings = (callback.session.kind == "orchestrator")
             .then(|| self.slot_holdings())
             .transpose()?;
@@ -716,8 +722,17 @@ impl Store {
     /// one that stays could take them ([`Store::give_if_due`]): a detached dispatcher's, which
     /// every command-line write starts while a channel is registered, so a board whose
     /// orchestrators listen on channels alone gives at the next write's dispatch.
+    ///
+    /// Its passes then settle what the tasks a custom workflow holds need of the board itself
+    /// ([`Store::settle_held_if_due`]: a lost holder recovered, a dependant cancelled by its
+    /// position's policy), so the PULL they push says what is true. That pass is a pointer set
+    /// here, never a call in the pass: `agent-send` delivers what it sends through the same pass
+    /// (on a store never built with this), and a call there would link the board's admission and
+    /// its write into it, which nothing it does needs (tools/size-budget.toml). Named only here,
+    /// it links only into the programs that build a giving store, `tasks dispatch`'s.
     pub fn giving(mut self) -> Store {
         self.giving = true;
+        self.settling = Some(Store::settle_held_if_due);
         self
     }
 
@@ -799,6 +814,14 @@ impl Store {
         // orchestrator holds first, so its recipients hear the give; an observing one keeps the
         // board as its write left it.
         if pass == Pass::Deliver && self.giving && self.give_if_due(&board) {
+            *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            (board, sequence) = self.callback_board()?;
+        }
+        // Then what the tasks a workflow holds need of the board itself ([`Store::giving`]).
+        if pass == Pass::Deliver
+            && let Some(settle) = self.settling
+            && settle(self, &board)
+        {
             *self.inbox_pool.lock().unwrap_or_else(|e| e.into_inner()) = None;
             (board, sequence) = self.callback_board()?;
         }

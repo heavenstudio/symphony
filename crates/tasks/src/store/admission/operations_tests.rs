@@ -408,3 +408,92 @@ fn a_claim_by_its_role_takes_the_one_open_edge_of_several_and_refuses_a_choice_b
         assert_eq!(position(&f, "sim/a").at(), pair("build", "available"));
     }
 }
+
+/// [`REVIEWED`] with an executor's claim, `rework`, leaving verify/approved: a position that
+/// projects to done, outside the pullable statuses.
+fn reworked() -> Custom {
+    let rework = r#"  { id = "rework", label = "Rework", from = { phase = "verify", state = "approved" }, to = { phase = "build", state = "working" }, operation = "claim", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "acquire_role", role = "executor" }, { kind = "slot", policy = "acquire" }], automatic = false, human_wait = false },
+  { id = "accept","#;
+    custom(&format!(
+        "{}{MAPPED}",
+        REVIEWED.replace(r#"  { id = "accept","#, rework)
+    ))
+}
+
+#[test]
+fn next_offers_a_held_tasks_claim_whatever_status_its_position_projects_to_and_no_task_done_by_the_board()
+ {
+    for backend in BACKENDS {
+        let f = Fixture::on(
+            backend,
+            Seed::default()
+                .session("amber")
+                .session("birch")
+                .session("cedar")
+                .task("sim/a", "ready")
+                .task("sim/old", "done"),
+        );
+        f.store
+            .activate_workflow(&reworked(), &Host::local())
+            .unwrap();
+        let next = |handle: &str| f.store.next_for(handle).unwrap().map(|t| t.slug);
+        let (amber, birch) = (agent_session("amber"), agent_session("birch"));
+        for (who, edge) in [
+            (&amber, "claim"),
+            (&amber, "submit"),
+            (&birch, "review"),
+            (&birch, "approve"),
+        ] {
+            take(&f.store, "sim/a", who, edge).unwrap();
+        }
+        // Approved, it projects to done; its rework claim is open, and next offers it.
+        assert_eq!(f.store.get("sim/a").unwrap().status, "done");
+        assert_eq!(next("cedar").as_deref(), Some("sim/a"), "{backend:?}");
+        // Taken, nothing is left: sim/old, done and held by no workflow, is never offered, though
+        // the read now takes the status done for the claim that leaves it.
+        take(&f.store, "sim/a", &agent_session("cedar"), "rework").unwrap();
+        assert_eq!(next("cedar"), None, "{backend:?}");
+    }
+}
+
+#[test]
+fn a_settle_the_board_is_refused_is_said_and_counts_as_no_write() {
+    for backend in BACKENDS {
+        let f = Fixture::on(
+            backend,
+            Seed::default()
+                .session("orch")
+                .task("sim/c", "ready")
+                .task("sim/gone", "cancelled")
+                .role("sim/c", "orch", "orchestrator")
+                .link("sim/c", "dep", "sim/gone"),
+        );
+        // The cancel edge reads its task's dependencies itself, so a cancelled one stops it.
+        let waiting = REVIEWED.replace(
+            r#"capability = "recovery" }], inputs = [], dependencies = "none""#,
+            r#"capability = "recovery" }], inputs = [], dependencies = "done""#,
+        );
+        assert_ne!(waiting, REVIEWED);
+        f.store
+            .activate_workflow(&custom(&format!("{waiting}{MAPPED}")), &Host::local())
+            .unwrap();
+        let board = f.store.board().unwrap();
+        let settled = f.store.settle_held(&board).unwrap();
+        assert!(settled.lines.is_empty(), "{backend:?}: {settled:?}");
+        let [refusal] = &settled.refused[..] else {
+            panic!("{backend:?}: one refusal: {settled:?}");
+        };
+        assert!(
+            refusal.starts_with("sim/c not cancelled by cancel: dependency: "),
+            "{refusal}"
+        );
+        // Said each time it is tried, and no write: its caller reads the board again for none.
+        let mut said = Vec::new();
+        assert!(!(f.store).settle_held_saying(&board, &mut |line| said.push(line.to_string())));
+        assert_eq!(
+            said,
+            [format!("settling the tasks a workflow holds: {refusal}")]
+        );
+        assert_eq!(position(&f, "sim/c").at(), pair("build", "available"));
+    }
+}

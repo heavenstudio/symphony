@@ -516,3 +516,31 @@ fn a_staffing_pass_starts_the_role_a_held_tasks_open_claim_edge_gives_and_none_w
         )
     );
 }
+
+#[test]
+fn a_wait_recovers_a_lost_holder_as_a_pull_does() {
+    let mut c = Case::new();
+    let amber = c.register("worker");
+    let orch = c.register("orchestrator");
+    c.store()
+        .activate_workflow(&flow(), &Host::local())
+        .unwrap();
+    c.ok(&amber, &["create", "sim/jump", "Jump departure"]);
+    c.ok(&amber, &["claim", "sim/jump"]);
+    let now: f64 = c.env.vars["TASKS_NOW"].parse().unwrap();
+    let lost = now + symphony_board::health::LIVE_SECONDS + symphony_board::health::STALE_SECONDS;
+    c.env
+        .vars
+        .insert("TASKS_NOW".into(), (lost + 1.0).to_string());
+    c.store().touch(&orch).unwrap();
+    c.ok(&orch, &["wait", "--timeout", "0"]);
+    let position = c.store().workflow_position("sim/jump").unwrap().unwrap();
+    assert_eq!(
+        (
+            position.phase.as_str(),
+            position.state.as_str(),
+            position.revision
+        ),
+        ("build", "available", 3)
+    );
+}
