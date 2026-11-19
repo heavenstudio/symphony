@@ -2,7 +2,8 @@
 //! repository held in memory (`github.rs`). `flows.rs` and `recovery.rs` run it on a board held
 //! in memory (`memory.rs`), where each failure is planted exactly; `scratch.rs` runs it on a
 //! real scratch board through `tasks api`, its requests made by a real `curl` to a loopback
-//! server (`http.rs`). `deliver.rs` asks it the four verbs of a land delivered by a pull request.
+//! server (`http.rs`). `deliver.rs` asks it the four verbs of a land delivered by a pull request, and
+//! `protection.rs` what those verbs refuse of a repository not protected for one.
 
 #![expect(
     clippy::unwrap_used,
@@ -14,6 +15,7 @@ mod flows;
 mod github;
 mod http;
 mod memory;
+mod protection;
 mod recovery;
 mod scratch;
 

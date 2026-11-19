@@ -119,11 +119,7 @@ impl Fake {
                     }
                     stream.write_all(&bytes(answer)).unwrap();
                 }
-                // Nothing more is said: a client still reading meets the connection's end.
-                stream.shutdown(std::net::Shutdown::Write).unwrap();
-                let mut rest = Vec::new();
-                let _ = stream.read_to_end(&mut rest);
-                after.extend(rest);
+                finish(&mut stream, &mut after);
                 tell.send((startup, after)).unwrap();
             }
         });
@@ -138,6 +134,17 @@ impl Fake {
     fn sent(&self) -> (Vec<u8>, Vec<u8>) {
         self.sent.recv().unwrap()
     }
+}
+
+/// End the fake's answers and collect the client's last bytes. A client still reading meets the
+/// end; one done may already have disconnected.
+fn finish(stream: &mut UnixStream, after: &mut Vec<u8>) {
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .unwrap_or_else(|why| {
+            assert_eq!(why.kind(), std::io::ErrorKind::NotConnected, "{why}");
+        });
+    let _ = stream.read_to_end(after);
 }
 
 /// A connection's startup message, read whole: its body.
@@ -199,6 +206,32 @@ fn len(n: usize) -> [u8; 4] {
 /// One bare request on a new client of `fake`.
 fn one(fake: &Fake) -> Result<Vec<Answer>, DbError> {
     fake.client().request(&[Step::bare("SELECT 1")])
+}
+
+#[test]
+fn a_fake_collects_the_clients_last_bytes_whichever_side_ends_first() {
+    bounded("a fake and its client ending in either order", || {
+        for client_first in [true, false] {
+            let (mut stream, mut client) = UnixStream::pair().unwrap();
+            let ended = if client_first {
+                client.write_all(b"X\0\0\0\x04").unwrap();
+                drop(client);
+                None
+            } else {
+                Some(thread::spawn(move || {
+                    // The client stays connected until the fake has ended its answers.
+                    assert_eq!(client.read(&mut [0]).unwrap(), 0);
+                    client.write_all(b"X\0\0\0\x04").unwrap();
+                }))
+            };
+            let mut after = b"S\0\0\0\x04".to_vec();
+            finish(&mut stream, &mut after);
+            assert_eq!(after, b"S\0\0\0\x04X\0\0\0\x04");
+            if let Some(ended) = ended {
+                ended.join().unwrap();
+            }
+        }
+    });
 }
 
 #[test]
@@ -510,7 +543,7 @@ fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_client
 }
 
 #[test]
-fn a_server_gone_after_an_answer_fails_the_next_request_as_it_is_sent() {
+fn a_server_gone_after_an_answer_fails_the_next_request_and_drops_its_connection() {
     let (tell, gone) = mpsc::channel();
     let dir = serving(move |mut stream| {
         while wire::read(&mut stream).unwrap().kind != b'S' {}
@@ -519,15 +552,23 @@ fn a_server_gone_after_an_answer_fails_the_next_request_as_it_is_sent() {
         tell.send(()).unwrap();
     });
     let client = Client::new(dir.path(), "board");
-    client.request(&[Step::bare("SELECT 1")]).unwrap();
-    gone.recv().unwrap();
-    let Err(DbError::Failed(said)) = client.request(&[Step::bare("SELECT 1")]) else {
-        panic!("a request to a server that has gone fails");
+    let failed = bounded("a request to a server that has gone", move || {
+        client.request(&[Step::bare("SELECT 1")]).unwrap();
+        gone.recv().unwrap();
+        let failed = client.request(&[Step::bare("SELECT 1")]);
+        (failed, client.connection.lock().unwrap().is_none())
+    });
+    let (Err(DbError::Failed(said)), true) = failed else {
+        panic!("a request to a server that has gone fails, and its connection goes: {failed:?}");
     };
-    assert!(said.contains(": sending a request: "), "{said}");
+    // Either the write or the first read can meet the close. Reconnecting would instead say
+    // "is not answering on": this request must fail on the connection it already held.
     assert!(
-        client.connection.lock().unwrap().is_none(),
-        "the connection went"
+        said.starts_with(&format!(
+            "the board's PostgreSQL at {}: ",
+            dir.path().display()
+        )),
+        "{said}"
     );
 }
 
@@ -739,4 +780,16 @@ fn request_telemetry_counts_reads_writes_and_failures_once_and_is_shared_by_boar
     assert_eq!(client.requests(), 3);
     drop(client);
     fake.sent();
+}
+
+#[test]
+fn an_answers_column_is_the_first_of_every_row_that_gives_one() {
+    let row = |first: Option<&str>| vec![first.map(str::to_string), Some("beside".into())];
+    let answer = Answer {
+        rows: vec![row(Some("a")), row(None), row(Some("b")), vec![]],
+        tag: "SELECT 4".into(),
+    };
+    assert_eq!(answer.column(), ["a", "b"]);
+    assert_eq!(answer.value(), Some("a"));
+    assert!(Answer::default().column().is_empty());
 }

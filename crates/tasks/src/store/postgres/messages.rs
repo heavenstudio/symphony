@@ -1,6 +1,6 @@
 //! The statements of `store/messages.rs` and the thread reads on PostgreSQL.
 
-use super::{Pg, act, authorize, logged, rows};
+use super::{Pg, act, authorize, listed, logged, rows};
 use crate::store::messages::Poster;
 
 /// Whether `v ->> 'slug'` is a task, and its thread in order.
@@ -181,46 +181,46 @@ pub(in crate::store) fn inbox() -> Pg<'static> {
 }
 
 pub(in crate::store) fn to_owner() -> Pg<'static> {
-    Pg::read(rows(
+    listed(
         "m",
         "(SELECT m.* FROM message m WHERE recipient = 'owner' ORDER BY sid DESC LIMIT (v ->> 'limit')::bigint) m",
         "m.sid DESC",
-    ))
+    )
 }
 
 pub(in crate::store) fn questions_waiting() -> Pg<'static> {
-    Pg::read(rows(
+    listed(
         "m",
         "message m WHERE recipient = v ->> 'person' AND kind = 'msg' AND sender <> v ->> 'person' \
         AND slug IN (SELECT jsonb_array_elements_text(v -> 'open')) \
         AND NOT EXISTS (SELECT 1 FROM message a WHERE a.slug = m.slug AND a.sid > m.sid AND a.sender = v ->> 'person')",
         "m.sid",
-    ))
+    )
 }
 
 pub(in crate::store) fn newest_verdict() -> Pg<'static> {
-    Pg::read(rows(
+    listed(
         "m",
         "(SELECT m.* FROM message m WHERE kind = 'verdict' AND (text IN ('approve', 'changes') \
         OR starts_with(text, 'approve:') OR starts_with(text, 'changes:')) ORDER BY sid DESC LIMIT 1) m",
         "m.sid",
-    ))
+    )
 }
 
 pub(in crate::store) fn messages_after() -> Pg<'static> {
-    Pg::read(rows(
+    listed(
         "m",
         "message m WHERE sid > (v ->> 'since')::bigint AND sid <= (v ->> 'through')::bigint",
         "m.sid",
-    ))
+    )
 }
 
 pub(in crate::store) fn last_messages() -> Pg<'static> {
-    Pg::read(rows(
+    listed(
         "m",
         "said s JOIN message m ON m.slug = s.slug AND m.sid = s.sid",
         "m.sid",
-    ))
+    )
 }
 
 pub(in crate::store) fn landings_posted() -> Pg<'static> {

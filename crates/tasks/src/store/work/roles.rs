@@ -92,7 +92,10 @@ impl Store {
         self.ruling(slug, handle, starts, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
-            if task.status == "done" || task.status == "cancelled" {
+            // A finished task takes no role, but an approved one no landing has closed its
+            // orchestrator's: its land is still somebody's to make.
+            let lands = role == "orchestrator" && crate::orchestration::marked_unlanded(&task.status, &task.fields).is_some();
+            if (task.status == "done" || task.status == "cancelled") && !lands {
                 return Err(refused(format!("{slug} is {}", task.status)));
             }
             if role == "reviewer" && view.holds(handle, "executor") {
@@ -211,7 +214,8 @@ impl Store {
         self.ruling(slug, from, capped, |view| {
             view.actor(from)?;
             let task = view.task(slug)?;
-            if task.status == "done" || task.status == "cancelled" {
+            let lands = crate::orchestration::marked_unlanded(&task.status, &task.fields).is_some();
+            if (task.status == "done" || task.status == "cancelled") && !lands {
                 return Err(refused(format!("{slug} is {}", task.status)));
             }
             // Refused with who hands it over instead, or how to take the role first.

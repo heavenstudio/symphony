@@ -198,17 +198,27 @@ describe("the picture viewer drawn", () => {
 
   it("is a modal dialog over the page, the picture with its caption and a Close button", () => {
     expect(markup(PHOTOS.slice(0, 1), 0)).toBe(
-      '<div id="media-lightbox" data-state="open" class="dx-dialog-backdrop"><div id="media-lightbox-content" role="dialog" aria-modal="true" aria-label="Picture viewer" class="dx-dialog"><div class="lightbox-controls"><button class="dx-button" data-style="outline" data-size="default" type="button">Close</button></div><img src="/first.svg" alt="First"/><div class="lightbox-caption">First</div></div></div>',
+      '<div id="media-lightbox" data-state="open" class="dx-dialog-backdrop"><div id="media-lightbox-content" role="dialog" aria-modal="true" aria-label="Picture viewer" class="dx-dialog"><div class="lightbox-controls"><button class="dx-button" data-style="outline" data-size="default" type="button">Close</button><a class="lightbox-full" href="/first.svg" target="_blank" rel="noopener">Full size</a></div><img src="/first.svg" alt="First"/><div class="lightbox-caption">First</div></div></div>',
     );
   });
 
   it("moves through several pictures, its place among them in its caption", () => {
     const html = markup(PHOTOS, 1);
     expect(html).toContain(
-      '<div class="lightbox-controls"><button class="dx-button" data-style="outline" data-size="default" type="button" aria-label="Previous picture">←</button><button class="dx-button" data-style="outline" data-size="default" type="button">Close</button><button class="dx-button" data-style="outline" data-size="default" type="button" aria-label="Next picture">→</button></div>',
+      '<div class="lightbox-controls"><button class="dx-button" data-style="outline" data-size="default" type="button" aria-label="Previous picture">←</button><button class="dx-button" data-style="outline" data-size="default" type="button">Close</button><a class="lightbox-full" href="/second.svg" target="_blank" rel="noopener">Full size</a><button class="dx-button" data-style="outline" data-size="default" type="button" aria-label="Next picture">→</button></div>',
     );
     expect(html).toContain('<img src="/second.svg" alt="Second"/>');
     expect(html).toContain('<div class="lightbox-caption">Second · 2 / 3</div>');
+  });
+
+  it("calls a picture with no name by its place, in its alt and its caption", () => {
+    const nameless = [PHOTOS[0] as Photo, { src: "/bare.svg", caption: "" }];
+    const html = markup(nameless, 1);
+    expect(html).toContain('<img src="/bare.svg" alt="Picture 2 / 2"/>');
+    expect(html).toContain('<div class="lightbox-caption">Picture 2 / 2</div>');
+    const alone = markup(nameless.slice(1), 0);
+    expect(alone).toContain('<img src="/bare.svg" alt="Picture"/>');
+    expect(alone).toContain('<div class="lightbox-caption"></div>');
   });
 
   it("is nothing without pictures, and an empty dialog for a place past them", () => {

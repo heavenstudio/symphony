@@ -52,6 +52,10 @@ pub(in crate::store) fn field_set(path: &str, value: &str) -> String {
     )
 }
 
+/// What a rule's write sets the mark of a task approved and not landed to: when its approve was
+/// given, or nothing, which lifts it, where the change's `unlanded` is null.
+pub(in crate::store) const UNLANDED: &str = "nullif(v -> 'unlanded', 'null'::jsonb)";
+
 /// The write's refusal unless its actor is a red's filer: `filer` and `unfiled`.
 pub(in crate::store) const FILED: &str = "IF (SELECT kind FROM session WHERE handle = v ->> 'actor') IS DISTINCT FROM v ->> 'filer' THEN \
     RAISE EXCEPTION '%', v ->> 'unfiled'; \

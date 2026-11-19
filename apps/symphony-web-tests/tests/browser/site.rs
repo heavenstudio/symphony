@@ -132,11 +132,13 @@ fn runs(bytes: &[u8]) -> usize {
         .unwrap_or(0)
 }
 
-/// One open feed stream: its number, its socket, and whether it is a WebSocket.
+/// One open feed stream: its number, its socket, whether it is a WebSocket, and the document
+/// sections its request named (`sections`).
 struct Stream {
     id: u64,
     out: TcpStream,
     socket: bool,
+    sections: Vec<String>,
 }
 
 /// One thing the feed says, as the server says it in either of its forms
@@ -717,6 +719,20 @@ impl Site {
         shared.feeds.iter().filter(|stream| stream.socket).count()
     }
 
+    /// Whether an open feed stream follows the document section `key`, its request naming it
+    /// among its `sections`. A document page opens its feed before its sections come near the
+    /// screen and opens it again naming them: the server sends the stream opened again what the
+    /// page missed since its cursor (`since`), and the stand-in sends nothing, so an event pushed
+    /// between the two streams never reaches the page. A test pushes a document's events once the
+    /// stream naming its section is open.
+    pub fn following(&self, key: &str) -> bool {
+        let shared = self.shared.lock().unwrap();
+        shared
+            .feeds
+            .iter()
+            .any(|stream| stream.sections.iter().any(|section| section == key))
+    }
+
     fn send(&self, said: &Said) {
         send(&self.shared, said);
     }
@@ -1033,7 +1049,13 @@ pub fn query(target: &str, name: &str) -> Option<String> {
 
 /// The section keys a `/api/section` request asked for, as its `keys` query names them.
 pub fn asked_keys(target: &str) -> Vec<String> {
-    query(target, "keys")
+    query_list(target, "keys")
+}
+
+/// The list of keys a request's query parameter `name` holds as a JSON array, as a page names
+/// sections: none where it names none or no list.
+fn query_list(target: &str, name: &str) -> Vec<String> {
+    query(target, name)
         .and_then(|keys| serde_json::from_str(&keys).ok())
         .unwrap_or_default()
 }
@@ -1346,7 +1368,12 @@ fn serve(
                 }
                 shared.opened_feeds += 1;
                 let id = shared.opened_feeds;
-                shared.feeds.push(Stream { id, out, socket });
+                shared.feeds.push(Stream {
+                    id,
+                    out,
+                    socket,
+                    sections: query_list(&target, "sections"),
+                });
                 id
             };
             hold_feed(reader, shared, held);

@@ -556,7 +556,8 @@ impl Store {
         })
     }
 
-    /// A reviewer's `approve` (the task is done) or `changes` (back to its executor). The reviewer
+    /// A reviewer's `approve` (the task is done, and marked approved and not landed until a landing
+    /// closes it, [`crate::orchestration::unlanded`]) or `changes` (back to its executor). The reviewer
     /// is fresh (RULES.md `workflow/reviewers-not-the-owner`), by the rule the land goes by
     /// ([`Held::unfresh`]), so the board takes no verdict the land would refuse afterwards: a
     /// session that ever executed the task, or a work subtask under it, gives it none, whatever
@@ -619,6 +620,8 @@ impl Store {
                     text: said.clone(),
                     recipient: (!approve).then(|| "@executor".into()),
                 }),
+                // Done, and its land still somebody's to make: marked until a landing closes it.
+                unlanded: approve.then(|| json!(view.now)),
                 ..Change::default()
             })
         })?;
@@ -718,16 +721,17 @@ impl Store {
             }
             let (view, change) = (&ruled.view, &ruled.change);
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let (reason, needs, blocked, moved, holds) = (
+            let (reason, needs, unlanded, blocked, moved, holds) = (
                 change.reason.is_some(),
                 change.needs.is_some(),
+                change.unlanded.is_some(),
                 change.blocked.is_some(),
                 (change.status.as_deref()).map(|status| status == "cancelled"),
                 !ruled.slots.is_empty(),
             );
             let body = both(
-                surreal::rule(reason, needs, blocked, moved, holds),
-                pg::rule(reason, needs, blocked, moved, holds),
+                surreal::rule(reason, needs, unlanded, blocked, moved, holds),
+                pg::rule(reason, needs, unlanded, blocked, moved, holds),
             );
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
@@ -1147,6 +1151,10 @@ struct Change {
     needs: Option<Value>,
     /// What the block it makes waits on, the board's own field ([`crate::waits_on::Blocked`]).
     blocked: Option<Value>,
+    /// The mark of a task approved and not landed, the board's own field
+    /// ([`crate::orchestration::UNLANDED`]): when its approve was given, or null to lift it, as its
+    /// landing's line and a move back to review do.
+    unlanded: Option<Value>,
 }
 
 impl Change {
@@ -1233,6 +1241,7 @@ impl Change {
             "move_reason": self.reason,
             "needs": self.needs,
             "blocked": self.blocked,
+            "unlanded": self.unlanded,
         })
     }
 }
@@ -1296,7 +1305,7 @@ fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
     let (read, vars) = reading(which, sessions);
     let statement = Statement {
         surreal: read.into(),
-        postgres: Some(Pg::read(pg::reading::reading(which, sessions))),
+        postgres: Some(pg::reading::reading(which, sessions)),
     };
     (statement, vars)
 }

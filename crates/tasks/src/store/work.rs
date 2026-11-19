@@ -842,6 +842,8 @@ impl Store {
                 reason: reason.clone(),
                 opens,
                 blocked: record(Some(current.into())),
+                // Back to review from done: open work again, its approve standing no more.
+                unlanded: (current == "done").then_some(Value::Null),
                 ..Change::default()
             })
         })?;
@@ -966,6 +968,8 @@ impl Store {
                     },
                     recipient: taken_back.then(|| "@executor".into()),
                 }),
+                // Landed: no longer approved and waiting for its land.
+                unlanded: Some(Value::Null),
                 ..Change::default()
             })
         })?;

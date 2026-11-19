@@ -116,6 +116,11 @@ FOR $dependent IN array::distinct($blocked_links.slug) {{
 pub(in crate::store) const NEEDS_WRITTEN: &str =
     "\nUPDATE type::record('task', $slug) SET fields._board.needs = $needs RETURN NONE;";
 
+/// The write of [`Change::unlanded`] after the rule's own: the mark of a task approved and not
+/// landed set to when its approve was given, or lifted where `$unlanded` is null; a task that
+/// carries none is left as it is.
+pub(in crate::store) const UNLANDED_WRITTEN: &str = "\nUPDATE type::record('task', $slug) SET fields._board.unlanded = $unlanded ?? NONE WHERE ($unlanded ?? NONE) != NONE OR fields._board.unlanded != NONE RETURN NONE;";
+
 /// The write of what a block waits on (`$blocked`, [`crate::waits_on::Blocked`]) after the rule's
 /// own, which moved the task to blocked or found it there.
 pub(in crate::store) const BLOCKED_WRITTEN: &str =

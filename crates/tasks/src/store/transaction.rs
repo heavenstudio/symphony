@@ -224,10 +224,30 @@ pub(super) fn on_postgres(
         })
         .collect();
     let answers = client.request(&steps)?;
-    let Some(text) = answers.get(answer).and_then(pg::Answer::value) else {
-        return Ok(Value::Null);
+    let text: std::borrow::Cow<str> = match &answer {
+        postgres::Gives::Value(at) => match answers.get(*at).and_then(pg::Answer::value) {
+            Some(text) => text.into(),
+            None => return Ok(Value::Null),
+        },
+        postgres::Gives::Lists { lists, rest } => {
+            let column = |at: &usize| answers.get(*at).map(pg::Answer::column);
+            let lists: Vec<(&str, Vec<&str>)> = (lists.iter())
+                .map(|(key, at)| (*key, column(at).unwrap_or_default()))
+                .collect();
+            let rest = match rest {
+                Some(at) => Some(answers.get(*at).and_then(pg::Answer::value).ok_or_else(
+                    || {
+                        DbError::Failed(
+                            "PostgreSQL answered a read's lists without its fields".into(),
+                        )
+                    },
+                )?),
+                None => None,
+            };
+            postgres::joined(&lists, rest).into()
+        }
     };
-    serde_json::from_str(text).map_err(|e| {
+    serde_json::from_str(&text).map_err(|e| {
         DbError::Failed(format!(
             "PostgreSQL answered what is not JSON ({e}): {text}"
         ))

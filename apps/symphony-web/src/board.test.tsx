@@ -8,6 +8,7 @@ import {
   GhostBoard,
   GhostCard,
   keepShape,
+  laneSide,
   MORE,
   PAGE,
   ROW,
@@ -163,6 +164,37 @@ describe("the approved B board", () => {
     localStorage.setItem(STAGE_KEY, "unknown");
     expect(columns(board())).toEqual(["review"]);
   });
+  // The wait strip and the stage tabs are rows that scroll across on a phone (scrollrow.ts), which
+  // finds each row's chosen one by `aria-pressed` and `aria-current`: one of each, whatever the
+  // counts, a stage with nothing in it saying its zero whole.
+  it("draws a phone's wait strip and stage tabs as scrolling rows, one chosen in each", () => {
+    vi.stubGlobal("innerWidth", 390);
+    localStorage.setItem(STAGE_KEY, "design");
+    const html = board({
+      counts: [
+        ["design", 12],
+        ["review", 19],
+        ["concept", 0],
+      ],
+      waiting: {
+        kinds: [["check", 30]],
+        columns: [
+          { status: "design", ordinary: 0, blocked: 12, oldest: null },
+          { status: "review", ordinary: 1, blocked: 18, oldest: null },
+        ],
+      },
+    });
+    expect(html).toContain(
+      '<nav class="wait-strip scroll-row" aria-label="Filter tasks by what they wait on">',
+    );
+    expect(html).toContain('<nav class="stage-tabs scroll-row" aria-label="Task stages">');
+    expect(html.match(/aria-current="page"/g)).toHaveLength(1);
+    expect(html).toContain('aria-current="page">Design <i>0</i><b>+12</b></button>');
+    expect(html).toContain(">Review <i>1</i><b>+18</b></button>");
+    expect(html).toContain(">Concept <i>0</i></button>");
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(1);
+    expect(html).toContain('class="open-count" aria-pressed="true">30 open</button>');
+  });
   it("opens the linked row's original stage before a saved phone tab", () => {
     vi.stubGlobal("innerWidth", 390);
     vi.stubGlobal("location", { hash: "#row-work%2Fa" });
@@ -211,6 +243,44 @@ describe("the approved B board", () => {
         }),
       ),
     ).toEqual(["new", "old"]);
+  });
+});
+
+describe("the stages of the lane scroller", () => {
+  const frame = { left: 24, right: 1416 };
+  it.each([
+    ["a lane inside the frame", { left: 24, right: 304 }, "shown"],
+    ["a lane a pixel's rounding past either edge", { left: 23.4, right: 1416.6 }, "shown"],
+    ["a lane cut at the right edge", { left: 1176, right: 1456 }, "after"],
+    ["a lane beyond the right edge", { left: 2040, right: 2320 }, "after"],
+    ["a lane cut at the left edge", { left: -100, right: 180 }, "before"],
+    ["a lane beyond the left edge", { left: -840, right: -560 }, "before"],
+    ["a lane wider than the frame", { left: 0, right: 2000 }, "before"],
+  ] as const)("reads %s", (_, lane, side) => {
+    expect(laneSide(frame, lane)).toBe(side);
+  });
+  it("offers every stage over the lanes, in their order, each lane's heading taking the focus", () => {
+    const html = board();
+    expect(
+      [...html.matchAll(/<button type="button" data-side="shown">([^<]*)</g)].map(
+        (found) => found[1],
+      ),
+    ).toEqual(["Concept", "Design", "Ready", "In progress", "Build", "Test", "Review", "Done"]);
+    expect(html.indexOf('class="stage-jump"')).toBeLessThan(html.indexOf("waiting-columns"));
+    expect(html).toContain('<h2 tabindex="-1">concept');
+  });
+  it("offers none over one stage's list or a phone's one stage", () => {
+    vi.stubGlobal("location", { hash: "#row-work/a" });
+    expect(board({ tasks: [aTask("work/a", { status: "backlog" })] })).not.toContain("stage-jump");
+    vi.stubGlobal("location", { hash: "" });
+    vi.stubGlobal("innerWidth", 390);
+    expect(board()).not.toContain("stage-jump");
+  });
+  it("keeps the row's room in the ghost, on a desk alone", () => {
+    expect(render(<GhostBoard shape={[]} />)).toContain('<div class="ghost-jump"></div>');
+    expect(render(<GhostBoard shape={[]} />)).not.toContain("stage-jump");
+    vi.stubGlobal("innerWidth", 390);
+    expect(render(<GhostBoard shape={[]} />)).not.toContain("ghost-jump");
   });
 });
 
