@@ -14,7 +14,7 @@ pub(super) struct Observation {
     roles: Vec<RoleRead>,
     branches: Vec<Recorded>,
     /// The active custom workflow's positions, by whose slot policy a task it holds is counted.
-    positions: Vec<Value>,
+    positions: Value,
 }
 
 impl Observation {
@@ -34,7 +34,8 @@ impl Observation {
                 updated: None,
                 position: (row.fields.get("_board"))
                     .and_then(|board| board.get("workflow"))
-                    .cloned(),
+                    .cloned()
+                    .unwrap_or_default(),
                 held: false,
             });
         }
@@ -49,12 +50,11 @@ impl Observation {
     /// Whether `row`, a task a custom workflow holds, holds a slot by its position's slot policy;
     /// none for a task no workflow holds, or one at a pair the active definition does not declare.
     fn slot(&self, row: &Row) -> Option<bool> {
-        let position = row.position.as_ref()?;
         let (phase, state) = (
-            position.get("phase")?.as_str()?,
-            position.get("state")?.as_str()?,
+            row.position.get("phase")?.as_str()?,
+            row.position.get("state")?.as_str()?,
         );
-        (self.positions.iter())
+        (self.positions.as_array()?.iter())
             .find(|at| at["phase"] == phase && at["state"] == state)
             .map(|at| at["slot"] != "release")
     }

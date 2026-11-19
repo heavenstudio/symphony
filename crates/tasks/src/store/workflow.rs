@@ -500,23 +500,33 @@ impl Store {
     /// are given, each task's oldest first, every one from its first revision, each read by its
     /// id, never a scan of the record.
     pub fn transitions(&self, tasks: &[(&str, u64)]) -> Result<Vec<Moved>, Error> {
+        // Built as plain values, and read as one, so no serializer or list reader of their own
+        // links where a PULL is composed (tools/size-budget.toml).
         let ids: Vec<Value> = (tasks.iter())
-            .flat_map(|(slug, revision)| (1..=*revision).map(move |r| json!(["event", slug, r])))
+            .flat_map(|&(slug, revision)| {
+                (1..=revision)
+                    .map(move |r| Value::from(vec![json!("event"), slug.into(), r.into()]))
+            })
             .collect();
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let vars = json!({ "ids": ids });
-        let read: Vec<Value> =
+        let vars = Value::Object(
+            [("ids".to_string(), Value::Array(ids))]
+                .into_iter()
+                .collect(),
+        );
+        let read: Value =
             self.retrying(|| self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone()))?;
-        (read.iter())
-            .map(|body| {
-                Moved::of(body).ok_or_else(|| {
-                    Error::Db(format!(
-                        "a recorded transition the alarm cannot read: {body}"
-                    ))
-                })
-            })
+        let unread = || {
+            Error::Db(format!(
+                "recorded transitions the alarm cannot read: {read}"
+            ))
+        };
+        let bodies = read.as_array().ok_or_else(unread)?;
+        bodies
+            .iter()
+            .map(|body| Moved::of(body).ok_or_else(unread))
             .collect()
     }
 
