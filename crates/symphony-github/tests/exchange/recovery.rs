@@ -1141,6 +1141,40 @@ fn a_publication_lost_after_a_drop_is_mapped_by_the_next_preview_beside_the_drop
 }
 
 #[test]
+fn an_import_dropped_is_neither_mapped_nor_imported_again() {
+    let rig = Rig::new("drop-import", IMPORT);
+    let number = rig.github.open("Title", "Text.", &["symphony"]);
+    let slug = import_slug(77, number);
+    rig.sync();
+    let dropped = rig.run(&["drop", &slug]).ok();
+    assert!(
+        dropped
+            .out
+            .contains(&format!("no longer mapped to issue #{number}")),
+        "{}",
+        dropped.out
+    );
+    assert!(!dropped.out.contains("curated text"), "{}", dropped.out);
+
+    // Edited there, so the next preview lists it beside the proposal that names it.
+    rig.github.edit(number, "Title 2", "Text 2.");
+    let said = rig.sync();
+    assert!(
+        said.contains(&format!(
+            "{slug}: issue #{number} was dropped from it: not mapped again"
+        )),
+        "{said}"
+    );
+    assert!(rig.state().mappings.is_empty());
+    assert_eq!(
+        rig.board.task(&slug).unwrap().title,
+        "Title",
+        "its edit is not taken"
+    );
+    assert_eq!(rig.board.slugs(), [slug], "nothing imported again");
+}
+
+#[test]
 fn a_publication_dispatched_under_an_earlier_preview_is_looked_for_before_any_create() {
     let rig = Rig::new("lost-create-new-preview", EXCHANGE);
     // More issues than one preview lists, so the listing never reaches the new one.
