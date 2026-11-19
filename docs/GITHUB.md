@@ -117,7 +117,7 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
   A land runs it; an operator has no reason to.
 - **`release --request FILE`** answers a release run with
   [a GitHub Release](#publishing-a-release) for the tag FILE names. A release run runs it; an
-  operator asks through `just release --github`.
+  operator asks through that run's own `--github`.
 
 ## What is exchanged
 

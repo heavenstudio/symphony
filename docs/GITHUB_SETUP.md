@@ -192,8 +192,8 @@ to `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#landupstream)).
 
 ## GitHub Releases
 
-The release run (`just release`, [RELEASES](RELEASES.md#a-github-release)) is the Symphony's own
-repository's, so these steps are for that repository.
+The release run ([RELEASES](RELEASES.md#a-github-release)) is the Symphony's own repository's,
+so these steps are for that repository.
 
 1. **The token.** `token_file`'s token, as [the exchange's step 1](#the-issue-exchange) keeps it,
    with contents read and write on the repository: GitHub takes a release's creation as a write
@@ -202,13 +202,13 @@ repository's, so these steps are for that repository.
    branch, beside `enabled = true`, `repository` and `token_file`.
 3. **The run's command.** Commit `github = ["symphony-github", "release"]` to the `[releases]`
    table of `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#releases)). The run starts that
-   program by name, so it is on the `PATH` of whoever runs `just release`.
-4. **The releases tagged before.** `just release --github` asks for each release tagged in the
-   checkout, oldest first, and checks, tags and pushes nothing; one GitHub holds already is left
-   as it is.
+   program by name, so it is on the `PATH` of whoever starts the release run.
+4. **The releases tagged before.** The release run's `--github` asks for each release tagged in
+   the checkout, oldest first, and checks, tags and pushes nothing; one GitHub holds already is
+   left as it is.
 
-`symphony-github status` then says `releases: publish`, and `just release --status` counts the
-releases published and names each one pending with why.
+`symphony-github status` then says `releases: publish`, and the release run's `--status` counts
+the releases published and names each one pending with why.
 
 ## Checking it
 
