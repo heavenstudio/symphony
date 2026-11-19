@@ -21,6 +21,7 @@ use std::hash::{BuildHasher, RandomState};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub(crate) mod admission;
 mod artifacts;
 pub(crate) mod asks;
 mod beside;
@@ -64,6 +65,7 @@ mod transaction;
 pub(crate) mod unanswered;
 mod waits;
 mod work;
+pub(crate) mod workflow;
 mod writers;
 
 use beside::Beside;
@@ -689,12 +691,35 @@ impl Store {
     /// One that gives a session the orchestrator role ([`Change::gains`]) reads that session's open
     /// tasks for the limit on them ([`Store::gaining`]). The cap and the limit are read once, so a
     /// project file changed meanwhile never splits one decision.
+    ///
+    /// A task with no workflow position that the change moves out of done or cancelled while a
+    /// custom workflow is active is refused by the database (`workflow_position`), and the rule is
+    /// then written again placing it at its mapped pair in the same write
+    /// ([`crate::workflow::activate::Placing::reopened`]): a board with no workflow writes as it
+    /// always did, in one write.
     fn ruling(
         &self,
         slug: &str,
         actor: &str,
         starts: bool,
         decide: impl Fn(&View) -> Result<Change, Error>,
+    ) -> Result<Task, Error> {
+        match self.ruling_placed(slug, actor, starts, &decide, false) {
+            Err(Error::Refused(why)) if why.starts_with(&workflow::unplaced(slug)) => {
+                self.ruling_placed(slug, actor, starts, &decide, true)
+            }
+            ruled => ruled,
+        }
+    }
+
+    /// [`Store::ruling`]'s write, placing a task it reopens where `place` says to.
+    fn ruling_placed(
+        &self,
+        slug: &str,
+        actor: &str,
+        starts: bool,
+        decide: &impl Fn(&View) -> Result<Change, Error>,
+        place: bool,
     ) -> Result<Task, Error> {
         let limits = self.limits();
         let cap = limits.orchestrator_slots;
@@ -703,6 +728,16 @@ impl Store {
         } else {
             Which::Slug(slug)
         };
+        // A task a custom workflow holds moves, and is staffed, by its workflow's edges alone.
+        let decide = |view: &View| {
+            let change = decide(view)?;
+            match view.task(slug) {
+                Ok(task) if workflow::held(task) && change.moves_or_staffs() => {
+                    Err(refused(workflow::explicit_action(slug)))
+                }
+                _ => Ok(change),
+            }
+        };
         self.retrying(|| {
             let mut ruled = self.ruled(&which, slug, cap, &decide)?;
             if let Some((to, what)) = &ruled.change.gains {
@@ -710,6 +745,11 @@ impl Store {
                 self.gaining(to, what, limit, &mut ruled.slots)?;
             }
             let (view, change) = (&ruled.view, &ruled.change);
+            let placing = if place {
+                self.reopening(view, change, slug, actor)?
+            } else {
+                None
+            };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
             let (reason, needs, unlanded, blocked, moved, holds) = (
                 change.reason.is_some(),
@@ -719,14 +759,64 @@ impl Store {
                 (change.status.as_deref()).map(|status| status == "cancelled"),
                 !ruled.slots.is_empty(),
             );
+            let placed = placing.is_some();
             let body = both(
-                surreal::rule(reason, needs, unlanded, blocked, moved, holds),
-                pg::rule(reason, needs, unlanded, blocked, moved, holds),
+                surreal::rule(reason, needs, unlanded, blocked, moved, holds, placed),
+                pg::rule(reason, needs, unlanded, blocked, moved, holds, placed),
             );
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
+            if let Some(placing) = placing {
+                vars["placed"] = json!(placing.position());
+                vars["placing"] = json!(placing);
+            }
             self.written(body, vars, slug)
         })
+    }
+
+    /// Where `change` places `slug` as it moves it out of done or cancelled with no workflow
+    /// position, on the workflow active now; none for any other change, or a board with none
+    /// active. Refused, naming the pair, where the active workflow cannot place it.
+    fn reopening(
+        &self,
+        view: &View,
+        change: &Change,
+        slug: &str,
+        actor: &str,
+    ) -> Result<Option<workflow::Transition>, Failure> {
+        const CLOSED: [&str; 2] = ["done", "cancelled"];
+        let task = view.task(slug).map_err(Failure::Stop)?;
+        let Some(status) = change.status.as_deref() else {
+            return Ok(None);
+        };
+        if workflow::held(task)
+            || !CLOSED.contains(&task.status.as_str())
+            || CLOSED.contains(&status)
+        {
+            return Ok(None);
+        }
+        let Some(placing) = self.placing_context().map_err(Failure::Stop)? else {
+            return Ok(None);
+        };
+        let roles: Vec<(String, String, bool)> = (view.snap.roles.iter())
+            .filter(|r| r.slug == slug)
+            .map(|r| (r.handle.clone(), r.role.clone(), true))
+            .collect();
+        let principal = if actor == work::OWNER {
+            crate::workflow::local_owner()
+        } else {
+            crate::workflow::agent_session(actor)
+        };
+        let reopening = crate::workflow::activate::Reopening {
+            slug,
+            left: &task.status,
+            status,
+            roles: &roles,
+        };
+        placing
+            .reopened(&reopening, &principal, view.now)
+            .map(Some)
+            .map_err(|why| Failure::Stop(Error::Refused(why)))
     }
 
     /// `which` with every session: what a rule decides on, the cap's ledger and a whole board read.
@@ -1164,6 +1254,19 @@ struct Change {
     /// ([`crate::orchestration::UNLANDED`]): when its approve was given, or null to lift it, as its
     /// landing's line and a move back to review do.
     unlanded: Option<Value>,
+}
+
+impl Change {
+    /// Whether it moves the task, blocks it, or adds or drops an executor, a reviewer or a
+    /// reservation: what a custom workflow's edges alone do to a task it holds. The orchestrator's
+    /// role is the board's coordination, which its writers keep.
+    fn moves_or_staffs(&self) -> bool {
+        let staffing = |role: &str| role != "orchestrator";
+        self.status.is_some()
+            || self.blocked.is_some()
+            || self.add.as_ref().is_some_and(|r| staffing(&r.role))
+            || self.drop.iter().any(|(_, role)| staffing(role))
+    }
 }
 
 /// A start a rule makes: a claim or a move into an open status, the orchestrator role taken, or a

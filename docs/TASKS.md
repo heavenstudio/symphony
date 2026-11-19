@@ -1325,7 +1325,7 @@ reads with their JSON types, so a change that would break one fails its own task
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
 task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
 review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes. The current API is 2.3.
+keep their shapes. The current API is 2.4.
 
 ### What a program outside the board keeps
 
@@ -1388,6 +1388,22 @@ It is the reading the land itself goes by, one function, and stricter than the d
 what ties evidence to the head: the assessment is of the head, so one of another commit or of the
 brief waives nothing and none is no waiver; the approve names the head, never covering it by
 time; and every stamp is said, a waived one with who waived it and why.
+
+### A task a custom workflow holds
+
+Minor 4 adds the three calls by which an agent reads and moves a task a custom workflow holds,
+through the board's one admission ([WORKFLOW](WORKFLOW.md#admission)). On a board with no custom
+workflow active, `workflow_read` answers null and the other two are refused, saying none is
+active. Each answer is a type of `symphony_api::workflow`.
+
+- **`workflow_read`**, `{}`: the active definition, its revision and its activation generation
+  (`WorkflowRead`).
+- **`workflow_actions`**, `{"slug": S, "handle": H}`: each edge leaving the task's pair, with what
+  stops session `H` taking it now and its authority named without who holds it (`NextActions`):
+  a preview, never a permit.
+- **`workflow_apply`**, `{"handle": H, "request": OperationRequest}`: one typed operation admitted
+  for session `H`, which must be on the board and not have left, never for a principal the request
+  names; its answer is the `OperationResult`, and its refusal names its code.
 
 ## The agents API
 

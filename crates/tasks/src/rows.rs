@@ -32,6 +32,10 @@ pub struct Dump {
     pub execution_facts: Vec<Value>,
     pub execution_fences: Vec<Value>,
     pub execution_artifacts: Vec<Value>,
+    /// A custom delivery workflow's records, from schema 24; none on a board that never had one,
+    /// whose export is then the text it was before, which a binary from before reads.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub workflow: Vec<WorkflowRow>,
 }
 
 impl Dump {
@@ -62,6 +66,7 @@ impl Dump {
             execution_facts: table(&mut tables, "execution_facts")?,
             execution_fences: table(&mut tables, "execution_fences")?,
             execution_artifacts: table(&mut tables, "execution_artifacts")?,
+            workflow: table(&mut tables, "workflow")?,
         };
         match tables.keys().next() {
             Some(name) => Err(format!(
@@ -328,6 +333,19 @@ pub struct UsageRow {
     /// When the first and the last beat added to it.
     pub first: f64,
     pub last: f64,
+}
+
+/// A custom delivery workflow's record (`crate::schema`'s `workflow`, from schema 24): the parts
+/// of its id, its kind, what it records and when it was written. Its key is its id because a
+/// record names what it is of (`['event', slug, revision]`), and the task fence finds a task's
+/// transition by it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowRow {
+    pub key: Value,
+    pub kind: String,
+    pub body: Map<String, Value>,
+    pub at: f64,
 }
 
 fn two() -> i64 {

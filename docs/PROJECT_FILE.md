@@ -100,12 +100,15 @@ not there; nothing is landed for it.
 
 ## `[workflow]`
 
-This table is a strict **candidate format**, available through
-`symphony::project::workflow::candidate`. Runtime project loading refuses any supplied workflow
-with `unsupported_activation`: the authoritative storage/admission engine is not available.
+This table is a project's custom delivery workflow, strict, read by
+`symphony::project::workflow::candidate`. Project loading accepts one the local host supports and
+refuses any other with `unsupported_activation`, naming what it needs: a capability no grant of
+the host names, a guard, an adapter, or what durable attempts, landing adapters or accepted
+outputs bring. The board activates the workflow the project's default branch commits, with its
+`[[workflow_mappings]]`, and moves its tasks by its edges alone (`just tasks workflow`).
 Omission retains the current board behavior and selects built-in definition v1 in the candidate
 reader. Candidate parsing never changes a board. The [workflow reference](WORKFLOW.md) documents
-every nested field, validation and the remaining activation work.
+every nested field, validation, activation and admission.
 
 All fields below are required when the candidate table is present; lists may be empty only
 where validation allows it. Unknown fields and variants refuse the candidate.
@@ -122,6 +125,20 @@ where validation allows it. Unknown fields and variants refuse the candidate.
 | `capabilities` | required | declared host capability IDs; declarations grant no authority |
 | `adapters` | required | declared host adapter IDs; declarations supply no adapter |
 | `guards` | required | opaque policy requirements by stable ID and adapter |
+
+## `[[workflow_mappings]]`
+
+Where a task goes when a newly committed `[workflow]` no longer declares the pair it stands at
+(or the pair it resumes to when blocked). Each entry names a removed pair and a pair the workflow
+declares, and no pair is mapped twice; a pair the workflow still declares is never remapped, as an
+ID keeps its meaning (rename it instead). Mappings with no `[workflow]` are refused. A task the
+board's existing writers kept starts from built-in v1's pair of its status
+([WORKFLOW](WORKFLOW.md#activation-and-mappings)).
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `from` | required | the removed `{ phase, state }` pair |
+| `to` | required | the declared `{ phase, state }` pair a task there goes to |
 
 ## `[project]`
 

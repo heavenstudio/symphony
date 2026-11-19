@@ -37,8 +37,8 @@ pub const MAJOR: i64 = 2;
 
 /// The api's minor within [`MAJOR`]: 1 added a task's `id`, `bound`, `edit_bound` and
 /// `integration_state`; 2 added `evidence`; 3 added `import` to its `assessment`, where the
-/// assessment names one.
-pub const MINOR: i64 = 3;
+/// assessment names one; 4 added `workflow_read`, `workflow_actions` and `workflow_apply`.
+pub const MINOR: i64 = 4;
 
 /// Why a call has no result.
 enum Fail {
@@ -549,6 +549,30 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             args!(slug: need, handle: actor, role: take);
             let (slug, handle, role): (String, String, Option<String>) = (slug, handle, role);
             shape::task(&board.get()?.release(&slug, &handle, role.as_deref())?)
+        }
+        // A custom workflow (docs/WORKFLOW.md): an agent session's reads and operations, the
+        // principal the session the call names, as the local host binds it.
+        "workflow_read" => {
+            args!();
+            json!(board.get()?.workflow_read()?)
+        }
+        "workflow_actions" => {
+            args!(slug: need, handle: actor);
+            let (slug, handle): (String, String) = (slug, handle);
+            let principal = crate::workflow::agent_session(&handle);
+            json!(board.get()?.workflow_actions(
+                &slug,
+                &principal,
+                &crate::workflow::Host::local()
+            )?)
+        }
+        "workflow_apply" => {
+            args!(handle: actor, request: need);
+            let (handle, request): (String, symphony_api::workflow::OperationRequest) =
+                (handle, request);
+            let principal = crate::workflow::agent_session(&handle);
+            let store = board.get()?;
+            json!(store.apply_operation(&principal, &crate::workflow::Host::local(), &request)?)
         }
         "move" => {
             args!(slug: need, status: need, handle: actor, from: take, reason: take, on: take, why: take);

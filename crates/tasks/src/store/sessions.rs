@@ -386,8 +386,13 @@ impl Store {
     /// somebody's goes, in the same write, to an orchestrator that stays by rule 4, the topmost task
     /// of each tree it would leave with none ([`orchestration::orphaned`]), one line on each thread;
     /// with none, each such task is marked waiting (`Store::give_unowned`). Only a leaver holding
-    /// the orchestrator role reads the whole board for it.
+    /// the orchestrator role reads the whole board for it. On a task a custom workflow holds, its
+    /// other roles go first, each by its position's lost-holder recovery, which may keep one for a
+    /// person to recover and never moves the task to a pair it does not name.
     pub fn leave(&self, handle: &str) -> Result<(), Error> {
+        // What it staffs on a task a custom workflow holds goes first, by each position's
+        // lost-holder recovery (docs/WORKFLOW.md, "Recovery").
+        self.recover_leaving(handle)?;
         let body = sql::leave();
         let pg = pg::leave();
         let why = format!("{handle}, who orchestrated it, left");

@@ -19,7 +19,7 @@ pub use failure::Failure;
 #[cfg(test)]
 mod close_tests;
 
-pub const ROUTES: [&str; 13] = [
+pub const ROUTES: [&str; 14] = [
     "/api/postpone",
     "/api/decision",
     "/api/comment",
@@ -33,15 +33,22 @@ pub const ROUTES: [&str; 13] = [
     "/api/ask",
     "/api/ask-reply",
     symphony_api::TASK_ACTION_ROUTE,
+    WORKFLOW_APPLY,
 ];
 
+/// The owner's operation on a task a custom workflow holds, through the board's one admission
+/// (`symphony_board::Store::apply_operation`): `{"slug": SLUG, "request": OperationRequest}`, the
+/// principal the local owner, never one the payload names.
+pub const WORKFLOW_APPLY: &str = "/api/workflow-apply";
+
 /// The routes that write to one task, named by the payload's `slug`.
-const TASK_ROUTES: [&str; 5] = [
+const TASK_ROUTES: [&str; 6] = [
     "/api/task-message",
     "/api/task-priority",
     "/api/task-field",
     "/api/task-cancel",
     symphony_api::TASK_ACTION_ROUTE,
+    WORKFLOW_APPLY,
 ];
 
 fn string<'a>(payload: &'a Value, key: &str) -> &'a str {
@@ -402,6 +409,25 @@ impl Saves {
                 self.store()?
                     .move_to(string(payload, "slug"), "cancelled", "owner")?;
                 Ok(json!({"ok":true}))
+            }
+            WORKFLOW_APPLY => {
+                let request: symphony_api::workflow::OperationRequest =
+                    serde_json::from_value(payload["request"].clone())
+                        .map_err(|e| format!("request: not a workflow operation: {e}"))?;
+                if request.task != string(payload, "slug") {
+                    return Err(format!(
+                        "request: its task is {}, not the slug {}",
+                        request.task,
+                        string(payload, "slug")
+                    )
+                    .into());
+                }
+                let result = self.store()?.apply_operation(
+                    &symphony_board::workflow::local_owner(),
+                    &symphony_board::workflow::Host::local(),
+                    &request,
+                )?;
+                Ok(json!({"ok": true, "result": result}))
             }
             symphony_api::TASK_ACTION_ROUTE => {
                 let slug = string(payload, "slug");

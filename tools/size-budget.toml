@@ -21,7 +21,20 @@ client = 2_360_000
 
 # Each binary's file; symphony-server's less the client above, which it embeds.
 [binaries]
-symphony-server = 16_720_000
+# The delivery workflow's runtime (tools/workflow-runtime) adds 231,424 bytes to the server less
+# its client: 16,535,519 on main at a99dbaece, 16,766,943 with it. By its link maps: the owner's
+# operation on a task a workflow holds (/api/workflow-apply) through the board's one admission
+# (47,312), the store's workflow records and reads (18,220 and 15,380 in the store's own), the
+# built-in workflow, its validation and activation's host check the project file's check reads
+# (20,432, 10,220, 7,104 and 13,184), and the JSON reading and writing of the workflow's types
+# (serde_json 62,428, serde_core 42,188), with unwind and constant data in proportion; the
+# server's own TOML reader of those types went out (toml -49,548, symphony_api -22,376). Taken
+# back first, 314,384 bytes from the merge's tip: that TOML reader beside the JSON one, a sort and
+# a JSON writer per type. Every type left is read through the one JSON value reader; what is left
+# is the runtime the owner's route and the project file's check run, which no reduction removes
+# without removing a part of it. Measured 16,766,943; the line is that plus 4%, rounded down to
+# 10,000. Independent review is required.
+symphony-server = 17_430_000
 # Scratch PostgreSQL startup (+33,104 bytes) and main's release-notes/retired-key paths
 # (+33,056) each fit the former symphony line alone; together they weigh 11,914,192.
 # The combined line is that size plus 4%, rounded down to 10,000; independent review is required.
@@ -41,5 +54,18 @@ symphony = 12_390_000
 # rewriting another module (the heaviest are the store's, the commands' and derived readers).
 # Measured 6,744,208; the line is that plus 4%, rounded down to 10,000. Independent review is
 # required.
-tasks = 7_010_000
+# The delivery workflow's runtime (tools/workflow-runtime) adds 644,928 bytes to tasks: 6,793,840
+# on main at a99dbaece, 7,438,784 with it. By its link maps: the store's admission of every
+# workflow operation (62,660), its workflow records, activation and fences (39,584, and 37,672 in
+# the store's own), the built-in workflow and its validation (20,432 and 10,220), the follower,
+# activation planning and recovery (about 37,000), the workflow commands (15,204), and the JSON
+# reading and writing of the workflow's types the store and the api read and write (serde_core
+# 101,220, symphony_api 61,960, serde_json 60,836), with unwind and constant data in proportion.
+# Taken back first, 380,448 bytes from the merge's tip: a TOML reader of the workflow's types
+# beside the JSON one, a sort and a JSON writer per type, and agent-send's follower (agent-send
+# is back to main's bytes). Every type left is read through the one JSON value reader; what is
+# left is the runtime tasks runs, which no reduction removes without removing a part of it.
+# Measured 7,438,784; the line is that plus 4%, rounded down to 10,000. Independent review is
+# required.
+tasks = 7_730_000
 agent-send = 3_150_000

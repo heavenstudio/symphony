@@ -945,14 +945,17 @@ edges = [{ id = "accept", label = "Accept", from = { phase = "build", state = "a
 "#;
 
 #[test]
-fn candidate_is_strict_and_runtime_activation_is_explicitly_unsupported() {
+fn candidate_is_strict_and_activation_takes_what_the_local_host_supports() {
     let d = candidate(CUSTOM).unwrap();
     assert_eq!(d.definition().phases[0].id, "build");
-    assert!(
-        Project::parse(Path::new("/tmp/demo"), CUSTOM)
-            .unwrap_err()
-            .contains("unsupported_activation")
+    assert_eq!(
+        Project::parse(Path::new("/tmp/demo"), CUSTOM).unwrap_err(),
+        "symphony.toml: unsupported_activation: unsupported capability: accept"
     );
+    let owned = CUSTOM
+        .replace("\"accept\"]", "\"owner\"]")
+        .replace("capability = \"accept\"", "capability = \"owner\"");
+    assert!(Project::parse(Path::new("/tmp/demo"), &owned).is_ok());
     for (from, to) in [
         ("format = 1", "format = 1\nunknown = true"),
         ("close_covered", "deploy_shell"),
@@ -1188,4 +1191,64 @@ fn authority_insert_all_matches_the_standard_set_length_and_reports_cost() {
         authorities.len(),
         actual.len()
     );
+}
+
+#[test]
+fn workflow_mappings_are_a_known_key_checked_against_the_workflow() {
+    let mapped = "[[workflow_mappings]]\nfrom = { phase = \"ready\", state = \"available\" }\nto = { phase = \"build\", state = \"available\" }\n";
+    assert!(
+        Project::parse(Path::new("/tmp/demo"), mapped)
+            .unwrap_err()
+            .contains("workflow_mappings: no [workflow] to map onto")
+    );
+    assert!(
+        Project::parse(Path::new("/tmp/demo"), &format!("{CUSTOM}{mapped}"))
+            .unwrap_err()
+            .contains("unsupported_activation")
+    );
+    assert!(
+        Project::parse(
+            Path::new("/tmp/demo"),
+            &format!("{CUSTOM}{}", mapped.replace("\"build\"", "\"verify\""))
+        )
+        .unwrap_err()
+        .contains("names a destination the workflow does not declare")
+    );
+    let tree = tree::Tree::new();
+    tree.write("symphony.toml", mapped);
+    Project::of(&tree.root);
+    let problem = Project::problem(&tree.root).unwrap();
+    assert!(problem.contains("no [workflow] to map onto"), "{problem}");
+    assert!(!problem.contains("unknown"), "{problem}");
+}
+
+#[test]
+fn the_project_file_reads_its_workflow_as_the_board_does_and_names_what_it_refuses() {
+    let parse = |text: &str| Project::parse(Path::new("/tmp/demo"), text);
+    let unknown = parse(&CUSTOM.replace("format = 1", "format = 1\nunknown = true")).unwrap_err();
+    assert!(
+        unknown.starts_with("symphony.toml: workflow: unknown field `unknown`"),
+        "{unknown}"
+    );
+    let typed = parse(&CUSTOM.replace("order = 0,", "order = \"first\",")).unwrap_err();
+    assert!(
+        typed.starts_with("symphony.toml: workflow: invalid type"),
+        "{typed}"
+    );
+    assert!(
+        parse("workflow = 1\n")
+            .unwrap_err()
+            .starts_with("symphony.toml: workflow: ")
+    );
+    let mappings = parse("workflow_mappings = \"none\"\n").unwrap_err();
+    assert!(
+        mappings.starts_with("symphony.toml: workflow_mappings: "),
+        "{mappings}"
+    );
+    // Both are settings the Symphony knows, whatever they hold.
+    for text in ["workflow = 1\n", "workflow_mappings = []\n"] {
+        let refused = parse(text).err().unwrap_or_default();
+        assert!(!refused.contains("the Symphony knows"), "{refused}");
+    }
+    assert!(parse("workflow_mappings = []\n").is_ok());
 }

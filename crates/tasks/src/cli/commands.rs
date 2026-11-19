@@ -30,6 +30,7 @@ mod runs;
 mod stamps;
 mod stats;
 mod wait;
+mod workflow;
 
 /// Why a command stopped short.
 pub enum Stop {
@@ -288,6 +289,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             }
         }
         "limits" => limits::run(store, c)?,
+        "workflow" => workflow::run(store, c)?,
         "stamps" => stamps::stamps(store, c)?,
         "runs" => runs::runs(store, c)?,
         "needs" => stamps::needs(store, c)?,

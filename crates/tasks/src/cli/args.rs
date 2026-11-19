@@ -206,6 +206,17 @@ const COMMANDS: &[Command] = &[
         ],
     },
     plain("next", &[]),
+    Command {
+        name: "workflow",
+        pos: &[pos("action"), maybe("slug"), maybe("edge")],
+        opts: &[
+            AS,
+            opt("--revision", "revision", Takes::Value(Ty::Int)),
+            opt("--key", "key", STR),
+            opt("--input", "input", Takes::Append),
+            opt("--json", "json", Takes::Bool),
+        ],
+    },
     plain("limits", &[]),
     Command {
         name: "create",
