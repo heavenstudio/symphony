@@ -1057,10 +1057,12 @@ impl Store {
             );
             candidates.push((key, task, edge));
         }
-        candidates.sort_by_key(|c| c.0);
         let principal = crate::workflow::agent_session(handle);
         let host = crate::workflow::Host::local();
-        for (_, task, edge) in candidates {
+        // The least rank first, each taken in turn rather than all sorted: a rank names its
+        // task's id, so no two are equal and the order is the sort's.
+        while let Some(least) = (0..candidates.len()).min_by_key(|&i| candidates[i].0) {
+            let (_, task, edge) = candidates.swap_remove(least);
             let Some(edge) = edge else {
                 return Ok(Some(task));
             };

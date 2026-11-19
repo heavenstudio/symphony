@@ -53,12 +53,17 @@ impl Store {
                 let position = task_position(&prerequisite.fields)?;
                 Some((prerequisite.slug.as_str(), position.revision))
             };
-            let mut prerequisites: Vec<(&str, u64)> = (tasks.iter())
+            // Each once, in the order first named, and not sorted: a sort of its own would link
+            // where a PULL is composed (tools/size-budget.toml).
+            let mut prerequisites: Vec<(&str, u64)> = Vec::new();
+            for prerequisite in (tasks.iter())
                 .filter(|t| position_held(&t.fields))
                 .flat_map(|t| t.depends.iter().filter_map(at))
-                .collect();
-            prerequisites.sort_unstable();
-            prerequisites.dedup();
+            {
+                if !prerequisites.contains(&prerequisite) {
+                    prerequisites.push(prerequisite);
+                }
+            }
             operating.accepted = self.accepted_standing(&prerequisites)?;
         }
         Ok(Some(operating))
@@ -284,13 +289,14 @@ impl Store {
         // refuses it where one is superseded first, and admission names one none stands for.
         let takes = (operating.definition.edges.iter())
             .any(|e| e.id == edge && e.dependencies == Dependency::AcceptedOutput);
-        let input_revisions = if takes {
-            (self.accepted_outputs(slug)?.takes.into_iter())
-                .filter_map(|(prerequisite, output)| Some((prerequisite, output?)))
-                .collect()
-        } else {
-            BTreeMap::new()
-        };
+        let mut input_revisions = BTreeMap::new();
+        if takes {
+            for (prerequisite, output) in self.accepted_outputs(slug)?.takes {
+                if let Some(output) = output {
+                    input_revisions.insert(prerequisite, output);
+                }
+            }
+        }
         let request = OperationRequest {
             project: self.database().database().to_string(),
             task: slug.to_string(),
