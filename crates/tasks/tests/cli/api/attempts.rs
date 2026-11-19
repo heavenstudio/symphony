@@ -71,14 +71,20 @@ fn a_tasks_attempts_are_its_history_under_the_projects_board_scope() {
         &c.env,
         json!({"method": "attempts", "args": {"slug": "sim/run"}}),
     );
-    let attempts = said["ok"]["attempts"].as_array().unwrap_or_else(|| panic!("{said}"));
+    let attempts = said["ok"]["attempts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{said}"));
     assert_eq!(attempts.len(), 1, "{said}");
     let attempt = &attempts[0];
     assert_eq!(attempt["id"], json!(id));
     assert_eq!(attempt["handle"], json!("amber"));
     assert_eq!(attempt["lane"], json!("executor/amber"));
     assert_eq!(
-        (&attempt["dispatch"], &attempt["ending"], &attempt["cancellation"]),
+        (
+            &attempt["dispatch"],
+            &attempt["ending"],
+            &attempt["cancellation"]
+        ),
         (&json!("terminal"), &json!("cancelled"), &json!("confirmed"))
     );
     assert_eq!(attempt["initiator"], json!("human local/owner"));
@@ -89,15 +95,23 @@ fn a_tasks_attempts_are_its_history_under_the_projects_board_scope() {
         "tasks api offers no control: the host that holds the provider does"
     );
     assert_eq!(
-        answer(&c.env, json!({"method": "attempts", "args": {"slug": "sim/idle"}})),
+        answer(
+            &c.env,
+            json!({"method": "attempts", "args": {"slug": "sim/idle"}})
+        ),
         json!({"ok": {"attempts": []}})
     );
     // A task the board does not hold, and a slug not given, are refused before any attempt is read.
-    let missing = answer(&c.env, json!({"method": "attempts", "args": {"slug": "sim/none"}}));
+    let missing = answer(
+        &c.env,
+        json!({"method": "attempts", "args": {"slug": "sim/none"}}),
+    );
     assert!(missing.get("refused").is_some(), "{missing}");
     let unnamed = answer(&c.env, json!({"method": "attempts", "args": {}}));
     assert!(
-        unnamed["error"].as_str().is_some_and(|why| why.contains("slug")),
+        unnamed["error"]
+            .as_str()
+            .is_some_and(|why| why.contains("slug")),
         "{unnamed}"
     );
 }

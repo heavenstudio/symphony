@@ -91,10 +91,7 @@ impl Served {
             fake.clone(),
         )]);
         hub.refresh_page("", &root).unwrap();
-        let gate = Gate::new(
-            Arc::new(|_| Ok(None)),
-            Arc::new(std::time::Instant::now),
-        );
+        let gate = Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now));
         let shared = Shared::new(1, 1, &root, None, gate);
         assert!(shared.api.set(Arc::new(hub)).is_ok());
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -167,10 +164,9 @@ impl Served {
             .header("Content-Type", "application/json")
             .body(body.map_or_else(Body::empty, |body| Body::from(body.to_string())))
             .unwrap();
-        let app = self
-            .app
-            .clone()
-            .layer(MockConnectInfo("127.0.0.1:2".parse::<std::net::SocketAddr>().unwrap()));
+        let app = self.app.clone().layer(MockConnectInfo(
+            "127.0.0.1:2".parse::<std::net::SocketAddr>().unwrap(),
+        ));
         self.runtime.block_on(async {
             let response = app.oneshot(request).await.unwrap();
             let (status, headers) = (response.status(), response.headers().clone());
@@ -388,7 +384,10 @@ fn a_control_is_refused_for_a_forged_owner_another_task_or_project_and_a_stale_r
     for slug in [TASK, OTHER] {
         let (status, body) = cancel(json!({"slug": slug, "attempt": foreign}));
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-        assert!(said(&body).contains("another project's or board's attempt"), "{body}");
+        assert!(
+            said(&body).contains("another project's or board's attempt"),
+            "{body}"
+        );
     }
     // The history of a task holding another project's attempt is refused whole, never mixed.
     let (status, _, body) = s.ask("GET", &format!("/api/task-attempts?slug={OTHER}"), None);
@@ -402,8 +401,14 @@ fn a_provider_not_held_here_still_takes_a_cancel_but_no_resume_or_view() {
     let id = s.admit(PROJECT, "elsewhere", TASK);
     // Its own worker, elsewhere, started it and saw it running.
     let elsewhere = s.worker(PROJECT, "elsewhere");
-    assert!(matches!(elsewhere.step(&id).unwrap(), Worked::Answered { .. }));
-    assert!(matches!(elsewhere.step(&id).unwrap(), Worked::Answered { .. }));
+    assert!(matches!(
+        elsewhere.step(&id).unwrap(),
+        Worked::Answered { .. }
+    ));
+    assert!(matches!(
+        elsewhere.step(&id).unwrap(),
+        Worked::Answered { .. }
+    ));
     let shown = s.shown(&id);
     assert_eq!(shown["configuration"], "elsewhere");
     assert_eq!(shown["controls"]["view"], false);
@@ -417,18 +422,27 @@ fn a_provider_not_held_here_still_takes_a_cancel_but_no_resume_or_view() {
         Some(json!({"slug": TASK, "attempt": id})),
     );
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert!(said(&body).contains("elsewhere is not one this server holds"), "{body}");
+    assert!(
+        said(&body).contains("elsewhere is not one this server holds"),
+        "{body}"
+    );
     let (status, body) = s.control(json!({"slug": TASK, "attempt": id,
         "revision": shown["revision"], "act": "resume", "mode": "new_resource"}));
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert!(said(&body).contains("a resume goes through its provider"), "{body}");
+    assert!(
+        said(&body).contains("a resume goes through its provider"),
+        "{body}"
+    );
     // A cancel is intent its own worker sends: recorded here all the same.
     let (status, body) = s.control(json!({"slug": TASK, "attempt": id,
         "revision": shown["revision"], "act": "cancel"}));
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["attempts"][0]["cancellation"], "requested");
     let calls = s.fake.calls().len();
-    assert!(matches!(elsewhere.step(&id).unwrap(), Worked::Answered { .. }));
+    assert!(matches!(
+        elsewhere.step(&id).unwrap(),
+        Worked::Answered { .. }
+    ));
     assert_eq!(s.fake.calls()[calls], Operation::Cancel);
 }
 
@@ -444,7 +458,10 @@ fn a_view_is_resolved_on_demand_for_the_local_owner_and_kept_nowhere() {
     let (status, headers, body) =
         s.ask("POST", symphony_api::ATTEMPT_VIEW_ROUTE, Some(view.clone()));
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body, json!({"url": "https://provider.invalid/res-1", "valid_for_ms": 10_000}));
+    assert_eq!(
+        body,
+        json!({"url": "https://provider.invalid/res-1", "valid_for_ms": 10_000})
+    );
     assert_eq!(headers[header::CACHE_CONTROL], "no-store");
     assert!(s.fake.calls().contains(&Operation::ExternalLink));
     // Neither the board nor the history read keeps it.
@@ -454,7 +471,10 @@ fn a_view_is_resolved_on_demand_for_the_local_owner_and_kept_nowhere() {
     // Read with GET it is no route; asked for another task's slug, or with a forged field, refused.
     let (status, _, _) = s.ask(
         "GET",
-        &format!("{}?slug={TASK}&attempt={id}", symphony_api::ATTEMPT_VIEW_ROUTE),
+        &format!(
+            "{}?slug={TASK}&attempt={id}",
+            symphony_api::ATTEMPT_VIEW_ROUTE
+        ),
         None,
     );
     assert_ne!(status, StatusCode::OK);
@@ -481,7 +501,9 @@ fn a_hosted_visitor_reads_the_history_with_no_control_and_posts_none_here() {
     let (config, host) = crate::hosted::tests::native_host(&project);
     let hosted = crate::hosted::router(s.shared.clone(), config, host)
         .unwrap()
-        .layer(MockConnectInfo("127.0.0.1:1234".parse::<std::net::SocketAddr>().unwrap()));
+        .layer(MockConnectInfo(
+            "127.0.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
+        ));
     let read = crate::hosted::tests::request(&format!("/api/task-attempts?slug={TASK}"));
     let (status, body) = s.runtime.block_on(async {
         let response = hosted.clone().oneshot(read).await.unwrap();
@@ -538,14 +560,20 @@ fn a_hosted_askers_grant_is_its_verified_principal_on_the_one_task() {
 #[test]
 fn each_refusal_of_the_coordinator_is_answered_with_its_status() {
     let status = |refusal| refused(refusal).0;
-    assert_eq!(status(Refusal::Unauthorized("no".into())), StatusCode::FORBIDDEN);
+    assert_eq!(
+        status(Refusal::Unauthorized("no".into())),
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(status(Refusal::Scope), StatusCode::NOT_FOUND);
     assert_eq!(status(Refusal::Unknown("ab".into())), StatusCode::NOT_FOUND);
     assert_eq!(status(Refusal::Busy(None)), StatusCode::CONFLICT);
     assert_eq!(status(Refusal::Full(Vec::new())), StatusCode::CONFLICT);
     assert_eq!(status(Refusal::Conflict("k".into())), StatusCode::CONFLICT);
     assert_eq!(status(Refusal::Invalid("x".into())), StatusCode::CONFLICT);
-    assert_eq!(status(Refusal::Unavailable("down".into())), StatusCode::BAD_GATEWAY);
+    assert_eq!(
+        status(Refusal::Unavailable("down".into())),
+        StatusCode::BAD_GATEWAY
+    );
     let board = refused(Refusal::Board(symphony_board::Error::Db("lost".into())));
     assert_eq!(board.0, StatusCode::SERVICE_UNAVAILABLE, "{board:?}");
 }

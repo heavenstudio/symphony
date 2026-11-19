@@ -1,5 +1,5 @@
 //! The execution providers a host binary links, installed beside its plugins
-//! ([docs/EXECUTION_ATTEMPTS.md](../../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)): each the
+//! ([`docs/EXECUTION_ATTEMPTS.md`](../../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)): each the
 //! adapter a project supplies for one provider configuration, with what it can do and the capacity
 //! its attempts share. The server resumes an attempt and resolves a view of its resource only
 //! through the provider its configuration names; a cancel or a stop it records for whichever
@@ -132,7 +132,10 @@ mod tests {
 
     #[test]
     fn a_provider_is_found_by_its_configuration_alone() {
-        let held = Providers::of(vec![provider("cloud"), provider("lab").with_capacity("gpu", 2)]);
+        let held = Providers::of(vec![
+            provider("cloud"),
+            provider("lab").with_capacity("gpu", 2),
+        ]);
         assert_eq!(
             held.of_configuration("lab").and_then(Provider::capacity),
             Some(("gpu", 2))
@@ -149,9 +152,17 @@ mod tests {
         let unnamed = install(vec![provider(" ")]).unwrap_err();
         assert!(unnamed.contains("names its configuration"), "{unnamed}");
         // Neither refusal installed anything; this process's tests install no other list.
-        assert!(Providers::installed().of_configuration("install-test").is_none());
+        assert!(
+            Providers::installed()
+                .of_configuration("install-test")
+                .is_none()
+        );
         install(vec![provider("install-test")]).unwrap();
-        assert!(Providers::installed().of_configuration("install-test").is_some());
+        assert!(
+            Providers::installed()
+                .of_configuration("install-test")
+                .is_some()
+        );
         let again = install(Vec::new()).unwrap_err();
         assert!(again.contains("already"), "{again}");
     }

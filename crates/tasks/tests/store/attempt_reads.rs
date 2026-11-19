@@ -4,6 +4,7 @@
 //! project however its id came.
 
 use crate::common::{Backend, Fixture, Seed};
+use std::time::Instant;
 use symphony_board::execution::{
     Act, Adapter, Admission, Coordinator, Grant, Reader, Refusal, board_scope,
 };
@@ -11,7 +12,6 @@ use symphony_plugin::execution::{
     Authorization, Call, Capabilities, ContentRef, Input, Operation, Outcome, Principal,
     PrincipalKind, Profile, Scope, Unknown,
 };
-use std::time::Instant;
 
 const TASK: &str = "sim/jump";
 const OTHER: &str = "sim/land";

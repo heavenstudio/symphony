@@ -549,8 +549,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                     crate::attempts::Asker::hosted(&context.actor, &context.policy_revision)
                 },
             );
-            match crate::spawn::blocking(move || crate::attempts::read(&hub, &slug, &asker)).await
-            {
+            match crate::spawn::blocking(move || crate::attempts::read(&hub, &slug, &asker)).await {
                 Ok(Ok(attempts)) => no_store(Json(attempts)),
                 Ok(Err((code, e))) => error(code, e),
                 Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),

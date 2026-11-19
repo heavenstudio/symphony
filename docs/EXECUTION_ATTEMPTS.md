@@ -7,7 +7,8 @@ under [its card](DECISIONS.md#execution-provider-attempts), built on the kit's
 [execution adapter contract](EXECUTION_ADAPTER.md), whose types it reuses. A project supplies the
 provider as a kit `Adapter`, its credentials and its storage; the host that runs Symphony builds
 the grants and runs the coordinator. Nothing starts it: local terminals launch as before, and no
-route, setting or client page reaches it yet ([what is not delivered](#what-this-does-not-deliver)).
+setting reaches it; a task's page reads its attempts and its owner's controls reach the
+coordinator ([on a task's page](#on-a-tasks-page), [what is not delivered](#what-this-does-not-deliver)).
 
 ## The record
 
@@ -95,15 +96,66 @@ revision. A grant is never deserialized, so no payload, query or claimed handle 
 or board, an attempt of one, and a worker grant on some tasks alone are refused; a coordinator
 steps only its own configuration's attempts and refuses another's before touching its lease.
 
+## On a task's page
+
+A task's attempts are read with no provider at hand: `execution::Reader` reads a task's history,
+an attempt and its facts under a grant on that one task, in the board scope of the project the
+caller serves, which `execution::board_scope` makes from the registered project's id and the
+board's database, the one constructor every caller uses for a project's board. A history holds
+every attempt the board kept for the task, after its handle left too, with the resource,
+generation and conversation each was bound to, as references, never as addresses; an attempt of
+another project or board refuses the whole read, however its id came.
+
+- **The read.** The server answers `GET /api/task-attempts?slug=SLUG` with
+  `symphony_api::TaskAttempts` (`apps/symphony-server/src/attempts.rs`): each attempt's states in
+  the board's snake-case words, a word a newer server adds drawn as said, and what may be asked of
+  it here (`controls`). On this machine's server the asker is the local owner
+  (`workflow::local_owner`), as a workflow edge is taken; under hosted admission it is the
+  principal and policy revision the host verified, which reads alone and is offered no control. A
+  task's page counts its attempts (`TaskPage.attempts`, left out at none) and draws their history,
+  newest first, from a chunk it imports for a task with some alone
+  (`apps/symphony-web/src/attempts.tsx`), read again on each change of the task and on Refresh, as
+  the feed carries no attempt's change.
+- **The controls** are the local owner's posts: `POST /api/attempt-control` with the task, the
+  attempt, the revision the page read, the act (`cancel`, `stop` or `resume`), its mode and a
+  resume's request key, and `POST /api/attempt-view` with the task and the attempt. A request
+  takes its own fields alone, so one that names an owner, a principal or a grant is refused; an
+  attempt of another task or project is refused; a revision the attempt has moved past is refused
+  as stale; and a hosted visitor's post is its host's dispatch, never these. Each goes through the
+  coordinator, under a grant on that one task. A cancel and a stop are intent the provider's
+  worker sends wherever it runs, so the server records them with no provider of its own; a resume
+  admits under its provider's own profile and capacity, and a view is that provider's I/O now, so
+  both go only through the provider the attempt's configuration names, and with none here are not
+  offered (`controls.unserved` says why) and are refused.
+- **A view's address** is answered to the one who asked, `no-store`, and kept nowhere: not on the
+  board, on a thread, in a log, a cache or the page. The page opens a blank window within the
+  click, cuts its opener and sends it the address alone, an http or https one only.
+- **A session is as it was.** The live `session_url` and Go to session keep their behaviour. An
+  attempt runs on its provider and has no pane, so a session's focus and screen stay local.
+- **`tasks api`'s `attempts`** (2.5, `{"slug": S}`) reads a task's history as the board's own
+  service, under the project the call runs in, with no control offered
+  ([the tasks API](TASKS.md#the-tasks-api)).
+
+### The provider seam
+
+A host binary that links a provider installs it beside its plugins, by its configuration name:
+`symphony_server::binary::run_with_providers(plugins, providers, args)`, each
+`symphony_server::execution::Provider::new(configuration, capabilities, adapter)`, with
+`.with_capacity(scope, limit)` naming the capacity its own worker admits under. Nothing is
+discovered or loaded at run time, a configuration answers once and a second install is refused
+(`apps/symphony-server/src/execution.rs`). The Symphony's own server installs none: a page reads,
+cancels and stops as above and is offered no resume or view, so a host need do nothing to keep
+working.
+
 ## What this does not deliver
 
 This is the board's half alone; full provider integration is not complete.
 
 - **Local terminals are unchanged.** hc's launch, sessions and links keep their own calls;
   running them as a provider of attempts is the board task `tools/local-provider-attempts`.
-- **No one sees attempts yet.** The authorized task API, controls, history and session-link
-  presentation in the client are the board task `tools/attempt-history-presentation`; until it
-  lands, attempts are reachable only through the Rust API.
+- **No provider runs here.** The Symphony's server installs none, so a resume or a view is offered
+  only by a host that installs its own ([the seam](#the-provider-seam)), and nothing here steps an
+  attempt: its provider's worker does, wherever the project runs it.
 - **No provider, credentials or storage.** Each project supplies its own adapter and storage, in
   its own tasks; this crate links no provider SDK.
 
@@ -113,4 +165,9 @@ This is the board's half alone; full provider integration is not complete.
 deterministic provider (`tests/store/execution/fake.rs`) that scripts lost responses, outages,
 crashes before and after the provider acted, refusals, conflicts and calls that race a second
 worker or a cancel. `execution/rules_tests.rs` holds the transitions without a database, and
-`tests/consumer_api.rs` the shapes a host calls.
+`tests/consumer_api.rs` the shapes a host calls. `tests/store/attempt_reads.rs` reads a history
+with no provider; `tests/cli/api/attempts.rs` is `tasks api`'s read; the server's routes run on a
+private board with that provider and a worker the test steps
+(`apps/symphony-server/src/attempts_tests.rs`), each refusal among them; and the page is
+`apps/symphony-web/src/attempts.test.tsx` and the browser's
+`apps/symphony-web-tests/tests/browser/task_attempts.rs`.

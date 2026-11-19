@@ -90,7 +90,10 @@ impl Attempt {
             collection: word(&state.collection),
             cleanup: word(&state.cleanup),
             resource: state.resource.as_ref().map(|bound| bound.id.clone()),
-            generation: state.resource.as_ref().map(|bound| bound.generation.clone()),
+            generation: state
+                .resource
+                .as_ref()
+                .map(|bound| bound.generation.clone()),
             conversation: state.conversation.clone(),
             initiator: principal_word(&identity.initiator),
             controls: symphony_api::AttemptControls::default(),
@@ -121,9 +124,18 @@ mod tests {
         let said = |kind, issuer: &str, subject: &str| {
             principal_word(&Principal::new(kind, issuer.into(), subject.into()))
         };
-        assert_eq!(said(PrincipalKind::Human, "local", "owner"), "human local/owner");
-        assert_eq!(said(PrincipalKind::Service, "board", "api"), "service board/api");
-        assert_eq!(said(PrincipalKind::Agent, "local", "amber-1"), "agent local/amber-1");
+        assert_eq!(
+            said(PrincipalKind::Human, "local", "owner"),
+            "human local/owner"
+        );
+        assert_eq!(
+            said(PrincipalKind::Service, "board", "api"),
+            "service board/api"
+        );
+        assert_eq!(
+            said(PrincipalKind::Agent, "local", "amber-1"),
+            "agent local/amber-1"
+        );
     }
 
     #[test]

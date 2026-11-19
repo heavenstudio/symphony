@@ -135,7 +135,9 @@ reads ([TASKS](../../docs/TASKS.md#gate-decisions)), `red.rs` the red mark.
 ([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md)): `coordinator.rs` admission, controls and
 the worker's step, `rules.rs` the transitions it decides on what a write read, `evidence.rs`
 collection, cleanup and eligibility, `record.rs` the row and its facts, `keys.rs` the ids and
-operation keys; `store/execution.rs` with its statements is their store.
+operation keys, `reader.rs` the reads that need no provider, `view.rs` the board scope
+(`board_scope`) and an attempt on the wire; `store/execution.rs` with its statements is their
+store.
 
 ### The rules of work
 

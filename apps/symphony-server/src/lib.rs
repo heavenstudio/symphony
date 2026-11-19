@@ -9,9 +9,9 @@
 //! interpreter or proxy is used.
 
 mod api;
+mod attempts;
 mod backstop;
 pub mod binary;
-mod attempts;
 pub mod cli;
 mod client;
 pub mod execution;

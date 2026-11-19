@@ -32,9 +32,6 @@ mod view;
 
 pub use coordinator::Coordinator;
 pub use reader::Reader;
-pub use view::{
-    board_scope, principal_word, resume_mode, resume_word, stop_mode, stop_word,
-};
 pub use record::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Continuation, Dispatch, Ending,
     Fact, Identity, Lease, Pending, Relation, State,
@@ -43,6 +40,7 @@ pub use symphony_plugin::execution::{
     Adapter, AttemptRef, Capabilities, ContentRef, ExternalLink, Input, Operation, Outcome,
     Principal, PrincipalKind, Profile, ResumeMode, Scope, StopMode,
 };
+pub use view::{board_scope, principal_word, resume_mode, resume_word, stop_mode, stop_word};
 
 use crate::Error;
 use std::fmt;

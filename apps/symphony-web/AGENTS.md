@@ -511,6 +511,16 @@ closes the old files and cancels their reads. Patches are scrollable and bounded
 the file list at 500 files and 256 KiB of Git output; every incomplete or unavailable read
 says why. This code belongs only to the task kind, so the board carries none of it.
 
+A task whose page counts execution attempts (`attempts`, which the server leaves out at none)
+draws their history under its Changes, newest first (`src/attempts.tsx`, its style
+`src/attempts.css`): a chunk the page imports for such a task alone, near the screen, so a task
+with none loads and reads nothing of it. It reads `/api/task-attempts` again on each change of the
+task and on Refresh, as the feed carries no attempt's change. A cancel, a stop or a resume waits on
+its confirmation, then posts the attempt's revision as read (`/api/attempt-control`) and draws the
+history it answers; a view opens a blank window within the click, cuts its opener and sends it the
+address `/api/attempt-view` resolved, which the page keeps nowhere
+([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)).
+
 ## The panel
 
 The kind `panel` (`src/kinds/panel.tsx`, `src/panel.tsx`) is the shell's persistent kind, which it

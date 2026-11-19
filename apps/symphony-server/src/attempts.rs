@@ -1,5 +1,5 @@
 //! A task's execution attempts through the server's routes
-//! ([docs/EXECUTION_ATTEMPTS.md](../../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)): their
+//! ([`docs/EXECUTION_ATTEMPTS.md`](../../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)): their
 //! history ([`symphony_api::TASK_ATTEMPTS_PATH`]), a cancel, a stop or a resume of one
 //! ([`symphony_api::ATTEMPT_CONTROL_ROUTE`]) and a view of its resource
 //! ([`symphony_api::ATTEMPT_VIEW_ROUTE`]).
@@ -45,7 +45,10 @@ pub(crate) enum Asker {
     /// The local owner, at this machine's board.
     Local,
     /// A visitor hosted admission verified: its principal and the policy that admitted it.
-    Hosted { principal: Principal, policy: String },
+    Hosted {
+        principal: Principal,
+        policy: String,
+    },
 }
 
 impl Asker {
@@ -100,9 +103,7 @@ fn on_board<T>(
     if slug.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "name the task's slug".into()));
     }
-    let store = hub
-        .reader()
-        .map_err(|e| crate::api::unavailable(&e, ""))?;
+    let store = hub.reader().map_err(|e| crate::api::unavailable(&e, ""))?;
     let done = store
         .get(slug)
         .map_err(crate::api::task_failure)
@@ -129,18 +130,26 @@ pub(crate) fn controls(attempt: &Attempt, providers: &Providers) -> AttemptContr
         && state.stop.is_none()
         && pinned.operations.contains(&Operation::Stop)
     {
-        pinned.stop_modes.iter().map(|m| stop_word(*m).into()).collect()
+        pinned
+            .stop_modes
+            .iter()
+            .map(|m| stop_word(*m).into())
+            .collect()
     } else {
         Vec::new()
     };
-    let resumable = attempt.resumable().is_ok()
-        && (state.conversation.is_some() || state.checkpoint.is_some());
+    let resumable =
+        attempt.resumable().is_ok() && (state.conversation.is_some() || state.checkpoint.is_some());
     let viewable = state.resource.is_some() && pinned.external_view;
     let resume = match provider {
         Some(provider) if resumable => {
             let offered = provider.capabilities();
             if offered.operations.contains(&Operation::Resume) {
-                offered.resume_modes.iter().map(|m| resume_word(*m).into()).collect()
+                offered
+                    .resume_modes
+                    .iter()
+                    .map(|m| resume_word(*m).into())
+                    .collect()
             } else {
                 Vec::new()
             }

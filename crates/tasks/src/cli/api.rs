@@ -285,7 +285,10 @@ fn attempts(store: &Store, project: &str, slug: &str) -> Result<symphony_api::Ta
         other => Fail::Refused(other.to_string()),
     })?;
     Ok(symphony_api::TaskAttempts {
-        attempts: attempts.iter().map(crate::execution::Attempt::wire).collect(),
+        attempts: attempts
+            .iter()
+            .map(crate::execution::Attempt::wire)
+            .collect(),
     })
 }
 

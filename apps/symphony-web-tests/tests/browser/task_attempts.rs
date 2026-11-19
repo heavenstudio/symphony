@@ -101,12 +101,17 @@ fn a_tasks_attempts_are_drawn_newest_first_and_a_control_waits_on_its_confirmati
     };
     open(&mut page, &site, &format!("/task/{SLUG}"), 1280);
     assert!(
-        page.wait_for("document.querySelectorAll('.attempts .attempt').length === 3", SHOWN),
+        page.wait_for(
+            "document.querySelectorAll('.attempts .attempt').length === 3",
+            SHOWN
+        ),
         "{:?}",
         page.eval("document.querySelector('main')?.innerText")
     );
     assert_eq!(
-        page.eval("[...document.querySelectorAll('.attempt')].map(one => one.dataset.attempt.slice(0, 1))"),
+        page.eval(
+            "[...document.querySelectorAll('.attempt')].map(one => one.dataset.attempt.slice(0, 1))"
+        ),
         json!(["c", "b", "a"])
     );
     assert_eq!(texts(&mut page, ".attempts h2"), json!(["Attempts 3"]));
@@ -139,7 +144,10 @@ fn a_tasks_attempts_are_drawn_newest_first_and_a_control_waits_on_its_confirmati
         texts(&mut page, "[data-attempt^=b] [role=group] span"),
         json!(["Stop: pause attempt bbbbbbbb?"])
     );
-    assert!(site.posts().is_empty(), "nothing is asked before it is confirmed");
+    assert!(
+        site.posts().is_empty(),
+        "nothing is asked before it is confirmed"
+    );
     click(&mut page, "b", "Keep it");
     click(&mut page, "b", "Cancel");
     click(&mut page, "b", "Confirm");
@@ -167,7 +175,10 @@ fn a_tasks_attempts_are_drawn_newest_first_and_a_control_waits_on_its_confirmati
     );
 
     open(&mut page, &site, &format!("/task/{SLUG}"), 390);
-    assert!(page.wait_for("document.querySelectorAll('.attempts .attempt').length === 3", SHOWN));
+    assert!(page.wait_for(
+        "document.querySelectorAll('.attempts .attempt').length === 3",
+        SHOWN
+    ));
     assert_eq!(
         page.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true),
@@ -183,7 +194,10 @@ fn a_view_goes_to_the_window_the_click_opened_and_is_kept_nowhere() {
         panic!("Chrome is required for the attempts' acceptance")
     };
     open(&mut page, &site, &format!("/task/{SLUG}"), 1280);
-    assert!(page.wait_for("document.querySelectorAll('.attempts .attempt').length === 3", SHOWN));
+    assert!(page.wait_for(
+        "document.querySelectorAll('.attempts .attempt').length === 3",
+        SHOWN
+    ));
     // The window the click opens, which the page sends the address to and tells nothing of itself.
     page.eval(
         "window.viewed = []; window.open = (url, target) => { const opened = { url, target, opener: window, \
@@ -194,7 +208,10 @@ fn a_view_goes_to_the_window_the_click_opened_and_is_kept_nowhere() {
     assert!(page.wait_for("window.viewed.length === 2", SHOWN));
     assert_eq!(
         page.eval("window.viewed"),
-        json!([["opened", "", "_blank"], [null, "https://provider.invalid/res-2"]]),
+        json!([
+            ["opened", "", "_blank"],
+            [null, "https://provider.invalid/res-2"]
+        ]),
         "opened blank within the click, its opener cut, then sent the address"
     );
     assert_eq!(
@@ -226,7 +243,10 @@ fn a_task_with_no_attempts_loads_and_reads_nothing_of_them() {
     ));
     page.eval("window.scrollTo(0, document.body.scrollHeight)");
     assert!(page.wait_for("document.querySelector('#task-thread') !== null", SHOWN));
-    assert_eq!(page.eval("document.querySelector('.attempts') === null"), json!(true));
+    assert_eq!(
+        page.eval("document.querySelector('.attempts') === null"),
+        json!(true)
+    );
     let asked = site.requests();
     assert!(
         !asked
