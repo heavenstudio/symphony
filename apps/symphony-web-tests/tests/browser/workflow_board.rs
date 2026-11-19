@@ -300,6 +300,98 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
         "no sideways scroll on a phone"
     );
     shot(&mut page, "board-phone");
+
+    // The phone keeps the phase's tab it chose, and the ghost of its next visit draws that phase,
+    // with the count it last had: Review's one card, not the board's own first tab. That visit
+    // keeps no copy of the board, which would be drawn in the ghost's place.
+    page.eval("[...document.querySelectorAll('.stage-tabs button')].find(tab => tab.textContent.startsWith('Review')).click()");
+    assert!(page.wait_for(
+        "document.querySelector('.stage-tabs [aria-current=page]')?.textContent.startsWith('Review')",
+        SHOWN
+    ));
+    site.hold_route("/api/task-board", true);
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": super::NO_STORE }),
+    );
+    open(&mut page, &site, "/tasks", 390);
+    assert!(page.wait_for(
+        "document.querySelector('.waiting-ghost .ghost-column') !== null",
+        SHOWN
+    ));
+    shot(&mut page, "board-phone-ghost");
+    assert_eq!(
+        page.eval("[...document.querySelectorAll('.waiting-ghost .ghost-column')].map(column => [column.dataset.for, column.querySelectorAll('.waiting-card-ghost').length])"),
+        json!([["phase:review", 1]])
+    );
+    site.hold_route("/api/task-board", false);
+    assert!(page.wait_for(
+        "document.querySelector('.stage-tabs [aria-current=page]')?.textContent.startsWith('Review')",
+        SHOWN
+    ));
+}
+
+/// The build's file of the workflow's chunk (`flow.tsx`), as the page asks for it.
+fn flow_chunk() -> String {
+    let assets = dist().join("assets");
+    let file = std::fs::read_dir(&assets)
+        .expect("the build's assets")
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .find(|name| name.starts_with("flow-") && name.ends_with(".js"))
+        .expect("the workflow's chunk in the build");
+    format!("/assets/{file}")
+}
+
+#[test]
+fn a_workflow_chunk_that_does_not_load_is_said_and_retried_into_its_phases() {
+    let (site, _) = site();
+    let Some(mut page) = super::chrome() else {
+        panic!("Chrome is required for the workflow's acceptance")
+    };
+    let chunk = flow_chunk();
+    site.retire(&chunk);
+    open(&mut page, &site, "/tasks", 1440);
+    let notice = ".flow-failed[role=alert]";
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector('{notice}') !== null"),
+            SHOWN
+        ),
+        "{:?}",
+        page.eval("document.querySelector('main')?.innerText")
+    );
+    assert_eq!(
+        texts(&mut page, notice),
+        json!(["The workflow's phases could not be loaded. Retry"])
+    );
+    assert_eq!(
+        page.eval("document.querySelector('.column[data-status^=\"phase:\"]') === null && document.querySelector('.column[data-status=ready]') !== null"),
+        json!(true),
+        "the board draws its own lanes meanwhile"
+    );
+    shot(&mut page, "board-flow-failed");
+
+    // A later load works: the retry asks for the chunk again, and the phases are drawn.
+    site.restore(&chunk);
+    page.eval(&format!(
+        "document.querySelector('{notice} button').click()"
+    ));
+    assert!(
+        page.wait_for(
+            "document.querySelector('.column[data-status=\"phase:verify\"] [data-slug=\"w/d\"]') !== null",
+            SHOWN
+        ),
+        "the retry never drew the phases: {:?}",
+        site.requests()
+    );
+    assert_eq!(
+        page.eval(&format!(
+            "document.querySelector('{notice}') === null"
+        )),
+        json!(true)
+    );
+    let asked = site.requests().iter().filter(|r| r.contains(&chunk)).count();
+    assert_eq!(asked, 2, "{:?}", site.requests());
 }
 
 #[test]

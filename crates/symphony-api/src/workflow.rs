@@ -428,6 +428,38 @@ pub struct NextActions {
     pub actions: Vec<NextAction>,
 }
 
+/// The accepted output standing for a task another depends on, which a request taking an edge
+/// that depends on `accepted_output` names under its slug (`input_revisions`): none when none
+/// stands, which leaves that edge refused as `dependency`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowTakenOutput")
+)]
+#[serde(deny_unknown_fields)]
+pub struct TakenOutput {
+    pub task: String,
+    pub output: Option<String>,
+}
+
+/// The local owner's next actions on one task, as a page reads them: what `GET`
+/// [`WORKFLOW_ACTIONS_PATH`] answers, a [`NextActions`] preview and, where an edge leaving the
+/// task's pair depends on `accepted_output`, the output standing for each task it depends on
+/// (`takes`, empty otherwise), which the page sends with such an edge.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowActionsRead")
+)]
+#[serde(deny_unknown_fields)]
+pub struct ActionsRead {
+    pub snapshot: PositionSnapshot,
+    pub actions: Vec<NextAction>,
+    pub takes: Vec<TakenOutput>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "typescript",
@@ -445,7 +477,7 @@ pub struct OperationResult {
 pub const WORKFLOW_PATH: &str = "/api/workflow";
 
 /// The local owner's next actions on one task a custom workflow holds (`?slug=SLUG`): what `GET`
-/// [`WORKFLOW_ACTIONS_PATH`] answers, a [`NextActions`] preview and never a permit.
+/// [`WORKFLOW_ACTIONS_PATH`] answers, an [`ActionsRead`], a preview and never a permit.
 pub const WORKFLOW_ACTIONS_PATH: &str = "/api/workflow-actions";
 
 /// The owner's operation on a task a custom workflow holds, posted as `{"slug", "request"}` with an

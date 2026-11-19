@@ -2,7 +2,9 @@
 // its phase's and state's labels, with the place a block resumes at and the person a recovery by
 // hand waits on, and the local owner's next actions on it as the server offers them
 // (`/api/workflow-actions`): each its edge's label and destination, and one unavailable with why
-// and whom it needs. An action posts its edge's ID with the snapshot it was offered under
+// and whom it needs, with the accepted output standing for each task it depends on where an edge
+// takes them. An action posts its edge's ID with the snapshot it was offered under, and those
+// outputs where its edge depends on them
 // (`/api/workflow-apply`) and a key kept until the server has answered, so a post sent again after
 // no answer is the same request, which the board takes once; a refusal that the task or its
 // workflow moved since prompts a refresh of the actions. A chunk of its own, which the page imports
@@ -15,7 +17,7 @@ import { name, putStyle, readDefinition } from "./flow";
 import { useMount } from "./mount";
 import { scoped } from "./project";
 import { Failure, getJson, post, said } from "./request";
-import { field, STALE, useStore } from "./shared";
+import { field, list, STALE, useStore } from "./shared";
 import { tryAgain } from "./state";
 import {
   WORKFLOW_ACTIONS_PATH,
@@ -26,6 +28,7 @@ import {
   type WorkflowOperationRequest,
   type WorkflowPair,
   type WorkflowPlace,
+  type WorkflowTakenOutput,
 } from "./wire";
 import { CHECKING } from "./words";
 
@@ -38,6 +41,8 @@ const texts = (value: unknown): value is string[] => Array.isArray(value) && val
 /** An action the server offers on the task, as the page draws and posts it. */
 export interface Action {
   edge: string;
+  /** What its edge does: a land's or an adapter's is taken by them, never by the page. */
+  operation: string;
   label: string;
   destination: WorkflowPair;
   /** Whom it is open to: said beside an action that is unavailable. */
@@ -48,10 +53,13 @@ export interface Action {
   unavailable: string[];
 }
 
-/** The actions the server offers, with the snapshot they were offered under, sent back as it came. */
+/** The actions the server offers, with the snapshot they were offered under, sent back as it came,
+ * and the accepted output standing for each task the task depends on where an edge leaving its
+ * place takes them (none in an apply's answer, which the page reads again after). */
 export interface Offer {
   snapshot: WorkflowOperationRequest["expected"];
   actions: Action[];
+  takes: WorkflowTakenOutput[];
 }
 
 function readAuthority(value: unknown): value is WorkflowAuthority {
@@ -65,9 +73,11 @@ function readAction(value: unknown): Action | null {
   const unavailable = field(value, "unavailable");
   const destination = field(value, "destination");
   const edge = field(value, "edge");
+  const operation = field(value, "operation");
   const label = field(value, "label");
   if (
     !isText(edge) ||
+    !isText(operation) ||
     !isText(label) ||
     !isPair(destination) ||
     !Array.isArray(responsible) ||
@@ -77,7 +87,12 @@ function readAction(value: unknown): Action | null {
   ) {
     return null;
   }
-  return { edge, label, destination, responsible, inputs, unavailable };
+  return { edge, operation, label, destination, responsible, inputs, unavailable };
+}
+
+function readTaken(value: unknown): value is WorkflowTakenOutput {
+  const output = field(value, "output");
+  return isText(field(value, "task")) && (output === null || isText(output));
 }
 
 /**
@@ -88,18 +103,25 @@ function readAction(value: unknown): Action | null {
 export function readOffer(value: unknown): Offer | null {
   const snapshot = field(value, "snapshot");
   const actions = field(value, "actions");
+  const takes = field(value, "takes") ?? [];
   if (!isPair(field(snapshot, "at")) || !isNumber(field(snapshot, "task_revision"))) return null;
-  if (!Array.isArray(actions)) return null;
+  if (!Array.isArray(actions) || !Array.isArray(takes) || !takes.every(readTaken)) return null;
   const read = actions.map(readAction);
   if (!read.every((action): action is Action => action !== null)) return null;
-  return { snapshot: snapshot as Offer["snapshot"], actions: read };
+  return {
+    snapshot: snapshot as Offer["snapshot"],
+    actions: read,
+    takes: takes.map(({ task, output }) => ({ task, output })),
+  };
 }
 
-/** What the board's workflow read gives the task's page: the project a request names, and the
- * labels of the phases, states and places of its definition (flow.tsx's `name`). */
+/** What the board's workflow read gives the task's page: the project a request names, the labels
+ * of the phases, states and places of its definition (flow.tsx's `name`), and the edges that take
+ * the accepted outputs of what a task depends on. */
 export interface Board {
   project: string;
   names: Map<string, string>;
+  taking: Set<string>;
 }
 
 /** The board's workflow read (`/api/workflow`) as the page reads it, or none for one it cannot. */
@@ -109,7 +131,14 @@ export function readBoard(value: unknown): Board | null {
   if (!isText(project) || !definition) return null;
   const names = new Map<string, string>();
   name(definition, names);
-  return { project, names };
+  const edges = list(field(field(field(value, "workflow"), "definition"), "edges"));
+  const taking = new Set(
+    edges
+      .filter((edge) => field(edge, "dependencies") === "accepted_output")
+      .map((edge) => field(edge, "id"))
+      .filter(isText),
+  );
+  return { project, names, taking };
 }
 
 /** An ID as words, where its definition names it no label. */
@@ -151,12 +180,42 @@ const WHY: Record<string, string> = {
   explicit_action_required: "needs an explicit action",
 };
 
-/** Why `action` is unavailable, and whom it needs, as its line says it; empty while it is not. */
-export function unavailableWords(action: Action): string {
+/** Who takes an edge whose operation is a land's or an adapter's, never the page (as `just tasks
+ * workflow actions` says it), by the task's `slug`; none for any other. */
+export function takerWords(action: Action, slug: string): string | null {
+  switch (action.operation) {
+    case "prepare_land":
+    case "confirm_land":
+      return `the land takes it: just land ${slug}`;
+    case "prepare_external":
+    case "confirm_external":
+      return "its adapter takes it";
+    default:
+      return null;
+  }
+}
+
+/** Why `action` on `slug` is unavailable, and whom it needs, as its line says it; empty while it
+ * is not. An edge a land or an adapter takes says so in place of asking for an explicit action. */
+export function unavailableWords(action: Action, slug: string): string {
   if (action.unavailable.length === 0) return "";
-  const why = action.unavailable.map((code) => WHY[code] ?? "not supported here");
-  const needs = action.responsible.length > 0 ? `: needs ${whose(action.responsible)}` : "";
+  const taker = takerWords(action, slug);
+  const explicit = "explicit_action_required";
+  const theirs = taker !== null && action.unavailable.includes(explicit);
+  const others = action.unavailable
+    .filter((code) => !(theirs && code === explicit))
+    .map((code) => WHY[code] ?? "not supported here");
+  const why = theirs && taker !== null ? [taker, ...others] : others;
+  const needs =
+    action.responsible.length > 0 && others.length > 0 ? `: needs ${whose(action.responsible)}` : "";
   return `${[...new Set(why)].join("; ")}${needs}`;
+}
+
+/** The accepted output `taken` names, as its line says it. */
+export function takenWords(taken: WorkflowTakenOutput): string {
+  return taken.output === null
+    ? `Takes ${taken.task}'s accepted output: none stands`
+    : `Takes ${taken.task}'s accepted output ${taken.output}`;
 }
 
 /** The recovery by hand a task waits on, as its line says it. */
@@ -181,20 +240,24 @@ export function missing(action: Action, values: Values): boolean {
   return action.inputs.some((input) => value(values, action.edge, input) === "");
 }
 
-/** The request taking `action` on `slug`, under the offer's snapshot, but its key. */
+/** The request taking `action` on `slug` on the `board`'s project, under the offer's snapshot, but
+ * its key: an edge that depends on accepted outputs names each one the offer read standing. */
 export function requestOf(
-  project: string,
+  board: Board,
   slug: string,
   offer: Offer,
   action: Action,
   values: Values,
 ): Omit<WorkflowOperationRequest, "idempotency_key"> {
+  const taken = board.taking.has(action.edge) ? offer.takes : [];
   return {
-    project,
+    project: board.project,
     task: slug,
     edge: action.edge,
     expected: offer.snapshot,
-    input_revisions: {},
+    input_revisions: Object.fromEntries(
+      taken.flatMap(({ task, output }) => (output === null ? [] : [[task, output]])),
+    ),
     inputs: Object.fromEntries(
       action.inputs.map((input) => [
         input,
@@ -303,13 +366,13 @@ export interface Taken {
 export async function take(
   scope: string,
   slug: string,
-  project: string,
+  board: Board,
   offer: Offer,
   action: Action,
   values: Values,
   sent: Sent | null,
 ): Promise<Taken> {
-  const request = requestOf(project, slug, offer, action, values);
+  const request = requestOf(board, slug, offer, action, values);
   const body = JSON.stringify(request);
   const key = keyFor(body, sent);
   try {
@@ -365,11 +428,11 @@ export function NextActions({ scope, slug, place, updated }: NextActionsProps) {
   }, [scope, slug, revision, updated, round]);
   const choose = async (action: Action) => {
     const offer = read?.offer;
-    const project = read?.board?.project;
-    if (busy !== "" || STALE.get() || !offer || project === undefined) return;
+    const board = read?.board;
+    if (busy !== "" || STALE.get() || !offer || !board) return;
     setBusy(action.edge);
     setResult("");
-    const taken = await take(scope, slug, project, offer, action, values, sent.current);
+    const taken = await take(scope, slug, board, offer, action, values, sent.current);
     if (mount.aborted) return;
     sent.current = taken.sent;
     setBusy("");
@@ -381,6 +444,7 @@ export function NextActions({ scope, slug, place, updated }: NextActionsProps) {
   };
   return (
     <NextActionsView
+      slug={slug}
       place={place}
       read={read}
       values={values}
@@ -398,6 +462,7 @@ export function NextActions({ scope, slug, place, updated }: NextActionsProps) {
 }
 
 export interface NextActionsViewProps {
+  slug: string;
   place: WorkflowPlace;
   /** What the page read; none before its first read answers. */
   read: Read | null;
@@ -422,6 +487,7 @@ export interface NextActionsViewProps {
  * task's place, whose read is on its way.
  */
 export function NextActionsView({
+  slug,
   place,
   read,
   values,
@@ -444,12 +510,19 @@ export function NextActionsView({
         {place.resume && ` · resumes at ${placeWords(names, place.resume)}`}
       </p>
       {place.manual && <p className="flow-manual">{recoveryWords(place.manual)}</p>}
+      {offer !== null && offer.takes.length > 0 && (
+        <ul className="flow-takes" aria-label="Accepted outputs taken">
+          {offer.takes.map((taken) => (
+            <li key={taken.task}>{takenWords(taken)}</li>
+          ))}
+        </ul>
+      )}
       {read?.refused && <p className="flow-refused">{`No actions: ${read.refused}`}</p>}
       {offer?.actions.length === 0 && <p className="flow-refused">No action is open now</p>}
       {offer !== null && offer.actions.length > 0 && (
         <ul className="flow-actions" aria-label="Next actions">
           {offer.actions.map((action) => {
-            const why = unavailableWords(action);
+            const why = unavailableWords(action, slug);
             return (
               <li key={action.edge} data-edge={action.edge}>
                 {action.inputs.map((input) => (

@@ -1616,6 +1616,14 @@ export type WorkflowNextActions = {
   actions: Array<WorkflowNextAction>;
 };
 
+export type WorkflowActionsRead = {
+  snapshot: WorkflowPositionSnapshot;
+  actions: Array<WorkflowNextAction>;
+  takes: Array<WorkflowTakenOutput>;
+};
+
+export type WorkflowTakenOutput = { task: string; output: string | null };
+
 export type WorkflowOperationResult = {
   transition: string;
   next: WorkflowNextActions;

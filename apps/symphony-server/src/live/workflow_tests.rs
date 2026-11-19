@@ -205,6 +205,8 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
     );
     assert_eq!(status, 200, "{next}");
     assert_eq!(next["snapshot"]["task_revision"], 1);
+    // No edge leaving its pair takes an accepted output: it names none.
+    assert_eq!(next["takes"], json!([]), "{next}");
     let action = |next: &Value, edge: &str| {
         (next["actions"].as_array().unwrap().iter())
             .find(|a| a["edge"] == edge)

@@ -46,7 +46,13 @@
 .flow-moved {
   color: var(--question);
 }
+.flow-takes {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
 .flow-refused,
+.flow-takes,
 .flow-to,
 .flow-why {
   color: var(--muted-foreground);
