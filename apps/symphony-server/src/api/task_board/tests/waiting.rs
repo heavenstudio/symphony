@@ -260,7 +260,7 @@ async fn waiting_projection_refuses_other_views_bad_kinds_and_other_cursors() {
             .uri(format!("/api/task-board?view=waiting&{query}"))
             .body(())
             .unwrap();
-        let response = project(&request, tasks, "", &BTreeMap::new(), work, vec![]);
+        let response = project(&request, tasks, "", &BTreeMap::new(), work, vec![], None);
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
     }
     let empty = answer(&[], "counts=1").await;
@@ -362,7 +362,7 @@ async fn every_original_stage_places_blocks_and_activity_does_not_move_them() {
         .uri("/api/task-board?view=waiting&activity=1&wait=check")
         .body(())
         .unwrap();
-    let response = project(&request, tasks, "", &BTreeMap::new(), work, vec![]);
+    let response = project(&request, tasks, "", &BTreeMap::new(), work, vec![], None);
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();

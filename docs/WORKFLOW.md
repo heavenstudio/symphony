@@ -198,6 +198,61 @@ none of these records, its export is the text it was, and every other write runs
 whole-board copy carries the records before the tasks, so a copy that lost them cannot restore a
 task the workflow holds. A reader one schema behind keeps and ignores the position.
 
+## The app
+
+A board with no custom workflow draws as it always has: its listing names no workflow, and the
+client fetches none of what follows, so its seven columns, its phone's tabs and its Build and
+Test overlays are those of the board's own writers, and its first visit carries nothing more.
+
+**What the wire carries.** `GET /api/workflow` (`WORKFLOW_PATH`) answers `BoardWorkflow`: the
+board's project and its active `WorkflowRead` (definition, revision and generation), or none. A
+task the workflow holds carries `workflow`, its `TaskPlace`, on its page and in every listing:
+its phase and state IDs, the pair a blocked task resumes to, its workflow revision, and the
+recovery by hand it waits on (`manual`: whose `release` or `lost_holder` left it, in which role).
+A task the board's own writers keep carries none, and its wire is the text it was.
+`GET /api/workflow-actions?slug=SLUG` (`WORKFLOW_ACTIONS_PATH`) answers that task's
+`NextActions` for the local owner, a preview and never a permit; a hosted visitor is refused it,
+as the apply route refuses one.
+
+**The board.** The [waiting listing](TASKS.md#what-a-task-waits-on) puts a task the workflow holds
+in its phase's column, keyed `phase:ID` so a phase never takes a status's key or an overlay's,
+unless its machine work puts it in Build or Test; blocked, it stays in its phase, and
+`status=phase:ID` selects one there; every other listing counts and selects a held task by its
+status, as before. The waiting listing's `waiting` adds `workflow`, the active generation,
+absent on a board with none, and `states`, `[state, count]` for the open tasks the workflow
+holds, by state ID in its order, counted after search and window and before `wait`;
+`wait=state:ID` lists one state's open tasks across their phases, as a wait kind's are. The
+board loads the workflow's
+chunk (`apps/symphony-web/src/flow.tsx`) only once a listing names a generation, reads the
+definition, and reads it again when the generation moves. It draws the phases that are columns
+by their `order`, then Build and Test, then any status the board's own writers still hold a task
+in; on a phone, a tab for every phase by its `phone_order`; on a desk, a button for each phase
+that is no column, which opens it as a list as Backlog opens; and a chip for each state with
+open tasks, which chooses its facet. A card names its place by its phase's and state's labels.
+The phone tab the board keeps for a project is the phase's stable key, never its label, so a
+relabel keeps it, and a phase no longer drawn falls back to the first tab. The state facet
+chosen is the page's own and is not kept. A definition the board cannot draw leaves it as its
+own writers draw it.
+
+**The task page.** A task with a place loads the next-actions chunk
+(`apps/symphony-web/src/nextactions.tsx`). It says the place, the pair a blocked task resumes to
+and the recovery by hand it waits on, then each action by its label and destination, with the
+inputs it needs and, where it is unavailable now, why and whose it is (the authorities the edge
+names). Taking one posts its edge, the snapshot the actions named and a fresh idempotency key to
+`/api/workflow-apply`, the same key again only for the same request after an answer that never
+came. A refusal says its words; a `stale_*` one says the task moved since and offers to read its
+actions again, and they are read again whenever the task's revision moves.
+
+**The timeline and the Agents page.** A task's timeline (`/api/task-timeline`) carries `places`,
+one for each transition recorded for it (`Store::workflow_transitions`, a read of its own events'
+keys alone), each named by the definition its move was made under, with the status it projects
+to, who moved it and by which edge; a task no workflow held carries none. The page draws a Phase
+lane and a State lane under the stages, a row for each place on a phone, and the time spent in
+each phase and in each state in the heading: the clock's time there, told apart from the
+machine's time on runs. The Agents page says a held task's place where it says another task's
+status, by the definition's names, which it reads through the board's workflow chunk only once a
+task it lists has a place.
+
 ## Definition format 1
 
 IDs begin with a lowercase ASCII letter and contain only lowercase ASCII letters, digits,

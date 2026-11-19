@@ -24,6 +24,8 @@ const isReviewCount = (value: unknown): value is number =>
 const isTexts = (value: unknown): value is string[] => Array.isArray(value) && value.every(isText);
 /** As serde reads an `Option`: absent and `null` are none. */
 const absent = (value: unknown) => value === undefined || value === null;
+/** A task's place in a custom workflow, as its card places and names it: its phase and state. */
+const isPlace = (value: unknown) => isText(field(value, "phase")) && isText(field(value, "state"));
 
 function isRole(value: unknown): value is Role {
   return ["handle", "role", "health"].every((key) => isText(field(value, key)));
@@ -57,7 +59,8 @@ export function readTask(value: unknown): Task | null {
     isRoles(field(value, "roles")) &&
     (absent(field(value, "review_rounds")) || isReviewCount(field(value, "review_rounds"))) &&
     (absent(field(value, "waits_on")) || isWaitsOn(field(value, "waits_on"))) &&
-    (absent(field(value, "from")) || isText(field(value, "from")))
+    (absent(field(value, "from")) || isText(field(value, "from"))) &&
+    (absent(field(value, "workflow")) || isPlace(field(value, "workflow")))
     ? { ...(value as Task), parent: (field(value, "parent") as string | undefined) ?? null }
     : null;
 }
@@ -136,6 +139,7 @@ const FIELDS: [keyof TaskFields, (value: unknown) => boolean][] = [
   ["review_rounds", isReviewCount],
   ["waits_on", isWaitsOn],
   ["from", isText],
+  ["workflow", isPlace],
 ];
 
 /** A task's changed fields as the feed's `task-fields` sends them, or none for what is not. */
@@ -265,6 +269,7 @@ export function merge(task: Task, fields: TaskFields): Task {
     "updated",
     "instruction",
     "review_rounds",
+    "workflow",
   ] as const) {
     const value = fields[name];
     if (value !== undefined && value !== null) (next as Record<string, unknown>)[name] = value;
