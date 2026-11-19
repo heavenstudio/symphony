@@ -81,8 +81,9 @@
 //! position in `fields._board.workflow`. Two events are the fence every writer meets, whatever
 //! it is: a task's position, or the status of a task that has one, changes only beside the
 //! transition recorded for it (`workflow_position`), a position going only beside the transition
-//! made by an activation recorded as a return to the board's writers, and a recorded definition, activation,
-//! transition or receipt is never changed (`workflow_history`). A board with no custom workflow
+//! made by an activation recorded as a return to the board's writers, and a recorded definition,
+//! activation, transition or receipt is never changed (`workflow_history`). No event reads a
+//! record's deletion: the whole-board copy replaces the table. A board with no custom workflow
 //! holds no such record and meets neither.
 //!
 //! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and

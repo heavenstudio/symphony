@@ -5,9 +5,12 @@
 //!
 //! Nothing but this module writes them, and the schema's fences hold every writer to that: a
 //! task's position, or the status of a task that has one, changes only in the write that records
-//! its transition, a position goes only in the return that retires it, and a recorded definition, activation, transition or receipt is never changed
-//! (`crate::schema`'s `workflow_position`, `workflow_history` and `workflow_active`, and their
-//! PostgreSQL twins). `Store::raw` refuses the table, and `Store::set_field` the board's own
+//! its transition, a position goes only in the return that retires it, and a recorded
+//! definition, activation, transition or receipt is never changed (`crate::schema`'s
+//! `workflow_position`, `workflow_history` and `workflow_active`, and their PostgreSQL twins).
+//! No fence reads a deletion, which the whole-board copy makes of the table: that the active
+//! generation goes only in a return's write ([`Store::return_to_default`]) is this module's and
+//! `Store::raw`'s refusal of the table to hold. `Store::set_field` refuses the board's own
 //! fields. A board with no custom workflow holds none of this, and every other write meets the
 //! fences as it always ran.
 
@@ -187,8 +190,18 @@ struct Read {
     status: String,
     position: Option<TaskPosition>,
     blocked_from: Option<String>,
+    /// The block record the task carries, whatever its status: a workflow leaves it as it was.
+    blocked: Option<Value>,
     retired: u64,
 }
+
+/// What [`Store::standings`] answers: the read, its tasks as the planner takes them, and the
+/// block record each carries, by its slug.
+type Planned = (
+    Standings,
+    Vec<crate::workflow::activate::Standing>,
+    std::collections::BTreeMap<String, Value>,
+);
 
 /// What a return leaves on a task in its position's place (`fields._board.workflow_retired`):
 /// the workflow revision its return made, which its next transition continues from, and the
@@ -239,9 +252,11 @@ impl Store {
     /// revision kept beside it; each move is recorded as a transition, the activation recorded
     /// with the commit and the mappings it applied, and no generation is left active, so every
     /// writer finds a board with no custom workflow. The definitions, activations and
-    /// transitions before it stay. Nothing on a board with none active. Refused whole, the
-    /// active generation and every task left as they were, where a task cannot be placed;
-    /// planned again when the board changed between the read and the write.
+    /// transitions before it stay. A task returning blocked keeps the block record it carried
+    /// (what it waits on and why), and takes one waiting on `parked` where it carried none.
+    /// Nothing on a board with none active. Refused whole, the active generation and every task
+    /// left as they were, where a task cannot be placed; planned again when the board changed
+    /// between the read and the write.
     pub fn return_to_default(
         &self,
         committed: &crate::workflow::Committed,
@@ -249,7 +264,7 @@ impl Store {
         use crate::workflow::activate;
         let by = crate::workflow::board_service("activation");
         for _ in 0..PLANS {
-            let (read, tasks) = self.standings()?;
+            let (read, tasks, blocks) = self.standings()?;
             let Some(active) = read.active else {
                 return Ok(Followed::Legacy);
             };
@@ -267,13 +282,8 @@ impl Store {
                         "retired": Retired { revision: transition.revision, generation },
                     });
                     if transition.status == "blocked" {
-                        moved["blocked"] = json!(crate::waits_on::Blocked {
-                            on: "parked".into(),
-                            why: Some("returned from a custom workflow".into()),
-                            by: "board".into(),
-                            at,
-                            from: transition.resume.as_ref().map(|pair| pair.phase.clone()),
-                        });
+                        let from = transition.resume.as_ref().map(|pair| pair.phase.clone());
+                        moved["blocked"] = json!(blocked(blocks.get(&transition.slug), from, at));
                     }
                     moved
                 })
@@ -314,16 +324,21 @@ impl Store {
         )))
     }
 
-    /// What an activation plans from: the active generation and the last one recorded, and each
-    /// task a workflow holds or the board's writers keep open, with the roles held on it.
-    fn standings(&self) -> Result<(Standings, Vec<crate::workflow::activate::Standing>), Error> {
+    /// What an activation plans from: the active generation and the last one recorded, each
+    /// task a workflow holds or the board's writers keep open, with the roles held on it, and
+    /// the block record each carries, by its slug.
+    fn standings(&self) -> Result<Planned, Error> {
         // The versions first, the holders after: a claim between the two is seen by the
         // second, or fences the write by the version it moved.
         let mut read: Standings =
             self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
         let board = self.board()?;
+        let mut blocks = std::collections::BTreeMap::new();
         let tasks = (std::mem::take(&mut read.tasks).into_iter())
             .map(|task| {
+                if let Some(record) = task.blocked {
+                    blocks.insert(task.slug.clone(), record);
+                }
                 let roles = (board.tasks.iter())
                     .find(|t| t.slug == task.slug)
                     .map(|t| {
@@ -343,7 +358,7 @@ impl Store {
                 }
             })
             .collect();
-        Ok((read, tasks))
+        Ok((read, tasks, blocks))
     }
 
     /// The definition `active` names, which an activation recorded.
@@ -383,7 +398,7 @@ impl Store {
         activate::supported(&custom.definition, host).map_err(refused_workflow)?;
         let by = crate::workflow::board_service("activation");
         for _ in 0..PLANS {
-            let (read, tasks) = self.standings()?;
+            let (read, tasks, _) = self.standings()?;
             if let Some(active) = &read.active
                 && self.activated_as(active, custom)?
             {
@@ -594,6 +609,24 @@ pub(crate) fn unplaced(slug: &str) -> String {
         "explicit_action_required: {slug} has no workflow position, and a custom workflow is \
          active: it leaves "
     )
+}
+
+/// The block record of a task returning blocked from `from`, at `at`: the one it `carried` from
+/// before the workflow, what it waits on, why and who blocked it kept, or one waiting on `parked`
+/// where it carried none the board reads; its source is the status the return gives it either way.
+fn blocked(carried: Option<&Value>, from: Option<String>, at: f64) -> crate::waits_on::Blocked {
+    let kept = carried
+        .and_then(|record| serde_json::from_value::<crate::waits_on::Blocked>(record.clone()).ok());
+    match kept {
+        Some(kept) => crate::waits_on::Blocked { from, ..kept },
+        None => crate::waits_on::Blocked {
+            on: "parked".into(),
+            why: Some("returned from a custom workflow".into()),
+            by: "board".into(),
+            at,
+            from,
+        },
+    }
 }
 
 /// The tasks a plan only fences, as its write reads them.

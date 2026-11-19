@@ -59,7 +59,7 @@ pub(in crate::store) fn standings() -> Pg<'static> {
     'tasks', coalesce((SELECT jsonb_agg(jsonb_build_object(
         'slug', slug, 'version', version, 'status', status,
         'position', fields #> '{_board,workflow}',
-        'blocked_from', fields #> '{_board,blocked,from}',
+        'blocked_from', fields #> '{_board,blocked,from}', 'blocked', fields #> '{_board,blocked}',
         'retired', coalesce((fields #>> '{_board,workflow_retired,revision}')::bigint, 0)) ORDER BY slug)
         FROM task WHERE status NOT IN ('done', 'cancelled') OR fields #> '{_board,workflow}' IS NOT NULL),
         '[]'::jsonb))",

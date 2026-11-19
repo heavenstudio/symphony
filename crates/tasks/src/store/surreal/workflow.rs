@@ -37,22 +37,22 @@ RETURN NONE;";
 
 /// What an activation plans from, in one read: the active generation, the generation of the last
 /// activation recorded (by the range of their ids; 0 with none), and each task a workflow holds
-/// or the board's writers keep open, with its row's version, status, position, blocked source and
-/// the workflow revision a return retired it at.
+/// or the board's writers keep open, with its row's version, status, position, block record (and
+/// its source) and the workflow revision a return retired it at.
 pub(in crate::store) const STANDINGS: &str = "
 RETURN {
     active: (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL,
     last: array::max(SELECT VALUE body.generation FROM workflow:['activation', NONE]..=['activation', 9223372036854775807]) ?? 0,
     tasks: (SELECT slug, version, status, fields._board.workflow ?? NULL AS position,
-        fields._board.blocked.from ?? NULL AS blocked_from,
+        fields._board.blocked.from ?? NULL AS blocked_from, fields._board.blocked ?? NULL AS blocked,
         fields._board.workflow_retired.revision ?? 0 AS retired FROM task
         WHERE status NOT IN ['done', 'cancelled'] OR fields._board.workflow != NONE ORDER BY slug),
 };";
 
 /// An activation, whole: refused as stale unless the active generation is still `$expected`, no
 /// activation is recorded as `$generation` (after a return none is active, and another activation
-/// may have taken it) and every task it read is still at its version (and workflow revision); then each kept task
-/// written at its version, each moved one recorded and moved, the definition recorded once under
+/// may have taken it) and every task it read is still at its version (and workflow revision);
+/// then each kept task written at its version, each moved one recorded and moved, the definition recorded once under
 /// its digest, the activation recorded, and the active generation moved to it.
 pub(in crate::store) const ACTIVATE: &str = "
 LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;

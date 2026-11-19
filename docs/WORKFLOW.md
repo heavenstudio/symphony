@@ -91,8 +91,9 @@ the next generation's activation (`Store::return_to_default`, `activate::returni
 `[[workflow_mappings]]` then map onto built-in v1: every task the workflow holds, closed ones
 too, goes to the v1 pair it stands at where v1 declares that pair, else to its mapped one, and a
 task returning blocked maps the pair it resumes to the same way. In one transaction, fenced as
-any activation is, each task takes the status its v1 pair stands for, a blocked one a block
-record naming the status it came from (waiting on `parked`), and loses its position; the move
+any activation is, each task takes the status its v1 pair stands for and loses its position; a
+blocked one keeps the block record it carried from before the workflow (what it waits on and
+why), or takes one waiting on `parked` where it carried none, naming the status it came from; the move
 is recorded as a transition by the board's activation service, the activation is recorded as a
 return with the commit and the mappings it applied, and no generation is left active. The
 definitions, activations, transitions and receipts recorded before it stay, and each task keeps
@@ -221,12 +222,16 @@ and copy paths included. A write that changes a task's position, or the status o
 one, is refused unless the position is the next revision and the transition recorded for it names
 the same pair, resume, generation, digest and status. A position goes only beside the next
 transition recorded for its task by an activation recorded as a return, at the status that
-transition names, and a task is never put back at a position its later transitions left. A recorded definition, activation,
-transition or receipt is never changed, and the active generation moves forward only to an
-activation recorded for it, or goes in the write of a return. `Store::raw` refuses the table. A board that never activated a custom
-workflow holds none of these records, its export is the text it was, and every other write runs as before. The
-whole-board copy carries the records before the tasks, so a copy that lost them cannot restore a
-task the workflow holds. A reader one schema behind keeps and ignores the position.
+transition names, and a task is never put back at a position its later transitions left. A
+recorded definition, activation, transition or receipt is never changed, and the active
+generation moves forward only to an activation recorded for it. The database fences no deletion
+of a record, as the whole-board copy replaces the table: that the active generation goes only
+in the write of a return, and that no record is deleted otherwise, is held by the store, whose
+one module writes the table, and by `Store::raw`, which refuses it. A board that never
+activated a custom workflow holds none of these records, its export is the text it was, and
+every other write runs as before. The whole-board copy carries the records before the tasks, so
+a copy that lost them cannot restore a task the workflow holds. A reader one schema behind keeps
+and ignores the position.
 
 ## Definition format 1
 

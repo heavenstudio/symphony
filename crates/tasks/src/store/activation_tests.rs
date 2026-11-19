@@ -34,7 +34,7 @@ fn board(backend: Backend) -> Fixture {
         "_board".to_string(),
         BTreeMap::from([(
             "blocked".to_string(),
-            json!({"on": "sim/ready", "by": "owner", "at": 1.0, "from": "in_progress"}),
+            json!({"on": "task:sim/ready", "by": "owner", "at": 1.0, "from": "in_progress"}),
         )]),
     )]);
     let seed = [
@@ -388,15 +388,18 @@ fn a_board_returns_to_its_own_writers_and_back_with_its_history_kept() {
                 "{slug}"
             );
         }
+        // Blocked before the workflow, it kept its record through it: what it waits on and who
+        // blocked it are as they were, and its source is the status its resume pair maps to.
         let blocked = f.store.get("sim/blocked").unwrap();
         let record = crate::waits_on::Blocked::of(&blocked).expect("a blocked record");
         assert_eq!(
             (
                 record.on.as_str(),
                 record.from.as_deref(),
-                record.by.as_str()
+                record.by.as_str(),
+                record.at
             ),
-            ("parked", Some("in_progress"), "board"),
+            ("task:sim/ready", Some("in_progress"), "owner", 1.0),
             "{backend:?}"
         );
         // Closed tasks no workflow held are as they were.
@@ -552,6 +555,52 @@ fn a_task_closed_after_a_return_is_reopened_under_the_next_workflow_past_its_ret
                 .row("workflow", json!(["event", "sim/review", 3]))
                 .exists()
                 .unwrap()
+        );
+    }
+}
+
+#[test]
+fn a_task_blocked_under_the_workflow_returns_parked_naming_where_it_came_from() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        f.store
+            .activate_workflow(&mapped(), &Host::local())
+            .unwrap();
+        // The owner blocks sim/ready by the workflow's edge: no block record is written for it.
+        let owner = crate::workflow::local_owner();
+        let next = (f.store)
+            .workflow_actions("sim/ready", &owner, &Host::local())
+            .unwrap();
+        let request = symphony_api::workflow::OperationRequest {
+            project: f.store.database().database().into(),
+            task: "sim/ready".into(),
+            edge: "block".into(),
+            expected: next.snapshot,
+            input_revisions: BTreeMap::new(),
+            idempotency_key: "block".into(),
+            inputs: BTreeMap::new(),
+        };
+        (f.store)
+            .apply_operation(&owner, &Host::local(), &request)
+            .unwrap();
+        assert_eq!(status(&f, "sim/ready"), "blocked", "{backend:?}");
+        f.store.return_to_default(&dropped(BACK)).unwrap();
+        let task = f.store.get("sim/ready").unwrap();
+        let record = crate::waits_on::Blocked::of(&task).expect("a blocked record");
+        assert_eq!(
+            (
+                record.on.as_str(),
+                record.why.as_deref(),
+                record.by.as_str(),
+                record.from.as_deref()
+            ),
+            (
+                "parked",
+                Some("returned from a custom workflow"),
+                "board",
+                Some("ready")
+            ),
+            "{backend:?}"
         );
     }
 }
