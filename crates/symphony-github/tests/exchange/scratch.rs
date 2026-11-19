@@ -249,12 +249,17 @@ fn only_what_main_commits_turns_it_on() {
     git(&root, &["commit", "-q", "-am", "broken"]);
     assert!(source.load().unwrap_err().contains("symphony-github.toml"));
 
-    // Another default branch is the one read.
+    // Another default branch is the one read once the main checkout commits it, as the land
+    // reads it: an edit of the working file names no branch.
     std::fs::write(
         root.join("symphony.toml"),
         "[project]\ndefault_branch = \"trunk\"\n",
     )
     .unwrap();
+    let still = source.load().unwrap_err();
+    assert!(still.contains("symphony-github.toml"), "main's: {still}");
+    git(&root, &["add", "symphony.toml"]);
+    git(&root, &["commit", "-q", "-m", "trunk"]);
     assert!(source.load().unwrap_err().contains("no branch trunk"));
     git(&root, &["branch", "trunk", "feature"]);
     assert!(source.load().unwrap().config.enabled);

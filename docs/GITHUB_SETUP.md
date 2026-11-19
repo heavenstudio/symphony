@@ -1,7 +1,7 @@
 # Setting up GitHub
 
 Symphony runs without GitHub. `symphony-github` is an optional program that connects a
-project's board to one repository on GitHub.com, and it does two things, each set up on its own:
+project's board to one repository on GitHub.com, and it does three things, each set up on its own:
 
 - **The issue exchange.** Open issues carrying a label you choose become proposals on the board,
   and tasks you opt in are published as issues. It needs one token and no GitHub App:
@@ -10,6 +10,10 @@ project's board to one repository on GitHub.com, and it does two things, each se
   evidence there as checks, and has GitHub squash it, in place of merging and pushing the default
   branch itself. It needs three GitHub Apps installed on the repository and two rulesets on its
   default branch: [its steps](#delivery-by-pull-request).
+- **GitHub Releases.** A release run publishes a GitHub Release for each tag it pushes, its text
+  the release's notes. It needs the exchange's one token with contents read and write, and is
+  the release run's alone, so it serves the Symphony's own repository:
+  [its steps](#github-releases).
 
 This page is the setup, in order, from nothing to a check that passes. How each part behaves,
 every setting and every refusal are in [GITHUB](GITHUB.md).
@@ -186,6 +190,26 @@ ruleset names Merge beside Squash, and no ruleset requires a linear history; and
 `upstream_id`, the upstream's repository number, to `symphony-github.toml` and `[land.upstream]`
 to `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#landupstream)).
 
+## GitHub Releases
+
+The release run ([RELEASES](RELEASES.md#a-github-release)) is the Symphony's own repository's,
+so these steps are for that repository.
+
+1. **The token.** `token_file`'s token, as [the exchange's step 1](#the-issue-exchange) keeps it,
+   with contents read and write on the repository: GitHub takes a release's creation as a write
+   of the repository's contents.
+2. **The adapter's word.** Commit `releases = "publish"` to `symphony-github.toml` on the default
+   branch, beside `enabled = true`, `repository` and `token_file`.
+3. **The run's command.** Commit `github = ["symphony-github", "release"]` to the `[releases]`
+   table of `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#releases)). The run starts that
+   program by name, so it is on the `PATH` of whoever starts the release run.
+4. **The releases tagged before.** The release run's `--github` asks for each release tagged in
+   the checkout, oldest first, and checks, tags and pushes nothing; one GitHub holds already is
+   left as it is.
+
+`symphony-github status` then says `releases: publish`, and the release run's `--status` counts
+the releases published and names each one pending with why.
+
 ## Checking it
 
 **The settings.** `symphony-github status` says what the committed settings allow, reading
@@ -196,6 +220,7 @@ enabled by the committed settings
 repository: OWNER/NAME
 issues: import
 pull requests: off
+releases: off
 token file: /Users/YOU/.config/symphony-github/token
 nothing is kept: /PATH/TO/PROJECT/.git/symphony/integrations/github is not there
 ```

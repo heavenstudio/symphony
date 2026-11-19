@@ -121,7 +121,7 @@ pub(in crate::store) const INBOX: &str = "RETURN SELECT * OMIT id FROM callback_
 /// among them recorded as the one it was told. Needs `ACT`'s variables.
 pub(in crate::store) fn ack() -> String {
     format!("{ACT}\nLET $pull = (SELECT pull_entries, pull_withheld, pull_said, sequence FROM callback_event WHERE handle = $actor AND key IN $keys AND pull_entries != NONE ORDER BY sequence DESC LIMIT 1)[0];
-                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
+                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_idle = $pull.pull_said.idle ?? pull_idle, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
                 FOR $key IN $keys {{ UPDATE type::record('callback_event', [$actor, $key]) SET delivered = true RETURN NONE; }};
                 FOR $key IN $chats {{ UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; }};
                 UPDATE callback_event SET text = '' WHERE handle = $actor AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE; RETURN NONE;")
@@ -243,7 +243,7 @@ pub(in crate::store) fn record_delivery() -> String {
                     capacity_limited = $capacity OR (capacity_limited ?? false) RETURN NONE;
              }};
              IF $success {{
-                IF $pull != NONE {{ UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
+                IF $pull != NONE {{ UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_idle = $pull.pull_said.idle ?? pull_idle, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
                 FOR $message IN $messages {{ UPSERT type::record('delivery', [$message, $handle]) SET message = $message, handle = $handle, acked = $now RETURN NONE; }};
                 FOR $key IN $chat {{ UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; }};
                 UPDATE callback_event SET text = '' WHERE handle = $handle AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE;
