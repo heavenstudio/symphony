@@ -18,7 +18,6 @@ use super::{Error, Store};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashSet};
 use symphony_api::workflow::{Definition, Effect, Operation, Pair, Revision};
 use symphony_plugin::execution::Principal;
 
@@ -250,14 +249,6 @@ pub enum Followed {
 /// How many times an activation is planned again after the board changed under it.
 const PLANS: usize = 5;
 
-/// The active generation and the revision its definition was recorded with
-/// ([`sql::ACTIVE_SOURCE`]).
-#[derive(Deserialize)]
-struct Sourced {
-    active: Active,
-    revision: Option<Revision>,
-}
-
 /// What an activation reads ([`sql::STANDINGS`]).
 #[derive(Deserialize)]
 struct Standings {
@@ -319,12 +310,13 @@ impl Store {
         // What each write opening asks first, in one small read: is it the active one already. A
         // commit that changed something else names another revision of the same workflow, which
         // stays active as it was: only a commit that changes the workflow activates.
-        let body: Value =
+        // The active generation and the revision its definition was recorded with.
+        let mut body: Value =
             self.retrying(|| self.read(both(sql::ACTIVE_SOURCE, pg::active_source()), json!({})))?;
-        if let Some(read) = decoded::<Sourced>(body, "active workflow")?
-            && self.activated_as(&read.active, read.revision.as_ref(), custom)?
+        if let Some(active) = decoded::<Active>(body["active"].take(), "active workflow")?
+            && self.activated_as(&active, &body["revision"], custom)?
         {
-            return Ok(Followed::Unchanged(read.active));
+            return Ok(Followed::Unchanged(active));
         }
         activate::supported(&custom.definition, host).map_err(refused_workflow)?;
         let by = crate::workflow::board_service("activation");
@@ -334,7 +326,7 @@ impl Store {
             let read: Standings =
                 self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
             if let Some(active) = &read.active
-                && self.activated_as(active, None, custom)?
+                && self.activated_as(active, &Value::Null, custom)?
             {
                 return Ok(Followed::Unchanged(active.clone()));
             }
@@ -355,16 +347,13 @@ impl Store {
             // Each executor or reviewer the plan reads as no longer holding its role, fenced on its
             // session as read: one that beats before the write makes it stale, and the next plan
             // reads it live.
-            let read_slugs: HashSet<&str> = read.tasks.iter().map(|t| t.slug.as_str()).collect();
-            let lost: BTreeMap<&str, f64> = (board.tasks.iter())
-                .filter(|t| read_slugs.contains(t.slug.as_str()))
-                .flat_map(|t| &t.roles)
-                .filter(|r| matches!(r.role.as_str(), "executor" | "reviewer") && !r.health.holds())
-                .filter_map(|r| board.sessions.iter().find(|s| s.row.handle == r.handle))
-                .map(|s| (s.row.handle.as_str(), s.row.last_seen))
-                .collect();
-            let seen: Vec<Value> = (lost.iter())
-                .map(|(handle, last_seen)| json!({"handle": handle, "last_seen": last_seen}))
+            let read_slug = |slug: &str| read.tasks.iter().any(|t| t.slug == slug);
+            let seen: Vec<Value> = (board.tasks.iter())
+                .flat_map(|t| t.roles.iter().map(move |r| (t, r)))
+                .filter(|(_, r)| matches!(r.role.as_str(), "executor" | "reviewer"))
+                .filter(|(t, r)| !r.health.holds() && read_slug(&t.slug))
+                .filter_map(|(_, r)| board.sessions.iter().find(|s| s.row.handle == r.handle))
+                .map(|s| json!({"handle": s.row.handle, "last_seen": s.row.last_seen}))
                 .collect();
             let tasks: Vec<activate::Standing> = (read.tasks.into_iter())
                 .map(|task| {
@@ -454,21 +443,21 @@ impl Store {
     }
 
     /// Whether `active` is `custom` already: its revision, the project file it was read from in
-    /// the same format (`recorded`, its definition's revision where it was read), or a definition
-    /// and mappings that are `custom`'s, recorded from another commit. The digest names the commit
-    /// as well as the workflow, and the file holds the mappings as well as the definition, so the
-    /// definition and the mappings are read only where the file's bytes differ.
+    /// the same format (`recorded`, its definition's revision as recorded, null where it was not
+    /// read), or a definition and mappings that are `custom`'s, recorded from another commit. The
+    /// digest names the commit as well as the workflow, and the file holds the mappings as well as
+    /// the definition, so the definition and the mappings are read only where the file's bytes
+    /// differ.
     fn activated_as(
         &self,
         active: &Active,
-        recorded: Option<&Revision>,
+        recorded: &Value,
         custom: &crate::workflow::Custom,
     ) -> Result<bool, Error> {
         let theirs = &custom.revision;
         if active.digest == theirs.digest
-            || recorded.is_some_and(|r| {
-                r.format == theirs.format && r.source.project_blob == theirs.source.project_blob
-            })
+            || (recorded["format"] == theirs.format
+                && recorded["source"]["project_blob"] == theirs.source.project_blob.as_str())
         {
             return Ok(true);
         }
