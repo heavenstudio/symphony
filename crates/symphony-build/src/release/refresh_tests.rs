@@ -143,15 +143,16 @@ fn what_holds_the_release_is_a_lagging_writer_or_the_refreshs_own_red_and_never_
 }
 
 #[test]
-fn a_release_at_currents_schema_or_behind_it_says_which_and_moves_no_board() {
+fn a_release_at_currents_schema_or_behind_it_says_which_and_moves_only_a_board_left_behind() {
     assert_eq!(
         no_move("release-2", 19, 19),
-        "release-2 serves board schema 19, as the release current names serves 19: no board moves"
+        "release-2 serves board schema 19, as the release current names serves 19: only a board \
+         left behind it moves"
     );
     assert_eq!(
         no_move("release-2", 18, 19),
-        "release-2 serves board schema 18, behind the release current names, which serves 19: no \
-         board moves, as none moves back"
+        "release-2 serves board schema 18, behind the release current names, which serves 19: none \
+         moves back, and only a board left behind 18 moves"
     );
 }
 
