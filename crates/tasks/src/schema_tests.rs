@@ -170,21 +170,101 @@ fn the_write_refusal_is_split_around_the_version_the_guard_reads() {
 fn the_guard_takes_a_writes_own_variables_and_adds_its_own() {
     let refusal = Refusal::of(Some("alpha"), 11, &program());
     let mut vars = json!({"slug": "a/b"});
-    guard_vars(&mut vars, 11, &refusal, "refused: ");
+    guard_vars(&mut vars, 11, false, &refusal, "refused: ");
     assert_eq!(
         vars,
         json!({
             "slug": "a/b",
             "board_schema": 11,
+            "board_schema_ahead": false,
             "board_schema_before": "refused: the alpha board is at schema ",
             "board_schema_after": refusal.after,
         })
     );
     // A write with no variables of its own is given an object for the guard's.
     let mut none = serde_json::Value::Null;
-    guard_vars(&mut none, 11, &refusal, "refused: ");
+    guard_vars(&mut none, 11, true, &refusal, "refused: ");
     assert_eq!(none["board_schema"], 11);
+    assert_eq!(none["board_schema_ahead"], true);
     assert!(GUARD.contains("$board_schema_found != $board_schema"));
+    assert!(GUARD.contains("$board_schema_ahead = true"));
+    assert!(GUARD.contains("type::is_int($board_schema_from)"));
+}
+
+/// The guard's rule, as a reader asks it before it writes: its own schema always, one ahead only
+/// for a write that may and a record that is an integer no greater than its own, nothing else.
+#[test]
+fn a_write_passes_at_its_own_schema_and_one_ahead_only_when_it_may_and_the_record_lets_it() {
+    for (from, ahead) in [(json!(null), false), (json!(12), false), (json!(11), true)] {
+        assert!(writes(Some(11), &from, 11, ahead), "{from} {ahead}");
+    }
+    // One ahead, by a write that may, on a record that names its schema or an older one.
+    for from in [json!(11), json!(10), json!(-3)] {
+        assert!(writes(Some(12), &from, 11, true), "{from}");
+        assert!(!writes(Some(12), &from, 11, false), "a writer's: {from}");
+    }
+    // A record missing, newer than the write's schema, or of another shape lets nothing through.
+    for from in [
+        json!(null),
+        json!(12),
+        json!(13),
+        json!("11"),
+        json!(11.0),
+        json!(10.5),
+        json!(true),
+        json!([11]),
+        json!({"version": 11}),
+        json!(u64::MAX),
+    ] {
+        assert!(!writes(Some(12), &from, 11, true), "{from}");
+    }
+    // Two ahead, behind, or no board: refused whatever the record says.
+    for found in [Some(13), Some(40), Some(10), Some(0), None] {
+        assert!(!writes(found, &json!(11), 11, true), "{found:?}");
+        assert!(!writes(found, &json!(-100), 11, true), "{found:?}");
+    }
+    assert!(!writes(Some(i64::MIN), &json!(0), i64::MAX, true));
+    assert!(!writes(None, &json!(0), i64::MAX, true), "no board is never one ahead");
+}
+
+/// A schema's record of the oldest Symphony that may write a board it moved: its own version unless
+/// its step is declared to keep the one behind writing, and a newer build's step declares nothing
+/// until it says so.
+#[test]
+fn a_schema_names_the_oldest_symphony_that_may_write_the_board_it_moved() {
+    let this = Schema::this_build();
+    assert_eq!(this.writable_from(), VERSION - i64::from(keeps_writes(VERSION)));
+    let next = this.then("DEFINE TABLE IF NOT EXISTS later SCHEMALESS;");
+    assert_eq!(next.writable_from(), VERSION + 1);
+    let keeping = next.clone().keeping_writes();
+    assert_eq!(keeping.writable_from(), VERSION);
+    assert_eq!(keeping.version(), next.version());
+    assert_eq!(keeping.steps(), next.steps());
+    assert_ne!(keeping, next, "the declaration is part of the schema");
+    // A step after a declared one declares nothing of its own.
+    let after = keeping.then_each("DEFINE TABLE IF NOT EXISTS later2 SCHEMALESS;", "");
+    assert_eq!(after.writable_from(), VERSION + 2);
+    assert_eq!(after.clone().keeping_writes().writable_from(), VERSION + 1);
+    // An older build's declaration is not known here: it lets only its own schema write.
+    assert_eq!(keeping.before().writable_from(), VERSION);
+    assert_eq!(this.before().writable_from(), VERSION - 1);
+}
+
+/// The list starts empty: schema 24, which brought it and the record, changed `meta` and keeps the
+/// Symphony one behind read-only. Each version is listed once, with its reason, and none ahead of
+/// this build's.
+#[test]
+fn the_compatible_versions_are_each_listed_once_with_a_reason_and_none_ahead_of_this_build() {
+    assert!(!keeps_writes(24), "the mechanism's own step changed meta");
+    let mut seen = std::collections::BTreeSet::new();
+    for (version, why) in COMPATIBLE {
+        assert!(seen.insert(*version), "{version} listed twice");
+        assert!(*version > 24 && *version <= VERSION, "{version}");
+        assert!(why.split_whitespace().count() >= 5, "{version}: {why}");
+        assert!(keeps_writes(*version));
+    }
+    assert!(!keeps_writes(VERSION + 1));
+    assert!(DEFINE.contains("DEFINE FIELD IF NOT EXISTS writable_from ON meta TYPE option<int>;"));
 }
 
 #[test]

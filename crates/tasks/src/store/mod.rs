@@ -81,7 +81,7 @@ pub use copy::{CARRIED, leases_ended, leases_past};
 pub use database::Database;
 pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;
-pub use opening::Opening;
+pub use opening::{Opening, Standing};
 pub use raw::{Raw, Rows as RawRows};
 use reading::native_health;
 pub use report_lines::{ReportRead, ReportTask};
@@ -252,6 +252,11 @@ pub struct Store {
     /// The recovery authority it was handed ([`Store::recovering`]): none refuses every write
     /// bound to a recovery generation ([`recovery`]).
     authority: Option<std::sync::Arc<dyn recovery::Authority>>,
+    /// Whether it was opened to read by the schema rule ([`schema::Access::Read`], the Symphony's
+    /// opening), whose ordinary writes alone take a board one schema ahead that lets a Symphony
+    /// of its schema write it ([`schema::COMPATIBLE`]); set only by an opening that read the board,
+    /// never by a store taken unchecked.
+    reader: bool,
 }
 
 /// The command that reaches the board on `database` again: `just tasks`, naming the database when

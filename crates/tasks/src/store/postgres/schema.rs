@@ -272,7 +272,7 @@ pub(in crate::store) const TABLES: [Table; 29] = [
     },
     Table {
         name: "meta",
-        columns: &[req("version", Int)],
+        columns: &[req("version", Int), opt("writable_from", Int)],
     },
     Table {
         name: "writer",
@@ -789,6 +789,24 @@ fn create(table: &Table) -> String {
     sql
 }
 
+/// The columns a table gained after it was first made, which `CREATE TABLE IF NOT EXISTS` would
+/// leave out of a table already there: schema 24's record of the oldest schema whose Symphony may
+/// write the board, beside its version. Each is added only where the catalogue lacks it: `ALTER
+/// TABLE … ADD COLUMN IF NOT EXISTS` takes the table's exclusive lock even when the column is
+/// there, so every later migration would wait for each transaction that read `meta`, which every
+/// guarded write does.
+const ADDED: &str = "
+DO $added$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'meta'
+                AND column_name = 'writable_from') THEN
+        ALTER TABLE meta ADD COLUMN writable_from bigint;
+    END IF;
+END
+$added$;
+";
+
 /// The uniques SurrealDB's `UNIQUE` indexes keep.
 const UNIQUES: &str = "
 CREATE UNIQUE INDEX IF NOT EXISTS task_sid ON task (sid);
@@ -833,6 +851,7 @@ fn defined(analyzed: &str) -> String {
     for table in &TABLES {
         sql.push_str(&create(table));
     }
+    sql.push_str(ADDED);
     sql.push_str(UNIQUES);
     sql.push_str(RECOVERY);
     sql.push_str(INDEXES);
