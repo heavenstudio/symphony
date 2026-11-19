@@ -45,7 +45,7 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         return Ok(());
     };
     if c.parsed.flag("json") {
-        c.say(&serde_json::to_string_pretty(&read).expect("a workflow read serializes"));
+        c.say(&pretty(&read));
         return Ok(());
     }
     let d = &read.definition;
@@ -86,7 +86,7 @@ fn actions(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let principal = agent_session(&c.actor()?);
     let next = store.workflow_actions(&slug, &principal, &Host::local())?;
     if c.parsed.flag("json") {
-        c.say(&serde_json::to_string_pretty(&next).expect("next actions serialize"));
+        c.say(&pretty(&next));
         return Ok(());
     }
     for line in action_lines(&slug, &next) {
@@ -190,7 +190,7 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
     };
     let result = store.apply_attested(&principal, &host, &request, &attestations)?;
     if c.parsed.flag("json") {
-        c.say(&serde_json::to_string_pretty(&result).expect("a result serializes"));
+        c.say(&pretty(&result));
         return Ok(());
     }
     c.say(&format!("took {} ({})", request.edge, result.transition));
@@ -304,4 +304,11 @@ fn authorities(authority: &[Authority]) -> String {
         })
         .collect();
     each.join(" or ")
+}
+
+/// `value` as indented JSON, by way of a JSON value: the same text, written by the one writer of
+/// values every command's `--json` already links, not by a writer of each type's own.
+fn pretty(value: &impl serde::Serialize) -> String {
+    let value = serde_json::to_value(value).expect("a workflow answer serializes");
+    serde_json::to_string_pretty(&value).expect("JSON values serialize")
 }

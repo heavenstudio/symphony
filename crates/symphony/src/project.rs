@@ -463,12 +463,7 @@ impl Project {
     /// [`Project::load`]'s to look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
         let file = Self::written(text)?;
-        workflow::require_supported(
-            file.workflow.as_ref(),
-            &file.workflow_mappings,
-            &file.workflow_authorities,
-            file.project.id.as_deref(),
-        )?;
+        workflow::require_supported(text)?;
         if let Some(refusal) = File::refusal(&file.unknown(text)) {
             return Err(refusal);
         }
@@ -493,12 +488,7 @@ impl Project {
             return Ok((Self::plain(root), Vec::new(), Vec::new()));
         };
         let file = Self::written(&text)?;
-        workflow::require_supported(
-            file.workflow.as_ref(),
-            &file.workflow_mappings,
-            &file.workflow_authorities,
-            file.project.id.as_deref(),
-        )?;
+        workflow::require_supported(&text)?;
         let (unknown, retired) = (file.unknown(&text), file.retired(&text));
         let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
         Ok((project, unknown, retired))

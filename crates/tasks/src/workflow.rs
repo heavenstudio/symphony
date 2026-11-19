@@ -10,7 +10,7 @@
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::Path;
-use symphony_api::workflow::{Definition, FORMAT, Pair, Revision, Source};
+use symphony_api::workflow::{Authority, Definition, FORMAT, Pair, Revision, Source};
 use symphony_plugin::execution::{Principal, PrincipalKind};
 
 pub mod activate;
@@ -59,7 +59,7 @@ impl Validated {
                 ));
             }
         }
-        let bytes = serde_json::to_vec(&(FORMAT, &self.0, &source)).map_err(|e| e.to_string())?;
+        let bytes = canonical(&(FORMAT, &self.0, &source))?;
         Ok(Revision {
             format: FORMAT,
             digest: Sha256::digest(bytes)
@@ -82,7 +82,10 @@ impl Validated {
     /// declares (an ID keeps its meaning, so a pair still declared is never remapped) and a
     /// destination it does declare, and no pair is mapped twice.
     pub fn check_mappings(&self, mappings: &[Mapping]) -> Result<(), String> {
-        let declared: BTreeSet<&Pair> = self.0.positions.iter().map(|p| &p.at).collect();
+        let mut declared: BTreeSet<&Pair> = BTreeSet::new();
+        for position in &self.0.positions {
+            declared.insert(&position.at);
+        }
         let mut from = BTreeSet::new();
         for mapping in mappings {
             let (f, t) = (&mapping.from, &mapping.to);
@@ -123,53 +126,75 @@ pub struct Mapping {
 /// Parse only the candidate `[workflow]` in a project file; other project tables belong to
 /// `Project::parse`. Omission selects built-in v1. Unknown workflow fields/variants refuse.
 pub fn candidate(text: &str) -> Result<Validated, String> {
-    #[derive(serde::Deserialize)]
-    struct File {
-        workflow: Option<Definition>,
-    }
-    let file: File = toml::from_str(text).map_err(|e| format!("workflow: {e}"))?;
-    Validated::new(file.workflow.unwrap_or_else(builtin))
+    let workflow = taken(&mut table(text)?, "workflow")?;
+    Validated::new(workflow.unwrap_or_else(builtin))
 }
 
 /// The file's `[workflow]`, validated, or none when it has none; and its `[[workflow_mappings]]`,
 /// checked against that workflow. Mappings without a workflow are refused: they map onto nothing.
 pub fn written(text: &str) -> Result<(Option<Validated>, Vec<Mapping>), String> {
-    #[derive(serde::Deserialize)]
-    struct File {
-        workflow: Option<Definition>,
-        #[serde(default)]
-        workflow_mappings: Vec<Mapping>,
-    }
-    let file: File = toml::from_str(text).map_err(|e| format!("workflow: {e}"))?;
-    let Some(definition) = file.workflow else {
-        if !file.workflow_mappings.is_empty() {
+    let mut file = table(text)?;
+    let definition: Option<Definition> = taken(&mut file, "workflow")?;
+    let mappings: Vec<Mapping> = taken(&mut file, "workflow_mappings")?.unwrap_or_default();
+    let Some(definition) = definition else {
+        if !mappings.is_empty() {
             return Err("workflow_mappings: no [workflow] to map onto".into());
         }
         return Ok((None, Vec::new()));
     };
     let validated = Validated::new(definition)?;
-    validated.check_mappings(&file.workflow_mappings)?;
-    Ok((Some(validated), file.workflow_mappings))
+    validated.check_mappings(&mappings)?;
+    Ok((Some(validated), mappings))
+}
+
+/// The project file as one TOML table, as [`crate::limits`] reads it: a syntax error is named at
+/// its line.
+fn table(text: &str) -> Result<toml::Table, String> {
+    toml::from_str(text).map_err(|e| format!("workflow: {e}"))
+}
+
+/// `file`'s table `key`, taken out of it and read as the board reads the same types from its own
+/// rows (`serde_json`), so every program that links the workflow links its readers once and none
+/// for TOML; none where the file has no `key`. Its refusal names what is wrong, without TOML's
+/// line, and refuses all that a reading straight from TOML refuses: a datetime is a table to it,
+/// which no field of the workflow takes.
+fn taken<T: serde::de::DeserializeOwned>(
+    file: &mut toml::Table,
+    key: &str,
+) -> Result<Option<T>, String> {
+    fn json(value: toml::Value) -> serde_json::Value {
+        match value {
+            toml::Value::String(text) => text.into(),
+            toml::Value::Integer(number) => number.into(),
+            toml::Value::Float(number) => (serde_json::Number::from_f64(number))
+                .map_or(serde_json::Value::Null, serde_json::Value::Number),
+            toml::Value::Boolean(flag) => flag.into(),
+            toml::Value::Datetime(at) => serde_json::json!({ "datetime": at.to_string() }),
+            toml::Value::Array(values) => values.into_iter().map(json).collect(),
+            toml::Value::Table(table) => (table.into_iter())
+                .map(|(key, value)| (key, json(value)))
+                .collect(),
+        }
+    }
+    (file.remove(key))
+        .map(|value| serde_json::from_value(json(value)).map_err(|e| format!("{key}: {e}")))
+        .transpose()
 }
 
 /// The file's `[[workflow_authorities]]`, sorted by adapter and checked against `definition`
 /// ([`guard::check_attesters`]); refused where there is no `[workflow]` to guard, or no
 /// `[project] id` to bind an attestation to ([`attested_project`]).
 pub fn authorities(text: &str, definition: Option<&Validated>) -> Result<Vec<Attester>, String> {
-    #[derive(serde::Deserialize)]
-    struct File {
-        #[serde(default)]
-        workflow_authorities: Vec<Attester>,
-    }
-    let file: File = toml::from_str(text).map_err(|e| format!("workflow: {e}"))?;
-    let mut attesters = file.workflow_authorities;
+    let mut file = table(text)?;
+    let mut attesters: Vec<Attester> =
+        taken(&mut file, "workflow_authorities")?.unwrap_or_default();
     let Some(definition) = definition else {
         if !attesters.is_empty() {
             return Err("workflow_authorities: no [workflow] to guard".into());
         }
         return Ok(attesters);
     };
-    if !attesters.is_empty() && attested_project(text).is_none() {
+    if !attesters.is_empty() && project_id(&file).is_none() {
         return Err(
             "workflow_authorities: an attestation names the project it is for, and [project] \
              id names none"
@@ -177,7 +202,8 @@ pub fn authorities(text: &str, definition: Option<&Validated>) -> Result<Vec<Att
         );
     }
     guard::check_attesters(definition, &attesters)?;
-    attesters.sort();
+    // Each adapter is named once (`check_attesters`), so its name orders them.
+    ordered(&mut attesters, |attester| attester.adapter.clone());
     Ok(attesters)
 }
 
@@ -185,16 +211,13 @@ pub fn authorities(text: &str, definition: Option<&Validated>) -> Result<Vec<Att
 /// the committed id alone, never one a machine's registry or folder gives, so a project's
 /// attestation reads the same on every board of it and on no other project's.
 pub fn attested_project(text: &str) -> Option<String> {
-    #[derive(serde::Deserialize)]
-    struct File {
-        project: Option<Table>,
-    }
-    #[derive(serde::Deserialize)]
-    struct Table {
-        id: Option<String>,
-    }
-    let file: File = toml::from_str(text).ok()?;
-    file.project?.id.filter(|id| !id.trim().is_empty())
+    project_id(&table(text).ok()?)
+}
+
+/// `file`'s `[project] id`, where it is text that is not blank.
+fn project_id(file: &toml::Table) -> Option<String> {
+    let id = file.get("project")?.get("id")?.as_str()?;
+    (!id.trim().is_empty()).then(|| id.to_string())
 }
 
 /// The workflow a commit's project file sets: a custom definition with its revision, mappings
@@ -410,11 +433,11 @@ pub fn agent_session(handle: &str) -> Principal {
 }
 
 fn normalize(mut d: Definition) -> Definition {
-    d.phases.sort_by(|a, b| a.id.cmp(&b.id));
-    d.states.sort_by(|a, b| a.id.cmp(&b.id));
-    d.positions.sort_by(|a, b| a.at.cmp(&b.at));
-    d.edges.sort_by(|a, b| a.id.cmp(&b.id));
-    d.guards.sort_by(|a, b| a.id.cmp(&b.id));
+    ordered(&mut d.phases, |phase| phase.id.clone());
+    ordered(&mut d.states, |state| state.id.clone());
+    ordered(&mut d.positions, |position| pair_key(&position.at));
+    ordered(&mut d.edges, |edge| edge.id.clone());
+    ordered(&mut d.guards, |guard| guard.id.clone());
     d.capabilities.sort();
     d.adapters.sort();
     d.task_kinds.sort();
@@ -422,9 +445,52 @@ fn normalize(mut d: Definition) -> Definition {
         edge.inputs.sort();
         edge.guards.sort();
         // Authority is an unordered OR; effects remain in application order.
-        edge.authority.sort();
+        ordered(&mut edge.authority, authority_key);
     }
     d
+}
+
+/// The JSON text a digest is taken of: `value` as compact JSON, written by way of a JSON value,
+/// which writes the same bytes as writing it straight, so a type the board already turns into a
+/// value links no writer of its own for its digest.
+pub(crate) fn canonical(value: &impl serde::Serialize) -> Result<Vec<u8>, String> {
+    let value = serde_json::to_value(value).map_err(|e| e.to_string())?;
+    Ok(value.to_string().into_bytes())
+}
+
+/// `items` in the order of their `key`, those of one key in the order they came: one sort on
+/// `(String, usize)` for every list the workflow orders, where a sort of each element type would
+/// link a sort each.
+pub(crate) fn ordered<T>(items: &mut Vec<T>, key: impl Fn(&T) -> String) {
+    let mut keyed: Vec<(String, usize)> = items.iter().map(key).zip(0..).collect();
+    keyed.sort_unstable();
+    let mut slots: Vec<Option<T>> = std::mem::take(items).into_iter().map(Some).collect();
+    items.extend((keyed.into_iter()).map(|(_, at)| slots[at].take().expect("each index once")));
+}
+
+/// An authority as a key that orders as the authority does: its kind in the order the kinds are
+/// declared, then a task role in the order the roles are, or the capability.
+fn authority_key(authority: &Authority) -> String {
+    match authority {
+        Authority::TaskRole { role } => format!("0\0{}", *role as u8),
+        Authority::ProjectCapability { capability } => format!("1\0{capability}"),
+        Authority::SystemCapability { capability } => format!("2\0{capability}"),
+    }
+}
+
+/// A pair as a key that orders as the pair does, phase then state: no ID holds a NUL.
+pub(crate) fn pair_key(pair: &Pair) -> String {
+    format!("{}\0{}", pair.phase, pair.state)
+}
+
+/// Each mapping's source pair to its destination, built by insertion: a collected map sorts what
+/// it collects, a sort of its own for each key type.
+pub(crate) fn mapped(mappings: &[Mapping]) -> std::collections::BTreeMap<&Pair, &Pair> {
+    let mut map = std::collections::BTreeMap::new();
+    for mapping in mappings {
+        map.insert(&mapping.from, &mapping.to);
+    }
+    map
 }
 
 #[cfg(test)]

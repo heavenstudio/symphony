@@ -248,7 +248,7 @@ it does today.
 | The regenerator's client distribution | A commit of its own after a land. | A pull request of its own, assessed, with no second generation while its inputs are unchanged. |
 | A release candidate's fix | Lands on the default branch and advances the local candidate. | Squashed into the default branch by its pull request while the candidate advances to the retained head, under one receipt. |
 | A release | Pushes a tag alone, never a branch. | The same: a tag is not a write of the default branch, and stays the release run's. |
-| A document save, an owner's answer, a task filed into Git | Commits as today. | A pull request, with an assessment that may need no stamp. No direct write remains. |
+| A document save, an owner's answer, a task filed into Git | Commits as today. | A pull request, with an assessment that may need no stamp. No direct write remains: a document save is kept pending and delivered by a task of its own ([TASKS](TASKS.md#a-document-save-under-delivery)). |
 | A person or a tool pushing by hand | Possible, and outside every rule here. | Refused by the repository's rules for everyone but the landing identity. |
 
 The detail of each row with PR delivery on, and the proof it needs, is

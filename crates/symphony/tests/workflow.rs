@@ -1296,3 +1296,44 @@ fn workflow_authorities_are_a_known_key_committed_for_a_guarded_workflow_and_its
     assert!(problem.contains("no [workflow] to guard"), "{problem}");
     assert!(!problem.contains("unknown"), "{problem}");
 }
+
+#[test]
+fn the_project_file_reads_its_workflow_as_the_board_does_and_names_what_it_refuses() {
+    let parse = |text: &str| Project::parse(Path::new("/tmp/demo"), text);
+    let unknown = parse(&CUSTOM.replace("format = 1", "format = 1\nunknown = true")).unwrap_err();
+    assert!(
+        unknown.starts_with("symphony.toml: workflow: unknown field `unknown`"),
+        "{unknown}"
+    );
+    let typed = parse(&CUSTOM.replace("order = 0,", "order = \"first\",")).unwrap_err();
+    assert!(
+        typed.starts_with("symphony.toml: workflow: invalid type"),
+        "{typed}"
+    );
+    assert!(
+        parse("workflow = 1\n")
+            .unwrap_err()
+            .starts_with("symphony.toml: workflow: ")
+    );
+    let mappings = parse("workflow_mappings = \"none\"\n").unwrap_err();
+    assert!(
+        mappings.starts_with("symphony.toml: workflow_mappings: "),
+        "{mappings}"
+    );
+    let authorities = parse("workflow_authorities = \"none\"\n").unwrap_err();
+    assert!(
+        authorities.starts_with("symphony.toml: workflow_authorities: "),
+        "{authorities}"
+    );
+    // Each is a setting the Symphony knows, whatever it holds.
+    for text in [
+        "workflow = 1\n",
+        "workflow_mappings = []\n",
+        "workflow_authorities = 1\n",
+    ] {
+        let refused = parse(text).err().unwrap_or_default();
+        assert!(!refused.contains("the Symphony knows"), "{refused}");
+    }
+    assert!(parse("workflow_mappings = []\n").is_ok());
+    assert!(parse("workflow_authorities = []\n").is_ok());
+}

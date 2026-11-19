@@ -38,7 +38,7 @@ const OBSERVATION_CONTEXT: &[u8] = b"symphony-workflow-observation\n";
 /// speaks, and the public half of its signing key, `ed25519:` and 64 hex digits. Activation
 /// records them, so a key changed is a new generation, and nothing else extends them: no request,
 /// task or payload names a key.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Attester {
     pub adapter: String,

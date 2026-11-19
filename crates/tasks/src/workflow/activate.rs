@@ -194,8 +194,7 @@ pub fn plan(
 ) -> Result<Plan, String> {
     let legacy = builtin();
     let new = custom.definition.definition();
-    let mappings: BTreeMap<&Pair, &Pair> =
-        custom.mappings.iter().map(|m| (&m.from, &m.to)).collect();
+    let mappings = super::mapped(&custom.mappings);
     let mut plan = Plan::default();
     for task in tasks {
         let slug = &task.slug;
@@ -340,8 +339,7 @@ impl Placing {
                 named(&from)
             )
         })?;
-        let mappings: BTreeMap<&Pair, &Pair> =
-            self.mappings.iter().map(|m| (&m.from, &m.to)).collect();
+        let mappings = super::mapped(&self.mappings);
         let to = placed(&self.definition, &mappings, slug, &from, "reopens at")?;
         let destination =
             position_of(&self.definition, &to).expect("placed() names a declared pair");

@@ -1,4 +1,4 @@
-//! A custom delivery workflow's records on the board (docs/WORKFLOW.md), from schema 23: the
+//! A custom delivery workflow's records on the board (docs/WORKFLOW.md), from schema 24: the
 //! active generation, the immutable definitions, activations, transitions and receipts in the
 //! `workflow` table, and the position of each task the workflow holds in its
 //! `fields._board.workflow`.
@@ -364,25 +364,16 @@ impl Store {
         {
             return Ok(false);
         }
-        let sorted = |mappings: &[crate::workflow::Mapping]| {
-            let mut pairs: Vec<(&Pair, &Pair)> =
-                mappings.iter().map(|m| (&m.from, &m.to)).collect();
-            pairs.sort_by(|a, b| {
-                (&a.0.phase, &a.0.state, &a.1.phase, &a.1.state)
-                    .cmp(&(&b.0.phase, &b.0.state, &b.1.phase, &b.1.state))
-            });
-            pairs
-                .into_iter()
-                .map(|(f, t)| (f.clone(), t.clone()))
-                .collect::<Vec<_>>()
-        };
         let mappings = self
             .workflow_mappings(active.generation)?
             .unwrap_or_default();
         let (project, authorities) = self.workflow_authorities_of(active.generation)?;
-        Ok(sorted(&mappings) == sorted(&custom.mappings)
-            && authorities == custom.authorities
-            && project == custom.project)
+        // Each maps a pair once (`Validated::check_mappings`), so as maps they are equal or not.
+        Ok(
+            crate::workflow::mapped(&mappings) == crate::workflow::mapped(&custom.mappings)
+                && authorities == custom.authorities
+                && project == custom.project,
+        )
     }
 
     /// The project and the approval authorities, sorted by adapter, activation `generation`

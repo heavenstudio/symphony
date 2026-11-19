@@ -70,10 +70,14 @@
 //! older schema copies a board without replacing it, which is why it came with a schema step:
 //! the [`guard`] refuses that build's copy.
 //!
-//! `workflow:[KIND, …]` is a custom delivery workflow's record, from schema 23 (`store/workflow.rs`,
+//! `execution_attempt:⟨uuid⟩`, `execution_fact:[uuid, seq]`, `execution_fence:[kind, …]` and
+//! `execution_artifact:[uuid, name]` are execution attempts, from schema 23 (`crate::execution`):
+//! schemaless and with no event, as no reader caches them.
+//!
+//! `workflow:[KIND, …]` is a custom delivery workflow's record, from schema 24 (`store/workflow.rs`,
 //! docs/WORKFLOW.md): the active generation (`['active']`), an immutable definition by its digest,
 //! an activation by its generation, a task's transition by its slug and workflow revision, a
-//! receipt by its principal and key, and an external intent; and, for its guards
+//! receipt by its principal and key, and an external intent; and, from schema 26, for its guards
 //! (`workflow/guard.rs`), the state the board accepted from each approval authority
 //! (`['authority', ADAPTER]`) and each guarded edge's admission (`['admission', SLUG, REVISION]`).
 //! A task the workflow holds keeps its position in `fields._board.workflow`. Two events are the
@@ -478,7 +482,7 @@ DEFINE TABLE IF NOT EXISTS recovery SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS generation ON recovery TYPE string;
 IF !record::exists(recovery:board) { CREATE recovery:board SET generation = <string> rand::uuid::v4() RETURN NONE; };
 
--- Schema 23: custom delivery workflows' records, and the fences on them (`store/workflow.rs`).
+-- Schema 24: custom delivery workflows' records, and the fences on them (`store/workflow.rs`).
 DEFINE TABLE IF NOT EXISTS workflow SCHEMAFULL;
 DEFINE FIELD OVERWRITE kind ON workflow TYPE string
     ASSERT $value IN ['active', 'definition', 'activation', 'event', 'receipt', 'intent', 'authority', 'admission'];
@@ -595,6 +599,18 @@ DEFINE FIELD IF NOT EXISTS first ON usage TYPE float;
 DEFINE FIELD IF NOT EXISTS last ON usage TYPE float;
 DEFINE INDEX IF NOT EXISTS usage_slug ON usage FIELDS slug;
 DEFINE INDEX IF NOT EXISTS usage_handle ON usage FIELDS handle;
+
+-- Schema 23: execution attempts (`crate::execution`): an attempt's immutable identity beside its
+-- revisioned state, its append-only facts, the fences its admission writes and its collected
+-- artifacts. Schemaless and with no event: no reader caches them, and a write moves no marker.
+DEFINE TABLE IF NOT EXISTS execution_attempt SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS execution_attempt_task ON execution_attempt FIELDS task, created;
+DEFINE INDEX IF NOT EXISTS execution_attempt_due ON execution_attempt FIELDS open, due;
+DEFINE TABLE IF NOT EXISTS execution_fact SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS execution_fact_attempt ON execution_fact FIELDS attempt, seq;
+DEFINE TABLE IF NOT EXISTS execution_fence SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS execution_artifact SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS execution_artifact_attempt ON execution_artifact FIELDS attempt, name;
 
 DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN {

@@ -459,7 +459,7 @@ fn record_keys_order_as_surrealdb_orders_compound_ids() {
 }
 
 #[test]
-fn schema_23_keeps_every_row_fences_the_writer_before_it_and_its_readers_read_a_managed_task() {
+fn schema_24_keeps_every_row_fences_the_writer_before_it_and_its_readers_read_a_managed_task() {
     use crate::store_fixture::{HOST, NOW};
     use crate::{NewTask, Opening, Schema};
     for backend in BACKENDS {
@@ -518,5 +518,121 @@ fn schema_23_keeps_every_row_fences_the_writer_before_it_and_its_readers_read_a_
                 .iter()
                 .any(|t| t.slug == "sim/jump")
         );
+    }
+}
+
+#[test]
+fn a_board_made_at_22_or_23_migrates_to_24_with_its_rows_and_one_at_24_opens_as_it_is() {
+    use crate::store_fixture::{HOST, NOW};
+    use crate::{NewTask, Opening, Schema};
+    // What an older build's board lacks of this build's definitions: schema 24's workflow
+    // records and their fence on tasks, and below 23 the execution attempts' tables as well.
+    const NO_WORKFLOW: (&str, &str) = (
+        "REMOVE EVENT workflow_position ON task; REMOVE TABLE workflow;",
+        "DROP TRIGGER task_workflow ON task; DROP TABLE workflow;",
+    );
+    const NO_EXECUTION: (&str, &str) = (
+        "REMOVE TABLE execution_attempt; REMOVE TABLE execution_fact; \
+         REMOVE TABLE execution_fence; REMOVE TABLE execution_artifact;",
+        "DROP TABLE execution_attempt; DROP TABLE execution_fact; DROP TABLE execution_fence; \
+         DROP TABLE execution_artifact;",
+    );
+    let version = |store: &Store| {
+        (store.raw().row("meta", "schema").field("version"))
+            .unwrap()
+            .as_i64()
+    };
+    // Whether the database defines `table`, as its own catalogue says.
+    let defines = |store: &Store, table: &str| -> bool {
+        let surreal = format!("RETURN (INFO FOR DB).tables.{table} != NONE;");
+        let postgres = format!("to_jsonb(to_regclass('{table}') IS NOT NULL)");
+        (store.retrying(|| {
+            store.read(
+                both(surreal.as_str(), Pg::read(postgres.as_str())),
+                json!({}),
+            )
+        }))
+        .unwrap()
+    };
+    for backend in BACKENDS {
+        for (older, lacks) in [
+            (22, &[NO_WORKFLOW, NO_EXECUTION][..]),
+            (23, &[NO_WORKFLOW][..]),
+        ] {
+            let database = backend.database();
+            let open = |how| {
+                Store::opening_on(
+                    database.another(),
+                    Box::new(|| NOW),
+                    Box::new(|_| false),
+                    HOST,
+                    &how,
+                )
+                .unwrap()
+            };
+            let mut schema = Schema::this_build();
+            while schema.version() > older {
+                schema = schema.before();
+            }
+            let old = open(Opening::write().at(schema));
+            old.create(&NewTask::new("sim/jump", "Jump departure", "owner"))
+                .unwrap();
+            let task = old.get("sim/jump").unwrap();
+            for (surreal, postgres) in lacks {
+                old.retrying(|| {
+                    old.transact::<Value>(both(*surreal, Pg::script(*postgres)), json!({}))
+                })
+                .unwrap();
+            }
+            assert_eq!(version(&old), Some(older));
+            assert!(!defines(&old, "workflow"), "{backend:?} at {older}");
+            assert_eq!(
+                defines(&old, "execution_attempt"),
+                older == 23,
+                "{backend:?}"
+            );
+
+            let current = open(Opening::write());
+            assert_eq!(version(&current), Some(24), "{backend:?} from {older}");
+            assert_eq!(
+                current.get("sim/jump").unwrap(),
+                task,
+                "{backend:?} from {older}"
+            );
+            for table in [
+                "workflow",
+                "execution_attempt",
+                "execution_fact",
+                "execution_fence",
+            ] {
+                assert!(
+                    defines(&current, table),
+                    "{backend:?} from {older}: {table}"
+                );
+                assert_eq!(current.raw().table(table).count().unwrap(), 0, "{table}");
+            }
+            // Schema 24's fence is on the board again: a held task's status follows its position.
+            let first = moved("sim/jump", 1, pair("build", "working"), "in_progress");
+            current.record_transition(&first, 0).unwrap();
+            let follows = refused(
+                current
+                    .raw()
+                    .row("task", "sim/jump")
+                    .set(json!({"status": "ready"})),
+            );
+            assert!(
+                follows.contains("the status of sim/jump follows its workflow position"),
+                "{backend:?} from {older}: {follows}"
+            );
+            // The older build stops at its next write.
+            let late = old.create(&NewTask::new("sim/late", "Late", "owner"));
+            assert!(matches!(late, Err(Error::Refused(_))), "{late:?}");
+
+            // At 24 it opens as it is, with the one read.
+            let again = open(Opening::write());
+            assert_eq!(again.database().requests(), 1, "{backend:?} from {older}");
+            assert_eq!(again.get("sim/jump").unwrap().status, "in_progress");
+            assert_eq!(version(&again), Some(24));
+        }
     }
 }
