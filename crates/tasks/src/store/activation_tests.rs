@@ -2,6 +2,7 @@
 //! fences that refuse it whole.
 
 use super::*;
+use crate::health::{LIVE_SECONDS, STALE_SECONDS};
 use crate::store_fixture::{Backend, Fixture, Seed, task};
 use crate::workflow::activate::tests::{MAPPED, TWO, custom};
 use crate::workflow::tests::Scratch;
@@ -380,19 +381,40 @@ fn the_activation_write_is_refused_as_stale_after_another_write_and_planned_agai
         };
         let empty = json!({
             "expected": 1, "generation": 2, "digest": "d2", "definition": {},
-            "activation": {}, "moved": [], "kept": [], "at": 1.0,
+            "activation": {}, "moved": [], "kept": [], "seen": [], "at": 1.0,
         });
         assert_eq!(
             refused(write(empty.clone())),
             "stale_workflow: the active generation is 0, not 1",
             "{backend:?}"
         );
-        let mut stale_task = empty;
+        let mut stale_task = empty.clone();
         stale_task["expected"] = json!(0);
         stale_task["kept"] = json!([{"slug": "sim/ready", "version": 99}]);
         assert_eq!(
             refused(write(stale_task)),
             "stale_task: sim/ready changed while its workflow activated"
+        );
+        // A holder it read as lost, seen since; a session gone since is seen as well.
+        let worker = f.session("worker");
+        let mut seen = empty.clone();
+        seen["expected"] = json!(0);
+        seen["seen"] = json!([{"handle": worker, "last_seen": 1.0}]);
+        assert_eq!(
+            refused(write(seen.clone())),
+            format!("stale_task: {worker} was seen while its workflow activated")
+        );
+        seen["seen"] = json!([{"handle": "gone", "last_seen": 1.0}]);
+        assert_eq!(
+            refused(write(seen)),
+            "stale_task: gone was seen while its workflow activated"
+        );
+        // An open task it neither moved nor kept: one filed or reopened since its read.
+        let mut unplaced = empty;
+        unplaced["expected"] = json!(0);
+        assert_eq!(
+            refused(write(unplaced)),
+            "stale_task: sim/backlog was filed or reopened while its workflow activated"
         );
         assert_eq!(f.store.raw().table("workflow").count().unwrap(), 0);
 
@@ -433,6 +455,108 @@ fn the_activation_write_is_refused_as_stale_after_another_write_and_planned_agai
                 .unwrap(),
             1
         );
+    }
+}
+
+/// A holder lost when the plan read it that beats before the write: the write is stale, and the
+/// next plan reads it live and refuses, as for a holder live all along.
+#[test]
+fn a_lost_holder_seen_between_the_plan_and_its_write_refuses_the_activation() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        let worker = f.session("worker");
+        f.store.claim("sim/ready", &worker).unwrap();
+        f.advance(LIVE_SECONDS + STALE_SECONDS + 1.0);
+        assert!(!f.health(&worker).holds(), "{backend:?}");
+        let (beating, handle) = (f.other(), worker.clone());
+        let late = f.late(move || beating.touch(&handle).unwrap());
+        let why = refused(late.activate_workflow(&mapped(), &Host::local()));
+        assert!(
+            why.starts_with(&format!(
+                "workflow: sim/ready is held by {worker} as its executor"
+            )),
+            "{backend:?}: {why}"
+        );
+        assert_eq!(f.store.workflow_active().unwrap(), None);
+        assert_eq!(f.store.workflow_position("sim/ready").unwrap(), None);
+        assert_eq!(f.store.raw().table("workflow").count().unwrap(), 0);
+        // Lost and unseen, its work is moved.
+        f.advance(LIVE_SECONDS + STALE_SECONDS + 1.0);
+        assert!(matches!(
+            f.store.activate_workflow(&mapped(), &Host::local()),
+            Ok(Followed::Activated(_))
+        ));
+    }
+}
+
+/// A task filed with no position between the plan's read and its write: the write is stale, and
+/// the next plan places it with the rest.
+#[test]
+fn a_task_filed_between_the_plan_and_its_write_is_placed_by_the_next_plan() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        let filer = f.other();
+        let late = f.late(move || {
+            filer
+                .create(&crate::NewTask::new("sim/filed", "Filed late", "owner"))
+                .unwrap();
+        });
+        assert!(matches!(
+            late.activate_workflow(&mapped(), &Host::local()),
+            Ok(Followed::Activated(_))
+        ));
+        let filed = f.store.workflow_position("sim/filed").unwrap();
+        assert_eq!(
+            filed.map(|p| (p.at(), p.revision, p.generation)),
+            Some((pair("build", "available"), 1, 1)),
+            "{backend:?}"
+        );
+    }
+}
+
+/// A commit whose project file is the active one's, byte for byte, is the active workflow: the
+/// one read of the active generation says so, and no definition or mapping is read. Another file
+/// with the same definition and mappings is compared by them.
+#[test]
+fn a_commit_of_the_active_ones_file_is_unchanged_by_its_blob_alone() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        let first = mapped();
+        f.store.activate_workflow(&first, &Host::local()).unwrap();
+        let active = f.store.workflow_active().unwrap().unwrap();
+        // Another definition under the same blob and format is the active file still: only its
+        // bytes are compared, which name the definition and the mappings both.
+        let mut relabelled = custom(&format!(
+            "{}{MAPPED}",
+            TWO.replace(r#"label = "Build""#, r#"label = "Make""#)
+        ));
+        let mut source = first.revision.source.clone();
+        source.commit = "b".repeat(40);
+        relabelled.revision = relabelled.definition.revision(source).unwrap();
+        assert_ne!(relabelled.revision.digest, active.digest);
+        assert_eq!(
+            f.store.activate_workflow(&relabelled, &Host::local()),
+            Ok(Followed::Unchanged(active.clone())),
+            "{backend:?}"
+        );
+        // The same workflow in a file of other bytes (a limit changed beside it): compared by its
+        // definition and mappings, which are the active ones.
+        let mut limits = first.clone();
+        let mut source = first.revision.source.clone();
+        source.project_blob = "c".repeat(40);
+        limits.revision = limits.definition.revision(source).unwrap();
+        assert_eq!(
+            f.store.activate_workflow(&limits, &Host::local()),
+            Ok(Followed::Unchanged(active.clone()))
+        );
+        // Of other bytes and another definition, it activates.
+        let mut source = first.revision.source.clone();
+        source.project_blob = "d".repeat(40);
+        relabelled.revision = relabelled.definition.revision(source).unwrap();
+        assert!(matches!(
+            f.store.activate_workflow(&relabelled, &Host::local()),
+            Ok(Followed::Activated(Active { generation: 2, .. }))
+        ));
     }
 }
 

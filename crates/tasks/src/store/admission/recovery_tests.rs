@@ -176,6 +176,18 @@ fn a_session_that_leaves_is_recovered_by_each_positions_lost_holder_action() {
         assert_eq!(f.store.get("sim/a").unwrap().status, "review");
         assert!(roles(&f, "sim/a").contains(&("birch".into(), "reviewer".into())));
         assert!(position(&f, "sim/a").manual.is_some());
+        // Left, it leaves no more: refused as any write by a session that left, before any
+        // recovery, and at once, with no try again.
+        let (before, tried) = (f.store.dump().unwrap(), Store::tried_again_here());
+        let again = f.store.leave("birch");
+        assert!(f.store.refuses_actor(again.as_ref().unwrap_err(), "birch"));
+        assert_eq!(
+            refused(again),
+            "session birch has left; attach again",
+            "{backend:?}"
+        );
+        assert_eq!(Store::tried_again_here(), tried);
+        assert_eq!(f.store.dump().unwrap(), before);
         f.store.leave("amber").unwrap();
         // amber's executor on sim/b moves back to available, and its leftover executor role on
         // sim/a, which verify/reviewing does not staff, goes alone.

@@ -462,8 +462,8 @@ impl Project {
     /// one, a key no stamp has) refused as it says it. The files its entrypoints hold are
     /// [`Project::load`]'s to look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
-        let file = Self::written(text)?;
-        workflow::require_supported(text)?;
+        let mut file = Self::written(text)?;
+        workflow::require_supported(file.workflow.take(), file.workflow_mappings.take())?;
         if let Some(refusal) = File::refusal(&file.unknown(text)) {
             return Err(refusal);
         }
@@ -487,8 +487,8 @@ impl Project {
         let Some(text) = Self::read(root)? else {
             return Ok((Self::plain(root), Vec::new(), Vec::new()));
         };
-        let file = Self::written(&text)?;
-        workflow::require_supported(&text)?;
+        let mut file = Self::written(&text)?;
+        workflow::require_supported(file.workflow.take(), file.workflow_mappings.take())?;
         let (unknown, retired) = (file.unknown(&text), file.retired(&text));
         let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
         Ok((project, unknown, retired))

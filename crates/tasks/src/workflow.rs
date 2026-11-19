@@ -122,7 +122,7 @@ pub struct Mapping {
 /// Parse only the candidate `[workflow]` in a project file; other project tables belong to
 /// `Project::parse`. Omission selects built-in v1. Unknown workflow fields/variants refuse.
 pub fn candidate(text: &str) -> Result<Validated, String> {
-    let workflow = taken(&mut table(text)?, "workflow")?;
+    let workflow = taken(table(text)?.remove("workflow"), "workflow")?;
     Validated::new(workflow.unwrap_or_else(builtin))
 }
 
@@ -130,8 +130,17 @@ pub fn candidate(text: &str) -> Result<Validated, String> {
 /// checked against that workflow. Mappings without a workflow are refused: they map onto nothing.
 pub fn written(text: &str) -> Result<(Option<Validated>, Vec<Mapping>), String> {
     let mut file = table(text)?;
-    let definition: Option<Definition> = taken(&mut file, "workflow")?;
-    let mappings: Vec<Mapping> = taken(&mut file, "workflow_mappings")?.unwrap_or_default();
+    written_from(file.remove("workflow"), file.remove("workflow_mappings"))
+}
+
+/// [`written`] of a file already read as TOML: the values of its `workflow` and
+/// `workflow_mappings`, none where it has none, so a reader of the whole file reads it once.
+pub fn written_from(
+    workflow: Option<toml::Value>,
+    mappings: Option<toml::Value>,
+) -> Result<(Option<Validated>, Vec<Mapping>), String> {
+    let definition: Option<Definition> = taken(workflow, "workflow")?;
+    let mappings: Vec<Mapping> = taken(mappings, "workflow_mappings")?.unwrap_or_default();
     let Some(definition) = definition else {
         if !mappings.is_empty() {
             return Err("workflow_mappings: no [workflow] to map onto".into());
@@ -149,13 +158,13 @@ fn table(text: &str) -> Result<toml::Table, String> {
     toml::from_str(text).map_err(|e| format!("workflow: {e}"))
 }
 
-/// `file`'s table `key`, taken out of it and read as the board reads the same types from its own
-/// rows (`serde_json`), so every program that links the workflow links its readers once and none
-/// for TOML; none where the file has no `key`. Its refusal names what is wrong, without TOML's
-/// line, and refuses all that a reading straight from TOML refuses: a datetime is a table to it,
-/// which no field of the workflow takes.
+/// `value`, a file's table `key`, read as the board reads the same types from its own rows
+/// (`serde_json`), so every program that links the workflow links its readers once and none for
+/// TOML; none where the file has no `key`. Its refusal names what is wrong, without TOML's line,
+/// and refuses all that a reading straight from TOML refuses: a datetime is a table to it, which
+/// no field of the workflow takes.
 fn taken<T: serde::de::DeserializeOwned>(
-    file: &mut toml::Table,
+    value: Option<toml::Value>,
     key: &str,
 ) -> Result<Option<T>, String> {
     fn json(value: toml::Value) -> serde_json::Value {
@@ -172,7 +181,7 @@ fn taken<T: serde::de::DeserializeOwned>(
                 .collect(),
         }
     }
-    (file.remove(key))
+    value
         .map(|value| serde_json::from_value(json(value)).map_err(|e| format!("{key}: {e}")))
         .transpose()
 }
@@ -210,30 +219,35 @@ fn tip(main: &Path, branch: &str) -> Option<String> {
         .map(|commit| commit.trim().to_string())
 }
 
-/// [`committed`] at `commit`, the tip of `branch`, which its refusals name.
+/// [`committed`] at `commit`, the tip of `branch`, which its refusals name: the commit's top tree,
+/// for the file's mode, and the file, in one `git cat-file --batch`.
 fn committed_at(main: &Path, branch: &str, commit: String) -> Result<Committed, String> {
     let refuse = |what: String| format!("workflow committed on {branch}: {what}");
-    let listed = git(main, &["ls-tree", "-z", &commit, "--", FILE]).map_err(refuse)?;
-    let Some(entry) = listed.split('\0').find(|line| !line.is_empty()) else {
+    let specs = [format!("{commit}^{{tree}}"), format!("{commit}:{FILE}")];
+    let mut read = crate::sweep::git::objects(main, &specs).map_err(refuse)?;
+    let (Some(file), Some(Some(tree))) = (read.pop(), read.pop()) else {
+        return Err(refuse(format!("commit {commit} has no tree")));
+    };
+    let Some((mode, blob)) = entry(&tree, FILE) else {
         return Ok(Committed {
             commit,
             custom: None,
         });
     };
-    // `<mode> <type> <object>\t<path>`
-    let (meta, _) = entry
-        .split_once('\t')
-        .ok_or_else(|| refuse(format!("unreadable tree entry {entry:?}")))?;
-    let fields: Vec<&str> = meta.split(' ').collect();
-    let [mode, kind, blob] = fields[..] else {
-        return Err(refuse(format!("unreadable tree entry {entry:?}")));
-    };
-    if kind != "blob" || !matches!(mode, "100644" | "100755") {
+    if !matches!(mode.as_str(), "100644" | "100755") {
+        let kind = match mode.as_str() {
+            "40000" => "tree",
+            "160000" => "commit",
+            _ => "blob",
+        };
         return Err(refuse(format!(
-            "{FILE} must be a regular file, not mode {mode} {kind}"
+            "{FILE} must be a regular file, not mode {mode:0>6} {kind}"
         )));
     }
-    let text = git(main, &["cat-file", "blob", blob]).map_err(refuse)?;
+    let file = file
+        .filter(|file| file.id == blob)
+        .ok_or_else(|| refuse(format!("{FILE} is not readable at {commit}")))?;
+    let text = String::from_utf8(file.bytes).map_err(|_| refuse("the file is not UTF-8".into()))?;
     let (definition, mappings) = written(&text).map_err(refuse)?;
     let custom = match definition {
         None => None,
@@ -296,6 +310,23 @@ fn git(main: &Path, args: &[&str]) -> Result<String, String> {
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
     String::from_utf8(out.stdout).map_err(|_| "the file is not UTF-8".to_string())
+}
+
+/// The mode and object id of the entry `name` in `tree`, a tree object as git stores it: each
+/// entry `<mode> <name>\0` and its id's bytes, as many as its own id's hex digits halved.
+fn entry(tree: &crate::sweep::git::Object, name: &str) -> Option<(String, String)> {
+    let width = tree.id.len() / 2;
+    let mut rest = tree.bytes.as_slice();
+    while let Some(space) = rest.iter().position(|b| *b == b' ') {
+        let end = space + rest[space..].iter().position(|b| *b == 0)?;
+        let id = rest.get(end + 1..end + 1 + width)?;
+        if &rest[space + 1..end] == name.as_bytes() {
+            let hex = id.iter().map(|byte| format!("{byte:02x}")).collect();
+            return Some((String::from_utf8_lossy(&rest[..space]).into_owned(), hex));
+        }
+        rest = &rest[end + 1 + width..];
+    }
+    None
 }
 
 fn object_id(id: &str) -> bool {
