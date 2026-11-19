@@ -2584,6 +2584,18 @@ the repository its own settings pin (for GitHub, [`upstream_id`](GITHUB.md#deliv
 and answers that repository's number, which the land requires: a program that does not deliver
 imports pins nothing, and nothing merges.
 
+To tell an import from a task, the land fetches the upstream for every head it delivers, not
+only for an import. It judges the head by the upstream's branch as it is then, never as it was
+last fetched, so a task head never carries an upstream commit the land did not see. The cost is
+that an upstream that does not answer refuses every land of the project, ordinary tasks
+included, before anything is published. The causes include the network, its host, the
+machine's credentials for it, or an address that moved. The line is said to the lander alone:
+`the upstream URL was not fetched:`, then git's reason or `no answer within N s` (the land's
+network timeout), then `every land reads it while symphony.toml on main names it`. The lander
+runs the land again once `git fetch URL` answers from the main checkout. An address on the
+default branch that no longer answers is that branch's to correct, by the project's owner at the
+host: the land of that correction is refused like any other.
+
 The merge commit is titled `Merge branch 'SLUG'`, as the land's own merge is, so the release
 cadence counts it as one. It is proved by git alone: on the fetched default branch, of two
 parents, the base it was made on then the head, its tree the merge of the two, and U in its

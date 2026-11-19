@@ -270,11 +270,12 @@ What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASK
 ## `[land.upstream]`
 
 The upstream a downstream project imports from ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)):
-where a land delivered by a pull request fetches it, to judge a head that imports it, and the one
-history such a head may bring in, merged by a merge commit rather than squashed
-([TASKS](TASKS.md#an-import-delivered-by-a-pull-request)). With none, no import is delivered and a
-head holding another history is refused. Both keys are needed, and no other is read; it decides
-what lands, so a change of it is reviewed.
+where a land delivered by a pull request fetches it for every head, to judge whether the head
+imports it, and the one history such a head may bring in, merged by a merge commit rather than
+squashed ([TASKS](TASKS.md#an-import-delivered-by-a-pull-request)). An address that does not
+answer refuses every such land, a task's as well. With none, no import is delivered and a head
+holding another history is refused. Both keys are needed, and no other is read; it decides what
+lands, so a change of it is reviewed.
 
 | Key | What it sets |
 | --- | --- |

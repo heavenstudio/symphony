@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
+use symphony_board::cli::Env;
 use symphony_board::cli::machine_work::recorded::{self, FOLDER_VAR, Phase, Record, Step};
 use symphony_board::land::delivery::{Journal, Receipt, Stage, Transport};
 use symphony_board::land::{Stop, evidence, land, land_by};
@@ -372,15 +373,27 @@ fn landed_with(
     host: &Host,
     vars: &[(&str, &str)],
 ) -> (String, Result<String, String>) {
+    let mut out = Vec::new();
+    let result = land_by(
+        &r.board.store,
+        &landing(r, vars),
+        slug,
+        actor,
+        &mut out,
+        host,
+    );
+    (String::from_utf8(out).unwrap(), result.map_err(refusal))
+}
+
+/// The environment a land runs in here: the checkout's, with the recorder's folder and `vars`.
+fn landing(r: &Repo, vars: &[(&str, &str)]) -> Env {
     let mut env = r.env(&r.root);
     let folder = work(r).to_string_lossy().into_owned();
     env.vars.insert(FOLDER_VAR.into(), folder);
     for (name, value) in vars {
         env.vars.insert((*name).into(), (*value).into());
     }
-    let mut out = Vec::new();
-    let result = land_by(&r.board.store, &env, slug, actor, &mut out, host);
-    (String::from_utf8(out).unwrap(), result.map_err(refusal))
+    env
 }
 
 fn lands(r: &Repo) -> PathBuf {

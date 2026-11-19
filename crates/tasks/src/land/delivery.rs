@@ -32,8 +32,9 @@
 //! and every other commit the head adds its line's own or U's. Each publication and merge of an
 //! import tells the program the operation, the upstream and U ([`delivering`]), which pins the
 //! upstream at its host and answers its number ([`pinned`]). Where an upstream is named, a head
-//! that holds any of its commits and is not assessed as an import is refused, never squashed.
-//! Neither operation falls back to the other, nor to a merge here.
+//! that holds any of its commits and is not assessed as an import is refused, never squashed,
+//! and the upstream is fetched for every land to tell, so one that does not answer refuses a
+//! task's land as well. Neither operation falls back to the other, nor to a merge here.
 //!
 //! Before it judges anything a land reads the pull request a run before bound the task to
 //! ([`Landing::bound_before`]): one merged since is settled or held, never published to, and one
@@ -868,13 +869,14 @@ impl Landing<'_> {
 
     /// Refuse a head a squash must not deliver: one that changes a generator's outputs
     /// ([`Landing::outputs`]); where the project names an upstream, one that holds any of its
-    /// commits, which only an import assessed as one delivers ([`Landing::import`]); and one that
-    /// merges a commit the remote default does not hold.
+    /// commits as fetched now ([`Landing::upstreamed`]), which only an import assessed as one
+    /// delivers ([`Landing::import`]); and one that merges a commit the remote default does not
+    /// hold.
     fn admit(&self, base: &str, tip: &str) -> Result<(), Refusal> {
         let (slug, default) = (self.slug, &self.settings.default_branch);
         self.outputs(base, tip)?;
         if let Some(upstream) = &self.settings.upstream {
-            let fetched = self.upstreamed(upstream).map_err(Refusal::here)?;
+            let fetched = self.upstreamed(upstream)?;
             let theirs = |not: &[&str]| -> Result<Vec<String>, Refusal> {
                 let args = [&["rev-list", tip, "--not", base][..], not].concat();
                 Ok((run_git(&self.main, &args)?.lines().map(str::to_string)).collect())
@@ -967,22 +969,32 @@ impl Landing<'_> {
         Ok(())
     }
 
-    /// The upstream's branch fetched now from `upstream`'s address to [`UPSTREAM`]: its tip.
-    fn upstreamed(&self, upstream: &super::Upstream) -> Result<String, String> {
+    /// The upstream's branch fetched now from `upstream`'s address to [`UPSTREAM`]: its tip. A head
+    /// is judged by the upstream as it is now, a task's as well as an import's, never as it was
+    /// last fetched, so one that does not answer (the network, its host, credentials, an address
+    /// that moved) refuses every land here before anything is published, the line naming it.
+    fn upstreamed(&self, upstream: &super::Upstream) -> Result<String, Refusal> {
+        let default = &self.settings.default_branch;
+        let unfetched = |why: &str| {
+            Refusal::here(format!(
+                "the upstream {} was not fetched: {why}: every land reads it while {} on \
+                 {default} names it ([land.upstream]), a task's as well as an import's, so \
+                 nothing landed. Land again once it answers; an address that no longer answers is \
+                 corrected on {default} by the project's owner, as no land delivers it",
+                upstream.url,
+                super::MANIFEST
+            ))
+        };
         let fetch = format!("+refs/heads/{}:{UPSTREAM}", upstream.branch);
         let args = ["fetch", "--quiet", "--no-tags", &upstream.url, &fetch];
-        let done = self.remote_output(&args)?;
+        let done = self.remote_output(&args).map_err(|why| unfetched(&why))?;
         if !done.status.success() {
             let said = String::from_utf8_lossy(&done.stderr);
             let said = (said.lines().map(str::trim)).find(|line| !line.is_empty());
-            return Err(format!(
-                "the upstream {} was not fetched: {}",
-                upstream.url,
-                said.unwrap_or("git fetch failed")
-            ));
+            return Err(unfetched(said.unwrap_or("git fetch failed")));
         }
         rev(&self.main, UPSTREAM)
-            .ok_or_else(|| format!("{} has no {}", upstream.url, upstream.branch))
+            .ok_or_else(|| Refusal::here(format!("{} has no {}", upstream.url, upstream.branch)))
     }
 
     /// The import of `commit` that `tip` is, held to the project's upstream and to the history it
@@ -1007,7 +1019,7 @@ impl Landing<'_> {
             ));
         };
         let url = &upstream.url;
-        let fetched = self.upstreamed(upstream).map_err(Refusal::here)?;
+        let fetched = self.upstreamed(upstream)?;
         let holds = |commit: &str, tip: &str| ancestor(&self.main, commit, tip);
         let then = "Its assessor names the upstream commit the head imports, or the branch is put \
                     right: nothing landed";
