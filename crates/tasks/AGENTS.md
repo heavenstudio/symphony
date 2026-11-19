@@ -2,7 +2,7 @@
 
 The `symphony-board` crate (this folder) is the task board: its store over SurrealDB, the database
 server it starts in `symphony/tasks/` in the git common dir, and the binaries `tasks`
-(`just tasks`), `agent-send` (`just agent-send`), `tasks-copy` and `tasks-reclaim`. The workspace,
+(`just tasks`), `agent-send` (`just agent-send`), `tasks-copy`, `tasks-reclaim` and `tasks-move`. The workspace,
 the Cargo wrapper and the toolchain pin are [the root guide's](../../AGENTS.md#rust).
 
 This guide is what to know before changing the crate: where each job lives, the invariants a change
@@ -26,7 +26,7 @@ board's first, Python, command line did). Every build of `tasks`, this crate's a
 project's board-only one, is `cli::process_main` and nothing else: a `main` of its own that calls
 `cli::main` delivers in every write and starts no dispatcher (`tests/server/dispatch.rs`).
 `bin/agent-send.rs` is `cli/agent_send.rs`; `bin/tasks-copy.rs` and `bin/tasks-reclaim.rs` say their
-own. `cli/api.rs` is `tasks api` ([TASKS](../../docs/TASKS.md#the-tasks-api)), `cli/agents.rs` the
+own, and `bin/tasks-move.rs` is `move_cli.rs`: a program apart, so `tasks` links no move. `cli/api.rs` is `tasks api` ([TASKS](../../docs/TASKS.md#the-tasks-api)), `cli/agents.rs` the
 agents API ([TASKS](../../docs/TASKS.md#the-agents-api)), `cli/beat.rs` the heartbeat hook,
 `usage.rs` and `usage/transcript.rs` what its beats read of the session's own transcript, kept
 beside the bound keys and never in the database
@@ -149,9 +149,12 @@ release and reclaim takes, `ending.rs` the asks to end, `apart.rs` a start off a
 server selection, `export.rs` what a refresh reads of a running board, and
 `scratch.rs` a fixture's supervised server. `postgres.rs` is the board's PostgreSQL beside it,
 the machine's own from `[board] postgresql` or discovered on `PATH`, which `Home` starts and stops
-for a scratch board alone, on a socket under `/tmp` and no TCP; `postgres/lifecycle.rs` its hold,
-stopped-cluster snapshot, scratch recovery and vacuum
-([POSTGRESQL](../../docs/POSTGRESQL.md)). `port.rs` is a child
+for the board whose identity names it, on a socket under `/tmp` and no TCP;
+`postgres/lifecycle.rs` its hold, stopped-cluster snapshot, recovery into a scratch home or over
+its own board, and vacuum ([POSTGRESQL](../../docs/POSTGRESQL.md)). `moving.rs` moves a board's
+store between the engines and holds the journalled switch a restore over a board shares; a
+table added to the board is placed as copied, carried or left in `store/copy.rs`, whose test
+fails on one that is none, since a move would drop it. `port.rs` is a child
 server's loopback port.
 
 `pg.rs` is the socket client of that PostgreSQL. `pg/external.rs` is the hosted board's settings,

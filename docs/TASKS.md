@@ -221,6 +221,15 @@ server would replay and its clean stop remove), else among the newest three whos
 the room the old store takes comes back only once it is removed. The exports stay in
 `symphony/tasks/reclaim/exports/`. `--dir FOLDER` rehearses on a copy of `symphony/tasks/` (`cp -c`, a clone).
 
+The `tasks-move` binary, the owner's to run the same way, moves the board's store to the other
+engine (`tasks-move postgresql --as HANDLE`, `tasks-move surrealdb --as HANDLE`) and puts a
+snapshot of a PostgreSQL board back over it (`tasks-move --restore SNAPSHOT --as HANDLE`): held,
+exported, copied, every row compared, then switched under a journal with a commit point. A
+failure before it leaves the board on the engine it was on, nothing is deleted, and a move cut
+short is settled by its holder's next `tasks-move`
+([one board's move](analysis/board-pg-cutover.md#one-boards-move),
+[POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)).
+
 **Snapshots.** `just tasks snapshot` clones the board's store, `symphony/tasks/data`, into
 `symphony/tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N` after another taken
 in the same second); `--list` names those kept, the newest first

@@ -40,6 +40,7 @@ mod blocks;
 mod board;
 mod callbacks;
 mod cancel;
+mod carried;
 mod claim;
 mod closing;
 mod common;
