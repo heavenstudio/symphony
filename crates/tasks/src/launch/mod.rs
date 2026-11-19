@@ -291,8 +291,18 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     }
     store.touch(&ask.actor)?;
     let task = store.get(slug)?;
-    if FINISHED.contains(&task.status.as_str()) {
+    // A task a custom workflow holds is finished by its position, and staffed by the edges
+    // leaving it: a launch starts only a role one of them gives.
+    let operating = store.operating_for(std::slice::from_ref(&task))?;
+    let finished = match &operating {
+        Some(operating) => operating.finished(&task).unwrap_or(false),
+        None => FINISHED.contains(&task.status.as_str()),
+    };
+    if finished {
         return Err(Error::Refused(format!("{slug} is {}", task.status)));
+    }
+    if let Some(placed) = operating.as_ref().and_then(|o| o.placed(&task)) {
+        by_its_edges(&placed, slug, role, ask.beside.is_some())?;
     }
     if role == "reviewer" {
         if task.instruction {
@@ -483,11 +493,13 @@ fn live_executor_in(store: &Store, path: &Path) -> Result<Option<String>, Error>
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let board = store.board()?;
     let records = store.all_task_sessions()?;
-    for task in board
-        .tasks
-        .iter()
-        .filter(|t| !FINISHED.contains(&t.status.as_str()))
-    {
+    // Finished by its recorded facts: a held task by its position, never its projected status.
+    let operating = store.operating_for(&board.tasks)?;
+    let finished = |t: &crate::Task| match &operating {
+        Some(operating) => operating.finished(t).unwrap_or(false),
+        None => FINISHED.contains(&t.status.as_str()),
+    };
+    for task in board.tasks.iter().filter(|t| !finished(t)) {
         for role in task
             .roles
             .iter()
@@ -565,9 +577,20 @@ fn agent_kind(ask: &Ask) -> &'static str {
 /// The new session takes its part on the task: an executor reserves it, a reviewer takes the
 /// reviewer role, beside one still there only when the launch says why. A refusal naming how one
 /// joins beside it names the launch's own `--beside`, not `tasks role`'s.
+///
+/// On a task a custom workflow holds, the reviewer takes its role by the one edge leaving the
+/// task's position that gives it, as the new session, through admission, which judges it fresh
+/// ([`Store::claim_by_workflow`]); no reviewer joins beside another there, as the edge gives the
+/// role to one session. An executor reserves it as on any task, and claims its edge when it starts.
 fn take_up(store: &Store, ask: &Ask, handle: &str) -> Result<(), Error> {
     let slug = ask.slug.as_str();
     let beside = ask.beside.as_deref();
+    if ask.role == "reviewer" && crate::store::workflow::position_held(&store.get(slug)?.fields) {
+        let principal = crate::workflow::agent_session(handle);
+        let role = symphony_api::workflow::Role::Reviewer;
+        store.claim_by_workflow(slug, &principal, &crate::workflow::Host::local(), role)?;
+        return Ok(());
+    }
     if ask.role == "executor" {
         store.reserve(slug, handle, RESERVE_SECONDS)?;
     } else {
@@ -581,6 +604,37 @@ fn take_up(store: &Store, ask: &Ask, handle: &str) -> Result<(), Error> {
                 )),
                 problem => problem,
             })?;
+    }
+    Ok(())
+}
+
+/// Whether a launch of `role` on `slug`, standing at `placed`, starts a role the edges leaving its
+/// position give: refused before anything starts where none does, or where a reviewer would join
+/// beside another, as an edge gives the reviewer's role to one session.
+fn by_its_edges(
+    placed: &crate::workflow::operate::Placed<'_>,
+    slug: &str,
+    role: &str,
+    beside: bool,
+) -> Result<(), Error> {
+    let at = placed.at();
+    let explicit = |why: String| {
+        Error::Refused(format!(
+            "explicit_action_required: a custom workflow holds {slug}, at {}/{}: {why}; its \
+             edges: `just tasks workflow actions {slug}`",
+            at.phase, at.state
+        ))
+    };
+    if beside {
+        return Err(explicit(
+            "its edges give the reviewer's role to one session, so no reviewer joins beside \
+             another"
+                .into(),
+        ));
+    }
+    let claims = placed.claims();
+    if !(claims.iter()).any(|c| crate::workflow::admit::word(&c.role) == role) {
+        return Err(explicit(format!("no edge leaving it gives the {role} role")));
     }
     Ok(())
 }

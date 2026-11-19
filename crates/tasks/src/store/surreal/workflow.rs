@@ -90,7 +90,7 @@ RETURN {
     active: (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL,
     task: (SELECT slug, version, status, created_by, fields._board.workflow ?? NULL AS position
         FROM ONLY type::record('task', $slug)) ?? NULL,
-    roles: (SELECT handle, role FROM role WHERE slug = $slug),
+    roles: (SELECT handle, role, expires FROM role WHERE slug = $slug),
     dependencies: $deps,
     found: (SELECT slug, version, status, fields._board.workflow ?? NULL AS position
         FROM $deps.map(|$d| type::record('task', $d))),
@@ -117,15 +117,15 @@ FOR $d IN $dependencies {
 FOR $r IN $holding {
     IF !record::exists(type::record('role', [$slug, $r.handle, $r.role])) { THROW 'stale' };
 };
-FOR $r IN $add {
-    IF array::len(SELECT VALUE handle FROM role WHERE slug = $slug AND role IN [$r.role, 'reserved'] AND handle != $r.handle) > 0 { THROW 'stale' };
-};
 FOR $s IN $seen {
     IF (SELECT VALUE last_seen FROM ONLY type::record('session', $s.handle)) != $s.last_seen { THROW 'stale' };
 };
 IF $receipt != NONE { IF record::exists(type::record('workflow', $receipt)) { THROW 'stale' }; };
 IF $actor != NONE AND (!record::exists(type::record('session', $actor)) OR type::record('session', $actor).left_at != NONE) { THROW 'stale' };
 FOR $r IN $drop { DELETE type::record('role', [$slug, $r.handle, $r.role]) RETURN NONE; };
+FOR $r IN $add {
+    IF array::len(SELECT VALUE handle FROM role WHERE slug = $slug AND role IN [$r.role, 'reserved'] AND handle != $r.handle) > 0 { THROW 'stale' };
+};
 FOR $r IN $add { UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
 IF $transition != NONE {
     CREATE type::record('workflow', ['event', $slug, $transition.revision])

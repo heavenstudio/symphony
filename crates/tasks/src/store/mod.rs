@@ -1236,11 +1236,13 @@ struct Change {
 }
 
 impl Change {
-    /// Whether it moves the task, blocks it, or adds or drops an executor, a reviewer or a
-    /// reservation: what a custom workflow's edges alone do to a task it holds. The orchestrator's
-    /// role is the board's coordination, which its writers keep.
+    /// Whether it moves the task, blocks it, or adds or drops an executor or a reviewer: what a
+    /// custom workflow's edges alone do to a task it holds. The orchestrator's role and a
+    /// reservation are the board's coordination, which its writers keep: a launch reserves the
+    /// work it starts a session for, and admission honours the reservation, and consumes it, when
+    /// that session takes the edge (docs/WORKFLOW.md, "Operations").
     fn moves_or_staffs(&self) -> bool {
-        let staffing = |role: &str| role != "orchestrator";
+        let staffing = |role: &str| role != "orchestrator" && role != "reserved";
         self.status.is_some()
             || self.blocked.is_some()
             || self.add.as_ref().is_some_and(|r| staffing(&r.role))

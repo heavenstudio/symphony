@@ -4,6 +4,7 @@
 use super::Case;
 use symphony_api::workflow::Source;
 use symphony_board::workflow::{Custom, Host, written};
+use symphony_board::{NewSession, NewTask};
 
 /// Work built (available, then worked by its executor), then accepted by the owner.
 const FLOW: &str = r#"
@@ -35,8 +36,37 @@ edges = [
 ]
 "#;
 
+/// The reviewer's position FLOW lacks: `verify/reviewing`, staffed by the reviewer the `review`
+/// edge gives from `verify/awaiting`.
+const REVIEWING: &str = r#"{ at = { phase = "verify", state = "reviewing" }, staffing = "reviewer", slot = "retain", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = false, legacy = "review", satisfies_dependencies = false, completion = "none", recovery = { release = { target = { phase = "verify", state = "awaiting" }, manual = false, slot = "retain", release_role = true, release_reservation = false }, lost_holder = { manual = true, slot = "retain", release_role = false, release_reservation = true }, attempt_failure = { manual = true, slot = "retain", release_role = false, release_reservation = false }, cancellation_acknowledged = { manual = true, slot = "retain", release_role = false, release_reservation = false } } },
+  "#;
+const REVIEW: &str = r#"{ id = "review", label = "Review", from = { phase = "verify", state = "awaiting" }, to = { phase = "verify", state = "reviewing" }, operation = "claim", authority = [{ kind = "task_role", role = "reviewer" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "acquire_role", role = "reviewer" }, { kind = "slot", policy = "retain" }], automatic = false, human_wait = false },
+  "#;
+
 pub(crate) fn flow() -> Custom {
-    let definition = written(FLOW).unwrap().0.unwrap();
+    custom(FLOW)
+}
+
+/// FLOW with a reviewer's position and the edge that staffs it.
+fn reviewed() -> Custom {
+    custom(
+        &(FLOW.replace(
+            r#"{ id = "accepted", label = "Accepted" },"#,
+            r#"{ id = "accepted", label = "Accepted" }, { id = "reviewing", label = "Reviewing" },"#,
+        ))
+        .replace(
+            r#"  { at = { phase = "verify", state = "accepted" }"#,
+            &format!(r#"  {REVIEWING}{{ at = {{ phase = "verify", state = "accepted" }}"#),
+        )
+        .replace(
+            r#"  { id = "accept","#,
+            &format!(r#"  {REVIEW}{{ id = "accept","#),
+        ),
+    )
+}
+
+fn custom(text: &str) -> Custom {
+    let definition = written(text).unwrap().0.unwrap();
     let revision = definition
         .revision(Source {
             commit: "1".repeat(40),
@@ -273,5 +303,92 @@ fn a_pull_recovers_a_lost_holder_by_its_positions_action_and_lists_the_work_agai
              build/working → build/available, workflow revision 3"
         )),
         "{shown}"
+    );
+}
+
+#[test]
+fn a_launch_starts_the_role_a_held_tasks_edges_give_its_executor_reserving_and_its_reviewer_claiming(
+) {
+    let p = super::launch::Terminals::new("held");
+    let board = p.board();
+    let orch = (board.register(&NewSession::new("orchestrator")).unwrap())
+        .row
+        .handle;
+    board
+        .activate_workflow(&reviewed(), &Host::local())
+        .unwrap();
+    board
+        .create(&NewTask::new("sim/jump", "Jump", &orch))
+        .unwrap();
+    let folder = |name: &str| {
+        let path = p.dir.join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        path.display().to_string()
+    };
+    let (built, looked) = (folder("built"), folder("looked"));
+    let launch = |role: &str, worktree: &str, more: &[&str]| {
+        let args = ["launch", "sim/jump", "--kind", "claude", "--role", role, "--worktree", worktree];
+        p.as_(&orch, &[&args[..], more].concat())
+    };
+    // No edge leaving build/available gives the reviewer's role: nothing starts.
+    let early = launch("reviewer", &looked, &[]);
+    assert_eq!(early.code, 1, "{}", early.out);
+    assert!(
+        early.err.starts_with(
+            "✖ explicit_action_required: a custom workflow holds sim/jump, at build/available: no \
+             edge leaving it gives the reviewer role"
+        ),
+        "{}",
+        early.err
+    );
+    assert!(board.task_sessions("sim/jump").unwrap().is_empty());
+    // The executor's launch reserves it; its claim takes the edge and the reservation with it.
+    let ran = launch("executor", &built, &[]);
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""));
+    let [executor] = <[_; 1]>::try_from(board.task_sessions("sim/jump").unwrap()).unwrap();
+    let task = board.get("sim/jump").unwrap();
+    assert_eq!(task.status, "ready");
+    assert!(
+        (task.roles.iter()).any(|r| r.handle == executor.handle && r.role == "reserved"),
+        "{:?}",
+        task.roles
+    );
+    let claimed = p.as_(&executor.handle, &["claim", "sim/jump"]);
+    assert!(
+        claimed.out.starts_with("claimed sim/jump (sim/jump@2)"),
+        "{}{}",
+        claimed.out,
+        claimed.err
+    );
+    let submitted = p.as_(
+        &executor.handle,
+        &["workflow", "apply", "sim/jump", "submit", "--revision", "2"],
+    );
+    assert_eq!(submitted.code, 0, "{}", submitted.err);
+    // A second reviewer beside another is no edge's: refused before anything starts.
+    let beside = launch("reviewer", &looked, &["--beside", "a second look"]);
+    assert_eq!(beside.code, 1);
+    assert!(
+        beside
+            .err
+            .contains("its edges give the reviewer's role to one session"),
+        "{}",
+        beside.err
+    );
+    // The reviewer's launch takes the review edge as the new session.
+    let reviewed = launch("reviewer", &looked, &[]);
+    assert_eq!((reviewed.code, reviewed.err.as_str()), (0, ""));
+    let sessions = board.task_sessions("sim/jump").unwrap();
+    let reviewer = (sessions.iter())
+        .find(|s| s.handle != executor.handle)
+        .unwrap();
+    let position = board.workflow_position("sim/jump").unwrap().unwrap();
+    assert_eq!(
+        (position.phase.as_str(), position.state.as_str(), position.revision),
+        ("verify", "reviewing", 4)
+    );
+    assert!(
+        (board.get("sim/jump").unwrap().roles.iter())
+            .any(|r| r.handle == reviewer.handle && r.role == "reviewer")
     );
 }

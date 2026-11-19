@@ -39,6 +39,17 @@ impl Store {
         self.workflow_operating()
     }
 
+    /// Whether `task` is finished by its recorded facts ([`Operating::finished`]): a task a
+    /// custom workflow holds when its position is terminal, never by the status it projects to;
+    /// any other when the board's writers keep it done or cancelled. Reads the workflow only for a
+    /// task one holds.
+    pub fn finished(&self, task: &crate::Task) -> Result<bool, Error> {
+        let Some(operating) = self.operating_for(std::slice::from_ref(task))? else {
+            return Ok(crate::health::FINISHED.contains(&task.status.as_str()));
+        };
+        Ok(operating.finished(task).unwrap_or(false))
+    }
+
     /// [`Store::settle_held`] where `board` holds anything to settle, its failure said on stderr:
     /// what a PULL and an orchestrator's monitor run beside the board's gives. Whether it wrote.
     pub fn settle_held_if_due(&self, board: &Board) -> bool {

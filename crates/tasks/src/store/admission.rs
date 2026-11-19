@@ -17,6 +17,7 @@
 use super::postgres as pg;
 use super::surreal::{self, cap as sql_cap, workflow as sql};
 use super::{Error, Failure, Opens, Store, Which, statement::both};
+use crate::Health;
 use crate::workflow::admit::{self, Context, Facts, Prerequisite, Refusal};
 use crate::workflow::{Active, Host, Recorded, TaskPosition, Transition};
 use serde::{Deserialize, Serialize};
@@ -67,6 +68,8 @@ struct TaskRead {
 struct RoleRead {
     handle: String,
     role: String,
+    #[serde(default)]
+    expires: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -85,6 +88,11 @@ struct Decided {
     task: TaskRead,
     found: Vec<Found>,
     receipt: Option<Receipt>,
+    /// The reservations on the task that lapsed (past their expiry, or held by a session lost or
+    /// gone), which stand against no claim: the write drops them, fenced on each lost reserver's
+    /// session as it was read.
+    lapsed: Vec<(String, String)>,
+    lapsed_seen: Vec<Value>,
 }
 
 impl Store {
@@ -200,7 +208,10 @@ impl Store {
                 "dependencies": fenced(&decided, request),
                 "holding": holding,
                 "add": admitted.add.iter().map(row).collect::<Vec<_>>(),
-                "drop": admitted.drop.iter().map(pair).collect::<Vec<_>>(),
+                "drop": (admitted.drop.iter())
+                    .chain(decided.lapsed.iter().filter(|l| !admitted.drop.contains(l)))
+                    .map(pair)
+                    .collect::<Vec<_>>(),
                 "receipt": receipt_id,
                 "receipt_body": receipt,
                 "actor": agent(principal),
@@ -211,7 +222,7 @@ impl Store {
                 "said": said(transition),
                 "now": at,
                 "slots": slots,
-                "seen": [],
+                "seen": decided.lapsed_seen,
             });
             // Each role the edge gives its taker is said as the board's own join says it, so every
             // reader of who held a task's roles (a fresh reviewer's, a post's recipient, where the
@@ -352,9 +363,7 @@ impl Store {
             ))
         })?;
         let recorded = self.recorded(&active)?;
-        let roles: Vec<(String, String)> = (read.roles.into_iter())
-            .map(|r| (r.handle, r.role))
-            .collect();
+        let (roles, lapsed, lapsed_seen) = self.lapsing(read.roles)?;
         let reviews = (recorded.definition.edges.iter())
             .filter(|e| task.position.as_ref().is_some_and(|p| p.at() == e.from))
             .any(|e| {
@@ -393,7 +402,47 @@ impl Store {
             task,
             found: read.found,
             receipt: read.receipt,
+            lapsed,
+            lapsed_seen,
         })
+    }
+
+    /// `roles` as admission reads them, and the reservations among them that lapsed, as the
+    /// board's own claim lapses them: past their expiry, or held by a session lost or gone, each
+    /// such session fenced at the beat it was read at. Sessions are read only where a
+    /// reservation could have lapsed by its holder.
+    #[expect(clippy::type_complexity, reason = "one read's three parts, each used once")]
+    fn lapsing(
+        &self,
+        roles: Vec<RoleRead>,
+    ) -> Result<(Vec<(String, String)>, Vec<(String, String)>, Vec<Value>), Failure> {
+        let now = self.now();
+        let reserving = roles.iter().any(|r| r.role == "reserved");
+        let sessions = if reserving {
+            self.sessions().map_err(Failure::Stop)?
+        } else {
+            Vec::new()
+        };
+        let (mut kept, mut lapsed, mut seen) = (Vec::new(), Vec::new(), Vec::new());
+        for role in roles {
+            let pair = (role.handle, role.role);
+            if pair.1 != "reserved" {
+                kept.push(pair);
+                continue;
+            }
+            let session = sessions.iter().find(|s| s.row.handle == pair.0);
+            let expired = role.expires.is_some_and(|expires| expires < now);
+            let gone = session.is_none_or(|s| matches!(s.health, Health::Lost | Health::Left));
+            if expired || gone {
+                if !expired && let Some(session) = session {
+                    seen.push(json!({"handle": pair.0, "last_seen": session.row.last_seen}));
+                }
+                lapsed.push(pair);
+            } else {
+                kept.push(pair);
+            }
+        }
+        Ok((kept, lapsed, seen))
     }
 
     /// The definition `active` names, as activation recorded it.

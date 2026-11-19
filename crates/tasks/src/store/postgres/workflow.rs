@@ -118,8 +118,8 @@ pub(in crate::store) fn admission() -> Pg<'static> {
     'task', (SELECT jsonb_build_object('slug', slug, 'version', version, 'status', status,
         'created_by', created_by, 'position', fields #> '{_board,workflow}')
         FROM task WHERE slug = v ->> 'slug'),
-    'roles', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', handle, 'role', role))
-        FROM role WHERE slug = v ->> 'slug'), '[]'::jsonb),
+    'roles', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', handle, 'role', role,
+        'expires', expires)) FROM role WHERE slug = v ->> 'slug'), '[]'::jsonb),
     'dependencies', coalesce((SELECT jsonb_agg(target) FROM link
         WHERE slug = v ->> 'slug' AND kind = 'dep'), '[]'::jsonb),
     'found', coalesce((SELECT jsonb_agg(jsonb_build_object('slug', t.slug, 'version', t.version,
@@ -161,10 +161,6 @@ BEGIN
             WHERE NOT EXISTS (SELECT 1 FROM role WHERE id = jsonb_build_array(v ->> 'slug', r ->> 'handle', r ->> 'role'))) THEN
         RAISE EXCEPTION 'stale';
     END IF;
-    IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'add') AS a JOIN role ON role.slug = v ->> 'slug'
-            AND role.role IN (a ->> 'role', 'reserved') AND role.handle <> a ->> 'handle') THEN
-        RAISE EXCEPTION 'stale';
-    END IF;
     PERFORM 1 FROM session WHERE handle IN (SELECT s ->> 'handle' FROM jsonb_array_elements(v -> 'seen') AS s)
         FOR SHARE;
     IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'seen') AS s
@@ -181,6 +177,10 @@ BEGIN
     END IF;
     DELETE FROM role WHERE id IN (SELECT jsonb_build_array(v ->> 'slug', d ->> 'handle', d ->> 'role')
         FROM jsonb_array_elements(v -> 'drop') AS d);
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'add') AS a JOIN role ON role.slug = v ->> 'slug'
+            AND role.role IN (a ->> 'role', 'reserved') AND role.handle <> a ->> 'handle') THEN
+        RAISE EXCEPTION 'stale';
+    END IF;
     INSERT INTO role (id, slug, handle, role, since, expires)
         SELECT jsonb_build_array(v ->> 'slug', a ->> 'handle', a ->> 'role'), a ->> 'slug',
             a ->> 'handle', a ->> 'role', (a ->> 'since')::double precision, NULL
