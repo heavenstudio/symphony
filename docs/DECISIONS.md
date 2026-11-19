@@ -9,6 +9,19 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### GitHub delivery
 
+- [ ] **github-delivery-policy-write-trial** — The read-only App you approved was made and tried, and GitHub does not show it the lists either: reading a repository's administration is not enough. The one level left to try is writing it, and an identity that can write a repository's administration can also change or remove the rules it is there to read. May that be tried, on the throwaway repository only? A: yes, the third App is given Administration (write) there, for one reading, to learn whether GitHub then shows the lists. B: no; a person confirms the lists by hand when delivery is turned on, and lands check everything else. C: neither, and pull-request landing stays off. Recommended: A, because it risks only the throwaway repository and settles what GitHub does; it decides nothing for the real one. Approve and say A, B or C in the note, or comment. [[analysis/github-pr-landing#Permissions and protection]]
+  [2026-11-19 02:45] agent — Posted for the board task `tools/github-pr-verified-activation`, as **github-delivery-policy-reader** said it would be if reading was not enough.
+
+    **What was tried.** The third App, with Administration (read) and Metadata (read), installed on the throwaway repository alone, read both rule sets and the rules in effect. Neither list of who is let past was in its answers. Its own standing was: let past neither.
+
+    **Under A,** the change is to that one App on that one repository. It is not installed anywhere else, the check publisher and the landing App keep exactly the rights they have, and nothing is granted until you answer. The trial is one reading with a token that is revoked after; it edits no rule. Whether write shows the lists is not known.
+
+    **What A does not decide.** If write does show the lists, using it for real would mean an identity on the real repository that could remove its protection, present at every land. That would be a card of its own, with the trial's result on it, and B stays open then.
+
+    **Under B,** every land still reads the rules, their settings and each App's own standing, which is what the two Apps can see today. What goes unread is whether someone was added to a list after the day a person looked.
+
+    **Earlier verdicts checked.** **github-delivery-policy-reader**, approved as A, covers the read-only identity and says a write level is asked separately. **github-delivery-proof-setup** gives the two Apps no Administration, which stays so under every option here.
+
 - [ ] **github-delivery-policy-reader** — The two Apps you approved work on the throwaway repository: GitHub refused every merge it should and let the landing App's squash through. One thing they cannot do is read who is allowed past the rules. Before each land, Symphony is to check that nobody is let past the evidence rule and that the landing App alone is let past the update rule; GitHub shows that list to neither App, so the check answers "unknown" and a land refuses. May a third, read-only identity be added to read it? A: yes, a third App used for that reading alone, tried on the throwaway repository alone, with read-only permission that may or may not show the list. B: no third identity: a person confirms the lists by hand when delivery is turned on, and lands do not check them after. C: neither, and pull-request landing stays off. Recommended: A, because only a reading at each land notices a list changed later. Approve and say A, B or C in the note, or comment. [[analysis/github-pr-landing#Permissions and protection]]
   [2026-11-19 01:35] agent — Posted for the board task `tools/github-pr-verified-activation`, with the preflight's needs from `tools/github-delivery-preflight`.
 
