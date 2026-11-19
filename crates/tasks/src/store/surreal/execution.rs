@@ -5,10 +5,15 @@
 /// An attempt admitted: `$row`'s identity and state written as attempt `$attempt` of `$task` under
 /// `$configuration`, with its first facts `$facts` (each `{seq, fact}`), the request fence
 /// `$request` (with `$digest`), the lane fence `['lane', $task, $lane]` and, under `$capacity`
-/// (`{scope, limit}`), a reservation, all in one transaction. Its `outcome` is `existing` (the
-/// `attempt` and `digest` a request key already admitted), `busy` (the lane's `attempt`, while it
-/// is live, or while it is not `$predecessor` when one is named), `full` (the `reserved` attempts
-/// of a full capacity scope) or `admitted`.
+/// (`{scope, limit}`), a reservation, all in one transaction. A retry or a resume names its
+/// `$predecessor` and, unless it was followed already, `$follow`: the predecessor's write as its
+/// caller decided on its row at `revision` with `facts_from` facts (`attempt`, `state`, `open`,
+/// `live`, `due_in`, its `facts` and the capacity scope it gives back, `release`), made in the
+/// same transaction, `stale` (tried again) if that row moved. A place the predecessor gives back
+/// under `$capacity`'s scope is handed to the new attempt, so following an attempt never needs a
+/// free place. Its `outcome` is `existing` (the `attempt` and `digest` a request key already
+/// admitted), `busy` (the lane's `attempt`, while it is live, or while it is not `$predecessor`
+/// when one is named), `full` (the `reserved` attempts of a full capacity scope) or `admitted`.
 pub(in crate::store) const ADMIT: &str = "LET $now = time::millis(time::now());
                      IF $request != NONE {
                          LET $known = (SELECT attempt, digest FROM ONLY type::record('execution_fence', ['request', $request]));
@@ -21,11 +26,20 @@ pub(in crate::store) const ADMIT: &str = "LET $now = time::millis(time::now());
                              RETURN { outcome: 'busy', attempt: $current };
                          };
                      };
+                     IF $follow != NONE {
+                         LET $before = (SELECT revision, facts FROM ONLY type::record('execution_attempt', $follow.attempt));
+                         IF $before = NONE OR $before.revision != $follow.revision OR $before.facts != $follow.facts_from { THROW 'stale'; };
+                     };
+                     LET $held = IF $capacity != NONE {
+                         (SELECT VALUE reserved FROM ONLY type::record('execution_fence', ['capacity', $capacity.scope])) ?? []
+                     } ELSE { [] };
+                     LET $handed = $capacity != NONE AND $follow != NONE AND $follow.release = $capacity.scope
+                         AND $held CONTAINS $follow.attempt;
+                     IF $capacity != NONE AND !$handed AND array::len($held) >= $capacity.limit { RETURN { outcome: 'full', reserved: $held }; };
                      IF $capacity != NONE {
-                         LET $held = (SELECT VALUE reserved FROM ONLY type::record('execution_fence', ['capacity', $capacity.scope])) ?? [];
-                         IF array::len($held) >= $capacity.limit { RETURN { outcome: 'full', reserved: $held }; };
+                         LET $kept = IF $handed { array::complement($held, [$follow.attempt]) } ELSE { $held };
                          UPSERT type::record('execution_fence', ['capacity', $capacity.scope])
-                             SET key = ['capacity', $capacity.scope], reserved = array::append(reserved ?? [], $attempt),
+                             SET key = ['capacity', $capacity.scope], reserved = array::append($kept, $attempt),
                                  limit = $capacity.limit RETURN NONE;
                      };
                      CREATE type::record('execution_attempt', $attempt) CONTENT {
@@ -41,6 +55,19 @@ pub(in crate::store) const ADMIT: &str = "LET $now = time::millis(time::now());
                          CREATE type::record('execution_fence', ['request', $request]) CONTENT { key: ['request', $request], attempt: $attempt, digest: $digest } RETURN NONE;
                      };
                      UPSERT type::record('execution_fence', ['lane', $task, $lane]) SET key = ['lane', $task, $lane], attempt = $attempt RETURN NONE;
+                     IF $follow != NONE {
+                         LET $due = IF $follow.due_in = NONE { NONE } ELSE { $now + $follow.due_in };
+                         UPDATE type::record('execution_attempt', $follow.attempt) SET state = $follow.state, open = $follow.open,
+                             live = $follow.live, due = $due, revision += 1, facts += array::len($follow.facts) RETURN NONE;
+                         FOR $fact IN $follow.facts {
+                             CREATE type::record('execution_fact', [$follow.attempt, $fact.seq])
+                                 CONTENT { attempt: $follow.attempt, seq: $fact.seq, at: $now, fact: $fact.fact } RETURN NONE;
+                         };
+                         IF $follow.release != NONE AND !$handed {
+                             UPDATE type::record('execution_fence', ['capacity', $follow.release])
+                                 SET reserved = array::complement(reserved ?? [], [$follow.attempt]) RETURN NONE;
+                         };
+                     };
                      RETURN { outcome: 'admitted', attempt: $attempt };";
 
 /// Attempt `$attempt`'s lease taken for `$owner` for `$lease_ms`: renewed at the same epoch when

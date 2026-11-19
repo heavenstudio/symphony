@@ -96,9 +96,48 @@ pub(crate) struct Write {
 
 impl Store {
     /// Admit attempt `vars["attempt"]` as [`sql::ADMIT`] says, tried again while the board moves
-    /// under it.
-    pub(crate) fn execution_admit(&self, vars: Value) -> Result<Admission, Error> {
-        self.retrying(|| self.transact(both(sql::ADMIT, pg::admit()), vars.clone()))
+    /// under it. A retry or a resume names its `predecessor`, whose row `follow` is asked about on
+    /// each try: the write it answers (none once it was followed) is made in the admission's own
+    /// transaction, fenced on that row, so the new attempt is never admitted with its predecessor
+    /// left live, nor the predecessor ended without it.
+    pub(crate) fn execution_admit(
+        &self,
+        vars: Value,
+        predecessor: Option<&str>,
+        mut follow: impl FnMut(&Value) -> Result<Option<Write>, Error>,
+    ) -> Result<Admission, Error> {
+        self.retrying(|| {
+            let mut vars = vars.clone();
+            if let Some(attempt) = predecessor {
+                let row: Option<Value> = self.read(
+                    both(sql::ATTEMPT, pg::attempt()),
+                    json!({"attempt": attempt}),
+                )?;
+                let Some(row) = row else {
+                    return Err(Failure::Stop(Error::Refused(format!(
+                        "there is no execution attempt {attempt}"
+                    ))));
+                };
+                if let Some(write) = follow(&row).map_err(Failure::Stop)? {
+                    let first = row["facts"].as_i64().unwrap_or(0) + 1;
+                    let (state, open, live, due_in) = write.state.unwrap_or_default();
+                    vars["follow"] = json!({
+                        "attempt": attempt,
+                        "revision": row["revision"],
+                        "facts_from": row["facts"],
+                        "state": state,
+                        "open": open,
+                        "live": live,
+                        "due_in": due_in,
+                        "facts": (write.facts.into_iter().zip(first..))
+                            .map(|(fact, seq)| json!({"seq": seq, "fact": fact}))
+                            .collect::<Vec<_>>(),
+                        "release": write.release,
+                    });
+                }
+            }
+            self.transact(both(sql::ADMIT, pg::admit()), vars)
+        })
     }
 
     /// Attempt `attempt`'s lease, taken or renewed for `owner` for `lease_ms`.

@@ -937,3 +937,138 @@ on_both! {
         c.end_cleanup(&grant, id, &again, Cleanup::Complete, None).unwrap();
     }
 }
+
+/// The attempts holding a place in capacity scope `scope`, as the board keeps them.
+fn reserved(f: &Fixture, scope: &str) -> Vec<String> {
+    let fences = f.store.dump().unwrap().execution_fences;
+    let fence = fences
+        .iter()
+        .find(|fence| fence["key"] == json!(["capacity", scope]));
+    let held = fence.and_then(|fence| fence["reserved"].as_array().cloned());
+    (held.unwrap_or_default().iter())
+        .map(|attempt| attempt.as_str().unwrap().to_string())
+        .collect()
+}
+
+on_both! {
+    fn a_cancel_asked_while_a_pause_is_in_flight_is_sent_after_it_whatever_its_answer(backend: Backend) {
+        let f = board(backend);
+        let fake = Fake::default();
+        let caller = coordinator(&f, &fake).with_capacity("pool", 1);
+        let grant = owner_grant();
+        let paused = admit(&caller, "k1");
+        let id = paused.id.as_str();
+        let resource = started(&caller, id);
+        caller.stop(&grant, id, StopMode::Pause).unwrap();
+        let caller_ref = &caller;
+        let racing = Meanwhile::new(&fake, Operation::Stop, move || {
+            caller_ref.cancel(&owner_grant(), id).expect("asked");
+        });
+        let c = coordinator(&f, &racing);
+        let (operation, outcome) = answered(c.step(id));
+        assert_eq!(operation, Operation::Stop);
+        assert!(matches!(outcome, Outcome::Accepted(_)), "{outcome:?}");
+        assert_eq!(fake.runtime_of(&resource), RuntimeState::Paused);
+        let state = read(&c, id).state;
+        assert_eq!(state.stop, None);
+        assert!(state.cancel.is_some(), "the cancel asked meanwhile is not dropped");
+        assert_eq!(state.cancellation, Cancellation::Requested);
+        assert_eq!(answered(c.step(id)).0, Operation::Cancel, "sent next, before any observation");
+        assert_eq!(fake.runtime_of(&resource), RuntimeState::Terminated);
+        answered(c.step(id));
+        let ended = read(&c, id).state;
+        assert_eq!((ended.ending, ended.cancellation), (Some(Ending::Cancelled), Cancellation::Confirmed));
+        assert!(ended.reserved.is_none());
+
+        // A pause refused leaves the cancel asked, never unconfirmed: the provider was not asked.
+        let second = caller.admit(&grant, asked(OTHER_TASK)).expect("the cancelled attempt's place was given back");
+        let other = second.id.as_str();
+        let resource = started(&caller, other);
+        caller.stop(&grant, other, StopMode::Pause).unwrap();
+        let racing = Meanwhile::new(&fake, Operation::Stop, move || {
+            caller_ref.cancel(&owner_grant(), other).expect("asked");
+        });
+        let c = coordinator(&f, &racing);
+        fake.script([Fault::Refuse("busy")]);
+        assert!(matches!(answered(c.step(other)).1, Outcome::Rejected(_)));
+        let state = read(&c, other).state;
+        assert_eq!((state.stop, state.cancellation), (None, Cancellation::Requested));
+        assert!(state.cancel.is_some());
+        assert_eq!(answered(c.step(other)).0, Operation::Cancel);
+        assert_eq!(fake.runtime_of(&resource), RuntimeState::Terminated);
+        assert_eq!(fake.keys(Operation::Cancel).len(), 2);
+    }
+
+    fn a_resume_or_a_retry_takes_its_predecessors_place_in_its_own_admission(backend: Backend) {
+        let f = board(backend);
+        let fake = Fake::default();
+        let c = coordinator(&f, &fake).with_capacity("pool", 1);
+        let grant = owner_grant();
+        let paused = admit(&c, "k1");
+        started(&c, &paused.id);
+        c.stop(&grant, &paused.id, StopMode::Pause).unwrap();
+        answered(c.step(&paused.id));
+        answered(c.step(&paused.id));
+        assert_eq!(read(&c, &paused.id).state.dispatch, Dispatch::Paused);
+        assert_eq!(
+            c.admit(&grant, asked(OTHER_TASK)),
+            Err(Refusal::Full(vec![paused.id.clone()])),
+            "a paused attempt holds its place"
+        );
+
+        let continuation = Continuation {
+            checkpoint: None,
+            conversation: Some("conversation-1".into()),
+            mode: ResumeMode::NewResource,
+        };
+        let resumed = c
+            .resume(&grant, &paused.id, continuation.clone(), None)
+            .expect("a resume needs no free place");
+        let before = read(&c, &paused.id).state;
+        assert_eq!(before.ending, Some(Ending::Superseded));
+        assert_eq!(before.successor.as_deref(), Some(resumed.id.as_str()));
+        assert_eq!(before.reserved, None);
+        assert_eq!(kinds(&c, &paused.id).last().map(String::as_str), Some("ended"));
+        assert_eq!(reserved(&f, "pool"), std::slice::from_ref(&resumed.id), "handed over, not added");
+        assert_eq!(f.store.live_attempts(TASK).unwrap(), std::slice::from_ref(&resumed.id));
+        assert!(matches!(
+            c.resume(&grant, &paused.id, continuation, None),
+            Err(Refusal::Invalid(why)) if why.contains("followed it already")
+        ), "a repeat without a request key finds it followed, nothing half-done");
+
+        // Held, then retried at capacity 1, its place handed over the same way.
+        fake.script([Fault::Lost, Fault::Twice]);
+        answered(c.step(&resumed.id));
+        answered(c.step(&resumed.id));
+        assert_eq!(read(&c, &resumed.id).state.dispatch, Dispatch::Held);
+        let retry = c
+            .retry(&grant, &resumed.id, "the provider shows both isolated", None)
+            .expect("a retry needs no free place");
+        let held = read(&c, &resumed.id).state;
+        assert_eq!((held.ending, held.successor.as_deref()), (Some(Ending::Superseded), Some(retry.id.as_str())));
+        assert_eq!(reserved(&f, "pool"), std::slice::from_ref(&retry.id));
+        assert!(matches!(
+            c.retry(&grant, &resumed.id, "again", None),
+            Err(Refusal::Invalid(why)) if why.contains("followed it already")
+        ));
+
+        // A predecessor that ended gives no place to hand over: a full scope refuses its retry,
+        // and the refusal leaves the predecessor as it was.
+        let resource = read(&c, &retry.id).state;
+        assert!(resource.pending.is_some());
+        answered(c.step(&retry.id));
+        let bound = read(&c, &retry.id).state.resource.unwrap().id;
+        fake.runtime(&bound, RuntimeState::Failed);
+        answered(c.step(&retry.id));
+        assert_eq!(read(&c, &retry.id).state.ending, Some(Ending::Failed));
+        let other = c.admit(&grant, asked(OTHER_TASK)).expect("the failed retry gave its place back");
+        let facts = kinds(&c, &retry.id);
+        assert_eq!(
+            c.retry(&grant, &retry.id, "it failed on its own", None),
+            Err(Refusal::Full(vec![other.id.clone()]))
+        );
+        let after = read(&c, &retry.id).state;
+        assert_eq!(after.successor, None);
+        assert_eq!(kinds(&c, &retry.id), facts, "nothing written to the predecessor");
+    }
+}

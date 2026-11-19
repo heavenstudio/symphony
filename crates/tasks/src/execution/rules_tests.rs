@@ -78,6 +78,7 @@ fn start(sent: bool) -> Pending {
         initiator: principal("owner"),
         sent,
         first_sent: sent.then_some(1_000),
+        cancels: false,
     }
 }
 
@@ -425,6 +426,7 @@ fn a_refused_cancel_leaves_the_cancellation_unconfirmed() {
             initiator: principal("owner"),
             sent: true,
             first_sent: Some(1),
+            cancels: false,
         }),
         ..running()
     };
@@ -503,67 +505,133 @@ fn a_start_found_again_on_the_resource_already_bound_binds_nothing_new() {
     assert!(found.facts.is_empty(), "{:?}", found.facts);
 }
 
-fn stopping(cancel: bool) -> State {
-    let request = Request::Stop {
-        resource: resource(&identity(every_operation()), &attempt(), &binding()),
-        mode: StopMode::Terminate,
+/// `state` with the operation the worker would send next marked sent, as its step writes it.
+fn sending(capabilities: Capabilities, state: &State) -> State {
+    let Next::Send { mut pending, .. } = next_of(capabilities, state, 2_000) else {
+        panic!("an operation to send");
     };
-    let asked = Asked {
-        initiator: principal("owner"),
-        mode: Some(StopMode::Terminate),
-    };
+    pending.sent = true;
+    pending.first_sent = Some(2_000);
     State {
-        cancellation: if cancel {
-            Cancellation::Requested
-        } else {
-            Cancellation::None
-        },
-        cancel: cancel.then(|| asked.clone()),
-        stop: Some(asked),
-        pending: Some(Pending {
-            sequence: 2,
-            kind: Operation::Stop,
-            key: "k2".into(),
-            digest: keys::digest(&request),
-            request,
-            initiator: principal("owner"),
-            sent: true,
-            first_sent: Some(1),
-        }),
-        ..running()
+        sequence: pending.sequence,
+        pending: Some(pending),
+        ..state.clone()
     }
 }
 
-#[test]
-fn a_stop_taken_settles_the_stop_and_a_cancel_it_stood_for_and_a_refused_one_settles_the_stop() {
-    let taken = answer(
-        &stopping(true),
+/// The answer `outcome` to `state`'s owed operation, on a provider of `capabilities`.
+fn answer_on(capabilities: Capabilities, state: &State, outcome: Outcome) -> Applied {
+    apply(
+        &identity(capabilities),
+        state,
+        state.pending.as_ref(),
         false,
-        Outcome::Accepted(receipt("res", "g1")),
-    );
-    assert_eq!((taken.state.stop, taken.state.cancel), (None, None));
-    assert_eq!(
-        taken.state.cancellation,
-        Cancellation::Requested,
-        "observed until it ceased"
-    );
-    assert_eq!(taken.state.dispatch, Dispatch::Running);
-    assert_eq!(taken.due_in, Some(5_000));
+        &outcome,
+        7,
+        &bounds(),
+    )
+}
 
+/// A provider that cannot cancel, only terminate.
+fn no_cancel() -> Capabilities {
+    capabilities(&[
+        Operation::Start,
+        Operation::Reconcile,
+        Operation::Observe,
+        Operation::Stop,
+    ])
+}
+
+#[test]
+fn a_cancel_asked_while_a_stop_is_in_flight_is_sent_after_it_whatever_its_answer() {
+    let owner = principal("owner");
+    let id = identity(every_operation());
+    let pausing = stop(&id, &running(), &owner, StopMode::Pause)
+        .unwrap()
+        .state;
+    let in_flight = sending(every_operation(), &pausing);
+    let owed = in_flight.pending.as_ref().unwrap();
+    assert_eq!((owed.kind, owed.cancels()), (Operation::Stop, false));
+    let asked = cancel(&in_flight, &owner, 5).unwrap().state;
+    assert!(
+        asked.cancel.is_some() && asked.pending.is_some(),
+        "the stop is still owed"
+    );
+
+    let paused = answer(&asked, false, Outcome::Accepted(receipt("res", "g1")));
+    assert_eq!(paused.state.stop, None);
+    assert!(paused.state.cancel.is_some(), "the cancel is not dropped");
+    assert_eq!(paused.state.cancellation, Cancellation::Requested);
+    assert_eq!(paused.due_in, Some(0), "sent at once");
+    let Next::Send { pending, .. } = next_of(every_operation(), &paused.state, 2_000) else {
+        panic!("the cancel is sent");
+    };
+    assert_eq!((pending.kind, pending.cancels()), (Operation::Cancel, true));
+    // On a provider that cannot cancel, a terminate stands in for it.
+    let Next::Send { pending, .. } = next_of(no_cancel(), &paused.state, 2_000) else {
+        panic!("its stand-in is sent");
+    };
+    assert_eq!((pending.kind, pending.cancels()), (Operation::Stop, true));
+    assert!(matches!(
+        pending.request,
+        Request::Stop {
+            mode: StopMode::Terminate,
+            ..
+        }
+    ));
+
+    // A pause refused leaves the cancel asked, never unconfirmed: the provider was not asked.
     let refused = answer(
-        &stopping(false),
+        &asked,
         false,
         Outcome::Rejected(Rejection::Provider("busy".into())),
     );
     assert_eq!(refused.state.stop, None);
     assert_eq!(refused.state.pending, None);
-    assert_eq!(
-        refused.state.cancellation,
-        Cancellation::None,
-        "no cancel was asked"
+    assert!(refused.state.cancel.is_some());
+    assert_eq!(refused.state.cancellation, Cancellation::Requested);
+    assert_eq!(refused.due_in, Some(0));
+    assert!(matches!(
+        next_of(every_operation(), &refused.state, 2_000),
+        Next::Send { pending, .. } if pending.kind == Operation::Cancel
+    ));
+}
+
+#[test]
+fn the_terminate_standing_in_for_a_cancel_settles_it_taken_or_refused() {
+    let owner = principal("owner");
+    let pausing = stop(&identity(no_cancel()), &running(), &owner, StopMode::Pause)
+        .unwrap()
+        .state;
+    // A cancel asked before the pause was sent goes first, as a terminate, and settles both.
+    let asked = cancel(&pausing, &owner, 5).unwrap().state;
+    let terminating = sending(no_cancel(), &asked);
+    assert!(terminating.pending.as_ref().unwrap().cancels());
+    let taken = answer_on(
+        no_cancel(),
+        &terminating,
+        Outcome::Accepted(receipt("res", "g1")),
     );
-    assert_eq!(refused.state.dispatch, Dispatch::Running);
-    assert_eq!(refused.due_in, Some(5_000));
+    assert_eq!((taken.state.cancel, taken.state.stop), (None, None));
+    assert_eq!(
+        taken.state.cancellation,
+        Cancellation::Requested,
+        "observed until it ceased"
+    );
+    assert_eq!(taken.due_in, Some(5_000));
+
+    let refused = answer_on(
+        no_cancel(),
+        &terminating,
+        Outcome::Rejected(Rejection::Provider("no".into())),
+    );
+    assert_eq!(refused.state.cancel, None);
+    assert_eq!(refused.state.cancellation, Cancellation::Unconfirmed);
+    assert!(
+        refused.state.stop.is_some(),
+        "the pause asked is still to be sent"
+    );
+    assert_eq!(refused.due_in, Some(0));
 }
 
 #[test]

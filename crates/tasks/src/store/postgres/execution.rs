@@ -20,7 +20,9 @@ DECLARE
     now_ bigint := {NOW};
     known_ jsonb;
     current_ jsonb;
-    held_ jsonb;
+    held_ jsonb := '[]';
+    handed_ boolean := false;
+    before_ jsonb;
     fact_ jsonb;
 BEGIN
     IF v ? 'request' THEN
@@ -41,12 +43,26 @@ BEGIN
         board_answer := jsonb_build_object('outcome', 'busy', 'attempt', current_);
         EXIT admit;
     END IF;
+    IF v ? 'follow' THEN
+        SELECT doc INTO before_ FROM execution_attempt WHERE id = to_jsonb(v -> 'follow' ->> 'attempt');
+        IF before_ IS NULL
+            OR (before_ ->> 'revision')::bigint IS DISTINCT FROM (v -> 'follow' ->> 'revision')::bigint
+            OR (before_ ->> 'facts')::bigint IS DISTINCT FROM (v -> 'follow' ->> 'facts_from')::bigint THEN
+            RAISE EXCEPTION 'stale';
+        END IF;
+    END IF;
     IF v ? 'capacity' THEN
         held_ := coalesce((SELECT doc -> 'reserved' FROM execution_fence
             WHERE id = jsonb_build_array('capacity', v -> 'capacity' -> 'scope')), '[]');
-        IF jsonb_array_length(held_) >= (v -> 'capacity' ->> 'limit')::bigint THEN
+        handed_ := coalesce(v -> 'follow' -> 'release' = v -> 'capacity' -> 'scope'
+            AND held_ @> jsonb_build_array(v -> 'follow' -> 'attempt'), false);
+        IF NOT handed_ AND jsonb_array_length(held_) >= (v -> 'capacity' ->> 'limit')::bigint THEN
             board_answer := jsonb_build_object('outcome', 'full', 'reserved', held_);
             EXIT admit;
+        END IF;
+        IF handed_ THEN
+            held_ := coalesce((SELECT jsonb_agg(held.value) FROM jsonb_array_elements(held_) AS held
+                WHERE held.value IS DISTINCT FROM v -> 'follow' -> 'attempt'), '[]');
         END IF;
         INSERT INTO execution_fence (id, doc) VALUES (jsonb_build_array('capacity', v -> 'capacity' -> 'scope'),
                 jsonb_build_object('key', jsonb_build_array('capacity', v -> 'capacity' -> 'scope'),
@@ -70,6 +86,26 @@ BEGIN
     INSERT INTO execution_fence (id, doc) VALUES (jsonb_build_array('lane', v -> 'task', v -> 'lane'),
             jsonb_build_object('key', jsonb_build_array('lane', v -> 'task', v -> 'lane'), 'attempt', v -> 'attempt'))
         ON CONFLICT (id) DO UPDATE SET doc = excluded.doc;
+    IF v ? 'follow' THEN
+        before_ := before_ || jsonb_build_object('state', v -> 'follow' -> 'state', 'open', v -> 'follow' -> 'open',
+            'live', v -> 'follow' -> 'live', 'revision', (before_ ->> 'revision')::bigint + 1,
+            'facts', (before_ ->> 'facts')::bigint + jsonb_array_length(coalesce(v -> 'follow' -> 'facts', '[]')));
+        before_ := CASE WHEN v -> 'follow' ? 'due_in'
+            THEN before_ || jsonb_build_object('due', now_ + (v -> 'follow' ->> 'due_in')::bigint)
+            ELSE before_ - 'due' END;
+        UPDATE execution_attempt SET doc = before_ WHERE id = to_jsonb(v -> 'follow' ->> 'attempt');
+        FOR fact_ IN SELECT value FROM jsonb_array_elements(coalesce(v -> 'follow' -> 'facts', '[]')) LOOP
+            INSERT INTO execution_fact (id, doc) VALUES (jsonb_build_array(v -> 'follow' -> 'attempt', fact_ -> 'seq'),
+                jsonb_build_object('attempt', v -> 'follow' -> 'attempt', 'seq', fact_ -> 'seq', 'at', now_,
+                    'fact', fact_ -> 'fact'));
+        END LOOP;
+        IF v -> 'follow' ? 'release' AND NOT handed_ THEN
+            UPDATE execution_fence SET doc = jsonb_set(doc, '{{reserved}}', coalesce((SELECT jsonb_agg(held.value)
+                    FROM jsonb_array_elements(coalesce(doc -> 'reserved', '[]')) AS held
+                    WHERE held.value IS DISTINCT FROM v -> 'follow' -> 'attempt'), '[]'))
+                WHERE id = jsonb_build_array('capacity', v -> 'follow' -> 'release');
+        END IF;
+    END IF;
     board_answer := jsonb_build_object('outcome', 'admitted', 'attempt', v -> 'attempt');
 END admit;"
     ))

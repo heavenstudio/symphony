@@ -136,7 +136,7 @@ pub(crate) fn next(
     let Some(binding) = &state.resource else {
         return Next::Wait;
     };
-    let control = |kind: Operation, request: Request, initiator: &Principal| {
+    let control = |kind: Operation, request: Request, initiator: &Principal, cancels: bool| {
         let sequence = state.sequence + 1;
         Next::Send {
             pending: Pending {
@@ -155,6 +155,7 @@ pub(crate) fn next(
                 initiator: initiator.clone(),
                 sent: false,
                 first_sent: None,
+                cancels,
             },
             new: true,
         }
@@ -170,10 +171,10 @@ pub(crate) fn next(
                 resource: bound,
                 mode: StopMode::Terminate,
             };
-            return control(Operation::Stop, request, &asked.initiator);
+            return control(Operation::Stop, request, &asked.initiator, true);
         }
         let request = Request::Cancel { resource: bound };
-        return control(Operation::Cancel, request, &asked.initiator);
+        return control(Operation::Cancel, request, &asked.initiator, true);
     }
     if let Some(Asked {
         initiator,
@@ -184,7 +185,7 @@ pub(crate) fn next(
             resource: bound,
             mode: *mode,
         };
-        return control(Operation::Stop, request, initiator);
+        return control(Operation::Stop, request, initiator, false);
     }
     Next::Observe(binding.clone())
 }
@@ -271,14 +272,15 @@ fn answered(
             if starts {
                 return ended(applied, Ending::Rejected, answer);
             }
-            if pending.kind == Operation::Cancel || state.cancel.is_some() {
+            if pending.cancels() {
+                // The cancel itself was refused: it may still be running.
                 applied.state.cancel = None;
                 applied.state.cancellation = Cancellation::Unconfirmed;
-            }
-            if pending.kind == Operation::Stop {
+            } else if pending.kind == Operation::Stop {
+                // A stop refused: a cancel asked while it was in flight is still to be sent.
                 applied.state.stop = None;
             }
-            applied.due_in = Some(bounds.observe_ms);
+            applied.due_in = Some(due(&applied.state, bounds));
             applied
         }
         Outcome::Unknown(Unknown::KeyExpired) => hold(
@@ -356,24 +358,28 @@ fn accepted(state: &State, pending: &Pending, receipt: &Receipt, bounds: &Bounds
                 applied.state.dispatch = Dispatch::Starting;
             }
         }
-        // A cancel or a stop taken is no proof that it ceased: it is observed until it has.
-        Operation::Cancel => applied.state.cancel = None,
-        Operation::Stop => {
+        // A cancel or a stop taken is no proof that it ceased: it is observed until it has. The
+        // cancel, or the stop standing in for it, settles any stop asked as well; any other stop
+        // leaves a cancel asked while it was in flight to be sent next.
+        Operation::Cancel | Operation::Stop if pending.cancels() => {
+            applied.state.cancel = None;
             applied.state.stop = None;
-            if state.cancel.is_some() {
-                applied.state.cancel = None;
-            }
         }
+        Operation::Stop => applied.state.stop = None,
         _ => {}
     }
-    applied.due_in = Some(
-        if applied.state.cancel.is_some() || applied.state.stop.is_some() {
-            0
-        } else {
-            bounds.observe_ms
-        },
-    );
+    applied.due_in = Some(due(&applied.state, bounds));
     applied
+}
+
+/// When a settled operation's attempt is looked at again: at once while a cancel or a stop asked
+/// is still to be sent, else at the next observation.
+fn due(state: &State, bounds: &Bounds) -> u64 {
+    if state.cancel.is_some() || state.stop.is_some() {
+        0
+    } else {
+        bounds.observe_ms
+    }
 }
 
 /// An observation of the bound resource.
@@ -463,8 +469,7 @@ fn observed(
         _ => return unsettled(applied, bounds, Operation::Observe),
     }
     // A cancel or a stop asked for while it was being observed is sent at once.
-    let asked = next.cancel.is_some() || next.stop.is_some();
-    applied.due_in = Some(if asked { 0 } else { bounds.observe_ms });
+    applied.due_in = Some(due(&applied.state, bounds));
     applied
 }
 

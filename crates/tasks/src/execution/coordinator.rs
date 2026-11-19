@@ -192,12 +192,9 @@ impl<'a> Coordinator<'a> {
         }
         // A repeat of the resume that followed it is answered by its request key, as admission
         // answers any repeat: its predecessor is no longer resumable, being followed.
-        let repeat = match (request_key, &before.state.successor) {
-            (Some(key), Some(successor)) => self
-                .store
-                .execution_fence(json!(["request", key]))?
-                .is_some_and(|fence| fence["attempt"] == successor.as_str()),
-            _ => false,
+        let repeat = match &before.state.successor {
+            Some(successor) => self.followed_by(request_key, successor)?,
+            None => false,
         };
         let (binding, quiescent) = match (repeat, &before.state.resource, before.state.quiescent) {
             (true, Some(binding), Some(quiescent)) => (binding.clone(), quiescent),
@@ -227,7 +224,7 @@ impl<'a> Coordinator<'a> {
             "conversation": continuation.conversation,
             "mode": continuation.mode,
         });
-        let attempt = self.enter(
+        self.enter(
             grant,
             Entry {
                 task: before.task.clone(),
@@ -242,14 +239,12 @@ impl<'a> Coordinator<'a> {
                 first,
                 asked,
             },
-        )?;
-        self.follow(from, &attempt.id, Relation::Resume)?;
-        Ok(attempt)
+        )
     }
 
     /// Admit a new execution of `from`'s input after it was held or ended: a person's decision
     /// alone, whose `decision` is the evidence that `from`'s runtime was found ended or isolated.
-    /// A held predecessor ends superseded, its reservation given back.
+    /// A held predecessor ends superseded in the same transaction, its place handed to the retry.
     pub fn retry(
         &self,
         grant: &Grant,
@@ -275,8 +270,16 @@ impl<'a> Coordinator<'a> {
                 "it is neither held nor ended: cancel it, or let recovery settle it".into(),
             ));
         }
+        // A repeat of the retry that followed it is answered by its request key at admission.
+        if let Some(successor) = &before.state.successor
+            && !self.followed_by(request_key, successor)?
+        {
+            return Err(Refusal::Invalid(format!(
+                "attempt {successor} followed it already"
+            )));
+        }
         let identity = &before.identity;
-        let attempt = self.enter(
+        self.enter(
             grant,
             Entry {
                 task: before.task.clone(),
@@ -293,9 +296,7 @@ impl<'a> Coordinator<'a> {
                 },
                 asked: Value::Null,
             },
-        )?;
-        self.follow(from, &attempt.id, Relation::Retry)?;
-        Ok(attempt)
+        )
     }
 
     /// The attempt `entry` describes, written as one transaction with its first facts, or the
@@ -356,6 +357,7 @@ impl<'a> Coordinator<'a> {
             initiator: principal.clone(),
             sent: false,
             first_sent: None,
+            cancels: false,
         };
         let capacity = self.capacity.as_ref().map(|(scope, _)| scope.clone());
         let (predecessor, relation) = entry.predecessor.clone().unzip();
@@ -410,7 +412,11 @@ impl<'a> Coordinator<'a> {
             "predecessor": predecessor,
             "capacity": self.capacity.as_ref().map(|(scope, limit)| json!({"scope": scope, "limit": limit})),
         });
-        match self.store.execution_admit(vars)? {
+        let follow = |row: &Value| followed(row, &hex, relation.unwrap_or(Relation::Retry));
+        match self
+            .store
+            .execution_admit(vars, predecessor.as_deref(), follow)?
+        {
             Admitted::Admitted => self.view(&hex),
             Admitted::Existing {
                 attempt,
@@ -429,35 +435,14 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    /// Attempt `from` followed by `by`: linked, and ended superseded if it was still live (held or
-    /// paused). Once only: a repeat finds it followed and writes nothing.
-    fn follow(&self, from: &str, by: &str, relation: Relation) -> Result<(), Refusal> {
-        self.store.execution_update(from, |value| {
-            let row = Row::of(value)?;
-            if row.state.successor.is_some() {
-                return Ok(Decision::Nothing(()));
-            }
-            let mut applied = Applied::from_state(row.state.clone());
-            applied.state.successor = Some(by.to_string());
-            applied.facts.push(Fact::Followed {
-                by: by.to_string(),
-                relation,
-            });
-            if applied.state.live() {
-                let state = &mut applied.state;
-                state.dispatch = super::record::Dispatch::Terminal;
-                state.ending = Some(Ending::Superseded);
-                state.pending = None;
-                state.cancel = None;
-                state.stop = None;
-                applied.release = state.reserved.take();
-                applied.facts.push(Fact::Ended {
-                    ending: Ending::Superseded,
-                });
-            }
-            Ok(Decision::write(written(&applied, None, false), ()))
-        })?;
-        Ok(())
+    /// Whether `successor` is the attempt `request_key` admitted: a repeat of the retry or the
+    /// resume that followed its predecessor.
+    fn followed_by(&self, request_key: Option<&str>, successor: &str) -> Result<bool, Refusal> {
+        let Some(key) = request_key else {
+            return Ok(false);
+        };
+        let fence = self.store.execution_fence(json!(["request", key]))?;
+        Ok(fence.is_some_and(|fence| fence["attempt"] == successor))
     }
 
     /// Ask attempt `id` to cease. From the moment it is written no result of it is eligible; an
@@ -968,6 +953,35 @@ pub(super) fn to_value(value: &impl serde::Serialize) -> Value {
 }
 
 /// `applied` as a write, under the lease `fence` when the worker writes it.
+/// The write that has the attempt in `row` followed by `by`: linked, and ended superseded if it
+/// was still live (held or paused), its reservation given back for admission to hand to `by`; none
+/// once it was followed. Made in `by`'s admission ([`Store::execution_admit`]).
+fn followed(row: &Value, by: &str, relation: Relation) -> Result<Option<Write>, Error> {
+    let row = Row::of(row)?;
+    if row.state.successor.is_some() {
+        return Ok(None);
+    }
+    let mut applied = Applied::from_state(row.state.clone());
+    applied.state.successor = Some(by.to_string());
+    applied.facts.push(Fact::Followed {
+        by: by.to_string(),
+        relation,
+    });
+    if applied.state.live() {
+        let state = &mut applied.state;
+        state.dispatch = super::record::Dispatch::Terminal;
+        state.ending = Some(Ending::Superseded);
+        state.pending = None;
+        state.cancel = None;
+        state.stop = None;
+        applied.release = state.reserved.take();
+        applied.facts.push(Fact::Ended {
+            ending: Ending::Superseded,
+        });
+    }
+    Ok(Some(written(&applied, None, false)))
+}
+
 pub(super) fn written(applied: &Applied, fence: Option<&Value>, release_lease: bool) -> Write {
     let state = &applied.state;
     Write {

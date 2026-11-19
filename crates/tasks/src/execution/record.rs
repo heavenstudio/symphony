@@ -163,6 +163,17 @@ pub struct Pending {
     /// When it was first sent, by the database's clock (ms): the provider's key retention runs
     /// from then.
     pub first_sent: Option<i64>,
+    /// A stop that stands in for the cancel asked, on a provider that cannot cancel: taken, it
+    /// settles the cancel; any other stop leaves a cancel asked meanwhile to be sent after it.
+    #[serde(default)]
+    pub cancels: bool,
+}
+
+impl Pending {
+    /// Whether it is the cancel asked, or the stop that stands in for it.
+    pub fn cancels(&self) -> bool {
+        self.kind == Operation::Cancel || self.cancels
+    }
 }
 
 /// A stop asked for, which the worker sends once a resource is bound.

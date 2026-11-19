@@ -60,12 +60,16 @@ A worker that dies leaves its lease to run out, and the attempt is due again the
 A cancel bars every result of the attempt from the moment it is written. One asked before
 anything was sent ends the attempt at once; one asked while the start is in flight is sent once
 the start's resource is known; one the provider refuses leaves the cancellation unconfirmed. A
-stop asks the bound resource to pause or terminate, in a mode its provider offers. A resume admits
-another attempt continuing a paused or ended one, from a checkpoint or a conversation, at the next
-runtime epoch, so nothing of the predecessor's runtime writes for it; a retry admits a new
-execution after a held or ended one, and is a person's decision alone, naming the evidence that
-the predecessor was found or isolated. Either ends a still-live predecessor superseded and links
-the two. `external_link` resolves a view for its caller, never kept.
+stop asks the bound resource to pause or terminate, in a mode its provider offers; a cancel asked
+while a stop is in flight is sent once the stop is answered, whether it was taken or refused,
+and only a cancel, or the terminate that stands in for one on a provider that cannot cancel,
+settles it. A resume admits another attempt continuing a paused or ended one, from a checkpoint
+or a conversation, at the next runtime epoch, so nothing of the predecessor's runtime writes for
+it; a retry admits a new execution after a held or ended one, and is a person's decision alone,
+naming the evidence that the predecessor was found or isolated. Either is admitted in the same
+transaction that links the two and ends a still-live predecessor superseded, its capacity place
+handed to the new attempt, so following an attempt never needs a free place and is never half
+done. `external_link` resolves a view for its caller, never kept.
 
 ## Evidence and what may count
 
