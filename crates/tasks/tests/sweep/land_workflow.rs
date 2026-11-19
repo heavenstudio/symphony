@@ -1,0 +1,552 @@
+//! `tasks land` on a task a custom workflow holds (docs/WORKFLOW.md, "External effects"), in
+//! scratch repositories on a board of their own: it lands by the prepare and finalize edges of the
+//! default landing's adapter and by nothing else, refuses before any merge a task no such edge
+//! leaves, binds the head its approve read, withdraws a reservation that went stale, and finishes
+//! a land interrupted between its merge and its finalize by the same intent.
+
+use super::*;
+use std::collections::BTreeMap;
+use symphony_api::workflow::{InputValue, OperationRequest, Pair};
+use symphony_board::Store;
+use symphony_board::land::adapter::DefaultLand;
+use symphony_board::workflow::effect::{DEFAULT_LAND, Intent, Stage};
+use symphony_board::workflow::{Followed, Host, agent_session, follow, local_owner};
+use symphony_plugin::execution::Principal;
+
+/// The workflow whose landing is the default landing's.
+const WORKFLOW: &str = include_str!("../fixtures/landing_workflow.toml");
+
+/// The project file on main: `check` and the workflow, followed on the board.
+fn workflowed(r: &Repo) {
+    manifest(r, &format!("\n{WORKFLOW}"));
+    let followed = follow(&r.board.store, &r.root).unwrap();
+    assert!(matches!(followed, Followed::Activated(_)), "{followed:?}");
+}
+
+fn pair(phase: &str, state: &str) -> Pair {
+    Pair {
+        phase: phase.into(),
+        state: state.into(),
+    }
+}
+
+fn at(r: &Repo, slug: &str) -> (Pair, u64) {
+    let position = r.board.store.workflow_position(slug).unwrap().unwrap();
+    (position.at(), position.revision)
+}
+
+/// `edge` taken on `slug` by `principal`, its `head` input given where `head` is.
+fn take(store: &Store, slug: &str, principal: &Principal, edge: &str, head: Option<&str>) {
+    let next = store
+        .workflow_actions(slug, principal, &Host::local())
+        .unwrap();
+    let mut inputs = BTreeMap::new();
+    if let Some(head) = head {
+        inputs.insert("head".to_string(), InputValue::Revision(head.to_string()));
+    }
+    let request = OperationRequest {
+        project: store.database().database().into(),
+        task: slug.into(),
+        edge: edge.into(),
+        expected: next.snapshot,
+        input_revisions: BTreeMap::new(),
+        idempotency_key: format!("{slug}:{edge}:{}", head.unwrap_or("")),
+        inputs,
+    };
+    store
+        .apply_operation(principal, &Host::local(), &request)
+        .unwrap_or_else(|why| panic!("{edge} on {slug}: {why:?}"));
+}
+
+/// `slug` filed under the workflow with its branch, orchestrated, built and submitted by its
+/// executor: the people, the worktree and its tip. It awaits review.
+fn submitted(r: &Repo, slug: &str) -> (People, PathBuf, String) {
+    let wt = branch(r, slug, "sim/jump.gd", "extends Node\n");
+    let tip = head(&wt, "HEAD");
+    let store = &r.board.store;
+    let people = People {
+        orch: r.board.session("orchestrator"),
+        exe: r.board.session("worker"),
+        rev: r.board.session("reviewer"),
+    };
+    r.task(slug);
+    store.take_role(slug, &people.orch, "orchestrator").unwrap();
+    let exe = agent_session(&people.exe);
+    take(store, slug, &exe, "claim", None);
+    take(store, slug, &exe, "submit", None);
+    assert_eq!(at(r, slug).0, pair("verify", "awaiting"));
+    (people, wt, tip)
+}
+
+/// [`submitted`], then approved by its reviewer, which read `read` (its tip when none).
+fn approved_by_edge(r: &Repo, slug: &str, read: Option<&str>) -> (People, PathBuf, String) {
+    let (people, wt, tip) = submitted(r, slug);
+    let rev = agent_session(&people.rev);
+    take(
+        &r.board.store,
+        slug,
+        &rev,
+        "approve",
+        Some(read.unwrap_or(&tip)),
+    );
+    assert_eq!(at(r, slug), (pair("deliver", "approved"), 4));
+    (people, wt, tip)
+}
+
+fn adapter(r: &Repo) -> DefaultLand<'_> {
+    DefaultLand {
+        store: &r.board.store,
+        env: Box::leak(Box::new(r.env(&r.root))),
+        main: &r.root,
+        folder: r.root.join(".git/symphony/tasks/land"),
+        branch: "main",
+    }
+}
+
+/// `slug`'s prepare edge taken for the default landing as the land takes it, bound to `tip`: its
+/// intent, at workflow revision 5.
+fn prepared(r: &Repo, slug: &str, orch: &str, tip: &str) -> Intent {
+    let store = &r.board.store;
+    let principal = agent_session(orch);
+    let land = adapter(r);
+    let next = store
+        .workflow_actions(slug, &principal, &Host::local())
+        .unwrap();
+    let request = OperationRequest {
+        project: store.database().database().into(),
+        task: slug.into(),
+        edge: "prepare_land".into(),
+        expected: next.snapshot,
+        input_revisions: BTreeMap::new(),
+        idempotency_key: format!("land:{tip}:4"),
+        inputs: BTreeMap::from([("head".to_string(), InputValue::Revision(tip.into()))]),
+    };
+    let bindings = land.bindings(slug, tip).unwrap();
+    store
+        .prepare_effect(&principal, &Host::local(), &land, &request, &bindings)
+        .unwrap()
+}
+
+/// The merge of `tip` a land killed after it moved main left: main at one merge commit of it, the
+/// main checkout with it, and the land's record of it. The merge.
+fn merged_as_a_land_left_it(r: &Repo, slug: &str, tip: &str) -> String {
+    git(
+        &r.root,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            &format!("Merge branch '{slug}'"),
+            tip,
+        ],
+    );
+    let merge = head(&r.root, "main");
+    let folder = r.root.join(".git/symphony/tasks/land");
+    fs::create_dir_all(&folder).unwrap();
+    Record {
+        slug: slug.into(),
+        tip: tip.into(),
+        merge: merge.clone(),
+        checked: merge.clone(),
+        regenerated: Vec::new(),
+    }
+    .write(&folder)
+    .unwrap();
+    merge
+}
+
+fn intent(r: &Repo, slug: &str) -> Intent {
+    r.board.store.effect_intent(slug, 5).unwrap().unwrap()
+}
+
+// -- nothing lands past the graph -------------------------------------------------------------------
+
+#[test]
+fn a_managed_task_at_a_pair_no_prepare_edge_leaves_is_refused_before_anything_is_merged() {
+    let r = Repo::new();
+    workflowed(&r);
+    let (people, _wt, _tip) = submitted(&r, SLUG);
+    let before = head(&r.root, "main");
+    // Awaiting review (the board's review), then accepted by the owner (the board's done): at
+    // neither does a prepare edge of the default landing leave its pair.
+    for (state, status) in [("awaiting", "review"), ("accepted", "done")] {
+        if state == "accepted" {
+            take(&r.board.store, SLUG, &local_owner(), "accept", None);
+        }
+        assert_eq!(r.board.store.get(SLUG).unwrap().status, status);
+        let (said, result) = landed(&r, SLUG, &people.orch);
+        let line = result.unwrap_err();
+        assert!(
+            line.starts_with(&format!(
+                "explicit_action_required: a custom workflow holds {SLUG}"
+            )),
+            "{line}"
+        );
+        assert!(
+            line.ends_with(&format!(
+                "it is at verify/{state}, which no prepare_land edge of the adapter default_land \
+                 leaves, so nothing is merged"
+            )),
+            "{line}"
+        );
+        assert_eq!(said, "", "nothing was merged, checked or pushed");
+        assert_eq!(head(&r.root, "main"), before);
+        assert_eq!(runs(&r), Vec::<String>::new());
+        assert_eq!(at(&r, SLUG).0, pair("verify", state));
+        assert!(!r.board.said(SLUG).iter().any(|l| l.starts_with("landed ")));
+    }
+}
+
+#[test]
+fn a_managed_task_is_not_delivered_by_a_pull_request() {
+    let r = Repo::new();
+    manifest(
+        &r,
+        &format!("\n[land]\ndelivery = [\"host\", \"deliver\"]\n\n{WORKFLOW}"),
+    );
+    follow(&r.board.store, &r.root).unwrap();
+    let (people, _wt, _tip) = approved_by_edge(&r, SLUG, None);
+    let before = head(&r.root, "main");
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap_err();
+    assert!(
+        line.contains(
+            "a land delivered by a pull request ([land] delivery) takes no workflow edge yet"
+        ),
+        "{line}"
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    assert_eq!(at(&r, SLUG), (pair("deliver", "approved"), 4));
+}
+
+// -- prepare, dispatch, finalize --------------------------------------------------------------------
+
+#[test]
+fn an_approved_managed_task_lands_by_its_prepare_and_finalize_edges() {
+    let r = Repo::new();
+    workflowed(&r);
+    let (people, _wt, tip) = approved_by_edge(&r, SLUG, None);
+    let base = head(&r.root, "main");
+    let policy = head(&r.root, "main:symphony.toml");
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap();
+    let merge = head(&r.root, "main");
+    assert_eq!(
+        line,
+        format!(
+            "landed {SLUG} on main at {}, by its workflow ({SLUG}@5); not pushed: no origin remote",
+            &merge[..12]
+        )
+    );
+    // One merge commit of the bound head, checked once, as any land's.
+    assert_eq!(head(&r.root, "main^1"), base);
+    assert_eq!(head(&r.root, "main^2"), tip);
+    assert_eq!(runs(&r), [format!("{SLUG} {}", people.orch)]);
+    assert!(
+        said.contains(&format!(
+            "land {SLUG}: prepared {SLUG}@5 by its edge prepare_land, bound to its head {}",
+            &tip[..7]
+        )),
+        "{said}"
+    );
+    // The graph says where it is, and the intent what happened.
+    assert_eq!(at(&r, SLUG), (pair("deliver", "landed"), 6));
+    let task = r.board.store.get(SLUG).unwrap();
+    assert_eq!(task.status, "done");
+    let intent = intent(&r, SLUG);
+    assert_eq!(intent.stage, Stage::Finalized);
+    assert_eq!(intent.adapter, DEFAULT_LAND);
+    assert_eq!(intent.receipt.as_deref(), Some(merge.as_str()));
+    assert_eq!(intent.finalized.as_deref(), Some("sim/jump@6"));
+    assert_eq!(intent.recovery, None);
+    let bound = &intent.bindings;
+    assert_eq!(bound.head, tip);
+    assert_eq!(bound.task, SLUG);
+    assert_eq!(bound.policy, policy);
+    assert_eq!(bound.destination, "refs/heads/main");
+    assert_eq!(bound.pull, None);
+    assert!(
+        Path::new(&bound.repository).ends_with(".git"),
+        "{}",
+        bound.repository
+    );
+    assert_eq!(bound.evidence.len(), 64);
+    // Its thread: prepared, finalized with the merge read back, then the land's own line.
+    let thread = r.board.said(SLUG);
+    assert!(
+        thread
+            .iter()
+            .any(|l| l.starts_with("prepared prepare_land for default_land"))
+    );
+    assert!(
+        thread.iter().any(|l| l.contains(&format!(
+            "finalized {SLUG}@5 by default_land ({SLUG}@6): {merge}"
+        ))),
+        "{thread:?}"
+    );
+    assert_eq!(last(&r, SLUG), line);
+    // Its record is dropped and its worktree gone.
+    assert_eq!(
+        Record::read(&r.root.join(".git/symphony/tasks/land"), SLUG),
+        None
+    );
+    assert!(!r.root.join(".git/symphony/tasks/land/worktree").exists());
+    // Landed: a land again merges nothing and says so.
+    let (_, again) = landed(&r, SLUG, &people.orch);
+    assert_eq!(
+        again.unwrap_err(),
+        format!(
+            "{SLUG} landed already, at {} ({SLUG}@5): nothing to land",
+            &merge[..7]
+        )
+    );
+    assert_eq!(head(&r.root, "main"), merge);
+}
+
+#[test]
+fn a_head_its_approve_did_not_read_is_refused_before_it_is_prepared() {
+    let r = Repo::new();
+    workflowed(&r);
+    let (people, wt, read) = approved_by_edge(&r, SLUG, None);
+    write(&wt, "sim/more.gd", "extends Node\n");
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", "more, after the approve"]);
+    let tip = head(&wt, "HEAD");
+    let before = head(&r.root, "main");
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    assert_eq!(
+        result.unwrap_err(),
+        format!(
+            "{SLUG}'s approve ({SLUG}@4) read {}, and its tip is {}: the head reviewed is the \
+             head landed",
+            &read[..7],
+            &tip[..7]
+        )
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    assert_eq!(at(&r, SLUG), (pair("deliver", "approved"), 4));
+    assert_eq!(r.board.store.effect_intent(SLUG, 5).unwrap(), None);
+    let told = last(&r, SLUG);
+    assert!(told.starts_with("land refused: "), "{told}");
+    assert!(
+        told.contains("A fresh reviewer approves the tip by the workflow's approve edge"),
+        "{told}"
+    );
+    // A prepare naming the tip, sent past the land, binds a head the receipt does not hold: the
+    // land that follows it dispatches nothing under it.
+    let intent = prepared(&r, SLUG, &people.orch, &read);
+    assert_eq!(intent.bindings.head, read);
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap_err();
+    assert!(
+        line.starts_with(&format!("stale_input: {SLUG}@5 is withdrawn")),
+        "{line}"
+    );
+    assert!(
+        line.contains(&format!("its head was {read} when prepared and is {tip}")),
+        "{line}"
+    );
+    assert_eq!(head(&r.root, "main"), before);
+}
+
+#[test]
+fn a_reservation_that_went_stale_is_withdrawn_and_nothing_is_merged() {
+    let r = Repo::new();
+    workflowed(&r);
+    let (people, _wt, tip) = approved_by_edge(&r, SLUG, None);
+    prepared(&r, SLUG, &people.orch, &tip);
+    // Cancelled by an edge out before the land dispatched it.
+    let orch = agent_session(&people.orch);
+    take(&r.board.store, SLUG, &orch, "send_back", None);
+    let before = head(&r.root, "main");
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap_err();
+    // It awaits review again: no prepare edge leaves that pair, so nothing is asked of the intent.
+    assert!(
+        line.contains("it is at verify/awaiting, which no prepare_land edge"),
+        "{line}"
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    assert_eq!(runs(&r), Vec::<String>::new());
+    // The intent itself refuses a dispatch, and is withdrawn.
+    let why = (r.board.store)
+        .dispatch_effect(&adapter(&r), SLUG, 5)
+        .unwrap_err()
+        .to_string();
+    assert!(why.contains("moved on to verify/awaiting"), "{why}");
+    assert_eq!(intent(&r, SLUG).stage, Stage::Withdrawn);
+}
+
+#[test]
+fn a_land_killed_between_its_merge_and_its_finalize_is_finished_by_the_same_intent() {
+    let r = Repo::new();
+    workflowed(&r);
+    let (people, _wt, tip) = approved_by_edge(&r, SLUG, None);
+    prepared(&r, SLUG, &people.orch, &tip);
+    r.board
+        .store
+        .dispatch_effect(&adapter(&r), SLUG, 5)
+        .unwrap();
+    let merge = merged_as_a_land_left_it(&r, SLUG, &tip);
+    assert_eq!(at(&r, SLUG), (pair("deliver", "landing"), 5));
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap();
+    assert_eq!(
+        line,
+        format!(
+            "landed {SLUG} on main at {}, by its workflow ({SLUG}@5), finishing a land \
+             interrupted after its merge; not pushed: no origin remote",
+            &merge[..12]
+        )
+    );
+    assert!(
+        said.contains("finishing the same operation (sim/jump@5), merging nothing"),
+        "{said}"
+    );
+    // Nothing merged again, nothing checked again.
+    assert_eq!(head(&r.root, "main"), merge);
+    assert_eq!(runs(&r), Vec::<String>::new());
+    assert_eq!(at(&r, SLUG), (pair("deliver", "landed"), 6));
+    let intent = intent(&r, SLUG);
+    assert_eq!(intent.receipt.as_deref(), Some(merge.as_str()));
+    assert_eq!(intent.recovery, None);
+    assert_eq!(last(&r, SLUG), line);
+}
+
+#[test]
+fn a_dispatched_land_whose_merge_never_happened_is_dispatched_and_merged_again() {
+    let r = Repo::new();
+    workflowed(&r);
+    let (people, _wt, tip) = approved_by_edge(&r, SLUG, None);
+    prepared(&r, SLUG, &people.orch, &tip);
+    r.board
+        .store
+        .dispatch_effect(&adapter(&r), SLUG, 5)
+        .unwrap();
+    let (said, result) = landed(&r, SLUG, &people.orch);
+    result.unwrap();
+    assert!(
+        said.contains("is dispatched, and nothing of it is on main: dispatching it again"),
+        "{said}"
+    );
+    assert_eq!(head(&r.root, "main^2"), tip);
+    assert_eq!(at(&r, SLUG), (pair("deliver", "landed"), 6));
+}
+
+#[test]
+fn a_policy_changed_between_the_prepare_and_the_merge_records_the_merge_and_the_recovery() {
+    let r = Repo::new();
+    workflowed(&r);
+    let (people, _wt, tip) = approved_by_edge(&r, SLUG, None);
+    let bound = prepared(&r, SLUG, &people.orch, &tip).bindings.policy;
+    r.board
+        .store
+        .dispatch_effect(&adapter(&r), SLUG, 5)
+        .unwrap();
+    // The request is in flight; main gains another landing policy before the merge is made.
+    let text = fs::read_to_string(r.root.join("symphony.toml")).unwrap();
+    write(
+        &r.root,
+        "symphony.toml",
+        &format!("# another policy\n{text}"),
+    );
+    git(&r.root, &["commit", "-qam", "another landing policy"]);
+    let now = head(&r.root, "main:symphony.toml");
+    assert_ne!(bound, now);
+    let merge = merged_as_a_land_left_it(&r, SLUG, &tip);
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap();
+    assert!(
+        line.ends_with(&format!(
+            "; RECOVERY REQUIRED: the landing policy was {bound} when prepared and {now} when \
+             the effect happened"
+        )),
+        "{line}"
+    );
+    // The merge happened, so it is recorded and the edge taken; the requirement is on the record.
+    assert_eq!(at(&r, SLUG), (pair("deliver", "landed"), 6));
+    let intent = intent(&r, SLUG);
+    assert_eq!(intent.receipt.as_deref(), Some(merge.as_str()));
+    assert_eq!(intent.bindings.policy, bound);
+    assert!(
+        intent
+            .recovery
+            .unwrap()
+            .starts_with("the landing policy was ")
+    );
+    let thread = r.board.store.thread(SLUG).unwrap();
+    let told = thread
+        .iter()
+        .find(|m| m.text.contains("RECOVERY REQUIRED"))
+        .unwrap();
+    assert_eq!(told.recipient.as_deref(), Some("@orchestrator"));
+}
+
+#[test]
+fn a_land_killed_after_its_finalize_says_its_landed_line_once() {
+    let r = Repo::new();
+    workflowed(&r);
+    let (people, _wt, tip) = approved_by_edge(&r, SLUG, None);
+    prepared(&r, SLUG, &people.orch, &tip);
+    let land = adapter(&r);
+    r.board.store.dispatch_effect(&land, SLUG, 5).unwrap();
+    let merge = merged_as_a_land_left_it(&r, SLUG, &tip);
+    let orch = agent_session(&people.orch);
+    (r.board.store)
+        .finalize_effect(&orch, &Host::local(), &land, SLUG, 5)
+        .unwrap();
+    assert_eq!(at(&r, SLUG), (pair("deliver", "landed"), 6));
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap();
+    assert_eq!(
+        line,
+        format!(
+            "landed {SLUG} on main at {}, by its workflow ({SLUG}@5), finishing a land \
+             interrupted after its finalize",
+            &merge[..12]
+        )
+    );
+    assert_eq!(last(&r, SLUG), line);
+    assert_eq!(
+        Record::read(&r.root.join(".git/symphony/tasks/land"), SLUG),
+        None
+    );
+    let (_, again) = landed(&r, SLUG, &people.orch);
+    assert!(again.unwrap_err().contains("landed already"));
+    assert_eq!(head(&r.root, "main"), merge);
+}
+
+#[test]
+fn a_withdrawn_intent_lands_nothing_until_an_edge_leaves_its_pair() {
+    let r = Repo::new();
+    workflowed(&r);
+    let (people, wt, tip) = approved_by_edge(&r, SLUG, None);
+    prepared(&r, SLUG, &people.orch, &tip);
+    // The branch moves under the reservation: the head bound is not the head there.
+    write(&wt, "sim/more.gd", "extends Node\n");
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", "more, after the prepare"]);
+    let before = head(&r.root, "main");
+    let (_, first) = landed(&r, SLUG, &people.orch);
+    assert!(
+        first
+            .unwrap_err()
+            .starts_with("stale_input: sim/jump@5 is withdrawn")
+    );
+    let told = last(&r, SLUG);
+    assert!(
+        told.contains("Nothing was merged. Take an edge out of its pair"),
+        "{told}"
+    );
+    let (said, again) = landed(&r, SLUG, &people.orch);
+    let line = again.unwrap_err();
+    assert!(
+        line.starts_with("sim/jump@5 is withdrawn (its head was "),
+        "{line}"
+    );
+    assert!(line.ends_with("then land it again"), "{line}");
+    assert_eq!(said, "");
+    assert_eq!(head(&r.root, "main"), before);
+    assert_eq!(runs(&r), Vec::<String>::new());
+}
