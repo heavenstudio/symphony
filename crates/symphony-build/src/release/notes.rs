@@ -85,7 +85,8 @@ fn fact(what: &str, now: Option<i64>, before: Option<(&str, Option<i64>)>) -> St
 /// The tag `tag`'s message for the release of `commit`: what it holds against `previous` (none for
 /// the first release), the checks it passed, what it publishes on crates.io (`crates`, its lines:
 /// [`super::crates::notes`]), what a release candidate's record says of it (`candidate`, its lines:
-/// [`super::candidate::Candidate::notes`]), what a project does to take it (`taking`, its lines:
+/// [`super::candidate::Candidate::notes`]), the failures that passed when the run reran them alone
+/// (`alone`, its lines: [`super::alone::notes`]), what a project does to take it (`taking`, its lines:
 /// [`super::consumer::taking`]), and `changes`, the commits on main since `previous`, one `SHORT
 /// SUBJECT` line each, newest first.
 #[expect(
@@ -100,6 +101,7 @@ pub(crate) fn message(
     checks: &[String],
     crates: &[String],
     candidate: &[String],
+    alone: &[String],
     taking: &[String],
     changes: &[String],
 ) -> String {
@@ -114,7 +116,7 @@ pub(crate) fn message(
     if !checks.is_empty() {
         text.push_str(&format!("\nGreen: {}.\n", checks.join(", ")));
     }
-    for lines in [crates, candidate, taking] {
+    for lines in [crates, candidate, alone, taking] {
         if !lines.is_empty() {
             text.push('\n');
             for line in lines {
@@ -244,6 +246,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             &["abc first".into()],
         );
         assert_eq!(
@@ -275,6 +278,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
             &["bbb second".into(), "aaa first".into()],
         );
         assert_eq!(
@@ -302,6 +306,7 @@ mod tests {
             ],
             &[],
             &[],
+            &[],
         );
         assert!(
             said.ends_with(
@@ -322,6 +327,7 @@ mod tests {
             &["verify".into()],
             &["Publishes to crates.io: a 1.0.0, b 0.1.0.".into()],
             &["Release candidate: first judged aaa.".into()],
+            &[],
             &[],
             &[],
         );
@@ -347,6 +353,7 @@ mod tests {
             &"0".repeat(40),
             Facts::default(),
             Some(&previous),
+            &[],
             &[],
             &[],
             &[],
@@ -378,6 +385,7 @@ mod tests {
             &["verify".into()],
             &[],
             &["Release candidate: first judged aaa.".into()],
+            &[],
             &["For a project taking this release:".into(), "Board:".into()],
             &["aaa first".into()],
         );

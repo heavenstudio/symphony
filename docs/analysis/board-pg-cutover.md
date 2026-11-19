@@ -204,9 +204,10 @@ commands on that task's thread, on main at `8b56e0580`, a development build, boa
 What it does not show: one run each way; the tables no dump holds were all but empty, two
 writers and nothing else, as a read-only export carries no callback, lease, counter or
 undelivered line, so those are proved by the move's tests on generated boards alone; and on a
-scratch board PostgreSQL ends with each command, where a live board's outlives it. `tasks-copy
---board --out` does not read a PostgreSQL board (it speaks SurrealDB alone), so the copy was
-read back by the move's own export.
+scratch board PostgreSQL ends with each command, where a live board's outlives it. The copy was
+read back by the move's own export; `tasks-copy --board --out` reads a board on either engine,
+the same document from each ([POSTGRESQL](../POSTGRESQL.md#the-whole-board-read-and-written)),
+so a board that has moved keeps its read-only export.
 
 ## The way back
 

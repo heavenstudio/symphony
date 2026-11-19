@@ -350,9 +350,9 @@ fn checked_generators(table: &str, generators: &mut [Generator]) -> Result<(), S
     Ok(())
 }
 
-/// A project file read for [`Project::of`]: the project of the settings this build knows, the names
-/// of the tables and keys it does not, and a line for each retired key it writes.
-type Known = (Project, Vec<String>, Vec<String>);
+/// A project file read for [`Project::of`]: the project of the settings this build knows, and the
+/// names of the tables and keys it does not.
+type Known = (Project, Vec<String>);
 
 impl Project {
     /// The plain project at `root`: every default, its name and id from the folder's name.
@@ -362,8 +362,8 @@ impl Project {
 
     /// The project at `root`: its `symphony.toml` over the defaults, or the plain project without
     /// one, with what its local settings file writes over that (`symphony_board::local`: the
-    /// launch's agent, model and effort and each role's model). A key the Symphony reads no more
-    /// is accepted and ignored ([`Project::retired`] says each). A file that does not parse, names a key or value the Symphony does not know, or leaves
+    /// launch's agent, model and effort and each role's model). A file that does not parse, names
+    /// a key or value the Symphony does not know, or leaves
     /// an entrypoint a file on a route another answers is an error naming the file and what is
     /// wrong.
     pub fn load(root: &Path) -> Result<Project, String> {
@@ -435,17 +435,6 @@ impl Project {
         problems
     }
 
-    /// One line for each key the project file at `root` still writes that the Symphony reads no
-    /// more ([`file::RETIRED`]: `[agents] transports`, `[board] export`, `[board] disposable`),
-    /// by name and line, saying it does nothing. Such a key refuses no load and fails no check;
-    /// none for a file that writes none, that is not there or that does not parse.
-    pub fn retired(root: &Path) -> Vec<String> {
-        let Ok(Some(text)) = Self::read(root) else {
-            return Vec::new();
-        };
-        Self::written(&text).map_or_else(|_| Vec::new(), |file| file.retired(&text))
-    }
-
     /// The file at `root` as written, `None` when there is none.
     fn read(root: &Path) -> Result<Option<String>, String> {
         let path = root.join(FILE);
@@ -486,24 +475,22 @@ impl Project {
 
     /// The file at `root` as [`Project::of`] reads it, before its entrypoints' files are looked
     /// at: the project of the settings this build knows, the names of the tables and keys it
-    /// does not, left out ([`File::unknown`]), and what it says of each retired key
-    /// ([`File::retired`]).
+    /// does not, left out ([`File::unknown`]).
     fn read_known(root: &Path) -> Result<Known, String> {
         let Some(text) = Self::read(root)? else {
-            return Ok((Self::plain(root), Vec::new(), Vec::new()));
+            return Ok((Self::plain(root), Vec::new()));
         };
         let file = Self::written(&text)?;
         workflow::require_supported(&text)?;
-        let (unknown, retired) = (file.unknown(&text), file.retired(&text));
+        let unknown = file.unknown(&text);
         let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
-        Ok((project, unknown, retired))
+        Ok((project, unknown))
     }
 
     /// The project at `root` as [`Project::load`] reads it, cached until its file or its local
     /// settings file ([`Project::local_file`]) changes, or an entry appears, goes or is replaced in a folder whose entries the load looked at: an
     /// entrypoint's folder, or one where a file of an entrypoint would meet another route, or any
-    /// folder under that. A key the Symphony reads no more ([`Project::retired`]) is said to do
-    /// nothing, and a table or key this build does not know is left out and reported, each once
+    /// folder under that. A table or key this build does not know is left out and reported, once
     /// per version on stderr, the rest read as written, so a file a newer Symphony wrote keeps its
     /// settings; a project that does not load leaves the plain project in its place, reported the
     /// same way, and says why while it does ([`Project::problem`]). A load refused while a plugin of
@@ -583,21 +570,18 @@ impl Project {
             (path, stamp)
         };
         let mut stamps = vec![stamped(root.join(FILE)), stamped(Self::local_file(root))];
-        let loaded = Self::read_known(root).and_then(|(project, unknown, retired)| {
+        let loaded = Self::read_known(root).and_then(|(project, unknown)| {
             let mut read = Vec::new();
             let checked = project.check_files(root, &mut read);
             read.sort();
             read.dedup();
             stamps.extend(read.into_iter().map(|path| stamped(root.join(path))));
             checked
-                .map(|()| (project, unknown, retired))
+                .map(|()| (project, unknown))
                 .map_err(|e| format!("{FILE}: {e}"))
         });
         let (project, problem, again) = match loaded {
-            Ok((mut project, unknown, retired)) => {
-                for line in &retired {
-                    eprintln!("{}: {line}", root.display());
-                }
+            Ok((mut project, unknown)) => {
                 if let Some(refusal) = File::refusal(&unknown) {
                     eprintln!("{}: {refusal}; left out, the rest read", root.display());
                 }

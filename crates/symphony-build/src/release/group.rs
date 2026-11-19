@@ -194,17 +194,22 @@ fn owned_signal(pid: u32, how: libc::c_int) -> io::Result<()> {
         if unsafe { libc::killpg(group_of(pid), how) } == 0 {
             return Ok(());
         }
-        let error = io::Error::last_os_error();
-        // Darwin reports EPERM for a group containing only zombies. A census below must still
-        // establish that no live member remains; EPERM alone never means successful cleanup.
-        if error.raw_os_error() == Some(libc::ESRCH)
-            || (error.raw_os_error() == Some(libc::EPERM) && !running(pid)?)
-        {
-            Ok(())
-        } else {
-            Err(error)
-        }
+        unreached(io::Error::last_os_error())
     })
+}
+
+/// A group signal that reached no member, which leaves the group to the census that follows
+/// every signal ([`drain`]): ESRCH, no process left in it, and EPERM, Darwin's answer once each
+/// member is a zombie or exiting. An exiting member is counted out of the signal as its exit
+/// begins, some milliseconds before its status reads as a zombie (longer on a loaded machine), so
+/// in between the census still reads it live: the drain looks again, and fails at its deadline
+/// on a member that stays live, as one the signal may not reach would. Neither answer ever means
+/// the cleanup succeeded. Every other refusal stands.
+fn unreached(error: io::Error) -> io::Result<()> {
+    match error.raw_os_error() {
+        Some(libc::ESRCH | libc::EPERM) => Ok(()),
+        _ => Err(error),
+    }
 }
 
 fn retry_interrupted<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
@@ -766,6 +771,40 @@ mod tests {
         assert_eq!(error.to_string(), "census refused");
         // Even at its deadline a completed drain succeeds, without a timer assertion.
         drain(&mut kill, &mut || Ok(false), Duration::ZERO, &mut clock).unwrap();
+    }
+
+    #[test]
+    fn a_signal_that_reached_no_member_leaves_the_group_to_the_census() {
+        let refused = |code| unreached(io::Error::from_raw_os_error(code));
+        refused(libc::ESRCH).unwrap();
+        // Darwin's answer while the only members left are exiting, which the census reads live.
+        refused(libc::EPERM).unwrap();
+        for stands in [libc::EINVAL, libc::EINTR] {
+            assert_eq!(refused(stands).unwrap_err().raw_os_error(), Some(stands));
+        }
+        // The census decides: a member that leaves is drained, one that stays live is an error
+        // at the deadline, never a successful cleanup.
+        let looks = std::cell::Cell::new(0);
+        let mut clock = Paused::default();
+        drain(
+            &mut || refused(libc::EPERM),
+            &mut || {
+                looks.set(looks.get() + 1);
+                Ok(looks.get() < 3)
+            },
+            GRACE,
+            &mut clock,
+        )
+        .unwrap();
+        assert_eq!((looks.get(), clock.elapsed()), (3, POLL * 2));
+        let error = drain(
+            &mut || refused(libc::EPERM),
+            &mut || Ok(true),
+            GRACE,
+            &mut clock,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     }
 
     #[test]

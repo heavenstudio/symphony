@@ -242,7 +242,12 @@ publication. `drop SLUG` drops the mapping and keeps the issue as not the task's
 the two again, counts it as a duplicate of the task's publication, or takes it for a publication
 whose answer was lost. A curated text kept stays, so the next preview shows it published as a
 new issue. Nothing is written to the issue or the board, and the journal holds the drop as an act
-of its own, its intent carrying the mapping it drops.
+of its own, its intent carrying the mapping it drops. The preview waiting is dropped before
+anything else is written, so a drop or a `resolve` cut short never leaves one read before it.
+
+No command undoes a drop. The issue's id stays under the task's slug in `dropped` in
+`state.json`; removing it there by hand, while no command runs, lets the next preview map the
+two again.
 
 ## What is kept
 
@@ -278,8 +283,10 @@ A reconcile is safe to run again and to interrupt.
   was dispatched (one found is mapped, more than one stops with none mapped and none created), an issue's edit and a brief's edit by
   reading the side they wrote, a proposal by its slug and the line naming its issue. Such a
   publication, or one skipped, is looked for at every later apply of it until an acknowledgment
-  maps an issue: each costs one request for each hundred issues of the repository. No bound is
-  set on it, since a public issue made twice cannot be recalled.
+  maps an issue: each costs one request for each hundred issues of the repository, up to 1,000
+  pages (100,000 issues). A repository with more ends the search there: the run stops with the
+  publication's result still unknown and creates nothing, since a public issue made twice cannot
+  be recalled.
 - A brief is rewritten only by `edit_bound`, with the token the preview read. A token the board
   refuses ends the run and drops the preview: nothing is tried on what the board holds now, and
   the next preview reads the task again.
