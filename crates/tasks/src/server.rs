@@ -54,6 +54,8 @@ mod fetch_tests;
 mod hold;
 mod left;
 pub use left::{LEFT_STOPS, LeftReplay};
+mod moving;
+pub use moving::{EXPORT, Journal, Kind, Moved, STEPS};
 pub mod postgres;
 pub use postgres::{Postgres, Serving};
 mod reclaim;
@@ -382,6 +384,8 @@ pub struct Home {
     /// Whether a start that replays the store's log runs apart from its caller
     /// ([`Home::starting_apart`]).
     apart: bool,
+    /// Where a test cuts a move's or a restore's switch ([`Home::stopping_after`]).
+    cut: Option<moving::Cut>,
 }
 
 impl Home {
@@ -399,6 +403,7 @@ impl Home {
             tell: std::sync::Arc::new(|line| eprintln!("{line}")),
             lock_wait: None,
             apart: false,
+            cut: None,
         }
     }
 
@@ -1039,6 +1044,20 @@ impl Home {
         on_start: &dyn Fn(&Running) -> Result<(), ServerError>,
     ) -> Result<Running, ServerError> {
         self.unheld()?;
+        self.spawn_held(data, except, storage, patience, what, on_start)
+    }
+
+    /// [`Home::spawn_as`] also while the board is held: a move's own server on the store its
+    /// caller holds stopped ([`moving`]).
+    fn spawn_held(
+        &self,
+        data: &str,
+        except: &[u16],
+        storage: Storage,
+        patience: Duration,
+        what: &str,
+        on_start: &dyn Fn(&Running) -> Result<(), ServerError>,
+    ) -> Result<Running, ServerError> {
         if !self.surreal.is_file() {
             return Err(self.no_surreal());
         }

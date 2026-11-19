@@ -9,7 +9,7 @@ mod args;
 pub mod attach;
 mod beat;
 mod commands;
-mod database;
+pub(crate) mod database;
 mod detached;
 mod field;
 pub mod machine_work;
@@ -578,7 +578,7 @@ enum Reaching {
 const READ_WAIT: Duration = Duration::from_secs(5);
 
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
-fn machine(env: &Env) -> Option<PathBuf> {
+pub(crate) fn machine(env: &Env) -> Option<PathBuf> {
     crate::project::machine_folder(
         |name| env.var(name).map(std::ffi::OsString::from),
         cfg!(target_os = "macos"),

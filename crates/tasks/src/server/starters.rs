@@ -50,6 +50,9 @@ pub(super) enum Doing {
     Reclaiming,
     /// Takes a snapshot of the board's store ([`Home::snapshot`]).
     Snapshotting,
+    /// Moves the board's store to another engine, or restores a snapshot over it
+    /// ([`Home::move_to`], [`super::Postgres::restore_over`]).
+    Moving,
 }
 
 /// What `symphony/tasks/lock.json` says: who holds the starters' lock, doing what, since when.
@@ -233,6 +236,9 @@ impl Home {
             Doing::Releasing => "a release of the board's hold".into(),
             Doing::Reclaiming => "a reclaim of the board's store (`tasks-reclaim`)".into(),
             Doing::Snapshotting => "a snapshot of the board's store (`tasks snapshot`)".into(),
+            Doing::Moving => "a move of the board's store to another engine, or a restore of a \
+                              snapshot over it (`tasks-move`)"
+                .into(),
         };
         format!("pid {}, since {}: {doing}", note.pid, local_minute(note.at))
     }
