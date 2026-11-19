@@ -36,11 +36,13 @@ pub const NEEDS: &str = "needs";
 /// What `just tasks needs` names for a task that needs no stamp.
 pub const NONE: &str = "none";
 
-/// One stamp as the Symphony has it: its name, whether a task nobody assessed needs it, how the land
-/// knows it stands, and where it applies and where it does not.
+/// One stamp as the Symphony has it: its name, whether a task nobody assessed needs it, whether a
+/// gate decision may waive it for one tip ([`crate::gates`]), how the land knows it stands, and
+/// where it applies and where it does not.
 struct Own {
     name: &'static str,
     default: bool,
+    waivable: bool,
     met: &'static str,
     applies: &'static str,
     skips: &'static str,
@@ -50,6 +52,7 @@ struct Own {
 const OWN: [Own; 4] = [
     Own {
         name: "tests",
+        waivable: false,
         default: false,
         met: "the task's recorded runs at the tip, its own or work under it: the newest run there \
               of each build and test command it ran is green, and one test run at least is among \
@@ -65,6 +68,7 @@ const OWN: [Own; 4] = [
     },
     Own {
         name: "review",
+        waivable: false,
         default: true,
         met: "a fresh reviewer's approve naming the tip, or the commit the tip merges the default \
               branch into where that merge settles conflicts in documents alone, changes \
@@ -93,6 +97,7 @@ const OWN: [Own; 4] = [
     },
     Own {
         name: "pictures",
+        waivable: true,
         default: false,
         met: "a post on the task's thread naming the tip and showing at least one picture (a file \
               under the task's artifacts folder, or an upload); the executor's to produce",
@@ -104,6 +109,7 @@ const OWN: [Own; 4] = [
     },
     Own {
         name: "owner",
+        waivable: false,
         default: false,
         met: "the owner's own approve naming the tip, given on the task's page",
         applies: "a result the owner asked, in the brief or on the thread, to see before it lands: \
@@ -120,6 +126,9 @@ pub struct Stamp {
     pub name: &'static str,
     /// Whether a task no assessment has read needs it.
     pub default: bool,
+    /// Whether a gate decision may waive it for one tip ([`crate::gates`]): never `tests`, `review`
+    /// or `owner` ([`crate::gates::NEVER`]).
+    pub waivable: bool,
     /// How the land knows it stands: the Symphony's, as its reader is.
     pub met: &'static str,
     /// Where the assessor needs it.
@@ -141,6 +150,7 @@ pub struct Catalogue {
 #[serde(deny_unknown_fields)]
 struct Written {
     default: Option<bool>,
+    waivable: Option<bool>,
     applies: Option<String>,
     skips: Option<String>,
 }
@@ -168,6 +178,7 @@ impl Catalogue {
                 .map(|own| Stamp {
                     name: own.name,
                     default: own.default,
+                    waivable: own.waivable,
                     met: own.met,
                     applies: own.applies.into(),
                     skips: own.skips.into(),
@@ -212,6 +223,26 @@ impl Catalogue {
                  four, or write each stamp the project's land can require"
             ));
         }
+        let never: Vec<String> = (crate::gates::NEVER.iter())
+            .filter(|name| {
+                written
+                    .get(**name)
+                    .is_some_and(|w| w.waivable == Some(true))
+            })
+            .map(
+                |name| match crate::limits::line(text, &["stamps", name], "waivable") {
+                    Some(line) => format!("{name:?} (line {line})"),
+                    None => format!("{name:?}"),
+                },
+            )
+            .collect();
+        if !never.is_empty() {
+            return Err(format!(
+                "{MANIFEST}: [stamps] marks waivable {}, which no gate decision waives: {}",
+                never.join(", "),
+                crate::gates::NEVER_WHY
+            ));
+        }
         let stamps = OWN
             .iter()
             .filter_map(|own| {
@@ -219,6 +250,7 @@ impl Catalogue {
                 Some(Stamp {
                     name: own.name,
                     default: stamp.default.unwrap_or(own.default),
+                    waivable: stamp.waivable.unwrap_or(own.waivable),
                     met: own.met,
                     applies: or_own(stamp.applies, own.applies),
                     skips: or_own(stamp.skips, own.skips),
@@ -271,6 +303,37 @@ impl Catalogue {
     /// Its stamps' names, in order.
     pub fn names(&self) -> Vec<&'static str> {
         self.stamps.iter().map(|stamp| stamp.name).collect()
+    }
+
+    /// Why a gate decision may not waive the stamp `name`, none when it may: a stamp the catalogue
+    /// lacks, one never waived ([`crate::gates::NEVER`]), or one the catalogue does not mark
+    /// waivable.
+    pub fn unwaivable(&self, name: &str) -> Option<String> {
+        let waivable: Vec<&str> = (self.stamps.iter())
+            .filter(|stamp| stamp.waivable)
+            .map(|stamp| stamp.name)
+            .collect();
+        let these = match waivable.as_slice() {
+            [] => "the catalogue marks none waivable".to_string(),
+            names => format!("the catalogue's waivable stamps are {}", names.join(", ")),
+        };
+        if crate::gates::NEVER.contains(&name) {
+            return Some(format!(
+                "{name} is never waived: {}; {these}",
+                crate::gates::NEVER_WHY
+            ));
+        }
+        match self.stamps.iter().find(|stamp| stamp.name == name) {
+            None => Some(format!(
+                "the catalogue has no stamp {name:?}: its stamps are {} (`just tasks stamps` lists \
+                 them); a raise names a number in a file, PATH:NAME",
+                self.names().join(", ")
+            )),
+            Some(stamp) if !stamp.waivable => Some(format!(
+                "the catalogue does not mark {name} waivable ([stamps.{name}] waivable); {these}"
+            )),
+            Some(_) => None,
+        }
     }
 
     /// What a task no assessment has read needs: the stamps needed by default, in order.

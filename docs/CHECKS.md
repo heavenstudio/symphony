@@ -37,6 +37,11 @@ landing](TASKS.md#the-default-landing)). A change to a test or a check (`[land] 
 keeps `review`, since a loosened test or check is how a red turns green unfixed. A change of
 settings' values needs `tests` alone, the settings check ([by kind](#evidence-by-kind-of-change)).
 
+A gate that must give way for one task gives way by its orchestrator's recorded decision, never
+by a word in a terminal: a limit raised, or a waivable stamp waived at one tip
+([gate decisions](TASKS.md#gate-decisions)). A red test, a missing review where the stamps name
+one and the owner's approve are never waived.
+
 Where review is needed, a reviewer reads the diff against the evidence and judges whether it is
 good enough for the change's risk, and builds or runs nothing the task's recorded runs at the
 tip already show green ([no second build in review](#no-second-build-in-review)), never the
@@ -497,7 +502,11 @@ publishes one client before scheduling, so no browser case builds or relinks whi
 run. Every test receives the build's binaries through `SYMPHONY_TEST_TASKS_BINARY` and
 `SYMPHONY_TEST_BINARIES`; a caller's values win. Each Cargo call keeps the workspace build's
 feature graph and its build-script/proc-macro debug info, so no concurrent batch relinks anything.
-Every server, store and browser still takes its own folder and a port the system picks.
+Cargo still makes each binary's copy in the target folder again at every call, removing it first,
+so before scheduling the runner makes each copy the build lists a hard link to the file it copies,
+which every later call leaves in place: a batch that starts never leaves another's test without
+the binary it runs. Every server, store and browser still takes its own folder and a port the
+system picks.
 
 Nextest and the Cargo batches keep live logs in `tests-lanes/` beside the step's log
 (`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), with the binary metadata beside
@@ -674,10 +683,19 @@ it. A task whose change adds weight to a shipped binary (a dependency or a depen
 library the binary did not reach before) runs `just size-check` at its tip and posts the sizes with
 its evidence. A binary past its line there is the task's own to take back before review, in its
 branch, by a reduction first: bytes of its own code, or of anything else that binary links. A
-raise of its line is the exception RULES.md `workflow/release-reds-first` names for a budget: in a
-commit of its own that names the growth, with the task's thread saying why no reduction will do, to
-the binary's size plus 4 % and never higher, landed only on a fresh reviewer's approve
-([the default landing](TASKS.md#the-default-landing)).
+raise of its line is the exception RULES.md `workflow/release-reds-first` names for a budget, and
+it is the task's orchestrator's decision, never its executor's: recorded with `just tasks gate
+SLUG tools/size-budget.toml:NAME --raise NEW --why WHY --as HANDLE`
+([gate decisions](TASKS.md#gate-decisions)), then made in a commit of its own that names the
+growth, with the task's thread saying why no reduction will do, landed only on a fresh reviewer's
+approve ([the default landing](TASKS.md#the-default-landing)) and only at the number decided, or
+below the default branch's should a further cut lower it.
+`NEW` is the caller's number, which the command does not check: for a size line the house form is
+[the rule above](#where-a-line-stands), the binary's size as `just size-check` measures it at the
+task's tip plus 4 %, rounded down to a multiple of 10,000 bytes, never higher. A first-visit cap
+of the client's ([its guide](../apps/symphony-web/AGENTS.md)) is raised the same way, a decision
+naming its constant (`apps/symphony-web-tests/tests/browser/main.rs:TASKS_FIRST_VISIT_BYTES`)
+with the bytes measured on the fixture.
 
 The landings that each stayed under a line can still cross it together, and the release run finds
 that: a red of its size step, fixed the same way, a reduction first. To find what grew, the red's

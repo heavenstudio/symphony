@@ -225,8 +225,16 @@ fn an_idle_reviewer_is_picked_only_when_the_board_takes_its_verdict() {
         let task = board.tasks.iter().find(|t| t.slug == slug).unwrap();
         let agents: Vec<_> = from.iter().map(|handle| idle_reviewer(handle)).collect();
         let held = f.store.ever_held(slug).unwrap();
-        idle_for(&agents, &board, task, "reviewer", &HashSet::new(), &held)
-            .map(|a| a.handle.clone())
+        idle_for(
+            &agents,
+            &board,
+            task,
+            "reviewer",
+            &HashSet::new(),
+            &held,
+            None,
+        )
+        .map(|a| a.handle.clone())
     };
     // Its executor, its filer and its orchestrator before are passed over for a fresh one.
     let unfresh = [EXECUTED, FILER, ORCHESTRATED];
@@ -266,6 +274,7 @@ fn a_review_goes_back_to_the_tasks_recorded_reviewer_never_to_another_idle_one()
             "reviewer",
             &HashSet::new(),
             &held,
+            None,
         )?;
         Ok::<_, Error>((resumed, picked.map(|a| a.handle.clone())))
     };
@@ -596,4 +605,176 @@ fn an_ended_pass_frees_its_lock_while_a_forked_child_still_holds_the_descriptor(
     assert!(lock(&env).unwrap().is_none());
     drop((inherited, next));
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// The review workflow of [`crate::workflow::operate::tests::REVIEWED`], as a board activates it.
+fn reviewed_workflow() -> crate::workflow::Custom {
+    use crate::workflow::activate::tests::{MAPPED, custom};
+    custom(&format!(
+        "{}{MAPPED}",
+        crate::workflow::operate::tests::REVIEWED
+    ))
+}
+
+#[test]
+fn a_held_task_wants_the_role_its_open_claim_edges_give_never_its_projected_status() {
+    use crate::workflow::operate::tests::{held, holding, legacy, reviewed};
+    let w = reviewed();
+    let orchestrated = |task| holding(task, ORCHESTRATES, "orchestrator", Health::Live);
+    let wants = |task: Task, others: Vec<Task>| {
+        let task = orchestrated(task);
+        let mut tasks = others;
+        tasks.push(task.clone());
+        let board = Board {
+            tasks,
+            sessions: Vec::new(),
+            latest_message: 0,
+        };
+        eligible(&task, &board, &Config::default(), Some(&w))
+    };
+    assert_eq!(
+        wants(held("sim/a", "build", "available"), Vec::new()),
+        Some("executor")
+    );
+    assert_eq!(
+        wants(held("sim/a", "verify", "awaiting"), Vec::new()),
+        Some("reviewer")
+    );
+    // In review by its projection, yet no edge leaving it gives a reviewer: a launch would fail.
+    let reviewing = held("sim/a", "verify", "reviewing");
+    assert_eq!(reviewing.status, "review");
+    assert_eq!(wants(reviewing, Vec::new()), None);
+    assert_eq!(
+        wants(legacy("sim/a", "review"), Vec::new()),
+        Some("reviewer")
+    );
+    // Work lost at a position no claim leaves is its recovery's, never a new executor's.
+    let lost = holding(
+        held("sim/a", "build", "working"),
+        EXECUTED,
+        "executor",
+        Health::Lost,
+    );
+    assert_eq!(wants(lost, Vec::new()), None);
+    assert_eq!(wants(held("sim/a", "verify", "accepted"), Vec::new()), None);
+    // The claim's dependency predicate, read from the prerequisite's position.
+    let needing = || {
+        let mut task = held("sim/a", "build", "available");
+        task.depends = vec!["sim/b".into()];
+        task
+    };
+    assert_eq!(
+        wants(needing(), vec![held("sim/b", "build", "working")]),
+        None
+    );
+    assert_eq!(
+        wants(needing(), vec![held("sim/b", "verify", "approved")]),
+        Some("executor")
+    );
+    // Reserved for a session there: nobody else is started.
+    let reserved = holding(
+        held("sim/a", "build", "available"),
+        FRESH,
+        "reserved",
+        Health::Live,
+    );
+    assert_eq!(wants(reserved, Vec::new()), None);
+    // No workflow read: a held task is never staffed by its status.
+    let task = orchestrated(held("sim/a", "build", "available"));
+    let board = Board {
+        tasks: vec![task.clone()],
+        sessions: Vec::new(),
+        latest_message: 0,
+    };
+    assert_eq!(eligible(&task, &board, &Config::default(), None), None);
+}
+
+#[test]
+fn an_idle_fresh_reviewer_takes_a_held_tasks_review_edge_and_its_executor_is_passed_over() {
+    use crate::workflow::{Host, agent_session};
+    let f = reviewing();
+    let host = Host::local();
+    f.store
+        .activate_workflow(&reviewed_workflow(), &host)
+        .unwrap();
+    f.store
+        .create(&NewTask::new("sim/jump", "A review", FILER))
+        .unwrap();
+    f.store
+        .take_role("sim/jump", ORCHESTRATES, "orchestrator")
+        .unwrap();
+    let executed = agent_session(EXECUTED);
+    (f.store)
+        .claim_by_workflow("sim/jump", &executed, &host, Role::Executor)
+        .unwrap();
+    let next = f
+        .store
+        .workflow_actions("sim/jump", &executed, &host)
+        .unwrap();
+    let request = symphony_api::workflow::OperationRequest {
+        project: f.store.database().database().to_string(),
+        task: "sim/jump".into(),
+        edge: "submit".into(),
+        input_revisions: Default::default(),
+        idempotency_key: "submit".into(),
+        inputs: Default::default(),
+        expected: next.snapshot,
+    };
+    f.store.apply_operation(&executed, &host, &request).unwrap();
+    let board = f.store.board().unwrap();
+    let task = board.tasks.iter().find(|t| t.slug == "sim/jump").unwrap();
+    let operating = f.store.operating_for(&board.tasks).unwrap();
+    assert_eq!(
+        eligible(task, &board, &Config::default(), operating.as_ref()),
+        Some("reviewer")
+    );
+    // Its executor let the role go with its submit, yet executed it: a fresh one is picked.
+    let held = f.store.ever_held("sim/jump").unwrap();
+    let agents = [
+        idle_reviewer(EXECUTED),
+        idle_reviewer(FILER),
+        idle_reviewer(FRESH),
+    ];
+    let picked = idle_for(
+        &agents,
+        &board,
+        task,
+        "reviewer",
+        &HashSet::new(),
+        &held,
+        operating.as_ref(),
+    );
+    assert_eq!(picked.map(|a| a.handle.as_str()), Some(FRESH));
+    let hc = ReusedTerminal::answering("started");
+    let line = dispatch(
+        &f.store,
+        &hc,
+        &reusing(),
+        &Defaults::default().resolve(None, None),
+        task,
+        ORCHESTRATES,
+        Some(&jump_review()),
+        picked,
+    )
+    .unwrap();
+    assert_eq!(
+        line,
+        format!("pinged {FRESH} as reviewer, pane t1, prompt $review-task sim/jump {FRESH}")
+    );
+    let position = f.store.workflow_position("sim/jump").unwrap().unwrap();
+    assert_eq!(
+        (position.phase.as_str(), position.state.as_str()),
+        ("verify", "reviewing")
+    );
+    assert_eq!(
+        f.store.get("sim/jump").unwrap().holders("reviewer"),
+        [FRESH]
+    );
+    // Taken: no claim leaves it, so the next pass starts nobody there.
+    let board = f.store.board().unwrap();
+    let task = board.tasks.iter().find(|t| t.slug == "sim/jump").unwrap();
+    assert_eq!(
+        eligible(task, &board, &Config::default(), operating.as_ref()),
+        None
+    );
 }
