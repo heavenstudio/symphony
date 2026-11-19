@@ -21,8 +21,8 @@ fn an_update_is_named_by_its_board_and_schema_and_its_generation_from_the_second
     );
     assert_eq!(slug("alpha", 24, 3), "tests/release-red-update-alpha-24-g3");
     assert_eq!(
-        slug("Star_Foundry..x", 7, 1),
-        "tests/release-red-update-star-foundry-x-7",
+        slug("Alpha_Beta..x", 7, 1),
+        "tests/release-red-update-alpha-beta-x-7",
         "a slug keeps letters and digits, in lower case, each other run one dash"
     );
     assert_eq!(slug("--", 7, 1), "tests/release-red-update-project-7");
