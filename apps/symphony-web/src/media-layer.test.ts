@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { WAITING } from "./media";
 import {
   keyed,
+  nameOf,
   panelShowsMedia,
   photo,
   pictureSet,
@@ -97,6 +98,10 @@ class FakeElement {
   /** The root of the page, to which every element on it is connected. */
   root = false;
   box = { width: 0, height: 0 };
+  /** Its own text, which its children's follows. */
+  text = "";
+  /** How it was last given the focus, by its options; none when it never was. */
+  focused: unknown[] = [];
   private readonly attributes = new Map<string, string>();
 
   constructor(tag: string, attributes: Record<string, string> = {}, children: FakeElement[] = []) {
@@ -145,6 +150,14 @@ class FakeElement {
 
   getBoundingClientRect(): { width: number; height: number } {
     return this.box;
+  }
+
+  get textContent(): string {
+    return this.text + this.children.map((child) => child.textContent).join("");
+  }
+
+  focus(options?: unknown): void {
+    this.focused.push(options);
   }
 
   private is(read: Compound): boolean {
@@ -424,7 +437,29 @@ describe("what the page shows, readied", () => {
     expect(outside.hasAttribute("data-zoom-ready")).toBe(false);
     const nameless = h("img");
     scanned(h("main", {}, nameless));
-    expect(nameless.getAttribute("aria-label")).toBe("Open picture ");
+    expect(nameless.getAttribute("aria-label")).toBe("Open picture");
+  });
+
+  it("names a picture with no alt by its figure's caption, and tells ten of a row apart", () => {
+    const caption = h("figcaption");
+    caption.text = " Picture 2 ";
+    const captioned = h("img", { alt: "  " });
+    const names = ["Desktop dark before", "Desktop dark after", "Phone light before"];
+    const row = names.map((alt) => h("figure", {}, h("img", { alt }), h("figcaption")));
+    scanned(
+      h("main", {}, h("div", { class: "compare" }, ...row, h("figure", {}, captioned, caption))),
+    );
+    expect(row.map((figure) => figure.children[0]?.getAttribute("aria-label"))).toEqual(
+      names.map((name) => `Open picture ${name}`),
+    );
+    expect(captioned.getAttribute("aria-label")).toBe("Open picture Picture 2");
+    expect(nameOf(asElement(captioned))).toBe("Picture 2");
+    captioned.setAttribute("src", "/c.png");
+    expect(photo(asElement(captioned))).toEqual({ src: "/c.png", caption: "Picture 2" });
+    const bare = h("img");
+    h("figure", {}, bare);
+    expect(nameOf(asElement(bare))).toBe("");
+    expect(nameOf(asElement(h("img")))).toBe("");
   });
 });
 
@@ -561,6 +596,27 @@ describe("a press on the page", () => {
     pressed(press, viewer);
     expect(press.preventDefault).toHaveBeenCalled();
     expect(asked[0]).toMatchObject({ kind: "picture", at: 1 });
+    // A picture the layer made no button takes no focus.
+    expect(b.focused).toEqual([]);
+  });
+
+  it("gives the picture the focus before it opens, so the viewer gives it back there", () => {
+    const [a, b] = ["A", "B"].map((alt) =>
+      h("img", { src: `/${alt.toLowerCase()}.png`, alt, tabindex: "0", role: "button" }),
+    ) as [FakeElement, FakeElement];
+    page(h("main", {}, a, b));
+    const { asked, viewer } = opened();
+    pressed(click(b), viewer);
+    expect(b.focused).toEqual([{ preventScroll: true }]);
+    expect(a.focused).toEqual([]);
+    expect(asked[0]).toMatchObject({
+      kind: "picture",
+      at: 1,
+      photos: [
+        { src: "/a.png", caption: "A" },
+        { src: "/b.png", caption: "B" },
+      ],
+    });
   });
 
   it("with a modifier or another button, or on what opens nowhere, does nothing", () => {

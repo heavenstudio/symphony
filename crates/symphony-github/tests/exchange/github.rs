@@ -1,6 +1,8 @@
 //! A GitHub repository held in memory, answering the calls the exchange makes as GitHub does:
 //! the repository, its issues listed by update and paged, one issue, its creation and edit, and
 //! its comments, and for a delivery its pull requests, their merge and a commit's checks. A test
+//! may protect its default branch by rulesets, which it then answers the rules of and holds a
+//! merge to, as GitHub does. A test
 //! sets it up, plants a fault on a coming request, and reads what it was
 //! asked. It answers as a [`Transport`] directly, and `http.rs` serves it to a real `curl`.
 
@@ -42,6 +44,11 @@ struct Inner {
     acting: i64,
     /// The number the next pull request or check is given.
     made: i64,
+    /// What the repository says of itself beside its number and name.
+    about: Value,
+    /// The rulesets that apply to the default branch, by number: each with its `rules`, its
+    /// `bypass_actors` (none where the asker is not shown them) and where it is from.
+    rulesets: BTreeMap<i64, Value>,
 }
 
 pub(crate) struct Fake(Mutex<Inner>);
@@ -75,6 +82,12 @@ impl Fake {
             checks: Vec::new(),
             acting: 0,
             made: 100,
+            about: json!({
+                "default_branch": "main", "archived": false, "allow_squash_merge": true,
+                "allow_merge_commit": false, "allow_rebase_merge": false,
+                "allow_auto_merge": false, "permissions": {"admin": false, "push": true},
+            }),
+            rulesets: BTreeMap::new(),
         }))
     }
 
@@ -194,6 +207,71 @@ impl Fake {
             .expect("a pull request of that number");
         for (field, value) in fields.as_object().unwrap() {
             pull[field] = value.clone();
+        }
+    }
+
+    /// The default branch protected as a delivery needs it: ruleset 1, which nobody bypasses,
+    /// requires a pull request merged by squash, `symphony/eligible` from the App `checks`, and
+    /// blocks force pushes and deletion; ruleset 2 restricts updates to the App `landing`.
+    pub(crate) fn protect(&self, checks: i64, landing: i64) {
+        self.ruleset(
+            1,
+            &json!([]),
+            &json!([
+                {"type": "pull_request", "parameters": {"allowed_merge_methods": ["squash"]}},
+                {"type": "required_status_checks", "parameters": {
+                    "strict_required_status_checks_policy": false,
+                    "required_status_checks":
+                        [{"context": "symphony/eligible", "integration_id": checks}],
+                }},
+                {"type": "non_fast_forward"},
+                {"type": "deletion"},
+            ]),
+        );
+        self.ruleset(
+            2,
+            &json!([{"actor_type": "Integration", "actor_id": landing, "bypass_mode": "always"}]),
+            &json!([{"type": "update"}]),
+        );
+    }
+
+    /// Ruleset `id` of the repository, active on the default branch, as it is from now: who
+    /// bypasses it (null where the asker is not shown) and its rules. `Value::Null` rules
+    /// remove it.
+    pub(crate) fn ruleset(&self, id: i64, bypass: &Value, rules: &Value) {
+        let mut inner = self.inner();
+        if rules.is_null() {
+            inner.rulesets.remove(&id);
+            return;
+        }
+        let source = format!("{}/{}", inner.owner, inner.name);
+        inner.rulesets.insert(
+            id,
+            json!({
+                "id": id, "name": format!("ruleset {id}"), "target": "branch",
+                "source_type": "Repository", "source": source, "enforcement": "active",
+                "bypass_actors": bypass, "rules": rules,
+            }),
+        );
+    }
+
+    /// Ruleset `id` changed there, field by field.
+    pub(crate) fn set_ruleset(&self, id: i64, fields: &Value) {
+        let mut inner = self.inner();
+        let ruleset = inner
+            .rulesets
+            .get_mut(&id)
+            .expect("a ruleset of that number");
+        for (field, value) in fields.as_object().unwrap() {
+            ruleset[field] = value.clone();
+        }
+    }
+
+    /// What the repository says of itself changed, field by field.
+    pub(crate) fn set_repository(&self, fields: &Value) {
+        let mut inner = self.inner();
+        for (field, value) in fields.as_object().unwrap() {
+            inner.about[field] = value.clone();
         }
     }
 
@@ -324,11 +402,13 @@ impl Inner {
             .unwrap_or(Value::Null);
         let parts: Vec<&str> = rest.split('/').filter(|part| !part.is_empty()).collect();
         match (method, parts.as_slice()) {
-            ("GET", []) => answer(
-                200,
-                &json!({"id": self.id, "node_id": format!("R_{}", self.id),
-                        "full_name": format!("{}/{}", self.owner, self.name)}),
-            ),
+            ("GET", []) => {
+                let mut about = self.about.clone();
+                about["id"] = json!(self.id);
+                about["node_id"] = json!(format!("R_{}", self.id));
+                about["full_name"] = json!(format!("{}/{}", self.owner, self.name));
+                answer(200, &about)
+            }
             ("GET", ["issues"]) => self.list(query),
             ("POST", ["issues"]) => {
                 let labels: Vec<&str> = sent["labels"]
@@ -470,6 +550,13 @@ impl Inner {
                 if pull["mergeable_state"] != json!("clean") {
                     return answer(405, &json!({"message": "Pull Request is not mergeable"}));
                 }
+                let head = pull["head"]["sha"].clone();
+                if let Some(broken) = self.broken(&head) {
+                    return answer(405, &json!({"message": broken}));
+                }
+                let pull = (self.pulls.iter_mut())
+                    .find(|pull| number.parse().ok() == pull["number"].as_i64())
+                    .expect("found above");
                 let squash = "5".repeat(40);
                 pull["state"] = json!("closed");
                 pull["merged"] = json!(true);
@@ -488,8 +575,98 @@ impl Inner {
                 answer(200, &json!({"total_count": runs.len(), "check_runs": runs}))
             }
             ("POST", ["check-runs"]) | ("PATCH", ["check-runs", _]) => self.written(parts, sent),
+            ("GET", _) => self.protection(parts, query),
             _ => answer(404, &json!({"message": "Not Found"})),
         }
+    }
+
+    /// The rules in effect for a branch, a page of them, and one ruleset.
+    fn protection(&self, parts: &[&str], query: &str) -> Response {
+        match parts {
+            ["rules", "branches", branch @ ..] => {
+                let value = |name: &str| -> Option<usize> {
+                    (query.split('&'))
+                        .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))?
+                        .parse()
+                        .ok()
+                };
+                let (size, page) = (value("per_page").unwrap_or(30), value("page").unwrap_or(1));
+                let rules: Vec<Value> = if branch.join("/") == self.about["default_branch"] {
+                    self.rules()
+                } else {
+                    Vec::new()
+                };
+                let listed: Vec<&Value> = rules.iter().skip((page - 1) * size).take(size).collect();
+                answer(200, &json!(listed))
+            }
+            ["rulesets", id] => {
+                match id.parse().ok().and_then(|id| self.rulesets.get(&id)) {
+                    Some(ruleset) => {
+                        let mut shown = ruleset.clone();
+                        // As GitHub: a list the asker may not see is left out, never shown empty.
+                        if shown["bypass_actors"].is_null() {
+                            shown.as_object_mut().unwrap().remove("bypass_actors");
+                        }
+                        answer(200, &shown)
+                    }
+                    None => answer(404, &json!({"message": "Not Found"})),
+                }
+            }
+            _ => answer(404, &json!({"message": "Not Found"})),
+        }
+    }
+
+    /// The rules in effect for the default branch: every active ruleset's, each naming its own.
+    fn rules(&self) -> Vec<Value> {
+        (self.rulesets.iter())
+            .filter(|(_, ruleset)| ruleset["enforcement"] == json!("active"))
+            .flat_map(|(id, ruleset)| {
+                let rules = ruleset["rules"].as_array().cloned().unwrap_or_default();
+                rules.into_iter().map(move |mut rule| {
+                    rule["ruleset_id"] = json!(id);
+                    rule["ruleset_source_type"] = ruleset["source_type"].clone();
+                    rule["ruleset_source"] = ruleset["source"].clone();
+                    rule
+                })
+            })
+            .collect()
+    }
+
+    /// The rule a merge of `head` by the one asking breaks, as GitHub holds it: an update
+    /// restricted to others, or a required check that does not pass from its App.
+    fn broken(&self, head: &Value) -> Option<String> {
+        for ruleset in self.rulesets.values() {
+            let through = (ruleset["bypass_actors"].as_array().into_iter().flatten()).any(|a| {
+                a["actor_type"] == json!("Integration") && a["actor_id"] == json!(self.acting)
+            });
+            if through || ruleset["enforcement"] != json!("active") {
+                continue;
+            }
+            for rule in ruleset["rules"].as_array().into_iter().flatten() {
+                if rule["type"] == json!("update") {
+                    return Some(
+                        "Repository rule violations found: Cannot update this protected ref."
+                            .into(),
+                    );
+                }
+                let required = &rule["parameters"]["required_status_checks"];
+                for check in required.as_array().into_iter().flatten() {
+                    let passes = self.checks.iter().any(|run| {
+                        run["head_sha"] == *head
+                            && run["name"] == check["context"]
+                            && run["app"]["id"] == check["integration_id"]
+                            && matches!(run["conclusion"].as_str(), Some("success" | "neutral"))
+                    });
+                    if !passes {
+                        return Some(format!(
+                            "Repository rule violations found: Required status check {} is expected.",
+                            check["context"]
+                        ));
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// A check written or rewritten, which GitHub takes from an App alone.
