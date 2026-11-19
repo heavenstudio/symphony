@@ -161,6 +161,7 @@ fn idle(handle: &str, kind: &str, worktree: &str) -> agents::Agent {
         state: "idle",
         detail: None,
         health: Health::Live,
+        confirmed: false,
         last_tool_call: None,
         last_message: None,
         slots: None,
