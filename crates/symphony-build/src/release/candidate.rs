@@ -23,6 +23,12 @@
 //! of this candidate whose digest of its inputs is the tip's, or whose commit holds the tip's tree,
 //! on the environment the rerun runs on; one whose inputs the tree does not tell keeps it only
 //! from the same tree. It is dropped at its bounds ([`Bounds`]), and main's tip is run at once.
+//!
+//! A land a pull request delivered leaves one squashed commit on main and the fix's own commits in
+//! no history of it. Its receipt ([`super::receipts`]) is then the one record both destinations are
+//! read from: the squash is the landing, and the head the receipt kept is what the candidate
+//! advances within ([`advance`], [`Delivered`]), so main is never merged into it. The candidate's
+//! tip, and the release tagged on it, are on the line by that squash ([`Receipts::holds`]).
 
 use std::fs;
 use std::io::ErrorKind;
@@ -36,9 +42,11 @@ use super::cadence::{self, Hold};
 use super::checks::Ran;
 use super::git::{commit, git, is_ancestor, short};
 use super::inputs::Inputs;
+use super::receipts::Receipts;
 use super::record::{Carried, Held, Run, age, local};
 use super::steps;
 use symphony::taskcli::CliBoard;
+use symphony_board::land::delivery::Receipt;
 
 /// The local branch that names the candidate's tip, never pushed.
 pub(crate) const BRANCH: &str = "release-candidate";
@@ -206,13 +214,46 @@ impl Tip<'_> {
     }
 }
 
-/// An advance: the red's task whose land made it, from which tip to which, and its land's merge.
+/// An advance: the red's task whose land made it, from which tip to which, and its land's merge,
+/// or the squash a pull request delivered it by, with what its receipt says of that.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Advance {
     pub(crate) slug: String,
     pub(crate) from: String,
     pub(crate) to: String,
     pub(crate) merge: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) delivered: Option<Delivered>,
+}
+
+/// What the receipt of a land a pull request delivered says of an advance: the one record both
+/// destinations are read from, the squash on the default branch (the advance's `merge`) and the
+/// head the candidate advanced within.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Delivered {
+    /// The head the pull request squashed, kept reachable by the land.
+    pub(crate) head: String,
+    /// The one parent of the squash.
+    pub(crate) parent: String,
+    /// The repository's number at its host, its name then, and the pull request's number.
+    pub(crate) repository: i64,
+    pub(crate) name: String,
+    pub(crate) pull: i64,
+    /// The revision of the evidence the merge was asked under.
+    pub(crate) revision: String,
+}
+
+impl Delivered {
+    fn of(receipt: &Receipt) -> Delivered {
+        Delivered {
+            head: receipt.head.clone(),
+            parent: receipt.parent.clone(),
+            repository: receipt.repository,
+            name: receipt.name.clone(),
+            pull: receipt.pull,
+            revision: receipt.revision.clone(),
+        }
+    }
 }
 
 /// How a candidate ended: when, why, the release it became, and, for a drop, whether the run of
@@ -967,13 +1008,20 @@ pub(crate) fn settle(
             Err(error) => noted.push(format!("the board: {error}")),
         }
     }
-    let landed = cadence::landings(line.root, Some(&candidate.first), line.remote, line.branch)
-        .unwrap_or_else(|error| {
-            noted.push(format!(
-                "the landings since its first commit cannot be read: {error}"
-            ));
-            Vec::new()
-        });
+    let receipts = Receipts::read(line.root);
+    let landed = cadence::landings_by(
+        line.root,
+        &receipts,
+        Some(&candidate.first),
+        line.remote,
+        line.branch,
+    )
+    .unwrap_or_else(|error| {
+        noted.push(format!(
+            "the landings since its first commit cannot be read: {error}"
+        ));
+        Vec::new()
+    });
     for landing in landed.iter().rev() {
         let answers =
             |red: &Red| red.answer.is_none() && red.slug.as_deref() == Some(landing.slug.as_str());
@@ -981,7 +1029,15 @@ pub(crate) fn settle(
             continue;
         }
         let from = candidate.commit.clone();
-        match advance(line.root, &from, &landing.commit, board, &landing.slug) {
+        let receipt = receipts.squashed(&landing.commit);
+        match advance(
+            line.root,
+            &from,
+            &landing.commit,
+            receipt,
+            board,
+            &landing.slug,
+        ) {
             Ok(Some(to)) => {
                 for red in candidate.reds.iter_mut().filter(|red| answers(red)) {
                     red.answer = Some(Answer::Landed {
@@ -992,17 +1048,24 @@ pub(crate) fn settle(
                 }
                 noted.push(format!(
                     "advanced the release candidate from {} to {}, the newest approved commit of \
-                     {}'s land ({})",
+                     {}'s land ({}){}",
                     short(&from),
                     short(&to),
                     landing.slug,
-                    short(&landing.commit)
+                    short(&landing.commit),
+                    receipt.map_or_else(String::new, |receipt| format!(
+                        ", the squash of {} by pull request #{} of {}",
+                        short(&receipt.head),
+                        receipt.pull,
+                        receipt.name
+                    ))
                 ));
                 candidate.advances.push(Advance {
                     slug: landing.slug.clone(),
                     from,
                     to: to.clone(),
                     merge: landing.commit.clone(),
+                    delivered: receipt.map(Delivered::of),
                 });
                 candidate.commit = to;
             }
@@ -1031,8 +1094,14 @@ pub(crate) fn settle(
         .map(|landing| landing.commit.as_str())
         .collect();
     let here = match line.local.filter(|local| *local != line.remote) {
-        Some(local) => cadence::landings(line.root, Some(&candidate.first), local, line.branch)
-            .unwrap_or_default(),
+        Some(local) => cadence::landings_by(
+            line.root,
+            &receipts,
+            Some(&candidate.first),
+            local,
+            line.branch,
+        )
+        .unwrap_or_default(),
         None => Vec::new(),
     };
     // What a red closed as covered by another's landing is read against: the landings that
@@ -1100,7 +1169,7 @@ pub(crate) fn settle(
         candidate.settled_at = Some(now);
         return noted;
     }
-    match bound(candidate, line, now, bounds) {
+    match bound(candidate, line, &receipts, now, bounds) {
         Some(Bound::Dropped(why)) => {
             noted.push(format!("dropped the release candidate: {why}"));
             candidate.drop(now, why);
@@ -1178,9 +1247,17 @@ enum Bound {
 }
 
 /// What ends `candidate` at `now`, by its time or a release: its hours past since it was first
-/// judged; its tip released already; a newer release it does not descend from (one on main passed
-/// it, and a release only moves forward); or its tip off the remote's main.
-fn bound(candidate: &Candidate, line: &Line<'_>, now: f64, bounds: Bounds) -> Option<Bound> {
+/// judged; its tip released already; a newer release it does not hold (one on main passed it, and
+/// a release only moves forward); or its tip off the remote's main. A tip or a release that is a
+/// head a pull request delivered is held by what holds its squash, by `receipts`
+/// ([`Receipts::holds`]), as no history of the line holds the head itself.
+fn bound(
+    candidate: &Candidate,
+    line: &Line<'_>,
+    receipts: &Receipts,
+    now: f64,
+    bounds: Bounds,
+) -> Option<Bound> {
     if now - candidate.since >= bounds.seconds() {
         let hours = ((now - candidate.since) / 3600.0).floor();
         return Some(Bound::Dropped(format!(
@@ -1199,7 +1276,7 @@ fn bound(candidate: &Candidate, line: &Line<'_>, now: f64, bounds: Bounds) -> Op
         if at == candidate.commit {
             return Some(Bound::Released(name.to_string()));
         }
-        if !is_ancestor(line.root, at, &candidate.commit).unwrap_or(true) {
+        if !(receipts.holds(line.root, at, &candidate.commit)).unwrap_or(true) {
             return Some(Bound::Dropped(format!(
                 "the release {name} ({}) passed it: its tip {} does not descend from it, and a \
                  release only moves forward",
@@ -1208,7 +1285,7 @@ fn bound(candidate: &Candidate, line: &Line<'_>, now: f64, bounds: Bounds) -> Op
             )));
         }
     }
-    if !is_ancestor(line.root, &candidate.commit, line.remote).unwrap_or(true) {
+    if !(receipts.holds(line.root, &candidate.commit, line.remote)).unwrap_or(true) {
         return Some(Bound::Dropped(format!(
             "its tip {} is not on {}",
             short(&candidate.commit),
@@ -1219,28 +1296,41 @@ fn bound(candidate: &Candidate, line: &Line<'_>, now: f64, bounds: Bounds) -> Op
 }
 
 /// The commit the land `merge` of the task `slug` advances the candidate's tip `tip` to: the newest
-/// of the commits the approves on its thread name that [`passes`]; none when none does.
+/// of the commits the approves on its thread name that [`passes`]; none when none does. A land a
+/// pull request delivered is read from its `receipt`, never from the squash, which has no second
+/// parent: main before the land is the squash's parent, what landed is the head the receipt kept,
+/// and that head is itself a commit that vouches, as the squash was asked for under evidence that
+/// stood on it, whether or not the board has closed the task yet. So the candidate takes the
+/// branch's own commits and never main's, however far main moved under the pull request.
 fn advance(
     root: &Path,
     tip: &str,
     merge: &str,
+    receipt: Option<&Receipt>,
     board: &dyn Board,
     slug: &str,
 ) -> Result<Option<String>, String> {
-    let before = commit(root, &format!("{merge}^1"))?;
-    let landed = commit(root, &format!("{merge}^2"))?;
+    let (before, landed) = match receipt {
+        Some(receipt) => (commit(root, &receipt.parent)?, commit(root, &receipt.head)?),
+        None => (
+            commit(root, &format!("{merge}^1"))?,
+            commit(root, &format!("{merge}^2"))?,
+        ),
+    };
+    let approved = board.approves(slug)?;
+    let named = (approved.iter())
+        .flat_map(|text| symphony_board::land::named(text))
+        .chain(receipt.map(|receipt| receipt.head.as_str()));
     let mut passing: Vec<(u64, String)> = Vec::new();
-    for text in board.approves(slug)? {
-        for word in symphony_board::land::named(&text) {
-            let Ok(named) = commit(root, word) else {
-                continue;
-            };
-            if passing.iter().any(|(_, known)| *known == named) {
-                continue;
-            }
-            if passes(root, tip, &before, &landed, &named)? {
-                passing.push((count(root, &[&named])?, named));
-            }
+    for word in named {
+        let Ok(named) = commit(root, word) else {
+            continue;
+        };
+        if passing.iter().any(|(_, known)| *known == named) {
+            continue;
+        }
+        if passes(root, tip, &before, &landed, &named)? {
+            passing.push((count(root, &[&named])?, named));
         }
     }
     Ok(passing

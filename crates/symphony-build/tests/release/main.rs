@@ -16,6 +16,7 @@ mod cadence;
 mod candidate;
 mod carried;
 mod consumers;
+mod delivered;
 mod install;
 mod places;
 mod publish;
