@@ -2575,13 +2575,14 @@ name once it is settled.
 | --- | --- |
 | The board does not answer, or the task cannot be filed | the entry and its branch; the next pass files it |
 | Its edit no longer applies to the default branch | the entry, with why, and no branch; later saves of the document do not wait for it |
-| Its task is cancelled, or closed by a landing or by hand with no receipt that proves the save | the entry and the owner's words, said as not delivered, with why; later saves of the document do not wait for it. A task its reviewer approved is done on the board before its land: while that approve stands with no landing after it, the save is still waiting for its pull request, and later saves still wait for it |
-| The default branch moved under a save on its branch, so its words no longer apply here | the entry and its branch; the note says the save is in conflict and that the page cannot show its words until the conflict is settled on the branch |
+| Its task is cancelled, or closed by a landing or by hand with no receipt that proves the save | the entry and the owner's words, said as not delivered, with why; later saves of the document do not wait for it. A task its reviewer approved is done on the board before its land: while that approve stands with no landing after it, the save is still waiting for its pull request, and later saves still wait for it. Once its land has asked the host for the merge the note says so, and a delivery the land holds for reconciliation is said with its why, both read from the land's delivery journal |
+| The default branch moved under a save on its branch, so its words no longer apply here | the entry and its branch; the note says the save is in conflict and that the page cannot show its words until the conflict is settled on the branch, and opens saying the page keeps its saves rather than shows them |
 | A receipt that is not this save's delivery: of another head, or of a commit the fetched remote does not hold | the entry: it proves nothing |
 | The server stops between two steps | the entry: a branch made and not journaled is taken up if it holds the edit, a task filed under its receipt is found again, and nothing is made twice |
 
 Each pass of the committer takes every kept save up again: at a server's start, after each save,
 and after each refresh of the documents, which the land's fast-forward of the checkout causes.
+Those asked while a pass is pending or running ask for one more pass together, never one each.
 A save kept by a build that did not know the key is delivered the same way. A project's
 `[verdicts]` generators are not run for a kept save, on its branch or after its delivery: what
 they generate stays as it is.

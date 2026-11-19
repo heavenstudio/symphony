@@ -277,6 +277,14 @@ fn a_pending_save_settled_on_its_branch_is_proved_by_its_receipt_alone() {
 }
 
 #[test]
+fn the_land_of_a_pending_saves_task_is_said_from_its_journal() {
+    isolated(
+        "the_land_of_a_pending_saves_task_is_said_from_its_journal",
+        delivery::the_land_of_a_pending_saves_task_is_said_from_its_journal,
+    );
+}
+
+#[test]
 fn two_verdicts_race_without_lost_files_or_merge_commits() {
     isolated(
         "two_verdicts_race_without_lost_files_or_merge_commits",

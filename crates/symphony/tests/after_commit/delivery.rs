@@ -10,6 +10,10 @@ const APPROVE: &str =
 const COMMENT: &str =
     r#"{"path":"docs/a.md","after_line":1,"kind":"comment","title":"T","body":"words"}"#;
 
+/// How a note opens over one save the page draws.
+const SHOWS_ONE: &str =
+    "> **Pending delivery.** This page shows an owner's save that `main` does not hold yet";
+
 fn payload(text: &str) -> Value {
     serde_json::from_str(text).unwrap()
 }
@@ -192,6 +196,7 @@ pub(super) fn kept_pending_on_a_branch_and_filed_as_the_owners_task(f: &Fixture)
         note.contains(&format!("`{branch}` (waiting for its pull request)")),
         "{note}"
     );
+    assert!(note.starts_with(SHOWS_ONE), "{note}");
     assert_eq!(pending::note(&root, "docs/b.md"), None);
 
     // The page as served: the note first, then the document as the save leaves it; the board's
@@ -555,6 +560,13 @@ pub(super) fn a_settled_conflict_is_proved_by_its_receipt_alone(f: &Fixture) {
         )),
         "{note}"
     );
+    // A page that cannot draw one of its saves keeps them rather than shows them.
+    assert!(
+        note.starts_with(
+            "> **Pending delivery.** This page keeps 2 owner's saves that `main` does not hold yet"
+        ),
+        "{note}"
+    );
 
     // A receipt proves nothing unless it is this save's delivery on the fetched remote.
     // One whose commit the remote does not hold:
@@ -652,5 +664,99 @@ pub(super) fn a_settled_conflict_is_proved_by_its_receipt_alone(f: &Fixture) {
     assert_eq!(pending[1].state, State::Waiting, "{pending:?}");
     assert_eq!(git(&root, &["rev-parse", "main"]), squash);
     assert_eq!(git(&root, &["status", "--porcelain"]), "");
+    f.clean_workers();
+}
+
+/// The land's journal of a delivery of `slug` at `stage`, held with `held` when it names why,
+/// kept in the lands' folder as the land keeps it.
+fn journaled(root: &Path, slug: &str, stage: symphony_board::land::delivery::Stage, held: &str) {
+    use symphony_board::land::delivery::Journal;
+    let journal = Journal {
+        slug: slug.into(),
+        operation: "task".into(),
+        stage,
+        head: git(root, &["rev-parse", slug]),
+        base_observed: git(root, &["rev-parse", "origin/main"]),
+        revision: "r".into(),
+        title: "docs: owner verdicts".into(),
+        body: String::new(),
+        by: "lander".into(),
+        closes: vec!["done".into()],
+        stood: String::new(),
+        binding: None,
+        squash: None,
+        held: (!held.is_empty()).then(|| held.into()),
+    };
+    journal
+        .write(&root.join(".git/symphony/tasks/land"))
+        .unwrap();
+}
+
+pub(super) fn the_land_of_a_pending_saves_task_is_said_from_its_journal(f: &Fixture) {
+    use symphony_board::land::delivery::Stage;
+    let root = delivering(f);
+    let saves = ClosingSaves::start(&root);
+    saves.post("", "/api/comment", payload(COMMENT));
+    drop(saves);
+    let pending = pending::saves(&root);
+    let a = pending[0].branch.clone();
+    assert_eq!(pending[0].state, State::Waiting, "{pending:?}");
+    let state = |root: &Path| pending::saves(root)[0].state.clone();
+    // A land run before it asks for the merge says nothing more: still waiting.
+    journaled(&root, &a, Stage::Eligible, "");
+    assert_eq!(state(&root), State::Waiting);
+    // Once it asks the host for the merge, the note says so, and the page still draws the save.
+    journaled(&root, &a, Stage::MergeRequested, "");
+    assert_eq!(state(&root), State::Merging);
+    let note = pending::note(&root, "docs/a.md").unwrap();
+    assert!(note.starts_with(SHOWS_ONE), "{note}");
+    assert!(
+        note.contains(&format!(
+            "`{a}` (its land has asked for the merge of its pull request)"
+        )),
+        "{note}"
+    );
+    // A delivery the land holds for a person is said with its why, at whatever stage.
+    let closed = "pull request #3 was closed without a merge";
+    for stage in [Stage::Eligible, Stage::MergeRequested] {
+        journaled(&root, &a, stage, closed);
+        assert_eq!(
+            state(&root),
+            State::Held(format!("its delivery is held for reconciliation: {closed}"))
+        );
+    }
+    let note = pending::note(&root, "docs/a.md").unwrap();
+    assert!(
+        note.contains(&format!(
+            "`{a}` (kept, not delivered: its delivery is held for reconciliation: {closed})"
+        )),
+        "{note}"
+    );
+    // Main changes the line its words were written beside: the page keeps them and cannot draw
+    // them, which the note says beside the merge asked for.
+    let revised = DOC.replace("first paragraph", "first paragraph, revised");
+    write(&root.join("docs/a.md"), &revised);
+    git(&root, &["commit", "-qam", "another landing"]);
+    journaled(&root, &a, Stage::MergeRequested, "");
+    let pending = pending::saves(&root);
+    assert_eq!(pending[0].state, State::Merging);
+    assert!(!pending[0].shown);
+    let note = pending::note(&root, "docs/a.md").unwrap();
+    assert!(
+        note.starts_with(
+            "> **Pending delivery.** This page keeps an owner's save that `main` does not hold yet"
+        ),
+        "{note}"
+    );
+    assert!(
+        note.contains(
+            "(its land has asked for the merge of its pull request; its words no longer apply \
+             to this page as it is here, so they are not shown: they are kept)"
+        ),
+        "{note}"
+    );
+    // With no journal, it reads as the conflict it is.
+    symphony_board::land::delivery::Journal::drop_in(&root.join(".git/symphony/tasks/land"), &a);
+    assert_eq!(state(&root), State::Conflicted);
     f.clean_workers();
 }
