@@ -22,10 +22,10 @@ use std::panic::Location;
 
 /// How a transaction runs: a write behind the schema guard, its committed messages dispatched to
 /// their callbacks when `dispatch`; staging preserves raw row values without dispatch; a write held
-/// to the store's own schema whoever opened it, with no dispatch (`Own`: a recovery rebind, which a
-/// reader's store never makes on a board one schema ahead); or with no guard, as a read, or the
-/// migration that checks the version itself. Staging, a whole-board copy's, is held to the store's
-/// own schema too.
+/// to the store's own schema whoever opened it, with no dispatch (`Own`: a recovery rebind and a
+/// whole-board copy's swap, which a reader's store never makes on a board one schema ahead); or
+/// with no guard, as a read, or the migration that checks the version itself. Staging, a
+/// whole-board copy's, is held to the store's own schema too.
 #[derive(Clone, Copy)]
 pub(super) enum Run {
     Guarded { dispatch: bool },
@@ -118,8 +118,8 @@ impl Store {
         let (guard, dispatch) = match run {
             Run::Guarded { .. } | Run::Staging | Run::Own => {
                 // Only a reader's ordinary write takes a board one schema ahead that lets it: a
-                // whole-board copy (staging) and a rebind are held to the store's own schema, a
-                // reader's too.
+                // whole-board copy (its staging and its swap) and a rebind are held to the store's
+                // own schema, a reader's too.
                 let ahead = self.reader && matches!(run, Run::Guarded { .. });
                 schema::guard_vars(&mut vars, self.schema, ahead, &self.refusal, REFUSED);
                 (
