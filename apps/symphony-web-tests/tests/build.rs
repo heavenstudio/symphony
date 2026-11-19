@@ -543,6 +543,20 @@ fn publisher(scratch: &Scratch) -> PathBuf {
     path
 }
 
+/// The lockfile's packages installed in the client's folder, as npm.sh installs them on its first
+/// run (`npm.sh --version`, whose own output is no case's). A first run of this target installs
+/// them in whichever case reaches npm.sh first, and a case that reaches it meanwhile waits its
+/// turn and says so on its stderr: a case that reads what a step says on stderr installs first,
+/// so it reads the step's words alone, on a first run as on every other.
+fn installed() {
+    let done = Command::new("bash")
+        .arg(web().join("npm.sh"))
+        .arg("--version")
+        .output()
+        .expect("run npm.sh");
+    succeeded(&done, "npm.sh --version");
+}
+
 fn package(out: &Path, publisher: &Path) -> Output {
     Command::new("bash")
         .arg(web().join("package.sh"))
@@ -637,6 +651,7 @@ fn the_manifest_step_names_each_kinds_script_imports_and_styles_shared_sheet_fir
     for stage in [&dead, &live] {
         fs::create_dir_all(stage).unwrap();
     }
+    installed();
     let done = package(&out, &publisher(&scratch));
     succeeded(&done, "package.sh");
     assert!(done.stdout.is_empty(), "{done:?}");
