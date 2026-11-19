@@ -18,9 +18,11 @@ use symphony_github::transport::{Failure, Request, Response, Transport};
 /// The token of the GitHub App that writes the checks.
 const CHECKS: &str = "ghs_fixtureCHECKS0123456789abcdefSECRET";
 /// That App's number.
-const APP: i64 = 42;
-const SLUG: &str = "sim/jump";
-const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+pub(crate) const APP: i64 = 42;
+/// The number of the GitHub App that merges, whose token the settings' `token_file` holds.
+pub(crate) const LANDING: i64 = 43;
+pub(crate) const SLUG: &str = "sim/jump";
+pub(crate) const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 /// The fake repository, asked as the App of the token a request carries.
 struct As(Arc<Fake>, i64);
@@ -44,11 +46,11 @@ impl Transport for As {
 }
 
 /// The project's git: where `origin` leads, and what was pushed.
-struct Pushes {
-    url: String,
+pub(crate) struct Pushes {
+    pub(crate) url: String,
     github: Arc<Fake>,
     refuses: bool,
-    pushed: RefCell<Vec<(String, String)>>,
+    pub(crate) pushed: RefCell<Vec<(String, String)>>,
 }
 
 impl Remote for Pushes {
@@ -67,22 +69,25 @@ impl Remote for Pushes {
 }
 
 /// A delivery's rig: the exchange's, its settings serving `publish`, and every line it said.
-struct Delivery {
-    rig: Rig,
-    remote: Pushes,
+pub(crate) struct Delivery {
+    pub(crate) rig: Rig,
+    pub(crate) remote: Pushes,
     said: RefCell<String>,
 }
 
 fn settings(checks: &std::path::Path, more: &str) -> String {
     format!(
-        "pull_requests = \"publish\"\nchecks_token_file = \"{}\"\nchecks_app_id = {APP}\n{more}",
+        "pull_requests = \"publish\"\nchecks_token_file = \"{}\"\nchecks_app_id = {APP}\n\
+         landing_app_id = {LANDING}\n{more}",
         checks.display()
     )
 }
 
 impl Delivery {
-    fn new(name: &str, more: &str) -> Delivery {
+    /// A delivery to a repository protected as one needs it.
+    pub(crate) fn new(name: &str, more: &str) -> Delivery {
         let rig = Rig::off(name);
+        rig.github.protect(APP, LANDING);
         let checks = rig.dir.0.join("secret/checks");
         std::fs::write(&checks, format!("{CHECKS}\n")).unwrap();
         std::fs::set_permissions(&checks, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -100,17 +105,21 @@ impl Delivery {
         }
     }
 
-    fn checks_file(&self) -> PathBuf {
+    pub(crate) fn checks_file(&self) -> PathBuf {
         self.rig.dir.0.join("secret/checks")
     }
 
     /// The answer to `verb` of `request`.
-    fn ask(&self, verb: &str, request: &Value) -> Value {
+    pub(crate) fn ask(&self, verb: &str, request: &Value) -> Value {
         let file = self.rig.dir.0.join("request.json");
         std::fs::write(&file, request.to_string()).unwrap();
         let github = Arc::clone(&self.rig.github);
         let connect = move |token: Secret| -> Result<Box<dyn Transport>, String> {
-            let app = if token.expose() == CHECKS { APP } else { 0 };
+            let app = match token.expose() {
+                CHECKS => APP,
+                TOKEN => LANDING,
+                _ => 0,
+            };
             Ok(Box::new(As(Arc::clone(&github), app)))
         };
         let ctx = Context {
@@ -130,7 +139,7 @@ impl Delivery {
         serde_json::from_str(&out).unwrap()
     }
 
-    fn publish(&self, snapshot: &Value) -> Value {
+    pub(crate) fn publish(&self, snapshot: &Value) -> Value {
         self.ask(
             "publish",
             &json!({
@@ -141,7 +150,7 @@ impl Delivery {
         )
     }
 
-    fn merge(&self, pull: i64) -> Value {
+    pub(crate) fn merge(&self, pull: i64) -> Value {
         self.ask(
             "merge",
             &json!({
@@ -152,13 +161,13 @@ impl Delivery {
         )
     }
 
-    fn result(&self, pull: i64) -> Value {
+    pub(crate) fn result(&self, pull: i64) -> Value {
         let request = json!({"verb": "result", "slug": SLUG, "repository": 77, "pull": pull});
         self.ask("result", &request)
     }
 
     /// The requests made that change the repository: each one's method and path.
-    fn writes(&self) -> Vec<String> {
+    pub(crate) fn writes(&self) -> Vec<String> {
         (self.rig.github.asked().into_iter())
             .filter(|(method, ..)| method != "GET")
             .map(|(method, path, _)| format!("{method} {path}"))
@@ -166,7 +175,7 @@ impl Delivery {
     }
 
     /// Neither token is in anything said, kept or asked for by its address.
-    fn assert_no_token(&self) {
+    pub(crate) fn assert_no_token(&self) {
         let folder = self.rig.dir.0.join("state");
         let mut texts = vec![self.said.borrow().clone()];
         for entry in std::fs::read_dir(&folder).unwrap() {
@@ -185,7 +194,7 @@ impl Delivery {
 }
 
 /// The evidence of [`SLUG`] at `head`: `tests` and `review` as given, the others waived.
-fn snapshot(head: &str, tests: &str, revision: &str) -> Value {
+pub(crate) fn snapshot(head: &str, tests: &str, revision: &str) -> Value {
     let eligible = tests == "met";
     json!({
         "version": 1, "slug": SLUG, "task": 7, "status": "done", "head": head, "branch": "main",

@@ -58,6 +58,21 @@ export const SHAPE = "board-waiting-shape";
 const width = (w: string) => ({ "--w": w }) as CSSProperties;
 const range = (count: number) => Array.from({ length: Math.max(count, 0) }, (_, at) => at);
 
+/** Where a stage's lane stands in the lane scroller: off its left edge, off its right, or whole. */
+export type Side = "before" | "after" | "shown";
+
+/** A box's left and right edges, as `getBoundingClientRect` gives them. */
+export interface Span {
+  left: number;
+  right: number;
+}
+
+/** Where `lane` stands in the scroller's `frame`; a pixel's rounding is no cut. */
+export function laneSide(frame: Span, lane: Span): Side {
+  if (lane.left < frame.left - 1) return "before";
+  return lane.right > frame.right + 1 ? "after" : "shown";
+}
+
 /** A status as the Status filter names it, a sentence's first word: `in_progress` reads "In
  * progress". */
 export function statusLabel(status: string): string {
@@ -161,10 +176,12 @@ export function GhostBoard({ shape }: { shape: [string, number][] }) {
           </span>
         ))}
       </nav>
-      {phone && (
+      {phone ? (
         <div className="ghost-tabs">
           <span className="bone" style={width("95%")} />
         </div>
+      ) : (
+        <div className="ghost-jump" />
       )}
       <div className="ghost-kanban waiting-columns">
         <div className="waiting-pipeline">
@@ -317,7 +334,7 @@ export const TaskColumn = memo(function TaskColumn({
   const follows = focused !== null && tasks.some((task) => task.slug === focused);
   return (
     <section className="column" data-status={status} aria-busy={reading}>
-      <h2>
+      <h2 tabIndex={-1}>
         {label ?? statusWords(status)} <span className="count">{meta?.ordinary ?? count}</span>
       </h2>
       <div className="column-summary">
@@ -542,12 +559,38 @@ export function TaskBoard({
   const rememberColumns = () => {
     if (showingColumns && surface.current !== null) columnLeft.current = surface.current.scrollLeft;
   };
+  // Which lanes the scroller cuts, a side for each in their order, read again at each scroll and
+  // each change of its width.
+  const [sides, setSides] = useState("");
+  const measure = useCallback(() => {
+    const box = surface.current;
+    if (box === null) return;
+    const frame = box.getBoundingClientRect();
+    setSides(
+      [...box.querySelectorAll(".column")]
+        .map((lane) => laneSide(frame, lane.getBoundingClientRect()))
+        .join(),
+    );
+  }, []);
   useLayoutEffect(() => {
     if (showingColumns && !wasShowingColumns.current && surface.current !== null) {
       surface.current.scrollLeft = columnLeft.current;
     }
     wasShowingColumns.current = showingColumns;
-  }, [showingColumns]);
+    const box = surface.current;
+    if (!showingColumns || box === null) return;
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [showingColumns, measure]);
+  // Show a stage's lane whole (its heading's scroll margin reaches the lane's edges) and put the
+  // focus on that heading, so the next Tab is in that lane.
+  const jump = (stage: string) => {
+    const head = surface.current?.querySelector<HTMLElement>(`[data-status="${stage}"] > h2`);
+    head?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    head?.focus({ preventScroll: true });
+  };
   // Follow only the card holding the keyboard focus. Adjust this component's state before
   // React commits the move, while BoardRow can still read the old title link to restore it.
   const focused = wait === "" ? focusedSlug() : null;
@@ -784,11 +827,28 @@ export function TaskBoard({
           Back to stages
         </Button>
       )}
+      {showingColumns && (
+        <nav className="stage-jump" aria-label="Show a stage">
+          {STAGES.map((stage, at) => {
+            const side = sides.split(",")[at] || "shown";
+            return (
+              <button key={stage} type="button" data-side={side} onClick={() => jump(stage)}>
+                {side === "before" && "‹ "}
+                {statusLabel(stage)}
+                {side === "after" && " ›"}
+              </button>
+            );
+          })}
+        </nav>
+      )}
       <section
         ref={surface}
         aria-label="Task columns"
         tabIndex={phone ? undefined : 0}
-        onScroll={rememberColumns}
+        onScroll={() => {
+          rememberColumns();
+          if (showingColumns) measure();
+        }}
         className={`kanban waiting-columns${wait !== "" || (!phone && opened !== "") ? " wait-list" : ""}`}
       >
         {wait !== "" ? (

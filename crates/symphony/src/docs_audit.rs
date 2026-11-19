@@ -101,7 +101,10 @@ fn picture_cards(text: &str, rel: &str, result: &mut Result) {
             continue;
         }
         let (_, candidates) = crate::render::compare_pictures(card);
-        let got: Vec<_> = candidates.into_iter().map(|(label, _)| label).collect();
+        let got: Vec<_> = candidates
+            .into_iter()
+            .map(|picture| picture.label)
+            .collect();
         if got != wanted {
             let shown = got
                 .into_iter()

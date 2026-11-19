@@ -115,11 +115,45 @@ pub(super) fn history_items(card: &Decision, ctx: &Ctx<'_>) -> String {
         .collect()
 }
 
-type Pictures = Vec<(String, String)>;
+/// A picture of a card's compare row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Picture {
+    /// What the row calls it: `Base`, a candidate's letter, or nothing when its alt ends in none.
+    pub label: String,
+    /// Its alt text as the source wrote it, trimmed.
+    pub name: String,
+    pub src: String,
+}
 
-/// The pictures a card compares, as (label, src): the base a card was drawn from (an agent line
-/// starting "Base"), and the candidates of the first agent line holding pictures, each lettered by its
-/// alt text (empty when the alt does not end in a letter).
+impl Picture {
+    /// What its caption says, at place `n` (from 1) of its row: its label, else its source's
+    /// name, else a brief `Picture n` for one the source named in no way.
+    fn caption(&self, n: usize) -> String {
+        [&self.label, &self.name]
+            .into_iter()
+            .find(|text| !text.is_empty())
+            .cloned()
+            .unwrap_or_else(|| format!("Picture {n}"))
+    }
+
+    /// Its accessible name, which the viewer captions it with too: the source's name, so a
+    /// lettered candidate says what it pictures; the base keeps `Base`, which its style reads.
+    fn alt(&self, n: usize) -> String {
+        if self.label == BASE || self.name.is_empty() {
+            self.caption(n)
+        } else {
+            self.name.clone()
+        }
+    }
+}
+
+const BASE: &str = "Base";
+
+type Pictures = Vec<Picture>;
+
+/// The pictures a card compares: the base a card was drawn from (an agent line starting "Base"),
+/// and the candidates of the first agent line holding pictures, each lettered by its alt text
+/// (no label when the alt does not end in a letter) and named by the whole of it.
 pub(crate) fn compare_pictures(card: &Decision) -> (Pictures, Pictures) {
     let (mut base, mut candidates): (Pictures, Pictures) = (Vec::new(), Vec::new());
     for entry in card.entries().iter().filter(|e| e.who == Who::Agent) {
@@ -127,21 +161,29 @@ pub(crate) fn compare_pictures(card: &Decision) -> (Pictures, Pictures) {
         let Some(first) = found.first() else {
             continue;
         };
-        if entry.text.starts_with("Base") {
+        if entry.text.starts_with(BASE) {
             if base.is_empty() {
-                base = vec![("Base".to_string(), first["src"].to_string())];
+                base = vec![Picture {
+                    label: BASE.to_string(),
+                    name: first["alt"].trim().to_string(),
+                    src: first["src"].to_string(),
+                }];
             }
         } else if candidates.is_empty() {
             candidates = found
                 .iter()
                 .map(|f| {
-                    let alt = &f["alt"];
+                    let alt = f["alt"].trim();
                     let label = if LETTERED.is_match(alt) {
                         alt.rsplit(' ').next().unwrap_or("")
                     } else {
                         ""
                     };
-                    (label.to_string(), f["src"].to_string())
+                    Picture {
+                        label: label.to_string(),
+                        name: alt.to_string(),
+                        src: f["src"].to_string(),
+                    }
                 })
                 .collect();
         }
@@ -150,7 +192,8 @@ pub(crate) fn compare_pictures(card: &Decision) -> (Pictures, Pictures) {
 }
 
 /// One labelled row of the pictures to choose between, an `.html` mockup as media. Empty when there is
-/// nothing to compare.
+/// nothing to compare. Every picture is named and captioned ([`Picture::alt`], [`Picture::caption`]),
+/// so a reader, by eye or by a screen reader, tells one from the next.
 fn compare_html(card: &Decision, ctx: &Ctx<'_>) -> String {
     let (base, candidates) = compare_pictures(card);
     let row: Vec<_> = base.into_iter().chain(candidates).collect();
@@ -159,12 +202,13 @@ fn compare_html(card: &Decision, ctx: &Ctx<'_>) -> String {
     }
     let figures: String = row
         .iter()
-        .map(|(label, src)| {
+        .zip(1..)
+        .map(|(picture, n)| {
             format!(
                 "<figure><img src=\"{}\" alt=\"{}\" loading=\"lazy\"><figcaption>{}</figcaption></figure>",
-                escape(src),
-                escape(label),
-                escape(label)
+                escape(&picture.src),
+                escape(&picture.alt(n)),
+                escape(&picture.caption(n))
             )
         })
         .collect();
@@ -231,3 +275,7 @@ pub(super) fn decisions(block: &Block, ctx: &Ctx<'_>) -> String {
     }
     out.join("\n")
 }
+
+#[cfg(test)]
+#[path = "cards_tests.rs"]
+mod tests;
