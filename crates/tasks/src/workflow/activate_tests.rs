@@ -100,6 +100,7 @@ fn standing(slug: &str, status: &str) -> Standing {
         position: None,
         blocked_from: None,
         roles: Vec::new(),
+        accepted: None,
         attempts: Vec::new(),
     }
 }
@@ -147,15 +148,15 @@ fn a_definition_needing_what_this_release_cannot_run_is_unsupported() {
         let definition = written(&TWO.replacen(from, to, 1)).unwrap().0.unwrap();
         assert_eq!(supported(&definition, &Host::local()), Ok(()), "{to}");
     }
-    let accepted_output = TWO.replacen(
+    let landed = TWO.replacen(
         "dependencies = \"none\", unsuccessful_dependency = \"block\", accepts_work = true, terminal = false, legacy = \"ready\"",
-        "dependencies = \"accepted_output\", unsuccessful_dependency = \"block\", accepts_work = true, terminal = false, legacy = \"ready\"",
+        "dependencies = \"landed\", unsuccessful_dependency = \"block\", accepts_work = true, terminal = false, legacy = \"ready\"",
         1,
     );
-    let definition = written(&accepted_output).unwrap().0.unwrap();
+    let definition = written(&landed).unwrap().0.unwrap();
     assert_eq!(
         supported(&definition, &Host::local()),
-        Err("unsupported dependency at build/available: accepted_output (tools/workflow-accepted-output)".into())
+        Err("unsupported dependency at build/available: landed".into())
     );
     let guarded = TWO
         .replacen("adapters = []", "adapters = [\"approvals\"]", 1)
@@ -224,18 +225,30 @@ fn parent_integration_and_adapters_are_unsupported() {
         Err("unsupported adapter: lander".into())
     );
     definition.edges[0].dependencies = Dependency::Landed;
-    let landed = Validated::new(definition.clone()).unwrap();
+    let landed = Validated::new(definition).unwrap();
     assert_eq!(
         supported(&landed, &Host::local()),
         Err("unsupported edge accept: a dependency on landed".into())
     );
-    definition.edges[0].dependencies = Dependency::AcceptedOutput;
-    let output = Validated::new(definition.clone()).unwrap();
-    assert!(
-        supported(&output, &Host::local())
-            .unwrap_err()
-            .starts_with("unsupported edge accept: a dependency on accepted_output")
-    );
+}
+
+#[test]
+fn a_definition_depending_on_accepted_outputs_is_supported_on_its_edges_and_positions() {
+    let outputs = custom(&crate::workflow::admit::tests::outputs());
+    let claim = (outputs.definition.definition().edges.iter())
+        .find(|e| e.id == "claim")
+        .unwrap();
+    assert_eq!(claim.dependencies, Dependency::AcceptedOutput);
+    assert_eq!(supported(&outputs.definition, &Host::local()), Ok(()));
+    let mut definition = outputs.definition.definition().clone();
+    for position in &mut definition.positions {
+        position.dependencies = Dependency::AcceptedOutput;
+    }
+    for edge in &mut definition.edges {
+        edge.dependencies = Dependency::AcceptedOutput;
+    }
+    let everywhere = Validated::new(definition).unwrap();
+    assert_eq!(supported(&everywhere, &Host::local()), Ok(()));
 }
 
 fn rework(d: &mut Definition) -> &mut Edge {
@@ -675,6 +688,108 @@ fn a_reactivation_moves_only_what_changes_and_fences_the_rest() {
 }
 
 #[test]
+fn an_activation_carries_an_accepted_output_supersedes_it_where_none_stands_and_accepts_none() {
+    let old = custom(&format!(
+        "{}{MAPPED}",
+        crate::workflow::admit::tests::outputs()
+    ));
+    let mut approved = standing("sim/approved", "done");
+    approved.position = Some(TaskPosition {
+        phase: "verify".into(),
+        state: "approved".into(),
+        resume: None,
+        generation: 1,
+        revision: 4,
+        digest: old.revision.digest.clone(),
+        manual: None,
+    });
+    approved.accepted = Some("sim/approved@4".into());
+    let replanned = |definition: Definition, mappings: Vec<Mapping>, task: &Standing| {
+        let new = Custom {
+            definition: Validated::new(definition).unwrap(),
+            revision: old.revision.clone(),
+            mappings,
+        };
+        plan(
+            &new,
+            Some(old.definition.definition()),
+            std::slice::from_ref(task),
+            2,
+            &by(),
+            60.0,
+        )
+    };
+    let only = |plan: Plan| {
+        assert!(plan.kept.is_empty(), "{plan:?}");
+        assert_eq!(plan.moved.len(), 1);
+        plan.moved.into_iter().next().unwrap().transition
+    };
+    let definition = old.definition.definition().clone();
+
+    // The same pair, satisfying dependants still: kept, its output standing.
+    let again = replanned(definition.clone(), Vec::new(), &approved).unwrap();
+    assert_eq!(again.kept, vec![("sim/approved".to_string(), 3)]);
+
+    // Mapped to another pair that satisfies them: the output is carried there.
+    let signed = pair("verify", "signed");
+    let mut renamed = definition.clone();
+    renamed.states.push(symphony_api::workflow::State {
+        id: "signed".into(),
+        label: "Signed".into(),
+    });
+    for position in &mut renamed.positions {
+        if position.at == pair("verify", "approved") {
+            position.at = signed.clone();
+        }
+    }
+    for edge in &mut renamed.edges {
+        for end in [&mut edge.from, &mut edge.to] {
+            if *end == pair("verify", "approved") {
+                *end = signed.clone();
+            }
+        }
+    }
+    renamed.states.retain(|s| s.id != "approved");
+    let mapped = vec![Mapping {
+        from: pair("verify", "approved"),
+        to: signed.clone(),
+    }];
+    let carried = only(replanned(renamed, mapped, &approved).unwrap());
+    assert_eq!(
+        (carried.to, carried.accepted.as_deref()),
+        (signed, Some("sim/approved@4"))
+    );
+
+    // The pair no longer satisfies dependants: a transition that moves nothing supersedes the
+    // output, and a live holder, which nothing moves or restaffs, does not stop it.
+    let mut unsatisfied = definition.clone();
+    position_mut(&mut unsatisfied, &pair("verify", "approved")).satisfies_dependencies = false;
+    let mut held = approved.clone();
+    held.roles = vec![("amber".into(), "executor".into(), true)];
+    let superseded = only(replanned(unsatisfied, Vec::new(), &held).unwrap());
+    assert_eq!(superseded.from.as_ref(), Some(&superseded.to));
+    assert_eq!(
+        (superseded.status.as_str(), superseded.accepted),
+        ("done", None)
+    );
+
+    // A pair kept that comes to satisfy dependants is refused, as ever: a mapping accepts nothing.
+    let mut awaiting = standing("sim/awaiting", "review");
+    awaiting.position = Some(TaskPosition {
+        state: "awaiting".into(),
+        ..approved.position.clone().unwrap()
+    });
+    awaiting.accepted = Some("sim/awaiting@2".into());
+    let mut satisfying = definition;
+    position_mut(&mut satisfying, &pair("verify", "awaiting")).satisfies_dependencies = true;
+    assert!(
+        replanned(satisfying, Vec::new(), &awaiting)
+            .unwrap_err()
+            .contains("its dependants satisfied")
+    );
+}
+
+#[test]
 fn a_status_that_is_no_board_status_is_refused() {
     let two = custom(&format!("{TWO}{MAPPED}"));
     assert_eq!(
@@ -736,6 +851,7 @@ fn a_reopened_task_is_placed_where_the_activation_maps_its_status_as_its_first_t
             effects: Vec::new(),
             key: None,
             recovery: None,
+            accepted: None,
             at: 7.0,
         }
     );

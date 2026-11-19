@@ -135,7 +135,7 @@ pub fn recover(
     Ok(Recovery {
         transition: Some(acted(
             context,
-            slug,
+            facts,
             position,
             declared,
             action,
@@ -149,15 +149,16 @@ pub fn recover(
     })
 }
 
-/// The transition `action`, the recovery of `declared`, the position `slug` stands at, records:
-/// a move to its target or a stay, the role it lets go and its slot effect, what it `recovered`.
+/// The transition `action`, the recovery of `declared`, the position the task `facts` read stands
+/// at, records: a move to its target or a stay, the role it lets go and its slot effect, what it
+/// `recovered`, and the accepted output a stay at a satisfying position keeps.
 #[expect(
     clippy::too_many_arguments,
     reason = "one transition's parts, each read once"
 )]
 fn acted(
     context: Context,
-    slug: &str,
+    facts: &Facts,
     position: &TaskPosition,
     declared: &Position,
     action: &RecoveryAction,
@@ -180,9 +181,10 @@ fn acted(
         policy: action.slot,
     });
     let revision = position.revision + 1;
+    let slug = &facts.slug;
     Transition {
         id: Transition::id_of(slug, revision),
-        slug: slug.to_string(),
+        slug: slug.clone(),
         revision,
         generation: context.generation,
         digest: context.revision.digest.clone(),
@@ -202,6 +204,13 @@ fn acted(
         effects,
         key: None,
         recovery: Some(recovered),
+        // A stay keeps the accepted output standing; a recovery never accepts one.
+        accepted: super::admit::accepted_after(
+            Some(declared),
+            destination,
+            facts.accepted.as_deref(),
+            None,
+        ),
         at,
     }
 }
@@ -359,7 +368,7 @@ pub fn observed(
     drop.dedup();
     Ok(Proposal::Recovery(Box::new(Recovery {
         transition: Some(acted(
-            context, slug, position, declared, &action, None, answered, principal, at,
+            context, facts, position, declared, &action, None, answered, principal, at,
         )),
         drop,
         acquires: action.slot == Slot::Acquire,

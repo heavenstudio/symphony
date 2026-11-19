@@ -136,6 +136,11 @@ pub struct Transition {
     /// The holder's exit it answered, for a recovery's move or stay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<Recovered>,
+    /// The task's accepted output standing after it (docs/WORKFLOW.md, "Accepted outputs"): this
+    /// transition's own id where its edge accepted the output, the one before it carried by a move
+    /// between two positions that satisfy dependants, none once the task stands where none does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted: Option<String>,
     pub at: f64,
 }
 
@@ -210,6 +215,7 @@ struct Read {
     status: String,
     position: Option<TaskPosition>,
     blocked_from: Option<String>,
+    accepted: Option<String>,
 }
 
 impl Store {
@@ -310,6 +316,7 @@ impl Store {
                         blocked_from: task.blocked_from,
                         roles,
                         attempts,
+                        accepted: task.accepted,
                     }
                 })
                 .collect();

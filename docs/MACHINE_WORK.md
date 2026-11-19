@@ -154,10 +154,9 @@ largest, in the three that ask a board that never answers (`ASKED`) and the one 
 (`LOCK_SCALE`); the script's (`record_script.rs`) take 20 on one that refuses, with a probe's
 wait of 120 s but in the case of that deadline. The server's test of what its machine panel
 reads takes the scale 20 on its board's scratch database
-(`apps/symphony-server/src/live/machine_work/tests`). The release run's test
-(`crates/symphony-build/tests/release/recorder.rs`) and the browser test of the board's Build and
-Test columns (`apps/symphony-web-tests/tests/browser/run_records.rs`) take both, the scale and the
-probe's 120 s, on their scratch boards, which every check and run of theirs inherits. Each
+(`apps/symphony-server/src/live/machine_work/tests`). The browser test of the board's Build and
+Test columns (`apps/symphony-web-tests/tests/browser/run_records.rs`) takes both, the scale and
+the probe's 120 s, on its scratch board, which every run of the test inherits. Each
 waits for a record on its condition, with a backstop on the wall only a stall reaches (the
 browser test's are the Chrome driver's waits, which keep the same rule). What the scale and
 the long probe would hide, a recorder grown slow, two checks turn red at half the real bound:

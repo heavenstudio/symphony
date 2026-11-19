@@ -132,6 +132,7 @@ fn past(revision: u64, edge: Option<&str>, exhausted: Option<&str>) -> Transitio
             exhausted: Some(edge.into()),
             ..answered(Trigger::AttemptFailure, true)
         }),
+        accepted: None,
         at: 1.0,
     }
 }
@@ -182,6 +183,7 @@ fn an_executors_failed_attempt_moves_its_task_by_the_positions_action_on_the_rec
             ],
             key: None,
             recovery: Some(answered(Trigger::AttemptFailure, false)),
+            accepted: None,
             at: 7.0,
         }
     );
@@ -434,5 +436,41 @@ fn a_holders_exit_never_takes_an_attempts_action() {
             .code,
             RefusalCode::UnknownId
         );
+    }
+}
+
+#[test]
+fn a_stay_where_dependants_are_satisfied_keeps_the_output_accepted_there_and_a_move_supersedes_it()
+{
+    let satisfying = |stay: bool| {
+        let mut definition = custom(&attempts(stay)).definition.definition().clone();
+        let working = (definition.positions.iter_mut())
+            .find(|p| p.at == pair("build", "working"))
+            .unwrap();
+        working.satisfies_dependencies = true;
+        Custom {
+            definition: crate::workflow::Validated::new(definition).unwrap(),
+            ..custom(&attempts(stay))
+        }
+    };
+    for (stay, kept) in [(true, Some("sim/a@4")), (false, None)] {
+        let custom = satisfying(stay);
+        let mut facts = at(&custom, "build", "working", &[("amber", "executor")]);
+        facts.accepted = Some("sim/a@4".into());
+        for trigger in [Trigger::AttemptFailure, Trigger::CancellationAcknowledged] {
+            let recovered = recovery(proposed(&custom, &facts, &ending(&facts, trigger), &[]));
+            let transition = recovered.transition.unwrap();
+            let expected = if trigger == Trigger::CancellationAcknowledged {
+                // The cancel stays in both, for a person.
+                Some("sim/a@4")
+            } else {
+                kept
+            };
+            assert_eq!(
+                transition.accepted.as_deref(),
+                expected,
+                "stay {stay}, {trigger:?}"
+            );
+        }
     }
 }

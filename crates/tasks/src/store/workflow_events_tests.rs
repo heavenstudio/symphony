@@ -35,6 +35,7 @@ fn moved(slug: &str, revision: u64) -> Transition {
         effects: vec![],
         key: Some(format!("key{revision}")),
         recovery: None,
+        accepted: None,
         at: 1000.0 + revision as f64,
     }
 }

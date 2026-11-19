@@ -102,6 +102,7 @@ mod tests {
             effects: vec![],
             key: None,
             recovery: None,
+            accepted: None,
             at,
         }
     }
