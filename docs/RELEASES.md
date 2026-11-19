@@ -18,7 +18,9 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
   `Pin N` line, each saying whether it changed since the release before (`Board schema 17,
   changed since release-2026-11-12.2 (16 then).`, `Pin 1, unchanged since …`), then the checks it
   passed, what it publishes on crates.io while the project publishes
-  ([the packages](#packages-on-cratesio)), what a project does to take it ([its notes](#its-notes)),
+  ([the packages](#packages-on-cratesio)), each test that failed in its run and passed rerun alone,
+  with both results and the load at each ([step 5](#the-release-run)), what a project does to take
+  it ([its notes](#its-notes)),
   and the commits on main's first-parent line since that release. The first release says so instead. The schema is `VERSION` in
   `crates/tasks/src/schema.rs` and the pin `PIN` in `crates/symphony/src/machine.rs`, read at the
   tagged commit.
@@ -488,18 +490,53 @@ project is given and neither the library nor the shipped `symphony` compiles
      last recipe its log says failed other than `verify` and a private one (`_NAME`), its tests'
      a target at a time, else says its last lines name the step. Any other check's is its own
      command;
+   - what came of the run's own reruns of its failures alone (below): each with how it ended, its
+     time, the load it ended under and its log, one that failed again saying the test failed twice,
+     or why the run reran none;
    - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`), and the same
      range on a line of its own by the two commits' full names, `between: LAST_GREEN..TIP`
      (`symphony_board::red::BETWEEN`), from which the Reports roll-up lists the landings the red
      may trace back to ([the day files](analysis/reports-and-monitoring.md#the-day-files)). With
      no green run on record the range starts at the release before; with neither there is none.
 
-   **A test red on load** is discarded: a rerun neither fails nor passes on the machine's load
-   (RULES.md `tests/no-test-fails-on-load`). A test that fails a run, or the release candidate's
-   rerun, because of load (it passes alone, or its failure is a wall-clock bound, a sleep-ordered
-   step or a timeout under load) is removed from the tree in its red's own fix, with one line on
-   the red's thread naming the test, the evidence it is load (its runs alone and the failing line)
-   and what it proved. That rule is the approval: no card is put to the owner to discard it. If
+   **Each failure rerun alone.** Before it files a red, the run reruns alone each failure of a red
+   run of the tests' lanes (a step `tools/test-lanes.sh` ran, step 3), one at a time, in the same
+   checkout and over the same build (`crates/symphony-build/src/release/alone.rs`): `tools/test-lanes.sh
+   --alone FOLDER ARGS`, FOLDER the folder of that run's lanes' logs, which the runner names first
+   (`test-lanes: logs in FOLDER`) and where it keeps the list of the test binaries it built and the
+   client the tests ran against, and ARGS the failure as its red's rerun lines name it, a test
+   (`-p PACKAGE --test TARGET -- NAME --exact`) or a target whole when its log named no failed test
+   in it. That runs the one test or target of the lanes' own build, nothing built again, with no
+   retry: a retry of nextest's is never counted as a pass ([CHECKS](CHECKS.md#the-release-run)).
+   Each rerun has a log of its own (`logs/ID/KEY.alone/N.log`) and the load it ended under, and
+   runs within the run's time, one the time leaves out red without starting; once they ended the
+   run looks at its checkout again (step 3), and reruns followed by a failed look judge nothing.
+   - **Fails again alone:** red, as before, its task saying each rerun as above and that the test
+     failed twice.
+   - **Passes alone:** no red. A step whose every failure passed alone is green, and so is a check
+     red only by such steps; the record keeps both results and the load at each, and the release's
+     message says them. For all such tests of the run, whatever else it found, the run files one
+     task at p1, `tests/passed-alone-ID`, outside the red series and unmarked: it names each test
+     with its run in company and its run alone, each with how it ended, its load and its log, and
+     asks for why to be found, then for the code or the runner to be fixed, the test rewritten on a
+     condition, a count, CPU time or an injected clock ([CHECKS](CHECKS.md#time-in-tests)), or the
+     test discarded with one line on its thread. It holds no release and takes no red's place.
+   - **None rerun:** more than 12 failures are a break, not load: red, with none rerun. So is a run
+     whose runner did not say it ran every lane it was asked for to its end (`test-lanes: ended:
+     every lane asked for ran`), named no folder, ended without a status of its own or found files
+     of its build gone (above), or that has a red lane naming no failed test or target: what failed
+     there may be more than its tests. Its red says why none was rerun.
+
+   The run never reruns the whole suite, and nothing waits on its reruns: agents work on as they
+   do.
+
+   **A test red on load** all the same is discarded: a rerun neither fails nor passes on the
+   machine's load (RULES.md `tests/no-test-fails-on-load`). A test the run reran alone that passed
+   is no red (above), and is found, fixed, rewritten or discarded by its own task. A red test that
+   failed alone too, or was not rerun, whose failure is still a wall-clock bound, a sleep-ordered
+   step or a timeout under load, is removed from the tree in its red's own fix, with one line on the
+   red's thread naming the test, the evidence it is load (its runs alone and the failing line) and
+   what it proved. That rule is the approval: no card is put to the owner to discard it. If
    what it proved matters, a follow-up task may bring it back written on a condition, a count, CPU
    time or an injected clock; the release does not wait for that. No rerun is spent on it, no
    rewrite of it is waited for, and nobody lowers the machine's load to help a run pass: an
@@ -620,9 +657,10 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   of it ([TASKS](TASKS.md#the-default-landing)). Its approve, where it needs review, names the
   full tip it read, and it lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
   landing (`just tasks done SLUG NOTE --covered-by OTHER`), never landed. A fix made outside this
-  repository (a consumer's) answers its red by the task cancelled, saying where. A test red on load
-  is discarded by its red's fix ([step 5](#the-release-run)): the candidate's rerun runs without
-  it, and no rerun is spent to see it pass.
+  repository (a consumer's) answers its red by the task cancelled, saying where. The candidate's
+  rerun reruns its failures alone as any run does ([step 5](#the-release-run)): a test that fails
+  there in company and passes alone is no red, and a round red only in such tests releases. A test
+  red on load all the same is discarded by its red's fix: the candidate's rerun runs without it.
 - **The advance.** The land's `--due` (`[board] on_land`) settles the candidate first, under the
   run's lock: a landing whose slug is a red's task in the record moves it to the newest commit an
   approve on that task named, or its landing's line says its needed stamps stood on where it
@@ -762,7 +800,9 @@ of another environment and are run again.
 
 The candidate is dropped, and a run of main's tip is due at once, whatever the count, when:
 
-- as many reruns as `[releases] candidate_reruns` allows (3) came back red;
+- as many reruns as `[releases] candidate_reruns` allows (3) came back red, a rerun counted only
+  when something in it failed alone too, or was not rerun alone: one red only in tests that passed
+  alone is green ([step 5](#the-release-run)) and releases;
 - it was first judged `[releases] candidate_hours` (24) hours ago;
 - a red's task landed with no approved commit that passes the advance, as when its executor merged
   main before any approve;

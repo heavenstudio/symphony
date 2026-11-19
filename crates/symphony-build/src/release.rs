@@ -31,6 +31,7 @@
 //! ended without recording itself is recorded by the next ([`record::recover`]); everything it runs
 //! is bounded by the run's time and stops when the run is told to (HUP, INT or TERM, [`group`]).
 
+mod alone;
 mod board;
 pub(crate) mod cadence;
 mod candidate;
@@ -2048,7 +2049,25 @@ fn night(
         };
         tell_check(&ran, out);
         stopped_in(&ran)?;
-        let looked = look(&place, &candidate, until, &after(&ran), true);
+        let mut looked = look(&place, &candidate, until, &after(&ran), true);
+        // Its tests' failures, each rerun alone in the checkout the look found as it was, which
+        // is looked at again once they ended ([`alone`]).
+        let mut ran = ran;
+        if looked.is_ok() && alone::rerun(&mut ran, &place.checkout, &logs, within, out) {
+            let mut reruns = (ran.steps.iter())
+                .filter_map(|step| step.alone.as_ref())
+                .flat_map(|alone| &alone.reruns);
+            looked = reruns.try_for_each(stopped_in).and_then(|()| {
+                let at = format!("after `{}` reran its failures alone", ran.name);
+                look(&place, &candidate, until, &at, true)
+            });
+            if looked.is_err() {
+                alone::void(
+                    &mut ran,
+                    "the run stopped after its reruns, before they could be looked at",
+                );
+            }
+        }
         keep(record, &logs, ran, looked)?;
     }
     if let Some(held) = held {
@@ -2128,6 +2147,7 @@ fn night(
         &checked,
         &publishes,
         &held_notes,
+        &alone::notes(&record.checks, &board::passed_alone_slug(&record.id)),
         &taking,
         &changes,
     );
@@ -2902,6 +2922,7 @@ mod tests {
             timed_out: false,
             interrupted: false,
             load: None,
+            alone: None,
         }
     }
 

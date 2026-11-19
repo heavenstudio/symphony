@@ -366,8 +366,11 @@ fix whose orchestrator lands only a fix changing no test or check (RULES.md
 rerun each failure alone (each failed test, else the step's own command, a test run's a target at a
 time), the load when it ended and the commits since the last green run
 (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
-stops short of deciding is the red `tests/release-red-run`. A test red on load is answered by its
-discard ([time in tests](#time-in-tests)). A run red in a check holds its commit
+stops short of deciding is the red `tests/release-red-run`. Before it files a red, the run reruns
+each failed test alone, one at a time, over the same build (below): one that fails again is red,
+its task saying it failed twice, and one that passes alone is no red, and has one p1 task of its
+run's ([RELEASES](RELEASES.md#the-release-run), step 5). A test red on load all the same is
+answered by its discard ([time in tests](#time-in-tests)). A run red in a check holds its commit
 as the release candidate while its reds' own tasks fix it on the branch `release-candidate`, then
 reruns what was red and what the fixes changed, and releases that commit and its fixes alone
 ([RELEASES](RELEASES.md#the-release-candidate)). It is the one place every test runs
@@ -513,6 +516,20 @@ Signals reach the foreground batches, which are waited for before the runner exi
 stop leaves their live output at the named paths. Native failures retain Cargo's target lists;
 nextest failures retain their own events. A batch is green only on an explicit exit status of zero.
 
+**A failure rerun alone.** The runner names the folder of its lanes' logs first (`test-lanes:
+logs in FOLDER`), keeps there the client its tests ran against beside the binary metadata, and
+says last that it ran every lane it was asked for (`test-lanes: ended: every lane asked for ran`),
+a line a run cut short never reaches. `tools/test-lanes.sh --alone FOLDER ARGS` reruns one
+failure of that run alone over its build, ARGS as a red's rerun line names it (`-p PACKAGE --test
+TARGET -- NAME --exact`, a target with no name for one rerun whole, `--workspace` and a kind for a
+lane's own line). A test, or a target whole, runs by nextest from the folder's `binaries.json`, by
+the filterset of its package, kind, binary and name, with no retry, `--no-tests fail` and the
+release profile's timeouts; a doctest, or the ignored runner fixture, by Cargo as its lane runs
+it; a lane's own line, or a shared-fixture target whole, as that lane alone, its logs in
+`FOLDER/alone`. Nothing is built again, and it exits as the rerun did. The release run reruns each
+failure of a red tests step this way, at most 12, before it files a red
+([RELEASES](RELEASES.md#the-release-run), step 5).
+
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
 price of focused gates without their full run, and narrows once it also runs each day. The
@@ -555,12 +572,20 @@ test. No such recipe exists yet, so nothing is `#[ignore]`d for a quiet machine;
 lets go so waits in the release run until that recipe lands, and is then listed below with its
 promise and the owner's word.
 
-**A test red on load in the release run is discarded.** A rerun neither fails nor passes on the
-machine's load, so a test that fails a release run, or the release candidate's rerun, because of
-load (it passes alone, or its failure is a wall-clock bound, a sleep-ordered step or a timeout
-under load) is answered by its red's own fix removing it from the tree, with one line on the red's
-thread naming the test, the evidence it is load (its runs alone and the failing line) and what it
-proved. This rule is the owner's approval: no card is put to them to discard it. If what it
+**A test that fails in the release run and passes alone is no red.** The run reruns each failed
+test alone, one at a time, in the same checkout and over the same build, up to 12: one that passes
+alone holds no release, and the run files one p1 task for all such tests of it, outside the red
+series, which finds why, then fixes the code or the runner, rewrites the test on a condition, a
+count, CPU time or an injected clock, or discards it with one line on its thread; one that fails
+again is red, its task saying it failed twice ([RELEASES](RELEASES.md#the-release-run), step 5).
+A retry of nextest's never counts as a pass, and no timeout or budget is widened for a rerun.
+
+**A test red on load in the release run all the same is discarded.** A rerun neither fails nor
+passes on the machine's load, so a red test that failed alone too, or was not rerun, because of
+load (its failure is a wall-clock bound, a sleep-ordered step or a timeout under load), in a
+release run or the release candidate's rerun, is answered by its red's own fix removing it from
+the tree, with one line on the red's thread naming the test, the evidence it is load (its runs
+alone and the failing line) and what it proved. This rule is the owner's approval: no card is put to them to discard it. If what it
 proved matters, a follow-up task may bring it back written on a condition, a count, CPU time or an
 injected clock; the release does not wait for that. No rerun is spent on it, no rewrite of it is waited for, and
 nobody lowers the machine's load to help a run pass: an orchestrator holds no other work back to
