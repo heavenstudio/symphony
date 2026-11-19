@@ -161,6 +161,8 @@ pub(crate) struct Hub {
     /// What the hub wakes as it finds or loses its board ([`Hub::has_board`]): its server's
     /// maintenance, given as the hub starts ([`Hub::wake_at_board`]).
     board_wakers: OnceLock<Arc<Wakers>>,
+    /// What the documents' loop calls after each refresh ([`Hub::after_refresh`]).
+    refreshed: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// Whether `trees` is what git last listed: unset before the first listing and after one that
     /// failed, when the owner's asks on a branch wait ([`symphony::owner_asks::Reading::listed`]).
     listed: std::sync::atomic::AtomicBool,
@@ -385,6 +387,7 @@ impl Hub {
             rescan: std::sync::atomic::AtomicBool::new(false),
             documents_waker: OnceLock::new(),
             board_wakers: OnceLock::new(),
+            refreshed: OnceLock::new(),
             listed: std::sync::atomic::AtomicBool::new(false),
             one_cards: RwLock::new(Arc::default()),
             marks: RwLock::new(Arc::default()),
@@ -551,6 +554,13 @@ impl Hub {
     /// Given once, as the hub starts; a second giving is ignored.
     pub(crate) fn wake_at_board(&self, wakers: Arc<Wakers>) {
         let _ = self.board_wakers.set(wakers);
+    }
+
+    /// Call `then` after each refresh of the documents: the server's saves take up again what
+    /// they keep for delivery by pull request, which a checkout that moved may have settled.
+    /// Given once, as the hub starts; a second giving is ignored.
+    pub(crate) fn after_refresh(&self, then: Box<dyn Fn() + Send + Sync>) {
+        let _ = self.refreshed.set(then);
     }
 
     /// Ask the documents' loop to scan the branches again, though no file moved, and wake it.
@@ -2250,6 +2260,9 @@ fn documents(
                 .restamp(&dirty);
             if let Err(e) = measured("document event", || hub.refresh_docs(Some(&dirty))) {
                 eprintln!("· Symphony data refresh failed: {e}");
+            }
+            if let Some(then) = hub.refreshed.get() {
+                then();
             }
         }
         hub.watch(&mut watcher, &mut watched);

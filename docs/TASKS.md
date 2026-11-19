@@ -2503,13 +2503,50 @@ run, by `result`:
 One limit holds by design: evidence withdrawn after the last reading and before the host acts on
 a request already made does not recall it. The receipt names the revision that was read.
 
-What else writes the default branch lands nothing there while the key is set, each refused by
-name: the regenerator, and a save of a document from the app, refused where it begins, before a
-file is written, and again where an edit is handed to the committer and in the commit itself. The release cadence refuses to
+What else writes the default branch lands nothing there while the key is set: the regenerator is
+refused by name, and a save of a document from the app is kept pending and delivered as a task of
+its own ([below](#a-document-save-under-delivery)), the commit on the default branch itself
+refused whoever asks for it. The release cadence refuses to
 count the landings of a line whose tip sets the key, since a squash is no merge of the land's: no
 release run is due by landings there and no release candidate is advanced, each saying so
 ([RELEASES](RELEASES.md#the-cadence)). The sweep keeps the worktree and branch of a squashed
 head, which it finds in no history.
+
+### A document save under delivery
+
+While the key is set, a save of a document from the app (an answer on a card, a comment, a
+dismissal) writes neither the file nor the default branch. The save is answered
+`{"ok": true, "delivery": "pending"}`, never as committed, once its edit is in the committer's
+journal (`verdict-publications/` in the server's state folder), and it is kept there, with the
+owner's words, until its delivery is proved (`crates/symphony/src/commit/pending.rs`). Every
+refusal a save has without the key stands: text that changed under it, a card it does not find,
+words it would lose, and the same tap or answer again is the repeat it always was.
+
+| Step | What it is |
+| --- | --- |
+| Shown | The page, its source and the queue show the document as the default branch has it with each kept save of it merged in, in the order saved, under a note that names each one and where it stands. The file in the checkout is never written, so the checkout stays clean for the land's reconciliation. |
+| A branch | The committer commits the edit as one commit on `docs/owner-save-N`, N the journal entry's number, on the default branch here. A later save of the same document waits until the one before it is delivered, cancelled or refused, and is then committed on the default branch as it stands: no branch stands on another's undelivered commit, and a head is never rebuilt. It is shown meanwhile. |
+| A task | The branch is filed as the owner's task of that slug, once, under a receipt of the branch and its commit, and put in review. Its assessor says what it needs from its diff as for any task, and its orchestrator lands it, which delivers it by its pull request. The app runs no land and asks the host for nothing. A conflict with the default branch is settled on the branch as any task's is, and the new head assessed again. |
+| Proved | The save is delivered once the land's receipt for its task names a commit that is on the fetched remote default branch and holds the edit, and its entry is dropped once the default branch here holds that commit. Until the checkout follows, it is still shown. |
+
+Text alone proves nothing. A save whose text another task's delivery brought is dropped once
+that task's receipt names the commit that introduced it, after its own task is told so, once,
+with that receipt's pull request and head; closing that task is its orchestrator's. A save whose
+text is on the remote default branch with no receipt that explains it is held for a person, who
+removes its journal entry by name once it is settled.
+
+| What stops a save | What is kept |
+| --- | --- |
+| The board does not answer, or the task cannot be filed | the entry and its branch; the next pass files it |
+| Its edit no longer applies to the default branch | the entry, with why, and no branch; later saves of the document do not wait for it |
+| Its task is cancelled | the entry and the owner's words, shown as not delivered; later saves of the document do not wait for it |
+| The server stops between two steps | the entry: a branch made and not journaled is taken up if it holds the edit, a task filed under its receipt is found again, and nothing is made twice |
+
+Each pass of the committer takes every kept save up again: at a server's start, after each save,
+and after each refresh of the documents, which the land's fast-forward of the checkout causes.
+A save kept by a build that did not know the key is delivered the same way. A project's
+`[verdicts]` generators are not run for a kept save: they run on the default branch once it
+holds the text.
 
 ### A delivery whose host is gone
 

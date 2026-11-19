@@ -106,6 +106,16 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
         {
             return Err(symphony::save::Failure { status: 503, error });
         }
+        // A save kept for delivery by pull request wrote no file, so no watcher tells the pages:
+        // they are read again here, and the feed brings the owner's line and the pending note.
+        if result
+            .as_ref()
+            .is_ok_and(|value| value["delivery"] == "pending")
+            && let Some(hub) = shared.api.get()
+            && let Err(error) = hub.refresh_page("", &shared.root)
+        {
+            eprintln!("· the pages were not read again after a pending save: {error}");
+        }
         if result.is_ok() && route == "/api/task-cancel" && shared.installed_ui {
             let root = shared.root.clone();
             let slug = payload["slug"].as_str().unwrap_or("").to_string();

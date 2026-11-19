@@ -31,6 +31,20 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
         )?;
         hub.gate_recorders(shared.recording.clone());
         hub.wake_at_board(shared.board_wakers.clone());
+        // Saves kept for delivery by pull request are taken up again now and after each refresh.
+        let weak = Arc::downgrade(&shared);
+        let settle = move || {
+            if let Some(shared) = weak.upgrade()
+                && symphony::commit::pending::kept(&shared.root)
+            {
+                shared
+                    .saves
+                    .get_or_init(|| symphony::save::Saves::start(&shared.root))
+                    .settle();
+            }
+        };
+        settle();
+        hub.after_refresh(Box::new(settle));
         assert!(
             shared.api.set(hub.clone()).is_ok(),
             "hub startup is serialized"
