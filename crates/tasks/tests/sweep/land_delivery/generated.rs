@@ -816,3 +816,137 @@ fn with_no_delivery_key_a_round_commits_and_keeps_no_pending_record() {
         "no task filed"
     );
 }
+
+#[test]
+fn an_input_landing_between_the_publication_and_the_request_asks_for_no_merge() {
+    let (r, bare) = generating(true);
+    let (made_as, orch) = assessed(&r);
+    // Fresh when it is first judged; a source lands while it is published.
+    let host = Host::new(&r, &bare).before("publish", || {
+        on_main(&r, "src/b.txt", "b\n");
+    });
+    let refused = landed(&r, &made_as.slug, &orch, &host).1.unwrap_err();
+    assert!(
+        refused.contains("is stale: it was made of main at"),
+        "{refused}"
+    );
+    assert_eq!(host.verbs(), ["publish"], "no merge asked");
+    assert!(Receipt::read(&lands(&r), &made_as.slug).is_none());
+}
+
+#[test]
+fn the_land_waits_for_a_regenerator_that_runs_when_it_must_read_a_key() {
+    let (r, bare) = generating(true);
+    let (made_as, orch) = assessed(&r);
+    on_main(&r, "sim/other.gd", "extends Node\n");
+    let lock = fs::File::open(lands(&r).join("regenerate.lock")).unwrap();
+    lock.try_lock().unwrap();
+    let host = Host::new(&r, &bare);
+    let refused = landed(&r, &made_as.slug, &orch, &host).1.unwrap_err();
+    assert!(
+        refused.starts_with("the regenerator runs, and judges what")
+            && refused.contains("nothing published"),
+        "{refused}"
+    );
+    assert!(host.verbs().is_empty());
+    drop(lock);
+    landed(&r, &made_as.slug, &orch, &host).1.unwrap();
+}
+
+#[test]
+fn a_record_whose_branch_moved_or_whose_generators_changed_is_not_gone_on_from() {
+    let (r, _bare) = generating(true);
+    round(&r, None).1.unwrap();
+    let made_as = pending(&r).unwrap();
+    // Its branch moved by somebody: the round stops and says so, making nothing.
+    let branch = format!("refs/heads/{}", made_as.slug);
+    git(&r.root, &["update-ref", &branch, &made_as.tip]);
+    let stopped = round(&r, None).1.unwrap_err();
+    assert!(
+        stopped.contains("not the commit the regenerator made"),
+        "{stopped}"
+    );
+    assert_eq!(made(&r), 1);
+    git(&r.root, &["update-ref", &branch, &made_as.head]);
+    // A generator the project no longer has made it: cancelled, and the tip made by today's.
+    let mut renamed = made_as.clone();
+    renamed.made[0].generator = "another".into();
+    fs::write(
+        lands(&r).join(PENDING),
+        serde_json::to_string(&renamed).unwrap(),
+    )
+    .unwrap();
+    let (said, result) = round(&r, None);
+    // The same tip names the same short branch, which the cancelled task has: the whole tip.
+    let again = pending(&r).unwrap();
+    assert!(result.unwrap().contains(&again.slug), "{said}");
+    assert_eq!(again.slug, format!("generated/outputs-at-{}", made_as.tip));
+    assert_eq!(
+        (made(&r), status(&r, &made_as.slug).as_str()),
+        (2, "cancelled")
+    );
+}
+
+/// A task bound to a pull request whose merge the host refused, then cancelled as stale by a
+/// round the host gave no answer to: the repository, the host's bare, and the task.
+fn withdrawn_untold() -> (Repo, PathBuf, Pending) {
+    let (r, bare) = generating(true);
+    let (first, orch) = assessed(&r);
+    {
+        let host = Host::new(&r, &bare).merging(Merges::Refuses("checks"));
+        landed(&r, &first.slug, &orch, &host).1.unwrap_err();
+        on_main(&r, "src/b.txt", "b\n");
+        let deaf = Host::new(&r, &bare).losing(&["result"]);
+        round(&r, Some(&deaf)).1.unwrap();
+    }
+    assert!(lands(&r).join(WITHDRAWN).exists());
+    (r, bare, first)
+}
+
+#[test]
+fn a_cancelled_tasks_pull_request_is_forgotten_only_once_it_is_told_closed_or_held() {
+    // Closed on the host: nothing is left to tell.
+    let (r, bare, _) = withdrawn_untold();
+    let host = Host::new(&r, &bare);
+    host.pull.borrow_mut().2 = true;
+    round(&r, Some(&host)).1.unwrap();
+    assert_eq!(host.verbs(), ["result"]);
+    assert!(!lands(&r).join(WITHDRAWN).exists());
+    // Merged all the same, by a person: held for one, said once on its thread, and forgotten.
+    let (r, bare, first) = withdrawn_untold();
+    let host = Host::new(&r, &bare);
+    *host.pull.borrow_mut() = (Some(first.head.clone()), Some(first.head.clone()), false);
+    round(&r, Some(&host)).1.unwrap();
+    assert!(!lands(&r).join(WITHDRAWN).exists());
+    assert!(
+        (r.board.said(&first.slug).iter())
+            .any(|line| line.contains("was merged though")
+                && line.contains("was cancelled as stale")),
+        "{:?}",
+        r.board.said(&first.slug)
+    );
+    let held = Journal::read(&lands(&r), &first.slug).unwrap().held;
+    assert!(held.is_some_and(|what| what.contains("was merged though")));
+    // The host takes no publication, or answers what is no state: still to tell, and said.
+    for answer in [
+        (
+            "publish",
+            json!({"state": "unavailable", "why": "no token"}),
+        ),
+        ("result", json!({"state": "unavailable", "why": "no token"})),
+    ] {
+        let (r, bare, first) = withdrawn_untold();
+        let host = Host::new(&r, &bare).saying(answer.0, answer.1);
+        let (said, result) = round(&r, Some(&host));
+        result.unwrap();
+        assert!(
+            said.contains(&format!(
+                "the pull request of {}, which was cancelled, was not told",
+                first.slug
+            )),
+            "{said}"
+        );
+        assert!(lands(&r).join(WITHDRAWN).exists());
+        assert!(!host.verbs().contains(&"merge".to_string()));
+    }
+}
