@@ -142,6 +142,10 @@ impl Hc for Hooked<'_> {
         self.inner.board()
     }
 
+    fn project(&self) -> String {
+        self.inner.project()
+    }
+
     fn ending(&self) -> std::time::Duration {
         self.inner.ending()
     }

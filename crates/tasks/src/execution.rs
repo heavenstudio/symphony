@@ -27,6 +27,7 @@ mod evidence;
 mod keys;
 mod record;
 mod rules;
+mod view;
 
 pub use coordinator::Coordinator;
 pub use record::{
@@ -37,6 +38,7 @@ pub use symphony_plugin::execution::{
     Adapter, AttemptRef, Capabilities, ContentRef, ExternalLink, Input, Operation, Outcome,
     Principal, PrincipalKind, Profile, ResumeMode, Scope, StopMode,
 };
+pub use view::board_scope;
 
 use crate::Error;
 use std::fmt;

@@ -33,12 +33,17 @@ impl Adapter for Silent {
     }
 }
 
+/// The local provider on this world's board, as a reader of it builds it.
+fn local(w: &World) -> Profile {
+    profile(&w.hc().project(), w.store())
+}
+
 /// A grant to read this world's board, and to stand as a coordinator's worker.
 fn reader(w: &World) -> Grant {
     let owner = Principal::new(PrincipalKind::Human, "local".into(), "owner".into());
     Grant::from_host(
         owner,
-        profile(&w.hc()).scope,
+        local(w).scope,
         &[Act::Read, Act::Work, Act::Start],
         "test",
     )
@@ -46,7 +51,7 @@ fn reader(w: &World) -> Grant {
 
 /// Every attempt of `slug`, oldest first.
 fn attempts(w: &World, slug: &str) -> Vec<Attempt> {
-    Coordinator::new(w.store(), profile(&w.hc()), &Silent, reader(w))
+    Coordinator::new(w.store(), local(w), &Silent, reader(w))
         .unwrap()
         .history(&reader(w), slug)
         .unwrap()
@@ -60,7 +65,7 @@ fn only(w: &World) -> Attempt {
 
 /// Attempt `id`'s facts as JSON, in order.
 fn facts(w: &World, id: &str) -> Vec<Value> {
-    Coordinator::new(w.store(), profile(&w.hc()), &Silent, reader(w))
+    Coordinator::new(w.store(), local(w), &Silent, reader(w))
         .unwrap()
         .facts(&reader(w), id)
         .unwrap()
@@ -181,7 +186,7 @@ fn a_launch_admits_its_attempt_before_hc_is_started_and_records_it_running() {
     );
     // No look beyond the launch's own: hc's receipt of the first message is the observation.
     assert_eq!(w.calls_of(&["get", &row.pane]).len(), 1);
-    // The legacy record is written as before.
+    // The launch record on the task is written beside it.
     let [record] = <[_; 1]>::try_from(w.store().task_sessions("sim/jump").unwrap()).unwrap();
     assert_eq!(record, row);
 }
@@ -461,7 +466,7 @@ fn a_record_from_before_attempts_is_restored_as_a_plain_start_and_none_is_made_u
             ..NewLaunch::new("sim/jump", &handle, "executor")
         })
         .unwrap();
-    // Its close is the close it always was: no attempt stands for the past launch.
+    // Its close ends no attempt: none stands for the past launch.
     w.close(&handle).unwrap();
     assert!(!w.has_terminal(&pane));
     assert_eq!(attempts(&w, "sim/jump"), vec![]);
@@ -640,7 +645,7 @@ fn remote_attempt(w: &World, handle: &str, scope_board: Option<&str>) -> (Profil
     let mut capabilities = Capabilities::default();
     capabilities.operations = vec![Operation::Start, Operation::Observe, Operation::Stop];
     capabilities.stop_modes = vec![StopMode::Terminate];
-    let mut scope = profile(&w.hc()).scope;
+    let mut scope = local(w).scope;
     if let Some(board) = scope_board {
         scope.board = board.to_string();
     }
@@ -684,7 +689,7 @@ fn a_remote_attempts_resource_is_never_given_to_hc_as_a_terminal() {
         .filter(|call| call.iter().any(|word| word.contains("res-1")))
         .collect();
     assert_eq!(named, Vec::<Vec<String>>::new());
-    // The local attempts ended and followed each other; the remote one is as it was.
+    // The local attempts ended and followed each other; the remote one is left untouched.
     let all = attempts(&w, "sim/jump");
     let local: Vec<&Attempt> = all
         .iter()
@@ -756,7 +761,7 @@ fn a_restore_settles_a_start_that_never_answered_as_cancelled_and_starts_plainly
         })
         .unwrap();
     let grant = reader(&w);
-    let lost = Coordinator::new(w.store(), profile(&w.hc()), &Lost, grant.clone()).unwrap();
+    let lost = Coordinator::new(w.store(), local(&w), &Lost, grant.clone()).unwrap();
     let input = Input::new(
         "r1".into(),
         "digest".into(),
@@ -811,7 +816,7 @@ fn a_restore_is_refused_while_its_last_attempt_is_held_and_starts_no_terminal() 
         })
         .unwrap();
     let grant = reader(&w);
-    let lost = Coordinator::new(w.store(), profile(&w.hc()), &Lost, grant.clone()).unwrap();
+    let lost = Coordinator::new(w.store(), local(&w), &Lost, grant.clone()).unwrap();
     let input = Input::new(
         "r1".into(),
         "digest".into(),
@@ -879,4 +884,154 @@ fn a_launch_in_a_folder_that_is_no_checkout_pins_no_commit() {
     let attempt = only(&w);
     assert_eq!(attempt.identity.input.repository_revision, "unversioned");
     assert_eq!(attempt.state.dispatch, Dispatch::Running);
+}
+
+/// An hc whose `run` answers only after the step that sent the start has lost its lease, as an
+/// answer slower than the lease does: the lease of the task's live attempt is expired once hc has
+/// answered each run.
+fn outlasting_its_lease(w: &World) -> Hooked<'_> {
+    Hooked {
+        after: Box::new(|args| {
+            if args[0] != "run" {
+                return;
+            }
+            for id in w.store().live_attempts("sim/jump").unwrap() {
+                let row = w.store().raw().row("execution_attempt", id);
+                let mut lease = row.field("lease").unwrap();
+                assert!(lease.is_object(), "the step holds a lease: {lease}");
+                lease["expires"] = json!(0);
+                row.set(json!({ "lease": lease })).unwrap();
+            }
+        }),
+        ..Hooked::new(w)
+    }
+}
+
+/// The outcomes of `facts`' answers, by name, with whether each came after its lease.
+fn answers(facts: &[Value]) -> Vec<(String, bool)> {
+    facts
+        .iter()
+        .filter(|fact| fact["kind"] == "answer")
+        .map(|fact| {
+            let outcome = fact["outcome"].as_object().expect("an outcome");
+            let name = outcome.keys().next().expect("its name").clone();
+            (name, fact["stale"] == true)
+        })
+        .collect()
+}
+
+#[test]
+fn a_terminal_hc_answered_after_the_steps_lease_is_found_and_the_launch_goes_on() {
+    let w = World::new();
+    let hc = outlasting_its_lease(&w);
+    let ask = Ask {
+        kind: Some("claude".into()),
+        ..w.ask("sim/jump")
+    };
+    let row = symphony_board::launch::launch(w.store(), &hc, &w.machine(), &ask)
+        .unwrap()
+        .row;
+    // The terminal hc made is the attempt's, and nothing closed it or asked for another.
+    let attempt = only(&w);
+    assert_eq!(attempt.state.dispatch, Dispatch::Running);
+    assert_eq!(terminal_of(&attempt), row.pane);
+    assert_eq!(attempt.state.pending, None);
+    assert_eq!(w.calls_of(&["run"]).len(), 1);
+    assert_eq!(w.calls_of(&["close"]), Vec::<Vec<String>>::new());
+    // The receipt that came after the lease changed nothing; the reconcile found the terminal.
+    let facts = facts(&w, &attempt.id);
+    let answers = answers(&facts);
+    assert_eq!(
+        answers[..2],
+        [("Accepted".to_string(), true), ("Found".to_string(), false)],
+        "{facts:?}"
+    );
+    let found = facts
+        .iter()
+        .find(|fact| fact["outcome"]["Found"].is_object())
+        .expect("a found answer");
+    assert_eq!(
+        found["outcome"]["Found"]["evidence"],
+        format!("hc run answered terminal {}", row.pane)
+    );
+    let [record] = <[_; 1]>::try_from(w.store().task_sessions("sim/jump").unwrap()).unwrap();
+    assert_eq!(record, row);
+}
+
+#[test]
+fn a_restores_terminal_answered_after_the_steps_lease_is_found_as_its_resume() {
+    let w = World::new();
+    let row = launched(&w).row;
+    w.close(&row.handle).unwrap();
+    let hc = outlasting_its_lease(&w);
+    let restored = restore(
+        w.store(),
+        &hc,
+        &w.machine(),
+        "sim/jump",
+        Some(&row.handle),
+        None,
+    );
+    let [again] = <[_; 1]>::try_from(restored.unwrap()).unwrap();
+    let [first, second] = <[_; 2]>::try_from(attempts(&w, "sim/jump")).unwrap();
+    assert_eq!(second.identity.relation, Some(Relation::Resume));
+    assert_eq!(second.state.dispatch, Dispatch::Running);
+    assert_eq!(terminal_of(&second), again.row.pane);
+    assert_ne!(terminal_of(&second), terminal_of(&first));
+    assert_eq!(w.calls_of(&["run"]).len(), 2);
+    assert_eq!(
+        w.calls_of(&["close", &again.row.pane]),
+        Vec::<Vec<String>>::new()
+    );
+    let facts = facts(&w, &second.id);
+    assert_eq!(
+        answers(&facts)[..2],
+        [("Accepted".to_string(), true), ("Found".to_string(), false)],
+        "{facts:?}"
+    );
+}
+
+#[test]
+fn an_attempt_started_from_a_linked_worktree_is_read_under_the_main_checkouts_scope() {
+    let w = World::new();
+    std::fs::write(w.repo.join("symphony.toml"), "[project]\nid = \"lamp\"\n").unwrap();
+    crate::git(&w.repo, &["add", "symphony.toml"]);
+    crate::git(&w.repo, &["commit", "-q", "-m", "the project's file"]);
+    let executor = w.launch("sim/jump").row;
+    w.store().claim("sim/jump", &executor.handle).unwrap();
+    w.store()
+        .move_to("sim/jump", "review", &executor.handle)
+        .unwrap();
+    // The reviewer is launched by a command run in the executor's linked worktree.
+    let linked = symphony_board::cli::Env {
+        cwd: w.wt.join("sim-jump"),
+        vars: w.env.vars.clone(),
+    };
+    let from_worktree = symphony_board::launch::hc::Binary::of(&linked);
+    let ask = Ask {
+        role: "reviewer".into(),
+        kind: Some("reviewer".into()),
+        ..w.ask("sim/jump")
+    };
+    symphony_board::launch::launch(w.store(), &from_worktree, &w.machine(), &ask).unwrap();
+
+    // The project's id is its file's, not a folder's name, from either checkout.
+    assert_eq!(w.hc().project(), "lamp");
+    assert_eq!(from_worktree.project(), "lamp");
+    let main = symphony_board::execution::board_scope("lamp", w.store());
+    assert_eq!(main.project, "lamp");
+    assert_eq!(main.board, w.store().database().database());
+    assert_eq!(profile(&from_worktree.project(), w.store()).scope, main);
+    // One history under the main checkout's scope holds both, each admitted under it.
+    let [first, second] = <[_; 2]>::try_from(attempts(&w, "sim/jump")).unwrap();
+    assert_eq!(
+        (first.identity.role.as_str(), second.identity.role.as_str()),
+        ("executor", "reviewer")
+    );
+    for attempt in [&first, &second] {
+        assert_eq!(
+            (&attempt.identity.project, &attempt.identity.board),
+            (&main.project, &main.board)
+        );
+    }
 }

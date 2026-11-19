@@ -5,8 +5,10 @@
 //!
 //! The provider is the configuration [`CONFIGURATION`], built here: no project setting names it
 //! and nothing remote is read. Its resource is the terminal's own address, as hc gave it. A launch
-//! admits its attempt before hc is started; its start is `hc run` alone, which answers at once, and
-//! the first message, which may wait a minute, stays the launcher's step. A launch or a restore
+//! admits its attempt before hc is started; its start is `hc run` alone, and the first message,
+//! which may wait a minute, stays the launcher's step. A terminal hc answered is the attempt's
+//! however long the answer took: one that came after the call's bound or the step's lease settles
+//! the start by the reconcile it then owes, answered with that terminal. A launch or a restore
 //! that fails after that cancels its attempt, the cancel sent as the terminate that closes the
 //! terminal, its reason in the receipt. A restore admits a resume of the attempt its handle ran
 //! last, from the recorded conversation; a record no attempt was made for (a launch from before
@@ -19,14 +21,15 @@
 //! What the launcher already read of a terminal answers an observation without another hc call: a
 //! first message hc confirmed is a running terminal, and a terminal the close just killed is gone.
 //!
-//! A lane is the role and the handle: who may execute or review a task stays the store's rule, as
-//! before, and a restore follows its own handle's attempt. An attempt of another configuration is
-//! never read as a terminal: only this configuration's resources are addresses.
+//! A lane is the role and the handle: who may execute or review a task is the store's rule, and
+//! a restore follows its own handle's attempt on the task it restores. An attempt of another
+//! configuration is never read as a terminal: only this configuration's resources are addresses.
 
 use super::hc::Hc;
 use super::{LaunchError, git};
 use crate::execution::{
     Act, Adapter, Admission, Attempt, Continuation, Coordinator, Grant, Pacing, Refusal, Worked,
+    board_scope,
 };
 use crate::{Error, Store, Task};
 use sha2::{Digest, Sha256};
@@ -37,7 +40,7 @@ use std::time::{Duration, Instant};
 use symphony_plugin::execution::{
     Authorization, Call, Capabilities, ContentRef, ConversationId, Input, Observation, Operation,
     Outcome, Principal, Profile, Receipt, Rejection, Request, Resource, ResourceId, ResumeMode,
-    RuntimeState, Scope, StopMode, Unknown,
+    RuntimeState, StopMode, Unknown,
 };
 
 /// The provider configuration of this machine's hc terminals.
@@ -69,27 +72,15 @@ pub fn capabilities() -> Capabilities {
     capabilities
 }
 
-/// The local provider's profile on the board `hc` names: what a reader of this board's local
-/// attempts builds its [`Coordinator`] from.
-pub fn profile(hc: &dyn Hc) -> Profile {
+/// The local provider's profile on `store`'s board, the board of the project whose id is
+/// `project` ([`board_scope`]): what a reader of this board's local attempts builds its
+/// [`Coordinator`] from. A launch names its project by [`Hc::project`].
+pub fn profile(project: &str, store: &Store) -> Profile {
     Profile::new(
-        scope_of(&hc.board()),
+        board_scope(project, store),
         CONFIGURATION.to_string(),
         capabilities(),
     )
-}
-
-/// The project and board `board` (hc's label of this board's terminals, `PROJECT/DATABASE`) names.
-fn scope_of(board: &str) -> Scope {
-    let (project, database) = board.rsplit_once('/').unwrap_or((board, ""));
-    let named = |part: &str| {
-        if part.is_empty() {
-            "local".to_string()
-        } else {
-            part.to_string()
-        }
-    };
-    Scope::new(named(project), named(database))
 }
 
 /// The lane of `handle` in `role`.
@@ -202,7 +193,7 @@ pub(super) struct Local<'a> {
 impl<'a> Local<'a> {
     /// The local provider on `store`'s board, as `hc` names it, acting for `principal`.
     pub(super) fn new(store: &'a Store, hc: &dyn Hc, principal: Principal) -> Local<'a> {
-        let profile = profile(hc);
+        let profile = profile(&hc.project(), store);
         let acts = [
             Act::Start,
             Act::Cancel,
@@ -343,9 +334,9 @@ impl<'a> Local<'a> {
     }
 
     /// Admit the attempt that restores `handle` on `task` in `checkout`, told `text`, where no
-    /// terminal runs as it any more: a resume of the attempt it ran last, from `conversation`, once
-    /// that one is recorded ended; a plain start where it ran none, or one that never had a
-    /// terminal. Refused while its last attempt cannot be said to have ended.
+    /// terminal runs as it: a resume of the attempt it ran last on `task`, from `conversation`,
+    /// once that one is recorded ended; a plain start where it ran none there, or one that never
+    /// had a terminal. Refused while its last attempt cannot be said to have ended.
     pub(super) fn follow(
         &self,
         task: &Task,
@@ -451,7 +442,7 @@ impl<'a> Local<'a> {
         );
         match made {
             Some(Err(problem)) => Err(problem.into()),
-            Some(Ok(address)) if accepted => Ok(address),
+            Some(Ok(address)) if accepted || self.found(id, &address)? => Ok(address),
             Some(Ok(address)) => Err(Error::Refused(format!(
                 "terminal {address} started, but its execution attempt {id} did not take it"
             ))),
@@ -459,6 +450,44 @@ impl<'a> Local<'a> {
                 "execution attempt {id} sent no start, so no terminal is started"
             ))),
         }
+    }
+
+    /// Settle attempt `id`'s start from the terminal `address` hc answered, where the step that
+    /// sent it recorded no receipt (the answer came after the call's bound, or after its lease):
+    /// the reconcile an unsettled start owes is answered with the terminal found. Whether the
+    /// attempt is bound to it.
+    fn found(&self, id: &str, address: &str) -> Result<bool, Error> {
+        let bound = |attempt: &Attempt| {
+            attempt.state.pending.is_none()
+                && attempt
+                    .state
+                    .resource
+                    .as_ref()
+                    .is_some_and(|bound| bound.id == address)
+        };
+        for _ in 0..ROUNDS {
+            let attempt = self.read(id)?;
+            if bound(&attempt) {
+                return Ok(true);
+            }
+            if !attempt.state.live() {
+                return Ok(false);
+            }
+            let worked = self.step(id, &mut |call| match &call.request {
+                Request::Reconcile { .. } | Request::ReconcileResume { .. } => {
+                    Outcome::Found(Receipt::new(
+                        call.identity.clone(),
+                        resource(call, address),
+                        format!("hc run answered terminal {address}"),
+                    ))
+                }
+                _ => Outcome::Unknown(Unknown::Other("its start is unsettled".into())),
+            })?;
+            if !matches!(worked, Worked::Answered { .. } | Worked::Fenced { .. }) {
+                break;
+            }
+        }
+        Ok(bound(&self.read(id)?))
     }
 
     /// Record attempt `id` running, as hc's receipt of its first message said, in `conversation`
@@ -614,29 +643,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_board_label_names_its_project_and_its_database() {
-        let scope = |board: &str| {
-            let scope = scope_of(board);
-            (scope.project, scope.board)
-        };
-        assert_eq!(
-            scope("lamp-works/tasks"),
-            ("lamp-works".into(), "tasks".into())
-        );
-        // A folder name may hold a slash's worth of nothing: the database is what follows the last.
-        assert_eq!(scope("a/b/scratch"), ("a/b".into(), "scratch".into()));
-        assert_eq!(scope("lamp-works"), ("lamp-works".into(), "local".into()));
-        assert_eq!(scope("/tasks"), ("local".into(), "tasks".into()));
-        assert_eq!(scope(""), ("local".into(), "local".into()));
-    }
-
-    #[test]
     fn hc_advertises_what_it_does_and_no_more() {
         let offered = capabilities();
         let stop = |mode| Request::Stop {
             resource: Resource::new(
                 symphony_plugin::execution::AttemptRef::new(
-                    scope_of("p/b"),
+                    symphony_plugin::execution::Scope::new("p".into(), "b".into()),
                     "t".into(),
                     symphony_plugin::execution::AttemptId::new([0; 16]),
                 ),
@@ -663,7 +675,7 @@ mod tests {
             answers: Mutex::new(answers),
         };
         let attempt = symphony_plugin::execution::AttemptRef::new(
-            scope_of("p/b"),
+            symphony_plugin::execution::Scope::new("p".into(), "b".into()),
             "t".into(),
             symphony_plugin::execution::AttemptId::new([0; 16]),
         );

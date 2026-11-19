@@ -102,8 +102,11 @@ steps only its own configuration's attempts and refuses another's before touchin
 ([`launch/attempts.rs`](../crates/tasks/src/launch/attempts.rs)), through the coordinator's public
 API alone, so a local run and a remote one are one history. The provider is the configuration
 `local-hc`, built in the launcher: no project setting names it, and no local command reads a
-remote one. Its scope is the project and database hc labels this board's terminals with, which
-`launch::attempts::profile` gives a reader. Its resource is the terminal's own address. It starts,
+remote one. Its scope is the board's own identity, the project's id (its file's, else the
+registry's, else its main checkout's folder name) and the board's database, the same from the main
+checkout and from a linked worktree: `execution::board_scope` is the one constructor every host of
+the board's attempts shares, a launch naming its project by `Hc::project`, and
+`launch::attempts::profile` is the provider under it. Its resource is the terminal's own address. It starts,
 finds again, observes and terminates a terminal and resumes a conversation in a new one; it pauses
 nothing and gives no view. A lane is the role and the handle: who may execute or review a task
 stays the board's role rules, and no launch is refused over an attempt.
@@ -112,23 +115,27 @@ stays the board's role rules, and no launch is refused over an attempt.
   the commit its checkout is at and its first message. The start is `hc run` alone; the first
   message, which may wait a minute, stays the launcher's step, and hc's receipt of it is the
   observation that records the attempt running, with the conversation when the launch chose it.
+  A terminal hc answered is the attempt's however long the answer took: where it came after the
+  call's bound or the step's lease, the start is settled by the reconcile it then owes, answered
+  with the terminal found, and the launch goes on.
 - **A refusal or a rollback** leaves the attempt ended with why. An hc that refuses the run is a
   rejected start, its error the reason. A launch or a restore that fails after its terminal
   started cancels the attempt: the cancel is sent as the terminate that closes the terminal, the
   failure in its receipt, and the closed terminal is observed gone. A terminal that will not
   close leaves the attempt live with its cancellation unconfirmed, as the launch's own error says.
-- **A restore** admits a resume of the attempt its handle ran last, from the recorded
-  conversation, at the next runtime epoch, once that attempt is recorded ended: one still read as
-  running is observed gone first, as the restore starts only where no terminal runs as the handle,
-  and a start that never answered is reconciled absent and cancelled. Where the handle ran no
-  attempt, or one that never had a terminal, the restore admits a plain start.
+- **A restore** admits a resume of the attempt its handle ran last on the task it restores, from
+  the recorded conversation, at the next runtime epoch, once that attempt is recorded ended: one
+  still read as running is observed gone first, as the restore starts only where no terminal runs
+  as the handle, and a start that never answered is reconciled absent and cancelled. Where the handle ran no
+  attempt on that task, or one that never had a terminal, the restore admits a plain start; an
+  attempt the handle left running on another task reads so until that task's close or cleanup.
 - **A close** asks a terminate as the closer, and the close's own last look and kill are its
   answer: a terminal that stays refuses the stop, and the attempt goes on running. Cleanup, a
   finished task's close and the idle sweep say a terminal they closed is gone, by one observation.
 
-The launch records on the task (`task_session`) and every reader of them are as they were, and no
-attempt is made up for a launch from before attempts: its close is the close it always was, and
-its restore is its first attempt. A terminal an older build closes leaves its attempt reading
+No attempt replaces the launch records on the task (`task_session`) or changes a reader of them,
+and none is made up for a launch from before attempts: its close ends no attempt, and its restore
+is its first. A terminal an older build closes leaves its attempt reading
 running until the next restore, close or cleanup of its handle observes it. An attempt of another
 configuration is never read as a terminal: only a `local-hc` resource is an address given to hc.
 A task that also holds attempts a host admitted under another name for this board cannot list its

@@ -23,7 +23,7 @@
 //! sweep of idle agents (`just tasks clean` runs one). [`close`] closes one agent's terminal on its
 //! orchestrator's word, whatever it holds, recorded the same way, under the rules its module gives.
 //! Each launch, restore and close is recorded as an execution attempt as well, hc its provider
-//! ([`attempts`]): the records above, and their readers, are as they were.
+//! ([`attempts`]), beside the records above, which no attempt replaces.
 //! For a command an agent ran unasked (`just tasks`), a launch and a restore start an agent only in
 //! the project, and a launch's first message is its skill's alone ([`Bounds`]).
 //!
