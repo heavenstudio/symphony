@@ -273,9 +273,8 @@ fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
             }];
         }),
         Err(
-            "unsupported edge rework: an automatic edge no authority of which this host grants \
-             the board's recovery service, which takes it (grant it `recovery`, and name that \
-             capability)"
+            "unsupported edge rework: no authority of this automatic edge is a capability the \
+             host grants the board's recovery service"
                 .into()
         )
     );
@@ -286,7 +285,7 @@ fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
     assert!(
         supported(&Validated::new(base.clone()).unwrap(), &owner_only)
             .unwrap_err()
-            .starts_with("unsupported edge rework: an automatic edge no authority")
+            .starts_with("unsupported edge rework: no authority of this automatic edge")
     );
     // Nothing the board cannot give.
     assert_eq!(
@@ -317,8 +316,8 @@ fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
     assert_eq!(
         twice,
         Err(
-            "unsupported edge again: an automatic edge, as is rework from verify/checking: the \
-             board takes one on an attempt's failure there, and could not choose"
+            "unsupported edge again: another automatic edge leaves its pair, and the board could \
+             not choose which to take"
                 .into()
         )
     );
@@ -333,8 +332,8 @@ fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
     assert_eq!(
         bounded,
         Err(
-            "unsupported edge unstick: a retry bound on an edge a caller takes; the board counts \
-             the takes of an automatic edge alone"
+            "unsupported edge unstick: a retry bound on an edge a caller takes: the board counts \
+             its own takes"
                 .into()
         )
     );

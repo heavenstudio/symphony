@@ -69,13 +69,15 @@ pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {
     }
     for edge in &d.edges {
         let id = &edge.id;
-        if edge.automatic {
-            automatic(d, edge, host).map_err(|why| format!("unsupported edge {id}: {why}"))?;
-        } else if edge.retry.is_some() {
-            return Err(format!(
-                "unsupported edge {id}: a retry bound on an edge a caller takes; the board counts \
-                 the takes of an automatic edge alone"
-            ));
+        let why = match edge.retry {
+            _ if edge.automatic => automatic(d, edge, host),
+            Some(_) => {
+                Some("a retry bound on an edge a caller takes: the board counts its own takes")
+            }
+            None => None,
+        };
+        if let Some(why) = why {
+            return Err(format!("unsupported edge {id}: {why}"));
         }
         if let Some(why) = unsupported_dependency(edge.dependencies) {
             return Err(format!("unsupported edge {id}: a dependency on {why}"));
@@ -112,47 +114,31 @@ fn unsupported_dependency(dependency: Dependency) -> Option<&'static str> {
 }
 
 /// Why the board could not take `edge`, an automatic edge of `d`, on an attempt's failure at its
-/// source pair (docs/WORKFLOW.md, "Attempts"): another automatic edge leaves that pair, so the
-/// board could not choose; it asks inputs, which the board has none of to give; it gives a role,
-/// which only an agent session holds; or none of its authorities is a capability `host` grants
-/// the board's recovery service, which takes it.
-fn automatic(d: &Definition, edge: &Edge, host: &Host) -> Result<(), String> {
-    if let Some(other) =
-        (d.edges.iter()).find(|e| e.automatic && e.from == edge.from && e.id != edge.id)
-    {
-        return Err(format!(
-            "an automatic edge, as is {} from {}: the board takes one on an attempt's failure \
-             there, and could not choose",
-            other.id,
-            named(&edge.from)
-        ));
-    }
-    if !edge.inputs.is_empty() {
-        return Err(
-            "an automatic edge asks for inputs, which the board has none of to give".into(),
-        );
-    }
-    if (edge.effects.iter()).any(|e| matches!(e, Effect::AcquireRole { .. })) {
-        return Err(
-            "an automatic edge gives a role, which only an agent session takes; the board \
-             takes an automatic edge"
-                .into(),
-        );
-    }
+/// source pair (docs/WORKFLOW.md, "Attempts"), none where it can: another automatic edge leaves
+/// that pair, so the board could not choose; it asks inputs, which the board has none of to give;
+/// it gives a role, which only an agent session holds; or none of its authorities is a capability
+/// `host` grants the board's recovery service, which takes it. Each reason is fixed text, the
+/// edge named by the refusal that carries it.
+fn automatic(d: &Definition, edge: &Edge, host: &Host) -> Option<&'static str> {
     let service = super::board_service("recovery");
     let authorized = edge.authority.iter().any(|authority| match authority {
         Authority::ProjectCapability { capability }
         | Authority::SystemCapability { capability } => host.grants.holds(&service, capability),
         Authority::TaskRole { .. } => false,
     });
-    if !authorized {
-        return Err(
-            "an automatic edge no authority of which this host grants the board's recovery \
-             service, which takes it (grant it `recovery`, and name that capability)"
-                .into(),
-        );
+    if (d.edges.iter()).any(|e| e.automatic && e.from == edge.from && e.id != edge.id) {
+        Some("another automatic edge leaves its pair, and the board could not choose which to take")
+    } else if !edge.inputs.is_empty() {
+        Some("an automatic edge asks for inputs, which the board has none of to give")
+    } else if (edge.effects.iter()).any(|e| matches!(e, Effect::AcquireRole { .. })) {
+        Some("an automatic edge gives a role, which only an agent session takes")
+    } else if !authorized {
+        Some(
+            "no authority of this automatic edge is a capability the host grants the board's recovery service",
+        )
+    } else {
+        None
     }
-    Ok(())
 }
 
 fn named(pair: &Pair) -> String {
