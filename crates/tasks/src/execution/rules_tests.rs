@@ -1,5 +1,5 @@
 use super::*;
-use crate::execution::record::{Collection, Ending, Relation};
+use crate::execution::record::{Cleanup, Collection, Ending, Relation};
 use symphony_plugin::execution::{
     AttemptId, Capabilities, ContentRef, ConversationId, Input, Observation, OperationIdentity,
     PrincipalKind, Scope,
@@ -966,7 +966,7 @@ fn an_attempt_stays_open_while_anything_is_owed_for_it() {
     };
     assert!(ended.open(), "its resource is not cleaned up");
     let cleaned = State {
-        cleanup: crate::execution::record::Cleanup::Complete,
+        cleanup: Cleanup::Complete,
         ..ended.clone()
     };
     assert!(!cleaned.open());
@@ -1121,9 +1121,9 @@ fn a_resource_whose_cleanup_has_begun_is_resumed_only_on_a_new_one() {
     assert_eq!(stopped.ending, Some(Ending::Stopped));
     assert!(resumable(&stopped, true).is_ok());
     for cleanup in [
-        crate::execution::record::Cleanup::Running,
-        crate::execution::record::Cleanup::Complete,
-        crate::execution::record::Cleanup::Failed,
+        Cleanup::Running,
+        Cleanup::Complete,
+        Cleanup::Failed,
     ] {
         // As its cleanup's begin writes it.
         let cleaning = State {

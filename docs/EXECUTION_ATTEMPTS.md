@@ -11,14 +11,14 @@ route, setting or client page reaches it yet ([what is not delivered](#what-this
 
 ## The record
 
-An attempt is a row of `execution_attempt` (schema 23): its identity, written once at admission and
-never again, beside its state, which each write replaces under the row's revision. Its facts are
-appended to `execution_fact` and never changed; `execution_fence` holds the fences admission writes
-(a request key, a task's lane, a capacity scope) and `execution_artifact` its collected artifacts.
-The four are schemaless, with no event: no reader caches them and no write of theirs moves the
-board's marker. A whole-board copy and dump carry them (`rows::Dump`'s `execution_*` rows, each
-holding its own record's id), so a restored board recovers its attempts, their reservations and
-their request keys.
+An attempt is a row of `execution_attempt` (schema 23): its identity, written once at admission
+and never again, beside its state, which each write replaces under the row's revision. Its facts
+are appended to `execution_fact` and never changed; `execution_fence` holds the fences admission
+writes (a request key, a task's lane, a capacity scope) and `execution_artifact` its collected
+artifacts. The four are schemaless, with no event: no reader caches them and no write of theirs
+moves the board's marker. A whole-board copy and dump carry them (`rows::Dump`'s `execution_*`
+rows, each holding its own record's id), so a restored board recovers its attempts, their
+reservations and their request keys.
 
 The identity pins the project, board, task, lane, role and handle, the task's input (its revision,
 digest, repository revision and manifest), the provider configuration with the contract and
