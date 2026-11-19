@@ -32,7 +32,11 @@ PostgreSQL 18 or later and its same-folder companion tools before starting anyth
 PostgreSQL server listens on its private Unix socket alone. On a scratch home it ends with the
 process that started it; on any other it outlives its starter, as the board's SurrealDB server
 does, and the next command finds it by its cluster's own record. A command uses one connection
-for its lifetime; there is no pool.
+for its lifetime; there is no pool. Its backend lives as long
+and keeps what memory its largest statement took, so a read of long lists (a whole board, the
+messages to the owner) is sent a statement a list and answered an item a row, all in one transaction
+and one snapshot: the server's memory under thirty commands at once is
+[measured](analysis/board-store-baseline.md#postgresqls-memory-peak-measured-2026-11-18).
 
 ## Holds, snapshots and recovery
 

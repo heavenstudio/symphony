@@ -740,3 +740,15 @@ fn request_telemetry_counts_reads_writes_and_failures_once_and_is_shared_by_boar
     drop(client);
     fake.sent();
 }
+
+#[test]
+fn an_answers_column_is_the_first_of_every_row_that_gives_one() {
+    let row = |first: Option<&str>| vec![first.map(str::to_string), Some("beside".into())];
+    let answer = Answer {
+        rows: vec![row(Some("a")), row(None), row(Some("b")), vec![]],
+        tag: "SELECT 4".into(),
+    };
+    assert_eq!(answer.column(), ["a", "b"]);
+    assert_eq!(answer.value(), Some("a"));
+    assert!(Answer::default().column().is_empty());
+}

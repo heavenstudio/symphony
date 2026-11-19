@@ -607,8 +607,10 @@ fn version_at(programs: &Path) -> Result<String, String> {
 /// TCP, a socket this user alone reaches, messages in English (the start waits for one), times
 /// in UTC; and sized for 512 MiB: 128 MiB of shared buffers, 4 MiB for a sort or a hash in each
 /// of 64 connections and 32 MiB for each of two autovacuum workers come to 448 MiB, which leaves
-/// out each backend's own memory, no parallel query (each worker a process of its own). What a
-/// loaded board takes is measured by the slice that loads one.
+/// out each backend's own memory, no parallel query (each worker a process of its own). A
+/// backend's own memory is what its largest statement took, kept until its connection ends,
+/// which is why the store's long reads answer an item a row (`store/postgres/mod.rs`'s
+/// `Pg::Listed`); what a loaded board takes is `examples/board_load.rs`'s to measure.
 pub fn settings(socket: &Path) -> String {
     format!(
         "# The board's PostgreSQL (crates/tasks/src/server/postgres.rs), written at each start.\n\
