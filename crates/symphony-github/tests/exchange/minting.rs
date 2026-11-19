@@ -1,0 +1,869 @@
+//! A GitHub App's installation token made by the program where the settings name the App's
+//! installation and key (src/mint.rs). GitHub's side of the Apps is held here: it answers
+//! `POST /app/installations/ID/access_tokens` to a JWT whose signature it verifies by `openssl`
+//! with the public half of the App's key, as GitHub does with the one it keeps. Every test signs
+//! with `openssl`, so it holds [`crate::starting`].
+
+use crate::deliver::{APP, As, CHECKS, Connect, Delivery, HEAD, LANDING, POLICY, READER, snapshot};
+use crate::github::{Fake, Fault};
+use crate::{Settings, TOKEN};
+use data_encoding::BASE64URL_NOPAD;
+use serde_json::{Value, json};
+use std::fmt::Write as _;
+use std::io::Write as _;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier, Mutex, MutexGuard, OnceLock};
+use symphony_github::config::{self, Role};
+use symphony_github::credential::Secret;
+use symphony_github::mint::{self, MARGIN};
+use symphony_github::reconcile::Context;
+use symphony_github::transport::{Failure, Request, Response, Transport};
+
+/// An App's installation on the repository: its number and a hundred.
+fn installation(app: i64) -> i64 {
+    app + 100
+}
+
+/// The App each token file's token is of.
+fn app(role: Role) -> i64 {
+    match role {
+        Role::Landing => LANDING,
+        Role::Checks => APP,
+        Role::Policy => READER,
+    }
+}
+
+/// The private keys of the three Apps and of one that is none of theirs (`stranger`), each beside
+/// its public half: made by `openssl` once and kept for every later run, as making them takes
+/// longer than the tests that use them.
+fn keys() -> &'static Path {
+    static KEYS: OnceLock<PathBuf> = OnceLock::new();
+    KEYS.get_or_init(|| {
+        let kept = std::env::temp_dir().join("symphony-github-app-keys");
+        if kept.join("stranger.pub").is_file() {
+            return kept.canonicalize().unwrap();
+        }
+        let made =
+            std::env::temp_dir().join(format!("symphony-github-app-keys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&made);
+        std::fs::create_dir_all(&made).unwrap();
+        for name in ["42", "43", "44", "stranger"] {
+            let key = made.join(format!("{name}.pem"));
+            let ran = Command::new("openssl")
+                .args(["genrsa", "-out"])
+                .arg(&key)
+                .arg("2048")
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(ran.success(), "openssl genrsa");
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let ran = Command::new("openssl")
+                .args(["rsa", "-pubout", "-in"])
+                .arg(&key)
+                .arg("-out")
+                .arg(made.join(format!("{name}.pub")))
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(ran.success(), "openssl rsa -pubout");
+        }
+        // Another run that made them first keeps its own.
+        if std::fs::rename(&made, &kept).is_err() {
+            let _ = std::fs::remove_dir_all(&made);
+        }
+        kept.canonicalize().unwrap()
+    })
+}
+
+/// The key of `name`'s App.
+fn key(name: &str) -> PathBuf {
+    keys().join(format!("{name}.pem"))
+}
+
+/// `at`, seconds of 1970-01-01, as GitHub writes a time.
+fn clock(at: i64) -> String {
+    assert!((0..86_400).contains(&at), "{at} is on the first day");
+    format!(
+        "1970-01-01T{:02}:{:02}:{:02}Z",
+        at / 3_600,
+        at % 3_600 / 60,
+        at % 60
+    )
+}
+
+/// The settings that give each of `roles` its App's installation and key.
+fn makers(roles: &[Role]) -> String {
+    roles.iter().fold(String::new(), |mut text, role| {
+        let prefix = role.prefix();
+        let _ = writeln!(
+            text,
+            "{prefix}_installation_id = {}\n{prefix}_key_file = \"{}\"",
+            installation(app(*role)),
+            key(&app(*role).to_string()).display()
+        );
+        text
+    })
+}
+
+/// What GitHub's side of the Apps was asked and made.
+#[derive(Default)]
+struct Made {
+    /// Each request: the App its JWT verified as (0 for none), its path and its body.
+    asked: Vec<(i64, String, Value)>,
+    jwts: Vec<String>,
+    /// Each token made, with its App.
+    tokens: Vec<(String, i64)>,
+    /// What the next request is answered.
+    planted: Option<Planted>,
+}
+
+/// An answer planted for the next request.
+#[derive(Clone)]
+enum Planted {
+    /// This status and body.
+    Answer(u16, Value),
+    /// None: the connection ends with no answer.
+    Lost,
+}
+
+/// GitHub's side of the Apps.
+pub(crate) struct Apps {
+    now: AtomicI64,
+    made: Mutex<Made>,
+}
+
+impl Apps {
+    fn new(now: i64) -> Arc<Apps> {
+        Arc::new(Apps {
+            now: AtomicI64::new(now),
+            made: Mutex::default(),
+        })
+    }
+
+    fn made(&self) -> MutexGuard<'_, Made> {
+        self.made
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// What the next request is answered.
+    fn plant(&self, answer: Planted) {
+        self.made().planted = Some(answer);
+    }
+
+    fn asked(&self) -> Vec<(i64, String, Value)> {
+        self.made().asked.clone()
+    }
+
+    fn tokens(&self) -> Vec<(String, i64)> {
+        self.made().tokens.clone()
+    }
+
+    /// Every token and JWT made, and each line of every key: none may be said or kept.
+    fn secrets(&self) -> Vec<String> {
+        let made = self.made();
+        let mut secrets: Vec<String> = (made.tokens.iter().map(|(token, _)| token.clone()))
+            .chain(made.jwts.iter().cloned())
+            .collect();
+        for name in ["42", "43", "44", "stranger"] {
+            let text = std::fs::read_to_string(key(name)).unwrap();
+            secrets.extend(
+                (text.lines())
+                    .filter(|line| !line.starts_with("-----"))
+                    .map(str::to_string),
+            );
+        }
+        secrets
+    }
+
+    /// The App `jwt` is of, where its signature is that App's key's and it holds now.
+    fn verified(&self, jwt: &str) -> Option<i64> {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let parts: Vec<&str> = jwt.split('.').collect();
+        let [header, claims, signature] = parts.as_slice() else {
+            return None;
+        };
+        let decode = |part: &str| BASE64URL_NOPAD.decode(part.as_bytes()).ok();
+        let read = |part: &str| serde_json::from_slice::<Value>(&decode(part)?).ok();
+        if read(header)? != json!({"alg": "RS256", "typ": "JWT"}) {
+            return None;
+        }
+        let claims_read = read(claims)?;
+        let app: i64 = claims_read["iss"].as_str()?.parse().ok()?;
+        let (iat, exp) = (claims_read["iat"].as_i64()?, claims_read["exp"].as_i64()?);
+        let now = self.now.load(Ordering::SeqCst);
+        if !(iat <= now && now < exp && exp - iat <= 600) {
+            return None;
+        }
+        let public = keys().join(format!("{app}.pub"));
+        if !public.is_file() {
+            return None;
+        }
+        let signed = std::env::temp_dir().join(format!(
+            "symphony-github-signature-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&signed, decode(signature)?).unwrap();
+        let mut child = Command::new("openssl")
+            .args(["dgst", "-sha256", "-verify"])
+            .arg(&public)
+            .arg("-signature")
+            .arg(&signed)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        stdin
+            .write_all(format!("{header}.{claims}").as_bytes())
+            .unwrap();
+        drop(stdin);
+        let good = child.wait().unwrap().success();
+        let _ = std::fs::remove_file(&signed);
+        good.then_some(app)
+    }
+
+    /// GitHub's answer to `request` carrying `jwt`.
+    fn answer(&self, jwt: &str, request: &Request) -> Result<Response, Failure> {
+        let app = self.verified(jwt);
+        let now = self.now.load(Ordering::SeqCst);
+        let mut made = self.made();
+        let body = (request.body.as_deref())
+            .and_then(|body| serde_json::from_str(body).ok())
+            .unwrap_or(Value::Null);
+        made.asked
+            .push((app.unwrap_or(0), request.path.clone(), body));
+        made.jwts.push(jwt.into());
+        let respond = |status: u16, body: Value| Response {
+            status,
+            headers: std::collections::BTreeMap::new(),
+            body: body.to_string(),
+        };
+        if let Some(planted) = made.planted.take() {
+            return match planted {
+                Planted::Answer(status, body) => Ok(respond(status, body)),
+                Planted::Lost => Err(Failure::Unknown(format!(
+                    "the connection ended with no answer to Bearer {jwt}"
+                ))),
+            };
+        }
+        let Some(app) = app else {
+            return Ok(respond(
+                401,
+                json!({"message": "A JSON web token could not be decoded"}),
+            ));
+        };
+        let wanted = format!("/app/installations/{}/access_tokens", installation(app));
+        if request.method != "POST" || request.path != wanted {
+            return Ok(respond(404, json!({"message": "Not Found"})));
+        }
+        let token = format!("ghs_minted{app}n{}SECRET", made.tokens.len());
+        made.tokens.push((token.clone(), app));
+        Ok(respond(
+            201,
+            json!({
+                "token": token, "expires_at": clock(now + 3_600),
+                "permissions": {}, "repository_selection": "selected",
+            }),
+        ))
+    }
+
+    /// What makes a request: to these Apps with a JWT, else to the repository as the App whose
+    /// token it carries, a token made here or one of the files' own.
+    fn connect(self: &Arc<Apps>, github: &Arc<Fake>) -> Connect {
+        let (apps, github) = (Arc::clone(self), Arc::clone(github));
+        Box::new(move |token: Secret| -> Result<Box<dyn Transport>, String> {
+            let text = token.expose().to_string();
+            if text.split('.').count() == 3 {
+                return Ok(Box::new(Minting(Arc::clone(&apps), text)));
+            }
+            let made = (apps.tokens().into_iter()).find(|(made, _)| *made == text);
+            let app = made.map_or_else(
+                || match text.as_str() {
+                    CHECKS => APP,
+                    TOKEN => LANDING,
+                    POLICY => READER,
+                    _ => 0,
+                },
+                |(_, app)| app,
+            );
+            Ok(Box::new(As(Arc::clone(&github), app)))
+        })
+    }
+}
+
+/// A request carrying a JWT, to GitHub's side of the Apps.
+struct Minting(Arc<Apps>, String);
+
+impl Transport for Minting {
+    fn send(&self, request: &Request) -> Result<Response, Failure> {
+        self.0.answer(&self.1, request)
+    }
+}
+
+/// A delivery whose three Apps' installations and keys are set, with `more` settings, and its
+/// requests made through GitHub's side of them.
+fn delivery(name: &str, roles: &[Role], more: &str) -> (Delivery, Arc<Apps>) {
+    let mut d = Delivery::new(name, &format!("{}{more}", makers(roles)));
+    let apps = Apps::new(d.rig.now.get());
+    d.connect = apps.connect(&d.rig.github);
+    d.starts = true;
+    (d, apps)
+}
+
+/// Each token file of a delivery, by its role.
+fn files(d: &Delivery) -> [(Role, PathBuf); 3] {
+    [
+        (Role::Landing, d.rig.token_file.clone()),
+        (Role::Checks, d.checks_file()),
+        (Role::Policy, d.policy_file()),
+    ]
+}
+
+fn write(file: &Path, text: &str) {
+    std::fs::write(file, text).unwrap();
+    std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+/// The permissions each App's token is asked for in a delivery.
+fn permissions(role: Role) -> Value {
+    match role {
+        Role::Landing => json!({"contents": "write", "pull_requests": "write"}),
+        Role::Checks => json!({"checks": "write"}),
+        Role::Policy => json!({"administration": "write"}),
+    }
+}
+
+/// The delivery answered published, and each request to the repository carried the token of
+/// the App the protection holds it to.
+fn published(d: &Delivery, answer: &Value) {
+    assert_eq!(answer["state"], "published", "{answer}");
+    assert_eq!(d.rig.github.pulls().len(), 1);
+    let checks = d.rig.github.checks(HEAD);
+    assert!(
+        checks.iter().all(|(.., app)| *app == APP),
+        "every check by the checks App: {checks:?}"
+    );
+    for app in [APP, LANDING, READER] {
+        assert!(
+            !d.rig.github.asked_as(app).is_empty(),
+            "nothing asked as {app}"
+        );
+    }
+    assert!(
+        d.rig.github.asked_as(0).is_empty(),
+        "nothing asked with no App's token"
+    );
+}
+
+#[test]
+fn an_absent_token_is_made_once_for_each_app_and_the_delivery_goes_on() {
+    let _alone = crate::starting();
+    let (d, apps) = delivery("mint-absent", &Role::ALL, "");
+    for (_, file) in files(&d) {
+        std::fs::remove_file(file).unwrap();
+    }
+    let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+    published(&d, &answer);
+    let asked = apps.asked();
+    assert_eq!(asked.len(), 3, "{asked:?}");
+    for (role, file) in files(&d) {
+        let app = app(role);
+        let (_, path, body) = (asked.iter())
+            .find(|(by, ..)| *by == app)
+            .unwrap_or_else(|| panic!("no token asked as {app}: {asked:?}"));
+        assert_eq!(
+            *path,
+            format!("/app/installations/{}/access_tokens", installation(app))
+        );
+        assert_eq!(
+            *body,
+            json!({"repositories": ["n"], "permissions": permissions(role)})
+        );
+        let (token, _) = (apps.tokens().into_iter())
+            .find(|(_, by)| *by == app)
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            format!("{token}\nexpires_at {}\n", clock(d.rig.now.get() + 3_600))
+        );
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "{}", file.display());
+    }
+    // Nothing is left beside the files but the files.
+    let beside: Vec<_> = std::fs::read_dir(d.rig.dir.0.join("secret"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(beside.len(), 3, "{beside:?}");
+    // Current now, each token is used again and none is asked for.
+    let again = d.publish(&snapshot(HEAD, "met", "r1"));
+    assert_eq!(again, answer);
+    assert_eq!(apps.asked().len(), 3);
+    d.assert_none_of(
+        &apps
+            .secrets()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+fn an_expired_a_nearly_expired_and_an_unknown_token_are_each_made_again_once() {
+    let _alone = crate::starting();
+    let now = 2_000;
+    for (case, kept) in [
+        (
+            "expired",
+            format!("ghs_old\nexpires_at {}\n", clock(now - 1)),
+        ),
+        (
+            "expiring",
+            format!("ghs_old\nexpires_at {}\n", clock(now + MARGIN)),
+        ),
+        ("by hand", "ghs_old\n".to_string()),
+    ] {
+        let (d, apps) = delivery("mint-again", &Role::ALL, "");
+        d.rig.now.set(now);
+        apps.now.store(now, Ordering::SeqCst);
+        for (_, file) in files(&d) {
+            write(&file, &kept);
+        }
+        let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+        published(&d, &answer);
+        assert_eq!(apps.asked().len(), 3, "{case}: one token for each App");
+        for (_, file) in files(&d) {
+            let text = std::fs::read_to_string(file).unwrap();
+            assert!(text.starts_with("ghs_minted"), "{case}: {text}");
+        }
+        d.publish(&snapshot(HEAD, "met", "r1"));
+        assert_eq!(apps.asked().len(), 3, "{case}: made once");
+        d.assert_none_of(
+            &apps
+                .secrets()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+    }
+}
+
+#[test]
+fn a_current_token_makes_no_call() {
+    let _alone = crate::starting();
+    let (d, apps) = delivery("mint-current", &Role::ALL, "");
+    let until = clock(d.rig.now.get() + MARGIN + 1);
+    for (role, file) in files(&d) {
+        let token = match role {
+            Role::Landing => TOKEN,
+            Role::Checks => CHECKS,
+            Role::Policy => POLICY,
+        };
+        write(&file, &format!("{token}\nexpires_at {until}\n"));
+    }
+    let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+    published(&d, &answer);
+    assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
+    d.assert_no_token();
+}
+
+/// A delivery whose landing App makes its token, the file holding an expired one, refused for
+/// `why` with the file as it was and nothing pushed or written to the repository.
+fn refused(d: &Delivery, apps: &Apps, why: &[&str]) -> Value {
+    let file = &d.rig.token_file;
+    let old = format!("ghs_old\nexpires_at {}\n", clock(d.rig.now.get() - 1));
+    write(file, &old);
+    let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+    assert_eq!(answer["state"], "refused", "{answer}");
+    let said = answer["why"].as_str().unwrap();
+    for part in why {
+        assert!(said.contains(part), "{part:?} in {said}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(file).unwrap(),
+        old,
+        "the old file is kept"
+    );
+    assert!(d.remote.pushed.borrow().is_empty());
+    assert!(d.writes().is_empty(), "{:?}", d.writes());
+    d.assert_none_of(
+        &apps
+            .secrets()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+    );
+    answer
+}
+
+#[test]
+fn a_loose_key_file_is_refused_before_anything_is_asked() {
+    let _alone = crate::starting();
+    let loose =
+        std::env::temp_dir().join(format!("symphony-github-loose-{}.pem", std::process::id()));
+    std::fs::copy(key("43"), &loose).unwrap();
+    std::fs::set_permissions(&loose, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let more = format!(
+        "landing_installation_id = {}\nlanding_key_file = \"{}\"\n",
+        installation(LANDING),
+        loose.display()
+    );
+    let (d, apps) = delivery("mint-loose", &[], &more);
+    refused(
+        &d,
+        &apps,
+        &["landing_key_file", "is readable by others; chmod 600 it"],
+    );
+    assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
+    let _ = std::fs::remove_file(&loose);
+}
+
+#[test]
+fn a_key_of_another_app_is_refused_by_github_and_said_so() {
+    let _alone = crate::starting();
+    let more = format!(
+        "landing_installation_id = {}\nlanding_key_file = \"{}\"\n",
+        installation(LANDING),
+        key("stranger").display()
+    );
+    let (d, apps) = delivery("mint-stranger", &[], &more);
+    refused(
+        &d,
+        &apps,
+        &[
+            "GitHub refused the App's key (401)",
+            "landing_key_file is not App 43's private key, or landing_app_id is not that App's number",
+        ],
+    );
+    assert_eq!(apps.asked().len(), 1, "asked once, and refused");
+}
+
+#[test]
+fn a_file_that_is_no_key_is_refused_and_nothing_of_it_is_said() {
+    let _alone = crate::starting();
+    let marker = "MARKERaaaaBEGINprivateKEYzzzz";
+    let planted =
+        std::env::temp_dir().join(format!("symphony-github-nokey-{}.pem", std::process::id()));
+    write(
+        &planted,
+        &format!("-----BEGIN RSA PRIVATE KEY-----\n{marker}\n-----END RSA PRIVATE KEY-----\n"),
+    );
+    let more = format!(
+        "landing_installation_id = {}\nlanding_key_file = \"{}\"\n",
+        installation(LANDING),
+        planted.display()
+    );
+    // The openssl on PATH, and one that says the key back on both its outputs before it fails.
+    let echo = std::env::temp_dir().join(format!("symphony-github-echo-{}", std::process::id()));
+    write(
+        &echo,
+        "#!/bin/sh\nfor last; do :; done\ncat \"$last\" >&2\ncat \"$last\"\nexit 1\n",
+    );
+    std::fs::set_permissions(&echo, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let echo: &'static str = Box::leak(echo.display().to_string().into_boxed_str());
+    for openssl in ["openssl", echo] {
+        let (mut d, apps) = delivery("mint-nokey", &[], &more);
+        d.openssl = openssl;
+        let answer = refused(&d, &apps, &["could not sign with landing_key_file", "PEM"]);
+        assert!(!answer.to_string().contains(marker), "{answer}");
+        assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
+    }
+    let _ = std::fs::remove_file(&planted);
+    let _ = std::fs::remove_file(echo);
+}
+
+#[test]
+fn no_openssl_is_refused_naming_what_to_install() {
+    let _alone = crate::starting();
+    let (mut d, apps) = delivery("mint-no-openssl", &[Role::Landing], "");
+    d.openssl = "/nowhere/openssl";
+    refused(
+        &d,
+        &apps,
+        &[
+            "/nowhere/openssl is not on PATH",
+            "install it; nothing was sent",
+        ],
+    );
+    assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
+}
+
+#[test]
+fn github_refusing_the_token_says_its_words_and_what_to_fix() {
+    let _alone = crate::starting();
+    let (d, apps) = delivery("mint-422", &[Role::Landing], "");
+    apps.plant(Planted::Answer(
+        422,
+        json!({"message": "The permissions requested are not granted to this installation."}),
+    ));
+    refused(
+        &d,
+        &apps,
+        &[
+            "GitHub refused a token for o/n with contents write, pull_requests write",
+            "422: The permissions requested are not granted to this installation.",
+            "give App 43 those permissions and install it on that repository",
+        ],
+    );
+    // An installation that is not the App's.
+    let more = format!(
+        "landing_installation_id = 999\nlanding_key_file = \"{}\"\n",
+        key("43").display()
+    );
+    let (d, apps) = delivery("mint-404", &[], &more);
+    refused(
+        &d,
+        &apps,
+        &[
+            "GitHub found no installation 999 of App 43 (404)",
+            "landing_installation_id is not its number, or the App is not installed",
+        ],
+    );
+}
+
+#[test]
+fn github_not_answering_is_unavailable_and_the_old_file_kept() {
+    let _alone = crate::starting();
+    for planted in [
+        Planted::Answer(502, json!({"message": "Bad Gateway"})),
+        Planted::Lost,
+    ] {
+        let (d, apps) = delivery("mint-unavailable", &[Role::Landing], "");
+        let old = format!("ghs_old\nexpires_at {}\n", clock(d.rig.now.get() - 1));
+        write(&d.rig.token_file, &old);
+        apps.plant(planted.clone());
+        let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+        assert_eq!(answer["state"], "unavailable", "{answer}");
+        assert!(
+            answer["why"]
+                .as_str()
+                .unwrap()
+                .starts_with("making token_file's token as App 43: "),
+            "{answer}"
+        );
+        assert_eq!(std::fs::read_to_string(&d.rig.token_file).unwrap(), old);
+        assert!(d.remote.pushed.borrow().is_empty());
+        d.assert_none_of(
+            &apps
+                .secrets()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+    }
+}
+
+#[test]
+fn unset_a_token_file_is_read_as_it_is_and_an_expired_one_is_unavailable() {
+    let _alone = crate::starting();
+    let (d, apps) = delivery("mint-unset", &[], "");
+    let before: Vec<Vec<u8>> = (files(&d).iter())
+        .map(|(_, file)| std::fs::read(file).unwrap())
+        .collect();
+    // The landing token, expired: GitHub answers it 401, and nothing makes another.
+    d.rig
+        .github
+        .fault("GET", "/repos/o/n", Fault::Status(401, Vec::new()));
+    let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+    assert_eq!(answer["state"], "unavailable", "{answer}");
+    assert!(
+        answer["why"].as_str().unwrap().contains("(401)"),
+        "{answer}"
+    );
+    assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
+    let after: Vec<Vec<u8>> = (files(&d).iter())
+        .map(|(_, file)| std::fs::read(file).unwrap())
+        .collect();
+    assert_eq!(before, after, "no file is written");
+    // A file of the shape the program writes is one token too many where it makes none.
+    write(
+        &d.rig.token_file,
+        &format!("{TOKEN}\nexpires_at {}\n", clock(5_000)),
+    );
+    let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+    assert_eq!(answer["state"], "refused", "{answer}");
+    assert!(
+        answer["why"]
+            .as_str()
+            .unwrap()
+            .ends_with("holds more than one token of printable characters"),
+        "{answer}"
+    );
+    assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
+    d.assert_no_token();
+}
+
+#[test]
+fn two_runs_at_once_leave_one_valid_token_and_no_torn_file() {
+    let _alone = crate::starting();
+    let (d, apps) = delivery("mint-together", &[Role::Landing], "");
+    let file = d.rig.token_file.clone();
+    let text = crate::settings(
+        &file,
+        &format!("landing_app_id = {LANDING}\n{}", makers(&[Role::Landing])),
+    );
+    let config = config::load(&text).unwrap().config;
+    let github = Arc::clone(&d.rig.github);
+    let (now, state, repository) = (
+        d.rig.now.get(),
+        d.rig.dir.0.join("state"),
+        d.rig.dir.0.join("repository"),
+    );
+    for _ in 0..3 {
+        std::fs::remove_file(&file).unwrap();
+        let starts = Barrier::new(4);
+        let made: Vec<String> = std::thread::scope(|scope| {
+            let runs: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let settings = Settings::default();
+                        let board = crate::memory::MemBoard::new(state.clone());
+                        let connect = apps.connect(&github);
+                        let ctx = Context {
+                            source: &settings,
+                            board: &board,
+                            connect: &connect,
+                            now,
+                            repository: vec![repository.clone()],
+                            openssl: "openssl",
+                        };
+                        starts.wait();
+                        let token = mint::token(&ctx, &config, Role::Landing).unwrap();
+                        token.expose().to_string()
+                    })
+                })
+                .collect();
+            runs.into_iter().map(|run| run.join().unwrap()).collect()
+        });
+        let kept = std::fs::read_to_string(&file).unwrap();
+        let (token, rest) = kept.split_once('\n').unwrap();
+        assert!(
+            made.contains(&token.to_string()),
+            "{kept} is one of {made:?}"
+        );
+        assert!(apps.tokens().iter().any(|(made, _)| made == token));
+        assert_eq!(rest, format!("expires_at {}\n", clock(now + 3_600)));
+        let beside = std::fs::read_dir(file.parent().unwrap()).unwrap().count();
+        assert_eq!(beside, 3, "no file left half made beside it");
+    }
+}
+
+#[test]
+fn the_exchange_asks_its_token_for_the_issues_permission_alone() {
+    let _alone = crate::starting();
+    for (issues, close, permissions) in [
+        ("import", false, json!({"issues": "read"})),
+        ("export", false, json!({"issues": "write"})),
+        ("import", true, json!({"issues": "write"})),
+    ] {
+        let rig = crate::Rig::off("mint-exchange");
+        std::fs::remove_file(&rig.token_file).unwrap();
+        rig.enable(&format!(
+            "issues = \"{issues}\"\nimport_labels = [\"symphony\"]\nclose_issues = {close}\n\
+             landing_app_id = {LANDING}\n{}",
+            makers(&[Role::Landing])
+        ));
+        let apps = Apps::new(rig.now.get());
+        let connect = apps.connect(&rig.github);
+        let ran = crate::run(
+            &["preview"],
+            &rig.board,
+            &rig.settings,
+            &connect,
+            rig.now.get(),
+            vec![rig.dir.0.join("repository")],
+        );
+        assert_eq!(ran.code, 0, "{ran:?}");
+        let asked = apps.asked();
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        assert_eq!(
+            asked[0].2,
+            json!({"repositories": ["n"], "permissions": permissions})
+        );
+        for secret in apps.secrets() {
+            assert!(!ran.out.contains(&secret) && !ran.err.contains(&secret));
+        }
+    }
+}
+
+#[test]
+fn tokens_says_whether_each_is_current_and_never_the_token() {
+    let _alone = crate::starting();
+    let (d, apps) = delivery("mint-tokens", &[Role::Checks, Role::Policy], "");
+    let now = 3_000;
+    d.rig.now.set(now);
+    write(
+        &d.checks_file(),
+        &format!("{CHECKS}\nexpires_at {}\n", clock(now + 2_820)),
+    );
+    std::fs::remove_file(d.policy_file()).unwrap();
+    let ran = d.run(&["tokens"]);
+    let (token_file, checks, policy) = (
+        d.rig.token_file.display(),
+        d.checks_file().display().to_string(),
+        d.policy_file().display().to_string(),
+    );
+    assert_eq!(
+        ran.out,
+        format!(
+            "token_file {token_file}: kept by hand: when it expires is not known here\n\
+             checks_token_file {checks}: current until 1970-01-01T01:37:00Z (in 47 min)\n\
+             policy_token_file {policy}: absent; App {READER} makes one at its next use\n"
+        )
+    );
+    assert_eq!(ran.code, 0, "{ran:?}");
+    // Expiring, expired, of no expiry, and refused.
+    for (kept, said, code) in [
+        (
+            format!("{CHECKS}\nexpires_at {}\n", clock(now + 240)),
+            "expires at 1970-01-01T00:54:00Z (in 4 min); App 42 makes another at its next use"
+                .to_string(),
+            0,
+        ),
+        (
+            format!("{CHECKS}\nexpires_at {}\n", clock(now - 60)),
+            "expired at 1970-01-01T00:49:00Z; App 42 makes another at its next use".to_string(),
+            0,
+        ),
+        (
+            format!("{CHECKS}\n"),
+            "holds no expiry this program wrote; App 42 makes another at its next use".to_string(),
+            0,
+        ),
+    ] {
+        write(&d.checks_file(), &kept);
+        let ran = d.run(&["tokens"]);
+        assert!(
+            ran.out
+                .contains(&format!("checks_token_file {checks}: {said}\n")),
+            "{ran:?}"
+        );
+        assert_eq!(ran.code, code);
+    }
+    std::fs::set_permissions(d.checks_file(), std::fs::Permissions::from_mode(0o640)).unwrap();
+    let ran = d.run(&["tokens"]);
+    assert!(
+        ran.out.contains(&format!(
+            "checks_token_file {checks}: refused: checks_token_file {checks} is readable by \
+             others; chmod 600 it\n"
+        )),
+        "{ran:?}"
+    );
+    assert_eq!(ran.code, 1);
+    // It reads no remote and writes nothing.
+    assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
+    assert_eq!(d.rig.github.asked().len(), 0);
+    assert!(!d.policy_file().exists());
+    for text in [&ran.out, &ran.err] {
+        for secret in [TOKEN, CHECKS, POLICY] {
+            assert!(!text.contains(secret), "{text}");
+        }
+    }
+}

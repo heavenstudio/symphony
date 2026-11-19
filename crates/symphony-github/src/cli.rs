@@ -1,13 +1,15 @@
 //! `symphony-github COMMAND`: the adapter's whole surface, each command an operator's own act.
 //!
-//! `status` reads what is kept and the committed settings and writes nothing anywhere.
+//! `status` reads what is kept and the committed settings and writes nothing anywhere, and
+//! `tokens` says of each token file whether its token is current, never the token.
 //! `publish` and `resolve` write only the adapter's own folder. `preview` reads GitHub when the
 //! adapter is turned on and writes nothing there or on the board. `reconcile` is the one
 //! command that writes either, and only the preview it is handed. `deliver` is the land's, not an
 //! operator's: it answers one verb of a delivery by pull request ([`crate::deliver`]).
 
-use crate::config::PullRequests;
+use crate::config::{PullRequests, Role};
 use crate::github::{clean_body, clean_title};
+use crate::mint::{self, Held};
 use crate::reconcile::{self, Context, Outcome};
 use crate::state::{Draft, Event, Flag, Side, State, Store};
 use std::io::Write;
@@ -35,7 +37,9 @@ project's default branch commits symphony-github.toml with enabled = true.
                                       (`[land] delivery`): publish, merge, result or landed
   preflight [--branch BASE]           read the protection of BASE (the default branch) as a
                                       delivery does before it writes, and say what is missing;
-                                      writes nothing anywhere
+                                      writes nothing anywhere but a token it makes
+  tokens                              whether each token is current and when it expires, never
+                                      the token; reads no remote and writes nothing
 
 --tasks PROGRAM names the board's program, else the `tasks` beside this one or on PATH.
 ";
@@ -130,6 +134,63 @@ fn status(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
         }
     }
     kept(ctx, out)
+}
+
+/// `tokens`: for each token file the committed settings name, whether its token is current and
+/// when it expires, or what makes one; never the token. It exits 0 unless a file is refused.
+fn tokens(ctx: &Context<'_>, out: &mut dyn Write) -> i32 {
+    let config = match ctx.source.load() {
+        Ok(loaded) => loaded.config,
+        Err(why) => {
+            let _ = writeln!(out, "turned off: its settings do not read: {why}");
+            return 1;
+        }
+    };
+    let mut code = 0;
+    for role in Role::ALL {
+        let Some(file) = config.file_of(role) else {
+            continue;
+        };
+        let app = config.app_of(role);
+        let maker = |what: &str| match &app {
+            Some(app) => format!("App {} makes {what} at its next use", app.id),
+            None => String::new(),
+        };
+        let said = match mint::standing(ctx, &config, role) {
+            Ok(None) => continue,
+            Ok(Some(Held::Unknown)) if app.is_none() => {
+                "kept by hand: when it expires is not known here".to_string()
+            }
+            Ok(Some(Held::Unknown)) => {
+                format!("holds no expiry this program wrote; {}", maker("another"))
+            }
+            Ok(Some(Held::Absent)) => format!("absent; {}", maker("one")),
+            Ok(Some(Held::Token { expires, .. })) => {
+                let left = expires.at - ctx.now;
+                if left > mint::MARGIN {
+                    format!("current until {} (in {} min)", expires.text, left / 60)
+                } else if left > 0 {
+                    format!(
+                        "expires at {} (in {} min); {}",
+                        expires.text,
+                        left / 60,
+                        maker("another")
+                    )
+                } else {
+                    format!("expired at {}; {}", expires.text, maker("another"))
+                }
+            }
+            Err(why) => {
+                code = 1;
+                format!("refused: {why}")
+            }
+        };
+        let _ = writeln!(out, "{} {}: {said}", role.file_key(), file.display());
+    }
+    if code == 0 && Role::ALL.iter().all(|role| config.file_of(*role).is_none()) {
+        let _ = writeln!(out, "the committed settings name no token file");
+    }
+    code
 }
 
 /// What `status` says of the state folder, reading it and nothing else.
@@ -353,6 +414,10 @@ fn command(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
                 )?,
             };
             crate::deliver::preflight(ctx, &base, out)
+        }
+        "tokens" => {
+            none_left(&rest)?;
+            Ok(tokens(ctx, out))
         }
         other => Err(format!("no command {other:?}\n{USAGE}")),
     }

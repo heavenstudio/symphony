@@ -11,9 +11,10 @@
 //! the preview: the next preview reads the task again.
 
 use crate::board::{Board, BoardError, Bound, Token};
-use crate::config::{Config, Loaded, Repository, Source};
-use crate::credential::{self, Secret};
+use crate::config::{Config, Loaded, Repository, Role, Source};
+use crate::credential::Secret;
 use crate::github::{ApiError, Client, Comment, Issue};
+use crate::mint;
 use crate::plan::{self, Action, Change, Preview, Seen, Tokens};
 use crate::state::{Entry, Event, Flag, Mapping, Origin, State, Store};
 use crate::transport::Transport;
@@ -41,6 +42,8 @@ pub struct Context<'a> {
     pub now: i64,
     /// The repository's folders, which the token file must be outside.
     pub repository: Vec<PathBuf>,
+    /// The program that signs a GitHub App's JSON Web Token ([`crate::mint`]): `openssl`.
+    pub openssl: &'a str,
 }
 
 /// How a command ended: its exit code, having said why on `out`.
@@ -83,13 +86,8 @@ fn enabled(ctx: &Context<'_>) -> Result<Loaded, String> {
 }
 
 fn connect(ctx: &Context<'_>, loaded: &Loaded) -> Result<Box<dyn Transport>, String> {
-    let file = loaded
-        .config
-        .token_file
-        .as_deref()
-        .ok_or("the settings name no token_file")?;
-    let folders: Vec<&std::path::Path> = ctx.repository.iter().map(PathBuf::as_path).collect();
-    (ctx.connect)(credential::read(file, &folders)?)
+    let token = mint::token(ctx, &loaded.config, Role::Landing).map_err(mint::Stop::said)?;
+    (ctx.connect)(token)
 }
 
 /// What an API failure does to the state: a refused credential or a repository not found

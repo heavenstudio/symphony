@@ -229,3 +229,106 @@ fn a_folder_in_no_repository_has_no_checkouts() {
     }
     assert!(checkouts(Path::new("/nonexistent/folder")).is_err());
 }
+
+/// A delivery's whole settings, each token kept by hand.
+const DELIVERY: &str = "enabled = true\nrepository = \"o/n\"\ntoken_file = \"/secrets/token\"\n\
+                        pull_requests = \"publish\"\nchecks_token_file = \"/secrets/checks\"\n\
+                        checks_app_id = 42\nlanding_app_id = 43\n\
+                        policy_token_file = \"/secrets/policy\"\npolicy_app_id = 44\n";
+
+#[test]
+fn an_apps_installation_and_key_make_its_token_file_the_programs() {
+    let config = parse(DELIVERY).unwrap();
+    for role in Role::ALL {
+        assert_eq!(config.app_of(role), None, "{role:?}: kept by hand");
+    }
+    assert_eq!(
+        Role::ALL.map(|role| config.file_of(role).unwrap().to_path_buf()),
+        ["/secrets/token", "/secrets/checks", "/secrets/policy"].map(PathBuf::from)
+    );
+    let config = parse(&format!(
+        "{DELIVERY}landing_installation_id = 143\nlanding_key_file = \"/keys/landing.pem\"\n\
+         checks_installation_id = 142\nchecks_key_file = \"/keys/checks.pem\"\n\
+         policy_installation_id = 144\npolicy_key_file = \"/keys/policy.pem\"\n"
+    ))
+    .unwrap();
+    for (role, id, installation, key) in [
+        (Role::Landing, 43, 143, "landing"),
+        (Role::Checks, 42, 142, "checks"),
+        (Role::Policy, 44, 144, "policy"),
+    ] {
+        assert_eq!(
+            config.app_of(role),
+            Some(App {
+                id,
+                installation,
+                key_file: format!("/keys/{key}.pem").into(),
+            })
+        );
+        assert_eq!(role.prefix(), key);
+    }
+    assert_eq!(
+        Role::ALL.map(Role::file_key),
+        ["token_file", "checks_token_file", "policy_token_file"]
+    );
+    // The exchange alone may have its token made too, by the App landing_app_id names.
+    let exchange = parse(&format!(
+        "{ON}issues = \"export\"\nlanding_app_id = 43\nlanding_installation_id = 143\n\
+         landing_key_file = \"/keys/landing.pem\"\n"
+    ))
+    .unwrap();
+    assert_eq!(exchange.app_of(Role::Landing).unwrap().id, 43);
+    assert_eq!(exchange.app_of(Role::Checks), None);
+}
+
+#[test]
+fn an_apps_keys_that_do_not_hold_together_are_refused_by_name() {
+    for (more, why) in [
+        (
+            "landing_installation_id = 143\n",
+            "landing_installation_id needs landing_key_file",
+        ),
+        (
+            "checks_key_file = \"/keys/checks.pem\"\n",
+            "checks_key_file needs checks_installation_id",
+        ),
+        (
+            "policy_installation_id = 0\npolicy_key_file = \"/keys/policy.pem\"\n",
+            "policy_installation_id is a GitHub App installation's number",
+        ),
+        (
+            "policy_installation_id = 144\npolicy_key_file = \"keys/policy.pem\"\n",
+            "policy_key_file is an absolute path outside the repository",
+        ),
+        (
+            "landing_installation_id = 143\nlanding_key_file = \"/secrets/checks\"\n",
+            "landing_key_file is a token file: a token made would be written over the key",
+        ),
+        (
+            "checks_installation_id = 142\nchecks_key_file = \"/secrets/checks\"\n",
+            "checks_key_file is a token file",
+        ),
+        (
+            "landing_installation_id = 143\nlanding_key_file = \"/keys/one.pem\"\n\
+             policy_installation_id = 144\npolicy_key_file = \"/keys/one.pem\"\n",
+            "policy_key_file is landing_key_file: each App has a key of its own",
+        ),
+    ] {
+        let refused = parse(&format!("{DELIVERY}{more}")).unwrap_err();
+        assert!(refused.contains(why), "{more}: {refused}");
+    }
+    for (text, why) in [
+        (
+            format!("{ON}landing_installation_id = 143\nlanding_key_file = \"/keys/l.pem\"\n"),
+            "landing_key_file needs landing_app_id: the App the key is of",
+        ),
+        (
+            "checks_app_id = 42\nchecks_installation_id = 142\nchecks_key_file = \"/keys/c.pem\"\n"
+                .to_string(),
+            "checks_key_file needs checks_token_file: where the token it makes is kept",
+        ),
+    ] {
+        let refused = parse(&text).unwrap_err();
+        assert!(refused.contains(why), "{text}: {refused}");
+    }
+}

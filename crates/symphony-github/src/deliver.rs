@@ -36,9 +36,9 @@
 //! none, its slug: never a brief, a thread or the title the land hands over. No token is in
 //! an argument, a URL, an environment variable, the journal, the state or a line said here.
 
-use crate::config::{Config, PullRequests, Repository};
-use crate::credential;
+use crate::config::{Config, PullRequests, Repository, Role};
 use crate::github::clean_title;
+use crate::mint;
 use crate::preflight::{self, Operation, Reader, Wanted};
 use crate::reconcile::{Context, Outcome};
 use crate::state::{Binding, Entry, Event, Pull, State, Store};
@@ -351,15 +351,13 @@ fn checks(snapshot: &Snapshot, repository: i64) -> Result<Vec<Check>, String> {
     Ok(wanted)
 }
 
-/// What makes the requests that carry the token `file` holds, the settings' key `key`.
-fn connect(
-    ctx: &Context<'_>,
-    file: Option<&Path>,
-    key: &str,
-) -> Result<Box<dyn Transport>, Stopped> {
-    let file = file.ok_or_else(|| refused(format!("the settings name no {key}")))?;
-    let folders: Vec<&Path> = ctx.repository.iter().map(PathBuf::as_path).collect();
-    let token = credential::read(file, &folders).map_err(refused)?;
+/// What makes the requests that carry `role`'s token, made first where the settings give its
+/// file an App ([`crate::mint`]).
+fn connect(ctx: &Context<'_>, config: &Config, role: Role) -> Result<Box<dyn Transport>, Stopped> {
+    let token = mint::token(ctx, config, role).map_err(|stop| match stop {
+        mint::Stop::Refused(why) => refused(why),
+        mint::Stop::Unavailable(why) => unavailable(why),
+    })?;
     (ctx.connect)(token).map_err(unavailable)
 }
 
@@ -393,8 +391,8 @@ impl Run<'_> {
         });
     }
 
-    fn connect(&self, file: Option<&Path>, key: &str) -> Result<Box<dyn Transport>, Stopped> {
-        connect(self.ctx, file, key)
+    fn connect(&self, role: Role) -> Result<Box<dyn Transport>, Stopped> {
+        connect(self.ctx, &self.config, role)
     }
 
     /// The repository as GitHub names it now, which must be the one the state is bound to.
@@ -442,10 +440,7 @@ impl Run<'_> {
             operation: Operation::of(self.config.upstream_id.is_some()),
         };
         // The policy token is read anew each time, and sent nowhere but through the reader.
-        let read = match self.connect(
-            self.config.policy_token_file.as_deref(),
-            "policy_token_file",
-        ) {
+        let read = match self.connect(Role::Policy) {
             Ok(transport) => {
                 let reader = Reader::new(transport.as_ref(), self.repository.clone());
                 preflight::check(host, &reader, &wanted)
@@ -617,10 +612,7 @@ impl Run<'_> {
     /// The checks of `wanted` on `head`, written where they do not stand and read back.
     fn stand(&self, wanted: &[Check], head: &str, slug: &str) -> Result<(), Stopped> {
         let app = self.config.checks_app_id.unwrap_or_default();
-        let transport = self.connect(
-            self.config.checks_token_file.as_deref(),
-            "checks_token_file",
-        )?;
+        let transport = self.connect(Role::Checks)?;
         let host = Host {
             transport: transport.as_ref(),
             repository: self.repository.clone(),
@@ -735,7 +727,7 @@ impl Run<'_> {
                 self.repository.full_name()
             )));
         }
-        let transport = self.connect(self.config.token_file.as_deref(), "token_file")?;
+        let transport = self.connect(Role::Landing)?;
         let host = Host {
             transport: transport.as_ref(),
             repository: self.repository.clone(),
@@ -901,7 +893,7 @@ impl Run<'_> {
                 "a merge is of one whole commit: a task's squashed, an import's by a merge commit",
             ));
         }
-        let transport = self.connect(self.config.token_file.as_deref(), "token_file")?;
+        let transport = self.connect(Role::Landing)?;
         let host = Host {
             transport: transport.as_ref(),
             repository: self.repository.clone(),
@@ -994,7 +986,7 @@ impl Run<'_> {
     }
 
     fn result(&mut self, request: &Value) -> Result<Value, Stopped> {
-        let transport = self.connect(self.config.token_file.as_deref(), "token_file")?;
+        let transport = self.connect(Role::Landing)?;
         let host = Host {
             transport: transport.as_ref(),
             repository: self.repository.clone(),
@@ -1031,7 +1023,7 @@ impl Run<'_> {
         let Some(number) = issue.filter(|_| self.config.close_issues) else {
             return Ok(noted(String::new()));
         };
-        let transport = self.connect(self.config.token_file.as_deref(), "token_file")?;
+        let transport = self.connect(Role::Landing)?;
         let host = Host {
             transport: transport.as_ref(),
             repository: self.repository.clone(),
@@ -1176,7 +1168,7 @@ pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome 
         Some(store) => store.state()?.and_then(|state| state.binding),
         None => None,
     };
-    let transport = match connect(ctx, config.token_file.as_deref(), "token_file") {
+    let transport = match connect(ctx, &config, Role::Landing) {
         Ok(transport) => transport,
         Err(answer) => return stopped(out, &answer),
     };
@@ -1211,11 +1203,7 @@ pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome 
         landing_app: config.landing_app_id.unwrap_or_default(),
         operation: Operation::of(config.upstream_id.is_some()),
     };
-    let policy = match connect(
-        ctx,
-        config.policy_token_file.as_deref(),
-        "policy_token_file",
-    ) {
+    let policy = match connect(ctx, &config, Role::Policy) {
         Ok(policy) => policy,
         Err(answer) => return stopped(out, &answer),
     };

@@ -67,6 +67,7 @@ fn main() -> ExitCode {
                 i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
             }),
         repository,
+        openssl: "openssl",
     };
     let code = symphony_github::cli::run(&args, &ctx, &mut out, &mut err);
     ExitCode::from(u8::try_from(code).unwrap_or(1))

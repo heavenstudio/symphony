@@ -16,6 +16,7 @@ mod github;
 mod http;
 mod import;
 mod memory;
+mod minting;
 mod protection;
 mod recovery;
 mod scratch;
@@ -180,6 +181,7 @@ pub(crate) fn run(
         connect,
         now,
         repository,
+        openssl: "openssl",
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = symphony_github::cli::run(&args, &ctx, &mut out, &mut err);

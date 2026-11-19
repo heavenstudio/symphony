@@ -44,11 +44,17 @@ refusal as turned off.
 | `policy_app_id` | none | the number of the GitHub App that token is of, never `landing_app_id` or `checks_app_id` |
 | `close_issues` | `false` | whether a delivered task's mapped issue is closed once the board closed the task |
 | `upstream_id` | none | the number at GitHub of the one repository [an import](#delivering-an-import) is of; with none, no import is delivered and the default branch permits squash alone |
+| `landing_installation_id` | none | the number of the installation on the repository of the App `landing_app_id` names, whose token [the program makes](#tokens-it-makes) in `token_file` |
+| `landing_key_file` | none | the absolute path of that App's private key |
+| `checks_installation_id`, `checks_key_file` | none | the same of the App `checks_app_id` names, for `checks_token_file` |
+| `policy_installation_id`, `policy_key_file` | none | the same of the App `policy_app_id` names, for `policy_token_file` |
 
 `enabled = true` needs `repository` and `token_file`, an `issues` that imports needs
 `import_labels`, `pull_requests = "publish"` needs `checks_token_file`, `checks_app_id`,
 `landing_app_id`, `policy_token_file` and `policy_app_id`, and `upstream_id` needs
-`pull_requests = "publish"`. The settings are read again before every operation that writes GitHub or the
+`pull_requests = "publish"`. An App's installation and key file come together, with the App's
+number and the token file they make the token of; a key file is never a token file nor another
+App's key file. The settings are read again before every operation that writes GitHub or the
 board, so a landing that turns the adapter off stops a run at its next dispatch.
 
 The issues are listed from where the last listing ended, and that place holds only under the
@@ -75,18 +81,66 @@ exchange with everything kept; the next preview that succeeds lifts the pause.
 
 A delivery uses three tokens, each held by the same rules. `token_file`'s opens and merges the pull
 request and reads the rules of [the protection](#the-protection-a-delivery-needs): an installation token of
-the GitHub App `landing_app_id` names, with pull requests read and write, contents read and
-write, and issues write where `close_issues` is set, and no administration. `checks_token_file`'s writes the checks: an installation token of the one
-GitHub App `checks_app_id` names, with checks read and write and nothing else. GitHub takes a
+the GitHub App `landing_app_id` names, with no administration. `checks_token_file`'s writes the checks: an installation token of the one
+GitHub App `checks_app_id` names. GitHub takes a
 check from an App alone, so what merges cannot say the evidence stands. `policy_token_file`'s
-reads who bypasses each ruleset: an installation token of a third GitHub App, `policy_app_id`,
-with administration read and write, the one App permission found to be shown those lists, and
-nothing else beside the metadata GitHub adds. That permission could change or remove the rules,
+reads who bypasses each ruleset: an installation token of a third GitHub App, `policy_app_id`.
+Its permission could change or remove the rules,
 so the adapter sends this token with one request, the read of a ruleset, and has no code that
 sends it with another (`preflight::Reader`); it is read from its file at each use and given to
-nothing else. The adapter mints no
-token: whoever installs the Apps keeps a current one in each file. The head itself is pushed by the
+nothing else. Each token needs the least each call it is sent with needs, and no more, beside the
+metadata (read) GitHub adds to every one; a token [the program makes](#tokens-it-makes) is asked
+for exactly these:
+
+| Token | Its calls | Permission |
+| --- | --- | --- |
+| `token_file`'s | the issues, their comments and their edits (`/issues`) | issues read for `import`; issues write for `export` and `exchange`, and where `close_issues` closes a delivered task's issue |
+| | the repository and its merge settings, the pull requests, their merge (`/pulls`, `/pulls/N/merge`) and marking one ready (GraphQL) | pull requests write and contents write, under `pull_requests = "publish"` |
+| | the rules in effect for the branch (`/rules/branches/BRANCH`) and an upstream's repository | metadata, which every token has |
+| `checks_token_file`'s | a head's checks, read and written (`/commits/SHA/check-runs`, `/check-runs`) | checks write |
+| `policy_token_file`'s | a ruleset and its bypass list (`/rulesets/ID`) | administration write, the one App permission found to be shown those lists |
+
+Where the settings name no App's installation and key for a file, whoever installs the App
+keeps a current token in it. The head itself is pushed by the
 checkout's own git, with the credentials a person's `git push` there uses.
+
+## Tokens it makes
+
+Where the settings name an App's installation and private key beside its token file
+(`landing_installation_id` and `landing_key_file` for `token_file`, and the same of `checks_` and
+`policy_`), that file is the program's own: it makes the token there itself, at the first use
+that finds it absent, expired, within five minutes of expiring, or holding a token it did not
+write, and uses the one there otherwise. Setting them hands the file to the program, which
+replaces a token written there by hand at once (`crates/symphony-github/src/mint.rs`).
+
+- **The key** is held as the token files are: outside the repository, a plain file readable by
+  its owner alone, and refused otherwise before anything is sent. `openssl` signs the App's JSON
+  Web Token with it (RS256, made a minute back and held nine minutes, as GitHub takes none of
+  more than ten), reading the key from its file, so the key's bytes never enter the program and
+  nothing `openssl` says is shown. A machine without `openssl` on `PATH` is told to install it.
+- **The request** is `POST /app/installations/ID/access_tokens`, made by `curl` with the JWT on its
+  standard input as every token is, asking for the one repository `repository` names and the
+  permissions [the table above](#the-token) gives that token, no more: an App given more holds
+  them, and its token does not.
+- **The file** holds the token on its first line and `expires_at` with the time GitHub gave on its
+  second. It is written to a file of its own beside it, readable by its owner alone, then renamed
+  over it: a reader finds the old token or the new, never part of either, and two lands at once
+  leave one of two tokens that both hold.
+- **A failure writes nothing** and leaves the file as it was. A key that is not there, is
+  readable by others or is not a key `openssl` signs with, GitHub refusing the key (401: not that
+  App's key, or the App's number wrong), finding no installation (404), or refusing what is asked
+  (422, in GitHub's words: a permission the App does not hold, or a repository it is not
+  installed on) is refused, naming the setting to put right; GitHub not answering is
+  `unavailable`, and the next use asks again.
+
+No key, JWT or token is said, journaled or kept anywhere but the token file. Where the settings
+name no App for a file, it is read as it is: its token is sent, and one GitHub expired is
+answered 401, `unavailable`, until the file holds a current one. The program runs no schedule
+and nothing between uses: a token is made only by a command that sends it.
+
+**`tokens`** says, for each token file the settings name, whether its token is current and until
+when, or that it is absent, expired or kept by hand, and never the token. It reads no remote and
+writes nothing, and exits 0 unless a file is refused.
 
 ## The commands
 
@@ -99,7 +153,7 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
   kept as its curated public text and shown as they will be published. Nothing is sent.
 - **`preview [--rebind]`** reads both sides and shows what a reconcile would do, with the exact text of
   every write, then keeps that preview under the digest it prints. It writes nothing to GitHub
-  or the board. Turned off, it reads nothing from GitHub and shows only the curated texts that
+  or the board, and nothing anywhere but a [token it makes](#tokens-it-makes). Turned off, it reads nothing from GitHub and shows only the curated texts that
   wait. `--rebind` binds to [another repository found at the name](#what-pauses-or-suspends).
 - **`reconcile --preview DIGEST --as HANDLE`** applies the preview of that digest and no other:
   at most 50 operations a run, or `--limit N`. HANDLE is the board session the board's writes
@@ -108,10 +162,12 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
   again. It writes only the adapter's own folder; the next preview shows what follows.
 - **`preflight [--branch BASE]`** reads [the protection](#the-protection-a-delivery-needs) of
   BASE, the default branch unless named, as a delivery reads it before it writes, and says that
-  it holds or each thing missing on a line of its own. It writes nothing, here or on GitHub, and
-  exits 0 only where a delivery would go on.
+  it holds or each thing missing on a line of its own. It writes nothing, here or on GitHub, but
+  a [token it makes](#tokens-it-makes), and exits 0 only where a delivery would go on.
 - **`deliver VERB --request FILE`** answers one verb of [a land's delivery](#delivering-a-land).
   A land runs it; an operator has no reason to.
+- **`tokens`** says whether each token is current and when it expires, never the token
+  ([tokens it makes](#tokens-it-makes)).
 
 ## What is exchanged
 
@@ -254,11 +310,11 @@ next run finds what was made. Evidence of another revision rewrites the checks o
 
 Every request is GitHub's REST API made by `curl`, as the exchange's are, and the one thing REST
 has no call for, marking a draft ready, is a single GraphQL mutation by the same `curl`. The `gh`
-CLI is not used or needed. The adapter is no GitHub App and holds no App's key: it cannot mint or
-renew an installation token, so each of the three files holds one made outside it, which GitHub
-expires within the hour. A token that expired is answered 401, `unavailable`, and nothing merges
-until the file holds a current one. Keeping it current is the operator's, by whatever they run
-for it; nothing here does.
+CLI is not used or needed. Each of the three installation tokens, which GitHub expires within
+the hour, is [made by the program](#tokens-it-makes) where the settings name its App's
+installation and key, so a land goes on with no file refreshed by hand. Where they do not, the
+file holds one made outside it: a token that expired is answered 401, `unavailable`, and nothing
+merges until the file holds a current one.
 
 ## Delivering an import
 
@@ -397,5 +453,8 @@ A setup of a repository of your own is checked by `status`, `preview` and `prefl
 and a repository held in memory with every failure above planted, and the exchange on a real
 scratch board through `tasks api` with its requests made by a real `curl` to a loopback server.
 The delivery's verbs are asked of the same repository in memory, which answers pull requests,
-their merge and a commit's checks, and its rules and rulesets, which it holds a merge to. None needs a GitHub repository or a credential. A run against GitHub itself needs a disposable
+their merge and a commit's checks, and its rules and rulesets, which it holds a merge to. The
+tokens it makes are asked of GitHub's side of the Apps held in memory too, which verifies each
+JWT's signature with the App's public key by `openssl`, as the program signs it, so those tests
+need `openssl` on `PATH`. None needs a GitHub repository or a credential. A run against GitHub itself needs a disposable
 repository and a token its owner supplies, and is nobody's to start without that word.

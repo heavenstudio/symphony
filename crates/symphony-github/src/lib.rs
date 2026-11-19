@@ -17,6 +17,7 @@ pub mod config;
 pub mod credential;
 pub mod deliver;
 pub mod github;
+pub mod mint;
 pub mod plan;
 pub mod preflight;
 pub mod reconcile;
