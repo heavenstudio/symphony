@@ -505,11 +505,12 @@ publishes one client before scheduling, so no browser case builds or relinks whi
 run. Every test receives the build's binaries through `SYMPHONY_TEST_TASKS_BINARY` and
 `SYMPHONY_TEST_BINARIES`; a caller's values win. Each Cargo call keeps the workspace build's
 feature graph and its build-script/proc-macro debug info, so no concurrent batch relinks anything.
-Cargo still makes each binary's copy in the target folder again at every call, removing it first,
-so before scheduling the runner makes each copy the build lists a hard link to the file it copies,
-which every later call leaves in place: a batch that starts never leaves another's test without
-the binary it runs. Every server, store and browser still takes its own folder and a port the
-system picks.
+On macOS Cargo still makes each binary's copy in the target folder again at every call, removing
+it first; elsewhere it hard-links the binary to its build, copying only where it cannot link, and
+a later call leaves a link in place. So before scheduling the runner makes each copy the build
+lists a hard link to the file it copies, which every later call leaves in place: a batch that
+starts never leaves another's test without the binary it runs. Every server, store and browser
+still takes its own folder and a port the system picks.
 
 Nextest and the Cargo batches keep live logs in `tests-lanes/` beside the step's log
 (`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), with the binary metadata beside
