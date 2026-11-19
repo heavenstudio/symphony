@@ -46,3 +46,16 @@ export function webAddress(url: string): boolean {
 export function linkable(link: string): boolean {
   return appPath(link) || webAddress(link);
 }
+
+/**
+ * The slug of the task whose page `path` names, where the server writes one into its words (the
+ * read-only notice, a schema update's task): an app path holding `/task/` (`/task/SLUG`, or
+ * `/<project>/task/SLUG` on the machine's one server), its slug what follows that, up to a `?` or
+ * `#`; none for any other text. The client's own: no Rust carries it.
+ */
+export function taskSlug(path: string): string | null {
+  const at = path.indexOf("/task/");
+  if (!appPath(path) || at < 0) return null;
+  const slug = path.slice(at + "/task/".length).split(/[?#]/)[0] ?? "";
+  return slug === "" ? null : slug;
+}

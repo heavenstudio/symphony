@@ -21,6 +21,8 @@ pub struct CliBoard {
     cwd: PathBuf,
     /// What a run that cannot start adds: how to give the project a build to run, when none was found.
     missing: Option<String>,
+    /// The variables of this process's environment the binary runs without.
+    cleared: Vec<String>,
 }
 
 /// The board's binary.
@@ -118,7 +120,17 @@ impl CliBoard {
             env: env.to_vec(),
             cwd: cwd.to_path_buf(),
             missing: None,
+            cleared: Vec::new(),
         }
+    }
+
+    /// The same board's binary run without each of `names` in its environment: what reaches another
+    /// project's board from its own checkout, rather than the board this process's environment names.
+    #[must_use]
+    pub fn without(mut self, names: &[&str]) -> CliBoard {
+        self.cleared
+            .extend(names.iter().map(|name| (*name).to_string()));
+        self
     }
 
     /// The binary with `extra`, `stdin` on its stdin (none if None), run to its end. Its input and
@@ -130,6 +142,9 @@ impl CliBoard {
             .args(extra)
             .envs(self.env.iter().map(|(k, v)| (k, v)))
             .current_dir(&self.cwd);
+        for name in &self.cleared {
+            command.env_remove(name);
+        }
         let mut child = if stdin.is_some() {
             symphony_board::sys::spawn_piped(&mut command)
         } else {

@@ -114,6 +114,23 @@ pub fn absent(error: &str) -> bool {
         || error.contains(crate::project::GONE)
 }
 
+/// What the schema rule's refusal of a reader says after the board's schema ([`crate::schema`]):
+/// the board behind the reader's build, or more than one schema ahead of it. Its words, which the
+/// tests of [`refused_by_schema`] hold to the rule's own refusals.
+const REFUSED_BY_SCHEMA: [&str; 2] = [
+    ", behind this build's ",
+    ", more than one ahead of this build's ",
+];
+
+/// Whether `error`, why a board could not be opened, is the schema rule's refusal of a reader
+/// ([`crate::schema`]): the board is behind the reader's build, or more than one schema ahead of
+/// it, so that build neither reads nor writes it until one at the board's schema does. Whatever
+/// wraps the error keeps its words. A board one schema ahead is read, not refused, and one not
+/// made yet is [`absent`].
+pub fn refused_by_schema(error: &str) -> bool {
+    REFUSED_BY_SCHEMA.iter().any(|words| error.contains(words))
+}
+
 /// One kind of pass over the hour: each minute's ok and failed passes, and the newest pass and
 /// failure.
 #[derive(Debug, Default, Clone)]
