@@ -937,6 +937,23 @@ Once a release's tag is pushed, the run does this, in order:
     with any other writer behind stays where it is, and the step names each writer to rebuild, at
     its schema, by its path and host and when it was last seen: the project's to finish. The
     machine's server is never counted, as it takes the new schema only by its reload.
+  - **A writer gone from its path.** A line keeps its program's path and no more, so for a line
+    behind on this host the refresh looks at what is at that path now, and runs none of it: a
+    recorded path is read from the board, which is no word on what to run. A line is not counted
+    when nothing is at its path (a build named by its hash, superseded and removed), or when the
+    file there was written more than an hour after the line was last seen (a build put there
+    since). A line is written again once it is an hour old, so every write through a path falls
+    within the hour after its `seen`, and a file written later has never opened this board to
+    write: the program that wrote is gone either way. The step says each line it did not count
+    and why (`not counted, as its program is gone: …`), on the board's line whether it moves,
+    waits or stays, and the move runs with `--leave-behind`, as the migrate reads the lines again.
+    A writer on another host is always counted, and so is one whose path cannot be read. What
+    this cannot see: an old build put back at a path that was empty, the same old build touched,
+    and a build put there since that is itself behind and has not run. Each that runs before the
+    move writes its line and holds the board; after it, each is refused the board ahead of it,
+    naming itself as the program to rebuild, before any write
+    ([who writes a board](TASKS.md#who-writes-a-board)): a refused write, never a corrupt one. A
+    file restored with its old time still counts.
   - A board whose database is not running is red: nothing here starts, signals or stops a
     database, and once it runs (any `just tasks` in its checkout starts it) the retry moves it. So
     is one running an older SurrealDB than the release pins, which the move would replace, and one
@@ -1380,7 +1397,8 @@ removes there only what an install of that same release left unfinished. Its ref
 project's checkout nothing at all: no branch, no commit, no worktree, no pin and no move of its
 main. It writes to a project only the snapshot of its store, in its git common dir, and moves the
 project's board only by the release's own `tasks migrate` run in its main checkout, and only when
-every writer seen there in the last week is a release's own or at the release's schema. It never
+every writer seen there in the last week, and still at its path, is a release's own or at the
+release's schema. It runs nothing because a board's record names it. It never
 moves a board below schema 18, never moves one board of a schema-raising release while another
 holds it, and never points `current` while a board holds the release, a project's linked plugin
 holds the switch or a move failed. It never starts, signals, stops or restarts a board's database

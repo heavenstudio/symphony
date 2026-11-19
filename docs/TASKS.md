@@ -195,6 +195,9 @@ lines first and moves the board only when every writer seen there in the last we
 own (a binary of a release installed in the machine folder, `releases/NAME/bin/`, on this host,
 which the `current` the refresh then points takes on) or was built at the release's schema; when
 the only writers behind are a release's own, its migrate runs with `--leave-behind`, naming them.
+A line on this host whose program is gone from its path, nothing there or a file written since
+the line's last possible write, is not counted, and is left behind the same way
+([a writer gone from its path](RELEASES.md#the-refresh)).
 Any other writer behind holds the release: the refresh names each to rebuild, moves no board of
 any project and leaves `current` where it was, until each is rebuilt and run once and the
 refresh's retry moves them all. Every board is snapshotted before the first moves; a migrate that
