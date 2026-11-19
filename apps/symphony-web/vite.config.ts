@@ -1,4 +1,3 @@
-import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { BACKSTOP_MS, UnitRunReport } from "./src/unit-run.ts";
 
@@ -18,11 +17,12 @@ const SHARED_STYLES = "src/styles/shared.css";
 // is `src/shared.ts`'s, which only calls the import, in the chunk every page shares: Vite's own
 // would be a file of its own beside each page that imports such a chunk.
 const PRELOAD_HELPER = "\0vite/preload-helper.js";
+/** `src/shared.ts`'s path, beside this file (its URL's path decoded: no Node types are taken). */
+const SHARED_MODULE = decodeURIComponent(new URL("./src/shared.ts", import.meta.url).pathname);
 const preloadHelper = {
   name: "symphony:preload-helper",
   enforce: "pre" as const,
-  resolveId: (id: string) =>
-    id === PRELOAD_HELPER ? fileURLToPath(new URL("./src/shared.ts", import.meta.url)) : null,
+  resolveId: (id: string) => (id === PRELOAD_HELPER ? SHARED_MODULE : null),
 };
 
 export default defineConfig({
