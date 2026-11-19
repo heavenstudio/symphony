@@ -1,16 +1,20 @@
 //! `symphony-github COMMAND`: the adapter's whole surface, each command an operator's own act.
 //!
 //! `status` reads what is kept and the committed settings and writes nothing anywhere.
-//! `publish` and `resolve` write only the adapter's own folder. `preview` reads GitHub when the
-//! adapter is turned on and writes nothing there or on the board. `reconcile` is the one
-//! command that writes either, and only the preview it is handed. `deliver` is the land's, not an
-//! operator's: it answers one verb of a delivery by pull request ([`crate::deliver`]). `release`
-//! is the release run's: a GitHub Release for a tag it pushed ([`crate::release`]).
+//! `publish`, `resolve` and `drop` write only the adapter's own folder, and `resolve` and `drop`
+//! make none where nothing is kept. `preview` reads GitHub when the adapter is turned on and
+//! writes nothing there or on the board; turned off, it reads nothing there, and neither it nor
+//! `reconcile` makes the folder. `reconcile` is the one command that writes either, and only the
+//! preview it is handed. `deliver` is the land's, not an operator's: it answers one verb of a
+//! delivery by pull request ([`crate::deliver`]). `release` is the release run's: a GitHub
+//! Release for a tag it pushed ([`crate::release`]).
 
 use crate::config::{PullRequests, Releases};
 use crate::github::{clean_body, clean_title};
+use crate::plan;
 use crate::reconcile::{self, Context, Outcome};
-use crate::state::{Draft, Event, Flag, Side, State, Store};
+use crate::state::{Draft, Entry, Event, Flag, Origin, Side, State, Store};
+use serde_json::{Value, json};
 use std::io::Write;
 
 /// What `--help` and a command line that does not read are answered with.
@@ -32,6 +36,9 @@ project's default branch commits symphony-github.toml with enabled = true.
                                       (50); safe to run again
   resolve SLUG local|remote           keep one side of a conflict, or take up a suspended
                                       mapping again; the next preview shows what follows
+  drop SLUG                           drop SLUG's mapping and keep its issue as not SLUG's: no
+                                      preview maps the two again, and a curated text kept is
+                                      published anew
   deliver VERB --request FILE         answer a land delivered by a pull request, which runs it
                                       (`[land] delivery`): publish, merge, result or landed
   release --request FILE              answer the release run with a GitHub Release for a tag it
@@ -213,6 +220,13 @@ fn kept(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
     {
         let _ = writeln!(out, "  {slug}: curated text waits to be published");
     }
+    for (slug, issues) in &state.dropped {
+        let _ = writeln!(
+            out,
+            "  {slug}: {} issue(s) dropped from it, never mapped to it again",
+            issues.len()
+        );
+    }
     if let Some(preview) = store.preview()? {
         let _ = writeln!(
             out,
@@ -251,6 +265,13 @@ fn publish(ctx: &Context<'_>, mut args: Vec<String>, out: &mut dyn Write) -> Out
     }
     let body = std::fs::read_to_string(&file).map_err(|error| format!("{file}: {error}"))?;
     let body = clean_body(&body);
+    let longest = plan::longest_body();
+    if body.chars().count() > longest {
+        return Err(format!(
+            "{file}: the public text is longer than {longest} characters, which is all an issue \
+             holds whole once it ends in its marker's line: shorten it"
+        ));
+    }
     let tasks = ctx.board.tasks().map_err(|e| e.said().to_string())?;
     if !tasks.iter().any(|task| task.slug == *slug) {
         return Err(format!("no task {slug} is on the board"));
@@ -258,6 +279,13 @@ fn publish(ctx: &Context<'_>, mut args: Vec<String>, out: &mut dyn Write) -> Out
     let store = Store::open(&ctx.board.state_folder().map_err(|e| e.said().to_string())?)?;
     let _lock = store.lock()?;
     let mut state = store.state()?.unwrap_or_default();
+    if let Some(mapping) = (state.mappings.get(slug)).filter(|m| m.origin == Origin::Import) {
+        return Err(format!(
+            "{slug} is imported from issue #{}: its text is its brief, which that issue's edits \
+             reach, and a curated text of it would be published nowhere",
+            mapping.issue_number
+        ));
+    }
     let _ = writeln!(
         out,
         "{slug}'s curated public text, kept here and sent nowhere yet:"
@@ -284,7 +312,10 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
         "remote" => Side::Remote,
         other => return Err(format!("keep local or remote, not {other:?}")),
     };
-    let store = Store::open(&ctx.board.state_folder().map_err(|e| e.said().to_string())?)?;
+    let folder = ctx.board.state_folder().map_err(|e| e.said().to_string())?;
+    let Some(store) = Store::existing(&folder) else {
+        return Err(format!("{slug} is mapped to no issue: nothing is kept"));
+    };
     let _lock = store.lock()?;
     let mut state: State = store.state()?.unwrap_or_default();
     let Some(mapping) = state.mappings.get_mut(slug) else {
@@ -312,6 +343,59 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
             "remote"
         }
     );
+    Ok(0)
+}
+
+/// `drop SLUG`: the task's mapping is dropped and its issue kept as not the task's, so no
+/// preview maps the two again or takes that issue for the task's publication; a curated text
+/// stays, and the next preview publishes it anew. It writes only the adapter's own folder, as an
+/// act of its own in the journal: its intent holding the mapping it drops, then its
+/// acknowledgment.
+fn drop_mapping(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
+    let [slug] = args else {
+        return Err("drop takes one SLUG".into());
+    };
+    let folder = ctx.board.state_folder().map_err(|e| e.said().to_string())?;
+    let Some(store) = Store::existing(&folder) else {
+        return Err(format!("{slug} is mapped to no issue: nothing is kept"));
+    };
+    let _lock = store.lock()?;
+    let mut state: State = store.state()?.unwrap_or_default();
+    let Some(mapping) = state.mappings.get(slug).cloned() else {
+        return Err(format!("{slug} is mapped to no issue"));
+    };
+    let entry = |event: Event, result: Value| Entry {
+        at: ctx.now,
+        event,
+        preview: String::new(),
+        op: format!("drop:{slug}:{}", mapping.issue_id),
+        kind: "drop".into(),
+        target: slug.clone(),
+        digest: String::new(),
+        base: serde_json::to_value(&mapping).unwrap_or_default(),
+        config: String::new(),
+        by: String::new(),
+        result,
+    };
+    store.journal(&entry(Event::Intent, Value::Null))?;
+    state.mappings.remove(slug);
+    state.resolutions.remove(slug);
+    (state.dropped.entry(slug.clone()).or_default()).insert(mapping.issue_id);
+    store.save(&state)?;
+    store.journal(&entry(Event::Ack, json!({"dropped": mapping.issue_id})))?;
+    store.drop_preview()?;
+    let _ = writeln!(
+        out,
+        "{slug} is no longer mapped to issue #{} ({}), which is kept as not this task's. Nothing \
+         was written to it or to the board.",
+        mapping.issue_number, mapping.url
+    );
+    if state.drafts.contains_key(slug) {
+        let _ = writeln!(
+            out,
+            "Its curated text stays: the next preview shows it published as a new issue."
+        );
+    }
     Ok(0)
 }
 
@@ -344,6 +428,7 @@ fn command(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
             reconcile::apply(ctx, &digest, &by, limit, out)
         }
         "resolve" => resolve(ctx, &rest, out),
+        "drop" => drop_mapping(ctx, &rest, out),
         "deliver" => {
             let file = need(&mut rest, "--request")?;
             let [verb] = rest.as_slice() else {

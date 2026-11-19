@@ -1515,7 +1515,12 @@ The rules a port must copy, in this order:
 - **state.** A matched run is `running_test`. Else a quiet subagent waiting on a process is `running_test` (`phase:
   running`), or, when the processes cannot be listed or the board cannot tell whether one there is its,
   `running_test` with `phase: unknown`. Else the terminal's status
-  (`working`, `blocked` is `waiting_on_input`, `idle` and `done` are `idle`). Else the board's health: live is `working`,
+  (`working`, `blocked` is `waiting_on_input`, `idle` and `done` are `idle`). Else, for a session that is neither an
+  orchestrator nor the chat and whose listener the idle sweep's last round confirmed, `idle` once it is at rest:
+  outside any tool call (its `busy_until` passed) and its last tool call more than 90 s ago (`LIVE_SECONDS`, the
+  window its health reads live for), when it connected standing for that call before its first. The confirmation
+  keeps such a session seen, so its health reads live after each round and stale between two, and says nothing of
+  whether it works. Else the board's health: live is `working`,
   stale `idle`, lost or left `gone`. A matched run, and a process its subagent waits on, also lift `stale` and `lost` to
   `live`; processes that cannot be listed, or one whose ownership cannot be told, make them `unknown`.
 - **A probe that fails** is `unavailable` in `probes`, and the answer is built from the board; a failing branch lookup is an
@@ -1582,7 +1587,13 @@ the sole automatic recovery attempt described above.
 What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, the
 owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, GIVEN (one line for every task the board gave the recipient since its last read, [Tasks and roles](#tasks-and-roles)), BLOCKED, WATCH, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
 child, never once a pass (a child it already hears as stale is not also listed idle, in a pushed PULL, a wait
-or `tasks pull` alike). WATCH says the pane watch could not ask hc, while it looks for no BLOCKED: once hc has
+or `tasks pull` alike). No such line is said of a child whose listener answers the idle sweep, so one at rest is
+listed idle whatever its health, and its entry stays through each round: said once. A session with no terminal
+is listed by its last tool call ([the agents API](#the-agents-api)), and the recipient's callback state keeps the
+beat each one was told idle at (`pull_idle`, from the PULL it acknowledged, which older dispatchers leave as it
+is): a dispatcher that does not list such a session forgets its entry, and this one still reads it as told while
+the session rests on that beat, so two builds on one board say it once. A new tool call is a new beat, and the
+rest after it is said again. WATCH says the pane watch could not ask hc, while it looks for no BLOCKED: once hc has
 failed at every sample for 30 s, never for one slow answer that the next sample answers, and again only after
 hc has answered. A gap of more than 30 s between two samples is time nobody sampled, the machine asleep or no
 server, and the stretch starts again at the sample after it

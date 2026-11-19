@@ -22,7 +22,7 @@ fn outside(name: &str) -> PathBuf {
     crate::scratch(&format!("launch-{name}"))
 }
 
-fn git(dir: &PathBuf, args: &[&str]) {
+pub(crate) fn git(dir: &PathBuf, args: &[&str]) {
     let done = symphony_board::sys::output(
         Command::of("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
@@ -187,7 +187,7 @@ fn a_launch_cases_folder_is_scratch_of_this_runs_own_and_goes_with_it() {
 
 impl Terminals {
     /// The repository's `symphony.toml`, which the launch reads in its main checkout.
-    fn manifest(&self, text: &str) {
+    pub(crate) fn manifest(&self, text: &str) {
         fs::write(self.env.cwd.join("symphony.toml"), text).unwrap();
     }
 
@@ -1546,7 +1546,7 @@ fn a_staffing_pass_launches_codex_for_ready_work_into_the_code_tab_and_says_so_o
 
 impl Terminals {
     /// An orchestrator holding `sim/jump`, ready, with staffing enabled in the checkout.
-    fn staffed(&self) -> String {
+    pub(crate) fn staffed(&self) -> String {
         let orch = self.orchestrator();
         self.board()
             .take_role("sim/jump", &orch, "orchestrator")

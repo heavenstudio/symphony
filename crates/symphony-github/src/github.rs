@@ -11,9 +11,10 @@ use std::collections::BTreeSet;
 
 /// A page's size, the largest GitHub serves.
 const PER_PAGE: usize = 100;
-/// The longest title and body kept of remote text.
+/// The longest title kept of remote text.
 const TITLE_CHARS: usize = 200;
-const BODY_CHARS: usize = 60_000;
+/// The longest body kept of remote text, in characters; a longer one is cut.
+pub const BODY_CHARS: usize = 60_000;
 
 /// Why a call gave no result.
 #[derive(Clone, Debug, PartialEq, Eq)]

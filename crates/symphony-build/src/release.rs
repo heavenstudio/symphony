@@ -125,7 +125,7 @@ options:
   --status              print the newest release, the last run and its age, the release
                         candidate, the landings since the last release and what the next run
                         waits for, the last publication on crates.io, the GitHub Releases
-                        asked for while [releases] github names a command, the last refresh, and the
+                        asked for once one was, the last refresh, and the
                         release current names, the machine's server and what holds the switch;
                         run nothing
   --schedule            print the schedule entry that runs `just release` each day; install nothing

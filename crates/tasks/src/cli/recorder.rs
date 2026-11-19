@@ -11,7 +11,8 @@
 //! for and signals is the command's, which keeps every descriptor, the signal mask and the ignored
 //! signals it was handed (only SIGPIPE starts at its default, as a shell's command does), and
 //! whatever ends the one, SIGKILL included, ends the other. First it forks its recorder, detached
-//! in a session of its own with none of the caller's streams open, which watches that process
+//! in a session of its own with none of the caller's streams open and out of its folder (at the
+//! root, so it is never a process working in the command's checkout), which watches that process
 //! through a kqueue (its exec, its exit and its status) and records it; the command waits at most
 //! [`READY`] to hear the recorder watches it, and runs unrecorded otherwise. Elsewhere, and in a
 //! caller's process ([`super::main`]), it runs COMMAND as its child and waits for it: as the
@@ -1508,7 +1509,7 @@ mod supervised {
         (unsafe { libc::read(told.as_raw_fd(), (&raw mut byte).cast(), 1) } == 1).then_some(byte)
     }
 
-    /// The recorder: out of the caller's session and streams, it watches `target`, takes the
+    /// The recorder: out of the caller's session, streams and folder, it watches `target`, takes the
     /// operation's lease, reads a run's tree and cleanliness and, given `tee`, makes its log and
     /// starts copying its streams or marks its caller's files; and says so on `tell` when it has a
     /// work folder to record it in ([`TEED`] when it copies streams, else [`WATCHED`]). Then it
@@ -1532,6 +1533,7 @@ mod supervised {
         ];
         keep.extend(tee.map(Tee::kept).into_iter().flatten());
         detach(&keep);
+        leave(&env.cwd);
         let mut prepared = watch
             .as_ref()
             .ok()
@@ -1687,6 +1689,17 @@ mod supervised {
                 // SAFETY: a descriptor inherited from the caller, which nothing here uses.
                 unsafe { libc::close(fd) };
             }
+        }
+    }
+
+    /// Out of its caller's folder, to the root: the recorder writes nothing there, and names what
+    /// it reads there from `cwd`, the folder its command runs in, so whoever asks which processes
+    /// work in a checkout (a release run's look after each check, the worktree sweep, a land)
+    /// never counts a recorder still writing down how its command ended. It stays where it is
+    /// when `cwd` is no whole path, as it then has nothing else to name that folder by.
+    fn leave(cwd: &std::path::Path) {
+        if cwd.is_absolute() {
+            let _ = std::env::set_current_dir("/");
         }
     }
 
