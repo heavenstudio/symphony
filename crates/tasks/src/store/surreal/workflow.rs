@@ -42,18 +42,18 @@ RETURN NONE;";
 
 /// What an activation plans from, in one read: the active generation, each task a workflow
 /// holds or the board's writers keep open, with its row's version, status, position, blocked
-/// source and the accepted output its last transition left (the event at its workflow revision),
-/// and each execution attempt whose runtime may still be alive, with its task and the
-/// cancellation asked of it.
+/// source, the accepted output its last transition left (the event at its workflow revision), and
+/// its execution attempts whose runtime may still be alive and that no cancel was asked of, oldest
+/// first.
 pub(in crate::store) const STANDINGS: &str = "
 RETURN {
     active: (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL,
     tasks: (SELECT slug, version, status, fields._board.workflow ?? NULL AS position,
         fields._board.blocked.from ?? NULL AS blocked_from,
-        type::record('workflow', ['event', slug, fields._board.workflow.revision ?? 0]).body.accepted ?? NULL AS accepted
+        type::record('workflow', ['event', slug, fields._board.workflow.revision ?? 0]).body.accepted ?? NULL AS accepted,
+        (SELECT VALUE attempt FROM execution_attempt WHERE task = $parent.slug AND live = true
+            AND (state.cancellation ?? 'none') = 'none' ORDER BY created, attempt) AS attempts
         FROM task WHERE status NOT IN ['done', 'cancelled'] OR fields._board.workflow != NONE ORDER BY slug),
-    attempts: (SELECT attempt, task, created, state.cancellation AS cancellation
-        FROM execution_attempt WHERE live = true ORDER BY created, attempt),
 };";
 
 /// An activation, whole: refused as stale unless the active generation is still `$expected` and

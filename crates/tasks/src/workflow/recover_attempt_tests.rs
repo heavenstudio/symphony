@@ -88,7 +88,7 @@ fn proposed(
 
 fn recovery(proposal: Result<Proposal, Refusal>) -> Recovery {
     match proposal {
-        Ok(Proposal::Recovery(recovery)) => *recovery,
+        Ok(Proposal::Recovery { recovery, .. }) => *recovery,
         other => panic!("expected a recovery, got {other:?}"),
     }
 }
@@ -99,8 +99,6 @@ fn answered(trigger: Trigger, manual: bool) -> Recovered {
         holder: "amber".into(),
         role: "executor".into(),
         manual,
-        attempt: Some("ab12".into()),
-        exhausted: None,
     }
 }
 
@@ -132,10 +130,8 @@ fn past(revision: u64, edge: Option<&str>, exhausted: Option<&str>) -> Transitio
         principal: board_service("recovery"),
         effects: Vec::new(),
         key: None,
-        recovery: (edge.is_some() || exhausted.is_some()).then(|| Recovered {
-            exhausted: exhausted.map(str::to_string),
-            ..answered(Trigger::AttemptFailure, exhausted.is_some())
-        }),
+        recovery: (edge.is_some() || exhausted.is_some())
+            .then(|| answered(Trigger::AttemptFailure, exhausted.is_some())),
         accepted: None,
         at: 1.0,
     }
@@ -185,7 +181,8 @@ fn an_executors_failed_attempt_moves_its_task_by_the_positions_action_on_the_rec
                     policy: Slot::Release
                 },
             ],
-            key: None,
+            // The board answers the attempt once, by its key.
+            key: Some("attempt/ab12".into()),
             recovery: Some(answered(Trigger::AttemptFailure, false)),
             accepted: None,
             at: 7.0,
@@ -257,10 +254,14 @@ fn a_failed_check_takes_the_automatic_edge_until_its_bound_is_exhausted() {
         Some(Recovered {
             holder: "ab12".into(),
             role: "checker".into(),
-            exhausted: Some("rework".into()),
             ..answered(Trigger::AttemptFailure, true)
         })
     );
+    assert_eq!(transition.key.as_deref(), Some("attempt/ab12"));
+    assert!(matches!(
+        rework(&twice),
+        Ok(Proposal::Recovery { exhausted: Some(edge), .. }) if edge == "rework"
+    ));
     assert_eq!(
         transition.effects,
         [Effect::Slot {
@@ -315,7 +316,7 @@ fn a_failed_check_takes_the_automatic_edge_until_its_bound_is_exhausted() {
             past(3, Some("rework"), None),
             past(4, Some("rework"), None)
         ]),
-        Ok(Proposal::Recovery(_))
+        Ok(Proposal::Recovery { .. })
     ));
 }
 

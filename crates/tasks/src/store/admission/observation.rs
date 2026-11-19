@@ -98,8 +98,11 @@ impl Store {
                     },
                     answered,
                 }),
-                Proposal::Recovery(recovery) => {
-                    self.recovered(&decided, &recovery, &principal, at)?;
+                Proposal::Recovery {
+                    recovery,
+                    exhausted,
+                } => {
+                    self.recovered(&decided, &recovery, exhausted.as_deref(), &principal, at)?;
                     let transition = recovery.transition.expect("an ending's recovery moves");
                     Ok(Next::Answered(transition))
                 }
@@ -157,6 +160,7 @@ impl Store {
         &self,
         decided: &Decided,
         recovery: &Recovery,
+        exhausted: Option<&str>,
         principal: &Principal,
         at: f64,
     ) -> Result<(), Failure> {
@@ -197,7 +201,10 @@ impl Store {
             "position": transition.position(),
             "moved": transition.status != decided.task.status,
             "sender": format!("{}/{}", principal.issuer, principal.subject),
-            "said": said(recovery, ""),
+            "said": match exhausted {
+                Some(edge) => format!("{}; {edge}'s retry bound is exhausted", said(recovery, "")),
+                None => said(recovery, ""),
+            },
             "now": at,
             "slots": slots,
         });
@@ -208,6 +215,6 @@ impl Store {
 
 /// The transition that answered `attempt`'s ending, if one did.
 fn answering<'a>(transitions: &'a [Transition], attempt: &str) -> Option<&'a Transition> {
-    (transitions.iter())
-        .find(|t| (t.recovery.as_ref()).and_then(|r| r.attempt.as_deref()) == Some(attempt))
+    let key = format!("attempt/{attempt}");
+    (transitions.iter()).find(|t| t.recovery.is_some() && t.key.as_deref() == Some(key.as_str()))
 }

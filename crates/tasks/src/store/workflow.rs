@@ -44,7 +44,8 @@ pub struct TaskPosition {
 /// What a recovery answered (docs/WORKFLOW.md, "Recovery"): a holder's exit
 /// (`Store::recover_holder`), an agent's own release of its role or a holder lost, or an execution
 /// attempt's ending (`Store::observe_attempt`), each by the position's configured action; or the
-/// automatic edge the board took on an attempt's failure.
+/// automatic edge the board took on an attempt's failure. A transition answering an attempt is
+/// keyed `attempt/ID` ([`Transition::key`]), which names the attempt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recovered {
@@ -57,13 +58,6 @@ pub struct Recovered {
     pub role: String,
     /// Whether the action asks a person to recover the task by hand.
     pub manual: bool,
-    /// The execution attempt whose ending it answered: an attempt's ending is answered once.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub attempt: Option<String>,
-    /// The automatic edge whose retry bound this recovery exhausted, sending the task to the
-    /// bound's `exhausted` pair: the board counts that edge's takes from here again.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exhausted: Option<String>,
 }
 
 /// What a recovery answers: the position's `release` action, its `lost_holder` one, or, on an
@@ -120,19 +114,7 @@ impl TaskPosition {
         let manual = match fields.get("manual") {
             None | Some(Value::Null) => None,
             Some(recovered) => {
-                const RECOVERED: [&str; 6] = [
-                    "trigger",
-                    "holder",
-                    "role",
-                    "manual",
-                    "attempt",
-                    "exhausted",
-                ];
-                let recovered = known(recovered, &RECOVERED)?;
-                let optional = |key| match recovered.get(key) {
-                    None | Some(Value::Null) => Some(None),
-                    Some(_) => text(recovered, key).map(Some),
-                };
+                let recovered = known(recovered, &["trigger", "holder", "role", "manual"])?;
                 Some(Recovered {
                     trigger: match recovered.get("trigger")?.as_str()? {
                         "release" => Trigger::Release,
@@ -144,8 +126,6 @@ impl TaskPosition {
                     holder: text(recovered, "holder")?,
                     role: text(recovered, "role")?,
                     manual: recovered.get("manual")?.as_bool()?,
-                    attempt: optional("attempt")?,
-                    exhausted: optional("exhausted")?,
                 })
             }
         };
@@ -198,7 +178,8 @@ pub struct Transition {
     pub principal: Principal,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<Effect>,
-    /// The idempotency key of the request that made it.
+    /// The idempotency key of the request that made it: `attempt/ID` for the board's answer to
+    /// execution attempt ID's ending, by an edge or a recovery, which answers it once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// The holder's exit it answered, for a recovery's move or stay.
@@ -289,15 +270,6 @@ const PLANS: usize = 5;
 struct Standings {
     active: Option<Active>,
     tasks: Vec<Read>,
-    attempts: Vec<LiveRead>,
-}
-
-/// A live execution attempt, as an activation reads it.
-#[derive(Deserialize)]
-struct LiveRead {
-    attempt: String,
-    task: String,
-    cancellation: crate::execution::Cancellation,
 }
 
 #[derive(Deserialize)]
@@ -308,6 +280,9 @@ struct Read {
     position: Option<TaskPosition>,
     blocked_from: Option<String>,
     accepted: Option<String>,
+    /// Its live execution attempts no cancel was asked of, oldest first.
+    #[serde(default)]
+    attempts: Vec<String>,
 }
 
 impl Store {
@@ -393,13 +368,6 @@ impl Store {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    let attempts = (read.attempts.iter())
-                        .filter(|live| live.task == task.slug)
-                        .map(|live| activate::Live {
-                            attempt: live.attempt.clone(),
-                            cancelled: live.cancellation != crate::execution::Cancellation::None,
-                        })
-                        .collect();
                     activate::Standing {
                         slug: task.slug,
                         version: task.version,
@@ -407,7 +375,7 @@ impl Store {
                         position: task.position,
                         blocked_from: task.blocked_from,
                         roles,
-                        attempts,
+                        attempts: task.attempts,
                         accepted: task.accepted,
                     }
                 })

@@ -653,7 +653,9 @@ fn said(transition: &Transition) -> String {
         named(&transition.to),
         transition.revision
     );
-    if let Some(attempt) = (transition.recovery.as_ref()).and_then(|r| r.attempt.as_deref()) {
+    // The board's take answering an attempt records what it recovered, keyed by the attempt.
+    let key = (transition.recovery.as_ref()).and(transition.key.as_deref());
+    if let Some(attempt) = key.and_then(|k| k.strip_prefix("attempt/")) {
         line.push_str(&format!(", on the failure of attempt {attempt}"));
     }
     line

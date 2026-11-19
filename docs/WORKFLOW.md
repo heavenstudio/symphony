@@ -332,8 +332,8 @@ moves, so a decision another write overtook is made again. An ending from a pair
 workflow revision the task has left (it moved, was reassigned, or activation placed it elsewhere)
 is refused as `stale_task`, and one whose position declares no action for it as
 `explicit_action_required`: either stays on its attempt and moves nothing. The transition records
-the attempt with what it recovered (`Recovered::attempt`, and `Recovered::exhausted` for a bound
-run out), and an ending is answered once: a repeat answers the transition that answered it. Its
+what it recovered (`Transition::recovery`) under the key `attempt/ID`, an edge's and a recovery's
+alike, and an ending is answered once: a repeat answers the transition keyed by its attempt. Its
 line on the thread names the attempt and, where it ran out, the bound.
 
 ## Operations

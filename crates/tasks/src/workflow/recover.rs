@@ -129,8 +129,6 @@ pub fn recover(
         holder: holder.to_string(),
         role: staffed_role,
         manual: action.manual,
-        attempt: None,
-        exhausted: None,
     };
     Ok(Recovery {
         transition: Some(acted(
@@ -229,11 +227,18 @@ pub struct Observation {
 }
 
 /// What an attempt's ending proposes: the automatic edge the board takes through admission,
-/// recording what it answered, or a recovery written as a holder's is.
+/// recording what it answered, or a recovery written as a holder's is, keyed `attempt/ID`, with
+/// the automatic edge whose retry bound it exhausted, if it did.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Proposal {
-    Edge { edge: String, answered: Recovered },
-    Recovery(Box<Recovery>),
+    Edge {
+        edge: String,
+        answered: Recovered,
+    },
+    Recovery {
+        recovery: Box<Recovery>,
+        exhausted: Option<String>,
+    },
 }
 
 /// What `observation` proposes for the task `facts` read, whose recorded `transitions` these are,
@@ -292,9 +297,8 @@ pub fn observed(
         holder: observation.handle.clone().unwrap_or_else(|| id.clone()),
         role: observation.role.clone(),
         manual: false,
-        attempt: Some(id.clone()),
-        exhausted: None,
     };
+    let mut exhausted = None;
     let actions = declared.recovery.as_ref();
     let action = match observation.trigger {
         Trigger::AttemptFailure => {
@@ -317,7 +321,7 @@ pub fn observed(
                 Some(edge) => match &edge.retry {
                     Some(retry) if taken(transitions, edge, &retry.exhausted) >= retry.maximum => {
                         // Exhausted: the failure's own action, sent where the bound says.
-                        answered.exhausted = Some(edge.id.clone());
+                        exhausted = Some(edge.id.clone());
                         RecoveryAction {
                             target: Some(retry.exhausted.clone()),
                             manual: true,
@@ -366,13 +370,20 @@ pub fn observed(
         .collect();
     drop.sort();
     drop.dedup();
-    Ok(Proposal::Recovery(Box::new(Recovery {
-        transition: Some(acted(
+    let transition = Transition {
+        key: Some(format!("attempt/{id}")),
+        ..acted(
             context, facts, position, declared, &action, None, answered, principal, at,
-        )),
-        drop,
-        acquires: action.slot == Slot::Acquire,
-    })))
+        )
+    };
+    Ok(Proposal::Recovery {
+        recovery: Box::new(Recovery {
+            transition: Some(transition),
+            drop,
+            acquires: action.slot == Slot::Acquire,
+        }),
+        exhausted,
+    })
 }
 
 /// How many times the board took the automatic edge `edge` on an attempt's ending, of the task
@@ -382,10 +393,9 @@ pub fn observed(
 /// it was not automatic, is no take of the board's. Activation keeps `exhausted` off the pairs the
 /// edge leaves and enters ([`super::activate::supported`]), so a take never restarts the count.
 fn taken(transitions: &[Transition], edge: &Edge, exhausted: &Pair) -> u32 {
-    let board = |t: &&Transition| {
-        t.edge.as_deref() == Some(edge.id.as_str())
-            && t.recovery.as_ref().is_some_and(|r| r.attempt.is_some())
-    };
+    // An edge's transition records what it recovered only where the board took it.
+    let board =
+        |t: &&Transition| t.edge.as_deref() == Some(edge.id.as_str()) && t.recovery.is_some();
     let since = (transitions.iter().rev()).take_while(|t| t.to != *exhausted);
     since.filter(board).count() as u32
 }

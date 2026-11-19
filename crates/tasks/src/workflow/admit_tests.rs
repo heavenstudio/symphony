@@ -618,8 +618,6 @@ fn an_automatic_edge_is_the_boards_to_take_on_an_attempts_ending_never_a_callers
         holder: "ab12".into(),
         role: "checker".into(),
         manual: false,
-        attempt: Some("ab12".into()),
-        exhausted: None,
     };
     let observed = |edge: &str| {
         let request = request(&custom, &facts, edge);

@@ -388,16 +388,8 @@ fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
 fn a_live_attempt_keeps_its_task_from_moving_until_it_ends_or_is_cancelled() {
     let two = custom(&format!("{TWO}{MAPPED}"));
     let mut working = standing("sim/working", "in_progress");
-    working.attempts = vec![
-        Live {
-            attempt: "aa11".into(),
-            cancelled: true,
-        },
-        Live {
-            attempt: "bb22".into(),
-            cancelled: false,
-        },
-    ];
+    // An attempt a cancel was asked of is not read: its result no longer counts.
+    working.attempts = vec!["bb22".into()];
     assert_eq!(
         planned(&two, None, &[working.clone()]),
         Err(
@@ -407,10 +399,7 @@ fn a_live_attempt_keeps_its_task_from_moving_until_it_ends_or_is_cancelled() {
                 .into()
         )
     );
-    // Cancelled, no result of it counts: the task moves, and the attempt keeps its ending.
-    working.attempts[1].cancelled = true;
-    assert!(planned(&two, None, &[working.clone()]).is_ok());
-    // Drained, nothing holds the task.
+    // Drained or cancelled, nothing holds the task, and a cancelled attempt keeps its ending.
     working.attempts.clear();
     assert!(planned(&two, None, &[working]).is_ok());
 }
@@ -429,10 +418,7 @@ fn a_task_activation_keeps_where_it_stands_keeps_its_live_attempt() {
         manual: None,
     });
     working.roles = vec![("amber".into(), "executor".into(), true)];
-    working.attempts = vec![Live {
-        attempt: "bb22".into(),
-        cancelled: false,
-    }];
+    working.attempts = vec!["bb22".into()];
     let definition = two.definition.definition();
     let placed = plan(&two, Some(definition), &[working.clone()], 2, &by(), 60.0).unwrap();
     assert_eq!(
@@ -819,10 +805,7 @@ fn an_activation_carries_an_accepted_output_supersedes_it_where_none_stands_and_
     // That transition leaves the task at another revision, where a live attempt's ending, pinned
     // to the one before, would answer nothing: it drains first, or is cancelled.
     let mut running = held.clone();
-    running.attempts = vec![Live {
-        attempt: "bb22".into(),
-        cancelled: false,
-    }];
+    running.attempts = vec!["bb22".into()];
     assert_eq!(
         replanned(unsatisfied.clone(), Vec::new(), &running),
         Err(
@@ -832,7 +815,7 @@ fn an_activation_carries_an_accepted_output_supersedes_it_where_none_stands_and_
                 .into()
         )
     );
-    running.attempts[0].cancelled = true;
+    running.attempts.clear();
     assert_eq!(
         only(replanned(unsatisfied, Vec::new(), &running).unwrap()).accepted,
         None

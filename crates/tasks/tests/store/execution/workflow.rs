@@ -195,8 +195,8 @@ on_both! {
         assert_eq!(moved.principal, board_service("recovery"));
         let answered = moved.recovery.clone().unwrap();
         assert_eq!(
-            (answered.trigger, answered.attempt.as_deref(), answered.holder.as_str(), answered.manual),
-            (Trigger::AttemptFailure, Some(attempt.id.as_str()), "amber-heron", false)
+            (answered.trigger, moved.key.clone(), answered.holder.as_str(), answered.manual),
+            (Trigger::AttemptFailure, Some(format!("attempt/{}", attempt.id)), "amber-heron", false)
         );
         assert_eq!(
             recoveries(&f, TASK),
@@ -230,7 +230,9 @@ on_both! {
         let stayed = f.store.workflow_position(TASK).unwrap().unwrap();
         assert_eq!(stayed.at(), pair("build", "working"));
         let manual = stayed.manual.clone().expect("a person decides");
-        assert_eq!((manual.trigger, manual.attempt.as_deref()), (Trigger::AttemptFailure, Some(attempt.id.as_str())));
+        assert_eq!(manual.trigger, Trigger::AttemptFailure);
+        let keyed = |f: &Fixture| transitions(f, TASK).last().unwrap().key.clone();
+        assert_eq!(keyed(&f), Some(format!("attempt/{}", attempt.id)));
         assert_eq!(f.store.get(TASK).unwrap().status, "in_progress");
         assert_eq!(roles(&f, TASK), [("amber-heron".into(), "executor".into())], "its role kept");
 
@@ -243,7 +245,8 @@ on_both! {
         answered(c.step(&retry.id));
         let again = f.store.workflow_position(TASK).unwrap().unwrap();
         assert_eq!(again.revision, stayed.revision + 1);
-        assert_eq!(again.manual.unwrap().attempt, Some(retry.id.clone()));
+        assert_eq!(again.manual.unwrap().trigger, Trigger::AttemptFailure);
+        assert_eq!(keyed(&f), Some(format!("attempt/{}", retry.id)));
         assert_eq!(recoveries(&f, TASK).len(), 2);
     }
 
@@ -334,10 +337,11 @@ on_both! {
         );
         assert!(fake.calls().is_empty());
         assert_eq!(at(&f, TASK), pair("build", "available"));
-        let answered = transitions(&f, TASK).last().unwrap().recovery.clone().unwrap();
+        let acknowledged = transitions(&f, TASK).last().unwrap().clone();
+        let answered = acknowledged.recovery.unwrap();
         assert_eq!(
-            (answered.trigger, answered.attempt, answered.manual),
-            (Trigger::CancellationAcknowledged, Some(check.id.clone()), false)
+            (answered.trigger, acknowledged.key, answered.manual),
+            (Trigger::CancellationAcknowledged, Some(format!("attempt/{}", check.id)), false)
         );
         assert!(
             recoveries(&f, TASK).last().unwrap().contains(&format!(
@@ -377,8 +381,7 @@ on_both! {
             assert_eq!(reworked.edge.as_deref(), Some("rework"));
             assert_eq!(reworked.principal, board_service("recovery"));
             assert_eq!(reworked.key.as_deref(), Some(format!("attempt/{}", check.id).as_str()));
-            let answered = reworked.recovery.clone().unwrap();
-            assert_eq!((answered.attempt, answered.exhausted), (Some(check.id.clone()), None));
+            assert_eq!(reworked.recovery.as_ref().unwrap().trigger, Trigger::AttemptFailure);
             assert!(
                 f.said(OTHER_TASK).iter().any(|line| line.ends_with(&format!(
                     "verify/checking → build/available, workflow revision {}, on the failure of attempt {}",
@@ -397,18 +400,14 @@ on_both! {
         assert_eq!(stuck.at(), pair("verify", "stuck"));
         assert_eq!(f.store.get(OTHER_TASK).unwrap().status, "blocked");
         let manual = stuck.manual.unwrap();
-        assert_eq!(
-            (manual.attempt, manual.exhausted.as_deref(), manual.manual),
-            (Some(check.id.clone()), Some("rework"), true)
-        );
+        assert_eq!((manual.trigger, manual.manual), (Trigger::AttemptFailure, true));
+        let exhaustion = transitions(&f, OTHER_TASK).last().unwrap().clone();
+        assert_eq!(exhaustion.key, Some(format!("attempt/{}", check.id)));
+        let line = recoveries(&f, OTHER_TASK).last().unwrap().clone();
         assert!(
-            recoveries(&f, OTHER_TASK).last().unwrap().contains(&format!(
-                "checker attempt {} failed, and rework's retry bound is exhausted; verify/checking \
-                 → verify/stuck",
-                check.id
-            )),
-            "{:?}",
-            recoveries(&f, OTHER_TASK)
+            line.contains(&format!("checker attempt {} failed; verify/checking → verify/stuck", check.id))
+                && line.ends_with("; rework's retry bound is exhausted"),
+            "{line}"
         );
         // The owner sends it back: the count starts again.
         take(&f.store, OTHER_TASK, &local_owner(), "unstick");

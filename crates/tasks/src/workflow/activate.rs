@@ -156,7 +156,9 @@ fn named(pair: &Pair) -> String {
 /// A task as activation reads it: its row's version, its status, where a workflow holds it, the
 /// status a blocked task came from, the roles held on it, each with whether its holder is alive
 /// enough to hold it ([`crate::Health::holds`]), the accepted output its last transition left, and
-/// its execution attempts whose runtime may still be alive ([`crate::Store::live_attempts`]).
+/// its execution attempts whose runtime may still be alive ([`crate::Store::live_attempts`]) and
+/// that no cancel was asked of: a cancel invalidates an attempt, after which no result of it
+/// counts or moves its task.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Standing {
     pub slug: String,
@@ -166,15 +168,7 @@ pub struct Standing {
     pub blocked_from: Option<String>,
     pub roles: Vec<(String, String, bool)>,
     pub accepted: Option<String>,
-    pub attempts: Vec<Live>,
-}
-
-/// A live execution attempt of a task, as activation reads it: its id, and whether a cancel was
-/// asked of it, which invalidates it: from then on no result of it counts or moves its task.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Live {
-    pub attempt: String,
-    pub cancelled: bool,
+    pub attempts: Vec<String>,
 }
 
 /// What an activation writes: each task moved, by its transition, from the version and workflow
@@ -287,19 +281,18 @@ pub fn plan(
 }
 
 /// Refused while `task` runs work that has not drained: an execution attempt no cancel was asked
-/// of, where activation `changes` its position (records it a transition, which leaves the
+/// of (its `attempts`), where activation `changes` its position (records it a transition, which leaves the
 /// attempt's ending pinned to a revision the task no longer stands at) or `restaffs` it, as an
 /// attempt is never rebound to another position (let it end, or cancel it); or a live executor or
 /// reviewer where it moves or restaffs it, whose local session is no attempt the board sees until
 /// local launches are recorded as attempts (tools/local-provider-attempts).
 fn drained(task: &Standing, changes: bool, restaffs: bool) -> Result<(), String> {
     let slug = &task.slug;
-    if let Some(live) = (task.attempts.iter()).find(|a| !a.cancelled && (changes || restaffs)) {
+    if let Some(live) = task.attempts.first().filter(|_| changes || restaffs) {
         return Err(format!(
-            "{slug} runs execution attempt {}, and activation would change its position or its \
-             staffing; an attempt drains first (let it end, or cancel it), and is never \
-             rebound to another position",
-            live.attempt
+            "{slug} runs execution attempt {live}, and activation would change its position or \
+             its staffing; an attempt drains first (let it end, or cancel it), and is never \
+             rebound to another position"
         ));
     }
     if let Some((handle, role, _)) = (task.roles.iter())

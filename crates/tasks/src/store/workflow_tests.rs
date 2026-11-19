@@ -45,8 +45,7 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
         ),
         with(
             "manual",
-            json!({"trigger": "attempt_failure", "holder": "ab12", "role": "checker",
-                   "manual": true, "attempt": "ab12", "exhausted": null}),
+            json!({"trigger": "attempt_failure", "holder": "ab12", "role": "checker", "manual": true}),
         ),
         // Each refused as its decoder refuses it.
         without("digest"),
@@ -76,11 +75,7 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
         with("manual", json!("lost_holder")),
         with(
             "manual",
-            json!({"trigger": "attempt_failure", "holder": "a", "role": "r", "manual": true, "attempt": 7}),
-        ),
-        with(
-            "manual",
-            json!({"trigger": "attempt_failure", "holder": "a", "role": "r", "manual": true, "exhausted": false}),
+            json!({"trigger": "cancellation_acknowledged", "holder": "a", "role": "r", "manual": true, "attempt": "a"}),
         ),
         json!(["build", "working"]),
         Value::Null,
@@ -133,10 +128,7 @@ fn every_position_the_types_hold_is_read_by_field_as_it_is_written() {
         | Trigger::AttemptFailure
         | Trigger::CancellationAcknowledged => trigger,
     });
-    for (trigger, attempt) in triggers
-        .into_iter()
-        .zip([None, None, Some("ab12"), Some("cd34")])
-    {
+    for trigger in triggers {
         let position = TaskPosition {
             phase: "build".into(),
             state: "working".into(),
@@ -149,8 +141,6 @@ fn every_position_the_types_hold_is_read_by_field_as_it_is_written() {
                 holder: "amber".into(),
                 role: "executor".into(),
                 manual: true,
-                attempt: attempt.map(str::to_string),
-                exhausted: attempt.map(|_| "rework".to_string()),
             }),
         };
         let written = serde_json::to_value(&position).unwrap();
