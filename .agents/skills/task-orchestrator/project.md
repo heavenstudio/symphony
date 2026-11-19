@@ -31,3 +31,8 @@ Read this page with the orchestrator skill, as the [root guide](../../../AGENTS.
   forcibly cycle an active worker, edit its feature branch or change global trust. Handle its
   current task-authorized prompt through the active approval flow; a redirected prompt alone
   is no reason to restart or repeat a recorded check.
+- A task that moves the board's schema (it raises `VERSION` in `crates/tasks/src/schema.rs`):
+  before its land, read `just release --status` and hold it while a run is in progress or a
+  release candidate is open, or while `current` names no release serving the last schema landed;
+  after its land, run `just release` at once, without asking, unless the land's own `--due`
+  started a run ([the cadence](../../../docs/RELEASES.md#the-cadence)).

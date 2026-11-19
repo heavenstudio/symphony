@@ -872,6 +872,22 @@ the hour, and its green release refreshes the server and its projects
   run has checked a commit, the count starts again from it, and the next landing that brings it to
   the count starts the next run. Between `--due`'s look and the run's start, a run that took the
   lock first refuses the second, which is not doubled either (*One run at a time*, above).
+- **A landing that moves the board's schema** (it raises `VERSION` in
+  `crates/tasks/src/schema.rs`, which its `Consumer-Note: board` trailer says,
+  [CHECKS](CHECKS.md#what-a-landing-tells-a-consumer)) is followed at once by a release run,
+  whatever the count ([the owner's A](DECISIONS.md#schema-landing-then-release), 2026-11-19).
+  Main's build moves this repository's board at its first command after the landing
+  ([TASKS](TASKS.md#where-it-lives)), and the machine's server, a release's, then writes nothing
+  to it until a release at the new schema serves it ([the switch](#the-switch)): the run brings
+  that release in one run, not at the count's. The orchestrator who landed it runs `just release`
+  once the land is done ([who runs it](#who-runs-it)), unless the land's own `--due` started a
+  run, which is that run. Such a landing waits, approved, while a run or the release candidate
+  holds the release (`just release --status`: `next run: in progress`, or a candidate open),
+  since a run started then judges nothing of main's newest commit ([main while it is
+  open](#main-while-it-is-open)), and lands once neither does. A second one waits until `current`
+  names a release serving the first's schema (`--status`'s `machine:` and `last refresh:` lines),
+  so the board is never two schemas ahead of the server, which reads nothing of a board that far
+  ahead.
 
 ## The refresh
 
@@ -1127,7 +1143,10 @@ nothing else. An orchestrator pushes main and never a tag ([AGENTS](../AGENTS.md
 cannot be taken back once a project fetches it, so running `just release` or
 `just release --commit` by hand and installing its schedule are the owner's call: an orchestrator
 does either only on the owner's word. The cadence's run has that word (*The cadence*, above): a
-land starts `--due` without asking, and the release it runs is automatic. So has a green release's
+land starts `--due` without asking, and the release it runs is automatic. So has the run that
+follows a landing that moves the board's schema (*The cadence*, above): the orchestrator who
+landed it runs `just release` without asking each time, the owner's standing word for those runs
+alone, and any other run by hand stays the owner's call. So has a green release's
 refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
 run without asking on a red refresh's task once it is fixed, or once a project finished what its
 step left to it (each writer named rebuilt and run once). The machine's server is not the
