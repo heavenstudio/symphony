@@ -101,6 +101,36 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
     }
 }
 
+/// Every position the types can hold, each optional field set and each trigger, is read by field
+/// as it is written: a field the types gain breaks the literals below and a trigger breaks the
+/// match, and each fails here until `TaskPosition::of` reads it, so a position a newer writer
+/// records is never read as no position.
+#[test]
+fn every_position_the_types_hold_is_read_by_field_as_it_is_written() {
+    let triggers = [Trigger::Release, Trigger::LostHolder].map(|trigger| match trigger {
+        // A trigger the enum gains stops compiling here: list it above as well.
+        Trigger::Release | Trigger::LostHolder => trigger,
+    });
+    for trigger in triggers {
+        let position = TaskPosition {
+            phase: "build".into(),
+            state: "working".into(),
+            resume: Some(pair("build", "available")),
+            generation: 2,
+            revision: 7,
+            digest: "d1".into(),
+            manual: Some(Recovered {
+                trigger,
+                holder: "amber".into(),
+                role: "executor".into(),
+                manual: true,
+            }),
+        };
+        let written = serde_json::to_value(&position).unwrap();
+        assert_eq!(TaskPosition::of(&written), Some(position), "{written}");
+    }
+}
+
 fn owner() -> Principal {
     Principal::new(PrincipalKind::Human, "local".into(), "owner".into())
 }
