@@ -1,6 +1,6 @@
 // The approved waiting board's presentation. The server supplies complete counts and pages;
 // these helpers place and order live changes by the same waiting-column contract.
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { href } from "./project";
 import { slugOrder } from "./task";
 import { markTasksReady } from "./taskcard";
@@ -100,8 +100,36 @@ export function waitLabel(task: Task): string {
   }
 }
 
+/**
+ * `text` as a cut line shows it, its start and the end it keeps: texts that differ only at their
+ * end (a slug's last word, a wait's task, a reason's last words) stay told apart when the line is
+ * too narrow for them. The end starts at the first space, hyphen or slash among the last 16
+ * characters that leaves it ten or more, else ten characters from the end, never inside a
+ * character; a text of 16 or fewer is all start.
+ */
+export function ends(text: string): [string, string] {
+  const at = text.length > 16 ? text.search(/[ /-].{1,15}$|.{10}$/su) : -1;
+  return at < 0 ? [text, ""] : [text.slice(0, at), text.slice(at)];
+}
+
+/** A line of text that keeps its end when cut: the ellipsis falls between its two parts. */
+export function Ends({ text }: { text: string }) {
+  const [head, tail] = ends(text);
+  return (
+    <>
+      <span className="cut-head">{head}</span>
+      {tail !== "" && <span className="cut-tail">{tail}</span>}
+    </>
+  );
+}
+
+/**
+ * A task's card on the waiting board. Closed, it keeps its fixed box (`ROW`, board.tsx); its one
+ * button opens it in place, by key or touch, to the whole of its title, slug, wait and reason.
+ */
 export function WaitCard({ task, now }: { task: Task; now: number }) {
   useEffect(markTasksReady);
+  const [open, setOpen] = useState(false);
   const kind = waitKind(task);
   const finished = ["done", "cancelled"].includes(task.status);
   const since = finished ? task.updated : waitSince(task);
@@ -123,6 +151,7 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
     <div
       className={`taskcard waiting-card p${task.priority} k-${kind}${blocked(task) ? " is-blocked" : ""}`}
       data-slug={task.slug}
+      data-open={open ? "true" : undefined}
     >
       <a className="taskcard-title" href={href(`/task/${task.slug}`)}>
         {blocked(task) && <span className="blocked-mark">blocked</span>}
@@ -134,15 +163,29 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
         {task.title}
       </a>
       <div className="waiting-slug">
-        <code>{task.slug}</code> <span className="prio">{`p${task.priority}`}</span>
+        <code>
+          <Ends text={task.slug} />
+        </code>
+        <span className="prio">{`p${task.priority}`}</span>
+        <button
+          type="button"
+          className="card-more"
+          aria-expanded={open}
+          aria-label={`Show all of ${task.title}`}
+          onClick={() => setOpen(!open)}
+        >
+          ▾
+        </button>
       </div>
       <div className="task-wait">
         <span className="on" title={waitLabel(task)}>
-          {finished ? (task.status === "done" ? "Done" : "Cancelled") : waitLabel(task)}
+          <Ends
+            text={finished ? (task.status === "done" ? "Done" : "Cancelled") : waitLabel(task)}
+          />
         </span>
         <span className={old ? "age old" : "age"}>{waitAge(since, now)}</span>
         <span className="why" title={why}>
-          {why}
+          <Ends text={why} />
         </span>
       </div>
     </div>

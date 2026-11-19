@@ -127,6 +127,62 @@ fn a_raised_exception_is_thrown_rolls_its_request_back_and_the_connection_serves
     assert_eq!(client.requests(), 5);
 }
 
+/// Waits until one connection of `holder`'s database waits on the advisory lock `key`, which
+/// `holder` holds: `what` it is that waits.
+fn awaited(holder: &pg::Client, key: u32, what: &str) {
+    let waiting = || {
+        let read = holder.request(&[Step::bare(&format!(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = {key} \
+             AND NOT granted AND database = \
+             (SELECT oid FROM pg_database WHERE datname = current_database())"
+        ))]);
+        value(&read.unwrap(), 0) == Some("1")
+    };
+    let backstop = test_time::backstop(Duration::from_secs(5));
+    test_time::until_true(what, backstop, waiting).unwrap();
+}
+
+#[test]
+fn the_statements_of_one_request_read_one_snapshot_whatever_commits_between_them() {
+    let client = with_a_row();
+    // Another connection holds the lock the reader waits on between its statements, and a third
+    // commits meanwhile: a read sent as a statement a list ([`pg::Answer::column`]) is one board.
+    let holder = client.another();
+    holder.simple("SELECT pg_advisory_lock(4343)").unwrap();
+    let reader = client.another();
+    let read = std::thread::scope(|scope| {
+        let reading = scope.spawn(|| {
+            reader.request(&[
+                Step::bare("SELECT n FROM t ORDER BY id"),
+                Step::bare("SELECT FROM pg_advisory_xact_lock(4343)"),
+                Step::bare("SELECT n FROM t ORDER BY id"),
+                Step::bare("SELECT count(*) FROM t"),
+            ])
+        });
+        awaited(&holder, 4343, "the reader waits on the lock");
+        client
+            .request(&[
+                Step::bare("UPDATE t SET n = 10 WHERE id = 1"),
+                Step::bare("INSERT INTO t VALUES (2, 20)"),
+            ])
+            .unwrap();
+        holder.simple("SELECT pg_advisory_unlock(4343)").unwrap();
+        reading.join().unwrap()
+    })
+    .unwrap();
+    assert_eq!(read[0].column(), ["0"]);
+    assert_eq!(
+        read[2].column(),
+        ["0"],
+        "what committed after its first statement"
+    );
+    assert_eq!(value(&read, 3), Some("1"));
+    let after = reader
+        .request(&[Step::bare("SELECT n FROM t ORDER BY id")])
+        .unwrap();
+    assert_eq!(after[0].column(), ["10", "20"], "its next request reads it");
+}
+
 #[test]
 fn two_clients_writing_one_row_at_once_meet_as_a_conflict_and_the_first_to_commit_stands() {
     let client = with_a_row();
@@ -143,16 +199,7 @@ fn two_clients_writing_one_row_at_once_meet_as_a_conflict_and_the_first_to_commi
                 Step::bare("UPDATE t SET n = n + 1 WHERE id = 1"),
             ])
         });
-        let waiting = || {
-            let read = holder.request(&[Step::bare(
-                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 4242 \
-                 AND NOT granted AND database = \
-                 (SELECT oid FROM pg_database WHERE datname = current_database())",
-            )]);
-            value(&read.unwrap(), 0) == Some("1")
-        };
-        let backstop = test_time::backstop(Duration::from_secs(5));
-        test_time::until_true("the first writer waits on the lock", backstop, waiting).unwrap();
+        awaited(&holder, 4242, "the first writer waits on the lock");
         client
             .request(&[Step::bare("UPDATE t SET n = n + 10 WHERE id = 1")])
             .unwrap();

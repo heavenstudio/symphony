@@ -91,6 +91,13 @@ impl Answer {
     pub fn value(&self) -> Option<&str> {
         self.rows.first()?.first()?.as_deref()
     }
+
+    /// The first column of every row that gives one, in order: a statement that answers a list,
+    /// an item a row.
+    pub fn column(&self) -> Vec<&str> {
+        let firsts = self.rows.iter().filter_map(|row| row.first()?.as_deref());
+        firsts.collect()
+    }
 }
 
 /// One database of the PostgreSQL whose socket is in the folder `socket`.

@@ -49,7 +49,9 @@ BLOCKED amber-heron tools/example t2a — observed waiting on an approval or a q
                                             (a launched session, to its responsible overseers;
                                             once per observed episode)
 WATCH hc unanswered at observation: … — blocked terminals may have gone unreported; inspect hc before acting
-                                            (once until hc answers)
+                                            (once hc has failed at every sample for 30 s,
+                                            never for one slow answer; again only after
+                                            it answers)
 PULL ready_unstaffed=3 (was 2)             (orchestrators: only for a new actionable entry, and only
                                             what changed since the last PULL: counts that moved,
                                             rows added, `resolved LIST a, b`)

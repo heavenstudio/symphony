@@ -54,9 +54,31 @@
 .waiting-columns .stage-slot {
   min-width: 0;
 }
-.waiting-columns:focus-visible {
+.waiting-columns:focus-visible,
+.column h2:focus-visible,
+.stage-jump button:focus-visible,
+.card-more:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 4px;
+}
+/* A stage's button scrolls its heading into view: the margin reaches the lane's edges. */
+.waiting-columns .column h2 {
+  scroll-margin: 0 12px;
+}
+/* The stages of the lane scroller, each a button that shows its lane whole; the ones the
+   scroller cuts stand out. The ghost keeps the row's room. */
+.stage-jump,
+.ghost-jump {
+  display: flex;
+  gap: 12px;
+  height: 24px;
+  margin: 0 0 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.stage-jump :not([data-side="shown"]) {
+  color: var(--primary);
 }
 .waiting-columns .column h2,
 .waiting-columns .ghost-column h2 {
@@ -82,7 +104,9 @@
 .column-summary b {
   color: var(--dislike);
 }
-.column-summary button {
+.column-summary button,
+.stage-jump button,
+.card-more {
   padding: 0;
   background: none;
   color: inherit;
@@ -90,7 +114,6 @@
   cursor: pointer;
   font: inherit;
 }
-.opened-stage,
 .waiting-columns.wait-list {
   display: block;
   max-width: 760px;
@@ -195,15 +218,53 @@
   line-height: 16px;
   font-size: 0.72rem;
   color: var(--muted-foreground);
-  white-space: nowrap;
+  white-space: pre;
 }
 .waiting-slug code {
+  display: flex;
   background: none;
   padding: 0;
   font-size: inherit;
   overflow: hidden;
-  text-overflow: ellipsis;
   min-width: 0;
+}
+/* A cut line keeps its end: the start gives way, with the ellipsis, and the end never does. */
+.cut-head {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cut-tail {
+  flex: none;
+}
+/* Opens the card in place. Its target reaches below it on a touch screen, over text alone. */
+.card-more {
+  flex: none;
+  position: relative;
+  width: 22px;
+  margin-left: auto;
+}
+.card-more[aria-expanded="true"] {
+  rotate: 180deg;
+}
+@media (pointer: coarse) {
+  .card-more:not(:active)::after {
+    content: "";
+    position: absolute;
+    inset: -4px -10px -24px -12px;
+  }
+}
+/* An opened card grows from its fixed box to the whole of each line. */
+.taskcard.waiting-card[data-open] {
+  height: auto;
+  min-height: 110px;
+}
+.waiting-card[data-open] .taskcard-title {
+  display: block;
+  height: auto;
+}
+.waiting-card[data-open] :is(code, .on, .why) {
+  display: block;
+  white-space: pre-wrap;
 }
 .waiting-slug .prio {
   flex-shrink: 0;
@@ -223,22 +284,21 @@
   color: var(--muted-foreground);
 }
 .task-wait .on {
+  display: flex;
   color: var(--k);
   font-weight: 650;
-  white-space: nowrap;
+  white-space: pre;
   overflow: hidden;
-  text-overflow: ellipsis;
   min-width: 0;
 }
 .task-wait .why {
   background: none;
   padding: 0;
   color: var(--muted-foreground);
+  display: flex;
   grid-column: 1 / -1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre;
 }
 .task-wait .age {
   grid-row: 1;
@@ -302,10 +362,6 @@
 .stage-tabs {
   display: none;
 }
-.waiting-ghost .ghost-strip {
-  height: 28px;
-  margin-bottom: 12px;
-}
 @media (max-width: 760px) {
   .waiting-pipeline {
     display: block;
@@ -332,9 +388,25 @@
     display: block;
     margin: 0 0 8px;
   }
-  .wait-strip {
-    gap: 4px;
-    margin: 0 0 10px;
+  /* One row each for the wait strip and the stage tabs, so the cards start higher: what does not
+     fit scrolls across (.scroll-row, frame.css). Each row's own padding is the room its chosen
+     one's outline and a focused one's need, taken back from the board around it. */
+  .wait-strip,
+  .stage-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    white-space: nowrap;
+    gap: 6px;
+    padding: 4px;
+    margin: 0 -4px 6px;
+  }
+  .waiting-ghost .wait-strip {
+    overflow: hidden;
+  }
+  .wait-strip > *,
+  .stage-tabs > * {
+    flex: none;
   }
   .wait-chip {
     font-size: 0.75rem;
@@ -344,15 +416,6 @@
   .wait-chip::before {
     width: 6px;
     height: 6px;
-  }
-  .stage-tabs {
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
-    margin: 0 0 10px;
-    padding: 2px 0 4px;
-    white-space: nowrap;
-    mask-image: linear-gradient(to right, #000 92%, transparent);
   }
   .stage-tabs button {
     font: inherit;
@@ -368,6 +431,7 @@
   .stage-tabs button[aria-current="page"] {
     color: var(--primary);
     border-color: var(--primary);
+    background: color-mix(in srgb, var(--primary) 10%, var(--card));
   }
   .stage-tabs i {
     font-style: normal;
@@ -400,14 +464,11 @@
   height: 12px;
   margin: 4px 0;
 }
-@media (max-width: 760px) {
-  .waiting-columns .ghost-column > div:first-child {
-    display: none;
-  }
-}
 .wait-chip,
 .open-count,
 .stage-tabs button,
+.stage-jump button,
+.card-more,
 .column-summary button {
   min-height: 0;
 }

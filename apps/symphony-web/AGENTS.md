@@ -269,8 +269,10 @@ class names the markup uses, and the kind's own sheet, imported by its module
 (`src/queue.css`, `src/docs.css`; the menus' `src/overlay.css`: the popup's and the dialog's rules
 as the components' sheets wrote them, their CSS-module suffixes gone, and the picture viewer's,
 moved there from the media sheet; the panel's `src/panel.css`: the `+` sheet's tabs and its
-collapse button's tip as the components' tabs and tooltip sheets write them, the sheets' own rules
-being the shared sheet's). The media sheet,
+collapse button's tip as the components' tabs and tooltip sheets write them, and what the sheets
+hold once the panel has mounted, the chat's thread and composer, the activity list, the toasts and
+the appearance panel; the boxes the shell draws before that are the shared sheet's, which every
+first visit pays for). The media sheet,
 `src/styles/media.css`, which the shared sheet leaves out, is the media layer's,
 imported by `media-layer.ts`, so home, the documents, a task's page and the chat take it as one
 file under the layer's name. The task board imports its own layout sheet
@@ -765,17 +767,32 @@ What holds on every page, and each page's contract where its section above names
   blocked tasks stay first in their original stage, ordered by named wait kind then age, ordinary
   work oldest first, parked last and finished newest first. An unnamed legacy block is ordinary
   work. Lifecycle, Build and Test columns scroll horizontally at a minimum width of 280 px,
-  including beside the chat. Backlog opens from the toolbar and cancelled work from Done, each
+  including beside the chat. Above them a row names every stage (`.stage-jump`), marking the
+  lanes the scroller cuts (`laneSide`, read at each scroll and each change of its width); a
+  stage's button scrolls its lane whole into view and puts the focus on its heading, so the
+  next Tab is in that lane. Backlog opens from the toolbar and cancelled work from Done, each
   as a list in the board's place, with Back to stages. Search and the finished window are behind
   Search and filters, collapsed initially at every width.
   A focused card that moves keeps its title focused, opening its destination where needed;
   unrelated moves keep the chosen stage. At 760 px and below one stage is mounted, Review
-  first, with the chosen tab saved per project (`board-waiting-stage`, `src/storage.ts`). The
+  first, with the chosen tab saved per project (`board-waiting-stage`, `src/storage.ts`). There
+  the header's pages, the wait strip and the stage tabs are each one row that scrolls across what
+  does not fit it (`src/scrollrow.ts`, `.scroll-row` in `src/styles/frame.css`): the chosen one,
+  and one that takes the focus, is brought whole into view; an edge fades only while the row
+  continues past it, the row itself and no colour over it; and a choice not whole in the row's
+  window is drawn as its empty shape, so no label is read in part
+  (`apps/symphony-web-tests/tests/browser/phone_labels.rs`, at 320 and 390 px). The Symphony's
+  seven pages fit at both widths, and below 375 px the bell is drawn alone, leaving the first row
+  to the project's name. The
   complete wait-kind strip filters to one paged list across stages; there is no Blocked column,
   sign-off lane, Status select or column pager. Search and the finished window remain.
   `/api/task-board?view=waiting` supplies complete facets and per-column ordinary/blocked counts;
   no count is inferred from loaded pages. Cards show title, slug/priority, what they wait on,
-  stage age and reason, with no role or document chips. A positive authoritative `review_rounds`
+  stage age and reason, with no role or document chips. A slug, wait or reason too long for
+  its line keeps its end, the ellipsis between its two parts (`ends`, `src/boardwait.tsx`), so
+  cards that differ only at the end are told apart, and each card's one button
+  (`.card-more`, `aria-expanded`) opens it in place to the whole of its title, slug, wait and
+  reason, by key or touch, reading nothing. A positive authoritative `review_rounds`
   adds one `1 review` / `N reviews` mark before the title, on open and finished cards; zero or
   unavailable summaries show no mark. Live fields update known counts; a full replacement clears
   an unavailable summary. No task detail read or subtask count supplies the mark.
@@ -841,7 +858,8 @@ What holds on every page, and each page's contract where its section above names
   `keepShape` in `src/board.tsx`; none kept is every column with a card).
   The board's cards reserve two title lines and their wait line in a fixed 110 px box plus an
   8 px gap (`ROW`, `src/board.tsx`, `src/styles/boardwait.css`), so no height polling or chip-row
-  cache is needed; the queue's rows
+  cache is needed: only a card the reader opened grows past it, in a row already drawn, and
+  the ghost keeps the stage row's room (`.ghost-jump`); the queue's rows
   per group (`ROWS` in `src/queue.tsx`) and each
   group's height; a task's head, title, facts and brief at the height drawn in a window as wide
   (`drawnHeight`, `rememberDrawn` in `src/viewport.tsx`), and its gates' room

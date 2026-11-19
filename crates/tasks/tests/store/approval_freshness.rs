@@ -71,14 +71,15 @@ fn restore(f: &Fixture, handle: &str) -> Listener {
     Listener::new(&format!("{}-{handle}", f.store.database().database()))
 }
 
-fn uncertain_samples(f: &Fixture, orch: &str, worker: &str, initial: &[Value]) {
-    panes(None);
-    tick(f);
-    assert_eq!(
-        pending(f, orch).len(),
-        2,
-        "one outage beside the known block"
-    );
+fn uncertain_samples(f: &Fixture, orch: &str, worker: &str, before: &[Value]) {
+    hc_down_for_the_stretch(f);
+    let queued = pending(f, orch);
+    assert_eq!(queued.len(), 2, "one outage beside the known block");
+    // The known block is the same row, its delivery tried once more over the outage's stretch.
+    let mut initial = before.to_vec();
+    initial[0]["attempts"] = json!(before[0]["attempts"].as_i64().unwrap() + 1);
+    assert!(queued.contains(&initial[0]), "{queued:?}");
+    let initial = initial.as_slice();
     let mut named = terminal("t5", "working", Some(1));
     named["name"] = worker.into();
     let mut duplicate = named.clone();
@@ -146,8 +147,7 @@ fn pane_task_and_supported_counter_advances_reach_the_native_recipient(backend: 
         "pane-910-0",
         &notice(&worker, "tests/pane", "t3"),
     );
-    panes(None);
-    tick(&f);
+    hc_down_for_the_stretch(&f);
     let outage = o.drain(&f, &worker, &orch);
     assert!(
         blocked(&outage).is_empty(),

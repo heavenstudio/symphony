@@ -23,7 +23,11 @@ board reader. `[board] postgresql` names the machine's programs, never the selec
 that override, the first executable `postgres` on `PATH` supplies the folder. Discovery validates
 PostgreSQL 18 or later and its same-folder companion tools before starting anything. A
 PostgreSQL server listens on its private Unix socket alone and ends with the process that started
-it. A command uses one connection for its lifetime; there is no pool.
+it. A command uses one connection for its lifetime; there is no pool. Its backend lives as long
+and keeps what memory its largest statement took, so a read of long lists (a whole board, the
+messages to the owner) is sent a statement a list and answered an item a row, all in one transaction
+and one snapshot: the server's memory under thirty commands at once is
+[measured](analysis/board-store-baseline.md#postgresqls-memory-peak-measured-2026-11-18).
 
 ## Holds, snapshots and recovery
 

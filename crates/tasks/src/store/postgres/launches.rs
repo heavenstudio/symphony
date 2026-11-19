@@ -1,13 +1,13 @@
 //! Launch records, closure and restoration, and the session lease that fences their writes.
 
-use super::{Pg, rows};
+use super::{Pg, listed};
 
 pub(in crate::store) fn sessions_of_task() -> Pg<'static> {
-    Pg::read(rows(
+    listed(
         "l",
         "task_session l WHERE slug = v ->> 'slug'",
         "l.started, l.handle",
-    ))
+    )
 }
 
 const KEY: &str = "jsonb_build_array(v -> 'slug', v -> 'handle')";
@@ -53,21 +53,21 @@ END;",
 }
 
 pub(in crate::store) fn sessions_of_handle() -> Pg<'static> {
-    Pg::read(rows(
+    listed(
         "l",
         "task_session l WHERE handle = v ->> 'handle'",
         "l.started, l.slug",
-    ))
+    )
 }
 pub(in crate::store) fn all_sessions() -> Pg<'static> {
-    Pg::read(rows("l", "task_session l", "l.started, l.slug, l.handle"))
+    listed("l", "task_session l", "l.started, l.slug, l.handle")
 }
 pub(in crate::store) fn open_sessions() -> Pg<'static> {
-    Pg::read(rows(
+    listed(
         "l",
         "task_session l WHERE closed IS NULL",
         "l.started, l.slug, l.handle",
-    ))
+    )
 }
 
 fn recorded(close: bool, held: bool) -> Pg<'static> {

@@ -133,6 +133,8 @@ fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_
                     const links = [...pages.querySelectorAll('a')];
                     const inView = l => box(l).width > 0 && box(l).left >= box(pages).left - 0.5 && box(l).right <= box(pages).right + 0.5;
                     const style = getComputedStyle(pages);
+                    // The row fades, itself, at the one edge it continues past (phone_labels.rs).
+                    const shaded = pages.dataset.overflow === 'end' && style.maskImage !== 'none' && style.backgroundImage === 'none';
                     pages.scrollLeft = 0;
                     const firstAtTheStart = inView(links[0]);
                     pages.scrollLeft = pages.scrollWidth;
@@ -148,7 +150,7 @@ fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_
                         pagesBelowThem: box(pages).top >= box(bell).bottom,
                         pagesOnOneRow: new Set(links.map(l => Math.round(box(l).top))).size === 1,
                         scrolls,
-                        shaded: style.backgroundImage.includes('linear-gradient'),
+                        shaded,
                         firstAtTheStart,
                         lastAtTheEnd,
                         symphonysFit,
