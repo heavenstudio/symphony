@@ -119,10 +119,22 @@ async fn a_held_task_goes_in_its_phase_column_blocked_or_not_and_a_status_word_n
     assert_eq!(slugs(&review), ["legacy/review"]);
     let phase = waiting(&named, "status=phase:review").await;
     assert_eq!(slugs(&phase), ["w/named"]);
-    // The board's other listings place it the same way.
-    let plain = listing_of(&board(), "status=phase:build").await;
-    assert_eq!(slugs(&plain), ["w/stuck", "w/working"]);
-    assert_eq!(total(&plain, "phase:verify"), 1);
+    // Every other listing keeps its lifecycle stages: a held task counts and is selected by its
+    // status, and no count names a phase.
+    let plain = listing_of(&board(), "").await;
+    assert_eq!(total(&plain, "in_progress"), 1);
+    assert_eq!(total(&plain, "blocked"), 1);
+    assert_eq!(total(&plain, "review"), 2);
+    assert!(
+        plain
+            .counts
+            .iter()
+            .all(|(stage, _)| !stage.starts_with(PHASE)),
+        "{:?}",
+        plain.counts
+    );
+    let working = listing_of(&board(), "status=in_progress").await;
+    assert_eq!(slugs(&working), ["w/working"]);
 }
 
 #[tokio::test]
@@ -237,7 +249,7 @@ async fn the_build_overlay_takes_a_held_task_its_machine_builds() {
 }
 
 #[test]
-fn a_listing_selects_a_phase_by_its_id_alone() {
+fn the_waiting_view_selects_a_phase_by_its_id_alone_and_no_other_listing_does() {
     let argument = |query: &str| {
         let request = Request::builder()
             .uri(format!("/api/task-board?{query}"))
@@ -246,18 +258,20 @@ fn a_listing_selects_a_phase_by_its_id_alone() {
         status_argument(&request)
     };
     for good in [
-        "status=phase:build",
-        "status=phase:verify-2",
-        "status=phase:a_b",
+        "view=waiting&status=phase:build",
+        "view=waiting&status=phase:verify-2",
+        "view=waiting&status=phase:a_b",
     ] {
         assert_eq!(argument(good), Ok(()), "{good}");
     }
     for bad in [
-        "status=phase:",
-        "status=phase:Build",
-        "status=phase:2nd",
-        "status=phases:build",
-        "status=build:phase",
+        "view=waiting&status=phase:",
+        "view=waiting&status=phase:Build",
+        "view=waiting&status=phase:2nd",
+        "view=waiting&status=phases:build",
+        "view=waiting&status=build:phase",
+        "status=phase:build",
+        "view=tree&status=phase:build",
     ] {
         assert!(argument(bad).is_err(), "{bad}");
     }

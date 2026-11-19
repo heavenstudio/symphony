@@ -89,6 +89,14 @@ fn reads_at(project: &Project, slug: &str, state: &str) {
     }
 }
 
+/// The workflow changes among the feed events the project's page published.
+fn generations(project: &Project) -> Vec<Value> {
+    published(project)
+        .into_iter()
+        .filter(|change| change["region"] == "workflow")
+        .collect()
+}
+
 /// The feed events the project's page published, as JSON.
 fn published(project: &Project) -> Vec<Value> {
     let pages = project.hub.pages.read().unwrap();
@@ -144,12 +152,15 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
         .unwrap();
     reads_at(&project, "flow/one", "available");
     // The activation is said on the feed once the hub reads it, so a page reads the definition.
-    let generations: Vec<Value> = published(&project)
-        .into_iter()
-        .filter(|change| change["region"] == "workflow")
-        .collect();
+    // The hub publishes a read a step after it keeps it, so the wait is for the feed's own event.
+    let said = test_time::until_true("the page's feed to say the activation", BACKSTOP, || {
+        !generations(&project).is_empty()
+    });
+    if let Err(stall) = said {
+        panic!("{stall}; the feed said {:?}", published(&project));
+    }
     assert_eq!(
-        generations,
+        generations(&project),
         [json!({"region": "workflow", "data": {"generation": 1}})]
     );
 

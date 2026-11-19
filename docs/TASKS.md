@@ -1887,9 +1887,11 @@ time for finished work) and slug. It is passed back only with the same view, sea
 activity, status and wait kind. A malformed cursor or one from the default view is refused.
 An empty page has no cursor. The task board opts into this projection for its stage columns and
 wait-kind strip; other listing callers retain the default view.
-On a board a custom workflow holds tasks on, a held task's column is its phase's (`phase:ID`),
-`waiting` adds the active generation and the open tasks by state, and `wait=state:ID` lists a
-state's ([WORKFLOW](WORKFLOW.md#the-app)).
+On a board a custom workflow holds tasks on, this projection puts a held task in its phase's
+column (`phase:ID`, which `status=` selects in this view alone), `waiting` adds the active
+generation and the open tasks by state, and `wait=state:ID` lists a state's
+([WORKFLOW](WORKFLOW.md#the-app)); the default view counts and selects a held task by its
+status.
 
 The default listing retains its legacy **Waiting for your sign-off** selection. The waiting
 board keeps these tasks in their own stages, with their named decision on the card, rather

@@ -217,19 +217,22 @@ as the apply route refuses one.
 **The board.** The [waiting listing](TASKS.md#what-a-task-waits-on) puts a task the workflow holds
 in its phase's column, keyed `phase:ID` so a phase never takes a status's key or an overlay's,
 unless its machine work puts it in Build or Test; blocked, it stays in its phase, and
-`status=phase:ID` selects one. Its `waiting` adds `workflow`, the active generation, absent on a
-board with none, and `states`, `[state, count]` for the open tasks the workflow holds, by state
-ID in its order, counted after search and window and before `wait`; `wait=state:ID` lists one
-state's open tasks across their phases, as a wait kind's are. The board loads the workflow's
+`status=phase:ID` selects one there; every other listing counts and selects a held task by its
+status, as before. The waiting listing's `waiting` adds `workflow`, the active generation,
+absent on a board with none, and `states`, `[state, count]` for the open tasks the workflow
+holds, by state ID in its order, counted after search and window and before `wait`;
+`wait=state:ID` lists one state's open tasks across their phases, as a wait kind's are. The
+board loads the workflow's
 chunk (`apps/symphony-web/src/flow.tsx`) only once a listing names a generation, reads the
 definition, and reads it again when the generation moves. It draws the phases that are columns
 by their `order`, then Build and Test, then any status the board's own writers still hold a task
 in; on a phone, a tab for every phase by its `phone_order`; on a desk, a button for each phase
 that is no column, which opens it as a list as Backlog opens; and a chip for each state with
 open tasks, which chooses its facet. A card names its place by its phase's and state's labels.
-The tab and facet the board keeps for a project are these stable keys, never a label, so a
-relabel keeps them, and a phase no longer drawn falls back to the first tab. A definition the
-board cannot draw leaves it as its own writers draw it.
+The phone tab the board keeps for a project is the phase's stable key, never its label, so a
+relabel keeps it, and a phase no longer drawn falls back to the first tab. The state facet
+chosen is the page's own and is not kept. A definition the board cannot draw leaves it as its
+own writers draw it.
 
 **The task page.** A task with a place loads the next-actions chunk
 (`apps/symphony-web/src/nextactions.tsx`). It says the place, the pair a blocked task resumes to

@@ -17,17 +17,19 @@ const PAGE: usize = 30;
 /// "The app").
 pub(super) const PHASE: &str = "phase:";
 
-/// A listing's `status`, when it names one: a board status, one of [`SELECTABLE`], or a phase's
-/// column ([`PHASE`] and a workflow ID).
+/// A listing's `status`, when it names one: a board status, one of [`SELECTABLE`], or in the
+/// waiting view, the one whose columns are phases, a phase's column ([`PHASE`] and a workflow ID).
 pub(super) fn status_argument(request: &Request) -> Result<(), String> {
+    let phases = query(request, "view").as_deref() == Some("waiting");
     match query(request, "status") {
         Some(wanted)
             if !SELECTABLE.contains(&wanted.as_str())
                 && !symphony_board::STATUSES.contains(&wanted.as_str())
-                && !wanted.strip_prefix(PHASE).is_some_and(workflow_id) =>
+                && !(phases && wanted.strip_prefix(PHASE).is_some_and(workflow_id)) =>
         {
             Err(format!(
-                "no status {wanted:?}: a listing selects one of {}, {} or {PHASE}PHASE",
+                "no status {wanted:?}: a listing selects one of {}, {}, or in view=waiting \
+                 {PHASE}PHASE",
                 symphony_board::STATUSES.join(", "),
                 SELECTABLE.join(", ")
             ))
@@ -45,8 +47,9 @@ pub(super) fn workflow_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
-/// The column `task` goes in: the process overlay its machine work puts it in (Build, Test), else
-/// its phase's when a custom workflow holds it ([`PHASE`]), else its status.
+/// The column the waiting view puts `task` in: the process overlay its machine work puts it in
+/// (Build, Test), else its phase's when a custom workflow holds it ([`PHASE`]), else its status.
+/// Every other listing keeps its lifecycle stage, a held task's status among them.
 pub(super) fn column(
     work: &symphony_api::MachineWork,
     task: &symphony_api::Task,
@@ -104,9 +107,10 @@ fn project(
     // `status` is one a listing selects ([`status_argument`], checked before the board is read).
     let status = query(request, "status");
     // The board opts into display stages. Existing lifecycle queries (including holder and
-    // hierarchy readers) retain their status/count/cursor semantics without that opt-in.
+    // hierarchy readers) retain their status/count/cursor semantics without that opt-in, a task a
+    // custom workflow holds at its status: only the waiting view puts it in its phase's column.
     let activity = query(request, "activity").as_deref() == Some("1");
-    let stage = |task: &symphony_api::Task| column(&work, task, activity);
+    let stage = |task: &symphony_api::Task| work.task_stage(task, activity).as_str().to_string();
     if !search.is_empty() {
         signoff.retain(|slug| scores.contains_key(slug));
     }

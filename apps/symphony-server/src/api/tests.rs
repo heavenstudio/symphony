@@ -88,7 +88,7 @@ async fn a_listing_status_no_listing_selects_is_refused_before_the_board_is_read
     .unwrap_err();
     assert!(
         said.starts_with("no status \"nope\": a listing selects one of ")
-            && said.ends_with(", signoff, build, test or phase:PHASE"),
+            && said.ends_with(", signoff, build, test, or in view=waiting phase:PHASE"),
         "{said}"
     );
     assert!(
