@@ -3,8 +3,9 @@
 //!
 //! Its lanes are what the server reads for this task, never the whole board: the stages the
 //! board's replay of its thread keeps ([`Stage`]), the executors' time in progress ([`Claim`]),
-//! each review round ([`Round`]), the builds and tests the board's recorder kept for it ([`Run`])
-//! and each gate's states ([`GateLane`], from the gates answer's past states). A client lays them
+//! each review round ([`Round`]), the builds and tests the board's recorder kept for it ([`Run`]),
+//! each gate's states ([`GateLane`], from the gates answer's past states) and, for a task a custom
+//! workflow held, each place it put the task at ([`PlaceSpan`], from its recorded transitions). A client lays them
 //! out: a list with a bar per step on a phone, lanes over the same hours wide. Optional [`History`]
 //! adds bounded role and address metadata, including recorded ancestor orchestration.
 //!
@@ -77,6 +78,12 @@ pub struct TaskTimeline {
     /// not be read.
     #[serde(default)]
     pub gates: Vec<GateLane>,
+    /// Each place a custom workflow put the task at, oldest first, from its recorded transitions:
+    /// each lasting until the next began, the last until the timeline's end. Time at a place is
+    /// the clock's, never the machine's time on runs ([`Self::machine_seconds`]). Empty, and left
+    /// out, for a task no workflow held, or whose transitions could not be read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub places: Vec<PlaceSpan>,
     /// Recorded roles and message addresses. Absent on servers without this projection; never
     /// interpret absence, a partial source or a failed source as an empty history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -293,6 +300,29 @@ impl RunResult {
     }
 }
 
+/// A place a custom workflow put the task at, and when (docs/WORKFLOW.md, "The app").
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct PlaceSpan {
+    /// Its phase's ID, then its label in the definition the move was made under: the ID where
+    /// that definition is not recorded or does not name it.
+    pub phase: String,
+    pub phase_label: String,
+    /// Its coordination state's ID and label, named as its phase is.
+    pub state: String,
+    pub state_label: String,
+    /// The board status the place projects to, which a page colours it by, as it colours a
+    /// status.
+    pub status: String,
+    /// When the task was put there.
+    pub from: f64,
+    /// The edge that moved it there: none for a move an activation or a filing made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<String>,
+    /// Who moved it: an agent session's handle, or the owner.
+    pub by: String,
+}
+
 /// One gate's states over time.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
@@ -401,6 +431,46 @@ mod tests {
             .runs
             .push(run(80.0, Some(81.0), None, RunResult::Running));
         assert_eq!(timeline.end(), 100.0);
+    }
+
+    #[test]
+    fn a_timeline_no_workflow_held_writes_no_places_and_a_held_ones_read_back_whole() {
+        let plain = TaskTimeline {
+            slug: "tools/x".into(),
+            ..TaskTimeline::default()
+        };
+        let written = serde_json::to_value(&plain).unwrap();
+        assert!(written.get("places").is_none(), "{written}");
+        let place = PlaceSpan {
+            phase: "review".into(),
+            phase_label: "Review".into(),
+            state: "awaiting".into(),
+            state_label: "Awaiting review".into(),
+            status: "review".into(),
+            from: 2.0,
+            edge: None,
+            by: "owner".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&place).unwrap(),
+            serde_json::json!({
+                "phase": "review", "phase_label": "Review", "state": "awaiting",
+                "state_label": "Awaiting review", "status": "review", "from": 2.0, "by": "owner"
+            })
+        );
+        let held = TaskTimeline {
+            places: vec![
+                place.clone(),
+                PlaceSpan {
+                    edge: Some("approve".into()),
+                    ..place
+                },
+            ],
+            ..plain
+        };
+        let read: TaskTimeline =
+            serde_json::from_str(&serde_json::to_string(&held).unwrap()).unwrap();
+        assert_eq!(read, held);
     }
 
     #[test]

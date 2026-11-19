@@ -1783,6 +1783,13 @@ export type TaskTimeline = {
    */
   gates: Array<GateLane>;
   /**
+   * Each place a custom workflow put the task at, oldest first, from its recorded transitions:
+   * each lasting until the next began, the last until the timeline's end. Time at a place is
+   * the clock's, never the machine's time on runs ([`Self::machine_seconds`]). Empty, and left
+   * out, for a task no workflow held, or whose transitions could not be read.
+   */
+  places?: Array<PlaceSpan>;
+  /**
    * Recorded roles and message addresses. Absent on servers without this projection; never
    * interpret absence, a partial source or a failed source as an empty history.
    */
@@ -1900,6 +1907,37 @@ export type GateSpan = {
   from: number;
   by?: string | null;
   detail: string;
+};
+
+export type PlaceSpan = {
+  /**
+   * Its phase's ID, then its label in the definition the move was made under: the ID where
+   * that definition is not recorded or does not name it.
+   */
+  phase: string;
+  phase_label: string;
+  /**
+   * Its coordination state's ID and label, named as its phase is.
+   */
+  state: string;
+  state_label: string;
+  /**
+   * The board status the place projects to, which a page colours it by, as it colours a
+   * status.
+   */
+  status: string;
+  /**
+   * When the task was put there.
+   */
+  from: number;
+  /**
+   * The edge that moved it there: none for a move an activation or a filing made.
+   */
+  edge?: string | null;
+  /**
+   * Who moved it: an agent session's handle, or the owner.
+   */
+  by: string;
 };
 
 export type History = {

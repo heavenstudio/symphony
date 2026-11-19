@@ -239,6 +239,16 @@ names). Taking one posts its edge, the snapshot the actions named and a fresh id
 came. A refusal says its words; a `stale_*` one says the task moved since and offers to read its
 actions again, and they are read again whenever the task's revision moves.
 
+**The timeline and the Agents page.** A task's timeline (`/api/task-timeline`) carries `places`,
+one for each transition recorded for it (`Store::workflow_transitions`, a read of its own events'
+keys alone), each named by the definition its move was made under, with the status it projects
+to, who moved it and by which edge; a task no workflow held carries none. The page draws a Phase
+lane and a State lane under the stages, a row for each place on a phone, and the time spent in
+each phase and in each state in the heading: the clock's time there, told apart from the
+machine's time on runs. The Agents page says a held task's place where it says another task's
+status, by the definition's names, which it reads through the board's workflow chunk only once a
+task it lists has a place.
+
 ## Definition format 1
 
 IDs begin with a lowercase ASCII letter and contain only lowercase ASCII letters, digits,

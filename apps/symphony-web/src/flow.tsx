@@ -253,19 +253,18 @@ export function flowOf(definition: Definition, own: Lanes): Flow {
   };
 }
 
+/** The wait before each read again (`tryAgain`'s). */
+type Wait = Parameters<typeof tryAgain>[3];
+
 /**
- * Read the active definition of the board under `scope`, tried again until it answers or `signal`
- * ends, and name its IDs in `names`: the board's workflow over its `own` lanes and tabs, or none
- * when the read says none is active or is not one a board draws, which leaves the board as its own
- * writers draw it. `wait` is the wait before each read again (`tryAgain`'s).
+ * The active definition of the board under `scope`, read again until it answers or `signal` ends:
+ * none when the read says none is active, or is not one a board draws, or `signal` ended first.
  */
-export async function readFlow(
+async function activeDefinition(
   scope: string,
   signal: AbortSignal,
-  names: Map<string, string>,
-  own: Lanes,
-  wait?: Parameters<typeof tryAgain>[3],
-): Promise<Flow | null> {
+  wait?: Wait,
+): Promise<Definition | null> {
   const read: { definition?: Definition | null | undefined } = {};
   const ask = async () => {
     try {
@@ -276,9 +275,41 @@ export async function readFlow(
   };
   await ask();
   await tryAgain(() => !("definition" in read), ask, signal, wait);
-  const { definition } = read;
-  if (signal.aborted || !definition) return null;
+  return signal.aborted ? null : (read.definition ?? null);
+}
+
+/**
+ * Read the active definition of the board under `scope` and name its IDs in `names`: the board's
+ * workflow over its `own` lanes and tabs, or none when the read says none is active or is not one
+ * a board draws, which leaves the board as its own writers draw it.
+ */
+export async function readFlow(
+  scope: string,
+  signal: AbortSignal,
+  names: Map<string, string>,
+  own: Lanes,
+  wait?: Wait,
+): Promise<Flow | null> {
+  const definition = await activeDefinition(scope, signal, wait);
+  if (definition === null) return null;
   putStyle();
   name(definition, names);
   return flowOf(definition, own);
+}
+
+/**
+ * The names the IDs of the active definition of the board under `scope` read as (as [`name`] gives
+ * them), for a page that names a task's place and draws none of the board's: none when no
+ * definition a board draws is active.
+ */
+export async function readNames(
+  scope: string,
+  signal: AbortSignal,
+  wait?: Wait,
+): Promise<Map<string, string> | null> {
+  const definition = await activeDefinition(scope, signal, wait);
+  if (definition === null) return null;
+  const names = new Map<string, string>();
+  name(definition, names);
+  return names;
 }

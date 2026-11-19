@@ -10,6 +10,7 @@ import {
   putStyle,
   readDefinition,
   readFlow,
+  readNames,
   Strip,
   type StripProps,
   stateCounts,
@@ -269,5 +270,22 @@ describe("reading a board's workflow", () => {
     asked[2]?.answer(reply(200, CASES.samples.workflow));
     expect(await left).toBeNull();
     expect(names.size).toBe(0);
+  });
+
+  it("gives a page that draws no board the names alone, and none where none is active", async () => {
+    const asked = server();
+    const { put } = page();
+    const reading = readNames("design~policy", new AbortController().signal, now);
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/@design~policy/api/workflow");
+    asked[0]?.answer(reply(200, CASES.samples.workflow));
+    const names = await reading;
+    expect(names?.get("build/working")).toBe("Build · Working");
+    expect(names?.get("state:awaiting")).toBe("Awaiting review");
+    expect(put).toHaveLength(0);
+    const none = readNames("", new AbortController().signal, now);
+    await asking(asked, 2);
+    asked[1]?.answer(reply(200, CASES.samples.noWorkflow));
+    expect(await none).toBeNull();
   });
 });

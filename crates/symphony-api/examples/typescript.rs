@@ -365,6 +365,7 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::timeline::RunResult>(cfg),
         declared::<api::timeline::GateLane>(cfg),
         declared::<api::timeline::GateSpan>(cfg),
+        declared::<api::timeline::PlaceSpan>(cfg),
         declared::<api::timeline::History>(cfg),
         declared::<api::timeline::HistorySource>(cfg),
         declared::<api::timeline::HistoryState>(cfg),
@@ -1468,9 +1469,7 @@ fn workflow_samples() -> Vec<(String, Value)> {
     let executor = json!({"kind": "task_role", "role": "executor"});
     let reviewer = json!({"kind": "task_role", "role": "reviewer"});
     let owner = json!({"kind": "project_capability", "capability": "owner"});
-    let phase = |id: &str, label: &str, order: u32, phone: u32, column: bool| {
-        json!({"id": id, "label": label, "order": order, "phone_order": phone, "column": column})
-    };
+    let phase = |id: &str, label: &str, order: u32, phone: u32, column: bool| json!({"id": id, "label": label, "order": order, "phone_order": phone, "column": column});
     let mut rework = edge(
         "rework",
         "Send back",
