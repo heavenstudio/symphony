@@ -251,12 +251,18 @@ fn aged(client: &Client, by: f64) {
 
 /// A line on the board `client` reaches of `program` at `path` on this host at `schema`, seen now.
 fn writes(client: &Client, program: &str, path: &Path, schema: i64) {
+    wrote(client, program, path, schema, 0.0);
+}
+
+/// [`writes`], its line seen `ago` seconds before now.
+fn wrote(client: &Client, program: &str, path: &Path, schema: i64, ago: f64) {
     let host = symphony_board::sys::hostname();
     let path = path.to_string_lossy().into_owned();
     let seen = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs_f64();
+        .as_secs_f64()
+        - ago;
     Raw::on(client)
         .row("writer", json!([host, path]))
         .put(
@@ -654,6 +660,97 @@ fn a_lagging_writer_holds_every_board_and_current_until_it_is_rebuilt() {
     assert_eq!([untouched(&alpha), untouched(&beta)], before);
 }
 
+/// A writer's line keeps its program's path alone, so the refresh looks at what is there now, on
+/// this host, and runs none of it: nothing at the path, or a file written after the line's last
+/// possible write, is a program that can write no more, said and left behind by name. The build
+/// that wrote, still at its path, holds the release as before.
+#[test]
+fn a_writer_gone_from_its_path_is_said_and_holds_no_board_and_one_still_there_does() {
+    let (fixture, _) = refreshing();
+    let alpha = a_project(&fixture, "alpha", &[]);
+    let beta = a_project(&fixture, "beta", &[]);
+    registered(&fixture, &[("alpha", &alpha, &[]), ("beta", &beta, &[])]);
+    let host = symphony_board::sys::hostname();
+    // alpha's writers behind: a build named by its hash, superseded and removed, and a build
+    // rebuilt at its path since it last wrote there, two hours ago.
+    let (alpha_board, _, alpha_client) = board_at(&alpha, 18);
+    Raw::on(&alpha_client).table("writer").delete().unwrap();
+    let removed = fixture.root.join("builds-of/alpha/bin/tasks-0a1b2c");
+    let rebuilt = fixture.root.join("builds-of/alpha/rs-bin/agent-send");
+    executable(&rebuilt, "#!/bin/sh\nexit 9\n");
+    wrote(&alpha_client, "tasks-0a1b2c", &removed, 18, DAY);
+    wrote(&alpha_client, "agent-send", &rebuilt, 18, 2.0 * 3600.0);
+    // beta's writer behind is the build that wrote just now, where it was.
+    let (beta_board, _, beta_client) = board_at(&beta, 18);
+    Raw::on(&beta_client).table("writer").delete().unwrap();
+    let standing = fixture.root.join("builds-of/beta/bin/tasks");
+    executable(&standing, "#!/bin/sh\nexit 9\n");
+    writes(&beta_client, "tasks", &standing, 18);
+    let builder = builder(&fixture, 19);
+    let surreal = super::board::surreal().to_string_lossy().into_owned();
+    let extra = [
+        (BUILDER, builder.as_str()),
+        ("SYMPHONY_SURREAL", surreal.as_str()),
+    ];
+
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    let not_counted = format!(
+        "; not counted, as its program is gone: agent-send at schema 18 ({} on {host}, last seen \
+         2 h ago): the file at its path was written after it last ran there, a build that has not \
+         opened this board; tasks-0a1b2c at schema 18 ({} on {host}, last seen 24 h ago): nothing \
+         is at its path now\n",
+        rebuilt.display(),
+        removed.display()
+    );
+    assert!(
+        out.contains(&format!(
+            "release: refresh: alpha: its board can move from schema 18 to 19, and stays at 18 \
+             while beta holds the release{not_counted}"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "release: refresh: beta: the project's to finish: its board stays at schema 18: a \
+             writer seen there in the last week is behind {RELEASE}'s schema 19: tasks at schema \
+             18 ({} on {host}, last seen ",
+            standing.display()
+        )),
+        "{out}"
+    );
+    assert_eq!(alpha_board.schema("tasks").unwrap(), Some(18));
+    assert!(migrated(&fixture).is_empty());
+    assert_eq!(current(&fixture), None);
+
+    // beta's build removed too: both boards move, each leaving its gone writers behind by name,
+    // as the release's migrate reads the lines again.
+    fs::remove_file(&standing).unwrap();
+    let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "release: refresh: alpha: its board moved from schema 18 to 19 by {RELEASE}'s own \
+             `tasks migrate --leave-behind`, its store snapshotted first to {}{not_counted}",
+            snapshot(&alpha, 19, RELEASE).display()
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "`tasks migrate --leave-behind`, its store snapshotted first to {}; not counted, as \
+             its program is gone: tasks at schema 18 ({} on {host}, last seen ",
+            snapshot(&beta, 19, RELEASE).display(),
+            standing.display()
+        )) && out.contains(" ago): nothing is at its path now\n"),
+        "{out}"
+    );
+    assert_eq!(alpha_board.schema("tasks").unwrap(), Some(19));
+    assert_eq!(beta_board.schema("tasks").unwrap(), Some(19));
+    assert_eq!(migrated(&fixture).lines().count(), 2);
+    assert_eq!(current(&fixture).as_deref(), Some(RELEASE));
+}
+
 #[test]
 fn every_snapshot_comes_first_and_a_move_that_fails_partway_is_finished_by_the_retry() {
     let (fixture, _) = refreshing();
@@ -866,7 +963,9 @@ fn what_cannot_be_judged_is_left_out_and_every_board_that_holds_the_release_is_n
     // gamma's last was seen over a week ago.
     let _fresh_board = Board::started(&fresh);
     let (_alpha_board, _, alpha_client) = board_at(&alpha, 18);
-    let gate = Path::new("/work/alpha/.target/debug/gate-review");
+    // A program of the project's own, where it wrote from: a path with nothing at it holds none.
+    let gate = &fixture.root.join("builds-of/alpha/debug/gate-review");
+    executable(gate, "#!/bin/sh\nexit 9\n");
     writes(&alpha_client, "gate-review", gate, 18);
     let _beta_board = board_at(&beta, 18);
     let (gamma_board, _, gamma_client) = board_at(&gamma, 18);
@@ -1492,13 +1591,10 @@ fn a_board_ahead_points_current_forward_and_a_failed_update_is_one_task_until_it
     );
     assert!(!out.contains("release-red-update-"), "{out}");
 
-    // Alpha's own build at 18 has just run.
-    writes(
-        &alpha_client,
-        "tasks",
-        Path::new("/work/alpha/.target/release/tasks"),
-        18,
-    );
+    // Alpha's own build at 18 has just run, and is where it ran from.
+    let own_build = fixture.root.join("builds-of/alpha/release/tasks");
+    executable(&own_build, "#!/bin/sh\nexit 9\n");
+    writes(&alpha_client, "tasks", &own_build, 18);
     fs::write(fixture.root.join("schema"), "19").unwrap();
     fixture.land("crates/core/next.txt", Some("b\n"), "the next release");
     let (code, out, err) = fixture.release_with(NOW + DAY, &["--check", CHECK], &extra);

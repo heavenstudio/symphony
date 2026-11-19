@@ -16,6 +16,7 @@
 //!   writer seen there in the last week (the board's writer record, `crates/tasks/src/store/
 //!   writers.rs`) is a release's own, a binary of a release installed in this machine folder on
 //!   this host, which `current` takes on, or one built at the release's schema ([`lagging`]). A
+//!   line on this host whose program is gone from its path ([`gone`]) is not counted, and said. A
 //!   board whose writers lag is named with each writer to rebuild, the project's to finish, and
 //!   holds the release; one whose database does not run, or whose move could put it on a newer
 //!   SurrealDB, holds it too, red (a board on PostgreSQL runs the machine's own, which a release
@@ -402,11 +403,11 @@ fn boards(
     for mut board in judged {
         let mut end = None;
         let ended = match std::mem::replace(&mut board.verdict, Verdict::Done(String::new())) {
-            Verdict::Move { live, leave } => match &kept_by {
+            Verdict::Move { live, leave, gone } => match &kept_by {
                 Some(why) => {
                     let said = format!(
                         "{}: its board can move from schema {live} to {target}, and stays at {live} \
-                         while {why}",
+                         while {why}{gone}",
                         board.id
                     );
                     end = Some(End::Waiting(said.clone()));
@@ -420,6 +421,7 @@ fn boards(
                     };
                     match moving.and_then(|()| moved(&mut board, live, leave, against)) {
                         Ok(said) => {
+                            let said = said + &gone;
                             end = Some(End::Moved {
                                 from: live,
                                 at: seen_now(),
@@ -544,8 +546,12 @@ enum Verdict {
     /// The refresh's own work cannot judge or move it, said: red, and the release waits for it.
     Red(String),
     /// To move from schema `live`, with `--leave-behind` when `leave`: the only writers behind are a
-    /// release's own.
-    Move { live: i64, leave: bool },
+    /// release's own or gone from their paths, the latter said in `gone` ([`not_counted`]).
+    Move {
+        live: i64,
+        leave: bool,
+        gone: String,
+    },
 }
 
 impl Verdict {
@@ -675,32 +681,34 @@ fn verdict(board: &Judged, against: &Against<'_>) -> Verdict {
             return Verdict::Red(format!("{error}: nothing was moved"));
         }
     };
-    let (own, behind) = lagging(writers, target, seen_now(), against.machine);
+    let Lagging { own, behind, gone } = lagging(writers, target, seen_now(), against.machine);
     if !behind.is_empty() {
         return Verdict::Theirs {
             why: format!(
                 "its board stays at schema {live}: {} seen there in the last week {} behind {}'s \
                  schema {target}: {}; rebuild each at schema {target} and run it once, which \
-                 records it, then an orchestrator's `just release --refresh` moves it",
+                 records it, then an orchestrator's `just release --refresh` moves it{}",
                 match behind.len() {
                     1 => "a writer".to_string(),
                     n => format!("{n} writers"),
                 },
                 if behind.len() == 1 { "is" } else { "are" },
                 against.tag,
-                (behind.iter().map(said)).collect::<Vec<_>>().join("; ")
+                (behind.iter().map(said)).collect::<Vec<_>>().join("; "),
+                not_counted(&gone)
             ),
             holds: true,
         };
     }
+    // The release's migrate reads the lines again, and would refuse for one not counted here.
+    let moving = Verdict::Move {
+        live,
+        leave: !own.is_empty() || !gone.is_empty(),
+        gone: not_counted(&gone),
+    };
     // A release pins no PostgreSQL: the board's is the machine's own, which no move replaces.
     match board.home.backend() {
-        Ok(Engine::PostgreSql) => {
-            return Verdict::Move {
-                live,
-                leave: !own.is_empty(),
-            };
-        }
+        Ok(Engine::PostgreSql) => return moving,
         Ok(Engine::SurrealDb) => {}
         Err(error) => return Verdict::Red(format!("{error}: nothing was moved")),
     }
@@ -732,21 +740,24 @@ fn verdict(board: &Judged, against: &Against<'_>) -> Verdict {
             against.tag
         ));
     }
-    Verdict::Move {
-        live,
-        leave: !own.is_empty(),
-    }
+    moving
 }
 
-/// The writers of `lines` seen in the last week before `now` that are behind `target`, as two
-/// lists: a release's own (a binary of a release installed in the machine folder `machine`, on this
-/// host), which `current` takes on, and the rest, which hold a move.
-fn lagging(
-    lines: Vec<Writer>,
-    target: i64,
-    now: f64,
-    machine: &Path,
-) -> (Vec<Writer>, Vec<Writer>) {
+/// The writers behind a release's schema, by what each does to a move ([`lagging`]).
+struct Lagging {
+    /// A release's own, which `current` takes on: left behind by name.
+    own: Vec<Writer>,
+    /// The rest that can still write: each holds the move.
+    behind: Vec<Writer>,
+    /// Those whose program is no longer at its path, each with why: not counted.
+    gone: Vec<(Writer, Gone)>,
+}
+
+/// The writers of `lines` seen in the last week before `now` that are behind `target`: a release's
+/// own (a binary of a release installed in the machine folder `machine`, on this host), which
+/// `current` takes on; those on this host whose program is no longer there ([`gone`]), which are
+/// not counted; and the rest, which hold a move.
+fn lagging(lines: Vec<Writer>, target: i64, now: f64, machine: &Path) -> Lagging {
     let releases = machine
         .join(release::RELEASES)
         .canonicalize()
@@ -754,10 +765,75 @@ fn lagging(
     let host = symphony_board::sys::hostname();
     let behind = (lines.into_iter())
         .filter(|line| line.schema < target && now - line.seen <= symphony_board::WRITERS_RECENT);
-    let (own, mut rest): (Vec<Writer>, Vec<Writer>) = behind
+    let (own, rest): (Vec<Writer>, Vec<Writer>) = behind
         .partition(|line| line.host == host && of_a_release(Path::new(&line.path), &releases));
-    rest.sort_by(|a, b| (&a.program, &a.host, &a.path).cmp(&(&b.program, &b.host, &b.path)));
-    (own, rest)
+    let by_name = |a: &Writer, b: &Writer| {
+        (&a.program, &a.host, &a.path).cmp(&(&b.program, &b.host, &b.path))
+    };
+    let (mut behind, mut gone) = (Vec::new(), Vec::new());
+    for line in rest {
+        // Another host's path is not this machine's to look at.
+        match Some(&line)
+            .filter(|line| line.host == host)
+            .and_then(self::gone)
+        {
+            Some(why) => gone.push((line, why)),
+            None => behind.push(line),
+        }
+    }
+    behind.sort_by(by_name);
+    gone.sort_by(|a, b| by_name(&a.0, &b.0));
+    Lagging { own, behind, gone }
+}
+
+/// Why the program that wrote a line can write no more: the record keeps its path alone, and the
+/// file there is looked at, never run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gone {
+    /// Nothing is at its path.
+    Missing,
+    /// The file there was written after the line's last write could have been made.
+    Replaced,
+}
+
+impl Gone {
+    fn said(self) -> &'static str {
+        match self {
+            Gone::Missing => "nothing is at its path now",
+            Gone::Replaced => {
+                "the file at its path was written after it last ran there, a build that has not opened this board"
+            }
+        }
+    }
+}
+
+/// Whether the program that wrote `line`, on this host, is gone from its path. Nothing there is
+/// gone. So is a file modified more than [`symphony_board::WRITERS_EVERY`] after the line was
+/// seen: a line is written again once it is that old, so every write through the path came within
+/// that long of `seen`, and a file written later has never opened this board to write. A path that
+/// cannot be read is not gone, and neither is one whose time cannot be.
+fn gone(line: &Writer) -> Option<Gone> {
+    use std::io::ErrorKind::{NotADirectory, NotFound};
+    match fs::metadata(&line.path) {
+        Err(error) if matches!(error.kind(), NotFound | NotADirectory) => Some(Gone::Missing),
+        Err(_) => None,
+        Ok(file) => {
+            let modified = file.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+            (modified.as_secs_f64() > line.seen + symphony_board::WRITERS_EVERY)
+                .then_some(Gone::Replaced)
+        }
+    }
+}
+
+/// What a step says of the writers it did not count, after its own words: nothing with none.
+fn not_counted(gone: &[(Writer, Gone)]) -> String {
+    if gone.is_empty() {
+        return String::new();
+    }
+    let each: Vec<String> = (gone.iter())
+        .map(|(writer, why)| format!("{}: {}", said(writer), why.said()))
+        .collect();
+    format!("; not counted, as its program is gone: {}", each.join("; "))
 }
 
 /// Whether `path` is a binary of a release in `releases`: `releases/NAME/bin/BINARY`.
