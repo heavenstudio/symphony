@@ -140,7 +140,8 @@ impl Adapter for DefaultLand<'_> {
     }
 }
 
-/// The digest of what was read of a task's evidence at `head`.
+/// The digest of what was read of a task's evidence at `head`, its gate decisions that stand among
+/// it: one given between the prepare and the merge changes it.
 fn evidence_revision(
     needed: &Needed,
     met: &[(String, String)],
@@ -150,6 +151,7 @@ fn evidence_revision(
 ) -> String {
     let mut parts: Vec<String> = vec![format!("head {head}")];
     parts.extend(needed.stamps.iter().map(|stamp| format!("needs {stamp}")));
+    parts.extend(needed.decisions.iter().map(|decision| decision.line()));
     parts.extend(met.iter().map(|(stamp, _)| format!("met {stamp}")));
     parts.extend(
         missing
@@ -280,6 +282,7 @@ impl Landing<'_> {
         }
         self.owner_lines(&base, &tip)
             .map_err(|refusal| self.refuse(refusal))?;
+        let raised = self.raised(&base, &tip, &needed)?;
         let read = needs::Evidence::of(self.store, self.env, &self.main, slug, &thread, &needed);
         let (met, missing) = needs::standing(&needed, &tip, &read);
         if !missing.is_empty() {
@@ -295,6 +298,7 @@ impl Landing<'_> {
         if needed.told() {
             self.say(&needed.line(slug, &tip, &met));
         }
+        self.say_raised(&raised);
         let bindings = self
             .adapter()
             .bindings(slug, &tip)

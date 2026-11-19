@@ -3,7 +3,9 @@
 //! by its reader, met, missing or, for `owner`, held; or left out by the task's assessment, waived,
 //! the assessment its reason. `owner` is held too while a card the task posted waits ([`owner`]),
 //! and `review` reads the rounds ([`review`]), met only while the last approve names the tip
-//! ([`review_at`]). A task done or cancelled with no assessment keeps the gates it had before
+//! ([`review_at`]). A stamp a gate decision waived for the tip (`symphony_board::gates`) is waived,
+//! the decision's author, reason and tip its own ([`decided`]); one for another tip lifts nothing.
+//! A task done or cancelled with no assessment keeps the gates it had before
 //! stamps ([`stamped`]): no history is judged again. A done task whose branch the sweep removed is
 //! read at the tip its land merged ([`landed_tip`]); a closed task with no tip to read at reads its
 //! needed stamps unknown, never missing. The task's timeline draws no lane for a stamp left out
@@ -18,6 +20,7 @@ use std::path::Path;
 use symphony_api::gates::{OWNER, REVIEW};
 use symphony_api::{Gate, GateState, PendingItem, TaskOffer};
 use symphony_board::cli::machine_work::recorded::Record;
+use symphony_board::gates::{self, Decision};
 use symphony_board::stamps::read::{self, Reading};
 use symphony_board::stamps::{Catalogue, Needs, READERS, said, short};
 use symphony_board::{Message, Store, Task};
@@ -65,6 +68,8 @@ pub struct Evidence<'a> {
 pub fn stamps(record: &Task, catalogue: &Catalogue, evidence: &Evidence<'_>) -> Vec<Gate> {
     let needs = record.needs();
     let needed = read::needed(catalogue, needs.as_ref(), evidence.tip);
+    let decisions = record.gates();
+    let (waivers, _) = gates::waivers(&decisions, catalogue, &needed, evidence.tip);
     let defaults = catalogue.defaults();
     let (slug, status) = (record.slug.as_str(), record.status.as_str());
     let reviewers = record.holders("reviewer");
@@ -78,6 +83,9 @@ pub fn stamps(record: &Task, catalogue: &Catalogue, evidence: &Evidence<'_>) -> 
             let name = stamp.name;
             let wanted = needed.iter().any(|need| need == name);
             let left_out = || waived(name, slug, needs.as_ref(), &defaults, evidence.thread);
+            if let Some(waiver) = waivers.iter().find(|waiver| waiver.gate == name) {
+                return decided(name, slug, waiver, evidence.thread);
+            }
             match name {
                 // A task done by a covered close was reviewed by none: it says so, needed or not.
                 REVIEW if status == "done" && covered_close(evidence.thread).is_some() => {
@@ -296,6 +304,30 @@ fn waived(
         past: Vec::new(),
     }
 }
+
+/// The stamp `name` of the task `slug` a gate decision waived at the tip (`waiver`): waived, its
+/// reason, author and tip the decision's, its line on the `thread` the link.
+fn decided(name: &str, slug: &str, waiver: &Decision, thread: &[Message]) -> Gate {
+    let said = waiver.line();
+    let line = (thread.iter()).rfind(|line| line.kind == "system" && line.text == said);
+    Gate {
+        name: name.into(),
+        state: GateState::Waived,
+        by: Some(waiver.by.clone()),
+        at: Some(waiver.at),
+        commit: waiver.tip.clone(),
+        why: Some(waiver.why.clone()),
+        detail: format!(
+            "{DECIDED} {}",
+            short(waiver.tip.as_deref().unwrap_or_default())
+        ),
+        link: line.map(|line| format!("/task/{slug}#message-{}", line.id)),
+        past: Vec::new(),
+    }
+}
+
+/// How a stamp a gate decision waived starts its detail, the tip after.
+const DECIDED: &str = "Waived by a gate decision at";
 
 /// Whether `gate` is a stamp left out ([`waived`]): by the task's assessment, or by default with
 /// none. The task page's gates list it; its timeline draws no lane for it, which would say the

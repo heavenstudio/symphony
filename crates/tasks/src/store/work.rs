@@ -19,6 +19,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod covered;
+
+mod gates;
 pub(crate) use covered::covered_command;
 pub use covered::{COVERED, CoveredLine, covered_by, covered_line, landing};
 

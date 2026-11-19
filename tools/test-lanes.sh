@@ -10,8 +10,10 @@
 # tests receive one published client, and tests receive the build's tasks and other binaries.
 # Every concurrent batch keeps a live log in SYMPHONY_TEST_LANE_LOGS (else build/test-lanes).
 # Native batches keep Cargo's feature graph and build-script debug info, so none relinks while
-# another runs. A failed nextest case is a libtest-json-plus 0.1 event; a native failure keeps
-# Cargo's output. The release readers understand both in the same recorded tests step.
+# another runs, and each binary's copy is a link to its build before any starts, so none removes a
+# binary another's test runs ([`link_binaries`]). A failed nextest case is a libtest-json-plus 0.1
+# event; a native failure keeps Cargo's output. The release readers understand both in the same
+# recorded tests step.
 # No retries. Signals reach every batch through the foreground pipeline, whose processes are
 # reaped before this script exits. Bash 3.2 (macOS's /bin/bash) runs it.
 set -uo pipefail
@@ -252,6 +254,37 @@ case "$processors" in
 esac
 if [ "$at_once" -lt 1 ]; then at_once=1; fi
 
+# Cargo puts each binary of the workspace in the target folder as a copy of its build under deps/,
+# and every Cargo call makes that copy again, even one that builds nothing: it removes the copy,
+# then copies. One batch's call while another batch's test runs that binary (CARGO_BIN_EXE_NAME,
+# SYMPHONY_TEST_BINARIES, the libraries' runner) leaves the test finding no file there. So each
+# copy the build lists is made a hard link to the build it copies, renamed over it, and every later
+# call finds the copy is its build already and leaves it in place. A copy that is no build's is
+# left as Cargo made it, and said.
+link_binaries() {
+    local path copy name build
+    jq -r '."rust-build-meta"."non-test-binaries" // {} | .[][] | .path' "$logs/binaries.json" |
+        while IFS= read -r path; do
+            copy="${debug%/debug}/$path"
+            if [ -L "$copy" ] || [ ! -f "$copy" ]; then continue; fi
+            name="${copy##*/}"
+            for build in "$debug/deps/${name//-/_}-"*; do
+                case "${build##*/}" in *.*) continue ;; esac
+                if [ -L "$build" ] || [ ! -f "$build" ]; then continue; fi
+                if [ "$build" -ef "$copy" ]; then continue 2; fi
+                if cmp -s "$build" "$copy"; then
+                    if ln -f "$build" "$copy.test-lanes" && mv -f "$copy.test-lanes" "$copy"; then
+                        continue 2
+                    fi
+                    rm -f "$copy.test-lanes"
+                    break
+                fi
+            done
+            printf 'test-lanes: %s is no link to its build under deps/: a batch starting while a test runs it may leave it gone\n' \
+                "$copy" >&2
+        done
+}
+
 # I: the lane I, its output in its log, its exit status in NAME.status, which a signal that ends
 # it leaves unwritten, and the seconds it took in NAME.seconds.
 lane() {
@@ -299,6 +332,7 @@ slots() {
 }
 
 if [ "${#started[@]}" -gt 0 ]; then
+    link_binaries
     printf 'test-lanes: lanes run at most %s at once (%s), each writing its log as it runs:\n' \
         "$at_once" "$why"
     for i in "${started[@]}"; do
