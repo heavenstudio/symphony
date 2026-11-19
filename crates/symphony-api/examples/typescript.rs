@@ -134,6 +134,9 @@ fn constants() -> String {
             "TIMELINE_HISTORY_SOURCES",
             api::timeline::TIMELINE_HISTORY_SOURCES.to_string(),
         ),
+        ("TASK_ATTEMPTS_PATH", text(api::TASK_ATTEMPTS_PATH)),
+        ("ATTEMPT_CONTROL_ROUTE", text(api::ATTEMPT_CONTROL_ROUTE)),
+        ("ATTEMPT_VIEW_ROUTE", text(api::ATTEMPT_VIEW_ROUTE)),
         ("AGENT_FOCUS_PATH", text(api::AGENT_FOCUS_PATH)),
         ("AGENT_SCREEN_PATH", text(api::AGENT_SCREEN_PATH)),
         ("WORKFLOW_PATH", text(api::workflow::WORKFLOW_PATH)),
@@ -359,6 +362,13 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::GatePast>(cfg),
         declared::<api::GateState>(cfg),
         declared::<api::GatesSeen>(cfg),
+        // Its execution attempts.
+        declared::<api::TaskAttempts>(cfg),
+        declared::<api::AttemptView>(cfg),
+        declared::<api::AttemptControls>(cfg),
+        declared::<api::AttemptControl>(cfg),
+        declared::<api::AttemptViewAsk>(cfg),
+        declared::<api::AttemptLink>(cfg),
         // Its timeline.
         declared::<api::TaskTimeline>(cfg),
         declared::<api::timeline::Offset>(cfg),
@@ -1341,6 +1351,7 @@ fn samples() -> Value {
     samples.insert("board".into(), json!(board));
     samples.extend(task_board_samples());
     samples.extend(workflow_samples());
+    samples.extend(attempt_samples());
     samples.extend(agents_samples());
     samples.insert("reports".into(), json!(reports()));
     samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
@@ -2856,4 +2867,61 @@ fn open() {
             Err("`fn open` has no line `}` after it".into())
         );
     }
+}
+
+/// A task's execution attempts, as [`samples`] holds them: a history of an attempt paused and
+/// followed by its resume, which runs and may be stopped, cancelled or viewed, and one of a
+/// provider this server does not hold; and a view's link.
+fn attempt_samples() -> Vec<(String, Value)> {
+    let attempt = |id: &str, revision: i64, dispatch: &str| -> api::AttemptView {
+        serde_json::from_value(json!({
+            "id": id.repeat(32), "created": 1_763_500_000_000_i64 + revision, "revision": revision,
+            "current": false, "lane": "executor/amber", "role": "executor", "handle": "amber",
+            "configuration": "cloud", "dispatch": dispatch, "cancellation": "none",
+            "collection": "not_started", "cleanup": "not_due", "initiator": "service host/launcher",
+        }))
+        .expect("an attempt")
+    };
+    let mut paused = attempt("a", 6, "terminal");
+    paused.ending = Some("stopped".into());
+    paused.resource = Some("res-1".into());
+    paused.generation = Some("g1".into());
+    paused.conversation = Some("conversation-1".into());
+    paused.successor = Some("b".repeat(32));
+    paused.controls.view = true;
+    let mut resumed = attempt("b", 4, "running");
+    resumed.current = true;
+    resumed.predecessor = Some("a".repeat(32));
+    resumed.relation = Some("resume".into());
+    resumed.resource = Some("res-2".into());
+    resumed.generation = Some("g1".into());
+    resumed.initiator = "human local/owner".into();
+    resumed.controls = api::AttemptControls {
+        cancel: true,
+        stop: vec!["pause".into(), "terminate".into()],
+        resume: Vec::new(),
+        view: true,
+        unserved: None,
+    };
+    let mut elsewhere = attempt("c", 2, "paused");
+    elsewhere.lane = "reviewer/coral".into();
+    elsewhere.role = "reviewer".into();
+    elsewhere.handle = None;
+    elsewhere.configuration = "lab".into();
+    elsewhere.current = true;
+    elsewhere.resource = Some("lab-7".into());
+    elsewhere.conversation = Some("conversation-7".into());
+    elsewhere.controls.cancel = true;
+    elsewhere.controls.unserved = Some("its provider lab is not one this server holds".into());
+    let history = api::TaskAttempts {
+        attempts: vec![paused, resumed, elsewhere],
+    };
+    let link = api::AttemptLink {
+        url: "https://provider.invalid/res-2".into(),
+        valid_for_ms: 10_000,
+    };
+    [("attempts", json!(history)), ("attemptLink", json!(link))]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value))
+        .collect()
 }

@@ -3458,6 +3458,95 @@
         "workflow": 2
       }
     },
+    "attempts": {
+      "attempts": [
+        {
+          "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "created": 1763500000006,
+          "revision": 6,
+          "current": false,
+          "lane": "executor/amber",
+          "role": "executor",
+          "handle": "amber",
+          "configuration": "cloud",
+          "predecessor": null,
+          "relation": null,
+          "successor": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "dispatch": "terminal",
+          "ending": "stopped",
+          "held": null,
+          "cancellation": "none",
+          "collection": "not_started",
+          "cleanup": "not_due",
+          "resource": "res-1",
+          "generation": "g1",
+          "conversation": "conversation-1",
+          "initiator": "service host/launcher",
+          "controls": { "cancel": false, "stop": [], "resume": [], "view": true, "unserved": null }
+        },
+        {
+          "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "created": 1763500000004,
+          "revision": 4,
+          "current": true,
+          "lane": "executor/amber",
+          "role": "executor",
+          "handle": "amber",
+          "configuration": "cloud",
+          "predecessor": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "relation": "resume",
+          "successor": null,
+          "dispatch": "running",
+          "ending": null,
+          "held": null,
+          "cancellation": "none",
+          "collection": "not_started",
+          "cleanup": "not_due",
+          "resource": "res-2",
+          "generation": "g1",
+          "conversation": null,
+          "initiator": "human local/owner",
+          "controls": {
+            "cancel": true,
+            "stop": ["pause", "terminate"],
+            "resume": [],
+            "view": true,
+            "unserved": null
+          }
+        },
+        {
+          "id": "cccccccccccccccccccccccccccccccc",
+          "created": 1763500000002,
+          "revision": 2,
+          "current": true,
+          "lane": "reviewer/coral",
+          "role": "reviewer",
+          "handle": null,
+          "configuration": "lab",
+          "predecessor": null,
+          "relation": null,
+          "successor": null,
+          "dispatch": "paused",
+          "ending": null,
+          "held": null,
+          "cancellation": "none",
+          "collection": "not_started",
+          "cleanup": "not_due",
+          "resource": "lab-7",
+          "generation": null,
+          "conversation": "conversation-7",
+          "initiator": "service host/launcher",
+          "controls": {
+            "cancel": true,
+            "stop": [],
+            "resume": [],
+            "view": false,
+            "unserved": "its provider lab is not one this server holds"
+          }
+        }
+      ]
+    },
+    "attemptLink": { "url": "https://provider.invalid/res-2", "valid_for_ms": 10000 },
     "agentPage": {
       "view": {
         "machine_work": {
