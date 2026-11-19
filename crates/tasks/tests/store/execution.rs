@@ -1314,7 +1314,7 @@ on_both! {
         let calls = fake.calls();
         assert_eq!(c.step(id), Ok(Worked::Waited));
         assert_eq!(fake.calls(), calls, "nothing is sent for a held attempt");
-        assert_eq!(f.store.live_attempts(TASK).unwrap(), [held.id.clone()]);
+        assert_eq!(f.store.live_attempts(TASK).unwrap(), std::slice::from_ref(&held.id));
         assert_eq!(
             c.admit(&grant, asked(OTHER_TASK)),
             Err(Refusal::Full(vec![held.id.clone()])),
@@ -1326,7 +1326,7 @@ on_both! {
         let superseded = read(&c, id).state;
         assert_eq!(superseded.ending, Some(Ending::Superseded));
         assert_eq!(superseded.cancel, None);
-        assert_eq!(reserved(&f, "pool"), [retry.id.clone()]);
+        assert_eq!(reserved(&f, "pool"), std::slice::from_ref(&retry.id));
     }
 
     fn concurrent_admissions_admit_one_per_request_key_lane_and_capacity_place(backend: Backend) {
@@ -1339,14 +1339,14 @@ on_both! {
         let answers = racing(&f, &fake, same, None);
         let ids: Vec<String> = answers.into_iter().map(|answer| answer.expect("admitted").id).collect();
         assert!(ids.iter().all(|id| *id == ids[0]), "{ids:?}");
-        assert_eq!(f.store.live_attempts(TASK).unwrap(), [ids[0].clone()]);
+        assert_eq!(f.store.live_attempts(TASK).unwrap(), std::slice::from_ref(&ids[0]));
 
         // One lane: one admitted, every other busy with it.
         let lane = (0..RACERS).map(|n| asked(OTHER_TASK).request_key(&format!("lane-{n}"))).collect();
         let held = one_admitted(racing(&f, &fake, lane, None), |refusal, admitted| {
             *refusal == Refusal::Busy(Some(admitted.id.clone()))
         });
-        assert_eq!(f.store.live_attempts(OTHER_TASK).unwrap(), [held.id.clone()]);
+        assert_eq!(f.store.live_attempts(OTHER_TASK).unwrap(), std::slice::from_ref(&held.id));
 
         // One capacity scope with one place left: one admitted, every other full.
         let c = coordinator(&f, &fake).with_capacity("pool", 2);
