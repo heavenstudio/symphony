@@ -585,6 +585,7 @@ mod tests {
             tasks,
             sessions: Vec::<Session>::new(),
             latest_message: 0,
+            workflow_generation: None,
         }
     }
 

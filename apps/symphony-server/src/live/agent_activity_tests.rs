@@ -72,6 +72,7 @@ fn board(tasks: Vec<Task>, sessions: Vec<Session>) -> Board {
         tasks,
         sessions,
         latest_message: 0,
+        workflow_generation: None,
     }
 }
 

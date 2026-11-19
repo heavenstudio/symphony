@@ -66,6 +66,8 @@ pub(in crate::store) fn standings() -> Pg<'static> {
     )
 }
 
+/// Twin of `super::super::surreal::workflow::ACTIVATE`, the board's marker moved by
+/// `board_bump`, once in its transaction as every trigger's.
 pub(in crate::store) fn activate() -> Pg<'static> {
     Pg::script(
         "
@@ -109,6 +111,7 @@ BEGIN
     INSERT INTO workflow (id, kind, body, at) VALUES ('[\"active\"]', 'active',
         jsonb_build_object('generation', v -> 'generation', 'digest', v ->> 'digest'), at_)
         ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, at = EXCLUDED.at;
+    PERFORM board_bump();
 END;
 ",
     )

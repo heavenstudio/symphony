@@ -55,7 +55,8 @@ RETURN {
 /// An activation, whole: refused as stale unless the active generation is still `$expected` and
 /// every task it read is still at its version (and workflow revision); then each kept task
 /// written at its version, each moved one recorded and moved, the definition recorded once under
-/// its digest, the activation recorded, and the active generation moved to it.
+/// its digest, the activation recorded, the board's marker moved (a board read carries the
+/// generation, and a relabel moves no task) and the active generation moved to it.
 pub(in crate::store) const ACTIVATE: &str = "
 LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
 IF ($active.generation ?? 0) != $expected {
@@ -83,6 +84,7 @@ IF (SELECT VALUE kind FROM ONLY type::record('workflow', ['definition', $digest]
 };
 CREATE type::record('workflow', ['activation', $generation])
     CONTENT { kind: 'activation', body: $activation, at: $at } RETURN NONE;
+IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; };
 UPSERT workflow:['active'] CONTENT { kind: 'active', body: { generation: $generation, digest: $digest }, at: $at } RETURN NONE;
 RETURN NONE;";
 

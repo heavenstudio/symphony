@@ -876,6 +876,7 @@ fn a_report_counts_the_open_tasks_nobody_orchestrates_in_the_newest_board_read()
         ],
         sessions: Vec::new(),
         latest_message: 0,
+        workflow_generation: None,
     };
     recorder.unowned(&board);
     let report = recorder.report(T0 + 1.0);
@@ -910,6 +911,7 @@ fn a_report_counts_the_open_tasks_nobody_orchestrates_in_the_newest_board_read()
         tasks: Vec::new(),
         sessions: Vec::new(),
         latest_message: 0,
+        workflow_generation: None,
     });
     let settled = recorder.report(T0 + 2.0);
     assert_eq!(settled.unowned, Some(0), "the newest board decides");

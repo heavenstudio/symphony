@@ -235,6 +235,7 @@ mod tests {
                 session("theirs", "worker", Some("next")),
             ],
             latest_message: 9,
+            workflow_generation: None,
         }
     }
 
