@@ -656,15 +656,22 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   the candidate stays open, how its rerun is allowed, how the count goes on from that release and
   how the next release of main's tip is one that moved forward. A pull request that did not
   merge leaves no receipt, and the red waits as for any task still open. Once the candidate
-  advanced so, `release-candidate` names a head main's history does not hold, so a later red's fix
-  that started before the advance is rebased onto `release-candidate`, never merged with it: a
-  delivery refuses a head that merges a commit the remote's default branch lacks, and a fix that
-  does not descend from the candidate's tip drops it. One that starts at `release-candidate` after
-  the advance holds no such merge and is delivered as any head. A rebase is a new head, assessed
-  and stamped again. One limit is the receipts' own: a task has one receipt, so a slug delivered
-  a second time replaces it, and the count then misses the first squash, and a release tagged on
-  the first head is held by nothing; that is the delivery's to keep apart, and until it does a
-  person judges such a line. The entries a delivered landing said
+  advanced so, `release-candidate` names a head main's history does not hold, and a delivery
+  refuses a head that merges a commit the remote's default branch lacks, so on such a line a
+  red's fix never merges `release-candidate`. A fix that starts at `release-candidate` after the
+  advance holds no such merge and is delivered as any head. One started before the advance and
+  not yet published or approved is rebased onto `release-candidate` before its assessment and
+  review: that is a new head, so its assessment, each stamp and its approve are of the rebased
+  head, and nothing gathered on the old one counts. One already published, or approved, is left
+  as it is: nothing is rewritten behind an approval or a pull request, which a delivery never
+  forces, and neither is main or a release's tag. Its land then answers no advance, as it does
+  not descend from the candidate's tip, and drops the candidate, so main's tip, which holds
+  both squashes, is what is run. Fixing a candidate's reds one after the other, each started at
+  the candidate as the one before left it, keeps it. One limit is the receipts' own: a task has
+  one receipt, so a slug delivered a second time replaces it; the count then misses the first
+  squash, and a release tagged on the first head is held by nothing, which a person judges until
+  [[task:tools/github-delivery-receipt-history]] keeps each delivery's receipt: a repeated
+  delivery of one task is not supported here. The entries a delivered landing said
   ([its notes](#its-notes)) are read from the head its receipt kept, as the squash carries none,
   and a release tagged on a delivered head stays in the notes of every release after it by the
   same reading. A fix that changes what
