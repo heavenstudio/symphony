@@ -349,3 +349,47 @@ fn what_a_pull_said_survives_the_record_it_is_kept_in() {
     assert!(said.entries.contains(&("landed_open".into(), "t/x".into())));
     assert!(said.entries.contains(&("idle".into(), "calm-vole".into())));
 }
+
+#[test]
+fn the_approved_and_not_landed_are_counted_only_when_there_are_some_and_said_once() {
+    let none = digest(1, &[]);
+    assert!(!none.lines()[0].contains(UNLANDED), "{:?}", none.lines());
+    // A PULL said before the list existed carried no count of it: none has moved.
+    let mut before = none.said();
+    before.counts.remove(UNLANDED);
+    assert_eq!(
+        none.changes_since(&before, &told(&before)),
+        ["PULL counts unchanged"]
+    );
+    let mut one = digest(1, &[(UNLANDED, &["tools/x"])]);
+    one.notes.insert(
+        "tools/x".into(),
+        "approved 09:12, not landed; its landing waits on tests".into(),
+    );
+    let lines = one.lines();
+    assert!(
+        lines[0].contains(" landed_open=0 approved_unlanded=1 idle=0"),
+        "{lines:?}"
+    );
+    let row = "  approved_unlanded p2 tools/x — Task tools/x   (approved 09:12, not landed; its \
+               landing waits on tests)";
+    assert_eq!(lines[1..], [row]);
+    // To a recipient of the older PULL the count is new, and so is the row.
+    assert_eq!(
+        one.changes_since(&before, &told(&before)),
+        ["PULL approved_unlanded=1 (was none)", row]
+    );
+    // Told, it is not said again; landed, it is resolved.
+    let said = one.said();
+    assert_eq!(
+        one.changes_since(&said, &told(&said)),
+        ["PULL counts unchanged"]
+    );
+    assert_eq!(
+        none.changes_since(&said, &told(&said)),
+        [
+            "PULL approved_unlanded=0 (was 1)",
+            "  resolved approved_unlanded tools/x"
+        ]
+    );
+}
