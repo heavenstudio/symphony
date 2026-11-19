@@ -11,6 +11,7 @@ import {
   hearBoard,
   keepBoard,
   noticeGeometry,
+  noticeParts,
   type PageBoard,
   PageNotices,
   pause,
@@ -104,6 +105,63 @@ describe("the page's notices", () => {
     expect(notices({ reconnecting: false, documentRemoved: true })).toContain(
       "This document was removed.",
     );
+  });
+
+  it("link the task the server's notice names by its slug, to the very path it names", async () => {
+    vi.resetModules();
+    vi.stubGlobal("document", {
+      getElementById: () => ({ textContent: '{"name":"","register":"","base":"/alpha"}' }),
+    });
+    const live = await import("./live");
+    const shared = await import("./shared");
+    shared.SERVER_NOTICE.set(
+      "This board is at schema 24, ahead of this server's 23. Its update's task: /symphony/task/tests/release-red-update-alpha-24.",
+    );
+    const markup = renderToStaticMarkup(<live.PageNotices reconnecting={false} />);
+    shared.SERVER_NOTICE.set("");
+    expect(markup).toContain(
+      '<p class="pill wait server-notice" role="status"><span>This board is at schema 24, ahead of this server&#x27;s 23. Its update&#x27;s task: <a href="/symphony/task/tests/release-red-update-alpha-24">tests/release-red-update-alpha-24</a>.</span></p>',
+    );
+    expect(markup, "never under the page's own project").not.toContain('href="/alpha/');
+    // The reserve holds the same words at the same width, with nothing a reader could reach.
+    expect(markup).toContain(
+      '<p class="pill"><span>This board is at schema 24, ahead of this server&#x27;s 23. Its update&#x27;s task: <span>tests/release-red-update-alpha-24</span>.</span></p>',
+    );
+  });
+
+  it("leave a notice naming no task as its words", () => {
+    SERVER_NOTICE.set("Restarting: see /docs/RUNS.md and https://h/task/x");
+    const markup = notices({ reconnecting: false });
+    expect(markup).not.toContain("<a ");
+    expect(markup).toContain("Restarting: see /docs/RUNS.md and https://h/task/x</p>");
+  });
+});
+
+describe("the server's notice in its parts", () => {
+  it("sets each task's page apart, the punctuation after it left in the words", () => {
+    expect(noticeParts("Its task: /task/tools/x), then /symphony/task/tests/y; done")).toEqual([
+      "Its task: ",
+      { path: "/task/tools/x", slug: "tools/x" },
+      "), then ",
+      { path: "/symphony/task/tests/y", slug: "tests/y" },
+      "; done",
+    ]);
+    expect(noticeParts("/task/a /task/b")).toEqual([
+      { path: "/task/a", slug: "a" },
+      " ",
+      { path: "/task/b", slug: "b" },
+    ]);
+  });
+
+  it("keeps words with no task's page whole, a path of another host or page among them", () => {
+    for (const text of [
+      "",
+      "Restarting",
+      "see /docs/TASKS.md, then //evil.example/task/x and task/x.",
+      "a task: /task/.",
+    ]) {
+      expect(noticeParts(text), JSON.stringify(text)).toEqual(text === "" ? [] : [text]);
+    }
   });
 });
 

@@ -110,6 +110,7 @@ fn constants() -> String {
         ("RUN_LOG_TAIL", api::RUN_LOG_TAIL.to_string()),
         ("RUN_LOG_MOST", api::RUN_LOG_MOST.to_string()),
         ("RUNS_DAYS", api::RUNS_DAYS.to_string()),
+        ("SCHEMA_UPDATES_PATH", text(api::SCHEMA_UPDATES_PATH)),
         ("VERSION_HEADER", text(api::VERSION_HEADER)),
         ("VERDICT_TASKS", text(api::VERDICT_TASKS)),
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
@@ -197,7 +198,7 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         // Reports'.
         declared::<api::Grain>(cfg),
         declared::<api::report_page::ReportMark>(cfg),
-        // The Runs page's.
+        // The Runs page's, its schema updates too.
         declared::<api::RunsPage>(cfg),
         declared::<api::RunPage>(cfg),
         declared::<api::RunLine>(cfg),
@@ -205,6 +206,10 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::Suite>(cfg),
         declared::<api::FailedTest>(cfg),
         declared::<api::RunLog>(cfg),
+        declared::<api::SchemaUpdates>(cfg),
+        declared::<api::SchemaUpdate>(cfg),
+        declared::<api::UpdateState>(cfg),
+        declared::<api::UpdateTime>(cfg),
         // The task board's, its tasks and the machines' work.
         declared::<api::TaskListing>(cfg),
         declared::<api::WaitingBoard>(cfg),

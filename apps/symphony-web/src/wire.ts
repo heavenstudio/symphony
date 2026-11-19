@@ -19,6 +19,7 @@ export const RUN_LOG_PATH = "/api/run-log";
 export const RUN_LOG_TAIL = 65536;
 export const RUN_LOG_MOST = 1048576;
 export const RUNS_DAYS = 14;
+export const SCHEMA_UPDATES_PATH = "/api/schema-updates";
 export const VERSION_HEADER = "symphony-version";
 export const VERDICT_TASKS = "verdicts/";
 export const UPLOAD_PATH = "/api/upload";
@@ -580,6 +581,102 @@ export type RunLog = {
    * Those bytes as text; a character a range cuts through reads as U+FFFD.
    */
   text: string;
+};
+
+export type SchemaUpdates = {
+  /**
+   * Every open update and the [`SCHEMA_UPDATES_SHOWN`] newest, newest first: the order the
+   * ledger was written in, turned round.
+   */
+  updates: Array<SchemaUpdate>;
+  /**
+   * Why the ledger could not be read, in a sentence naming it; none while it was read, or there
+   * is none yet.
+   */
+  unread: string | null;
+};
+
+export type SchemaUpdate = {
+  /**
+   * `ID@N`, `ID@N.G` from its second generation.
+   */
+  id: string;
+  /**
+   * The project whose board it is: its id on the machine's server.
+   */
+  project: string;
+  /**
+   * The schema its board reached.
+   */
+  schema: number;
+  /**
+   * Its generation: 1, then 2 for the board's next arrival at the same schema after it went back.
+   */
+  generation: number;
+  state: UpdateState;
+  /**
+   * When its board reached the schema, as far as a record says.
+   */
+  reached: UpdateTime | null;
+  /**
+   * When the first green release serving the schema was installed on the machine.
+   */
+  available: UpdateTime | null;
+  /**
+   * When the machine's server first wrote the board at the schema.
+   */
+  served: UpdateTime | null;
+  /**
+   * From reached to served, in seconds, once both are known.
+   */
+  total: number | null;
+  /**
+   * [`SchemaUpdate::total`] as the owner reads a wait: `4 h 46 min`, `3 min 10 s`, `40 s`.
+   */
+  total_said: string | null;
+  /**
+   * How much of the wait came after the release was installed, in seconds, once both are known.
+   */
+  after_available: number | null;
+  /**
+   * [`SchemaUpdate::after_available`] as the owner reads a wait.
+   */
+  after_available_said: string | null;
+  /**
+   * How many refreshes ended with it incomplete though a green release serving it was here.
+   */
+  failures: number;
+  /**
+   * What the last of them found; none while none failed.
+   */
+  failure: string | null;
+  /**
+   * The page of its task, filed at its first failure, on the server that answers: an app path
+   * (`/<project>/task/SLUG` under the machine's one server, while the project is registered);
+   * none while it has none, its board is an unregistered one's, or its task is another
+   * project's board's and the server serves its one project alone.
+   */
+  task: string | null;
+};
+
+export type UpdateState = "open" | "served" | "left";
+
+export type UpdateTime = {
+  /**
+   * Seconds since the epoch.
+   */
+  at: number;
+  /**
+   * Where it comes from, named as `release --status` names it, the record's words before their
+   * first colon: `schema-seen.log`, `release-2026-11-19's manifest, written by its install`,
+   * `the server's hand-off`, `this refresh's move`, or a refresh's own look.
+   */
+  source: string;
+  /**
+   * The record's words whole, its name first and then what it says of the time (`schema-seen.log:
+   * the first store that saw the board at this schema; …`), as the ledger holds them.
+   */
+  words: string;
 };
 
 export type TaskListing = {

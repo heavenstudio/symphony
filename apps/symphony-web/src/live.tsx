@@ -29,6 +29,7 @@ import {
 } from "./cache";
 import { back, type Heard, Inbox, openFeed } from "./feed";
 import { type FrameRefresh, useFrame } from "./frame";
+import { taskSlug } from "./links";
 import { scoped } from "./project";
 import { getIf, said } from "./request";
 import { engaged, whenFree } from "./route";
@@ -567,7 +568,7 @@ export function PageNotices({
         )}
         {server !== "" && (
           <p className="pill wait server-notice" role="status">
-            {server}
+            <NoticeText text={server} linked />
           </p>
         )}
       </div>
@@ -579,10 +580,73 @@ export function PageNotices({
         <p className="pill">{waiting}</p>
         {error !== "" && <p className="pill">{error}</p>}
         {documentRemoved && <p className="pill">{REMOVED_DOCUMENT_NOTICE}</p>}
-        {server !== "" && <p className="pill">{server}</p>}
+        {server !== "" && (
+          <p className="pill">
+            <NoticeText text={server} linked={false} />
+          </p>
+        )}
       </div>
     </div>
   );
+}
+
+/** A part of the server's notice: its words, or a task's page it names (`taskSlug`). */
+export type NoticePart = string | { path: string; slug: string };
+
+/** What may follow a path in a sentence and is no part of it. */
+const TRAILING = /[.,;:)]+$/;
+
+/**
+ * The server's notice `text` in its parts: each whitespace-separated word that is a task's page
+ * (`/symphony/task/SLUG`, the page of a failed schema update's task) apart, the punctuation after
+ * it left in the words, and the words between kept whole.
+ */
+export function noticeParts(text: string): NoticePart[] {
+  const parts: NoticePart[] = [];
+  let words = "";
+  for (const token of text.split(/(\s+)/)) {
+    const trail = TRAILING.exec(token)?.[0] ?? "";
+    const path = token.slice(0, token.length - trail.length);
+    const slug = /\s/.test(token) ? null : taskSlug(path);
+    if (slug === null) {
+      words += token;
+      continue;
+    }
+    if (words !== "") parts.push(words);
+    parts.push({ path, slug });
+    words = trail;
+  }
+  if (words !== "") parts.push(words);
+  return parts;
+}
+
+/**
+ * The server's notice, each task's page it names drawn as its slug: a link to that very path when
+ * `linked`, which is the server's whole path and never takes the project's base, as the server
+ * names a task under the project whose board holds it; plain text in the reserve, which only
+ * holds the notice's room and is hidden from a reader. Words naming a task are one span, as a pill
+ * lays its children out apart; words naming none are the text alone.
+ */
+function NoticeText({ text, linked }: { text: string; linked: boolean }) {
+  const parts = noticeParts(text);
+  if (parts.every((part) => typeof part === "string")) return text;
+  return (
+    <span>
+      {parts.map((part, at) =>
+        typeof part === "string" ? (
+          part
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: a notice may name one task twice
+          <NoticeTask key={at} task={part} linked={linked} />
+        ),
+      )}
+    </span>
+  );
+}
+
+/** A task's page the server's notice names: its slug, linked to that path when `linked`. */
+function NoticeTask({ task, linked }: { task: { path: string; slug: string }; linked: boolean }) {
+  return linked ? <a href={task.path}>{task.slug}</a> : <span>{task.slug}</span>;
 }
 
 /**

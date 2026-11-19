@@ -18,6 +18,7 @@ mod feed_socket;
 pub(crate) mod reports;
 pub(crate) mod run_log;
 pub(crate) mod runs;
+mod schema_updates;
 mod task_diff;
 mod validated;
 mod warm;
@@ -67,6 +68,7 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::RUN_LOG_PATH,
     symphony_api::RUNS_PATH,
     symphony_api::RUN_PATH,
+    symphony_api::SCHEMA_UPDATES_PATH,
 ];
 
 type Request = axum::http::Request<()>;
@@ -264,6 +266,24 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 "the Symphony server is starting",
             ),
         });
+    }
+    // The machine's schema updates are its ledger alone, read on each ask, the board never read.
+    if path == symphony_api::SCHEMA_UPDATES_PATH {
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match crate::spawn::blocking(move || schema_updates::answer(&hub)).await {
+                Ok(updates) => no_store(Json(updates)),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the schema updates could not be read: {e}"),
+                ),
+            },
+        );
     }
     // The reports are the project's day files and its git alone, the board never read: a board
     // slow or down leaves them as they are. The answer is the hub's kept one while neither moved,

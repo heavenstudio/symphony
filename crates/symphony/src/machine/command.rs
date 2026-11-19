@@ -230,6 +230,35 @@ pub(crate) fn running_within(
         .flatten()
 }
 
+/// Whether the server this machine's folder `machine` records writes each project's board, as its
+/// project list says (`/api/projects`, each project's `writes`): by id, `Some(true)` while it writes
+/// that board, `Some(false)` while it only reads or refuses it, and `None` while it cannot say (it
+/// keeps no board, has not read it yet, or its last read failed). A project it lists with no
+/// `writes` at all, from a server built before it said, is left out. None when no server answers
+/// there.
+pub fn writes(machine: &Path) -> Option<Vec<(String, Option<bool>)>> {
+    #[derive(serde::Deserialize)]
+    struct Record {
+        port: u16,
+    }
+    let text = std::fs::read_to_string(machine.join(RECORD)).ok()?;
+    let record: Record = serde_json::from_str(&text).ok()?;
+    let (status, body) = get(record.port, symphony_api::listing::PROJECTS_PATH, LOOK).ok()?;
+    if status != 200 {
+        return None;
+    }
+    let list: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let projects = list.get("projects")?.as_array()?;
+    Some(
+        (projects.iter())
+            .filter_map(|project| {
+                let id = project.get("id")?.as_str()?.to_string();
+                Some((id, project.get("writes")?.as_bool()))
+            })
+            .collect(),
+    )
+}
+
 /// Check the board's JSON, never the HTML shell, without writing or migrating it. A refusal keeps
 /// the API's actionable reason. A repaired board may retain that reason until its next retry.
 pub(crate) fn board_readiness_within(

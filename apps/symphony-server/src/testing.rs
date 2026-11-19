@@ -167,6 +167,25 @@ pub fn repository_holding(tree: &Tree, name: &str, file: &str, text: &str) -> st
     root.canonicalize().unwrap()
 }
 
+/// The machine folder `machine` with a registry of the projects `ids`, each named `ID works` at a
+/// root of its id beside the registry: the projects the machine's one server serves.
+pub fn registered(machine: &std::path::Path, ids: &[&str]) {
+    let projects = (ids.iter())
+        .map(|id| symphony::machine::Entry {
+            id: (*id).into(),
+            name: format!("{id} works"),
+            root: machine.join(id),
+            manifest: None,
+            plugins: Vec::new(),
+            pin: 0,
+            schema: 0,
+        })
+        .collect();
+    symphony::machine::Registry { projects }
+        .write(machine)
+        .unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

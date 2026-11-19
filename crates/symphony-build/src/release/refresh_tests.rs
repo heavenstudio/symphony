@@ -379,6 +379,8 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     let logs = dir.join("logs");
     fs::create_dir_all(&logs).unwrap();
     let against = Against {
+        run: "2026-11-20T1000-1",
+        main: &dir,
         // No repository: the SurrealDB a release pins cannot be read, and is not asked for.
         root: &dir,
         ours: &dir,

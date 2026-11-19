@@ -298,6 +298,12 @@ project's runs on the server that serves it:
 - **Now:** each machine's word (its freshness and how long ago it came), then each
   operation running or queued, with its recipe, task, who started it and since when.
   This is the machine work the board reads (`/api/machine-work`), read every 5 s.
+- **Schema updates:** each registered project's board reaching a new schema, from the
+  machine folder's ledger a release's refresh writes, the open ones first, marked
+  waiting: its board and schema, how long from reaching the schema until the machine's
+  server wrote it and how much of that came after the release serving it was installed,
+  when each came (the record each comes from named under them, its words on hover), and
+  a failed one's refreshes, the last one's words and its task. Read every 15 s.
 - **Every run,** newest first, a line each: its result, label (on one line, a long one
   cut short), task or branch and commit, who started it, how long it took and how many
   tests it failed. It can be filtered by pipeline, result (an end, or `started` for
@@ -333,6 +339,14 @@ the one it ran inside, read from the newest day back to the one the run was aske
 A `run` that is not 32 lower-case hex digits is refused (400), and one in none of those
 days is none (404). Both read only regular files, never through a link, and never the
 board; a project that keeps no runs where its server reads has none (404).
+
+`GET /api/schema-updates` (`symphony_api::SCHEMA_UPDATES_PATH`) answers a
+`symphony_api::SchemaUpdates`, the same from any project's server: the ledger's updates
+newest first, its 20 newest (`SCHEMA_UPDATES_SHOWN`) and every open one, each with its
+times and where each comes from, its waits in the owner's words, its failures and the
+page of its task on that server (under the one server while its project is registered;
+on a server of its own, its own project's alone). A ledger that cannot be read, or no
+machine folder, is said in `unread` in place of any update. The hosted board refuses it.
 
 The server keeps what it folded of each day file in memory, a project's own, by the
 file's length, modification time and inode: of each run only what the filters, the fold

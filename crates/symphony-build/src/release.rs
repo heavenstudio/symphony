@@ -54,6 +54,7 @@ mod schedule;
 mod span;
 mod steps;
 mod tags;
+mod updates;
 #[cfg(test)]
 mod waits;
 
@@ -753,6 +754,7 @@ fn status(
     // project's build ([`symphony::machine::switch`]).
     match symphony::machine::dir() {
         Ok(machine) => {
+            let _ = write!(out, "{}", updates::status(&machine, now));
             let _ = write!(out, "{}", symphony::machine::switch::standing(&machine));
         }
         Err(problem) => {
@@ -1503,6 +1505,8 @@ impl Refreshing<'_> {
             .surreal()
             .to_path_buf();
         let against = refresh::Against {
+            run: id,
+            main: &self.repo.main,
             root: &self.repo.root,
             ours: &self.repo.common,
             machine,

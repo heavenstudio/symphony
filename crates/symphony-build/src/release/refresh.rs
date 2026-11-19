@@ -73,7 +73,7 @@ const RELOAD_SECONDS: &str = "SYMPHONY_RELEASE_RELOAD_SECONDS";
 /// How often that wait asks the server what it is.
 const RELOAD_LOOK: Duration = Duration::from_millis(500);
 /// The machine's server's log, in the machine folder (the server's `home::LOG`).
-const SERVER_LOG: &str = "server.log";
+pub(crate) const SERVER_LOG: &str = "server.log";
 /// What starts each line the server's reload says in that log.
 const RELOAD_LINE: &str = "· Symphony reload: ";
 /// The most of that log read for what the reload said: its newest part.
@@ -82,7 +82,7 @@ const LOG_READ: u64 = 256 * 1024;
 /// (`symphony_board::sys::GIT_VARS`: each command names its own folder): the board, session and
 /// task a run of the Symphony's names (a project's command reaches its own), the landing's marker,
 /// and the build folder and toolchain, which are the project's own.
-const UNSET: [&str; 9] = [
+pub(crate) const UNSET: [&str; 9] = [
     "TASKS_SERVER",
     "TASKS_DATABASE",
     "TASKS_SESSION",
@@ -98,6 +98,11 @@ const UNSET: [&str; 9] = [
 /// commit, and its git common dir), the machine folder, the release and its commit, where the
 /// steps' logs go, the `surreal` a snapshot falls back to, and its time.
 pub(crate) struct Against<'a> {
+    /// The run's id, which an update's failure names.
+    pub(crate) run: &'a str,
+    /// The Symphony's main checkout, whose board an update's task is filed on when no project's own
+    /// board takes it.
+    pub(crate) main: &'a Path,
     pub(crate) root: &'a Path,
     pub(crate) ours: &'a Path,
     pub(crate) machine: &'a Path,
@@ -161,16 +166,37 @@ pub(crate) fn release(
         return told(refresh, out);
     }
     let kept = release::current_installed(machine).map(|current| current.serves.schema);
+    let target = manifest.serves.schema;
+    // This repository's board, which moves with its own main: at the release's schema while current
+    // serves another, no project's board holds current (docs/RELEASES.md, "The forward move").
+    let ours = Home::in_common(against.ours, against.surreal).schema(symphony_board::DATABASE);
+    let forward = matches!(ours, Ok(Some(at)) if at == target) && kept != Some(target);
+    if forward {
+        say(
+            &mut refresh,
+            out,
+            format!(
+                "this repository's board is at schema {target}, which {}: no project's board holds \
+                 current, each moving as its own writers allow",
+                kept.map_or_else(
+                    || "no release current names serves".to_string(),
+                    |kept| format!("the release current names does not serve (it serves {kept})")
+                )
+            ),
+        );
+    }
     let mut steps = Vec::new();
-    let clear = boards(
+    let judgement = boards(
         against,
         &registry,
-        manifest.serves.schema,
+        target,
         kept,
+        forward,
         &mut refresh,
         &mut steps,
         out,
     );
+    let clear = judgement.clear;
     // The server as it answers before `current` moves, to tell its reload's hand-off after.
     let before = clear
         .then(|| symphony::machine::command::running(machine, None))
@@ -191,10 +217,34 @@ pub(crate) fn release(
             ),
         );
     }
+    let held = (!clear).then(|| refresh.said.last().cloned()).flatten();
     refresh.steps.push(installed.ran);
     refresh.steps.extend(steps);
+    let mut server_line = None;
     if pointed {
         let line = server(machine, before, logged, against);
+        server_line = Some(line.clone());
+        say(&mut refresh, out, line);
+    }
+    let look = super::updates::Look {
+        against,
+        registry: &registry,
+        release: &manifest,
+        kept,
+        pointed,
+        held: held.as_deref(),
+        ends: &judgement.ends,
+        front: symphony::machine::command::running(machine, None),
+        writes: super::updates::settled(
+            &registry,
+            || symphony::machine::command::writes(machine),
+            super::updates::SETTLE,
+            Duration::from_secs(1),
+        ),
+        server: server_line.as_deref(),
+        now: seen_now(),
+    };
+    for line in super::updates::reconcile(&look, &super::updates::CliBoards) {
         say(&mut refresh, out, line);
     }
     told(refresh, out)
@@ -258,28 +308,66 @@ fn told(refresh: Refresh, out: &mut dyn Write) -> Refresh {
     refresh
 }
 
+/// How a project's board ended in a refresh, for its update ([`super::updates`]).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum End {
+    /// Moved from schema `from` by this refresh, its move done at `at` (seconds since the epoch).
+    Moved { from: i64, at: f64 },
+    /// Nothing to move: at the release's schema or past it, or no board made yet.
+    Nothing,
+    /// Left as it was while another board, a snapshot or a failed move held every move.
+    Waiting(String),
+    /// Its project's to finish, said: its writers to rebuild, or its own migrate.
+    Theirs(String),
+    /// The refresh's own work could not judge or move it, said; `down` when its database does not
+    /// run, which its project starts.
+    Red { why: String, down: bool },
+}
+
+/// One project's board as a refresh ended it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Ended {
+    pub(crate) id: String,
+    pub(crate) end: End,
+}
+
+/// What the boards came to: whether nothing holds the release, and how each judged board ended.
+pub(crate) struct Judgement {
+    pub(crate) clear: bool,
+    pub(crate) ends: Vec<Ended>,
+}
+
 /// Each registered project's board brought to the release's schema `target` over `kept`, the
 /// schema of the release `current` names (none: none named), its lines said in `refresh` and to
-/// `out` and its steps put in `steps`: whether nothing holds the release, every board it moves
-/// moved.
+/// `out` and its steps put in `steps`: whether nothing holds the release, and how each board
+/// ended. A release at `kept` or behind it moves only a board left behind it, and says nothing of
+/// the rest. `forward`: this repository's board is at `target` and current serves another, so no
+/// board holds another or current, and each is snapshotted and moved on its own.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the refresh's one pass over the boards, each part its own"
+)]
 fn boards(
     against: &Against<'_>,
     registry: &Registry,
     target: i64,
     kept: Option<i64>,
+    forward: bool,
     refresh: &mut Refresh,
     steps: &mut Vec<Ran>,
     out: &mut dyn Write,
-) -> bool {
-    if let Some(kept) = kept.filter(|kept| target <= *kept) {
+) -> Judgement {
+    let reconciling = kept.is_some_and(|kept| target <= kept);
+    if let Some(kept) = kept.filter(|_| reconciling) {
         say(refresh, out, no_move(against.tag, target, kept));
-        return true;
     }
     let mut judged = Vec::new();
     for entry in &registry.projects {
         match project(entry, against) {
-            Err(Some(line)) => say(refresh, out, line),
-            Err(None) => {}
+            Err(Some(line)) if !reconciling => say(refresh, out, line),
+            Err(_) => {}
+            // A release current serves already judges only a board read behind it.
+            Ok(common) if reconciling && !behind(&common, target, against) => {}
             Ok(common) => judged.push(judge(entry, &common, target, against)),
         }
     }
@@ -288,14 +376,16 @@ fn boards(
         .map(|board| board.id.clone())
         .collect();
     // What keeps a board that can move where it is: the boards that hold the release, a snapshot
-    // that failed, or the move that failed before it.
+    // that failed, or the move that failed before it. Moving forward, nothing keeps another.
     let mut kept_by = match holding.len() {
+        _ if forward => None,
         0 => None,
         1 => Some(format!("{} holds the release", holding[0])),
         _ => Some(format!("{} hold the release", holding.join(", "))),
     };
-    // Every board's snapshot before the first move, so one that fails moves nothing.
-    if kept_by.is_none() {
+    // Every board's snapshot before the first move, so one that fails moves nothing; moving
+    // forward, each is snapshotted just before its own move instead.
+    if kept_by.is_none() && !forward {
         for board in &mut judged {
             if !matches!(board.verdict, Verdict::Move { .. }) {
                 continue;
@@ -307,24 +397,57 @@ fn boards(
             }
         }
     }
+    let mut ends = Vec::new();
     for mut board in judged {
+        let mut end = None;
         let ended = match std::mem::replace(&mut board.verdict, Verdict::Done(String::new())) {
             Verdict::Move { live, leave } => match &kept_by {
-                Some(why) => Verdict::Done(format!(
-                    "{}: its board can move from schema {live} to {target}, and stays at {live} \
-                     while {why}",
-                    board.id
-                )),
-                None => match moved(&mut board, live, leave, against) {
-                    Ok(said) => Verdict::Done(said),
-                    Err(why) => {
-                        kept_by = Some(format!("the move of {}'s board failed", board.id));
-                        Verdict::Red(why)
+                Some(why) => {
+                    let said = format!(
+                        "{}: its board can move from schema {live} to {target}, and stays at {live} \
+                         while {why}",
+                        board.id
+                    );
+                    end = Some(End::Waiting(said.clone()));
+                    Verdict::Done(said)
+                }
+                None => {
+                    let moving = if forward {
+                        snapshot(&mut board, against)
+                    } else {
+                        Ok(())
+                    };
+                    match moving.and_then(|()| moved(&mut board, live, leave, against)) {
+                        Ok(said) => {
+                            end = Some(End::Moved {
+                                from: live,
+                                at: seen_now(),
+                            });
+                            Verdict::Done(said)
+                        }
+                        Err(why) => {
+                            if !forward {
+                                kept_by = Some(format!("the move of {}'s board failed", board.id));
+                            }
+                            Verdict::Red(why)
+                        }
                     }
-                },
+                }
             },
             verdict => verdict,
         };
+        let end = end.unwrap_or_else(|| match &ended {
+            Verdict::Theirs { why, .. } => End::Theirs(why.clone()),
+            Verdict::Red(why) => End::Red {
+                why: why.clone(),
+                down: board.down,
+            },
+            _ => End::Nothing,
+        });
+        ends.push(Ended {
+            id: board.id.clone(),
+            end,
+        });
         let theirs = matches!(ended, Verdict::Theirs { .. });
         let (ran, line) = board.ended(ended, against);
         if theirs {
@@ -333,7 +456,20 @@ fn boards(
         say(refresh, out, line);
         steps.push(ran);
     }
-    kept_by.is_none()
+    Judgement {
+        clear: forward || kept_by.is_none(),
+        ends,
+    }
+}
+
+/// Whether the board in the git common dir `common` reads behind `target`: a board left behind a
+/// release current already serves. One not read (no board, its database not running) is not.
+fn behind(common: &Path, target: i64, against: &Against<'_>) -> bool {
+    if !common.join(symphony_board::server::FOLDER).is_dir() {
+        return false;
+    }
+    let home = Home::in_common(common, Some(&surreal_for(common, against.surreal)));
+    matches!(home.schema(symphony_board::DATABASE), Ok(Some(live)) if live < target)
 }
 
 /// Why the release `tag`, serving board schema `target`, moves no board where the release
@@ -341,13 +477,13 @@ fn boards(
 fn no_move(tag: &str, target: i64, kept: i64) -> String {
     if target == kept {
         format!(
-            "{tag} serves board schema {target}, as the release current names serves {kept}: no \
-             board moves"
+            "{tag} serves board schema {target}, as the release current names serves {kept}: only \
+             a board left behind it moves"
         )
     } else {
         format!(
             "{tag} serves board schema {target}, behind the release current names, which serves \
-             {kept}: no board moves, as none moves back"
+             {kept}: none moves back, and only a board left behind {target} moves"
         )
     }
 }
@@ -390,6 +526,8 @@ struct Judged {
     verdict: Verdict,
     /// Its store as it was before the move, once [`snapshot`] took it.
     snapshot: Option<PathBuf>,
+    /// Whether its database was found not running.
+    down: bool,
     name: String,
     log: Log,
     started: Span,
@@ -475,11 +613,17 @@ fn judge(entry: &Entry, common: &Path, target: i64, against: &Against<'_>) -> Ju
         target,
         verdict: Verdict::Done(String::new()),
         snapshot: None,
+        down: false,
         name,
         log,
         started: Span::begin(),
     };
     judged.verdict = verdict(&judged, against);
+    judged.down = matches!(&judged.verdict, Verdict::Red(_))
+        && matches!(
+            judged.home.schema(symphony_board::DATABASE),
+            Err(ServerError::NotUp(_))
+        );
     judged
 }
 
@@ -637,7 +781,7 @@ fn said(writer: &Writer) -> String {
 }
 
 /// The time a writer's line is read by: this machine's clock, as the line is written by.
-fn seen_now() -> f64 {
+pub(crate) fn seen_now() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0.0, |since| since.as_secs_f64())
@@ -733,7 +877,7 @@ fn moved(
 
 /// The `surreal` a snapshot of the board in the git common dir `common` runs: `SYMPHONY_SURREAL`,
 /// else the one pinned beside that board, else `fallback` (the Symphony's own).
-fn surreal_for(common: &Path, fallback: Option<&Path>) -> PathBuf {
+pub(crate) fn surreal_for(common: &Path, fallback: Option<&Path>) -> PathBuf {
     let named = symphony_env::SURREAL.os().map(PathBuf::from);
     let beside = Home::in_common(common, None).surreal().to_path_buf();
     (named.into_iter())
