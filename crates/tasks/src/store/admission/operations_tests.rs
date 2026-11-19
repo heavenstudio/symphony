@@ -225,3 +225,70 @@ fn a_claim_by_its_role_says_what_stops_its_one_edge() {
         );
     }
 }
+
+/// Sessions amber, birch, cedar and orch; sim/a and sim/b ready, each orchestrated by orch;
+/// [`REVIEWED`] activated.
+fn two_ready(backend: Backend) -> Fixture {
+    let seed = Seed::default()
+        .session("amber")
+        .session("birch")
+        .session("cedar")
+        .session("orch")
+        .task("sim/a", "ready")
+        .task("sim/b", "ready")
+        .role("sim/a", "orch", "orchestrator")
+        .role("sim/b", "orch", "orchestrator");
+    let f = Fixture::on(backend, seed);
+    f.store
+        .activate_workflow(&reviewed(), &Host::local())
+        .unwrap();
+    f
+}
+
+/// The slots orch holds, by the task whose work each is.
+fn holdings(store: &Store) -> Vec<String> {
+    let all = store.slot_holdings().unwrap();
+    all.get("orch").into_iter().flatten().cloned().collect()
+}
+
+#[test]
+fn a_held_task_holds_its_slot_by_its_positions_policy_from_its_executor_to_its_reviewer() {
+    for backend in BACKENDS {
+        let f = two_ready(backend);
+        let capped = f.other().capping(Some(1));
+        let [amber, birch, cedar] = ["amber", "birch", "cedar"].map(agent_session);
+        let held = || holdings(&f.store);
+        let full = |slug: &str, by: &Principal, edge: &str| {
+            let why = refused(take(&capped, slug, by, edge));
+            assert!(why.starts_with("capacity: "), "{backend:?} {slug} {edge}: {why}");
+        };
+        take(&capped, "sim/a", &amber, "claim").unwrap();
+        assert_eq!(held(), ["sim/a"]);
+        full("sim/b", &birch, "claim");
+        // A held block retains its slot, though it projects to blocked, which takes none.
+        take(&capped, "sim/a", &amber, "block").unwrap();
+        assert_eq!(f.store.get("sim/a").unwrap().status, "blocked");
+        assert_eq!(held(), ["sim/a"]);
+        full("sim/b", &birch, "claim");
+        // Back from the block it held the slot all along: no start, never refused.
+        take(&capped, "sim/a", &amber, "resume").unwrap();
+        // Submitted, its position releases the slot: other work starts in it.
+        take(&capped, "sim/a", &amber, "submit").unwrap();
+        assert_eq!(f.store.get("sim/a").unwrap().status, "review");
+        assert!(held().is_empty(), "{backend:?}");
+        take(&capped, "sim/b", &birch, "claim").unwrap();
+        // The reviewer's position acquires one, though it projects to review, which the board's
+        // own ledger counts apart: a start the cap refuses while it is full.
+        full("sim/a", &cedar, "review");
+        take(&capped, "sim/b", &birch, "submit").unwrap();
+        take(&capped, "sim/a", &cedar, "review").unwrap();
+        assert_eq!(f.store.get("sim/a").unwrap().status, "review");
+        assert_eq!(held(), ["sim/a"]);
+        full("sim/b", &amber, "review");
+        // Approved, it releases it, though it projects to done short of its terminal position.
+        take(&capped, "sim/a", &cedar, "approve").unwrap();
+        assert!(held().is_empty(), "{backend:?}");
+        take(&capped, "sim/b", &amber, "review").unwrap();
+        assert_eq!(held(), ["sim/b"]);
+    }
+}

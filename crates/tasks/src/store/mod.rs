@@ -1268,6 +1268,9 @@ struct Opens {
     by: Vec<String>,
     /// What the refusal says cannot happen.
     what: String,
+    /// For a task a custom workflow holds, whether the position it moves to holds a slot by its
+    /// slot policy ([`crate::slots::Entry::slot`]).
+    slot: Option<bool>,
 }
 
 struct Say {

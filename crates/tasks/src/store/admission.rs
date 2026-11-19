@@ -178,6 +178,8 @@ impl Store {
             let taking = Taking {
                 status: &status,
                 acquires: admitted.acquires,
+                held: decided.holds_now(),
+                holds: decided.holds_at(&transition.to),
                 add: &admitted.add,
                 what: format!("{slug} cannot take {}", request.edge),
             };
@@ -458,8 +460,10 @@ impl Store {
     }
 
     /// The slot counters an admitted operation holds under the project's cap: one that takes a
-    /// slot, or moves the task into work or review from outside them, is counted as a start
-    /// would be, and refused as `capacity` past the cap.
+    /// slot, or moves the task to a position whose slot policy holds one from a position that
+    /// holds none, is counted as a start would be, and refused as `capacity` past the cap. The
+    /// ledger counts the task at its destination by that position's policy
+    /// ([`crate::slots::Entry::slot`]), never by the status it projects to.
     fn taken(
         &self,
         decided: &Decided,
@@ -467,8 +471,7 @@ impl Store {
         principal: &Principal,
     ) -> Result<Vec<Value>, Failure> {
         let status = taking.status;
-        let starts = crate::slots::OPEN.contains(&status)
-            && !crate::slots::OPEN.contains(&decided.task.status.as_str());
+        let starts = taking.holds && !taking.held;
         let Some(cap) = self.slots() else {
             return Ok(Vec::new());
         };
@@ -491,6 +494,7 @@ impl Store {
             status: Some(status.to_string()),
             by,
             what: taking.what,
+            slot: Some(taking.holds),
             ..Opens::default()
         };
         self.slots_taken(&view, slug, &opens, cap)
@@ -504,12 +508,30 @@ impl Store {
 }
 
 /// What a write takes under the cap: the status it moves its task to, whether it takes a slot,
-/// the roles it adds, and what a refusal says cannot happen.
+/// whether the task's position holds one before it (`held`) and its destination after it
+/// (`holds`), the roles it adds, and what a refusal says cannot happen.
 struct Taking<'a> {
     status: &'a str,
     acquires: bool,
+    held: bool,
+    holds: bool,
     add: &'a [(String, String)],
     what: String,
+}
+
+impl Decided {
+    /// Whether the position at `at` holds a slot by its slot policy, whatever status it projects
+    /// to ([`crate::slots::Entry::slot`]).
+    fn holds_at(&self, at: &symphony_api::workflow::Pair) -> bool {
+        (self.recorded.definition.positions.iter())
+            .find(|p| p.at == *at)
+            .is_some_and(|p| p.slot != symphony_api::workflow::Slot::Release)
+    }
+
+    /// Whether the task's position as read holds a slot.
+    fn holds_now(&self) -> bool {
+        (self.task.position.as_ref()).is_some_and(|p| self.holds_at(&p.at()))
+    }
 }
 
 fn context(decided: &Decided) -> Context<'_> {
