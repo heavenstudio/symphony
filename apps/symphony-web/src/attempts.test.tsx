@@ -70,7 +70,9 @@ describe("a task's attempts as read", () => {
       },
     });
     expect(ELSEWHERE.handle).toBeNull();
-    expect(ELSEWHERE.controls.unserved).toBe("its provider lab is not one this server holds");
+    expect(ELSEWHERE.controls.unserved).toBe(
+      "No resume or view here: its provider lab is not one this server holds",
+    );
   });
 
   it("default what serde defaults, and keep a word a newer server adds", () => {

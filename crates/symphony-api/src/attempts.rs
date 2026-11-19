@@ -97,8 +97,8 @@ pub struct AttemptControls {
     /// Whether a view of its resource may be asked.
     #[serde(default)]
     pub view: bool,
-    /// Why its resume and view are not offered here although its state allows them: its provider
-    /// is not one this server holds.
+    /// Why a control its state allows is not offered here, as a sentence the page shows: its
+    /// provider is not one this server holds, or it is a local terminal its launcher steps.
     #[serde(default)]
     pub unserved: Option<String>,
 }

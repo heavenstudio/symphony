@@ -3541,7 +3541,7 @@
             "stop": [],
             "resume": [],
             "view": false,
-            "unserved": "its provider lab is not one this server holds"
+            "unserved": "No resume or view here: its provider lab is not one this server holds"
           }
         }
       ]

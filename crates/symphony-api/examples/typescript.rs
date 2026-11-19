@@ -2912,7 +2912,8 @@ fn attempt_samples() -> Vec<(String, Value)> {
     elsewhere.resource = Some("lab-7".into());
     elsewhere.conversation = Some("conversation-7".into());
     elsewhere.controls.cancel = true;
-    elsewhere.controls.unserved = Some("its provider lab is not one this server holds".into());
+    elsewhere.controls.unserved =
+        Some("No resume or view here: its provider lab is not one this server holds".into());
     let history = api::TaskAttempts {
         attempts: vec![paused, resumed, elsewhere],
     };

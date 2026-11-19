@@ -495,9 +495,7 @@ export function AttemptRow({
           </Button>
         </div>
       )}
-      {controls.unserved && (
-        <p className="attempt-meta">{`No resume or view here: ${controls.unserved}`}</p>
-      )}
+      {controls.unserved && <p className="attempt-meta">{controls.unserved}</p>}
     </li>
   );
 }

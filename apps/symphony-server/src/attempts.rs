@@ -14,7 +14,10 @@
 //! refused as stale once it moved.
 //!
 //! A cancel or a stop is intent the coordinator records for the worker that sends the attempt's
-//! operations, wherever it runs: it needs no provider here. A resume admits another attempt under
+//! operations, wherever it runs: it needs no provider here. A local terminal's attempt
+//! (`local-hc`, the board's launcher) takes none: its launcher's own commands alone step it, so an
+//! intent recorded here would wait unsent; and a hosted read leaves out its terminal's address
+//! and conversation, this machine's own. A resume admits another attempt under
 //! its provider's own profile and capacity, and a view is that provider's I/O now, so both go only
 //! through a provider this server holds ([`crate::execution`]). A view's address is answered to
 //! the one who asked, `no-store`, and kept nowhere: not in the board, a log, a cache or a thread.
@@ -74,9 +77,17 @@ impl Asker {
     }
 }
 
-/// The board scope of the project `hub` serves, on `store`.
+/// The board scope of the project `hub` serves, on `store`: the project's id as the board's own
+/// commands name it ([`symphony_board::project::find`], as the launcher and `tasks api` do: its
+/// file's id, else the machine's registry's, else its main checkout's folder), so an attempt a
+/// launch or a host admitted for this project is this project's here. The served project's own
+/// id where its folder is in no repository, whose board holds no attempt.
 fn scope_of(hub: &Hub, store: &Store) -> Scope {
-    board_scope(&symphony::project::Project::of(&hub.root).id, store)
+    let id = symphony_board::project::find(&hub.root, hub.machine.as_deref()).map_or_else(
+        |_| symphony::project::Project::of(&hub.root).id.clone(),
+        |project| project.id,
+    );
+    board_scope(&id, store)
 }
 
 /// A refusal of the coordinator as an answer.
@@ -119,6 +130,12 @@ fn on_board<T>(
 /// What `attempt` may be asked here, by the local owner: its controls as its state, its pinned
 /// capabilities and the providers this server holds allow. The coordinator decides each again.
 pub(crate) fn controls(attempt: &Attempt, providers: &Providers) -> AttemptControls {
+    if local(attempt) {
+        return AttemptControls {
+            unserved: Some(LOCAL.into()),
+            ..AttemptControls::default()
+        };
+    }
     let (identity, state) = (&attempt.identity, &attempt.state);
     let pinned = &identity.capabilities;
     let provider = providers.of_configuration(&identity.configuration);
@@ -163,11 +180,23 @@ pub(crate) fn controls(attempt: &Attempt, providers: &Providers) -> AttemptContr
         view: viewable && provider.is_some(),
         unserved: (provider.is_none() && (resumable || viewable)).then(|| {
             format!(
-                "its provider {} is not one this server holds",
+                "No resume or view here: its provider {} is not one this server holds",
                 identity.configuration
             )
         }),
     }
+}
+
+/// Why a local terminal's attempt takes no control here.
+const LOCAL: &str =
+    "No control here: a local terminal, stepped by its launcher's own commands (close, restore)";
+
+/// Whether `attempt` is a terminal of this machine's launcher
+/// ([`symphony_board::launch::attempts::CONFIGURATION`]): stepped by the launcher's own commands
+/// alone, with no worker between them, so a control recorded here would wait unsent, and its
+/// resource and conversation are this machine's.
+fn local(attempt: &Attempt) -> bool {
+    attempt.identity.configuration == symphony_board::launch::attempts::CONFIGURATION
 }
 
 /// `slug`'s attempts, read for `asker`: the local owner is told what each may be asked here; a
@@ -189,6 +218,10 @@ fn history(hub: &Hub, store: &Store, slug: &str, asker: &Asker) -> Result<TaskAt
                 let mut wired = attempt.wire();
                 if *asker == Asker::Local {
                     wired.controls = controls(attempt, &hub.providers);
+                } else if local(attempt) {
+                    // This machine's terminal address and conversation, which a hosted page
+                    // leaves out as it leaves out the sessions.
+                    (wired.resource, wired.generation, wired.conversation) = (None, None, None);
                 }
                 wired
             })
@@ -288,6 +321,9 @@ fn controlled(hub: &Hub, store: &Store, asked: &AttemptControl) -> Result<TaskAt
             ),
         ));
     }
+    if local(&attempt) {
+        return Err((StatusCode::CONFLICT, LOCAL.into()));
+    }
     let provider = hub
         .providers
         .of_configuration(&attempt.identity.configuration);
@@ -347,6 +383,9 @@ fn viewed(hub: &Hub, store: &Store, asked: &AttemptViewAsk) -> Result<AttemptLin
     let attempt = Reader::new(store, scope.clone())
         .attempt(&read, &asked.attempt)
         .map_err(refused)?;
+    if local(&attempt) {
+        return Err((StatusCode::CONFLICT, LOCAL.into()));
+    }
     let Some(provider) = hub
         .providers
         .of_configuration(&attempt.identity.configuration)

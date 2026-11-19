@@ -71,9 +71,14 @@ struct Served {
 
 impl Served {
     fn new() -> Served {
+        Served::with_file("[project]\nid = \"proj\"\n")
+    }
+
+    /// The project whose `symphony.toml` is `file`.
+    fn with_file(file: &str) -> Served {
         let tree = Tree::new();
         let root = repository(&tree);
-        std::fs::write(root.join("symphony.toml"), "[project]\nid = \"proj\"\n").unwrap();
+        std::fs::write(root.join("symphony.toml"), file).unwrap();
         let f = Fixture::new(
             Seed::default()
                 .session("amber")
@@ -414,7 +419,7 @@ fn a_provider_not_held_here_still_takes_a_cancel_but_no_resume_or_view() {
     assert_eq!(shown["controls"]["view"], false);
     assert_eq!(
         shown["controls"]["unserved"],
-        "its provider elsewhere is not one this server holds"
+        "No resume or view here: its provider elsewhere is not one this server holds"
     );
     let (status, _, body) = s.ask(
         "POST",
@@ -492,26 +497,40 @@ fn a_view_is_resolved_on_demand_for_the_local_owner_and_kept_nowhere() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
 
-#[test]
-fn a_hosted_visitor_reads_the_history_with_no_control_and_posts_none_here() {
-    let s = Served::new();
-    let id = s.running();
+/// The served project's routes under hosted admission, its visitor verified by the fixture host.
+fn hosted(s: &Served) -> axum::Router {
     let project = symphony::project::Project::of(&s.shared.root).id.clone();
     assert_eq!(project, PROJECT);
     let (config, host) = crate::hosted::tests::native_host(&project);
-    let hosted = crate::hosted::router(s.shared.clone(), config, host)
+    crate::hosted::router(s.shared.clone(), config, host)
         .unwrap()
         .layer(MockConnectInfo(
             "127.0.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
-        ));
+        ))
+}
+
+/// [`TASK`]'s history as `hosted` answers it.
+fn hosted_history(s: &Served, hosted: &axum::Router) -> (StatusCode, Value) {
     let read = crate::hosted::tests::request(&format!("/api/task-attempts?slug={TASK}"));
-    let (status, body) = s.runtime.block_on(async {
+    s.runtime.block_on(async {
         let response = hosted.clone().oneshot(read).await.unwrap();
         let status = response.status();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         (status, serde_json::from_slice::<Value>(&bytes).unwrap())
-    });
+    })
+}
+
+#[test]
+fn a_hosted_visitor_reads_the_history_with_no_control_and_posts_none_here() {
+    let s = Served::new();
+    let id = s.running();
+    let hosted = hosted(&s);
+    let (status, body) = hosted_history(&s, &hosted);
     assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["attempts"][0]["resource"], "res-1",
+        "a provider's reference is shown"
+    );
     assert_eq!(body["attempts"][0]["id"], json!(id));
     assert_eq!(
         body["attempts"][0]["controls"],
@@ -531,6 +550,82 @@ fn a_hosted_visitor_reads_the_history_with_no_control_and_posts_none_here() {
         .block_on(async { hosted.oneshot(post).await.unwrap().status() });
     assert!(status.is_client_error(), "{status}");
     assert_eq!(s.shown(&id)["cancellation"], "none");
+}
+
+#[test]
+fn a_local_terminals_attempt_takes_no_control_here_and_a_hosted_read_hides_its_terminal() {
+    let s = Served::new();
+    let local = symphony_board::launch::attempts::CONFIGURATION;
+    let id = s.admit(PROJECT, local, TASK);
+    let launcher = s.worker(PROJECT, local);
+    for _ in 0..2 {
+        assert!(matches!(
+            launcher.step(&id).unwrap(),
+            Worked::Answered { .. }
+        ));
+    }
+    let shown = s.shown(&id);
+    assert_eq!(shown["dispatch"], "running");
+    assert_eq!(shown["resource"], "res-1");
+    assert_eq!(
+        shown["controls"],
+        json!({"cancel": false, "stop": [], "resume": [], "view": false,
+            "unserved": "No control here: a local terminal, stepped by its launcher's own commands (close, restore)"})
+    );
+    let before = s.kept(TASK);
+    for act in [
+        json!({"act": "cancel"}),
+        json!({"act": "stop", "mode": "terminate"}),
+        json!({"act": "resume", "mode": "new_resource"}),
+    ] {
+        let mut asked = json!({"slug": TASK, "attempt": id, "revision": shown["revision"]});
+        asked
+            .as_object_mut()
+            .unwrap()
+            .extend(act.as_object().unwrap().clone());
+        let (status, body) = s.control(asked);
+        assert_eq!(status, StatusCode::CONFLICT, "{act}: {body}");
+        assert!(said(&body).contains("a local terminal"), "{body}");
+    }
+    let (status, _, body) = s.ask(
+        "POST",
+        symphony_api::ATTEMPT_VIEW_ROUTE,
+        Some(json!({"slug": TASK, "attempt": id})),
+    );
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(s.kept(TASK), before, "nothing was asked of the terminal");
+    // Its address and conversation are this machine's: a hosted read leaves them out.
+    let (status, body) = hosted_history(&s, &hosted(&s));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let read = &body["attempts"][0];
+    assert_eq!(read["id"], json!(id));
+    assert_eq!(
+        (
+            &read["resource"],
+            &read["generation"],
+            &read["conversation"]
+        ),
+        (&Value::Null, &Value::Null, &Value::Null),
+        "{read}"
+    );
+    assert!(!body.to_string().contains("res-1"), "{body}");
+}
+
+#[test]
+fn the_scope_is_the_projects_id_as_the_launcher_names_it_whatever_the_file_leaves_out() {
+    // A file that names the project but no id: its pages are served under the name's slug, while
+    // the board's commands name it by its main checkout's folder, and so do its attempts.
+    let s = Served::with_file("[project]\nname = \"Proj Name\"\n");
+    let root = s.shared.root.clone();
+    assert_eq!(symphony::project::Project::of(&root).id, "proj-name");
+    let launched = symphony_board::project::find(&root, None).unwrap().id;
+    assert_eq!(launched, "main", "the repository's folder");
+    let id = s.admit(&launched, CONFIGURATION, TASK);
+    assert_eq!(s.history(TASK)[0]["id"], json!(id));
+    // One admitted under the served id is another project's here.
+    let other = s.admit("proj-name", CONFIGURATION, OTHER);
+    let (status, _, body) = s.ask("GET", &format!("/api/task-attempts?slug={OTHER}"), None);
+    assert_eq!(status, StatusCode::NOT_FOUND, "{other}: {body}");
 }
 
 #[test]

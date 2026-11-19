@@ -146,8 +146,10 @@ ended ones here, so a restore there starts plainly; its live ones are still read
 
 A task's attempts are read with no provider at hand: `execution::Reader` reads a task's history,
 an attempt and its facts under a grant on that one task, in the board scope of the project the
-caller serves, which `execution::board_scope` makes from the registered project's id and the
-board's database, the one constructor every caller uses for a project's board. A history holds
+caller serves, which `execution::board_scope` makes from the project's id and the board's
+database, the one constructor every caller uses for a project's board. The server, `tasks api`
+and the launcher each name the project as the board's commands do (`project::find`: its file's
+id, else the machine registry's, else its main checkout's folder), so they read one history. A history holds
 every attempt the board kept for the task, after its handle left too, with the resource,
 generation and conversation each was bound to, as references, never as addresses; an attempt of
 another project or board refuses the whole read, however its id came.
