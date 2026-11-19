@@ -22,6 +22,42 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **github-delivery-policy-reader**, approved as A, covers the read-only identity and says a write level is asked separately. **github-delivery-proof-setup** gives the two Apps no Administration, which stays so under every option here.
 
+### Releases
+
+- [ ] **schema-landing-then-release** — When a task that changes the board's layout (its schema) lands, this project's pages stop saving until a release with that layout runs on the machine: the board still shows, but your verdicts, messages and changes wait or are refused, and reach no agent. Today that lasts until the next release run, which comes every 20 landings, so for hours. What should follow such a landing? A: the orchestrator starts a release run right after it, without asking each time: your pages wait for that run, under 40 minutes when it is green, at the cost of one run outside the count. B: the approved task waits and lands just before the count's next run, its landing the one that starts it: your pages wait for the same run and nothing extra runs, at the cost of holding the task for up to 20 landings. C: as now: it lands when approved, and your pages wait until the count brings a release. Recommended: A. Approve and say A, B or C in the note, or comment. [[RELEASES#The switch]]
+  [2026-11-19 04:52] agent — Posted for the board task `docs/schema-landing-then-release-card`. Two tasks would each change the schema: `tools/durable-provider-attempts` (in review) and `tools/workflow-runtime` (in progress), both to 23 on their branches, so the second to land becomes 24. Read on 2026-11-19 at 04:50: main and release-2026-11-19, which `current` names and the machine's server runs, are at schema 22.
+
+    **Your pages meanwhile.** In this repository the board moves at the first board command after the landing. The machine's server is the release `current` names. With the board one schema ahead it shows the board and writes nothing: your saves and chat wait in its journal, a message on a task, a priority, a field or a cancel is refused, every page says so, and a verdict saved meanwhile reaches no agent until the server reloads at the new schema. Two schemas ahead, it shows no board at all.
+
+    **What ends it.** A green release run at the new schema, its refresh pointing `current` at it, and the server following by its own reload. Three things stand in between, under every option:
+    - **The count.** A run starts once 20 tasks have landed, and 45 to 97 landed a day from 2026-11-15 to 11-18. After five of the last six releases the count's next run came 2½ to nearly 10 hours later.
+    - **A red run.** 19 of the 26 runs since 2026-11-16 were red. A red run's commit is held as the release candidate until its fixes land and a rerun is green: from a counted run's start to its release took 27 minutes to 16 hours, 2¼ hours or less in four of the last six. While a candidate is open no run checks main's newest commit, by hand or by the count; one was open for 25 of the 56 hours since release-2026-11-16.
+    - **The other two projects.** `current` moves only once every program seen writing their boards in the last week is at the new schema. That held release-2026-11-18 for 1 h 50 and release-2026-11-18.2 for 1 h 08, until those programs were brought up and the refresh rerun.
+
+    **What happened.** On 2026-11-17 schema 20 landed at 06:04 while the machine's server was at 18, two behind: it showed no board of this project until it was replaced at 13:03. On 2026-11-18 your verdicts saved from 12:47 reached no agent until 18:05. Schema 21 had landed at 23:02 the night before; its release came at 12:28, the other projects held it until 14:18, and the server took it up only at 17:48. Schema 22 landed meanwhile, at 15:46: the count's run started at 16:03 and was red, its rerun released release-2026-11-18.2 at 16:57, and the other projects held it until 18:05.
+
+    **A run** takes 17 to 37 minutes when green (7 since 2026-11-16, the install and the refresh included) and 20 to 63 when red.
+
+    **What each costs.**
+    - **A:** at most one run more per schema landing, on this machine, and the count starts again from it: there were four schema landings beside the 26 runs since 2026-11-16. A schema landing still waits while a run or a candidate holds the release, since a run started then runs nothing on main's newest commit; B waits for them too. Starting a release run by hand is your call today, so A is your standing word for these runs.
+    - **B:** nothing runs beyond the count. The approved task waits for it, up to 20 landings, and its branch takes main's newer commits meanwhile, so a conflict sends it back to review; tasks that build on it wait as well. The orchestrator lands it when `just release --status` says the next landing starts a run.
+    - **C:** nothing to do. Your pages wait for the count as well as the run, hours each time, as on 2026-11-18.
+
+    **Under every option** the orchestrator holds a second schema landing, without asking, until a release serving the first is `current`, so the board is never two ahead. With both tasks above approved, that is two runs, an hour or so when green, under A; under B, a count for each.
+
+    **A fourth way would remove the wait rather than shorten it.** Nothing of it is built or designed: it is proposed as a design task for the orchestrator to file, and this card does not decide it. The wait comes from one rule, that a program writes only a board at its own schema.
+    - A release's server could keep writing a board one schema ahead wherever that schema changed nothing it writes, each schema saying whether it did: 23 on `tools/durable-provider-attempts` only adds four tables the server never writes, while 23 on `tools/workflow-runtime` adds checks on every write of a task.
+    - Or this board could move only at the refresh, as the other projects' boards do. Then main's newer build would have to write a board one schema behind instead, the same rule turned round, and this board would no longer move with main, as **board-schema-at-update** keeps it.
+
+    **Why A.** A and B leave your pages the same one run, against hours under C. A spends at most one run per schema landing, and none on this machine once the release runs on GitHub; B spends approved work held for hours at every schema landing, with a second review when it conflicts, and a count for each when two come together.
+
+    **Earlier verdicts checked.**
+    - **live-board-schema-moves** (A, 2026-11-15) landed two schema moves at once and took the read-only pages until a refresh, over a release run by hand after each landing (its B, close to A here). The refresh was red then with no end in sight, so that B meant holding both tasks first. It chose for those two tasks and sets no rule for every schema landing. Its other half, the second move "only after the server is refreshed", is the hold above.
+    - **release-main-judged-in-steps** (rejected, 2026-11-18): you refused a round after each landing for the load, and called the count "mostly a control for that, so the machine isn't always under load". A adds a run per schema landing, not per landing; it weighs on A and does not decide it.
+    - **release-run-on-github** (approved, 2026-11-18) runs the release's checks on GitHub's machines, which would take A's run off this one. It is not built: its trial, `tools/release-hosted-trial`, is in the backlog.
+    - **release-main-while-candidate-open** (A): no run of main's newest commit while a candidate is open, which A and B both wait out.
+    - **board-schema-at-update** (C): a board moves only once its writers are at the new schema. It is the third wait above under every option, and the fourth way's second form would change what it keeps for this board.
+
 ## Auto-approved: spot-check
 
 ### Releases

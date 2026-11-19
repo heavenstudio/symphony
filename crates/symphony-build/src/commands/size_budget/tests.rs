@@ -6,6 +6,25 @@ use std::time::Duration;
 /// release binaries `built` (name, bytes) in `release/`, written after the client.
 fn checkout(budget: &str, client: &[(&str, usize)], built: &[(&str, usize)]) -> Tree {
     let tree = Tree::new();
+    fill(&tree, budget, client, built);
+    tree
+}
+
+/// A checkout as [`checkout`] makes it whose client's `builds.json` names `builds`, newest first:
+/// each the names of its files under `assets/`, its shell first.
+fn kept_checkout(
+    budget: &str,
+    builds: &[&[&str]],
+    client: &[(&str, usize)],
+    built: &[(&str, usize)],
+) -> Tree {
+    let tree = Tree::new();
+    tree.write(&format!("{CLIENT}/{KEPT}"), &builds_json(builds));
+    fill(&tree, budget, client, built);
+    tree
+}
+
+fn fill(tree: &Tree, budget: &str, client: &[(&str, usize)], built: &[(&str, usize)]) {
     tree.write(BUDGET, budget);
     for (path, bytes) in client {
         tree.write(&format!("{CLIENT}/{path}"), &"c".repeat(*bytes));
@@ -13,7 +32,14 @@ fn checkout(budget: &str, client: &[(&str, usize)], built: &[(&str, usize)]) -> 
     for (name, bytes) in built {
         tree.write(&format!("release/{name}"), &"b".repeat(*bytes));
     }
-    tree
+}
+
+/// `builds.json` as `symphony-build publish-client` writes it, naming `builds` newest first.
+fn builds_json(builds: &[&[&str]]) -> String {
+    let builds: Vec<_> = (builds.iter())
+        .map(|files| serde_json::json!({"shell": files.first(), "files": files}))
+        .collect();
+    serde_json::to_string_pretty(&serde_json::json!({"keep": 3, "builds": builds})).unwrap() + "\n"
 }
 
 /// A budget file: `client` for the client, and `each` for every shipped binary but those `lines`
@@ -63,22 +89,30 @@ const HINT: &str = "` (`cargo install cargo-bloat --root DIR`) beside the same a
 
 #[test]
 fn every_line_within_its_budget_prints_each_size_beside_it_and_exits_zero() {
-    // Each binary at its line: a line the rule would put no lower.
-    let tree = checkout(
-        &budget(100, 1, &[("tasks", 50), ("symphony-server", 30)]),
+    // Each binary at its line: a line the rule would put no lower. The client: one build of 70
+    // bytes, its page of 30 and its builds.json.
+    let page = 30 + builds_json(&[&["a.wasm"]]).len();
+    let tree = kept_checkout(
+        &budget(1_000, 1, &[("tasks", 50), ("symphony-server", 30)]),
+        &[&["a.wasm"]],
         &[("index.html", 30), ("assets/a.wasm", 70)],
-        &built(1, &[("tasks", 50), ("symphony-server", 130)]),
+        &built(1, &[("tasks", 50), ("symphony-server", 70 + page + 30)]),
     );
     let (code, out, err) = run(&tree);
     assert_eq!((code, err.as_str()), (0, ""), "{out}");
     assert_eq!(
         out,
-        "size-budget: agent-send       0.0 MiB of 0.0 MiB\n\
-         size-budget: symphony         0.0 MiB of 0.0 MiB\n\
-         size-budget: symphony-server  0.0 MiB of 0.0 MiB (0.0 MiB with the embedded client)\n\
-         size-budget: tasks            0.0 MiB of 0.0 MiB\n\
-         size-budget: embedded client  0.0 MiB of 0.0 MiB (2 files)\n\
-         size-budget: every shipped binary and the embedded client within tools/size-budget.toml\n"
+        format!(
+            "size-budget: agent-send       0.0 MiB of 0.0 MiB\n\
+             size-budget: symphony         0.0 MiB of 0.0 MiB\n\
+             size-budget: symphony-server  0.0 MiB of 0.0 MiB (0.0 MiB with the embedded client)\n\
+             size-budget: tasks            0.0 MiB of 0.0 MiB\n\
+             size-budget: embedded client  0.0 MiB of 0.0 MiB (1 build of 70 bytes; {} bytes \
+             embedded in 3 files)\n\
+             size-budget: every shipped binary and the embedded client within \
+             tools/size-budget.toml\n",
+            70 + page
+        )
     );
 }
 
@@ -105,8 +139,8 @@ fn a_line_is_its_binarys_size_plus_four_percent_rounded_down_to_ten_thousand_byt
 fn a_binarys_line_above_where_the_rule_puts_it_says_where_it_comes_down_to() {
     // symphony at 300,000 bytes under a line of 400,000: the rule puts it at 310,000. The server's
     // own 260,000 (its client aside) at 270,000, where the rule puts it: nothing to say. The
-    // client's line is never told to come down: its distribution grows and shrinks with the
-    // builds it keeps.
+    // client's line is never told to come down: a reduction of the newest build reaches what the
+    // line counts in full only once the builds before it are no longer kept.
     let tree = checkout(
         &budget(
             1_000_000,
@@ -134,7 +168,7 @@ fn a_binarys_line_above_where_the_rule_puts_it_says_where_it_comes_down_to() {
     );
     assert_eq!(
         lines[4],
-        "size-budget: embedded client  0.0 MiB of 1.0 MiB (1 files)"
+        "size-budget: embedded client  0.0 MiB of 1.0 MiB (no build; 30 bytes embedded in 1 files)"
     );
     // A line already under the rule's, as growth leaves it, is never told to go up.
     let tree = checkout(
@@ -177,24 +211,247 @@ fn a_binary_a_byte_past_its_budget_says_its_size_the_budget_and_how_to_see_what_
 }
 
 #[test]
-fn the_embedded_client_past_its_budget_counts_every_file_under_the_distribution() {
-    let tree = checkout(
-        &budget(100, 50, &[]),
-        &[
-            ("index.html", 40),
-            ("assets/one.wasm", 40),
-            ("assets/deeper/two.js", 21),
-        ],
-        &built(1, &[("symphony-server", 101)]),
+fn the_clients_line_counts_each_kept_build_whole_and_the_page_once() {
+    // Two builds that share a stylesheet, as a landing that changed none leaves them, the newest
+    // naming it twice: 10 + 100 + 20 and 10 + 90 + 20 bytes, and the page beside them.
+    let builds: [&[&str]; 2] = [
+        &["shell-2.js", "shared-2.js", "kind.css", "kind.css"],
+        &["shell-1.js", "shared-1.js", "kind.css"],
+    ];
+    let client = [
+        ("index.html", 5),
+        ("assets/shell-2.js", 10),
+        ("assets/shared-2.js", 100),
+        ("assets/kind.css", 20),
+        ("assets/shell-1.js", 10),
+        ("assets/shared-1.js", 90),
+    ];
+    let page = 5 + builds_json(&builds).len();
+    let (embedded, counted) = (230 + page, 130 + 120 + page);
+    let checked = |line: usize| {
+        kept_checkout(
+            &budget(line as u64, 50, &[]),
+            &builds,
+            &client,
+            &built(1, &[("symphony-server", embedded + 40)]),
+        )
+    };
+    let tree = checked(10_000);
+    let lines = measure(&tree.root, &tree.path("release")).unwrap();
+    assert_eq!(
+        lines[4],
+        Measured {
+            what: What::Client {
+                builds: vec![130, 120],
+                embedded: embedded as u64,
+                files: 7
+            },
+            bytes: counted as u64,
+            budget: 10_000
+        }
     );
-    let (code, _, err) = run(&tree);
-    assert_eq!(code, 1, "{err}");
+    // The server's own bytes are its file less what it embeds, the shared sheet once.
+    assert_eq!(lines[2].bytes, 40);
+    let (code, out, err) = run(&tree);
+    assert_eq!((code, err.as_str()), (0, ""), "{out}");
+    assert!(
+        out.contains(&format!(
+            "size-budget: embedded client  0.0 MiB of 0.0 MiB (2 builds of 130 and 120 bytes, \
+             newest first; {} bytes embedded in 7 files)\n",
+            grouped(embedded as u64)
+        )),
+        "{out}"
+    );
+    // A line a byte under the builds counted whole is past, though what the server embeds is
+    // within it.
+    assert!(embedded < counted - 1);
+    let (code, out, err) = run(&checked(counted - 1));
+    assert_eq!(code, 1, "{out}{err}");
     assert_eq!(
         err,
-        "size-budget: the embedded client (apps/symphony-server/client/public, 3 files) is 0.0 MiB \
-         (101 bytes), 0.0 MiB past its budget of 0.0 MiB (100 bytes) in tools/size-budget.toml. \
-         See what it holds: `ls -lS apps/symphony-server/client/public/assets`; every generation \
-         `symphony-build publish-client` keeps there is embedded in the server.\n"
+        format!(
+            "size-budget: the embedded client (apps/symphony-server/client/public: 2 builds of 130 \
+             and 120 bytes, newest first) is 0.0 MiB ({} bytes), 0.0 MiB past its budget of 0.0 \
+             MiB ({} bytes) in tools/size-budget.toml. Its line counts each build \
+             `symphony-build publish-client` keeps whole, a file builds share once for each, and \
+             the files beside assets/ once; the server embeds {} bytes in 7 files of them. See \
+             what the newest build grew by beside the one before it: the files `jq -r \
+             '.builds[0].files[]' apps/symphony-server/client/public/builds.json` names in \
+             apps/symphony-server/client/public/assets, beside `.builds[1]`'s. A reduction takes \
+             the bytes back first; a line is raised only in a commit of its own that names the \
+             growth and why no reduction will do, to the size plus 4 % and never higher, on a \
+             fresh reviewer's approve (docs/CHECKS.md, \"A red at the size check\").\n",
+            grouped(counted as u64),
+            grouped(counted as u64 - 1),
+            grouped(embedded as u64)
+        )
+    );
+}
+
+#[test]
+fn what_the_clients_line_counts_does_not_move_with_how_many_files_its_builds_share() {
+    // Three builds of a 10-byte shell and a 100-byte shared chunk each: sharing one chunk, as
+    // landings that changed no shared module leave them, or each with its own, as three that did
+    // leave them, every chunk that imports the shared one renamed with it. The server embeds 200
+    // bytes more of the second; the line counts the two alike.
+    let shared: [&[&str]; 3] = [
+        &["sh-3.js", "s-0.js"],
+        &["sh-2.js", "s-0.js"],
+        &["sh-1.js", "s-0.js"],
+    ];
+    let apart: [&[&str]; 3] = [
+        &["sh-3.js", "s-3.js"],
+        &["sh-2.js", "s-2.js"],
+        &["sh-1.js", "s-1.js"],
+    ];
+    let client = |builds: &[&[&str]]| -> Measured {
+        let mut files = vec![("index.html".to_string(), 5)];
+        for build in builds {
+            files.push((format!("assets/{}", build[0]), 10));
+            files.push((format!("assets/{}", build[1]), 100));
+        }
+        let files: Vec<(&str, usize)> = (files.iter())
+            .map(|(path, bytes)| (path.as_str(), *bytes))
+            .collect();
+        let tree = kept_checkout(
+            &budget(10_000, 50, &[]),
+            builds,
+            &files,
+            &built(1, &[("symphony-server", 1_000)]),
+        );
+        measure(&tree.root, &tree.path("release"))
+            .unwrap()
+            .remove(4)
+    };
+    assert_eq!(builds_json(&shared).len(), builds_json(&apart).len());
+    let page = 5 + builds_json(&shared).len() as u64;
+    let (sharing, not) = (client(&shared), client(&apart));
+    assert_eq!((sharing.bytes, not.bytes), (330 + page, 330 + page));
+    assert_eq!(
+        sharing.what,
+        What::Client {
+            builds: vec![110; 3],
+            embedded: 130 + page,
+            files: 6
+        }
+    );
+    assert_eq!(
+        not.what,
+        What::Client {
+            builds: vec![110; 3],
+            embedded: 330 + page,
+            files: 8
+        }
+    );
+}
+
+#[test]
+fn a_client_file_no_kept_build_names_or_a_build_naming_no_file_is_an_error_not_a_pass() {
+    // What `size-budget` says of a client of `builds` (none: no builds.json) and `files`.
+    let refused = |builds: Option<&[&[&str]]>, files: &[(&str, usize)]| -> String {
+        let (budget, built) = (
+            budget(10_000, 50, &[]),
+            built(1, &[("symphony-server", 1_000)]),
+        );
+        let tree = match builds {
+            Some(builds) => kept_checkout(&budget, builds, files, &built),
+            None => checkout(&budget, files, &built),
+        };
+        let (code, out, err) = run(&tree);
+        assert_eq!((code, out.as_str()), (2, ""), "{err}");
+        err
+    };
+    let unnamed = |paths: &str| {
+        format!(
+            "symphony-build size-budget: apps/symphony-server/client/public: builds.json names no \
+             build that holds {paths}: the line counts the builds, so the server would embed what \
+             it does not count; `symphony-build publish-client` keeps no file outside its builds \
+             (`just client-update` publishes the client again)\n"
+        )
+    };
+    // Files of a build no longer kept, every one named, in order.
+    let kept: &[&[&str]] = &[&["sh.js"]];
+    assert_eq!(
+        refused(
+            Some(kept),
+            &[
+                ("assets/sh.js", 1),
+                ("assets/stale.js", 1),
+                ("assets/old.css", 1)
+            ]
+        ),
+        unnamed("assets/old.css, assets/stale.js")
+    );
+    // A file below assets/, which no build's name reaches.
+    assert_eq!(
+        refused(
+            Some(kept),
+            &[("assets/sh.js", 1), ("assets/deeper/two.js", 1)]
+        ),
+        unnamed("assets/deeper/two.js")
+    );
+    // No builds.json: no build, so every file of assets/ is one none names.
+    assert_eq!(
+        refused(None, &[("index.html", 1), ("assets/a.js", 1)]),
+        unnamed("assets/a.js")
+    );
+    // A build naming a file that is not there, or one that is no file of assets/.
+    for (name, files) in [
+        ("gone.js", &[("assets/sh.js", 1)][..]),
+        ("../index.html", &[("assets/sh.js", 1), ("index.html", 1)]),
+        (
+            "deeper/two.js",
+            &[("assets/sh.js", 1), ("assets/deeper/two.js", 1)],
+        ),
+        ("", &[("assets/sh.js", 1)]),
+    ] {
+        assert_eq!(
+            refused(Some(&[&["sh.js", name]]), files),
+            format!(
+                "symphony-build size-budget: apps/symphony-server/client/public: builds.json: the \
+                 build sh.js names {name:?}, which is no file of assets/\n"
+            )
+        );
+    }
+    // A builds.json that is not one.
+    for (text, said) in [
+        ("not json", "expected"),
+        ("{\"keep\": 3}", "missing field `builds`"),
+        (
+            "{\"builds\": [{\"shell\": \"sh.js\"}]}",
+            "missing field `files`",
+        ),
+    ] {
+        let tree = checkout(&budget(10_000, 50, &[]), &[], &built(1, &[]));
+        tree.write(&format!("{CLIENT}/{KEPT}"), text);
+        let (code, out, err) = run(&tree);
+        assert_eq!((code, out.as_str()), (2, ""), "{text}");
+        assert!(
+            err.starts_with(
+                "symphony-build size-budget: apps/symphony-server/client/public: builds.json: "
+            ) && err.contains(said),
+            "{text}: {err}"
+        );
+    }
+}
+
+#[test]
+fn the_committed_distribution_holds_no_file_outside_its_kept_builds() {
+    let ours = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(CLIENT);
+    let client = folder(&ours).unwrap();
+    assert!(client.kept() >= client.embedded);
+}
+
+#[test]
+fn the_kept_builds_weights_read_newest_first() {
+    assert_eq!(weighing(&[]), "no build");
+    assert_eq!(weighing(&[756_886]), "1 build of 756,886 bytes");
+    assert_eq!(weighing(&[2, 1]), "2 builds of 2 and 1 bytes, newest first");
+    assert_eq!(
+        weighing(&[756_886, 754_713, 755_142]),
+        "3 builds of 756,886, 754,713 and 755,142 bytes, newest first"
     );
 }
 
@@ -278,7 +535,11 @@ fn the_servers_line_is_its_file_less_the_client_it_embeds() {
                     name: "tasks".into(),
                     whole: None
                 },
-                &What::Client { files: 1 },
+                &What::Client {
+                    builds: vec![],
+                    embedded: 90,
+                    files: 1
+                },
             ]
         );
         assert_eq!((lines[2].bytes, lines[2].budget), (own, 50));
@@ -309,12 +570,12 @@ fn a_server_built_from_another_client_than_the_one_beside_it_is_an_error_naming_
     // `client-update` finds it: its own bytes cannot be told.
     let tree = checkout(
         &budget(100, 50, &[]),
-        &[("index.html", 30), ("assets/a.wasm", 30)],
+        &[("index.html", 30), ("about.html", 30)],
         &built(1, &[("symphony-server", 100)]),
     );
     let server = tree.path("release/symphony-server");
     let built_at = fs::metadata(&server).unwrap().modified().unwrap();
-    let client = tree.path(&format!("{CLIENT}/assets/a.wasm"));
+    let client = tree.path(&format!("{CLIENT}/about.html"));
     let later = fs::File::options().write(true).open(&client).unwrap();
     later
         .set_modified(built_at + Duration::from_secs(1))
@@ -365,7 +626,7 @@ fn a_checkout_with_no_client_distribution_embeds_none() {
     let (code, out, err) = run(&tree);
     assert_eq!((code, err.as_str()), (0, ""));
     assert!(
-        out.contains("embedded client  0.0 MiB of 0.0 MiB (0 files)"),
+        out.contains("embedded client  0.0 MiB of 0.0 MiB (no build; 0 bytes embedded in 0 files)"),
         "{out}"
     );
     let lines = measure(&tree.root, &tree.path("release")).unwrap();
@@ -514,7 +775,7 @@ fn a_link_in_the_client_or_a_folder_in_a_binarys_place_is_an_error() {
     release.retain(|(name, _)| *name != "symphony");
     let tree = checkout(
         &budget(100, 50, &[]),
-        &[("index.html", 1), ("assets/a.js", 1)],
+        &[("index.html", 1), ("about.html", 1)],
         &release,
     );
     fs::create_dir_all(tree.path("release/symphony")).unwrap();
@@ -527,6 +788,7 @@ fn a_link_in_the_client_or_a_folder_in_a_binarys_place_is_an_error() {
     fs::remove_dir(tree.path("release/symphony")).unwrap();
     tree.write("release/symphony", "b");
     assert_eq!(run(&tree).0, 0, "the folder's own files");
+    fs::create_dir_all(tree.path(&format!("{CLIENT}/assets"))).unwrap();
     std::os::unix::fs::symlink(
         tree.path("release/tasks"),
         tree.path(&format!("{CLIENT}/assets/link.js")),

@@ -941,7 +941,11 @@ What holds on every page, and each page's contract where its section above names
   keeps it and the two builds published before it over the folder, newest first in
   the folder's `builds.json`, copying in what the stage lacks and removing every
   other file (`KEEP`, `crates/symphony/src/cli/publish.rs`), so an open page's
-  deferred import finds its build two publications on. Once its build is gone, an
+  deferred import finds its build two publications on. The server embeds every file kept, and
+  the size check's client line counts each kept build whole
+  ([CHECKS](../../docs/CHECKS.md#size-budgets)): a change to a module of the chunk every page
+  imports renames every chunk that imports it, so the build after it shares almost no file with
+  the builds before it, and the folder weighs up to `KEEP` builds. Once its build is gone, an
   import that fails asks for the page's own shell past the cache: a 404 loads the
   page again, onto the build served, once per build in the tab's storage
   (`gone` in `shell/shell.js`); anything else says the failure with its retry.
