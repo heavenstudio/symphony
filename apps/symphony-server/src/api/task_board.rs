@@ -11,20 +11,53 @@ const SELECTABLE: [&str; 3] = ["signoff", "build", "test"];
 /// two change together.
 const PAGE: usize = 30;
 
-/// A listing's `status`, when it names one: a board status or one of [`SELECTABLE`].
+/// The column of a task a custom workflow holds: this, then its phase's ID. A phase's ID is the
+/// project's own and may be any board status's word, so a phase's column never takes a status's
+/// key, and a phase named for Build or Test never takes the process overlays' (docs/WORKFLOW.md,
+/// "The app").
+pub(super) const PHASE: &str = "phase:";
+
+/// A listing's `status`, when it names one: a board status, one of [`SELECTABLE`], or a phase's
+/// column ([`PHASE`] and a workflow ID); and its `state`, when it names one, a workflow ID.
 pub(super) fn status_argument(request: &Request) -> Result<(), String> {
+    if let Some(state) = query(request, "state")
+        && !workflow_id(&state)
+    {
+        return Err(format!(
+            "no state {state:?}: a listing's state is a workflow state's ID"
+        ));
+    }
     match query(request, "status") {
         Some(wanted)
             if !SELECTABLE.contains(&wanted.as_str())
-                && !symphony_board::STATUSES.contains(&wanted.as_str()) =>
+                && !symphony_board::STATUSES.contains(&wanted.as_str())
+                && !wanted.strip_prefix(PHASE).is_some_and(workflow_id) =>
         {
             Err(format!(
-                "no status {wanted:?}: a listing selects one of {} or {}",
+                "no status {wanted:?}: a listing selects one of {}, {} or {PHASE}PHASE",
                 symphony_board::STATUSES.join(", "),
                 SELECTABLE.join(", ")
             ))
         }
         _ => Ok(()),
+    }
+}
+
+/// Whether `id` is a workflow ID's shape: a lowercase ASCII letter, then lowercase letters, digits,
+/// `_` and `-` (docs/WORKFLOW.md, "Definition format 1").
+fn workflow_id(id: &str) -> bool {
+    id.starts_with(|c: char| c.is_ascii_lowercase())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
+/// The column `task` goes in: the process overlay its machine work puts it in (Build, Test), else
+/// its phase's when a custom workflow holds it ([`PHASE`]), else its status.
+pub(super) fn column(work: &symphony_api::MachineWork, task: &symphony_api::Task, activity: bool) -> String {
+    match (work.task_stage(task, activity), &task.workflow) {
+        (symphony_api::TaskStage::Lifecycle(_), Some(place)) => format!("{PHASE}{}", place.phase),
+        (stage, _) => stage.as_str().to_string(),
     }
 }
 
@@ -74,7 +107,7 @@ fn project(
     // The board opts into display stages. Existing lifecycle queries (including holder and
     // hierarchy readers) retain their status/count/cursor semantics without that opt-in.
     let activity = query(request, "activity").as_deref() == Some("1");
-    let stage = |task: &symphony_api::Task| work.task_stage(task, activity).as_str().to_string();
+    let stage = |task: &symphony_api::Task| column(&work, task, activity);
     if !search.is_empty() {
         signoff.retain(|slug| scores.contains_key(slug));
     }

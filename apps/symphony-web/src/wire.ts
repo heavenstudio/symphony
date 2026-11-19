@@ -36,6 +36,9 @@ export const TIMELINE_HISTORY_LIMIT = 256;
 export const TIMELINE_HISTORY_SOURCES = 8;
 export const AGENT_FOCUS_PATH = "/api/agent-focus";
 export const AGENT_SCREEN_PATH = "/api/agent-screen";
+export const WORKFLOW_PATH = "/api/workflow";
+export const WORKFLOW_ACTIONS_PATH = "/api/workflow-actions";
+export const WORKFLOW_APPLY_ROUTE = "/api/workflow-apply";
 export const SYMPHONY_ROUTES = [
   "tasks",
   "task",
@@ -618,6 +621,11 @@ export type WaitingBoard = {
    * Every column after the selected wait kind, including columns outside the requested page.
    */
   columns: Array<WaitingColumn>;
+  /**
+   * Open tasks a custom workflow holds by their coordination state's ID, ordered by ID, before
+   * the selected wait kind and state: empty, and left out, on a board with none.
+   */
+  states?: Array<[string, number]>;
 };
 
 export type WaitingColumn = {
@@ -663,6 +671,12 @@ export type Task = {
    * and its [`WaitsOn`] says no reason is recorded (docs/TASKS.md, what a task waits on).
    */
   from?: string | null;
+  /**
+   * Where a custom workflow holds it ([`workflow::TaskPlace`]): none for a task the board's own
+   * writers keep, every task of a board with no custom workflow among them, and from a server
+   * before it.
+   */
+  workflow?: WorkflowPlace | null;
 };
 
 export type WaitsOn = {
@@ -725,7 +739,23 @@ export type TaskFields = {
    * Present only when the status it was blocked from changes. Empty string clears it.
    */
   from?: string | null;
+  /**
+   * Present only when its place in a custom workflow changes; a place is never taken away.
+   */
+  workflow?: WorkflowPlace | null;
 };
+
+export type WorkflowPlace = {
+  phase: string;
+  state: string;
+  resume?: WorkflowPair | null;
+  revision: number;
+  manual?: WorkflowManualRecovery | null;
+};
+
+export type WorkflowManualRecovery = { trigger: string; holder: string; role: string };
+
+export type WorkflowPair = { phase: string; state: string };
 
 export type MachineWork = {
   freshness: WorkFreshness;
@@ -1329,6 +1359,224 @@ export type Upload = {
    */
   markup: string;
 };
+
+export type BoardWorkflow = { project: string; workflow: WorkflowRead | null };
+
+export type WorkflowRead = {
+  definition: WorkflowDefinition;
+  revision: WorkflowRevision;
+  activation_generation: number;
+};
+
+export type WorkflowDefinition = {
+  format: number;
+  initial: WorkflowPair;
+  task_kinds: Array<string>;
+  phases: Array<WorkflowPhase>;
+  states: Array<WorkflowState>;
+  positions: Array<WorkflowPosition>;
+  edges: Array<WorkflowEdge>;
+  capabilities: Array<string>;
+  adapters: Array<string>;
+  guards: Array<WorkflowGuard>;
+};
+
+export type WorkflowPhase = {
+  id: string;
+  label: string;
+  order: number;
+  phone_order: number;
+  /**
+   * False for the default's off-pipeline backlog/blocked/cancelled groups.
+   */
+  column: boolean;
+};
+
+export type WorkflowState = { id: string; label: string };
+
+export type WorkflowPosition = {
+  at: WorkflowPair;
+  /**
+   * None is explicit in JSON; TOML omits it. Phase/state names never imply staffing.
+   */
+  staffing: WorkflowRole | null;
+  slot: WorkflowSlot;
+  dependencies: WorkflowDependency;
+  unsuccessful_dependency: WorkflowUnsuccessfulDependency;
+  accepts_work: boolean;
+  terminal: boolean;
+  legacy: WorkflowLegacyStatus;
+  outcome: WorkflowOutcome | null;
+  satisfies_dependencies: boolean;
+  completion: WorkflowCompletion;
+  recovery: WorkflowRecovery | null;
+};
+
+export type WorkflowRecovery = {
+  release: WorkflowRecoveryAction;
+  lost_holder: WorkflowRecoveryAction;
+  attempt_failure: WorkflowRecoveryAction;
+  cancellation_acknowledged: WorkflowRecoveryAction;
+};
+
+export type WorkflowRecoveryAction = {
+  /**
+   * None means stay; manual must then be true. No implicit move to ready.
+   */
+  target: WorkflowPair | null;
+  manual: boolean;
+  slot: WorkflowSlot;
+  release_role: boolean;
+  release_reservation: boolean;
+};
+
+export type WorkflowGuard = { id: string; adapter: string };
+
+export type WorkflowAuthority =
+  | { kind: "task_role"; role: WorkflowRole }
+  | { kind: "project_capability"; capability: string }
+  | { kind: "system_capability"; capability: string };
+
+export type WorkflowEffect =
+  | { kind: "acquire_role"; role: WorkflowRole }
+  | { kind: "release_role"; role: WorkflowRole }
+  | { kind: "slot"; policy: WorkflowSlot }
+  | { kind: "review"; approved: boolean }
+  | { kind: "block"; save_resume: boolean }
+  | { kind: "clear_block" }
+  | { kind: "outcome"; outcome: WorkflowOutcome; satisfies_dependencies: boolean }
+  | { kind: "parent_integration" }
+  | { kind: "prepare"; adapter: string }
+  | { kind: "finalize"; adapter: string };
+
+export type WorkflowRetryBound = { maximum: number; exhausted: WorkflowPair };
+
+export type WorkflowEdge = {
+  id: string;
+  label: string;
+  from: WorkflowPair;
+  to: WorkflowPair;
+  operation: WorkflowOperation;
+  /**
+   * A legacy alias resolves only when unique at a source pair.
+   */
+  alias: string | null;
+  authority: Array<WorkflowAuthority>;
+  inputs: Array<string>;
+  dependencies: WorkflowDependency;
+  guards: Array<string>;
+  effects: Array<WorkflowEffect>;
+  automatic: boolean;
+  retry: WorkflowRetryBound | null;
+  human_wait: boolean;
+};
+
+export type WorkflowRevision = { format: number; digest: string; source: WorkflowSource };
+
+export type WorkflowSource = { commit: string; project_blob: string };
+
+export type WorkflowPositionSnapshot = {
+  workflow: WorkflowRevision;
+  activation_generation: number;
+  task_revision: number;
+  at: WorkflowPair;
+};
+
+export type WorkflowInputValue =
+  | { kind: "text"; value: string }
+  | { kind: "revision"; value: string }
+  | { kind: "pair"; value: WorkflowPair }
+  | { kind: "flag"; value: boolean };
+
+export type WorkflowOperationRequest = {
+  project: string;
+  task: string;
+  edge: string;
+  expected: WorkflowPositionSnapshot;
+  input_revisions: { [key in string]: string };
+  idempotency_key: string;
+  inputs: { [key in string]: WorkflowInputValue };
+};
+
+export type WorkflowNextAction = {
+  edge: string;
+  operation: WorkflowOperation;
+  destination: WorkflowPair;
+  label: string;
+  responsible: Array<WorkflowAuthority>;
+  required_inputs: Array<string>;
+  unavailable: Array<WorkflowRefusalCode>;
+};
+
+export type WorkflowNextActions = {
+  snapshot: WorkflowPositionSnapshot;
+  actions: Array<WorkflowNextAction>;
+};
+
+export type WorkflowOperationResult = {
+  transition: string;
+  next: WorkflowNextActions;
+  effects: Array<WorkflowEffect>;
+};
+
+export type WorkflowRefusalCode =
+  | "stale_task"
+  | "stale_workflow"
+  | "stale_activation"
+  | "stale_input"
+  | "unknown_id"
+  | "removed_id"
+  | "unauthorized"
+  | "dependency"
+  | "capacity"
+  | "human_wait"
+  | "guard_unavailable"
+  | "unsupported_activation"
+  | "unsupported_writer"
+  | "unsupported_adapter"
+  | "explicit_action_required";
+
+export type WorkflowRole = "executor" | "reviewer" | "orchestrator";
+
+export type WorkflowSlot = "retain" | "acquire" | "release";
+
+export type WorkflowDependency = "none" | "done" | "landed" | "accepted_output";
+
+export type WorkflowUnsuccessfulDependency = "block" | "cancel" | "manual";
+
+export type WorkflowOutcome = "success" | "cancellation" | "failure";
+
+export type WorkflowCompletion = "none" | "landing" | "covered_close" | "parent_integration";
+
+export type WorkflowOperation =
+  | "create"
+  | "claim"
+  | "release"
+  | "advance"
+  | "request_review"
+  | "approve"
+  | "changes"
+  | "block"
+  | "resume"
+  | "retry"
+  | "cancel"
+  | "complete_subtask"
+  | "close_covered"
+  | "prepare_land"
+  | "confirm_land"
+  | "prepare_external"
+  | "confirm_external";
+
+export type WorkflowLegacyStatus =
+  | "backlog"
+  | "concept"
+  | "design"
+  | "ready"
+  | "in_progress"
+  | "review"
+  | "done"
+  | "blocked"
+  | "cancelled";
 
 export type TaskPage = {
   machine_work: MachineWork;

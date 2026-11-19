@@ -41,9 +41,10 @@ fn since(task: &Task) -> f64 {
 }
 
 /// Only the board's named block can be blocked. Its derived `nobody` line can name a dependency
-/// that disappeared; that is still a real block. An unnamed legacy block is ordinary work.
+/// that disappeared; that is still a real block. An unnamed legacy block is ordinary work. A task
+/// a custom workflow holds is blocked by its state, which the board's own block never names.
 fn normalize(task: &mut Task) {
-    if task.status != "blocked" {
+    if task.status != "blocked" || task.workflow.is_some() {
         return;
     }
     let named = task.waits_on.as_ref().is_some_and(|waits| {
@@ -80,12 +81,20 @@ fn original(task: &Task) -> &str {
         .unwrap_or("ready")
 }
 
-fn stage<'a>(task: &'a Task, work: &MachineWork, activity: bool) -> &'a str {
-    if task.status == "blocked" {
-        original(task)
+/// The column `task` goes in: a blocked task the board's own writers keep in the status it was
+/// blocked from, any other where every listing puts it ([`super::column`]), a task a custom
+/// workflow holds in its phase's, blocked or not.
+fn stage(task: &Task, work: &MachineWork, activity: bool) -> String {
+    if task.status == "blocked" && task.workflow.is_none() {
+        original(task).to_string()
     } else {
-        work.task_stage(task, activity).as_str()
+        super::column(work, task, activity)
     }
+}
+
+/// The coordination state of a task a custom workflow holds; none for one the board's writers keep.
+fn state(task: &Task) -> Option<&str> {
+    task.workflow.as_ref().map(|place| place.state.as_str())
 }
 
 fn key(task: &Task, stage: &str, across: bool) -> Key {
@@ -149,11 +158,14 @@ pub(super) fn project(
     };
     let wait = query(request, "wait");
     let status = query(request, "status");
+    let selected_state = query(request, "state");
     let activity = query(request, "activity").as_deref() == Some("1");
     let mut waiting = WaitingBoard {
         kinds: WAITS_KINDS.iter().map(|kind| ((*kind).into(), 0)).collect(),
         columns: Vec::new(),
+        states: Vec::new(),
     };
+    let mut states = std::collections::BTreeMap::<String, usize>::new();
     for task in &mut tasks.tasks {
         normalize(task);
         if !task.is_finished() {
@@ -162,20 +174,25 @@ pub(super) fn project(
                 .position(|one| *one == kind(task))
                 .unwrap_or(1);
             waiting.kinds[rank].1 += 1;
+            if let Some(state) = state(task) {
+                *states.entry(state.into()).or_default() += 1;
+            }
         }
     }
+    waiting.states = states.into_iter().collect();
     tasks.tasks.retain(|task| {
         wait.as_ref()
             .is_none_or(|wanted| !task.is_finished() && kind(task) == wanted)
+            && (selected_state.as_ref()).is_none_or(|wanted| state(task) == Some(wanted.as_str()))
     });
     let mut columns = std::collections::BTreeMap::<String, WaitingColumn>::new();
     let mut lifecycle = std::collections::BTreeMap::<String, usize>::new();
     for task in &tasks.tasks {
         let stage = stage(task, &work, activity);
         let column = columns
-            .entry(stage.into())
+            .entry(stage.clone())
             .or_insert_with(|| WaitingColumn {
-                status: stage.into(),
+                status: stage,
                 ..WaitingColumn::default()
             });
         if task.status == "blocked" {
@@ -201,10 +218,10 @@ pub(super) fn project(
         .into_iter()
         .filter_map(|task| {
             let stage = stage(&task, &work, activity);
-            if status.as_ref().is_some_and(|wanted| wanted != stage) {
+            if status.as_ref().is_some_and(|wanted| *wanted != stage) {
                 return None;
             }
-            let key = key(&task, stage, wait.is_some());
+            let key = key(&task, &stage, wait.is_some());
             Some((key, task))
         })
         .collect();
@@ -307,7 +324,7 @@ mod ordering_study {
                             let mut task = task.clone();
                             normalize(&mut task);
                             (
-                                key(&task, stage(&task, &MachineWork::default(), false), across),
+                                key(&task, &stage(&task, &MachineWork::default(), false), across),
                                 task,
                             )
                         })

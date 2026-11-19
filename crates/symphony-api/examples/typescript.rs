@@ -135,6 +135,15 @@ fn constants() -> String {
         ),
         ("AGENT_FOCUS_PATH", text(api::AGENT_FOCUS_PATH)),
         ("AGENT_SCREEN_PATH", text(api::AGENT_SCREEN_PATH)),
+        ("WORKFLOW_PATH", text(api::workflow::WORKFLOW_PATH)),
+        (
+            "WORKFLOW_ACTIONS_PATH",
+            text(api::workflow::WORKFLOW_ACTIONS_PATH),
+        ),
+        (
+            "WORKFLOW_APPLY_ROUTE",
+            text(api::workflow::WORKFLOW_APPLY_ROUTE),
+        ),
     ];
     for (name, value) in constants {
         let _ = writeln!(out, "export const {name} = {value};");
@@ -216,6 +225,9 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::FieldValue>(cfg),
         declared::<api::TaskChange>(cfg),
         declared::<api::TaskFields>(cfg),
+        declared::<api::workflow::TaskPlace>(cfg),
+        declared::<api::workflow::ManualRecovery>(cfg),
+        declared::<api::workflow::Pair>(cfg),
         declared::<api::MachineWork>(cfg),
         declared::<api::MachineObservation>(cfg),
         declared::<api::WorkOperation>(cfg),
@@ -297,6 +309,38 @@ fn document_declarations(cfg: &Config) -> Vec<Declared> {
 /// The types a task's page reads, after the others in wire.ts.
 fn task_declarations(cfg: &Config) -> Vec<Declared> {
     vec![
+        // A custom workflow: the definition the board and a task's page draw by, the owner's next
+        // actions on a task, and the operation the page posts with its answer.
+        declared::<api::workflow::BoardWorkflow>(cfg),
+        declared::<api::workflow::WorkflowRead>(cfg),
+        declared::<api::workflow::Definition>(cfg),
+        declared::<api::workflow::Phase>(cfg),
+        declared::<api::workflow::State>(cfg),
+        declared::<api::workflow::Position>(cfg),
+        declared::<api::workflow::Recovery>(cfg),
+        declared::<api::workflow::RecoveryAction>(cfg),
+        declared::<api::workflow::Guard>(cfg),
+        declared::<api::workflow::Authority>(cfg),
+        declared::<api::workflow::Effect>(cfg),
+        declared::<api::workflow::RetryBound>(cfg),
+        declared::<api::workflow::Edge>(cfg),
+        declared::<api::workflow::Revision>(cfg),
+        declared::<api::workflow::Source>(cfg),
+        declared::<api::workflow::PositionSnapshot>(cfg),
+        declared::<api::workflow::InputValue>(cfg),
+        declared::<api::workflow::OperationRequest>(cfg),
+        declared::<api::workflow::NextAction>(cfg),
+        declared::<api::workflow::NextActions>(cfg),
+        declared::<api::workflow::OperationResult>(cfg),
+        declared::<api::workflow::RefusalCode>(cfg),
+        declared::<api::workflow::Role>(cfg),
+        declared::<api::workflow::Slot>(cfg),
+        declared::<api::workflow::Dependency>(cfg),
+        declared::<api::workflow::UnsuccessfulDependency>(cfg),
+        declared::<api::workflow::Outcome>(cfg),
+        declared::<api::workflow::Completion>(cfg),
+        declared::<api::workflow::Operation>(cfg),
+        declared::<api::workflow::LegacyStatus>(cfg),
         // A task's page: its brief, thread, landing offer and gates (its holders' sessions are the
         // agents page's types).
         declared::<api::TaskPage>(cfg),
@@ -959,6 +1003,7 @@ fn task(slug: &str, status: &str, parent: Option<&str>) -> api::Task {
         waits_on: None,
         review_rounds: None,
         from: None,
+        workflow: None,
     }
 }
 

@@ -29,6 +29,7 @@ fn task(slug: &str, status: &str, updated: f64, roles: &[(&str, &str)]) -> Task 
         waits_on: None,
         review_rounds: None,
         from: None,
+        workflow: None,
     }
 }
 

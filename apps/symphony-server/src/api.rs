@@ -65,6 +65,8 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::RUN_LOG_PATH,
     symphony_api::RUNS_PATH,
     symphony_api::RUN_PATH,
+    symphony_api::workflow::WORKFLOW_PATH,
+    symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
 ];
 
 type Request = axum::http::Request<()>;
@@ -211,9 +213,18 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             | symphony_api::TASK_TIMELINE_PATH
             | symphony_api::TASK_DIFF_PATH
             | symphony_api::TASK_DIFF_FILE_PATH
+            | symphony_api::workflow::WORKFLOW_ACTIONS_PATH
     ) && let Err(why) = argument(&request, "slug")
     {
         return Some(error(StatusCode::BAD_REQUEST, why));
+    }
+    // The next actions are the local owner's, and a hosted visitor is no local owner: its host's
+    // dispatch answers for its principal.
+    if hosted && path == symphony_api::workflow::WORKFLOW_ACTIONS_PATH {
+        return Some(error(
+            StatusCode::FORBIDDEN,
+            "Forbidden: next actions are the local owner's, never a hosted visitor's",
+        ));
     }
     if path == symphony_api::AGENT_SCREEN_PATH
         && let Err(why) = argument(&request, "handle")
@@ -503,6 +514,47 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             .await
         }
         "/api/feed" => feed(hub, scope, request).await,
+        // The board's active custom workflow, and the local owner's next actions on one task it
+        // holds (docs/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
+        symphony_api::workflow::WORKFLOW_PATH | symphony_api::workflow::WORKFLOW_ACTIONS_PATH => {
+            let slug = query(&request, "slug").unwrap_or_default();
+            let actions = path == symphony_api::workflow::WORKFLOW_ACTIONS_PATH;
+            match crate::spawn::blocking(move || {
+                let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
+                let read = if actions {
+                    store
+                        .workflow_actions(
+                            &slug,
+                            &symphony_board::workflow::local_owner(),
+                            &symphony_board::workflow::Host::local(),
+                        )
+                        .map(|next| no_store(Json(next)))
+                        .map_err(task_failure)
+                } else {
+                    store
+                        .workflow_read()
+                        .map(|workflow| {
+                            no_store(Json(symphony_api::workflow::BoardWorkflow {
+                                project: store.database().database().to_string(),
+                                workflow,
+                            }))
+                        })
+                        .map_err(task_failure)
+                };
+                if read.as_ref().is_err_and(|(status, _)| {
+                    [StatusCode::SERVICE_UNAVAILABLE, StatusCode::GATEWAY_TIMEOUT].contains(status)
+                }) {
+                    hub.reader_failed(&store);
+                }
+                read
+            })
+            .await
+            {
+                Ok(Ok(response)) => response,
+                Ok(Err((code, e))) => error(code, e),
+                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            }
+        }
         "/api/tasks" | "/api/task-board" => {
             let search = query(&request, "q")
                 .unwrap_or_default()
