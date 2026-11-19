@@ -461,11 +461,13 @@ row, with one more statement for the object's other fields, all in the request's
 transaction and so of one snapshot (`Pg::Listed`, `crates/tasks/src/store/postgres/mod.rs`); the
 client joins the rows into the same JSON text the one value was. The server sends each row as it
 makes it, so the backend holds a sort's memory (`work_mem`, 4 MiB, then a temporary file) and
-not the board. The whole-board read, every plain list of rows (a thread's messages, each
-sender's last message, the launches, the usage rows, the reviews waiting) and the bound
-sessions are read so. A list read so goes through the index it went through as one value: a
-thread's messages, the messages between two numbers and each sender's last were planned both
-ways and scan alike. A write's read of its one task is still one value.
+not the board. The whole-board read, the reads that are one plain list of rows (the messages to the
+owner, each sender's last message, the launches, the usage rows, the reviews waiting) and the
+bound sessions are read so. A list statement's condition is the one its value had; no plan of
+either was kept, so that they scan alike is not shown here. A write's read of its one task is
+still one value, and so are a thread, several threads, the task tree, an inbox's lines since
+its last look, the open asks and `tasks sessions`' list of every session: none of them was
+moved or measured here.
 
 **Thirty and ten sessions on this board**, by the paired driver, `--seed 1`, forty calls a
 session, from one export of this repository's board read that day (953 tasks, 13,793 messages,

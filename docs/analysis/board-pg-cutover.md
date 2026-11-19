@@ -4,8 +4,8 @@ The procedure that moves a live board from SurrealDB to PostgreSQL: the order, w
 when, how long a board cannot be written, how to go back, and what the two stores measured side
 by side. [What a live move waits for](#the-choice) is decided: the pieces not built yet, a clean
 rehearsal, and the memory peak found and answered: it is found, under the target on a board of
-today's size, and over it on one ten times the size, which is the owner's to answer before any
-live move. Today PostgreSQL serves only scratch boards
+today's size, and over it on one ten times the size, which the card `board-pg-memory-at-ten-times`
+([DECISIONS](../DECISIONS.md)) puts to the owner before any live move. Today PostgreSQL serves only scratch boards
 ([POSTGRESQL](../POSTGRESQL.md)), and no command here moves a live one.
 
 ## What the comparison showed
@@ -151,8 +151,8 @@ prerequisites, and the memory peak.
   and one connection per command only in that a backend keeps its memory for its command's
   life: the fix is in what the reads ask the server to build. On a board ten times the size it
   is 1.7 to 1.8 GiB, over the target, which is unchanged: the live move stays held until the
-  owner answers that result on the card, and the result on today's board does not stand in for
-  it.
+  owner answers the card `board-pg-memory-at-ten-times` ([DECISIONS](../DECISIONS.md)), and the result on
+  today's board does not stand in for it.
 
 The target was part of what the store was approved with. The cutover is the one step that takes
 a hold on a live board and a second hold to undo. Everything before it is free to do and free to
