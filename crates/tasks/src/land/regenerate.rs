@@ -1081,10 +1081,8 @@ impl Regenerator<'_, '_> {
             Some(at) if at == pending.head => {}
             Some(at) => {
                 return Err(format!(
-                    "the branch {slug} is at {}, not the commit the regenerator made ({}): move \
-                     it away, and the next round files it",
-                    short(&at),
-                    short(&pending.head)
+                    "the branch {slug} is at {}, not the commit the regenerator made",
+                    short(&at)
                 ));
             }
             None => {
@@ -1680,17 +1678,10 @@ impl Landing<'_> {
                     .any(|g| owns(&g.outputs, name))
             });
             let wrong = if pending.head != tip {
-                Some(format!(
-                    "is not the commit the regenerator made ({})",
-                    short(&pending.head)
-                ))
+                Some("is not the commit the regenerator made".to_string())
             } else if parents != [pending.tip.as_str()] || !ancestor(&self.main, &pending.tip, base)
             {
-                Some(format!(
-                    "is not one commit on {}, which {}/{default} holds",
-                    short(&pending.tip),
-                    super::REMOTE
-                ))
+                Some("is not one commit on the tip it was made of, held remotely".to_string())
             } else {
                 stray.map(|stray| format!("changes {stray}, outside the generators' outputs"))
             };

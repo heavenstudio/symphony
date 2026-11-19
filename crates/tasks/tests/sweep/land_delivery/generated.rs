@@ -353,9 +353,8 @@ fn a_head_that_is_not_what_the_regenerator_made_is_refused_by_name() {
     let line = refused(&r);
     assert!(
         line.ends_with(&format!(
-            "'s head {} is not the commit the regenerator made ({})",
-            &more[..7],
-            &made_as.head[..7]
+            "'s head {} is not the commit the regenerator made",
+            &more[..7]
         )),
         "{line}"
     );
@@ -932,7 +931,7 @@ fn a_record_gone_between_the_publication_and_the_request_asks_for_no_merge() {
     });
     let refused = landed(&r, &made_as.slug, &orch, &host).1.unwrap_err();
     assert!(
-        refused.contains("is no longer what the regenerator delivers: no merge asked"),
+        refused.contains("no longer what the regenerator delivers: no merge asked"),
         "{refused}"
     );
     assert_eq!(host.verbs(), ["publish"], "no merge asked");

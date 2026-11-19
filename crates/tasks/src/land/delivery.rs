@@ -677,9 +677,9 @@ impl Landing<'_> {
             let now = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
             let again = (self.committed(&now)).and_then(|()| {
                 self.generated(&now, tip).unwrap_or_else(|| {
-                    Err(Refusal::here(format!(
-                        "{slug} is no longer what the regenerator delivers: no merge asked"
-                    )))
+                    Err(Refusal::here(
+                        "no longer what the regenerator delivers: no merge asked".into(),
+                    ))
                 })
             });
             again.map_err(|refusal| self.refuse(refusal))?;
