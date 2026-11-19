@@ -88,7 +88,7 @@ impl Receipts {
     }
 
     /// Whether `receipt`'s squash is, in `root`, the commit it recorded ([`borne_out`]).
-    fn proved(root: &Path, receipt: &Receipt) -> bool {
+    pub(crate) fn proved(root: &Path, receipt: &Receipt) -> bool {
         git(root, &["log", "-1", "--format=%P%x09%T", &receipt.squash])
             .ok()
             .and_then(|said| {

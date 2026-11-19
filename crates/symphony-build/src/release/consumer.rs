@@ -10,7 +10,9 @@
 //!   ([`GUARDS`]).
 //! - **Entries**, said by the landing that changes what a consumer must do: a trailer of one of
 //!   its branch's commits, `Consumer-Note: SECTION: TEXT` ([`parse`]), which the `--no-ff` land
-//!   keeps on main, so the release reads them between two releases' commits ([`entries`]). One
+//!   keeps on main, so the release reads them between two releases' commits ([`entries`]); a land
+//!   a pull request delivered keeps them on the head its receipt names, where the release reads
+//!   them for the squash ([`delivered`]). One
 //!   that names a release already cut (`Consumer-Note: release-NAME SECTION: TEXT`) is read as
 //!   that release's, and said again in the release whose commits hold it, for the project already
 //!   past the one it names: what a landing left unsaid is said by a later commit.
@@ -26,6 +28,7 @@ use std::path::Path;
 
 use super::git::git;
 use super::notes::{PIN_FILE, SCHEMA_FILE, constant};
+use super::receipts::Receipts;
 use super::tags::Release;
 
 /// The trailer a commit says an entry by.
@@ -292,9 +295,14 @@ pub(crate) fn parse(value: &str) -> Result<Entry, String> {
 /// Every [`TRAILER`] value of the commits `range` names, oldest first, each with its commit's
 /// short name. Git reads the trailers, so a value folded over several lines is one.
 pub(crate) fn entries(root: &Path, range: &str) -> Result<Vec<(String, String)>, String> {
+    entries_of(root, &[range])
+}
+
+/// [`entries`] of the commits `revs` name together, as `git log` reads several.
+fn entries_of(root: &Path, revs: &[&str]) -> Result<Vec<(String, String)>, String> {
     let format =
         format!("--format=%h%x01%(trailers:key={TRAILER},valueonly,unfold,separator=%x01)%x02");
-    let listed = git(root, &["log", "--reverse", &format, range])?;
+    let listed = git(root, &[&["log", "--reverse", &format][..], revs].concat())?;
     let mut found = Vec::new();
     for record in listed.split('\u{2}') {
         let mut fields = record.trim_matches('\n').split('\u{1}');
@@ -304,6 +312,38 @@ pub(crate) fn entries(root: &Path, range: &str) -> Result<Vec<(String, String)>,
                 found.push((commit.clone(), value.trim().to_string()));
             }
         }
+    }
+    Ok(found)
+}
+
+/// The entries the lands a pull request delivered between `before` and `commit` said: a squash
+/// keeps no trailer of the commits it squashed, so each squash among the commits of
+/// `before..commit` that one of `receipts` names, and git bears out, is read from the head that
+/// receipt kept, the commits that head holds beyond the squash's parent and beyond `before`
+/// (which a release on a delivered head said already). Oldest squash first.
+fn delivered(
+    root: &Path,
+    receipts: &Receipts,
+    before: &str,
+    commit: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let mut found = Vec::new();
+    if receipts.is_empty() {
+        return Ok(found);
+    }
+    let listed = git(
+        root,
+        &["rev-list", "--reverse", &format!("{before}..{commit}")],
+    )?;
+    for squash in listed.lines() {
+        let Some(receipt) = receipts.squashed(squash) else {
+            continue;
+        };
+        if !Receipts::proved(root, receipt) {
+            continue;
+        }
+        let (parent, past) = (format!("^{}", receipt.parent), format!("^{before}"));
+        found.extend(entries_of(root, &[&receipt.head, &parent, &past])?);
     }
     Ok(found)
 }
@@ -417,6 +457,7 @@ pub(crate) struct Notes {
 pub(crate) fn history(root: &Path, releases: &[(String, String)]) -> Result<Vec<Notes>, String> {
     let mut all: Vec<Notes> = Vec::new();
     let mut said: Vec<(usize, String, Entry)> = Vec::new();
+    let receipts = Receipts::read(root);
     for (at, (name, commit)) in releases.iter().enumerate() {
         let before = at.checked_sub(1).map(|before| &releases[before]);
         let mut notes = Notes {
@@ -428,7 +469,9 @@ pub(crate) fn history(root: &Path, releases: &[(String, String)]) -> Result<Vec<
         };
         // The first release's entries would be every commit's before it: it says none.
         if let Some((_, before)) = before {
-            for (by, value) in entries(root, &format!("{before}..{commit}"))? {
+            let mut read = entries(root, &format!("{before}..{commit}"))?;
+            read.extend(delivered(root, &receipts, before, commit)?);
+            for (by, value) in read {
                 match parse(&value) {
                     Ok(entry) => said.push((at, by, entry)),
                     Err(_) => notes.unread.push(value),
@@ -681,28 +724,37 @@ pub(crate) fn document(history: &[Notes]) -> String {
     text
 }
 
-/// The releases the repository at `root` tags that are ancestors of `commit` or tag it, oldest
-/// first, each with its commit.
+/// The releases the repository at `root` tags that `commit` holds, oldest first, each with its
+/// commit: those that tag it or an ancestor of it, and those tagged on a head a pull request
+/// delivered whose squash it holds ([`Receipts::holds`]), a release candidate's release, which
+/// no history of the default branch holds and every release after it is still after.
 pub(crate) fn releases(root: &Path, commit: &str) -> Result<Vec<(String, String)>, String> {
     let pattern = format!("{}*", super::tags::PREFIX);
-    let listed = git(
-        root,
-        &[
-            "tag",
-            "-l",
-            &pattern,
-            "--merged",
-            commit,
-            "--format=%(refname:short) %(*objectname)%(if)%(*objectname)%(then)%(else)%(objectname)%(end)",
-        ],
-    )?;
-    let mut found: Vec<(Release, String)> = listed
-        .lines()
-        .filter_map(|line| {
-            let (name, commit) = line.split_once(' ')?;
-            Some((Release::parse(name)?, commit.trim().to_string()))
-        })
-        .collect();
+    let tagged = |merged: &[&str]| -> Result<Vec<(Release, String)>, String> {
+        let format = "--format=%(refname:short) %(*objectname)%(if)%(*objectname)%(then)%(else)%(objectname)%(end)";
+        let listed = git(
+            root,
+            &[&["tag", "-l", &pattern][..], merged, &[format]].concat(),
+        )?;
+        Ok(listed
+            .lines()
+            .filter_map(|line| {
+                let (name, commit) = line.split_once(' ')?;
+                Some((Release::parse(name)?, commit.trim().to_string()))
+            })
+            .collect())
+    };
+    let mut found = tagged(&["--merged", commit])?;
+    let receipts = Receipts::read(root);
+    if !receipts.is_empty() {
+        for (release, at) in tagged(&[])? {
+            if found.iter().all(|(known, _)| *known != release)
+                && receipts.holds(root, &at, commit).unwrap_or(false)
+            {
+                found.push((release, at));
+            }
+        }
+    }
     found.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(found
         .into_iter()

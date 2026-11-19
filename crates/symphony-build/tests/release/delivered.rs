@@ -413,3 +413,119 @@ fn a_candidate_dropped_before_its_fix_is_delivered_stays_dropped_and_mains_tip_i
     assert_eq!(record["commit"], red.as_str());
     assert_eq!(record["advances"].as_array().map(Vec::len), Some(0));
 }
+
+#[test]
+fn two_reds_delivered_in_turn_advance_the_candidate_twice_and_it_is_released() {
+    const ONE: &str = "tests/release-red-one";
+    const TWO: &str = "tests/release-red-two";
+    let checks = [
+        "--check",
+        "one=test ! -e red1",
+        "--check",
+        "two=test ! -e red2",
+    ];
+    let run = |fixture: &Fixture, now: f64, more: &[&str], code: i32| {
+        fixture.run(now, &[&checks[..], more].concat(), code)
+    };
+    let fixture = holding();
+    fixture.write("red1", "planted");
+    let red = fixture.land("red2", Some("planted"), "two red changes");
+    let out = run(&fixture, NOW, &[], 1);
+    assert!(
+        out.contains(&format!(
+            "release: holds the release candidate {}",
+            &red[..12]
+        )),
+        "{out}"
+    );
+    let reds: Vec<String> = (candidate::record(&fixture)["reds"]
+        .as_array()
+        .unwrap()
+        .iter())
+    .map(|red| red["slug"].as_str().unwrap().to_string())
+    .collect();
+    assert_eq!(reds, [ONE, TWO]);
+
+    // The first red's fix, started at the candidate and delivered: the candidate takes its head
+    // and waits for the second.
+    let one = candidate::fix(&fixture, ONE, "red1", None);
+    let first = squashed(&fixture, ONE, &one);
+    keep(&fixture, &first);
+    let out = run(&fixture, NOW + 60.0, &["--due", ONE, &first.squash], 0);
+    assert!(
+        out.contains(&format!(
+            "release: advanced the release candidate from {} to {}, ",
+            &red[..12],
+            &one[..12]
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "next run: held for the release candidate {}: its rerun waits for {TWO}",
+            &one[..12]
+        )),
+        "{out}"
+    );
+    assert_eq!(candidate::branch(&fixture), Some(one.clone()));
+
+    // The second starts at the candidate as it is now, a head main's history does not hold, and
+    // merges nothing: a delivery takes a head with no merge of a commit the remote lacks.
+    let two = candidate::fix(&fixture, TWO, "red2", None);
+    assert_eq!(
+        git(&fixture.main, &["rev-parse", &format!("{two}^")]),
+        one,
+        "on the first fix's head"
+    );
+    assert_eq!(
+        git(
+            &fixture.main,
+            &["rev-list", "--merges", &format!("origin/main..{two}")]
+        ),
+        "",
+        "no merge commit to deliver"
+    );
+    let second = squashed(&fixture, TWO, &two);
+    keep(&fixture, &second);
+    let out = run(&fixture, NOW + 120.0, &["--due", TWO, &second.squash], 0);
+    for said in [
+        format!(
+            "release: advanced the release candidate from {} to {}, the newest approved commit \
+             of {TWO}'s land ({}), the squash of {} by pull request #5 of owner/repository\n",
+            &one[..12],
+            &two[..12],
+            &second.squash[..12],
+            &two[..12]
+        ),
+        format!(
+            "release: due: the rerun of the release candidate {} starts\n",
+            &two[..12]
+        ),
+        "release: green; tagged release-2026-11-12, pushed to origin\n".into(),
+    ] {
+        assert!(out.contains(&said), "{said}\n\n{out}");
+    }
+    assert_eq!(fixture.tagged("release-2026-11-12"), two);
+    let record = candidate::record(&fixture);
+    assert_eq!(record["state"], "released");
+    let advances: Vec<(String, String)> = (record["advances"].as_array().unwrap().iter())
+        .map(|advance| {
+            let said = |key: &str| advance[key].as_str().unwrap().to_string();
+            (said("to"), said("merge"))
+        })
+        .collect();
+    assert_eq!(
+        advances,
+        [
+            (one.clone(), first.squash.clone()),
+            (two.clone(), second.squash.clone())
+        ]
+    );
+    // Main's tip holds both squashes and neither head, and is released after it.
+    let out = run(&fixture, NOW + DAY, &[], 0);
+    assert!(
+        out.contains("release: green; tagged release-2026-11-13, pushed to origin\n"),
+        "{out}"
+    );
+    assert_eq!(fixture.tagged("release-2026-11-13"), second.squash);
+}
