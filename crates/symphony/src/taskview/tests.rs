@@ -23,6 +23,7 @@ fn project_task_counts_exclude_children_and_grandchildren() {
         waits_on: None,
         review_rounds: None,
         from: None,
+        workflow: None,
     };
     let board = Tasks {
         version: "fixture".into(),
@@ -120,6 +121,7 @@ fn a_questions_task_is_open_until_it_is_done_or_cancelled() {
         waits_on: None,
         review_rounds: None,
         from: None,
+        workflow: None,
     };
     let tasks: Vec<Task> = [
         ("a", "backlog"),
@@ -310,4 +312,57 @@ fn stored_fields_keep_plugin_and_field_order_while_filtering_invalid_values() {
     assert_eq!(got["a"]["z"], FieldValue::Number(2.5));
     assert!(got["z"].is_empty());
     assert!(fields(&BTreeMap::new()).is_empty());
+}
+
+/// A task's place in a custom workflow, as a page shows it: none for a task the board's own
+/// writers keep or whose position this build cannot read, the resume pair a block saved, and the
+/// person's recovery it waits on only where its action asks for one.
+#[test]
+fn a_tasks_place_is_its_position_as_a_page_shows_it() {
+    use serde_json::json;
+    use symphony_api::workflow::{ManualRecovery, Pair, TaskPlace};
+    let fields = |board: serde_json::Value| {
+        let mut stored = BTreeMap::new();
+        stored.insert(
+            "_board".to_string(),
+            serde_json::from_value::<BTreeMap<String, serde_json::Value>>(board).unwrap(),
+        );
+        stored
+    };
+    assert_eq!(super::place(&BTreeMap::new()), None);
+    assert_eq!(super::place(&fields(json!({"needs": "review"}))), None);
+    let position = json!({"phase": "build", "state": "blocked", "generation": 2, "revision": 5,
+        "digest": "d", "resume": {"phase": "build", "state": "working"}});
+    assert_eq!(
+        super::place(&fields(json!({"workflow": position}))),
+        Some(TaskPlace {
+            phase: "build".into(),
+            state: "blocked".into(),
+            resume: Some(Pair {
+                phase: "build".into(),
+                state: "working".into(),
+            }),
+            revision: 5,
+            manual: None,
+        })
+    );
+    let recovered = |manual: bool| {
+        let mut position = position.clone();
+        position["manual"] = json!({"trigger": "lost_holder", "holder": "amber", "role": "executor", "manual": manual});
+        super::place(&fields(json!({"workflow": position}))).unwrap()
+    };
+    assert_eq!(
+        recovered(true).manual,
+        Some(ManualRecovery {
+            trigger: "lost_holder".into(),
+            holder: "amber".into(),
+            role: "executor".into(),
+        })
+    );
+    assert_eq!(recovered(false).manual, None);
+    // A newer board's position, or a broken one, is no place: the page draws the board's own.
+    let mut newer = position.clone();
+    newer["attempt"] = json!("a-1");
+    assert_eq!(super::place(&fields(json!({"workflow": newer}))), None);
+    assert_eq!(super::place(&fields(json!({"workflow": "build"}))), None);
 }

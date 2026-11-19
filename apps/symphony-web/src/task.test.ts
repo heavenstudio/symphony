@@ -89,8 +89,17 @@ describe("a task as the client reads it", () => {
     ["links that are no texts", { ...aTask("w/a"), links: [1] }],
     ["a role without its health", { ...aTask("w/a"), roles: [{ handle: "a", role: "executor" }] }],
     ["roles that are no list", { ...aTask("w/a"), roles: "executor" }],
+    ["a workflow place without its state", { ...aTask("w/a"), workflow: { phase: "build" } }],
+    ["a workflow place that is no place", { ...aTask("w/a"), workflow: "build" }],
   ])("is none for %s", (_, value) => {
     expect(readTask(value)).toBeNull();
+  });
+
+  it("is held by a custom workflow where its place says so, and by none without one", () => {
+    const workflow = { phase: "build", state: "blocked", revision: 2, newer: true };
+    expect(readTask({ ...aTask("w/a"), workflow })?.workflow).toEqual(workflow);
+    expect(readTask({ ...aTask("w/a"), workflow: null })).not.toBeNull();
+    expect(readTask(aTask("w/a"))?.workflow).toBeUndefined();
   });
 
   it("is a task, not a slice of one, while it has no parent", () => {
@@ -247,6 +256,18 @@ describe("a task's changed fields", () => {
     expect(cleared.waits_on).toBeNull();
     expect(cleared.from).toBeNull();
     expect(merge(blocked, { waits_on: null, from: null })).toEqual(blocked);
+  });
+});
+
+describe("a task's place in a custom workflow", () => {
+  it("moves with the feed, and stays where a change says nothing of it", () => {
+    const place = { phase: "review", state: "awaiting", revision: 9 };
+    expect(readTaskChange({ key: "w/a", fields: { workflow: place } })).not.toBeNull();
+    expect(readTaskChange({ key: "w/a", fields: { workflow: { phase: 1 } } })).toBeNull();
+    const held = merge(aTask("w/a"), { workflow: place });
+    expect(held.workflow).toEqual(place);
+    expect(merge(held, { workflow: null }).workflow).toEqual(place);
+    expect(merge(held, { title: "Renamed" }).workflow).toEqual(place);
   });
 });
 

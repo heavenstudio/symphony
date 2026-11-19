@@ -29,6 +29,8 @@ import {
   nextRead,
   offsetAt,
   PAD_PX,
+  placeRow,
+  placeTotals,
   queuedSeconds,
   type Row,
   RUN_GAP,
@@ -50,6 +52,7 @@ import {
   stageSeconds,
   statusTone,
   stops,
+  stretches,
   timelineEnd,
   took,
   totals,
@@ -61,7 +64,7 @@ import {
   waited,
   widthFor,
 } from "./timeline-layout";
-import type { Run, RunResult, Stage, TaskTimeline } from "./wire";
+import type { PlaceSpan, Run, RunResult, Stage, TaskTimeline } from "./wire";
 import { TIMELINE_EVERY } from "./wire";
 import { moment } from "./words";
 
@@ -1600,3 +1603,171 @@ function week(): TaskTimeline {
     ],
   };
 }
+
+describe("a custom workflow's places", () => {
+  const HOUR = 3600;
+  const NAMES: Record<string, string> = {
+    build: "Build",
+    review: "Review",
+    verify: "Verify",
+    working: "Working",
+    awaiting: "Awaiting review",
+    blocked: "Blocked",
+  };
+  const STATUS: Record<string, string> = {
+    working: "in_progress",
+    awaiting: "review",
+    blocked: "blocked",
+  };
+  /** A move to `phase`/`state` `hours` in, by `by` and `edge` (none: an activation's). */
+  const moved = (
+    hours: number,
+    phase: string,
+    state: string,
+    by: string,
+    edge?: string,
+  ): PlaceSpan => ({
+    phase,
+    phase_label: NAMES[phase] ?? phase,
+    state,
+    state_label: NAMES[state] ?? state,
+    status: STATUS[state] ?? "in_progress",
+    from: hours * HOUR,
+    by,
+    ...(edge === undefined ? {} : { edge }),
+  });
+  /** Two review stages with a rework between them and a block in Build: open, nine hours in. */
+  const PLACES = [
+    moved(0, "build", "working", "owner"),
+    moved(2, "review", "awaiting", "misty-otter-30", "request_review"),
+    moved(3, "build", "working", "jade-heron-2", "changes"),
+    moved(4, "build", "blocked", "misty-otter-30", "block"),
+    moved(5, "build", "working", "owner", "resume"),
+    moved(6, "review", "awaiting", "misty-otter-30", "request_review"),
+    moved(7, "verify", "awaiting", "jade-heron-2", "approve"),
+  ];
+  const held = (fields: Partial<TaskTimeline> = {}) =>
+    aTimeline({ now: 9 * HOUR, places: PLACES, ...fields });
+  const spans = (key: "phase" | "state" | "place", timeline = held()) =>
+    stretches(timeline, key).map((one) => [one.label, one.from / HOUR, one.to / HOUR]);
+
+  it("are stretches of one phase, one state or one place, the last until now or the close", () => {
+    expect(spans("phase")).toEqual([
+      ["Build", 0, 2],
+      ["Review", 2, 3],
+      ["Build", 3, 6],
+      ["Review", 6, 7],
+      ["Verify", 7, 9],
+    ]);
+    // A state the task kept across a phase's change is one stretch.
+    expect(spans("state")).toEqual([
+      ["Working", 0, 2],
+      ["Awaiting review", 2, 3],
+      ["Working", 3, 4],
+      ["Blocked", 4, 5],
+      ["Working", 5, 6],
+      ["Awaiting review", 6, 9],
+    ]);
+    expect(spans("place").map(([label]) => label)).toEqual([
+      "Build · Working",
+      "Review · Awaiting review",
+      "Build · Working",
+      "Build · Blocked",
+      "Build · Working",
+      "Review · Awaiting review",
+      "Verify · Awaiting review",
+    ]);
+    expect(spans("phase", held({ closed: 8 * HOUR })).at(-1)).toEqual(["Verify", 7, 8]);
+    expect(stretches(aTimeline(), "phase")).toEqual([]);
+  });
+
+  it("are told by phase and by state, a phase the task came back to told whole", () => {
+    expect(placeTotals(held(), "phase")).toBe("Build 5 h · Review 2 h · Verify 2 h");
+    expect(placeTotals(held(), "state")).toBe("Working 4 h · Awaiting review 4 h · Blocked 1 h");
+    expect(placeTotals(aTimeline(), "phase")).toBeNull();
+    // The machine's time on runs is told apart, and never in a place's.
+    const run = aRun("test", "test-rs", null, [HOUR, HOUR + 60, 2 * HOUR]);
+    expect(totals(held({ runs: [run] }))[1]).toBe("59 m, queued 1 m");
+    expect(placeTotals(held({ runs: [run] }), "phase")).toBe(placeTotals(held(), "phase"));
+  });
+
+  it("are rows of a phone's list, each its bar's share of the longest, the last running", () => {
+    const listed = rows(held());
+    expect(said(listed)).toEqual([
+      ["00:00", "Build · Working", "2 h", "", true],
+      ["02:00", "Review · Awaiting review", "1 h", "", true],
+      ["03:00", "Build · Working", "1 h", "", true],
+      ["04:00", "Build · Blocked", "1 h", "", true],
+      ["05:00", "Build · Working", "1 h", "", true],
+      ["06:00", "Review · Awaiting review", "1 h", "", true],
+      ["07:00", "Verify · Awaiting review", "2 h", "", true],
+    ]);
+    expect(listed.map((row) => row.tone)).toEqual([
+      "primary",
+      "question",
+      "primary",
+      "dislike",
+      "primary",
+      "question",
+      "question",
+    ]);
+    expect(listed.map((row) => row.bar?.work)).toEqual([
+      BAR_SPAN,
+      BAR_SPAN / 2,
+      BAR_SPAN / 2,
+      BAR_SPAN / 2,
+      BAR_SPAN / 2,
+      BAR_SPAN / 2,
+      BAR_SPAN,
+    ]);
+    expect(listed.map((row) => row.bar?.running)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+    ]);
+    expect(listed[1]?.title).toBe(
+      "Review · Awaiting review 1 h, from 02:00 to 03:00, moved there by misty-otter-30 (request review)",
+    );
+    expect(listed[0]?.title).toBe("Build · Working 2 h, from 00:00 to 02:00, moved there by owner");
+    const closed = held({ closed: 8 * HOUR });
+    const [last] = stretches(closed, "place").slice(-1);
+    expect(last && placeRow(last, closed, (seconds) => seconds).bar?.running).toBe(false);
+  });
+
+  it("are a phase lane and a state lane after the stages', and none for a task no workflow held", () => {
+    const drawn = lanes(held());
+    expect(drawn.lanes.map((lane) => [lane.key, lane.name, lane.segs.length])).toEqual([
+      ["stage", "Stage", 0],
+      ["phase", "Phase", 5],
+      ["state", "State", 6],
+    ]);
+    const blocked = drawn.lanes[2]?.segs[3];
+    expect(blocked?.tone).toBe("dislike");
+    expect(blocked?.title).toBe(
+      "Blocked 1 h, from 04:00 to 05:00, moved there by misty-otter-30 (block)",
+    );
+    expect(stops(drawn)).toBe(11);
+    expect(lanes(aTimeline({ now: HOUR })).lanes.map((lane) => lane.key)).toEqual(["stage"]);
+    // A stretch with no time drawn has no segment.
+    const instant = held({
+      places: [moved(0, "build", "working", "owner"), moved(0, "review", "awaiting", "owner")],
+    });
+    expect(lanes(instant).lanes[1]?.segs.map((seg) => seg.title.split(" ")[0])).toEqual(["Review"]);
+  });
+
+  it("are read as the server answers them, and left out, never the timeline, where unreadable", () => {
+    const answer = (places: unknown) => ({ ...aTimeline({ now: 1 }), places });
+    expect(readTimeline(answer(PLACES))?.places).toEqual(
+      PLACES.map((place) => ({ edge: null, ...place })),
+    );
+    const unreadable = readTimeline(answer([{ ...PLACES[0], from: "noon" }]));
+    expect(unreadable).not.toBeNull();
+    expect(unreadable && "places" in unreadable).toBe(false);
+    expect(readTimeline(answer("none"))?.places).toBeUndefined();
+    expect(readTimeline(aTimeline({ now: 1 }))?.places).toBeUndefined();
+  });
+});

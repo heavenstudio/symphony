@@ -33,9 +33,9 @@ const UNREACHED: &str = "the case keeps its hub from its board while it ends";
 /// A fixture project: its checkout, holding `symphony.toml` with its id, its hub, whether that
 /// hub's reach of its board goes on ([`Project::unreached`]), and where its next reach waits
 /// ([`Project::paused`]).
-struct Project {
-    root: PathBuf,
-    hub: Arc<Hub>,
+pub(super) struct Project {
+    pub(super) root: PathBuf,
+    pub(super) hub: Arc<Hub>,
     reaches: Arc<Mutex<bool>>,
     pause: Arc<Mutex<Option<Pause>>>,
 }
@@ -54,7 +54,7 @@ impl Project {
     }
 
     /// As `new`, its board made by `make`, which opens it to write.
-    fn made_by(tree: &Tree, id: &str, make: impl FnOnce(&Path) -> Store) -> Project {
+    pub(super) fn made_by(tree: &Tree, id: &str, make: impl FnOnce(&Path) -> Store) -> Project {
         Project::made_in(tree, id, id, make)
     }
 
@@ -174,7 +174,7 @@ impl Project {
     }
 
     /// Wait for the hub to read `slugs`; only a stall reaches the wait's backstop.
-    fn reads(&self, slugs: &[&str]) {
+    pub(super) fn reads(&self, slugs: &[&str]) {
         let mut read = self.read();
         let waited = test_time::until_true(
             format!("{}: the hub to read {slugs:?}", self.root.display()),
@@ -205,7 +205,7 @@ impl Drop for Project {
 }
 
 /// What a caller in `root` reads: the project's own board, its server started if it is down.
-fn env(root: &Path) -> Env {
+pub(super) fn env(root: &Path) -> Env {
     Env {
         vars: [(
             "SYMPHONY_SURREAL".to_string(),
@@ -224,7 +224,7 @@ fn pinned(root: &Path, now: &str) -> Env {
 }
 
 /// The board of `root`'s project, opened to write as its command line opens it.
-fn writer(root: &Path) -> Store {
+pub(super) fn writer(root: &Path) -> Store {
     symphony_board::cli::connect(&env(root)).unwrap()
 }
 
@@ -780,7 +780,7 @@ fn a_pages_ask_and_asks_read_after_its_projects_git_went_keep_to_its_own_journal
 }
 
 /// A page on this machine asking `method` at `uri`, with `body` as its JSON.
-fn asked(method: &str, uri: &str, body: Option<&Value>) -> Request<Body> {
+pub(super) fn asked(method: &str, uri: &str, body: Option<&Value>) -> Request<Body> {
     Request::builder()
         .method(method)
         .uri(uri)
@@ -792,7 +792,7 @@ fn asked(method: &str, uri: &str, body: Option<&Value>) -> Request<Body> {
 }
 
 /// What the project's routes answer `request`: the status, and the JSON said, or else the text.
-fn answer(shared: &Arc<Shared>, request: Request<Body>) -> (u16, Value) {
+pub(super) fn answer(shared: &Arc<Shared>, request: Request<Body>) -> (u16, Value) {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

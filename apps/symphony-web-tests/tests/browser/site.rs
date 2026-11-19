@@ -241,9 +241,9 @@ struct Shared {
     /// How many of the next feed requests are answered 500.
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
-    /// Paths or targets answered 404, as the server answers a read of what it does not have, each
-    /// with the server's error.
-    missing_routes: BTreeMap<String, String>,
+    /// Paths or targets answered 404, as the server answers a read of what it does not have, or 400,
+    /// as it refuses a write, each with its status and the server's error.
+    missing_routes: BTreeMap<String, (u16, String)>,
     held_routes: BTreeSet<String>,
     /// Paths whose next request alone is held, and the requests so held, by number.
     hold_next: BTreeSet<String>,
@@ -610,7 +610,20 @@ impl Site {
         match error {
             Some(error) => shared
                 .missing_routes
-                .insert(path.to_owned(), error.to_owned()),
+                .insert(path.to_owned(), (404, error.to_owned())),
+            None => shared.missing_routes.remove(path),
+        };
+    }
+
+    /// Answer a route 400 with the server's JSON error, `{"error": ERROR}`, as the server refuses a
+    /// write it read and would not take (an operation a workflow refuses, its code first); none
+    /// answers it again. `path` is a route (every query of it) or one target, its query included.
+    pub fn refuse_route(&self, path: &str, error: Option<&str>) {
+        let mut shared = self.shared.lock().unwrap();
+        match error {
+            Some(error) => shared
+                .missing_routes
+                .insert(path.to_owned(), (400, error.to_owned())),
             None => shared.missing_routes.remove(path),
         };
     }
@@ -1316,12 +1329,17 @@ fn serve(
                 .or_else(|| shared.missing_routes.get(&target))
                 .cloned()
         };
-        if let Some(error) = missing {
-            answered(404);
+        if let Some((status, error)) = missing {
+            answered(status);
+            let reason = if status == 400 {
+                "Bad Request"
+            } else {
+                "Not Found"
+            };
             let error = serde_json::json!({ "error": error }).to_string();
             let _ = write!(
                 out,
-                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}",
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{error}",
                 error.len()
             );
             return;

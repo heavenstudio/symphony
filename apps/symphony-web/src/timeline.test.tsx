@@ -204,6 +204,35 @@ describe("the timeline drawn", () => {
     expect(drawn).toContain('id="tl-body"');
   });
 
+  it("tells a custom workflow's phases and states apart from the machine's time, and none without", () => {
+    const made = pictures().created;
+    const place = (hours: number, phase: string, state: string, status: string) => ({
+      phase,
+      phase_label: phase === "build" ? "Build" : "Review",
+      state,
+      state_label: state === "working" ? "Working" : "Awaiting review",
+      status,
+      from: made + hours * 3600,
+      by: "owner",
+    });
+    const held = {
+      ...pictures(),
+      places: [
+        place(0, "build", "working", "in_progress"),
+        place(5, "review", "awaiting", "review"),
+      ],
+    };
+    const drawn = html(held);
+    expect(drawn).toContain('<p class="tl-totals">Phases: Build 5 h · Review 1 h 18 m</p>');
+    expect(drawn).toContain(
+      '<p class="tl-totals">States: Working 5 h · Awaiting review 1 h 18 m</p>',
+    );
+    expect(drawn).toContain(">Machine 1 h 33 m, queued 26 m<");
+    expect(drawn).toContain('data-lane="phase"');
+    expect(html(pictures())).not.toContain("Phases:");
+    expect(html(pictures())).not.toContain('data-lane="phase"');
+  });
+
   it("draws each element and attribute as the Dioxus view, in its order", () => {
     const drawn = html(pictures());
     expect(

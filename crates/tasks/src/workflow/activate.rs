@@ -25,14 +25,17 @@ pub struct Host {
 
 impl Host {
     /// The local host's own policy, fixed here and never read from a definition: the local
-    /// owner holds `owner`, the board's recovery service holds `recovery`, and no adapter is
-    /// registered. A definition declaring any other capability is unsupported on this host.
+    /// owner holds `owner`, the board's recovery service holds `recovery`, and the two landing
+    /// adapters are registered: the default landing's and a project's own ([`super::effect`]). A definition declaring any other capability is unsupported on this host.
     pub fn local() -> Host {
         Host {
             grants: Grants::none()
                 .grant("owner", super::local_owner())
                 .grant("recovery", super::board_service("recovery")),
-            adapters: Vec::new(),
+            adapters: vec![
+                super::effect::DEFAULT_LAND.to_string(),
+                super::effect::PROJECT_LAND.to_string(),
+            ],
         }
     }
 }
@@ -92,17 +95,22 @@ pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {
             return Err(format!("unsupported edge {id}: a dependency on {why}"));
         }
         for effect in &edge.effects {
-            let unsupported = match effect {
-                Effect::ParentIntegration => "parent integration",
-                // No adapter runs here yet: a prepared intent never completes on a caller's word.
-                Effect::Prepare { .. } | Effect::Finalize { .. } => {
-                    "an adapter's prepare or finalize"
+            match effect {
+                Effect::ParentIntegration => {
+                    return Err(format!("unsupported edge {id}: parent integration"));
                 }
-                _ => continue,
-            };
-            return Err(format!(
-                "unsupported edge {id}: {unsupported} (tools/workflow-landing-adapters)"
-            ));
+                // The host's own adapters alone prepare and finalize: a name another list
+                // registers (a guard's authority) makes no effect.
+                Effect::Prepare { adapter } | Effect::Finalize { adapter }
+                    if !host.adapters.contains(adapter) =>
+                {
+                    return Err(format!(
+                        "unsupported edge {id}: this host registers no adapter {adapter} to \
+                         prepare or finalize its effect"
+                    ));
+                }
+                _ => {}
+            }
         }
     }
     Ok(())
@@ -113,7 +121,7 @@ pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {
 fn unsupported_dependency(dependency: Dependency) -> Option<&'static str> {
     match dependency {
         Dependency::None | Dependency::Done | Dependency::AcceptedOutput => None,
-        Dependency::Landed => Some("landed (tools/workflow-landing-adapters)"),
+        Dependency::Landed => Some("landed"),
     }
 }
 

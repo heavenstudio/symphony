@@ -148,6 +148,7 @@ mod tests {
             waits_on: None,
             review_rounds: None,
             from: None,
+            workflow: None,
         }
     }
 
