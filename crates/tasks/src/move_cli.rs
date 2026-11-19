@@ -152,7 +152,11 @@ fn switched(asked: &Asked, home: &Home, env: &Env, by: &str) -> Result<String, S
                 },
                 moved.from,
                 moved.aside.display(),
-                if moved.finished { "" } else { ", with its export" },
+                if moved.finished {
+                    ""
+                } else {
+                    ", with its export"
+                },
                 (moved.snapshot.as_ref()).map_or_else(String::new, |snapshot| format!(
                     ", and its snapshot in {}",
                     snapshot.display()
@@ -234,8 +238,14 @@ mod tests {
             (&["postgresql", "surrealdb"], BOTH),
             (&["postgresql", "--restore", "x"], BOTH),
             (&["--restore"], "argument --restore: expected one SNAPSHOT"),
-            (&["--restore", " "], "argument --restore: expected one SNAPSHOT"),
-            (&["postgresql", "--as"], "argument --as: expected one argument"),
+            (
+                &["--restore", " "],
+                "argument --restore: expected one SNAPSHOT",
+            ),
+            (
+                &["postgresql", "--as"],
+                "argument --as: expected one argument",
+            ),
         ] {
             let (code, out, err) = ran(args);
             assert_eq!((code, out.as_str()), (2, ""), "{args:?}");

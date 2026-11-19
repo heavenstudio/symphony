@@ -72,7 +72,11 @@ fn carried_across(from: Backend, to: Backend) {
     let carried = source.store.carried().unwrap();
     for table in CARRIED {
         // The store that opened the board keeps its own line among the writers.
-        let held = if table == "writer" || table == "counter" { 2 } else { 1 };
+        let held = if table == "writer" || table == "counter" {
+            2
+        } else {
+            1
+        };
         assert_eq!(rows(&carried, table), held, "{table}: {carried}");
     }
     assert_eq!(carried["counter"][0]["id"], json!(["hold", "tools/one"]));
@@ -171,8 +175,12 @@ fn moved(from: &Fixture, to: Backend) -> Fixture {
     let there = target.store.carried().unwrap();
     for table in ["callback_lease", "callback_event", "counter"] {
         assert_eq!(
-            serde_json::to_string(&there[table]).unwrap().replace(".0", ""),
-            serde_json::to_string(&carried[table]).unwrap().replace(".0", ""),
+            serde_json::to_string(&there[table])
+                .unwrap()
+                .replace(".0", ""),
+            serde_json::to_string(&carried[table])
+                .unwrap()
+                .replace(".0", ""),
             "{table}"
         );
     }
@@ -197,10 +205,8 @@ fn a_send_and_a_lease_meet_the_board_as_it_was(from: Backend, to: Backend) {
     };
     let (sender, worker, host) = (register(), register(), "this-host");
     // The worker's channel answers throughout, so a line is held back by a lease alone.
-    let listener = crate::callbacks::Listener::new(&format!(
-        "{}-carried",
-        source.store.database().database()
-    ));
+    let listener =
+        crate::callbacks::Listener::new(&format!("{}-carried", source.store.database().database()));
     let address = format!("uds:{}", listener.path.display());
     (source.store.callback(&worker, Some(&address), false, false)).unwrap();
     // Each lease held when the board is moved, as a dispatcher, a host and a close hold them.

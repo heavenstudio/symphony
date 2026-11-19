@@ -345,8 +345,7 @@ fn own(id: &Value) -> bool {
     match id {
         Value::String(name) => {
             // `board` is the marker of boards before `board_structure`, kept retired.
-            ["board_structure", "board"].contains(&name.as_str())
-                || COPIED.contains(&name.as_str())
+            ["board_structure", "board"].contains(&name.as_str()) || COPIED.contains(&name.as_str())
         }
         other => other.get(0).and_then(Value::as_str) == Some("board"),
     }
@@ -358,7 +357,9 @@ fn own(id: &Value) -> bool {
 /// own, and the next one taken is past both; a lease that stood would outlive the hold the move
 /// ran under.
 pub fn leases_ended(mut carried: Value) -> Value {
-    let leases = carried.get_mut("callback_lease").and_then(Value::as_array_mut);
+    let leases = carried
+        .get_mut("callback_lease")
+        .and_then(Value::as_array_mut);
     for lease in leases.into_iter().flatten() {
         if lease.get("until").is_some() {
             lease["until"] = serde_json::json!(0);
@@ -678,7 +679,10 @@ mod placed {
         assert_eq!(key("writer", &compound, false), json!(["host", "/bin"]));
         // PostgreSQL lists the key alone, so one that begins with its table's name is whole.
         assert_eq!(key("writer", &compound, true), compound);
-        assert_eq!(key("writer", &json!(["host", "/bin"]), true), json!(["host", "/bin"]));
+        assert_eq!(
+            key("writer", &json!(["host", "/bin"]), true),
+            json!(["host", "/bin"])
+        );
         assert_eq!(key("chat_event", &json!("7"), false), json!("7"));
         for carried in [
             json!(["hold", "sim/jump"]),
