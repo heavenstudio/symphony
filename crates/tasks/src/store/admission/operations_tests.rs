@@ -292,3 +292,29 @@ fn a_held_task_holds_its_slot_by_its_positions_policy_from_its_executor_to_its_r
         assert_eq!(held(), ["sim/b"]);
     }
 }
+
+#[test]
+fn the_transitions_of_held_tasks_are_read_by_their_ids_oldest_first() {
+    for backend in BACKENDS {
+        let f = two_ready(backend);
+        let amber = agent_session("amber");
+        take(&f.store, "sim/a", &amber, "claim").unwrap();
+        take(&f.store, "sim/a", &amber, "submit").unwrap();
+        // Asked past its newest, it reads what there is; a task asked for nothing reads nothing.
+        let read = f.store.transitions(&[("sim/b", 1), ("sim/a", 5)]).unwrap();
+        let said: Vec<(&str, u64, &str)> = (read.iter())
+            .map(|t| (t.slug.as_str(), t.revision, t.status.as_str()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                ("sim/a", 1, "ready"),
+                ("sim/a", 2, "in_progress"),
+                ("sim/a", 3, "review"),
+                ("sim/b", 1, "ready"),
+            ],
+            "{backend:?}"
+        );
+        assert!(f.store.transitions(&[]).unwrap().is_empty());
+    }
+}

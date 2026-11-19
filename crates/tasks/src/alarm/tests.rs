@@ -577,3 +577,78 @@ pub(super) fn waits_line(sid: i64, ts: f64, text: &str) -> Line {
         &format!("land{WAITS_SET}{text}"),
     )
 }
+
+/// Revision `revision` of `slug`, made at `at`, putting it where it projects to `status`.
+fn transition(slug: &str, revision: u64, status: &str, at: f64) -> crate::workflow::Transition {
+    use symphony_api::workflow::Pair;
+    crate::workflow::Transition {
+        id: crate::workflow::Transition::id_of(slug, revision),
+        slug: slug.into(),
+        revision,
+        generation: 1,
+        digest: "d".into(),
+        edge: (revision > 1).then(|| "an-edge".into()),
+        operation: None,
+        activation: None,
+        from: None,
+        to: Pair {
+            phase: "build".into(),
+            state: format!("at-{revision}"),
+        },
+        resume: None,
+        status: status.into(),
+        principal: crate::workflow::agent_session("amber"),
+        effects: Vec::new(),
+        key: None,
+        recovery: None,
+        at,
+    }
+}
+
+#[test]
+fn a_held_tasks_transitions_say_each_change_of_the_status_it_projects_to_as_a_move() {
+    let transitions = [
+        // Placed, claimed, blocked at a position that keeps its status, submitted: the first
+        // places it, and the block changes nothing the alarm counts.
+        transition("sim/a", 1, "ready", 0.0),
+        transition("sim/a", 2, "in_progress", HOUR),
+        transition("sim/a", 3, "in_progress", 2.0 * HOUR),
+        transition("sim/a", 4, "review", 3.0 * HOUR),
+        // Another task's first transition is no move from sim/a's last.
+        transition("sim/b", 1, "ready", 3.5 * HOUR),
+        transition("sim/b", 2, "in_progress", 4.0 * HOUR),
+    ];
+    let said = transition_lines(&transitions, 0.0);
+    let read: Vec<(&str, f64, Step<'_>)> = (said.iter())
+        .map(|l| (l.slug.as_str(), l.ts, step(l)))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("sim/a", HOUR, Step::Between("ready", "in_progress")),
+            ("sim/a", 3.0 * HOUR, Step::Between("in_progress", "review")),
+            ("sim/b", 4.0 * HOUR, Step::Between("ready", "in_progress")),
+        ]
+    );
+    assert_eq!(said[0].text, "workflow moved it ready → in_progress (sim/a@2)");
+    // Only those made at the window's start or later; the one before still says where it was.
+    let since = transition_lines(&transitions, 3.0 * HOUR);
+    let steps: Vec<Step<'_>> = since.iter().map(step).collect();
+    assert_eq!(
+        steps,
+        [
+            Step::Between("in_progress", "review"),
+            Step::Between("ready", "in_progress")
+        ]
+    );
+    // Its timeline walks back through them as through the board's own moves.
+    let lines: Vec<&Line> = said.iter().filter(|l| l.slug == "sim/a").collect();
+    assert_eq!(
+        timeline("review", 0.0, &lines, 0.0, None),
+        [
+            (0.0, Some("ready")),
+            (HOUR, Some("in_progress")),
+            (3.0 * HOUR, Some("review"))
+        ]
+    );
+}

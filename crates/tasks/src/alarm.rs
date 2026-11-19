@@ -134,6 +134,29 @@ fn status_word(text: &str) -> Option<&str> {
     crate::store::STATUSES.contains(&word).then_some(word)
 }
 
+/// The moves a task a custom workflow holds made, as the lines the alarm reads ([`step`]): its
+/// recorded transitions (`transitions`, each task's oldest first), each that changed the status
+/// its task projects to said as a move from its predecessor's status into its own, written when it
+/// was, for those made at `since` or later. A task's first transition, which places it, and one
+/// that keeps its status say nothing. So the alarm reads a held task's record, never its line on
+/// the thread or a state's name.
+pub fn transition_lines(transitions: &[crate::workflow::Transition], since: f64) -> Vec<Line> {
+    (transitions.windows(2))
+        .filter(|pair| pair[0].slug == pair[1].slug && pair[1].at >= since)
+        .filter(|pair| pair[0].status != pair[1].status)
+        .map(|pair| Line {
+            slug: pair[1].slug.clone(),
+            sid: 0,
+            ts: pair[1].at,
+            kind: "system".into(),
+            text: format!(
+                "workflow{MOVED}{}{ARROW}{} ({})",
+                pair[0].status, pair[1].status, pair[1].id
+            ),
+        })
+        .collect()
+}
+
 /// What `line` says of its task's status ([`Step`]).
 pub fn step(line: &Line) -> Step<'_> {
     let text = line.text.as_str();

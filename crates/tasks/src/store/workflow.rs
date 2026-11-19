@@ -430,6 +430,24 @@ impl Store {
         decoded(body, "workflow definition")
     }
 
+    /// The transitions recorded for each of `tasks`, a slug with the workflow revision its
+    /// position stands at, each task's oldest first: every one from its first revision, each read
+    /// by its id, never a scan of the record.
+    pub fn transitions(&self, tasks: &[(&str, u64)]) -> Result<Vec<Transition>, Error> {
+        let ids: Vec<Value> = (tasks.iter())
+            .flat_map(|(slug, revision)| (1..=*revision).map(move |r| json!(["event", slug, r])))
+            .collect();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let vars = json!({ "ids": ids });
+        let mut read: Vec<Transition> = self.retrying(|| {
+            self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone())
+        })?;
+        read.sort_by(|a, b| (&a.slug, a.revision).cmp(&(&b.slug, b.revision)));
+        Ok(read)
+    }
+
     /// `slug`'s workflow position, or none for a task the board's own writers keep; refused for
     /// a task that is not there.
     pub fn workflow_position(&self, slug: &str) -> Result<Option<TaskPosition>, Error> {

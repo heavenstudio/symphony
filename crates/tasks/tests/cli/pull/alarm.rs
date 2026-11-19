@@ -598,3 +598,54 @@ fn equally_old_review_tasks_use_priority_then_slug_before_truncating() {
         ]
     );
 }
+
+/// `edge` taken on `slug` by `handle`, from where it reads the task now.
+fn take(c: &Case, slug: &str, handle: &str, edge: &str) {
+    use symphony_api::workflow::OperationRequest;
+    use symphony_board::workflow::{Host, agent_session};
+    let (principal, host) = (agent_session(handle), Host::local());
+    let store = &c.f.store;
+    let next = store.workflow_actions(slug, &principal, &host).unwrap();
+    let request = OperationRequest {
+        project: store.database().database().to_string(),
+        task: slug.into(),
+        edge: edge.into(),
+        input_revisions: Default::default(),
+        idempotency_key: format!("{slug}:{edge}"),
+        inputs: Default::default(),
+        expected: next.snapshot,
+    };
+    store.apply_operation(&principal, &host, &request).unwrap();
+}
+
+#[test]
+fn work_a_workflow_holds_is_counted_by_its_recorded_transitions_never_its_status_now() {
+    let c = Case::new();
+    (c.f.store)
+        .activate_workflow(&crate::workflow::flow(), &symphony_board::workflow::Host::local())
+        .unwrap();
+    // Fourteen claimed at once: four stay at work, ten go to review three hours on.
+    let start = c.f.now();
+    let mut workers = Vec::new();
+    for n in 0..14 {
+        let slug = format!("sim/held-{n}");
+        c.f.store
+            .create(&NewTask::new(&slug, &format!("T {slug}"), "owner"))
+            .unwrap();
+        let worker = c.worker();
+        take(&c, &slug, &worker, "claim");
+        workers.push((slug, worker));
+    }
+    c.f.advance(3.0 * HOUR);
+    for (slug, worker) in &workers[4..] {
+        take(&c, slug, worker, "submit");
+        c.f.advance(MINUTE);
+    }
+    let over = start + 3.0 * HOUR + 8.0 * MINUTE;
+    // Read by status now, review would have held ten against four since they were filed, and
+    // the alarm stood from four hours after it; by their transitions, review held ten only from
+    // the submits on.
+    assert_eq!(c.alarm_at(start + 5.0 * HOUR), None);
+    assert_eq!(c.alarm_at(over + 4.0 * HOUR - MINUTE), None);
+    assert_eq!(c.alarm_at(over + 4.0 * HOUR + MINUTE), Some((10, 4)));
+}

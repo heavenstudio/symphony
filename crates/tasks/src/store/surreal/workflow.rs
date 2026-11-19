@@ -6,6 +6,11 @@ pub(in crate::store) const ACTIVE: &str =
     "RETURN (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL;";
 
 /// The definition recorded under `$digest`, or NULL.
+/// The transitions `$ids` name (`['event', SLUG, REVISION]`), each read by its id: none for an id
+/// with no record.
+pub(in crate::store) const TRANSITIONS: &str =
+    "SELECT VALUE body FROM $ids.map(|$i| type::record('workflow', $i));";
+
 pub(in crate::store) const DEFINITION: &str = "RETURN (SELECT VALUE body FROM ONLY type::record('workflow', ['definition', $digest])) ?? NULL;";
 
 /// The mappings activation `$generation` recorded, or NULL.
