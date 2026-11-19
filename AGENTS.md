@@ -222,6 +222,9 @@ project names a linked plugin, the release is installed and nothing more. Runnin
 or `--commit` by hand, installing its schedule and turning `[releases] publish` on are the
 owner's call; an orchestrator reruns `just release --refresh` without asking once what a refresh
 left red, or left to a project, is put right ([who runs it](docs/RELEASES.md#who-runs-it)).
+The one exception is the run that follows a landing that moves the board's schema, which the
+orchestrator who landed it starts at once without asking
+([the cadence](docs/RELEASES.md#the-cadence)).
 Restarting the shared server, its first switch to a release's own server among it, is a separate
 act that needs its own word, and so is pointing `current` back by hand ([the way
 back](docs/RELEASES.md#the-way-back)). A pin moved by hand to a commit of main waits until
