@@ -294,8 +294,7 @@ impl Placing {
             roles: task.roles.to_vec(),
         };
         let (from, _) = legacy_standing(&standing)?;
-        let legacy = builtin();
-        let source = position_of(&legacy, &from).ok_or_else(|| {
+        let source = super::builtin::position_at(&from).ok_or_else(|| {
             format!(
                 "{slug} would reopen at {}, which the board's own workflow does not declare",
                 named(&from)
@@ -305,7 +304,7 @@ impl Placing {
         let to = placed(&self.definition, &mappings, slug, &from, "reopens at")?;
         let destination =
             position_of(&self.definition, &to).expect("placed() names a declared pair");
-        fabricates_nothing(slug, source, destination)?;
+        fabricates_nothing(slug, &source, destination)?;
         let status = projection(destination.legacy);
         if status != task.status {
             return Err(format!(

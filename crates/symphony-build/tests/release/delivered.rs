@@ -66,6 +66,7 @@ fn squashed(fixture: &Fixture, slug: &str, head: &str) -> Receipt {
         tree: git(&fixture.main, &["rev-parse", "HEAD^{tree}"]),
         revision: "r1".into(),
         by: "lander".into(),
+        import: None,
     }
 }
 

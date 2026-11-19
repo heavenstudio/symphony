@@ -205,6 +205,7 @@ pub(crate) mod tests {
             tree: run(root, &["rev-parse", "HEAD^{tree}"]),
             revision: "r1".into(),
             by: "lander".into(),
+            import: None,
         }
     }
 

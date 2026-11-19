@@ -129,20 +129,31 @@ pub(super) fn needs(store: &Store, c: &mut Context) -> Result<(), Stop> {
         )
     })?;
     let catalogue = Catalogue::of(&main).map_err(Stop::Refused)?;
-    let tip = match c.parsed.get("tip").map(str::trim).filter(|t| !t.is_empty()) {
-        None => None,
-        Some(named) => Some(rev(&main, &format!("{named}^{{commit}}")).ok_or_else(|| {
-            Stop::Refused(format!(
-                "--tip {named} names no commit in {}",
-                main.display()
-            ))
-        })?),
+    let commit = |option: &str| -> Result<Option<String>, Stop> {
+        match c
+            .parsed
+            .get(option)
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+        {
+            None => Ok(None),
+            Some(named) => rev(&main, &format!("{named}^{{commit}}"))
+                .map(Some)
+                .ok_or_else(|| {
+                    Stop::Refused(format!(
+                        "--{option} {named} names no commit in {}",
+                        main.display()
+                    ))
+                }),
+        }
     };
+    let (tip, import) = (commit("tip")?, commit("import")?);
     let needs = Needs {
         stamps: c.parsed.all("stamps").to_vec(),
         tip,
         by: actor,
         why: c.arg("why"),
+        import,
     };
     let task = store.set_needs(&slug, &catalogue, &needs)?;
     let written = task.needs().unwrap_or(needs);

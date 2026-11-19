@@ -124,10 +124,46 @@ folder = "."
             timeout: TIMEOUT,
             check_paths: check_paths::defaults(),
             documents: vec!["design/spec".into(), String::new()],
+            upstream: None,
         }
     );
     assert_eq!(Settings::default().documents, ["docs"]);
     assert_eq!(Settings::parse("").unwrap().documents, ["docs"]);
+}
+
+#[test]
+fn an_upstream_is_read_whole_and_refused_where_git_could_misread_it() {
+    let read = |text: &str| Settings::parse(&format!("[land.upstream]\n{text}"));
+    assert_eq!(
+        read("url = \"https://github.com/o/up\"\nbranch = \"main\"\n")
+            .unwrap()
+            .upstream,
+        Some(Upstream {
+            url: "https://github.com/o/up".into(),
+            branch: "main".into(),
+        })
+    );
+    assert_eq!(Settings::parse("").unwrap().upstream, None);
+    for (written, says) in [
+        ("url = \"u\"\n", "missing field `branch`"),
+        ("branch = \"main\"\n", "missing field `url`"),
+        (
+            "url = \"u\"\nbranch = \"main\"\nremote = \"x\"\n",
+            "unknown field",
+        ),
+        ("url = \"--upload-pack=x\"\nbranch = \"main\"\n", "url is"),
+        ("url = \"\"\nbranch = \"main\"\n", "url is"),
+        ("url = \" u\"\nbranch = \"main\"\n", "url is"),
+        ("url = \"u\"\nbranch = \"-main\"\n", "branch is"),
+        (
+            "url = \"u\"\nbranch = \"ma in\"\n",
+            "not a plain branch name",
+        ),
+        ("url = \"u\"\nbranch = \"a:b\"\n", "not a plain branch name"),
+    ] {
+        let refused = read(written).unwrap_err();
+        assert!(refused.contains(says), "{written}: {refused}");
+    }
 }
 
 #[test]
