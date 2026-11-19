@@ -535,3 +535,26 @@ fn an_authority_key_orders_as_the_authority_does() {
     sorted.sort();
     assert_eq!(keyed, sorted);
 }
+
+#[test]
+fn a_built_in_position_built_alone_is_the_one_built_in_v1_declares() {
+    let definition = builtin();
+    assert_eq!(definition.positions.len(), 13);
+    for position in &definition.positions {
+        assert_eq!(builtin::position_at(&position.at).as_ref(), Some(position));
+    }
+    let pair = |phase: &str, state: &str| Pair {
+        phase: phase.into(),
+        state: state.into(),
+    };
+    for undeclared in [
+        pair("ready", "held"),
+        pair("done", "held"),
+        pair("done", "available"),
+        pair("review", "available"),
+        pair("shipped", "available"),
+        pair("", ""),
+    ] {
+        assert_eq!(builtin::position_at(&undeclared), None, "{undeclared:?}");
+    }
+}

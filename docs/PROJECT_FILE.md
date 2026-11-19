@@ -284,6 +284,21 @@ What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASK
 | `check_paths` | the list in [TASKS](TASKS.md#the-default-landing) | what holds the project's tests and checks, which a red's fix its orchestrator approves may not change |
 | `delivery` | none: the land merges and pushes here | the command that delivers a task by a hosted pull request in place of that merge and push, a list of words run as `COMMAND VERB --request FILE` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); it decides what lands, so a change of it is reviewed |
 
+## `[land.upstream]`
+
+The upstream a downstream project imports from ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)):
+where a land delivered by a pull request fetches it for every head, to judge whether the head
+imports it, and the one history such a head may bring in, merged by a merge commit rather than
+squashed ([TASKS](TASKS.md#an-import-delivered-by-a-pull-request)). An address that does not
+answer refuses every such land, a task's as well. With none, no import is delivered and a head
+holding another history is refused. Both keys are needed, and no other is read; it decides what
+lands, so a change of it is reviewed.
+
+| Key | What it sets |
+| --- | --- |
+| `url` | the upstream's address, as `git fetch` takes it; never one starting with `-` |
+| `branch` | the upstream's default branch, a plain branch name, which an import's commit must be on |
+
 ## `[[land.generators]]`
 
 A generator, in `[land] generators` or `[verdicts] generators`, usually written inline

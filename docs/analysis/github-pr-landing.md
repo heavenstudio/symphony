@@ -12,9 +12,10 @@ described here is implemented by this document. What is built of it, the task op
 [GITHUB](../GITHUB.md#delivering-a-land), with the reading of the repository's protection
 before each step ([GITHUB](../GITHUB.md#the-protection-a-delivery-needs)), the
 generated-output delivery, a task the regenerator files
-([TASKS](../TASKS.md#what-the-generators-make-delivered-by-a-pull-request)), and the release
-cadence and candidate reading its receipts ([RELEASES](../RELEASES.md#the-cadence)); the import
-operation and the protecting itself are not.
+([TASKS](../TASKS.md#what-the-generators-make-delivered-by-a-pull-request)), the release
+cadence and candidate reading its receipts ([RELEASES](../RELEASES.md#the-cadence)), and the
+upstream import operation ([TASKS](../TASKS.md#an-import-delivered-by-a-pull-request),
+[GITHUB](../GITHUB.md#delivering-an-import)); the protecting itself is not.
 
 ## Scope and ownership
 

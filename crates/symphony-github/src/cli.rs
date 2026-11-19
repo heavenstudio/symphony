@@ -121,6 +121,9 @@ fn status(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
             if let Some(file) = &config.token_file {
                 let _ = writeln!(out, "token file: {}", file.display());
             }
+            if let Some(file) = &config.policy_token_file {
+                let _ = writeln!(out, "policy token file: {}", file.display());
+            }
         }
         Err(why) => {
             let _ = writeln!(out, "turned off: its settings do not read: {why}");

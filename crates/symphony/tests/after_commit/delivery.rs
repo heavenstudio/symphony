@@ -71,6 +71,7 @@ fn receipt(root: &Path, slug: &str, head: &str, parent: &str, squash: &str) {
         tree: git(root, &["rev-parse", &format!("{squash}^{{tree}}")]),
         revision: "r".into(),
         by: "lander".into(),
+        import: None,
     };
     let path = Receipt::path(&root.join(".git/symphony/tasks/land"), slug);
     write(&path, &serde_json::to_string(&receipt).unwrap());
@@ -686,6 +687,7 @@ fn journaled(root: &Path, slug: &str, stage: symphony_board::land::delivery::Sta
         binding: None,
         squash: None,
         held: (!held.is_empty()).then(|| held.into()),
+        import: None,
     };
     journal
         .write(&root.join(".git/symphony/tasks/land"))

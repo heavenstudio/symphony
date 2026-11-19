@@ -6,6 +6,7 @@
 mod commands;
 mod model;
 mod publish;
+mod tool_commands;
 
 /// A built client published over the one served, keeping the builds published before it: what
 /// `symphony-build publish-client` (crates/symphony-build) runs.
@@ -105,6 +106,9 @@ pub fn main_in(
         Some("model") => model::main(&args[1..], env, out, err),
         Some("blocks") => crate::blocks::main(&args[1..], out, err),
         Some("triage") => triage_main(&args[1..], out, err),
+        Some(name @ ("render-card" | "landing-checks")) => {
+            tool_commands::main(name, &args[1..], out, err)
+        }
         Some("verdict-asks") => verdict_asks_main(&args[1..], out, err),
         Some("ask") => asks::main(&args[1..], env, out, err),
         Some("project") => crate::machine::command::main(&args[1..], out, err),

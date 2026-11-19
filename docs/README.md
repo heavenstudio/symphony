@@ -47,6 +47,8 @@ the evidence behind decisions are under [Design and history](#design-and-history
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
   setting, the seams it answers, its process, its commands, a register read in one request, the
   line, each call's minor, the versions and the wire's shape.
+- [Commands for a project's tools](TOOL_COMMANDS.md) — draw one card, check a branch for a
+  landing, read status and triage, and share the document write lock.
 - [Execution adapter](EXECUTION_ADAPTER.md) — bounded provider operations, scoped identities,
   trusted actor context, capabilities and the independent execution wire contract.
 - [Execution attempts](EXECUTION_ATTEMPTS.md) — the board's durable record of each provider
