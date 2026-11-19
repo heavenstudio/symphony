@@ -691,9 +691,10 @@ What holds on every page, and each page's contract where its section above names
   a 20 KB return-visit budget (`apps/symphony-web-tests/tests/browser/`, restored after the port;
   both the owner's, the first-visit cap raised by the owner to 300 KB, and
   never loosened by an agent). Home's first visit is held
-  to 115,000 bytes (`HOME_FIRST_VISIT_BYTES`), the task board's, the same way, to 125,000
+  to 115,000 bytes (`HOME_FIRST_VISIT_BYTES`), the task board's to 150,000
   (`TASKS_FIRST_VISIT_BYTES`) and a task's page's to 145,000 (`TASK_FIRST_VISIT_BYTES`), each
-  lowered by its move and again once the chat moved and no kind was left to move, never raised.
+  lowered by its move and again once the chat moved and no kind was left to move; the board's
+  alone was raised since, from 125,000, by the owner on 2026-11-19.
   A visit counts each response the page loaded at what Chrome's
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the kind's scripts, the style sheets, API replies
