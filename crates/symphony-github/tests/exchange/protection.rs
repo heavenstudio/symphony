@@ -829,8 +829,8 @@ fn a_policy_token_shown_no_list_or_not_there_delivers_nothing() {
     let ran = d.run(&["preflight"]);
     assert_eq!(ran.code, 1);
     assert!(ran.out.lines().last().unwrap().starts_with("token_file "));
-    // Evidence that blocks is still said where the policy token is gone: a withdrawal waits
-    // on no third credential.
+    // Evidence that blocks is still said where the policy token's file is gone; one GitHub
+    // does not answer is the next test's.
     let d = Delivery::new("protection-reader-withdrawal", "");
     assert_eq!(
         d.publish(&snapshot(HEAD, "met", "r1"))["state"],
@@ -848,4 +848,62 @@ fn a_policy_token_shown_no_list_or_not_there_delivers_nothing() {
     // And a merge is refused there.
     assert_eq!(missing(&d.merge(100)).len(), 1);
     assert_eq!(d.rig.github.pulls()[0]["merged"], false);
+}
+
+#[test]
+fn a_policy_token_github_does_not_answer_stops_a_delivery_and_no_withdrawal() {
+    for (status, said) in [
+        (401, "GitHub refused the credential (401)"),
+        (429, "GitHub's rate limit"),
+        (500, "GitHub answered 500 to GET /repos/o/n/rulesets/1"),
+    ] {
+        let d = Delivery::new("protection-reader-unanswered", "");
+        assert_eq!(
+            d.publish(&snapshot(HEAD, "met", "r1"))["state"],
+            "published"
+        );
+        let unanswered = || {
+            (d.rig.github).fault(
+                "GET",
+                "/repos/o/n/rulesets/1",
+                Fault::Status(status, Vec::new()),
+            );
+        };
+        // Evidence that stands is not published past a policy nobody read, and the land is
+        // told to come back, in words that name the policy token and not the one that merges.
+        unanswered();
+        let moved = "c".repeat(40);
+        let answer = d.publish(&snapshot(&moved, "met", "r2"));
+        assert_eq!(
+            (&answer["state"], &answer["kind"]),
+            (&json!("unavailable"), &json!("policy")),
+            "{status}: {answer}"
+        );
+        let why = answer["why"].as_str().unwrap();
+        assert!(
+            why.starts_with(
+                "who bypasses ruleset 1 was not read with the policy token (policy_token_file): "
+            ) && why.contains(said),
+            "{why}"
+        );
+        assert_eq!(d.remote.pushed.borrow().len(), 1);
+        // Nor is a merge asked for.
+        unanswered();
+        let answer = d.merge(100);
+        assert_eq!(answer["state"], "unavailable", "{status}: {answer}");
+        assert_eq!(d.rig.github.pulls()[0]["merged"], false);
+        // Evidence that blocks is still said, by its checks: the green one does not outlive it.
+        unanswered();
+        let answer = d.publish(&snapshot(HEAD, "missing", "r3"));
+        assert_eq!(answer["state"], "published", "{status}: {answer}");
+        let eligible: Vec<String> = (d.rig.github.checks(HEAD).into_iter())
+            .filter(|(name, ..)| name == "symphony/eligible")
+            .map(|(_, conclusion, _)| conclusion)
+            .collect();
+        assert_eq!(eligible, ["failure"], "{status}");
+        // And GitHub holds the merge to it once the policy is read again.
+        assert_eq!(d.merge(100)["state"], "refused");
+        assert_eq!(d.rig.github.pulls()[0]["merged"], false);
+        d.assert_no_token();
+    }
 }

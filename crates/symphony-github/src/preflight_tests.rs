@@ -252,7 +252,18 @@ fn the_policy_token_is_sent_with_one_read_of_one_ruleset_and_nothing_else() {
     // No answer to judge is unavailable, never a list.
     for status in [401, 429, 500] {
         let (answer, asked) = reading(status, &json!({}));
-        assert_eq!(answer.unwrap_err()["state"], "unavailable", "{status}");
+        let stopped = answer.unwrap_err();
+        assert_eq!(
+            (&stopped["state"], &stopped["kind"]),
+            (&json!("unavailable"), &json!("policy")),
+            "{status}"
+        );
+        assert!(
+            (stopped["why"].as_str().unwrap()).starts_with(
+                "who bypasses ruleset 2 was not read with the policy token (policy_token_file): "
+            ),
+            "{stopped}"
+        );
         assert_eq!(asked.len(), 1);
     }
 }

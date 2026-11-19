@@ -129,9 +129,23 @@ impl<'a> Reader<'a> {
     ///
     /// # Errors
     ///
-    /// The answer that stops a delivery where GitHub gave none to judge.
+    /// The answer that stops a delivery where GitHub gave none to judge: `unavailable`, of
+    /// `kind` `policy`, naming the policy token.
     pub fn bypass(&self, id: i64) -> Result<Bypass, Value> {
-        let (status, value) = self.host.get(&format!("/rulesets/{id}"))?;
+        // No answer to the policy token is said as its own: the answer keeps its state, so a
+        // land tries again, and is of the policy, so evidence that blocks is still said.
+        let (status, value) =
+            self.host
+                .get(&format!("/rulesets/{id}"))
+                .map_err(|mut stopped| {
+                    stopped["kind"] = json!("policy");
+                    stopped["why"] = json!(format!(
+                        "who bypasses ruleset {id} was not read with the policy token \
+                 (policy_token_file): {}",
+                        stopped["why"].as_str().unwrap_or_default()
+                    ));
+                    stopped
+                })?;
         if status != 200 {
             return Ok(Bypass::Unknown(format!(
                 "GitHub answered {status} to the policy token"

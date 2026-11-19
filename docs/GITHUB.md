@@ -270,8 +270,10 @@ in effect for the branch (`GET /repos/OWNER/NAME/rules/branches/BRANCH`, every p
 GitHub evaluates from every active ruleset that applies, an organization's among them. The
 third is with `policy_token_file`'s: each ruleset those rules come from
 (`GET /repos/OWNER/NAME/rulesets/ID`) for who may bypass it. A policy token that is not in its
-file is a policy that does not hold; evidence that blocks is still said then, by its checks, as
-it is whenever the policy does not hold. A rule holds
+file is a policy that does not hold, and one GitHub does not answer (expired, refused, limited)
+is `unavailable`, naming the policy token, so a land comes back to it. Either way evidence that
+blocks is still said, by its checks, as it is whenever the policy does not hold: a withdrawal
+waits on no third credential. A rule holds
 everyone only when its ruleset's bypass list was read and is empty. What must hold:
 
 | What | How it is read |

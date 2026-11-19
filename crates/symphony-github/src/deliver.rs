@@ -424,7 +424,7 @@ impl Run<'_> {
                 Ok(())
             }
             Err(stopped) => {
-                if stopped["kind"] == json!("policy") {
+                if stopped["kind"] == json!("policy") && stopped["missing"].is_array() {
                     let id = crate::digest(&["policy", slug, base]);
                     self.journal(
                         Event::Failed,
@@ -474,7 +474,8 @@ impl Run<'_> {
                 let id = crate::digest(&["pull", slug, base]);
                 self.journal(Event::Intent, "pull", slug, &id, Value::Null);
                 // A draft: nothing merges it, by anyone, until this program marks it ready at
-                // the merge the land asks for.
+                // the merge the land asks for. It stays ready after a merge GitHub refuses,
+                // and the rulesets hold it: the landing App alone merges, through this program.
                 let sent = json!({
                     "title": title, "body": body, "head": slug, "base": base, "draft": true,
                 });
