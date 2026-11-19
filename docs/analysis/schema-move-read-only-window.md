@@ -33,7 +33,8 @@ While it lasts, the server reads and writes nothing (`board_read` in
 The agents' own board commands go on: they run main's build, at the board's schema, and their
 writes are delivered by the detached `tasks dispatch`.
 
-**How long.** One release run under the approved rule: 17 to 37 minutes when green, longer when
+**How long.** One release run under [the cadence's rule](../RELEASES.md#the-cadence) for a landing
+that moves the board's schema: 17 to 37 minutes when green, longer when
 the run is red or a release candidate holds the release. A second schema landing waits until a
 release serving the first is `current`, so the board is never two ahead, which the server would
 not read at all.
