@@ -773,7 +773,10 @@ fn lagging(lines: Vec<Writer>, target: i64, now: f64, machine: &Path) -> Lagging
     let (mut behind, mut gone) = (Vec::new(), Vec::new());
     for line in rest {
         // Another host's path is not this machine's to look at.
-        match Some(&line).filter(|line| line.host == host).and_then(self::gone) {
+        match Some(&line)
+            .filter(|line| line.host == host)
+            .and_then(self::gone)
+        {
             Some(why) => gone.push((line, why)),
             None => behind.push(line),
         }
@@ -797,7 +800,9 @@ impl Gone {
     fn said(self) -> &'static str {
         match self {
             Gone::Missing => "nothing is at its path now",
-            Gone::Replaced => "the file at its path was written after it last ran there, a build that has not opened this board",
+            Gone::Replaced => {
+                "the file at its path was written after it last ran there, a build that has not opened this board"
+            }
         }
     }
 }

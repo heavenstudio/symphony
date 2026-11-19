@@ -180,10 +180,7 @@ fn a_writer_whose_program_is_gone_from_its_path_on_this_host_is_not_counted() {
     let said = not_counted(&found.gone);
     assert!(
         said.starts_with("; not counted, as its program is gone: tasks at schema 18 (")
-            && said.contains(&format!(
-                "{} on {here}, last seen ",
-                path(&missing)
-            ))
+            && said.contains(&format!("{} on {here}, last seen ", path(&missing)))
             && said.contains(" ago): nothing is at its path now; ")
             && said.contains(
                 " ago): the file at its path was written after it last ran there, a build that \
