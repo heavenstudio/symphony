@@ -32,8 +32,9 @@
 //!   task's receipt is named on the save's own task, whose close is its orchestrator's; with no
 //!   receipt at all the save is held for a person ([`standing`]).
 //!
-//! Every pass of the output worker (a start, each save, each refresh of the documents) takes
-//! each entry up again. A step that fails (a board that does not answer, an edit that no longer
+//! Every pass of the output worker (a start, each save, each refresh of the documents, those
+//! asked while a pass is pending or running asking for one more together) takes each entry up
+//! again. A step that fails (a board that does not answer, an edit that no longer
 //! applies, a task cancelled, or closed with no receipt that proves the save) is kept in the entry
 //! and said by [`note`]; the entry and the owner's words stay, and a save on no way to the
 //! default branch no longer holds back the next of its document. Words the page cannot draw,
@@ -46,7 +47,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use symphony_board::land::delivery::{RECEIPTS, Receipt};
+use symphony_board::land::delivery::{Journal, RECEIPTS, Receipt, Stage};
 
 use super::{
     Edit, JOURNAL, OutputJob, QueuedPublication, checked, common_dir, git, made, main_ref, merge,
@@ -77,7 +78,8 @@ pub(super) struct Delivery {
     #[serde(default)]
     filed: bool,
     /// Whether that task closed with no delivery: cancelled, or closed by a landing or by hand
-    /// with no receipt that proves this save ([`closed`]). The save is kept, and is on no way to the default branch.
+    /// with no receipt that proves this save ([`closed`]). The save is kept, and is on no way
+    /// to the default branch.
     #[serde(default)]
     closed: bool,
     /// Why the last pass went no further, when it did not.
@@ -102,6 +104,9 @@ pub enum State {
     Queued,
     /// On its branch, waiting for its pull request.
     Waiting,
+    /// On its branch, and the land of its task has asked the host to merge its pull request
+    /// (the land's [`Journal`]).
+    Merging,
     /// On its branch, and its words no longer apply to the default branch here: the branch
     /// needs that conflict settled before its pull request can deliver it. The page cannot
     /// draw them meanwhile.
@@ -283,6 +288,19 @@ fn standing(root: &Path, sequence: u64, edit: &Edit, delivery: &Delivery) -> Sta
     }
 }
 
+/// Where the land of the save `sequence`'s task stands, by the delivery journal it keeps while
+/// it runs: held for a person with why, or asking the host for the merge. None before either,
+/// as with no land run yet: its task approved, the save still waits for its pull request.
+fn landing(root: &Path, sequence: u64) -> Option<State> {
+    let journal = Journal::read(&lands(root)?, &format!("{BRANCHES}{sequence}"))?;
+    match journal.held {
+        Some(why) => Some(State::Held(format!(
+            "its delivery is held for reconciliation: {why}"
+        ))),
+        None => (journal.stage >= Stage::MergeRequested).then_some(State::Merging),
+    }
+}
+
 /// What an unproved save is held with.
 fn unproved(root: &Path) -> String {
     let default = &Project::of(root).default_branch;
@@ -328,8 +346,11 @@ fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
                 Standing::Unproved => State::Held(unproved(root)),
                 Standing::Open if !delivery.problem.is_empty() => State::Held(delivery.problem),
                 Standing::Open if delivery.tip.is_empty() => State::Queued,
-                Standing::Open if !shown => State::Conflicted,
-                Standing::Open => State::Waiting,
+                Standing::Open => landing(root, sequence).unwrap_or(if shown {
+                    State::Waiting
+                } else {
+                    State::Conflicted
+                }),
             };
             Some(Save {
                 sequence,
@@ -384,6 +405,7 @@ pub fn note(root: &Path, file: &str) -> Option<String> {
             let stands = match &save.state {
                 State::Queued => "kept, its branch not made yet".to_string(),
                 State::Waiting => "waiting for its pull request".to_string(),
+                State::Merging => "its land has asked for the merge of its pull request".into(),
                 State::Conflicted => format!(
                     "in conflict: its words no longer apply to `{default}` as it is here, so \
                      this page cannot show them; its branch holds them, and needs the conflict \
@@ -406,8 +428,14 @@ pub fn note(root: &Path, file: &str) -> Option<String> {
             format!("`{task}` ({stands}{unshown})")
         })
         .collect();
+    // A page that cannot draw one of them keeps it rather than shows it.
+    let keeps = if saves.iter().all(|save| save.shown) {
+        "shows"
+    } else {
+        "keeps"
+    };
     Some(format!(
-        "> **Pending delivery.** This page shows {} that `{default}` does not hold yet: this \
+        "> **Pending delivery.** This page {keeps} {} that `{default}` does not hold yet: this \
          project delivers by pull request, so each waits for the task that delivers it: {}. \
          Nothing is lost meanwhile, and nothing here is committed to `{default}`.",
         if saves.len() == 1 {

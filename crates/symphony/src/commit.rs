@@ -2478,6 +2478,21 @@ fn publication_pass(
     }
 }
 
+/// The output worker's loop: a `pass` for each message that wakes it, handed the jobs of that
+/// message and of every one sent before the pass began, until every sender is gone. A message is
+/// a job, or a wake with none (`None`); a burst of wakes sent while a pass is pending or running
+/// asks for one more pass, never one each.
+fn passes<T>(messages: &mpsc::Receiver<Option<T>>, mut pass: impl FnMut(Vec<T>)) {
+    while let Ok(first) = messages.recv() {
+        pass(
+            first
+                .into_iter()
+                .chain(messages.try_iter().flatten())
+                .collect(),
+        );
+    }
+}
+
 /// A fast commit worker and an output worker; saves only enqueue their immutable before/after edit.
 /// Same-file edits wait behind any generated branch they were written against.
 pub struct Committer {
@@ -2511,13 +2526,11 @@ impl Committer {
                 &output_ahead,
                 &output_writes,
             );
-            for job in output_jobs {
+            passes(&output_jobs, |jobs| {
                 // A different serving generation may have released a queued publication
                 // since startup. Every subsequent save can adopt it once that lease ends.
                 recover_outputs(&output_root, &mut queued, &output_waiting, &output_ahead);
-                if let Some(job) = job {
-                    queued.push_back(job);
-                }
+                queued.extend(jobs);
                 publication_pass(
                     &output_root,
                     &mut queued,
@@ -2525,7 +2538,7 @@ impl Committer {
                     &output_ahead,
                     &output_writes,
                 );
-            }
+            });
         });
         let root = root.to_path_buf();
         let worker_waiting = waiting.clone();
@@ -2605,7 +2618,8 @@ impl Committer {
 
     /// Ask the output worker for one more pass over the journal, with no new save: what takes
     /// up the saves kept for delivery by pull request again ([`pending`]) once something they
-    /// wait on may have moved. Nothing once the committer is closing.
+    /// wait on may have moved. Wakes asked while a pass is pending or running ask for that one
+    /// more pass together ([`passes`]). Nothing once the committer is closing.
     pub fn wake(&self) {
         if let Some(wake) = &*self.wake.lock().unwrap_or_else(|e| e.into_inner()) {
             let _ = wake.send(None);
@@ -2655,6 +2669,9 @@ impl Committer {
 }
 
 pub mod pending;
+
+#[cfg(test)]
+mod passes_tests;
 
 #[cfg(test)]
 mod publication_tests;
