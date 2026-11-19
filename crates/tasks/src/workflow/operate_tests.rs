@@ -58,6 +58,7 @@ pub(crate) fn reviewed() -> Operating {
         definition: custom.definition.definition().clone(),
         revision: custom.revision,
         generation: 1,
+        accepted: Vec::new(),
     }
 }
 
@@ -367,12 +368,36 @@ fn a_done_predicate_is_met_by_satisfying_positions_and_the_boards_done() {
     let mut none = claim.clone();
     none.dependencies = Dependency::None;
     assert!(w.dependencies_met(&needing(&["sim/gone"]), &none, find));
-    for unchecked in [Dependency::Landed, Dependency::AcceptedOutput] {
-        let mut edge = claim.clone();
-        edge.dependencies = unchecked;
+    let mut landed = claim.clone();
+    landed.dependencies = Dependency::Landed;
+    assert!(!w.dependencies_met(&needing(&[]), &landed, find));
+
+    // `accepted_output` is met by the output standing for each prerequisite at the revision the
+    // board's read has it at (each held task here is at revision 3), never by a position that
+    // satisfies dependants alone, an output read at another revision, one recorded for a task now
+    // where none stands, or the board's own done.
+    let mut takes = claim.clone();
+    takes.dependencies = Dependency::AcceptedOutput;
+    let w = Operating {
+        accepted: vec![
+            ("sim/approved".into(), 3, "sim/approved@3".into()),
+            ("sim/accepted".into(), 2, "sim/accepted@2".into()),
+            ("sim/reviewing".into(), 3, "sim/reviewing@3".into()),
+        ],
+        ..w
+    };
+    assert!(w.dependencies_met(&needing(&[]), &takes, find));
+    assert!(w.dependencies_met(&needing(&["sim/approved"]), &takes, find));
+    for unmet in [
+        "sim/accepted",
+        "sim/reviewing",
+        "sim/done",
+        "sim/ready",
+        "sim/gone",
+    ] {
         assert!(
-            !w.dependencies_met(&needing(&[]), &edge, find),
-            "{unchecked:?}"
+            !w.dependencies_met(&needing(&["sim/approved", unmet]), &takes, find),
+            "{unmet}"
         );
     }
 }

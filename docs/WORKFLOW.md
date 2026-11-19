@@ -187,7 +187,9 @@ output standing then. What a supersession does to a dependant already admitted o
 not this check's (`tools/workflow-revision-guards`). `just tasks workflow actions SLUG` prints the
 task's own output standing and, where an edge leaving its pair depends on accepted outputs, the
 one standing for each task it depends on, which `workflow apply … --accept SLUG=OUTPUT` names;
-`Store::accepted_outputs` reads the same.
+`Store::accepted_outputs` reads the same, and the board's claim names the ones it reads there
+(`just tasks claim`, a launch, the staffing pass). PULL and the staffing pass find such an edge
+open by the outputs standing too ([Operations](#operations)).
 
 ## External effects
 
@@ -290,18 +292,22 @@ whether a principal may take an edge stays admission's question.
 - **Claims.** A claim is an edge leaving the task's pair that gives its taker a role
   (`acquire_role`), whatever operation the definition names it; an automatic edge is the board's,
   never a claim. `just tasks claim SLUG` takes the one claim edge that gives the executor's role,
-  at the revision it reads (`Store::claim_by_workflow`), and is refused as
-  `explicit_action_required`, naming the edges, where none gives it or several open ones do.
-- **PULL and `next`.** PULL lists a held task by its claims: an executor's claim nobody there
-  holds, its dependency predicate met, is ready (red, once red work waited unstaffed) and a
-  reviewer's is unreviewed, a live reservation named beside it. A staffed role whose holders are
-  all lost or gone is orphaned, saying whether the board recovers it or a person does; a
-  prerequisite that ended without success (an outcome of cancellation or failure, or the board's
-  cancelled) blocks it, naming its position's `unsuccessful_dependency`; its staffed executor at
-  work is executing. `just tasks next` offers a held task whose executor's claim edge admission's
-  preview shows nothing stopping, unless another's live reservation stands on it, whatever status
-  the claim's position projects to: its read takes those statuses beside the pullable ones, and a
-  task no workflow holds only in a pullable one.
+  at the revision it reads (`Store::claim_by_workflow`), naming, for an edge that depends on
+  `accepted_output`, the outputs it reads standing ([Accepted outputs](#accepted-outputs)), and is
+  refused as `explicit_action_required`, naming the edges, where none gives it or several open
+  ones do.
+- **PULL and `next`.** PULL lists a held task by its claims: an executor's claim nobody there holds,
+  its dependency predicate met (as admission judges it: `accepted_output` by the output standing for
+  each prerequisite at the revision the board read, which the workflow's read takes only where an
+  edge depends on one; `landed` never), is ready (red, once red work waited unstaffed) and a
+  reviewer's is unreviewed, a live reservation named beside it. A staffed role whose holders are all
+  lost or gone is orphaned, saying whether the board recovers it or a person does; a prerequisite
+  that ended without success (an outcome of cancellation or failure, or the board's cancelled)
+  blocks it, naming its position's `unsuccessful_dependency`; its staffed executor at work is
+  executing. `just tasks next` offers a held task whose executor's claim edge admission's preview
+  shows nothing stopping, unless another's live reservation stands on it, whatever status the
+  claim's position projects to: its read takes those statuses beside the pullable ones, and a task
+  no workflow holds only in a pullable one.
 - **Settling.** Wherever the board gives open work an orchestrator, it then settles what no
   session asks for (`Store::settle_held`): before `tasks pull` lists anything, in an
   orchestrator's monitor, in a look of `tasks wait`, in a write's detached dispatcher (`tasks

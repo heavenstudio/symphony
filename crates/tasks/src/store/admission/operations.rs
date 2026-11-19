@@ -13,7 +13,8 @@ use crate::workflow::operate::{Operating, Placed};
 use crate::workflow::{admit::word, board_service};
 use std::collections::BTreeMap;
 use symphony_api::workflow::{
-    Authority, NextActions, OperationRequest, OperationResult, Role, UnsuccessfulDependency,
+    Authority, Dependency, NextActions, OperationRequest, OperationResult, Role,
+    UnsuccessfulDependency,
 };
 use symphony_plugin::execution::Principal;
 
@@ -33,12 +34,34 @@ impl Store {
     }
 
     /// [`Store::workflow_operating`] for a reader of `tasks`: none, and nothing read, where none of
-    /// them is a task a workflow holds, so a board with no workflow reads as it always did.
+    /// them is a task a workflow holds, so a board with no workflow reads as it always did. Where
+    /// an edge depends on `accepted_output`, it reads the output standing for each held task of
+    /// `tasks` that a held one depends on, at the revision `tasks` has it at
+    /// ([`Operating::accepted`]).
     pub fn operating_for(&self, tasks: &[crate::Task]) -> Result<Option<Operating>, Error> {
-        if !(tasks.iter()).any(|t| crate::store::workflow::position_held(&t.fields)) {
+        use crate::store::workflow::{position_held, task_position};
+        if !(tasks.iter()).any(|t| position_held(&t.fields)) {
             return Ok(None);
         }
-        self.workflow_operating()
+        let Some(mut operating) = self.workflow_operating()? else {
+            return Ok(None);
+        };
+        if (operating.definition.edges.iter()).any(|e| e.dependencies == Dependency::AcceptedOutput)
+        {
+            let at = |slug: &String| {
+                let prerequisite = tasks.iter().find(|t| t.slug == *slug)?;
+                let position = task_position(&prerequisite.fields)?;
+                Some((prerequisite.slug.as_str(), position.revision))
+            };
+            let mut prerequisites: Vec<(&str, u64)> = (tasks.iter())
+                .filter(|t| position_held(&t.fields))
+                .flat_map(|t| t.depends.iter().filter_map(at))
+                .collect();
+            prerequisites.sort_unstable();
+            prerequisites.dedup();
+            operating.accepted = self.accepted_standing(&prerequisites)?;
+        }
+        Ok(Some(operating))
     }
 
     /// Whether `task` is finished by its recorded facts ([`Operating::finished`]): a task a
@@ -199,7 +222,8 @@ impl Store {
     /// `role` taken on `slug` by `principal` through the one claim edge leaving its pair that
     /// gives it, at the snapshot read now: the workflow-aware form of the board's claim (the
     /// analysis's legacy alias), which reads the task's next actions and sends the revision it read
-    /// there. Refused as `explicit_action_required`, naming the edges, where no edge or several
+    /// there, and, for an edge depending on `accepted_output`, the outputs it reads standing for
+    /// what the task depends on ([`Store::accepted_outputs`]). Refused as `explicit_action_required`, naming the edges, where no edge or several
     /// open ones give the role; admission refuses the one edge for what stops it.
     pub fn claim_by_workflow(
         &self,
@@ -255,11 +279,23 @@ impl Store {
                 }
             },
         };
+        // An edge that takes the accepted outputs of what the task depends on names the ones it
+        // reads standing, as it sends the revision it read: the write's fence on each prerequisite
+        // refuses it where one is superseded first, and admission names one none stands for.
+        let takes = (operating.definition.edges.iter())
+            .any(|e| e.id == edge && e.dependencies == Dependency::AcceptedOutput);
+        let input_revisions = if takes {
+            (self.accepted_outputs(slug)?.takes.into_iter())
+                .filter_map(|(prerequisite, output)| Some((prerequisite, output?)))
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
         let request = OperationRequest {
             project: self.database().database().to_string(),
             task: slug.to_string(),
             edge: edge.to_string(),
-            input_revisions: BTreeMap::new(),
+            input_revisions,
             idempotency_key: format!("{slug}@{}:{edge}", next.snapshot.task_revision),
             inputs: BTreeMap::new(),
             expected: next.snapshot,

@@ -507,24 +507,10 @@ impl Store {
     /// are given, each task's oldest first, every one from its first revision, each read by its
     /// id, never a scan of the record.
     pub fn transitions(&self, tasks: &[(&str, u64)]) -> Result<Vec<Moved>, Error> {
-        // Built as plain values, and read as one, so no serializer or list reader of their own
-        // links where a PULL is composed (tools/size-budget.toml).
-        let ids: Vec<Value> = (tasks.iter())
-            .flat_map(|&(slug, revision)| {
-                (1..=revision)
-                    .map(move |r| Value::from(vec![json!("event"), slug.into(), r.into()]))
-            })
+        let ids = (tasks.iter())
+            .flat_map(|&(slug, revision)| (1..=revision).map(move |r| event(slug, r)))
             .collect();
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let vars = Value::Object(
-            [("ids".to_string(), Value::Array(ids))]
-                .into_iter()
-                .collect(),
-        );
-        let read: Value =
-            self.retrying(|| self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone()))?;
+        let read = self.events(ids)?;
         let unread = || {
             Error::Db(format!(
                 "recorded transitions the alarm cannot read: {read}"
@@ -535,6 +521,46 @@ impl Store {
             .iter()
             .map(|body| Moved::of(body).ok_or_else(unread))
             .collect()
+    }
+
+    /// The accepted output standing for each of `tasks`, a slug with the workflow revision its
+    /// position stands at: the `accepted` the transition that made that revision left
+    /// (docs/WORKFLOW.md, "Accepted outputs"), with its slug and revision, in the order the tasks
+    /// are given, none for a task whose transition left none, each read by its id.
+    pub fn accepted_standing(
+        &self,
+        tasks: &[(&str, u64)],
+    ) -> Result<Vec<(String, u64, String)>, Error> {
+        let ids = (tasks.iter())
+            .filter(|&&(_, revision)| revision > 0)
+            .map(|&(slug, revision)| event(slug, revision))
+            .collect();
+        let read = self.events(ids)?;
+        Ok((read.as_array().into_iter().flatten())
+            .filter_map(|body| {
+                Some((
+                    body.get("slug")?.as_str()?.to_string(),
+                    body.get("revision")?.as_u64()?,
+                    body.get("accepted")?.as_str()?.to_string(),
+                ))
+            })
+            .collect())
+    }
+
+    /// The bodies of the transitions `ids` name, in their order, one no transition has left out:
+    /// each read by its id, never a scan of the record. Built as plain values, and read as one, so
+    /// no serializer or list reader of their own links where a PULL is composed
+    /// (tools/size-budget.toml).
+    fn events(&self, ids: Vec<Value>) -> Result<Value, Error> {
+        if ids.is_empty() {
+            return Ok(Value::Array(Vec::new()));
+        }
+        let vars = Value::Object(
+            [("ids".to_string(), Value::Array(ids))]
+                .into_iter()
+                .collect(),
+        );
+        self.retrying(|| self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone()))
     }
 
     /// `slug`'s workflow position, or none for a task the board's own writers keep; refused for
@@ -587,6 +613,11 @@ pub(crate) fn task_position(
     fields: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
 ) -> Option<TaskPosition> {
     TaskPosition::of(fields.get("_board")?.get("workflow")?)
+}
+
+/// The id of the transition that made workflow revision `revision` of `slug`.
+fn event(slug: &str, revision: u64) -> Value {
+    Value::from(vec![json!("event"), slug.into(), revision.into()])
 }
 
 /// `value`'s fields: none where it is no object, or names a field `allowed` does not.

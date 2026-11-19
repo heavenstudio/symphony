@@ -497,3 +497,108 @@ fn a_settle_the_board_is_refused_is_said_and_counts_as_no_write() {
         assert_eq!(position(&f, "sim/c").at(), pair("build", "available"));
     }
 }
+
+/// A claim edge that takes the accepted outputs of what its task depends on reads as admission
+/// reads it: the board's readers (PULL, staffing) find it met by the output standing for each
+/// prerequisite at the revision their read has it at, not by one superseded or read before a new
+/// one was accepted, and the claim by its role names the ones it reads standing.
+#[test]
+fn a_claim_taking_accepted_outputs_is_met_and_named_by_the_outputs_standing() {
+    use super::super::tests::{apply, request};
+    use crate::workflow::admit::tests::outputs;
+    use crate::workflow::local_owner;
+    for backend in BACKENDS {
+        let seed = Seed::default()
+            .session("amber")
+            .session("birch")
+            .task("sim/up", "ready")
+            .task("sim/down", "ready")
+            .link("sim/down", "dep", "sim/up");
+        let f = Fixture::on(backend, seed);
+        let workflow = custom(&format!("{}{MAPPED}", outputs()));
+        f.store
+            .activate_workflow(&workflow, &Host::local())
+            .unwrap();
+        let (amber, birch, owner, host) = (
+            agent_session("amber"),
+            agent_session("birch"),
+            local_owner(),
+            Host::local(),
+        );
+        // `edge` taken on `slug` under a key naming the revision it is read at.
+        let step = |slug: &str, principal: &Principal, edge: &str| {
+            let mut sent = request(&f.store, slug, principal, edge, "");
+            sent.idempotency_key = format!("{slug}@{}:{edge}", sent.expected.task_revision);
+            apply(&f.store, principal, &sent).unwrap().transition
+        };
+        let accept_up = || {
+            step("sim/up", &amber, "claim");
+            step("sim/up", &amber, "submit");
+            step("sim/up", &owner, "approve")
+        };
+        // What the board's readers make of sim/down's claim on `board`, by the workflow as read
+        // with `read`'s tasks, and the outputs that read found standing.
+        let judged = |read: &crate::Board, board: &crate::Board| {
+            let operating = f.store.operating_for(&read.tasks).unwrap().unwrap();
+            let down = board.tasks.iter().find(|t| t.slug == "sim/down").unwrap();
+            let claim = (operating.definition.edges.iter())
+                .find(|e| e.id == "claim")
+                .unwrap();
+            let find = |slug: &str| board.tasks.iter().find(|t| t.slug == slug);
+            (
+                operating.dependencies_met(down, claim, find),
+                operating.accepted.clone(),
+            )
+        };
+        let now = || {
+            let board = f.store.board().unwrap();
+            judged(&board, &board)
+        };
+
+        assert_eq!(now(), (false, Vec::new()), "{backend:?}");
+        assert!(
+            refused(
+                f.store
+                    .claim_by_workflow("sim/down", &birch, &host, Role::Executor)
+            )
+            .starts_with(
+                "dependency: sim/down depends on the accepted output of sim/up, which has \
+                     none standing"
+            ),
+            "{backend:?}"
+        );
+
+        assert_eq!(accept_up(), "sim/up@4");
+        assert_eq!(
+            now(),
+            (true, vec![("sim/up".into(), 4, "sim/up@4".into())]),
+            "{backend:?}"
+        );
+        let accepted_then = f.store.board().unwrap();
+
+        // Reopened, its output is superseded: none stands until another is accepted.
+        step("sim/up", &owner, "reopen");
+        assert_eq!(now(), (false, Vec::new()), "{backend:?}");
+        assert_eq!(accept_up(), "sim/up@8");
+        // A read from before the new acceptance vouches for none of it.
+        assert!(!judged(&accepted_then, &f.store.board().unwrap()).0);
+        assert_eq!(
+            now(),
+            (true, vec![("sim/up".into(), 8, "sim/up@8".into())]),
+            "{backend:?}"
+        );
+
+        let claimed = (f.store)
+            .claim_by_workflow("sim/down", &birch, &host, Role::Executor)
+            .unwrap();
+        assert_eq!(claimed.transition, "sim/down@2");
+        let receipt = (f.store.workflow_receipt(&birch, "sim/down@1:claim"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            receipt.sent.input_revisions,
+            [("sim/up".to_string(), "sim/up@8".to_string())].into()
+        );
+        assert_eq!(position(&f, "sim/down").at(), pair("build", "working"));
+    }
+}

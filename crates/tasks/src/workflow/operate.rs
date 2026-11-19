@@ -24,6 +24,11 @@ pub struct Operating {
     pub definition: Definition,
     pub revision: Revision,
     pub generation: u64,
+    /// The accepted output standing for each task a workflow holds that a task read depends on,
+    /// by its slug, with the workflow revision it stood at when read (docs/WORKFLOW.md, "Accepted
+    /// outputs"): read only where an edge depends on `accepted_output`
+    /// ([`crate::Store::operating_for`]), and none for a task whose last transition left none.
+    pub accepted: Vec<(String, u64, String)>,
 }
 
 impl From<WorkflowRead> for Operating {
@@ -32,6 +37,7 @@ impl From<WorkflowRead> for Operating {
             definition: read.definition,
             revision: read.revision,
             generation: read.activation_generation,
+            accepted: Vec::new(),
         }
     }
 }
@@ -122,8 +128,11 @@ impl Operating {
 
     /// Whether `edge`'s dependency predicate holds for `task` on the board `find` reads, as
     /// admission judges it: `done` is met by a prerequisite the workflow holds at a position that
-    /// satisfies its dependants, or one the board's writers keep done; a prerequisite not on the
-    /// board meets nothing, and a predicate this release does not check is never met.
+    /// satisfies its dependants, or one the board's writers keep done; `accepted_output` by an
+    /// accepted output standing for each, one the workflow holds at such a position whose last
+    /// transition, at the revision `find` reads it at, left one ([`Operating::accepted`]). A
+    /// prerequisite not on the board meets nothing, and `landed`, which this release does not
+    /// check, is never met.
     pub fn dependencies_met<'t>(
         &self,
         task: &Task,
@@ -132,7 +141,17 @@ impl Operating {
     ) -> bool {
         match edge.dependencies {
             Dependency::None => true,
-            Dependency::Landed | Dependency::AcceptedOutput => false,
+            Dependency::Landed => false,
+            Dependency::AcceptedOutput => task.depends.iter().all(|slug| {
+                (find(slug).and_then(|prerequisite| self.placed(prerequisite))).is_some_and(
+                    |placed| {
+                        placed.declared.satisfies_dependencies
+                            && (self.accepted.iter()).any(|(standing, revision, _)| {
+                                standing == slug && *revision == placed.position.revision
+                            })
+                    },
+                )
+            }),
             Dependency::Done => task.depends.iter().all(|slug| {
                 find(slug).is_some_and(|prerequisite| match self.placed(prerequisite) {
                     Some(placed) => placed.declared.satisfies_dependencies,
