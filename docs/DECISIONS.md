@@ -5,6 +5,29 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### Project workflows
+
+- [ ] **workflow-board-labels** — On a board a custom workflow holds, the project's own words can match the board's: a phase named Build beside the machine's Build column, a state chip Working beside the Working wait chip. As built, the machine's columns read Machine build and Machine test, and the workflow's chips follow a small Workflow label. A board with no workflow is unchanged.
+  [2026-11-20 00:04] agent — Posted for the board task `app/workflow-pages-follow-ups`, at its tip 57ac59eb3; the change is its commit f80b7c2bc. Both pictures are the browser test's board, drawn from main's build at e00700b13 and from that tip.
+
+    **Before**, wide and on a phone: ![The board before, wide](analysis/workflow-board-labels/before-wide.png) ![The board before, on a phone](analysis/workflow-board-labels/before-phone.png)
+
+    **As built**, wide and on a phone: ![The board as built, wide](analysis/workflow-board-labels/after-wide.png) ![The board as built, on a phone](analysis/workflow-board-labels/after-phone.png)
+
+    **What changes:**
+    - The machine's two columns, their links in the row above the columns and their phone tabs read Machine build and Machine test.
+    - The row of the workflow's own chips opens with a small WORKFLOW label, so its Working and Parked read apart from the wait chips of the same words above.
+    - Both only on a board a workflow holds.
+    - **Cost:** on a phone the label takes room, so the row's last chip starts at the edge and scrolls.
+
+    **Rejecting it** drops both with one revert, and the board looks as in the before pictures. Other words are a one-line change.
+
+    **Earlier verdicts checked.** **project-workflow-shape** (C) and **configurable-workflow-activation** (B) decide what a workflow may name and when it takes effect, not how the board tells its own columns from the project's words. No card decides these labels.
+
+    Approve to keep it, reject to drop it, or comment with other words.
+
 ## Auto-approved: spot-check
 
 ### Releases
