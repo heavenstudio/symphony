@@ -23,8 +23,8 @@ pub use crate::store::workflow::{
     Active, Followed, Recorded, Recovered, TaskPosition, Transition, Trigger,
 };
 pub use activate::Host;
-pub use operate::Operating;
 pub use builtin::{builtin, legacy_pair};
+pub use operate::Operating;
 
 /// A project's file, at the top of the tree a commit holds.
 const FILE: &str = "symphony.toml";

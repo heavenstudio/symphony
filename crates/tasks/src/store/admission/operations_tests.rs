@@ -50,7 +50,10 @@ fn position(f: &Fixture, slug: &str) -> TaskPosition {
 }
 
 fn settle(f: &Fixture) -> Vec<String> {
-    f.store.settle_held(&f.store.board().unwrap()).unwrap().lines
+    f.store
+        .settle_held(&f.store.board().unwrap())
+        .unwrap()
+        .lines
 }
 
 #[test]
@@ -78,14 +81,21 @@ fn a_lost_executor_is_recovered_by_the_board_once() {
     for backend in BACKENDS {
         let f = board(backend);
         take(&f.store, "sim/a", &agent_session("amber"), "claim").unwrap();
-        assert!(settle(&f).iter().all(|l| !l.contains("sim/a")), "{backend:?}: live");
+        assert!(
+            settle(&f).iter().all(|l| !l.contains("sim/a")),
+            "{backend:?}: live"
+        );
         lose_all_but(&f, &["orch"]);
         let lines = settle(&f);
-        assert!(lines.contains(&"recovered amber on sim/a".to_string()), "{lines:?}");
+        assert!(
+            lines.contains(&"recovered amber on sim/a".to_string()),
+            "{lines:?}"
+        );
         assert_eq!(position(&f, "sim/a").at(), pair("build", "available"));
         assert_eq!(roles(&f, "sim/a"), [("orch".into(), "orchestrator".into())]);
         assert!(
-            (f.said("sim/a").iter()).any(|l| l.contains("the board's recovery (sim/a@3): amber's executor lost")),
+            (f.said("sim/a").iter())
+                .any(|l| l.contains("the board's recovery (sim/a@3): amber's executor lost")),
             "{:?}",
             f.said("sim/a")
         );
@@ -102,10 +112,17 @@ fn a_manual_stay_is_recorded_once_and_the_holder_keeps_its_role() {
         take(&f.store, "sim/a", &amber, "block").unwrap();
         lose_all_but(&f, &["orch"]);
         let lines = settle(&f);
-        assert!(lines.contains(&"recovered amber on sim/a".to_string()), "{lines:?}");
+        assert!(
+            lines.contains(&"recovered amber on sim/a".to_string()),
+            "{lines:?}"
+        );
         let at = position(&f, "sim/a");
         assert_eq!(at.at(), pair("build", "blocked"));
-        assert_eq!(at.resume, Some(pair("build", "working")), "a stay keeps its resume");
+        assert_eq!(
+            at.resume,
+            Some(pair("build", "working")),
+            "a stay keeps its resume"
+        );
         assert_eq!(at.manual.as_ref().map(|m| m.holder.as_str()), Some("amber"));
         let revision = at.revision;
         assert!(settle(&f).iter().all(|l| !l.contains("sim/a")));
@@ -121,7 +138,9 @@ fn a_dependant_whose_policy_is_cancel_is_cancelled_and_block_moves_nothing() {
         let d = position(&f, "sim/d");
         let lines = settle(&f);
         assert!(
-            lines.iter().any(|l| l.starts_with("cancelled sim/c by cancel (sim/c@2)")),
+            lines
+                .iter()
+                .any(|l| l.starts_with("cancelled sim/c by cancel (sim/c@2)")),
             "{backend:?}: {lines:?}"
         );
         assert_eq!(position(&f, "sim/c").at(), pair("build", "cancelled"));
@@ -154,7 +173,9 @@ fn a_cancel_policy_with_no_edge_the_board_may_take_moves_nothing() {
                 .task("sim/gone", "cancelled")
                 .link("sim/c", "dep", "sim/gone"),
         );
-        f.store.activate_workflow(&custom(&text), &Host::local()).unwrap();
+        f.store
+            .activate_workflow(&custom(&text), &Host::local())
+            .unwrap();
         assert!(settle(&f).is_empty());
         assert_eq!(position(&f, "sim/c").at(), pair("build", "available"));
     }
@@ -172,15 +193,21 @@ fn a_claim_by_its_role_takes_the_one_edge_that_gives_it() {
         assert_eq!(claimed.transition, "sim/a@2");
         assert_eq!(position(&f, "sim/a").at(), pair("build", "working"));
         assert_eq!(
-            refused(f.store.claim_by_workflow("sim/a", &birch, &host, Role::Reviewer)),
+            refused(
+                f.store
+                    .claim_by_workflow("sim/a", &birch, &host, Role::Reviewer)
+            ),
             "explicit_action_required: no edge leaving sim/a's build/working gives the reviewer \
              role: read its edges with `just tasks workflow actions sim/a`"
         );
         take(&f.store, "sim/a", &amber, "submit").unwrap();
         // Its executor never reviews it, though submitting let go of the role.
         assert!(
-            refused(f.store.claim_by_workflow("sim/a", &amber, &host, Role::Reviewer))
-                .starts_with("unauthorized: amber executed sim/a"),
+            refused(
+                f.store
+                    .claim_by_workflow("sim/a", &amber, &host, Role::Reviewer)
+            )
+            .starts_with("unauthorized: amber executed sim/a"),
             "{backend:?}"
         );
         (f.store)
@@ -209,10 +236,17 @@ fn a_claim_by_its_role_says_what_stops_its_one_edge() {
             .unwrap();
         assert_eq!(again.transition, "sim/a@6");
         // No workflow active refuses as such, and the owner holds no task role.
-        let plain = Fixture::on(backend, Seed::default().session("amber").task("sim/x", "ready"));
+        let plain = Fixture::on(
+            backend,
+            Seed::default().session("amber").task("sim/x", "ready"),
+        );
         assert!(
-            refused(plain.store.claim_by_workflow("sim/x", &amber, &host, Role::Executor))
-                .starts_with("unsupported_activation: ")
+            refused(
+                plain
+                    .store
+                    .claim_by_workflow("sim/x", &amber, &host, Role::Executor)
+            )
+            .starts_with("unsupported_activation: ")
         );
         assert!(
             refused(f.store.claim_by_workflow(
@@ -260,7 +294,10 @@ fn a_held_task_holds_its_slot_by_its_positions_policy_from_its_executor_to_its_r
         let held = || holdings(&f.store);
         let full = |slug: &str, by: &Principal, edge: &str| {
             let why = refused(take(&capped, slug, by, edge));
-            assert!(why.starts_with("capacity: "), "{backend:?} {slug} {edge}: {why}");
+            assert!(
+                why.starts_with("capacity: "),
+                "{backend:?} {slug} {edge}: {why}"
+            );
         };
         take(&capped, "sim/a", &amber, "claim").unwrap();
         assert_eq!(held(), ["sim/a"]);

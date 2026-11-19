@@ -634,7 +634,9 @@ fn by_its_edges(
     }
     let claims = placed.claims();
     if !(claims.iter()).any(|c| crate::workflow::admit::word(&c.role) == role) {
-        return Err(explicit(format!("no edge leaving it gives the {role} role")));
+        return Err(explicit(format!(
+            "no edge leaving it gives the {role} role"
+        )));
     }
     Ok(())
 }

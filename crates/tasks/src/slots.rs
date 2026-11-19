@@ -89,8 +89,9 @@ impl<'a> Entry<'a> {
     /// Whether it holds a slot: by its position's slot policy where a workflow holds it, else in
     /// an open status, or blocked under a hold.
     pub fn open(&self) -> bool {
-        self.slot
-            .unwrap_or_else(|| OPEN.contains(&self.status) || (self.held && self.status == "blocked"))
+        self.slot.unwrap_or_else(|| {
+            OPEN.contains(&self.status) || (self.held && self.status == "blocked")
+        })
     }
 
     /// Whether it is work in review the cap does not count: a task in review that no workflow

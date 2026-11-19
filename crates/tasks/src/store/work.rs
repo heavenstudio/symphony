@@ -1053,7 +1053,7 @@ impl Store {
             );
             candidates.push((key, task, edge));
         }
-        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        candidates.sort_by_key(|c| c.0);
         let principal = crate::workflow::agent_session(handle);
         let host = crate::workflow::Host::local();
         for (_, task, edge) in candidates {

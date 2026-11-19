@@ -630,7 +630,10 @@ fn a_held_tasks_transitions_say_each_change_of_the_status_it_projects_to_as_a_mo
             ("sim/b", 4.0 * HOUR, Step::Between("ready", "in_progress")),
         ]
     );
-    assert_eq!(said[0].text, "workflow moved it ready → in_progress (sim/a@2)");
+    assert_eq!(
+        said[0].text,
+        "workflow moved it ready → in_progress (sim/a@2)"
+    );
     // Only those made at the window's start or later; the one before still says where it was.
     let since = transition_lines(&transitions, 3.0 * HOUR);
     let steps: Vec<Step<'_>> = since.iter().map(step).collect();

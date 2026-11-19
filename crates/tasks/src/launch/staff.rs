@@ -5,14 +5,14 @@ use super::hc::{self, Binary, Hc, text_of};
 use super::{Ask, Defaults, Machine, Resolved, launch, prompt_text};
 use crate::cli::{Env, agents, probes};
 use crate::health::{EXECUTING, FINISHED};
-use crate::workflow::operate::Operating;
-use symphony_api::workflow::Role;
 use crate::sys::FileLock;
+use crate::workflow::operate::Operating;
 use crate::{Board, Error, Health, Held, NewLaunch, Store, Task, git};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
+use symphony_api::workflow::Role;
 
 /// One config for enablement, capacity and optional subtree selection. Missing means disabled.
 #[derive(Deserialize)]
@@ -140,7 +140,13 @@ fn wanted(task: &Task, board: &Board, operating: Option<&Operating>) -> Option<&
         return [Role::Executor, Role::Reviewer]
             .into_iter()
             .find(|role| claims.iter().any(|c| c.role == *role))
-            .map(|role| if role == Role::Executor { "executor" } else { "reviewer" });
+            .map(|role| {
+                if role == Role::Executor {
+                    "executor"
+                } else {
+                    "reviewer"
+                }
+            });
     }
     let role = match task.status.as_str() {
         "ready" => "executor",
@@ -508,10 +514,7 @@ fn idle_for<'a>(
             && !agents.iter().any(|other| {
                 other.health.holds()
                     && other.worktree == a.worktree
-                    && other
-                        .tasks
-                        .iter()
-                        .any(|t| t.role == "executor" && open(t))
+                    && other.tasks.iter().any(|t| t.role == "executor" && open(t))
             })
             && if role == "reviewer" {
                 a.branch.is_empty()
@@ -549,7 +552,10 @@ fn job_for<'a>(
     {
         return Ok((Some(record.handle), None));
     }
-    Ok((None, idle_for(agents, board, task, role, used, held, operating)))
+    Ok((
+        None,
+        idle_for(agents, board, task, role, used, held, operating),
+    ))
 }
 
 /// Whether `handle` is a fresh reviewer of `task`, `held` its [`Store::ever_held`]: one that

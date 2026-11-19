@@ -622,7 +622,10 @@ fn take(c: &Case, slug: &str, handle: &str, edge: &str) {
 fn work_a_workflow_holds_is_counted_by_its_recorded_transitions_never_its_status_now() {
     let c = Case::new();
     (c.f.store)
-        .activate_workflow(&crate::workflow::flow(), &symphony_board::workflow::Host::local())
+        .activate_workflow(
+            &crate::workflow::flow(),
+            &symphony_board::workflow::Host::local(),
+        )
         .unwrap();
     // Fourteen claimed at once: four stay at work, ten go to review three hours on.
     let start = c.f.now();

@@ -96,7 +96,9 @@ pub(super) fn judged<'t>(
     for claim in placed.claims() {
         let role = word(&claim.role);
         let there = (task.roles.iter()).any(|r| r.role == role && r.health.holds());
-        if there || wanted.contains(&claim.role) || !operating.dependencies_met(task, claim.edge, find)
+        if there
+            || wanted.contains(&claim.role)
+            || !operating.dependencies_met(task, claim.edge, find)
         {
             continue;
         }

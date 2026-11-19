@@ -538,9 +538,14 @@ fn a_held_task_holds_a_slot_by_its_positions_policy_whatever_status_it_projects_
             ("sim/reviewing", vec![("sim/reviewing", "review")]),
         ]
     );
-    assert_eq!(ledger.reviews()["orch"].keys().copied().collect::<Vec<_>>(), ["sim/review"]);
+    assert_eq!(
+        ledger.reviews()["orch"].keys().copied().collect::<Vec<_>>(),
+        ["sim/review"]
+    );
     // Moved to a position that releases its slot, and to one that holds it.
-    let after = ledger.slotted("sim/blocked", false).slotted("sim/released", true);
+    let after = ledger
+        .slotted("sim/blocked", false)
+        .slotted("sim/released", true);
     assert_eq!(
         slots_of(&after),
         [

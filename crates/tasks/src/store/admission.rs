@@ -413,7 +413,10 @@ impl Store {
     /// board's own claim lapses them: past their expiry, or held by a session lost or gone, each
     /// such session fenced at the beat it was read at. Sessions are read only where a
     /// reservation could have lapsed by its holder.
-    #[expect(clippy::type_complexity, reason = "one read's three parts, each used once")]
+    #[expect(
+        clippy::type_complexity,
+        reason = "one read's three parts, each used once"
+    )]
     fn lapsing(
         &self,
         roles: Vec<RoleRead>,

@@ -1,8 +1,7 @@
 //! One canonical admission ledger builder, shared with the read-only holdings producer.
 
 use super::{
-    DEPTH, Failure, Level, Read, Recorded, RoleRead, Row, SlotAt, Store, View, branches, slots,
-    sql,
+    DEPTH, Failure, Level, Read, Recorded, RoleRead, Row, SlotAt, Store, View, branches, slots, sql,
 };
 use crate::slots::{Entry, Ledger};
 use crate::store::postgres::cap as pg;
@@ -51,7 +50,10 @@ impl Observation {
     /// none for a task no workflow holds, or one at a pair the active definition does not declare.
     fn slot(&self, row: &Row) -> Option<bool> {
         let position = row.position.as_ref()?;
-        let (phase, state) = (position.get("phase")?.as_str()?, position.get("state")?.as_str()?);
+        let (phase, state) = (
+            position.get("phase")?.as_str()?,
+            position.get("state")?.as_str()?,
+        );
         (self.positions.iter())
             .find(|at| at.phase == phase && at.state == state)
             .map(|at| at.slot != "release")

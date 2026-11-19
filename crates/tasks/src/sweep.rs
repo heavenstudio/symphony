@@ -119,9 +119,9 @@ mod verdicts;
 pub use aside::{SWEPT, swept};
 pub use command::{Request, command, command_connect};
 
-use crate::workflow::operate::{self, Operating};
 use crate::maps::Collect as _;
 use crate::rows::TaskSessionRow;
+use crate::workflow::operate::{self, Operating};
 use crate::{Error, Session, Store, Task, sys};
 use build_output::Cleared;
 use holder::Holder;

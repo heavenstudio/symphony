@@ -237,9 +237,7 @@ impl Store {
 /// Of `edges`, those `next` shows nothing stopping now.
 fn open<'a>(next: &NextActions, edges: &[&'a str]) -> Vec<&'a str> {
     (edges.iter())
-        .filter(|edge| {
-            (next.actions.iter()).any(|a| a.edge == **edge && a.unavailable.is_empty())
-        })
+        .filter(|edge| (next.actions.iter()).any(|a| a.edge == **edge && a.unavailable.is_empty()))
         .copied()
         .collect()
 }

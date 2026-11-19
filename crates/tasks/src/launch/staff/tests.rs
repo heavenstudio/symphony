@@ -225,8 +225,16 @@ fn an_idle_reviewer_is_picked_only_when_the_board_takes_its_verdict() {
         let task = board.tasks.iter().find(|t| t.slug == slug).unwrap();
         let agents: Vec<_> = from.iter().map(|handle| idle_reviewer(handle)).collect();
         let held = f.store.ever_held(slug).unwrap();
-        idle_for(&agents, &board, task, "reviewer", &HashSet::new(), &held, None)
-            .map(|a| a.handle.clone())
+        idle_for(
+            &agents,
+            &board,
+            task,
+            "reviewer",
+            &HashSet::new(),
+            &held,
+            None,
+        )
+        .map(|a| a.handle.clone())
     };
     // Its executor, its filer and its orchestrator before are passed over for a fresh one.
     let unfresh = [EXECUTED, FILER, ORCHESTRATED];
@@ -624,15 +632,29 @@ fn a_held_task_wants_the_role_its_open_claim_edges_give_never_its_projected_stat
         };
         eligible(&task, &board, &Config::default(), Some(&w))
     };
-    assert_eq!(wants(held("sim/a", "build", "available"), Vec::new()), Some("executor"));
-    assert_eq!(wants(held("sim/a", "verify", "awaiting"), Vec::new()), Some("reviewer"));
+    assert_eq!(
+        wants(held("sim/a", "build", "available"), Vec::new()),
+        Some("executor")
+    );
+    assert_eq!(
+        wants(held("sim/a", "verify", "awaiting"), Vec::new()),
+        Some("reviewer")
+    );
     // In review by its projection, yet no edge leaving it gives a reviewer: a launch would fail.
     let reviewing = held("sim/a", "verify", "reviewing");
     assert_eq!(reviewing.status, "review");
     assert_eq!(wants(reviewing, Vec::new()), None);
-    assert_eq!(wants(legacy("sim/a", "review"), Vec::new()), Some("reviewer"));
+    assert_eq!(
+        wants(legacy("sim/a", "review"), Vec::new()),
+        Some("reviewer")
+    );
     // Work lost at a position no claim leaves is its recovery's, never a new executor's.
-    let lost = holding(held("sim/a", "build", "working"), EXECUTED, "executor", Health::Lost);
+    let lost = holding(
+        held("sim/a", "build", "working"),
+        EXECUTED,
+        "executor",
+        Health::Lost,
+    );
     assert_eq!(wants(lost, Vec::new()), None);
     assert_eq!(wants(held("sim/a", "verify", "accepted"), Vec::new()), None);
     // The claim's dependency predicate, read from the prerequisite's position.
@@ -641,13 +663,21 @@ fn a_held_task_wants_the_role_its_open_claim_edges_give_never_its_projected_stat
         task.depends = vec!["sim/b".into()];
         task
     };
-    assert_eq!(wants(needing(), vec![held("sim/b", "build", "working")]), None);
+    assert_eq!(
+        wants(needing(), vec![held("sim/b", "build", "working")]),
+        None
+    );
     assert_eq!(
         wants(needing(), vec![held("sim/b", "verify", "approved")]),
         Some("executor")
     );
     // Reserved for a session there: nobody else is started.
-    let reserved = holding(held("sim/a", "build", "available"), FRESH, "reserved", Health::Live);
+    let reserved = holding(
+        held("sim/a", "build", "available"),
+        FRESH,
+        "reserved",
+        Health::Live,
+    );
     assert_eq!(wants(reserved, Vec::new()), None);
     // No workflow read: a held task is never staffed by its status.
     let task = orchestrated(held("sim/a", "build", "available"));
@@ -677,7 +707,10 @@ fn an_idle_fresh_reviewer_takes_a_held_tasks_review_edge_and_its_executor_is_pas
     (f.store)
         .claim_by_workflow("sim/jump", &executed, &host, Role::Executor)
         .unwrap();
-    let next = f.store.workflow_actions("sim/jump", &executed, &host).unwrap();
+    let next = f
+        .store
+        .workflow_actions("sim/jump", &executed, &host)
+        .unwrap();
     let request = symphony_api::workflow::OperationRequest {
         project: f.store.database().database().to_string(),
         task: "sim/jump".into(),
@@ -697,7 +730,11 @@ fn an_idle_fresh_reviewer_takes_a_held_tasks_review_edge_and_its_executor_is_pas
     );
     // Its executor let the role go with its submit, yet executed it: a fresh one is picked.
     let held = f.store.ever_held("sim/jump").unwrap();
-    let agents = [idle_reviewer(EXECUTED), idle_reviewer(FILER), idle_reviewer(FRESH)];
+    let agents = [
+        idle_reviewer(EXECUTED),
+        idle_reviewer(FILER),
+        idle_reviewer(FRESH),
+    ];
     let picked = idle_for(
         &agents,
         &board,
@@ -725,8 +762,14 @@ fn an_idle_fresh_reviewer_takes_a_held_tasks_review_edge_and_its_executor_is_pas
         format!("pinged {FRESH} as reviewer, pane t1, prompt $review-task sim/jump {FRESH}")
     );
     let position = f.store.workflow_position("sim/jump").unwrap().unwrap();
-    assert_eq!((position.phase.as_str(), position.state.as_str()), ("verify", "reviewing"));
-    assert_eq!(f.store.get("sim/jump").unwrap().holders("reviewer"), [FRESH]);
+    assert_eq!(
+        (position.phase.as_str(), position.state.as_str()),
+        ("verify", "reviewing")
+    );
+    assert_eq!(
+        f.store.get("sim/jump").unwrap().holders("reviewer"),
+        [FRESH]
+    );
     // Taken: no claim leaves it, so the next pass starts nobody there.
     let board = f.store.board().unwrap();
     let task = board.tasks.iter().find(|t| t.slug == "sim/jump").unwrap();

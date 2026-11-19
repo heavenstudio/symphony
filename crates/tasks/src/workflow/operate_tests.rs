@@ -121,11 +121,16 @@ fn a_task_no_workflow_holds_and_one_at_an_undeclared_pair_are_not_placed() {
     assert_eq!(w.placed(&legacy("sim/a", "ready")), None);
     assert_eq!(w.placed(&held("sim/a", "build", "nowhere")), None);
     let mut broken = legacy("sim/a", "ready");
-    broken.fields.entry("_board".into()).or_default().insert(
-        "workflow".into(),
-        json!({"phase": "build"}),
+    broken
+        .fields
+        .entry("_board".into())
+        .or_default()
+        .insert("workflow".into(), json!({"phase": "build"}));
+    assert_eq!(
+        w.placed(&broken),
+        None,
+        "a position not in the board's shape"
     );
-    assert_eq!(w.placed(&broken), None, "a position not in the board's shape");
     assert_eq!(w.finished(&held("sim/a", "build", "nowhere")), None);
     assert_eq!(w.holds_slot(&legacy("sim/a", "in_progress")), None);
 }
@@ -190,7 +195,12 @@ fn working_is_a_session_there_holding_the_role_the_position_staffs() {
         (Health::Lost, false),
         (Health::Left, false),
     ] {
-        let task = holding(held("sim/a", "build", "working"), "amber", "executor", health);
+        let task = holding(
+            held("sim/a", "build", "working"),
+            "amber",
+            "executor",
+            health,
+        );
         assert_eq!(
             w.placed(&task).unwrap().working(&task),
             working,
@@ -198,16 +208,31 @@ fn working_is_a_session_there_holding_the_role_the_position_staffs() {
         );
     }
     // A reviewer is no executor; a position nobody works at is never worked.
-    let task = holding(held("sim/a", "build", "working"), "amber", "reviewer", Health::Live);
+    let task = holding(
+        held("sim/a", "build", "working"),
+        "amber",
+        "reviewer",
+        Health::Live,
+    );
     assert!(!w.placed(&task).unwrap().working(&task));
-    let task = holding(held("sim/a", "verify", "awaiting"), "amber", "reviewer", Health::Live);
+    let task = holding(
+        held("sim/a", "verify", "awaiting"),
+        "amber",
+        "reviewer",
+        Health::Live,
+    );
     assert!(!w.placed(&task).unwrap().working(&task));
 }
 
 #[test]
 fn the_lost_are_the_staffed_roles_holders_gone_while_nobody_there_holds_it() {
     let w = reviewed();
-    let task = holding(held("sim/a", "build", "working"), "amber", "executor", Health::Lost);
+    let task = holding(
+        held("sim/a", "build", "working"),
+        "amber",
+        "executor",
+        Health::Lost,
+    );
     let task = holding(task, "birch", "executor", Health::Left);
     let task = holding(task, "cedar", "reserved", Health::Lost);
     assert_eq!(w.placed(&task).unwrap().lost(&task), ["amber", "birch"]);
@@ -216,7 +241,12 @@ fn the_lost_are_the_staffed_roles_holders_gone_while_nobody_there_holds_it() {
         w.placed(&task).unwrap().lost(&task).is_empty(),
         "a holder there keeps the work going"
     );
-    let task = holding(held("sim/a", "verify", "awaiting"), "amber", "executor", Health::Lost);
+    let task = holding(
+        held("sim/a", "verify", "awaiting"),
+        "amber",
+        "executor",
+        Health::Lost,
+    );
     assert!(
         w.placed(&task).unwrap().lost(&task).is_empty(),
         "a role the position does not staff is no lost work"
@@ -274,9 +304,16 @@ fn a_slot_is_held_by_policy_and_finished_is_a_terminal_position() {
 fn unsuccessful_prerequisites_are_read_from_outcomes_and_the_boards_cancelled() {
     let w = reviewed();
     let mut task = held("sim/a", "build", "available");
-    task.depends = ["sim/gone", "sim/cancelled", "sim/c-held", "sim/accepted", "sim/done", "sim/approved"]
-        .map(String::from)
-        .to_vec();
+    task.depends = [
+        "sim/gone",
+        "sim/cancelled",
+        "sim/c-held",
+        "sim/accepted",
+        "sim/done",
+        "sim/approved",
+    ]
+    .map(String::from)
+    .to_vec();
     let board = [
         legacy("sim/cancelled", "cancelled"),
         held("sim/c-held", "build", "cancelled"),
@@ -333,7 +370,10 @@ fn a_done_predicate_is_met_by_satisfying_positions_and_the_boards_done() {
     for unchecked in [Dependency::Landed, Dependency::AcceptedOutput] {
         let mut edge = claim.clone();
         edge.dependencies = unchecked;
-        assert!(!w.dependencies_met(&needing(&[]), &edge, find), "{unchecked:?}");
+        assert!(
+            !w.dependencies_met(&needing(&[]), &edge, find),
+            "{unchecked:?}"
+        );
     }
 }
 
@@ -348,7 +388,12 @@ fn finished_is_a_terminal_position_for_held_work_and_done_or_cancelled_for_the_r
         (legacy("sim/a", "cancelled"), true),
         (legacy("sim/a", "review"), false),
     ] {
-        assert_eq!(super::finished(Some(&w), &task), finished, "{:?}", task.fields);
+        assert_eq!(
+            super::finished(Some(&w), &task),
+            finished,
+            "{:?}",
+            task.fields
+        );
     }
     // No workflow read: a held task is never finished by the status it projects to.
     assert!(!super::finished(None, &held("sim/a", "verify", "accepted")));

@@ -307,8 +307,8 @@ fn a_pull_recovers_a_lost_holder_by_its_positions_action_and_lists_the_work_agai
 }
 
 #[test]
-fn a_launch_starts_the_role_a_held_tasks_edges_give_its_executor_reserving_and_its_reviewer_claiming(
-) {
+fn a_launch_starts_the_role_a_held_tasks_edges_give_its_executor_reserving_and_its_reviewer_claiming()
+ {
     let p = super::launch::Terminals::new("held");
     let board = p.board();
     let orch = (board.register(&NewSession::new("orchestrator")).unwrap())
@@ -327,7 +327,16 @@ fn a_launch_starts_the_role_a_held_tasks_edges_give_its_executor_reserving_and_i
     };
     let (built, looked) = (folder("built"), folder("looked"));
     let launch = |role: &str, worktree: &str, more: &[&str]| {
-        let args = ["launch", "sim/jump", "--kind", "claude", "--role", role, "--worktree", worktree];
+        let args = [
+            "launch",
+            "sim/jump",
+            "--kind",
+            "claude",
+            "--role",
+            role,
+            "--worktree",
+            worktree,
+        ];
         p.as_(&orch, &[&args[..], more].concat())
     };
     // No edge leaving build/available gives the reviewer's role: nothing starts.
@@ -384,7 +393,11 @@ fn a_launch_starts_the_role_a_held_tasks_edges_give_its_executor_reserving_and_i
         .unwrap();
     let position = board.workflow_position("sim/jump").unwrap().unwrap();
     assert_eq!(
-        (position.phase.as_str(), position.state.as_str(), position.revision),
+        (
+            position.phase.as_str(),
+            position.state.as_str(),
+            position.revision
+        ),
         ("verify", "reviewing", 4)
     );
     assert!(
@@ -402,7 +415,10 @@ fn an_edge_to_a_terminal_position_finishes_the_task_closing_what_was_launched_on
     let orch = (board.register(&NewSession::new("orchestrator")).unwrap())
         .row
         .handle;
-    let shipping = FLOW.replace(r#"  { id = "accept","#, &format!(r#"  {SHIP}{{ id = "accept","#));
+    let shipping = FLOW.replace(
+        r#"  { id = "accept","#,
+        &format!(r#"  {SHIP}{{ id = "accept","#),
+    );
     board
         .activate_workflow(&custom(&shipping), &Host::local())
         .unwrap();
@@ -429,7 +445,8 @@ fn an_edge_to_a_terminal_position_finishes_the_task_closing_what_was_launched_on
         &["workflow", "apply", "sim/jump", "claim", "--revision", "1"],
     );
     assert!(
-        claimed.out.starts_with("took claim (sim/jump@2)\n") && !claimed.out.contains("closed pane"),
+        claimed.out.starts_with("took claim (sim/jump@2)\n")
+            && !claimed.out.contains("closed pane"),
         "{}{}",
         claimed.out,
         claimed.err

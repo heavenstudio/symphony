@@ -441,9 +441,8 @@ impl Store {
             return Ok(Vec::new());
         }
         let vars = json!({ "ids": ids });
-        let mut read: Vec<Transition> = self.retrying(|| {
-            self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone())
-        })?;
+        let mut read: Vec<Transition> =
+            self.retrying(|| self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone()))?;
         read.sort_by(|a, b| (&a.slug, a.revision).cmp(&(&b.slug, b.revision)));
         Ok(read)
     }
