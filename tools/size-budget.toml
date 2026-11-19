@@ -68,4 +68,19 @@ symphony = 12_390_000
 # Measured 7,438,784; the line is that plus 4%, rounded down to 10,000. Independent review is
 # required.
 tasks = 7_730_000
-agent-send = 3_150_000
+# The board's operations on tasks a workflow holds (tools/workflow-operations) add 264,656 bytes to
+# agent-send: 3,087,168 at the runtime's d7e3b719d, 3,351,824 with them. agent-send delivers what
+# it sends itself (send_agent, then the recipient's dispatch), and that dispatch composes an
+# orchestrator's PULL when one is due (pull::digest_on, cli::agents::describe_board). That PULL
+# must judge a held task as `tasks pull` does, by the active definition (its claims, staffing,
+# recovery, unsuccessful_dependency and slot policy), so it reads the definition. By the two tips'
+# link maps: the store's decoder of the definition, about 182 KB (serde_core 74,020, serde_json
+# 54,848 and symphony_api::workflow 53,032: Effect, Edge, Authority, Position, Recovery...), and
+# the board's own new code there, about 30 KB (the held judgments, the operating reader, the
+# cap's slot positions, the alarm's transitions read). Taken back first, 16,528 bytes: the alarm
+# decodes only the four fields of a transition it reads, not the whole Transition. A second
+# hand-written reader of the definition is what the runtime's cuts removed, so no reduction keeps
+# this PULL; one that composes no PULL in agent-send is another change of delivery, left to its own
+# task. Measured 3,351,824; the line is that plus 4%, rounded down to 10,000. Independent review is
+# required.
+agent-send = 3_480_000
