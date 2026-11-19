@@ -120,14 +120,16 @@ const COPY_USAGE: &str =
 pub const COPY_HELP: &str =
     "usage: tasks-copy ADDR [DATABASE] < dump.json, or tasks-copy --board [--out]
 
-Copy a whole board, read as a dump on standard input, into SurrealDB, replacing
-what the database held, in one transaction: into DATABASE (default tasks) of
-namespace sf on the server at ADDR, or, with --board, into the board this run
-reaches. With --board --out it writes that board's dump instead, in the shape
-the copy reads, and changes nothing.
+Copy a whole board, read as a dump on standard input, into its database,
+replacing what that held, in one transaction: into DATABASE (default tasks) on
+the server at ADDR, or, with --board, into the board this run reaches. With
+--board --out it writes that board's dump instead, in the shape the copy
+reads, and changes nothing. The board is read and written in the database it
+is in, SurrealDB or PostgreSQL, and its dump is the same from either.
 
 positional arguments:
-  ADDR            the server, HOST:PORT
+  ADDR            the server: SurrealDB's HOST:PORT (namespace sf), or
+                  PostgreSQL's socket folder as postgresql:/PATH
   DATABASE        the database there (default: tasks)
 
 options:
@@ -137,8 +139,8 @@ options:
   --out           with --board: write its dump, change nothing
 
 environment, with --board:
-  TASKS_SERVER    the board's server, HOST:PORT, in place of the one the
-                  repository's common dir records
+  TASKS_SERVER    the board's server, as ADDR names one, in place of the one
+                  the repository's common dir records
   TASKS_DATABASE  the board's database, in place of tasks
 ";
 
@@ -149,8 +151,11 @@ const COPY_SCRATCH: &str = "`TASKS_DATABASE=NAME` with `--board`, or `tasks-copy
 /// (`TASKS_SERVER`, `TASKS_DATABASE`, else the server in the git common dir, started if it is down),
 /// or `tasks-copy --board --out`, which writes that
 /// board's dump on one line, in the shape the copy reads, and changes nothing: how a test seeds a
-/// board too big to build call by call, and reads it back. `args` without the program name; what it
-/// says goes to `out`, a refusal to `err`; the exit code is returned.
+/// board too big to build call by call, and reads it back. The board is read and written in the
+/// database it is in ([`cli::Reached::database`]), SurrealDB or PostgreSQL, by the one reader and
+/// the one copy both have ([`Store::dump`], [`Store::copy`]), and a refusal names that database.
+/// `args` without the program name; what it says goes to `out`, a refusal to `err`; the exit code
+/// is returned.
 pub fn copy_main(
     args: &[String],
     env: &cli::Env,
@@ -190,29 +195,49 @@ fn copy(
     let opening = Opening::write().scratch(COPY_SCRATCH);
     // Either way the store opens a live board as one, so a board that went back is refused it
     // ([`live::seen`]): the board this run reaches, or the one whose server an address names.
+    // The board is read and written in the database it is in, whichever its reach names.
     let board = || {
-        cli::writable_board(env).map(|reached| (reached.opening(opening.clone()), reached.client))
+        cli::writable_board(env)
+            .map(|reached| (reached.opening(opening.clone()), reached.database()))
     };
     let server = |addr: &str, db: &str| {
         let how = opening.clone().live(live::find_here(addr, db));
-        (how, rpc::Client::new(addr, NAMESPACE, db))
+        cli::database_at(addr, db, "ADDR").map(|database| (how, database))
     };
-    let ((opening, client), dumping) = match args {
+    let ((opening, database), dumping) = match args {
         [board_word] if board_word == "--board" => (board()?, false),
         [board_word, dump] if board_word == "--board" && dump == "--out" => (board()?, true),
-        [addr] if named(addr) => (server(addr, DATABASE), false),
+        [addr] if named(addr) => (server(addr, DATABASE)?, false),
         [addr, db] if named(addr) && named(db) => {
             if !rpc::plain(db) {
                 return Err(format!("{db:?} is not a plain name for a database"));
             }
-            (server(addr, db), false)
+            (server(addr, db)?, false)
         }
         _ => return Err(COPY_USAGE.into()),
     };
+    let (addr, db) = (database.addr(), database.database().to_string());
+    let postgresql = database.is_postgresql();
+    // A refusal names the database the board is in, by its own name: the store's own says
+    // SurrealDB of either.
+    let refused = |why: Error| match why {
+        Error::Db(said) if postgresql => format!(
+            "PostgreSQL: {said} (the board's database {db} at {addr}: `just tasks database` \
+             says what serves it and whether it is held)"
+        ),
+        why => why.to_string(),
+    };
+    let host = sys::hostname();
+    let store = Store::opening_on(
+        database,
+        Box::new(store::now),
+        Box::new(sys::pid_alive),
+        &host,
+        &opening,
+    )
+    .map_err(&refused)?;
     if dumping {
-        let dump = Store::open_as(client, &opening)
-            .and_then(|store| store.dump())
-            .map_err(|e| e.to_string())?;
+        let dump = store.dump().map_err(&refused)?;
         let text = serde_json::to_string(&dump).map_err(|e| e.to_string())?;
         writeln!(out, "{text}").map_err(|e| format!("cannot write the dump: {e}"))?;
         return Ok(None);
@@ -222,11 +247,15 @@ fn copy(
         .read_to_string(&mut text)
         .map_err(|e| format!("cannot read the dump: {e}"))?;
     let dump = rows::Dump::from_json(&text)?;
-    let (addr, db) = (client.addr().to_string(), client.database().to_string());
-    let store = Store::open_as(client, &opening).map_err(|e| e.to_string())?;
-    store.copy(&dump).map_err(|e| e.to_string())?;
+    store.copy(&dump).map_err(&refused)?;
+    // A PostgreSQL board has no namespace: its database is named alone.
+    let place = if postgresql {
+        db.clone()
+    } else {
+        format!("{NAMESPACE}/{db}")
+    };
     Ok(Some(format!(
-        "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys, {} asks, {} usage rows{} into {NAMESPACE}/{db} at {addr}",
+        "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys, {} asks, {} usage rows{} into {place} at {addr}",
         dump.tasks.len(),
         dump.task_links.len(),
         dump.sessions.len(),

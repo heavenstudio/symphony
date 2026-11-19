@@ -32,6 +32,8 @@ pub use process_cwd::spawn::{
 
 mod callers;
 pub use callers::{Caller, callers, folder_of};
+mod gone;
+pub use gone::{gone, load_average, load_said};
 mod start;
 #[cfg(target_os = "macos")]
 pub(crate) use start::bsd_start;
