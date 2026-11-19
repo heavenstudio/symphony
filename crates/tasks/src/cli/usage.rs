@@ -167,7 +167,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "handover",
                 "hand a task's orchestrator role to another session",
             ),
-            ("move", "move a task to another status, --reason saying why"),
+            (
+                "move",
+                "take the board's own edge to a status, --reason saying why",
+            ),
             (
                 "workflow",
                 "a custom workflow: show it, a task's actions, apply, recover",
@@ -178,7 +181,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "verdict",
-                "as its reviewer: approve (done) or changes (back to work)",
+                "as its reviewer: a review round's approve or changes edge",
             ),
             (
                 "needs",
@@ -898,6 +901,11 @@ options:
                        slug
                        {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
 
+Take one of the board's own workflow's edges: the one from where the task
+stands to the status named, as your role on it allows. A task a custom workflow
+holds moves by its edges alone: a move refuses it as explicit_action_required,
+and `just tasks workflow actions SLUG` names the edges you can take.
+
 positional arguments:
   slug
   {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
@@ -920,6 +928,13 @@ options:
         r#"usage: just tasks verdict [-h] [--as ACTOR] slug {approve,changes} [text]
 "#,
         r#"usage: just tasks verdict [-h] [--as ACTOR] slug {approve,changes} [text]
+
+Record a round of a task's review as its reviewer, by one of the board's own
+review edges: approve, which completes the task and is the stamp its landing
+goes by, the text naming the whole tip read and why, or changes, which returns
+it to its executor's work, the text naming what and where. A task a custom
+workflow holds takes its review edges with `just tasks workflow apply`: a
+verdict refuses it as explicit_action_required.
 
 positional arguments:
   slug

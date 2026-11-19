@@ -87,7 +87,7 @@ full suite).
    resumed (no conversation recorded, a Codex thread that never arrived, a reviewer
    that left) is replaced: then another reviewer takes the role on the task. Use a
    separate checkout per executor.
-   Start an assessor on each task you file, and again each time it moves to review,
+   Start an assessor on each task you file, and again each time it requests review,
    before you staff any reviewer: an Agent launch on the model just tasks limits names
    for the assessor, its handle registered with just tasks register --kind reviewer
    --parent HANDLE, its whole prompt $assess-task SLUG HANDLE (Claude: /assess-task
@@ -122,16 +122,17 @@ full suite).
    who gives it: its executor its tests or pictures at the tip, you an assessor of
    the tip or a fresh reviewer, the owner its approve on the task's page, the task
    held blocked (or left done by its approve) meanwhile. Never waive a check it
-   refuses on: its one line names what to fix, and an approve it cannot go by sends
-   the task back to review. Run it again after an interrupted land: it finishes the
+   refuses on: its one line names what to fix, and an approve it cannot go by asks
+   for the task's review again. Run it again after an interrupted land: it finishes the
    push and the close.
    A task whose work landed with another task's branch, leaving none of its own,
-   is closed by its executor, or by you holding its orchestrator role, with just
-   tasks done SLUG "what landed, where" --covered-by OTHER, never a verdict of
-   yours: it is no approve, and a land refuses it. Cancel work no longer wanted
-   with just tasks move SLUG cancelled --reason "why".
-9. Post only a review-ready tip, review/blocked move, collision, finding, verdict or
-   question. Address action with --to @executor, --to @reviewer or a handle. Never
+   is closed by its executor, or by you holding its orchestrator role, by its
+   close_covered edge, just tasks done SLUG "what landed, where" --covered-by
+   OTHER, never a verdict of yours: it is no approve, and a land refuses it.
+   Cancel work no longer wanted by its cancel edge, just tasks move SLUG
+   cancelled --reason "why".
+9. Post only a review-ready tip, a request for review or a block, collision,
+   finding, verdict or question. Address action with --to @executor, --to @reviewer or a handle. Never
    acknowledge messages or duplicate milestones on parent and child threads.
 10. Name the dependency, verdict or landing you await on the thread, then end the
     turn. Do not poll. Use just tasks restore SLUG to resume recorded work and

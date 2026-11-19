@@ -1,6 +1,7 @@
 # Start: claim the task, then question it
 
-1. Claim exactly the assigned task: `just tasks claim SLUG --as HANDLE`. If it is held, reserved
+1. Claim exactly the assigned task, its `claim` edge: `just tasks claim SLUG --as HANDLE`. If it
+   is held, reserved
    for someone else or blocked by a dependency, say so on its thread and stop dependent work. If
    the claim is refused at a cap while the task is reserved for you, work under the reservation:
    it lapses after an hour, so renew it with `just tasks reserve SLUG --as HANDLE` within each
@@ -20,8 +21,8 @@
    answer ([connected.md](connected.md): your callback or inbox, and how to wait). A brief is an
    instruction, not proof the work is worth doing.
 4. From then on follow the description exactly. If it cannot be fulfilled, say what prevents it
-   and move the task blocked, naming what it waits on (`--on decision:NAME`, `check:NAME`,
-   `task:SLUG` or `parked`, with `--why TEXT`). Resolve conflicting instructions under project
+   and take its `block` edge, naming what it waits on (`just tasks move SLUG blocked` with
+   `--on decision:NAME`, `check:NAME`, `task:SLUG` or `parked`, and `--why TEXT`). Resolve conflicting instructions under project
    policy; never change the scope silently or invent a replacement task.
 
 ## Fast bug fixes

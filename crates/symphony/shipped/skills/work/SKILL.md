@@ -25,3 +25,12 @@ own standing instructions for an executor. Read them before the stage page of st
    - Not claimed by you yet: [start.md](start.md).
    - Claimed and questioned: [build.md](build.md).
    - Built, or back from a verdict or a land: [finish.md](finish.md).
+
+A task moves by its workflow's edges, each named here by its operation: `claim`, `block`,
+`request_review`, `complete_subtask` and `close_covered`. Where the board's own workflow holds
+the task, each is the command its page gives. Where a custom workflow holds it, a command that
+cannot take the edge for you refuses it as `explicit_action_required`: then `just tasks workflow
+actions SLUG --as HANDLE` names each edge that leaves where it stands, with its label, destination and what stops you now (`--json` adds its operation), and
+`just tasks workflow apply SLUG EDGE --revision N --as HANDLE` takes one, N the workflow revision
+those actions named, an input the edge needs given as `--input NAME=TEXT`. One refused as
+`stale_task` moved since you read it: read its actions again.

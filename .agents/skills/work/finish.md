@@ -4,17 +4,18 @@ Finish only by the step the description names:
 
 - Branch work: post the complete tip, the changed behaviour and its evidence
   ([build.md](build.md#evidence-is-the-gate)), with what the description asked for that was
-  left out and why, then `just tasks move SLUG review --as HANDLE` once the project's review
-  prerequisites hold.
+  left out and why, then take its `request_review` edge (`just tasks move SLUG review --as
+  HANDLE`) once the project's review prerequisites hold.
 - A slice of a feature: as [below](#parent-feature-delivery).
-- An instruction subtask: `just tasks done SLUG "complete result and remaining limits" --as HANDLE`.
+- An instruction subtask: its `complete_subtask` edge,
+  `just tasks done SLUG "complete result and remaining limits" --as HANDLE`.
 - Work that landed with another task's branch, or a land that refused your approved task:
   [rare-endings.md](rare-endings.md).
 
 A changes verdict returns the work to you: fix every finding, validate under project policy,
-post the new complete tip and move it to review again. Never review your own work, waive a
-required approval or perform a landing the task did not authorize. A move to review may run the
-project's configured `on_review` command; what it does, and any later landing, belong to the
+post the new complete tip and request review again. Never review your own work, waive a
+required approval or perform a landing the task did not authorize. A request for review may run
+the project's configured `on_review` command; what it does, and any later landing, belong to the
 project's configuration and instructions.
 
 ## The default branch, once
@@ -38,8 +39,8 @@ card; never move it onto a different card to let this branch land.
 
 Run the focused builds and tests through the project's recorded entrypoints, at the tip you ask
 review for: the runs recorded there are what a reviewer reads in place of running them again. A
-run made before your last commit is of another commit, so run it again yourself before the move
-to review; a reviewer builds or runs only what your record leaves open.
+run made before your last commit is of another commit, so run it again yourself before you
+request review; a reviewer builds or runs only what your record leaves open.
 
 ## Parent feature delivery
 
@@ -51,9 +52,9 @@ the feature branch, or merge their worktree commits into it with the project's
 no delivery hooks or stamps, and the project's landing (`land` where it has one) remains the
 completed feature's delivery command. A slice runs only the focused checks it needs: no
 slice-level full build, full suite, reviewer staffing, certificate, stamps or landing. Close the
-slice with its integration commit and focused result using
+slice by its `complete_subtask` edge with its integration commit and focused result,
 `just tasks done SLUG "integration commit and focused result" --as HANDLE`. When the complete
-feature is ready, the parent goes to review once with its evidence, then lands. Review fixes stay
+feature is ready, the parent requests review once with its evidence, then lands. Review fixes stay
 with that parent and do not create independent delivery rounds. The board shows parents by
 default, their subtasks nested under them. This rule supersedes conflicting per-subtask gate
 instructions.
