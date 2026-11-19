@@ -21,7 +21,7 @@ fn each_capability_is_its_own_setting() {
         for pulls in ["off", "track", "publish"] {
             let text = format!(
                 "{ON}issues = \"{issues}\"\npull_requests = \"{pulls}\"\nimport_labels = \
-                 [\"a\"]\nchecks_token_file = \"/secrets/checks\"\nchecks_app_id = 42\n"
+                 [\"a\"]\nchecks_token_file = \"/secrets/checks\"\nchecks_app_id = 42\nlanding_app_id = 43\n"
             );
             let config = parse(&text).unwrap();
             assert_eq!(
@@ -55,9 +55,23 @@ fn what_does_not_hold_together_is_refused_by_name() {
         ),
         (
             &format!(
-                "{ON}pull_requests = \"publish\"\nchecks_token_file = \"/secrets/token\"\nchecks_app_id = 42\n"
+                "{ON}pull_requests = \"publish\"\nchecks_token_file = \"/secrets/token\"\nchecks_app_id = 42\nlanding_app_id = 43\n"
             ),
             "checks_token_file is token_file: what writes the checks is never what merges",
+        ),
+        (
+            &format!(
+                "{ON}pull_requests = \"publish\"\nchecks_token_file = \"/secrets/checks\"\nchecks_app_id = 42\n"
+            ),
+            "pull_requests = \"publish\" needs landing_app_id",
+        ),
+        (
+            "checks_app_id = 42\nlanding_app_id = 42\n",
+            "landing_app_id is checks_app_id: what merges is never what writes the checks",
+        ),
+        (
+            "landing_app_id = -1\n",
+            "landing_app_id is a GitHub App's number",
         ),
         (
             "checks_token_file = \"checks\"\n",
