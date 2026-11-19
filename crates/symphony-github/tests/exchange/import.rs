@@ -93,6 +93,12 @@ fn merge(d: &Delivery, method: &str, url: Option<&str>) -> Value {
     )
 }
 
+/// The `why` of `answer`, a refusal of `d`'s that pushed nothing.
+fn not_pushed(d: &Delivery, answer: &Value) -> String {
+    assert!(d.remote.pushed.borrow().is_empty(), "{answer}");
+    why(answer).to_string()
+}
+
 /// The `why` of a refusal.
 fn why(answer: &Value) -> &str {
     assert_eq!(answer["state"], "refused", "{answer}");
@@ -156,10 +162,6 @@ fn a_task_in_a_repository_that_imports_is_squashed_and_asks_for_nothing_else() {
 
 #[test]
 fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anything_is_pushed() {
-    let not_pushed = |d: &Delivery, answer: &Value| -> String {
-        assert!(d.remote.pushed.borrow().is_empty(), "{answer}");
-        why(answer).to_string()
-    };
     // Settings that pin no upstream deliver no import, as their branch permits squash alone.
     let d = Delivery::new("import-unpinned", "");
     d.rig.github.set_repository(&json!({"private": false}));
@@ -224,6 +226,10 @@ fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anyt
         let refused = not_pushed(&d, &publish(&d, &imported(Some(UPSTREAM)), Some(url)));
         assert!(refused.contains(said), "{url}: {refused}");
     }
+}
+
+#[test]
+fn an_import_into_itself_or_of_other_evidence_is_refused_and_private_into_private_is_not() {
     // The repository delivered to is no upstream of its own.
     let d = Delivery::new("import-self", "upstream_id = 77\n");
     permits(&d, &["merge", "squash"]);
