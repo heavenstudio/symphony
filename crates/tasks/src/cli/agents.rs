@@ -357,9 +357,12 @@ pub fn describe_board_observed(
     let spoke = store.last_messages()?;
     let callbacks = store.callbacks()?;
     let web = store.session_urls()?;
-    let open_slots = store
-        .slots()
-        .map(|cap| (cap, crate::slots::Ledger::of_board(board).counts()));
+    // A task a custom workflow holds counts by its position's slot policy.
+    let operating = store.operating_for(&board.tasks)?;
+    let open_slots = store.slots().map(|cap| {
+        let ledger = crate::slots::Ledger::of_board_on(board, operating.as_ref());
+        (cap, ledger.counts())
+    });
     let mut held_by_handle = tasks_by_handle(&board.tasks);
     let following = following_by_handle(&board.tasks);
     let mut by_handle: HashMap<&str, Vec<&TaskSessionRow>> = HashMap::new();
