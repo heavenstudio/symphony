@@ -59,6 +59,15 @@ pub trait Hc {
     /// the board's database.
     fn board(&self) -> String;
 
+    /// The id of the project whose board this is, as the board itself names it
+    /// ([`crate::project::find`]): its file's, else the registry's, else its main checkout's
+    /// folder name, the same from the main checkout and from a linked worktree. What the board's
+    /// local attempts are scoped by ([`crate::execution::board_scope`]). An hc that reads neither
+    /// the project's file nor the registry names the folder [`Hc::board`] does.
+    fn project(&self) -> String {
+        labelled(&self.board())
+    }
+
     /// Queue a resumed Codex conversation's next message through its native channel. Acceptance
     /// does not say the resumed turn ended or that a turn on this text has started.
     fn queue_codex(&self, _thread: &str, _text: &str) -> Result<(), LaunchError> {
@@ -436,6 +445,18 @@ impl Hc for Binary {
     fn board(&self) -> String {
         board_of(&self.env)
     }
+
+    fn project(&self) -> String {
+        let machine = crate::cli::machine(&self.env);
+        crate::project::find(&self.env.cwd, machine.as_deref())
+            .map_or_else(|_| labelled(&self.board()), |project| project.id)
+    }
+}
+
+/// The project folder's name the [`BOARD_LABEL`] `board` (`PROJECT/DATABASE`) begins with.
+fn labelled(board: &str) -> String {
+    let (project, _) = board.rsplit_once('/').unwrap_or((board, ""));
+    project.to_string()
 }
 
 /// Where `program` is: a path (one with a `/`) from `env`'s working directory, else the first

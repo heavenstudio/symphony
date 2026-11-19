@@ -97,6 +97,17 @@ pub struct Pull {
     pub landed: Option<String>,
 }
 
+/// The GitHub Release a release's tag is published as ([`crate::release`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Released {
+    /// The release's number at GitHub.
+    pub id: i64,
+    pub url: String,
+    /// The commit the release was asked for: read as the tag's at GitHub before one is made,
+    /// and the request's own word for one found there.
+    pub commit: String,
+}
+
 /// Which side an operator kept of a conflict.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -119,6 +130,9 @@ pub struct State {
     /// The pull request each delivered task is bound to, by its slug.
     #[serde(default)]
     pub pulls: BTreeMap<String, Pull>,
+    /// The GitHub Release each release is published as, by its tag.
+    #[serde(default)]
+    pub releases: BTreeMap<String, Released>,
     /// The issues an operator dropped from a task's mapping, by the task's slug and the issue's
     /// id: none is mapped to that task again, or taken for its publication.
     #[serde(default)]
@@ -310,28 +324,28 @@ impl Store {
     }
 
     /// The journal, oldest first. What follows its last line end is a line cut short by a crash
-    /// before its operation went on, and is left out. Any other line that does not read is a
-    /// refusal naming it: a line dropped may be an intent, and an intent forgotten is an
-    /// operation made twice.
+    /// before its operation went on, and is left out, whatever bytes the cut left: one may end
+    /// inside a character. Any other line that does not read is a refusal naming it: a line
+    /// dropped may be an intent, and an intent forgotten is an operation made twice.
     ///
     /// # Errors
     ///
     /// The file is there and could not be read, or a line of it does not read.
     pub fn entries(&self) -> Result<Vec<Entry>, String> {
         let path = self.path("journal.jsonl");
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(wrong(&path, error)),
         };
-        let Some((ended, _cut_short)) = text.rsplit_once('\n') else {
+        let Some(end) = bytes.iter().rposition(|byte| *byte == b'\n') else {
             return Ok(Vec::new());
         };
-        ended
-            .split('\n')
+        bytes[..end]
+            .split(|byte| *byte == b'\n')
             .enumerate()
             .map(|(index, line)| {
-                serde_json::from_str(line).map_err(|error| {
+                serde_json::from_slice(line).map_err(|error| {
                     wrong(
                         &path,
                         format!(

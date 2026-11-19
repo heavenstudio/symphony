@@ -1,7 +1,8 @@
 # GitHub issue exchange and pull request delivery
 
-`symphony-github` exchanges selected tasks with the issues of one GitHub.com repository, and
-answers [a land delivered by a pull request](#delivering-a-land) there. It is optional and turned
+`symphony-github` exchanges selected tasks with the issues of one GitHub.com repository,
+answers [a land delivered by a pull request](#delivering-a-land) there, and answers a release run
+with [a GitHub Release](#publishing-a-release) for a tag it pushed. It is optional and turned
 off: a project that never commits its settings file runs none of it, and its
 board, its pages and its landing are as they are without it.
 
@@ -13,8 +14,8 @@ It is a program of its own (`crates/symphony-github`). It reaches the board thro
 [`tasks api`](TASKS.md#the-tasks-api) and nothing else, GitHub through `curl`, and keeps what it
 must remember in the folder the board names for it. No other package of the workspace builds with
 it, which `crates/symphony-github/tests/boundary.rs` holds. Nothing starts it but an operator,
-and a land where the project's `[land] delivery` names it: there is no schedule, no webhook and
-no page that runs it. The design it follows, and what of
+a land where the project's `[land] delivery` names it, and a release run where its `[releases]
+github` does: there is no schedule, no webhook and no page that runs it. The design it follows, and what of
 that design is not built, is [the proposal](analysis/github-integration.md).
 
 ## Turning it on
@@ -35,6 +36,7 @@ refusal as turned off.
 | `repository` | none | `"OWNER/NAME"` on GitHub.com, the one repository reached; never a URL or another host |
 | `issues` | `"off"` | `"import"`, `"export"` or `"exchange"` (both) |
 | `pull_requests` | `"off"` | `"publish"` answers [a land's delivery](#delivering-a-land); `"track"` is read and held to its word, and this build tracks none and says so |
+| `releases` | `"off"` | `"publish"` answers [a release run](#publishing-a-release) with a GitHub Release for a tag it pushed |
 | `token_file` | none | the absolute path of a file holding the token |
 | `import_labels` | `[]` | the labels that select an open issue for import |
 | `import_comments` | `false` | whether the comments of a mapped issue become notes on its task |
@@ -72,8 +74,9 @@ says when it fails is redacted before it is printed or journaled, and nothing th
 holds the token. A machine without `curl` on `PATH` is told so, and nothing is sent.
 
 A fine-grained token scoped to the one repository is enough: issues read for `import`, issues
-read and write for `export` and `exchange`. A token that GitHub refuses (401) pauses the
-exchange with everything kept; the next preview that succeeds lifts the pause.
+read and write for `export` and `exchange`, and contents read and write for `releases =
+"publish"`, which GitHub takes a release's creation as. A token that GitHub refuses (401) pauses
+the exchange with everything kept; the next preview that succeeds lifts the pause.
 
 A delivery uses three tokens, each held by the same rules. `token_file`'s opens and merges the pull
 request and reads the rules of [the protection](#the-protection-a-delivery-needs): an installation token of
@@ -119,6 +122,9 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
   exits 0 only where a delivery would go on.
 - **`deliver VERB --request FILE`** answers one verb of [a land's delivery](#delivering-a-land).
   A land runs it; an operator has no reason to.
+- **`release --request FILE`** answers a release run with
+  [a GitHub Release](#publishing-a-release) for the tag FILE names. A release run runs it; an
+  operator asks through that run's own `--github`.
 
 ## What is exchanged
 
@@ -174,7 +180,12 @@ publication. `drop SLUG` drops the mapping and keeps the issue as not the task's
 the two again, counts it as a duplicate of the task's publication, or takes it for a publication
 whose answer was lost. A curated text kept stays, so the next preview shows it published as a
 new issue. Nothing is written to the issue or the board, and the journal holds the drop as an act
-of its own, its intent carrying the mapping it drops.
+of its own, its intent carrying the mapping it drops. The preview waiting is dropped before
+anything else is written, so a drop or a `resolve` cut short never leaves one read before it.
+
+No command undoes a drop. The issue's id stays under the task's slug in `dropped` in
+`state.json`; removing it there by hand, while no command runs, lets the next preview map the
+two again.
 
 ## What is kept
 
@@ -186,7 +197,8 @@ no worktree and no commit, and backed up with the repository's common dir or not
   task's number with the board's recovery generation, the issue's number and ids, each side's
   digest), the curated texts, and what pauses the exchange.
 - `state.json` holds as well the pull request each delivered task is bound to, with the task's
-  number and, once it landed, the commit, and the issues dropped from each task's mapping.
+  number and, once it landed, the commit, the issues dropped from each task's mapping, and the
+  GitHub Release each release's tag is published as, with its number, its page and the commit.
 - `preview.json`: the preview that waits.
 - `journal.jsonl`: a line before each operation is dispatched (its id, target, the digest of
   what it writes, what it expects to find, the settings' revision, who ran it) and a line with
@@ -209,8 +221,10 @@ A reconcile is safe to run again and to interrupt.
   was dispatched (one found is mapped, more than one stops with none mapped and none created), an issue's edit and a brief's edit by
   reading the side they wrote, a proposal by its slug and the line naming its issue. Such a
   publication, or one skipped, is looked for at every later apply of it until an acknowledgment
-  maps an issue: each costs one request for each hundred issues of the repository. No bound is
-  set on it, since a public issue made twice cannot be recalled.
+  maps an issue: each costs one request for each hundred issues of the repository, up to 1,000
+  pages (100,000 issues). A repository with more ends the search there: the run stops with the
+  publication's result still unknown and creates nothing, since a public issue made twice cannot
+  be recalled.
 - A brief is rewritten only by `edit_bound`, with the token the preview read. A token the board
   refuses ends the run and drops the preview: nothing is tried on what the board holds now, and
   the next preview reads the task again.
@@ -332,6 +346,45 @@ is the one operation that brings another repository's commits in, and a task hea
 is refused, but a branch that copies a private history's files as commits of its own is a task,
 and only its review sees what it publishes.
 
+## Publishing a release
+
+A project whose `symphony.toml` commits `[releases] github = ["symphony-github", "release"]` has
+its release run ask for a GitHub Release of each tag it pushed
+([RELEASES](RELEASES.md#a-github-release)): the run starts `symphony-github release --request
+FILE` in the main checkout and reads one line of JSON. The adapter answers only `enabled`
+settings whose `releases` is `"publish"`; under any other it answers `refused` and asks GitHub
+nothing, keeping nothing. The request names the release's `tag`, the `commit` it tags, its
+`body` and whether it is the `latest`.
+
+In order, with `token_file`'s token (`crates/symphony-github/src/release.rs`):
+
+1. **The repository** is read and held to the one the state is bound to by its number, as a
+   delivery holds it; with none bound yet, it is bound. Another repository at the name is
+   refused: nothing is published to it.
+2. **The release is looked for by its tag** (`GET /repos/OWNER/NAME/releases/tags/TAG`). One
+   found is kept as the tag's and answered `found`: none is made, and it is left as it is,
+   whatever its text. One that was published here and GitHub no longer shows, because a person
+   removed it or made it a draft, is refused and not made again.
+3. **The tag is read at GitHub** (`GET …/git/ref/tags/TAG`, through the tag's own object where it
+   is annotated) and must name the request's commit. GitHub makes a tag of its own for a release
+   whose tag it does not hold, so with no tag there, or one naming another commit, nothing is
+   asked for.
+4. **The release is made** (`POST …/releases`): its name the tag's, its body the text handed
+   over, cleaned to content and cut at 100,000 characters with a line saying so, neither a draft
+   nor a prerelease, and marked the latest only where the request says. Nothing is uploaded.
+
+The answer's `state` is `published` (made now), `found`, `refused` (running again as things are
+makes none: the settings, the repository, the tag, a token that may not write contents),
+`unavailable` (GitHub gave no answer to go on by, and nothing was made) or `unknown` (the release
+was asked for and its answer was lost).
+
+It is safe to run twice and to interrupt. The one write is journaled before it is made, and
+every run looks for the release by its tag first, so a second run, a run after a lost answer and
+a run after one killed between the request and its answer make no second release. A creation
+GitHub refuses as there already, made by another run since the look, is found and kept. This
+command sends one kind of write, a release's creation: it edits and deletes no release and
+makes, moves and deletes no tag.
+
 ## The protection a delivery needs
 
 A delivery is held to its evidence by GitHub only where the default branch's rules say so, and
@@ -423,5 +476,7 @@ A setup of a repository of your own is checked by `status`, `preview` and `prefl
 and a repository held in memory with every failure above planted, and the exchange on a real
 scratch board through `tasks api` with its requests made by a real `curl` to a loopback server.
 The delivery's verbs are asked of the same repository in memory, which answers pull requests,
-their merge and a commit's checks, and its rules and rulesets, which it holds a merge to. None needs a GitHub repository or a credential. A run against GitHub itself needs a disposable
+their merge and a commit's checks, and its rules and rulesets, which it holds a merge to. A
+release is asked of it too, which answers a tag, the release of a tag and its creation, and
+makes a tag of its own for a release whose tag it lacks, as GitHub does. None needs a GitHub repository or a credential. A run against GitHub itself needs a disposable
 repository and a token its owner supplies, and is nobody's to start without that word.

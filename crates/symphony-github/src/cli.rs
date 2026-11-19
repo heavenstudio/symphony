@@ -6,9 +6,10 @@
 //! writes nothing there or on the board; turned off, it reads nothing there, and neither it nor
 //! `reconcile` makes the folder. `reconcile` is the one command that writes either, and only the
 //! preview it is handed. `deliver` is the land's, not an operator's: it answers one verb of a
-//! delivery by pull request ([`crate::deliver`]).
+//! delivery by pull request ([`crate::deliver`]). `release` is the release run's: a GitHub
+//! Release for a tag it pushed ([`crate::release`]).
 
-use crate::config::PullRequests;
+use crate::config::{PullRequests, Releases};
 use crate::github::{clean_body, clean_title};
 use crate::plan;
 use crate::reconcile::{self, Context, Outcome};
@@ -40,6 +41,8 @@ project's default branch commits symphony-github.toml with enabled = true.
                                       published anew
   deliver VERB --request FILE         answer a land delivered by a pull request, which runs it
                                       (`[land] delivery`): publish, merge, result or landed
+  release --request FILE              answer the release run with a GitHub Release for a tag it
+                                      pushed (`[releases] github`); edits and deletes none
   preflight [--branch BASE]           read the protection of BASE (the default branch) as a
                                       delivery does before it writes, and say what is missing;
                                       writes nothing anywhere
@@ -125,6 +128,15 @@ fn status(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
                     PullRequests::Publish => " (a land's delivery: `deliver`)",
                 }
             );
+            let _ = writeln!(
+                out,
+                "releases: {}{}",
+                config.releases.word(),
+                match config.releases {
+                    Releases::Off => "",
+                    Releases::Publish => " (a release run's GitHub Release: `release`)",
+                }
+            );
             if let Some(file) = &config.token_file {
                 let _ = writeln!(out, "token file: {}", file.display());
             }
@@ -185,6 +197,9 @@ fn kept(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
             "  {slug} is delivered by #{} {}{landed}",
             pull.number, pull.url
         );
+    }
+    for (tag, released) in &state.releases {
+        let _ = writeln!(out, "  {tag} is published as {}", released.url);
     }
     for (slug, mapping) in &state.mappings {
         let flag = mapping
@@ -306,6 +321,9 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
     let Some(mapping) = state.mappings.get_mut(slug) else {
         return Err(format!("{slug} is mapped to no issue"));
     };
+    // A preview read before the side was kept is never applied after it, so it goes before
+    // anything is written: a stop between the two leaves no preview, never an old one.
+    store.drop_preview()?;
     if matches!(mapping.flag, Some(Flag::Suspended(_))) {
         // Taken up again for the task the slug names now, under the board's generation now,
         // with digests neither side has: the side kept decides what the next preview writes.
@@ -318,7 +336,6 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
     }
     state.resolutions.insert(slug.clone(), side);
     store.save(&state)?;
-    store.drop_preview()?;
     let _ = writeln!(
         out,
         "{slug}: the {} side is kept. Nothing was written yet: preview, then reconcile.",
@@ -333,9 +350,9 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
 
 /// `drop SLUG`: the task's mapping is dropped and its issue kept as not the task's, so no
 /// preview maps the two again or takes that issue for the task's publication; a curated text
-/// stays, and the next preview publishes it anew. It writes only the adapter's own folder, as an
-/// act of its own in the journal: its intent holding the mapping it drops, then its
-/// acknowledgment.
+/// stays, and the next preview publishes it anew. It writes only the adapter's own folder: the
+/// preview waiting is dropped first, then the drop is an act of its own in the journal, its
+/// intent holding the mapping it drops, then its acknowledgment.
 fn drop_mapping(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
     let [slug] = args else {
         return Err("drop takes one SLUG".into());
@@ -362,13 +379,16 @@ fn drop_mapping(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outc
         by: String::new(),
         result,
     };
+    // A preview read before the drop would adopt the mapping again, or push the curated text
+    // into the issue dropped, so it goes before anything is written: a stop between the writes
+    // leaves no preview, never an old one.
+    store.drop_preview()?;
     store.journal(&entry(Event::Intent, Value::Null))?;
     state.mappings.remove(slug);
     state.resolutions.remove(slug);
     (state.dropped.entry(slug.clone()).or_default()).insert(mapping.issue_id);
     store.save(&state)?;
     store.journal(&entry(Event::Ack, json!({"dropped": mapping.issue_id})))?;
-    store.drop_preview()?;
     let _ = writeln!(
         out,
         "{slug} is no longer mapped to issue #{} ({}), which is kept as not this task's. Nothing \
@@ -425,6 +445,11 @@ fn command(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
                 .ok_or("the project has no main checkout")?;
             let remote = crate::deliver::Git { main: main.clone() };
             crate::deliver::run(ctx, &remote, verb, std::path::Path::new(&file), out)
+        }
+        "release" => {
+            let file = need(&mut rest, "--request")?;
+            none_left(&rest)?;
+            crate::release::run(ctx, std::path::Path::new(&file), out)
         }
         "preflight" => {
             let named = option(&mut rest, "--branch")?;
