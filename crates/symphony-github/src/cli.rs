@@ -33,6 +33,9 @@ project's default branch commits symphony-github.toml with enabled = true.
                                       mapping again; the next preview shows what follows
   deliver VERB --request FILE         answer a land delivered by a pull request, which runs it
                                       (`[land] delivery`): publish, merge, result or landed
+  preflight [--branch BASE]           read the protection of BASE (the default branch) as a
+                                      delivery does before it writes, and say what is missing;
+                                      writes nothing anywhere
 
 --tasks PROGRAM names the board's program, else the `tasks` beside this one or on PATH.
 ";
@@ -334,6 +337,19 @@ fn command(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
                 .ok_or("the project has no main checkout")?;
             let remote = crate::deliver::Git { main: main.clone() };
             crate::deliver::run(ctx, &remote, verb, std::path::Path::new(&file), out)
+        }
+        "preflight" => {
+            let named = option(&mut rest, "--branch")?;
+            none_left(&rest)?;
+            let base = match named {
+                Some(base) => base,
+                None => crate::config::default_branch(
+                    ctx.repository
+                        .first()
+                        .ok_or("the project has no main checkout")?,
+                )?,
+            };
+            crate::deliver::preflight(ctx, &base, out)
         }
         other => Err(format!("no command {other:?}\n{USAGE}")),
     }

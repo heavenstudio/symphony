@@ -216,7 +216,8 @@
   margin: 12px 0;
 }
 
-#media-lightbox button {
+#media-lightbox button,
+#media-lightbox .lightbox-full {
   min-width: 44px;
   min-height: 44px;
   font-size: 1rem;
@@ -227,6 +228,23 @@
   cursor: pointer;
 }
 
+/* The picture itself, in a tab of its own: a link drawn as the buttons beside it. */
+#media-lightbox .lightbox-full {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0 14px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+#media-lightbox .lightbox-full:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 #media-lightbox .lightbox-caption {
   text-align: center;
+  overflow-wrap: anywhere;
 }
