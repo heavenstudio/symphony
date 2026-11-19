@@ -328,14 +328,14 @@ fn replayed<'t>(
         .collect();
     let moved_by_workflow = alarm::transition_lines(&store.transitions(&touched)?, since);
     let mut threads: HashMap<&str, Vec<&Line>> = HashMap::new();
-    let until_now = (lines.iter().chain(&moved_by_workflow)).filter(|line| line.ts <= now);
-    for line in until_now {
+    for line in lines.iter().filter(|line| line.ts <= now) {
         threads.entry(line.slug.as_str()).or_default().push(line);
     }
-    for (slug, _) in &touched {
-        if let Some(thread) = threads.get_mut(slug) {
-            thread.sort_by(|a, b| a.ts.total_cmp(&b.ts));
-        }
+    // Each in its place on its thread, which the board's own lines keep in time order.
+    for line in moved_by_workflow.iter().filter(|line| line.ts <= now) {
+        let thread = threads.entry(line.slug.as_str()).or_default();
+        let at = thread.partition_point(|said| said.ts <= line.ts);
+        thread.insert(at, line);
     }
     let mut moves: HashMap<&str, Vec<(f64, alarm::Moved<'_>)>> = HashMap::new();
     for (slug, lines) in &threads {

@@ -224,11 +224,13 @@ INSERT INTO workflow (id, kind, body, at) VALUES (jsonb_build_array('event', v -
 UPDATE task SET fields = board_fields(id, fields, '{_board,workflow}', v -> 'placed')
     WHERE slug = v ->> 'slug';";
 
-/// Twin of `super::super::surreal::workflow::TRANSITIONS`, by the primary key.
+/// Twin of `super::super::surreal::workflow::TRANSITIONS`, by the primary key, in the order the
+/// ids are given.
 pub(in crate::store) fn transitions() -> Pg<'static> {
     Pg::read(
-        "coalesce((SELECT jsonb_agg(w.body) FROM workflow w \
-            WHERE w.id IN (SELECT jsonb_array_elements(v -> 'ids'))), '[]')",
+        "coalesce((SELECT jsonb_agg(w.body ORDER BY i.n) \
+            FROM jsonb_array_elements(v -> 'ids') WITH ORDINALITY i(id, n) \
+            JOIN workflow w ON w.id = i.id), '[]')",
     )
 }
 

@@ -16,6 +16,91 @@ fn pair(phase: &str, state: &str) -> Pair {
     }
 }
 
+#[test]
+fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
+    let full = json!({
+        "phase": "build", "state": "working", "resume": {"phase": "build", "state": "available"},
+        "generation": 2, "revision": 7, "digest": "d1",
+        "manual": {"trigger": "lost_holder", "holder": "amber", "role": "executor", "manual": true},
+    });
+    let with = |key: &str, value: Value| {
+        let mut changed = full.clone();
+        changed[key] = value;
+        changed
+    };
+    let without = |key: &str| {
+        let mut changed = full.clone();
+        changed.as_object_mut().unwrap().remove(key);
+        changed
+    };
+    let cases = [
+        full.clone(),
+        without("resume"),
+        without("manual"),
+        with("resume", Value::Null),
+        with("manual", Value::Null),
+        with(
+            "manual",
+            json!({"trigger": "release", "holder": "a", "role": "reviewer", "manual": false}),
+        ),
+        // Each refused as its decoder refuses it.
+        without("digest"),
+        without("generation"),
+        with("revision", json!("7")),
+        with("revision", json!(-1)),
+        with("revision", json!(7.5)),
+        with("phase", json!(1)),
+        with("extra", json!(1)),
+        with("resume", json!({"phase": "build"})),
+        with(
+            "resume",
+            json!({"phase": "build", "state": "a", "extra": 1}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "gone", "holder": "a", "role": "r", "manual": true}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "release", "holder": "a", "role": "r", "manual": "yes"}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "release", "holder": "a", "role": "r", "manual": true, "x": 1}),
+        ),
+        with("manual", json!("lost_holder")),
+        json!(["build", "working"]),
+        Value::Null,
+    ];
+    let mut read = 0;
+    for case in cases {
+        let decoded: Option<TaskPosition> = serde_json::from_value(case.clone()).ok();
+        assert_eq!(TaskPosition::of(&case), decoded, "{case}");
+        read += usize::from(decoded.is_some());
+    }
+    assert_eq!(read, 6, "the cases the decoder reads");
+    let position = TaskPosition::of(&full).unwrap();
+    assert_eq!(
+        (position.at(), position.revision),
+        (pair("build", "working"), 7)
+    );
+
+    // A transition's body is read for what the alarm says of it, whatever else it records.
+    let body =
+        serde_json::to_value(moved("sim/a", 2, pair("build", "working"), "in_progress")).unwrap();
+    let read = Moved::of(&body).unwrap();
+    assert_eq!(
+        (read.slug.as_str(), read.revision, read.status.as_str()),
+        ("sim/a", 2, "in_progress")
+    );
+    assert_eq!(read.at, body["at"].as_f64().unwrap());
+    for missing in ["slug", "revision", "status", "at"] {
+        let mut short = body.clone();
+        short.as_object_mut().unwrap().remove(missing);
+        assert_eq!(Moved::of(&short), None, "{missing}");
+    }
+}
+
 fn owner() -> Principal {
     Principal::new(PrincipalKind::Human, "local".into(), "owner".into())
 }

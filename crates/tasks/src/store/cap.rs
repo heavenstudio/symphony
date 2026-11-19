@@ -139,14 +139,6 @@ struct Row {
     held: bool,
 }
 
-/// A position of the active custom workflow as the cap reads it: its pair and slot policy.
-#[derive(Clone, Deserialize)]
-struct SlotAt {
-    phase: String,
-    state: String,
-    slot: String,
-}
-
 /// A role as the cap reads it.
 #[derive(Clone, Deserialize)]
 struct RoleRead {
@@ -167,9 +159,11 @@ pub(super) struct Read {
     counted: Vec<(String, i64)>,
     /// Each red's counter, by slug.
     reds: Vec<(String, i64)>,
-    /// The active custom workflow's positions; none while no workflow is active.
+    /// The active custom workflow's positions, each its pair and slot policy (`phase`, `state`,
+    /// `slot`); none while no workflow is active. Read by field from the value, as `Row`'s
+    /// position is, so no reader of their own links where the cap does (tools/size-budget.toml).
     #[serde(default)]
-    positions: Vec<SlotAt>,
+    positions: Vec<Value>,
 }
 
 impl Read {

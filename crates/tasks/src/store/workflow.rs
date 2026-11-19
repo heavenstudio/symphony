@@ -73,6 +73,58 @@ impl Trigger {
 }
 
 impl TaskPosition {
+    /// The position `value` holds, read by field as its decoder reads it: none where a field is
+    /// missing, of another type, or one it does not know. No decoder of its own: every program
+    /// that lists a PULL reads a held task's position, and links what it reads
+    /// (tools/size-budget.toml).
+    pub fn of(value: &Value) -> Option<TaskPosition> {
+        const FIELDS: [&str; 7] = [
+            "phase",
+            "state",
+            "resume",
+            "generation",
+            "revision",
+            "digest",
+            "manual",
+        ];
+        let fields = known(value, &FIELDS)?;
+        let resume = match fields.get("resume") {
+            None | Some(Value::Null) => None,
+            Some(pair) => {
+                let pair = known(pair, &["phase", "state"])?;
+                Some(Pair {
+                    phase: text(pair, "phase")?,
+                    state: text(pair, "state")?,
+                })
+            }
+        };
+        let manual = match fields.get("manual") {
+            None | Some(Value::Null) => None,
+            Some(recovered) => {
+                let recovered = known(recovered, &["trigger", "holder", "role", "manual"])?;
+                Some(Recovered {
+                    trigger: match recovered.get("trigger")?.as_str()? {
+                        "release" => Trigger::Release,
+                        "lost_holder" => Trigger::LostHolder,
+                        _ => return None,
+                    },
+                    holder: text(recovered, "holder")?,
+                    role: text(recovered, "role")?,
+                    manual: recovered.get("manual")?.as_bool()?,
+                })
+            }
+        };
+        Some(TaskPosition {
+            phase: text(fields, "phase")?,
+            state: text(fields, "state")?,
+            resume,
+            generation: fields.get("generation")?.as_u64()?,
+            revision: fields.get("revision")?.as_u64()?,
+            digest: text(fields, "digest")?,
+            manual,
+        })
+    }
+
     /// Its pair.
     pub fn at(&self) -> Pair {
         Pair {
@@ -121,14 +173,27 @@ pub struct Transition {
 }
 
 /// Of a recorded [`Transition`], what the pipeline alarm reads: the status it put its task at, and
-/// when. Decoding no more keeps the workflow's own types out of what reads it alone: `agent-send`
-/// composes an orchestrator's PULL, and with it the alarm, as it delivers (tools/size-budget.toml).
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+/// when. Read by field from the record's value ([`Moved::of`]), with no decoder of its own: every
+/// program that delivers a PULL (`agent-send` and `symphony` among them) composes the alarm, and
+/// links what it reads (tools/size-budget.toml).
+#[derive(Clone, Debug, PartialEq)]
 pub struct Moved {
     pub slug: String,
     pub revision: u64,
     pub status: String,
     pub at: f64,
+}
+
+impl Moved {
+    /// The four fields of a recorded transition's `body`; none where one is missing.
+    pub fn of(body: &Value) -> Option<Moved> {
+        Some(Moved {
+            slug: body.get("slug")?.as_str()?.to_string(),
+            revision: body.get("revision")?.as_u64()?,
+            status: body.get("status")?.as_str()?.to_string(),
+            at: body.get("at")?.as_f64()?,
+        })
+    }
 }
 
 impl Transition {
@@ -431,8 +496,9 @@ impl Store {
     }
 
     /// The transitions recorded for each of `tasks`, a slug with the workflow revision its
-    /// position stands at, each task's oldest first, as the pipeline alarm reads them ([`Moved`]):
-    /// every one from its first revision, each read by its id, never a scan of the record.
+    /// position stands at, as the pipeline alarm reads them ([`Moved`]): in the order the tasks
+    /// are given, each task's oldest first, every one from its first revision, each read by its
+    /// id, never a scan of the record.
     pub fn transitions(&self, tasks: &[(&str, u64)]) -> Result<Vec<Moved>, Error> {
         let ids: Vec<Value> = (tasks.iter())
             .flat_map(|(slug, revision)| (1..=*revision).map(move |r| json!(["event", slug, r])))
@@ -441,10 +507,17 @@ impl Store {
             return Ok(Vec::new());
         }
         let vars = json!({ "ids": ids });
-        let mut read: Vec<Moved> =
+        let read: Vec<Value> =
             self.retrying(|| self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone()))?;
-        read.sort_by(|a, b| (&a.slug, a.revision).cmp(&(&b.slug, b.revision)));
-        Ok(read)
+        (read.iter())
+            .map(|body| {
+                Moved::of(body).ok_or_else(|| {
+                    Error::Db(format!(
+                        "a recorded transition the alarm cannot read: {body}"
+                    ))
+                })
+            })
+            .collect()
     }
 
     /// `slug`'s workflow position, or none for a task the board's own writers keep; refused for
@@ -496,8 +569,20 @@ pub(crate) fn position_held(
 pub(crate) fn task_position(
     fields: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
 ) -> Option<TaskPosition> {
-    let position = fields.get("_board")?.get("workflow")?;
-    serde_json::from_value(position.clone()).ok()
+    TaskPosition::of(fields.get("_board")?.get("workflow")?)
+}
+
+/// `value`'s fields: none where it is no object, or names a field `allowed` does not.
+fn known<'v>(value: &'v Value, allowed: &[&str]) -> Option<&'v serde_json::Map<String, Value>> {
+    let fields = value.as_object()?;
+    (fields.keys())
+        .all(|key| allowed.contains(&key.as_str()))
+        .then_some(fields)
+}
+
+/// The text `fields` holds under `key`.
+fn text(fields: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    Some(fields.get(key)?.as_str()?.to_string())
 }
 
 /// The refusal of a legacy move or staffing of `slug`, a task a custom workflow holds.

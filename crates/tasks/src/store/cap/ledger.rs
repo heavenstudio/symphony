@@ -1,7 +1,7 @@
 //! One canonical admission ledger builder, shared with the read-only holdings producer.
 
 use super::{
-    DEPTH, Failure, Level, Read, Recorded, RoleRead, Row, SlotAt, Store, View, branches, slots, sql,
+    DEPTH, Failure, Level, Read, Recorded, RoleRead, Row, Store, View, branches, slots, sql,
 };
 use crate::slots::{Entry, Ledger};
 use crate::store::postgres::cap as pg;
@@ -14,7 +14,7 @@ pub(super) struct Observation {
     roles: Vec<RoleRead>,
     branches: Vec<Recorded>,
     /// The active custom workflow's positions, by whose slot policy a task it holds is counted.
-    positions: Vec<SlotAt>,
+    positions: Vec<Value>,
 }
 
 impl Observation {
@@ -55,8 +55,8 @@ impl Observation {
             position.get("state")?.as_str()?,
         );
         (self.positions.iter())
-            .find(|at| at.phase == phase && at.state == state)
-            .map(|at| at.slot != "release")
+            .find(|at| at["phase"] == phase && at["state"] == state)
+            .map(|at| at["slot"] != "release")
     }
 
     /// Admission's scoped observation needs the ancestors and paired tasks absent from its
