@@ -480,6 +480,16 @@ fn the_land_table_names_what_the_regenerator_makes_and_whether_a_land_pushes_and
         refused("[land]\ndelivery = [\"\"]\n")
             .contains("[land] delivery names no command: leave it out to land here")
     );
+    // The upstream an import is of: read whole, and refused where git could misread it.
+    let upstream =
+        "[land.upstream]\nurl = \"https://github.com/up/stream.git\"\nbranch = \"main\"\n";
+    assert!(parsed(upstream).is_ok());
+    assert!(refused("[land.upstream]\nurl = \"u\"\n").contains("branch"));
+    assert!(refused(&format!("{upstream}token = \"x\"\n")).contains("token"));
+    assert!(
+        refused("[land.upstream]\nurl = \"--upload-pack=x\"\nbranch = \"main\"\n")
+            .contains("[land.upstream] url is \"--upload-pack=x\"")
+    );
     // A generator's key, which the regenerator runs before it, named in `[land] keys`: a key
     // inside the generator's own table would make an older Symphony refuse the whole file.
     let generator =

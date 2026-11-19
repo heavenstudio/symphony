@@ -18,6 +18,7 @@ fn needs(by: &str, stamps: &[&str], tip: Option<&str>, why: &str) -> Needs {
         tip: tip.map(str::to_string),
         by: by.into(),
         why: why.into(),
+        import: None,
     }
 }
 
@@ -137,8 +138,39 @@ on_both! {
             )),
             "none is no stamp: name it alone for a task that needs none, or name the stamps it needs"
         );
+        // An import is named whole, and at the head read.
+        let import = |tip: Option<&str>, import: &str| Needs {
+            import: Some(import.into()),
+            ..needs(&assessor, &["review"], tip, WHY)
+        };
+        let upstream = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
+        assert_eq!(
+            refused(f.store.set_needs("tools/query", &own, &import(None, upstream))),
+            "an import is named at the head the assessment read (--tip TIP): it binds that head \
+             to the upstream commit it imports"
+        );
+        for short in ["9f8e7d6", "9f8e7d6c5b4a39281706f5e4d3c2b1a09876543z"] {
+            assert_eq!(
+                refused(f.store.set_needs("tools/query", &own, &import(Some(TIP), short))),
+                format!("an import names its upstream commit whole, not {short:?}")
+            );
+        }
         assert_eq!(f.store.get("tools/query").unwrap().needs(), None);
         assert_eq!(f.said("tools/query"), before, "no line either");
+        // Named whole at a tip, it is kept and said, and a blank one is none.
+        f.store
+            .set_needs("tools/query", &own, &import(Some(TIP), &format!(" {upstream} ")))
+            .unwrap();
+        let written = f.store.get("tools/query").unwrap().needs().unwrap();
+        assert_eq!(written.import.as_deref(), Some(upstream));
+        assert_eq!(
+            f.said("tools/query").last().unwrap(),
+            &format!("needs review at 1a2b3c4, an import of {upstream} (was review): {WHY}; by {assessor}")
+        );
+        f.store
+            .set_needs("tools/query", &own, &import(None, "  "))
+            .unwrap();
+        assert_eq!(f.store.get("tools/query").unwrap().needs().unwrap().import, None);
         // The project's own catalogue: what it needed before is its defaults.
         f.store
             .set_needs(

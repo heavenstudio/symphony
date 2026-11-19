@@ -88,6 +88,19 @@ fn what_does_not_hold_together_is_refused_by_name() {
         ),
         ("close_issues = \"yes\"\n", "expected a boolean"),
         (
+            "upstream_id = 0\n",
+            "upstream_id is a GitHub repository's number",
+        ),
+        (
+            "upstream_id = 88\n",
+            "upstream_id needs pull_requests = \"publish\": an import is delivered by a pull request",
+        ),
+        (
+            &format!("{ON}pull_requests = \"track\"\nupstream_id = 88\n"),
+            "upstream_id needs pull_requests = \"publish\"",
+        ),
+        ("upstream_id = \"up/stream\"\n", "invalid type"),
+        (
             &format!("{ON}issues = \"exchange\"\n"),
             "needs import_labels",
         ),
@@ -114,6 +127,14 @@ fn what_does_not_hold_together_is_refused_by_name() {
         assert!(refused.contains(why), "{text:?}: {refused}");
         assert!(refused.starts_with("symphony-github.toml: "), "{refused}");
     }
+}
+
+#[test]
+fn an_upstream_is_pinned_by_its_number_where_pull_requests_are_published() {
+    let publish = format!("{PUBLISH}policy_token_file = \"/secrets/policy\"\npolicy_app_id = 44\n");
+    assert_eq!(parse(&publish).unwrap().upstream_id, None);
+    let config = parse(&format!("{publish}upstream_id = 88\n")).unwrap();
+    assert_eq!(config.upstream_id, Some(88));
 }
 
 #[test]

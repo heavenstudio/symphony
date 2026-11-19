@@ -49,6 +49,7 @@ fn assess(r: &Repo, slug: &str, by: &str, stamps: &[&str], tip: &str) {
         tip: Some(tip.into()),
         by: by.into(),
         why: "as the guidelines say".into(),
+        import: None,
     };
     (r.board.store)
         .set_needs(slug, &Catalogue::symphony(), &needs)

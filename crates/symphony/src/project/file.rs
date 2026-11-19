@@ -302,6 +302,9 @@ pub(super) struct FileLand {
     /// The command that delivers a task by a hosted pull request, in place of the land's own
     /// merge and push (`symphony_board::land::delivery`); none, and the land merges here.
     pub(super) delivery: Vec<String>,
+    /// The repository this one imports from (`symphony_board::land::Upstream`), strict as a
+    /// generator is: a misspelt key would change what a delivery merges.
+    pub(super) upstream: Option<symphony_board::land::Upstream>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -316,6 +319,7 @@ impl Default for FileLand {
             check: true,
             check_paths: None,
             delivery: Vec::new(),
+            upstream: None,
             unknown: Unknown::new(),
         }
     }
