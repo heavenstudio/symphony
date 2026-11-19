@@ -37,8 +37,9 @@ pub const MAJOR: i64 = 2;
 
 /// The api's minor within [`MAJOR`]: 1 added a task's `id`, `bound`, `edit_bound` and
 /// `integration_state`; 2 added `evidence`; 3 added `import` to its `assessment`, where the
-/// assessment names one; 4 added `workflow_read`, `workflow_actions` and `workflow_apply`.
-pub const MINOR: i64 = 4;
+/// assessment names one; 4 added `workflow_read`, `workflow_actions` and `workflow_apply`; 5 added
+/// `attempts`.
+pub const MINOR: i64 = 5;
 
 /// Why a call has no result.
 enum Fail {
@@ -249,6 +250,43 @@ fn one<F: FnOnce() -> Result<Store, String>>(
     let mut a = Args { method, given };
     let result = dispatch(&mut a, board)?;
     Ok(result)
+}
+
+/// The id of the project `context`'s working directory is in, as the machine's registry names it:
+/// the scope of its board's attempts ([`crate::execution::board_scope`]).
+fn project_of(context: Option<&super::Env>) -> Result<String, Fail> {
+    let context =
+        context.ok_or_else(|| Fail::Refused("attempts are read in a project's checkout".into()))?;
+    let machine = crate::project::machine_folder(
+        |name| context.var(name).map(std::ffi::OsString::from),
+        cfg!(target_os = "macos"),
+    )
+    .ok();
+    crate::project::find(&context.cwd, machine.as_deref())
+        .map(|project| project.id)
+        .map_err(Fail::Refused)
+}
+
+/// Task `slug`'s attempts, oldest first, read as the board's own service: what a project's program
+/// reads through `tasks api`, its controls left to the host that holds the provider.
+fn attempts(store: &Store, project: &str, slug: &str) -> Result<symphony_api::TaskAttempts, Fail> {
+    use crate::execution::{Act, Grant, Reader, Refusal, board_scope};
+    let scope = board_scope(project, store);
+    let grant = Grant::from_host(
+        crate::workflow::board_service("tasks-api"),
+        scope.clone(),
+        &[Act::Read],
+        "tasks-api/1",
+    )
+    .on_tasks(&[slug]);
+    let read = Reader::new(store, scope).history(&grant, slug);
+    let attempts = read.map_err(|refusal| match refusal {
+        Refusal::Board(error) => Fail::from(error),
+        other => Fail::Refused(other.to_string()),
+    })?;
+    Ok(symphony_api::TaskAttempts {
+        attempts: attempts.iter().map(crate::execution::Attempt::wire).collect(),
+    })
 }
 
 fn none(done: Result<(), Error>) -> Result<Value, Fail> {
@@ -573,6 +611,16 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let principal = crate::workflow::agent_session(&handle);
             let store = board.get()?;
             json!(store.apply_operation(&principal, &crate::workflow::Host::local(), &request)?)
+        }
+        // A task's execution attempts (docs/EXECUTION_ATTEMPTS.md), read as the board's own
+        // service under its scope: the project the call runs in, and the board's database.
+        "attempts" => {
+            args!(slug: need);
+            let slug: String = slug;
+            let project = project_of(board.context.as_ref())?;
+            let store = board.get()?;
+            store.get(&slug)?;
+            json!(attempts(store, &project, &slug)?)
         }
         "move" => {
             args!(slug: need, status: need, handle: actor, from: take, reason: take, on: take, why: take);

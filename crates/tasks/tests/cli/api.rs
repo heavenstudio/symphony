@@ -5,6 +5,7 @@ use crate::{Case, env, run};
 use serde_json::{Value, json};
 
 mod assessment;
+mod attempts;
 mod bound;
 mod contract;
 mod red;

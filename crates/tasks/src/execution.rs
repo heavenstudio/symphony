@@ -25,10 +25,16 @@
 mod coordinator;
 mod evidence;
 mod keys;
+mod reader;
 mod record;
 mod rules;
+mod view;
 
 pub use coordinator::Coordinator;
+pub use reader::Reader;
+pub use view::{
+    board_scope, principal_word, resume_mode, resume_word, stop_mode, stop_word,
+};
 pub use record::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Continuation, Dispatch, Ending,
     Fact, Identity, Lease, Pending, Relation, State,
@@ -274,6 +280,15 @@ pub struct Attempt {
     pub revision: i64,
     /// Whether it is its lane's current attempt: a later one supersedes it.
     pub current: bool,
+}
+
+impl Attempt {
+    /// Whether a resume may continue it now, and why not: it must be known paused or ended with
+    /// its resource bound, owe nothing, have no cancel whose outcome is uncertain and no successor.
+    /// [`Coordinator::resume`] decides again on the row it writes.
+    pub fn resumable(&self) -> Result<(), String> {
+        rules::resumable(&self.state).map(|_| ())
+    }
 }
 
 /// A fact as it was appended.

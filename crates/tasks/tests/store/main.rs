@@ -33,6 +33,7 @@ macro_rules! on_both {
 
 mod amend;
 mod artifacts;
+mod attempt_reads;
 mod asks;
 mod bindings;
 mod blocked_panes;
