@@ -137,6 +137,26 @@ impl Store {
                     ])
                 }),
             ),
+            (
+                "execution_attempt",
+                keyed(dump.execution_attempts.clone(), &|r| r["attempt"].clone()),
+            ),
+            (
+                "execution_fact",
+                keyed(dump.execution_facts.clone(), &|r| {
+                    json!([r["attempt"], r["seq"]])
+                }),
+            ),
+            (
+                "execution_fence",
+                keyed(dump.execution_fences.clone(), &|r| r["key"].clone()),
+            ),
+            (
+                "execution_artifact",
+                keyed(dump.execution_artifacts.clone(), &|r| {
+                    json!([r["attempt"], r["name"]])
+                }),
+            ),
         ];
         let last = dump.messages.iter().map(|m| m.id).max().unwrap_or(0);
         let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);
@@ -193,11 +213,18 @@ impl Store {
             "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
         });
         for (table, rows) in tables {
+            let schemaless =
+                postgres::schema::table(table).is_some_and(|table| table.columns.is_empty());
             let rows: Vec<Value> = (rows.iter().cloned())
                 .map(|mut row| {
                     // A task row is made at its first version, as SurrealDB's field default makes it.
                     if *table == "task" {
                         row["version"] = json!(0);
+                    }
+                    // A schemaless row is its id beside its document.
+                    if schemaless && let Value::Object(fields) = &mut row {
+                        let id = fields.remove("id").unwrap_or(Value::Null);
+                        row = json!({"id": id, "doc": row});
                     }
                     row
                 })
@@ -302,6 +329,24 @@ impl Store {
         } else {
             self.retrying(|| self.transact(dump(), json!({})))?
         };
+        // The execution tables' rows in the order of their ids, and each row's fields in one order
+        // at every depth, as the two databases neither return rows nor order a document's fields
+        // alike (PostgreSQL's jsonb keeps the shorter keys first).
+        let rows = [
+            &mut dump.execution_attempts,
+            &mut dump.execution_facts,
+            &mut dump.execution_fences,
+            &mut dump.execution_artifacts,
+        ];
+        rows.into_iter().flatten().for_each(Value::sort_all_objects);
+        let text = |value: &Value| value.to_string();
+        dump.execution_attempts
+            .sort_by_key(|row| text(&row["attempt"]));
+        dump.execution_facts
+            .sort_by_key(|row| (text(&row["attempt"]), row["seq"].as_i64()));
+        dump.execution_fences.sort_by_key(|row| text(&row["key"]));
+        dump.execution_artifacts
+            .sort_by_key(|row| (text(&row["attempt"]), text(&row["name"])));
         let fields = (dump.tasks.iter_mut()).flat_map(|task| task.fields.values_mut());
         for value in fields.flat_map(|namespace| namespace.values_mut()) {
             value.sort_all_objects();

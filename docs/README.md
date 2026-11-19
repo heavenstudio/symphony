@@ -49,6 +49,9 @@ the evidence behind decisions are under [Design and history](#design-and-history
   line, each call's minor, the versions and the wire's shape.
 - [Execution adapter](EXECUTION_ADAPTER.md) — bounded provider operations, scoped identities,
   trusted actor context, capabilities and the independent execution wire contract.
+- [Execution attempts](EXECUTION_ATTEMPTS.md) — the board's durable record of each provider
+  attempt: admission, fenced recovery, controls, evidence eligibility and host grants; no route
+  or client reaches it yet.
 
 Agents working in this repository follow the standing [Rules](../RULES.md).
 

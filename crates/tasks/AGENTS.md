@@ -124,6 +124,14 @@ task's evidence it and `tasks api` go by
 ([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
 the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `red.rs` the red mark.
 
+### Execution attempts
+
+`execution.rs` and `execution/` are the attempts a project's execution provider runs
+([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md)): `coordinator.rs` admission, controls and
+the worker's step, `rules.rs` the transitions it decides on what a write read, `evidence.rs`
+collection, cleanup and eligibility, `record.rs` the row and its facts, `keys.rs` the ids and
+operation keys; `store/execution.rs` with its statements is their store.
+
 ### The rules of work
 
 `slots.rs` with `store/cap.rs` is the cap on an orchestrator's open work

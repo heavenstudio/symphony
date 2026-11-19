@@ -95,6 +95,7 @@ Rust additions preserve source compatibility. The existing plugin protocol, cons
 linked/process notification calls are unchanged. Transport failures are ambiguous to the sender,
 which reconciles the same operation rather than submitting a second execution.
 
-Integration still requires the board coordinator's durable intent/recovery transactions, the
-host's current authorization and provider-specific idempotency/generation proof. Real providers,
+The board's coordinator ([execution attempts](EXECUTION_ATTEMPTS.md)) supplies the durable
+intent, recovery, fencing and capacity this kit leaves out; integration still requires the host's
+current authorization and provider-specific idempotency/generation proof. Real providers,
 credentials, paid sessions, storage and live activation are outside this kit contract.

@@ -21,6 +21,7 @@ pub(in crate::store) mod cap;
 pub(in crate::store) mod copy;
 pub(in crate::store) mod depends;
 pub(in crate::store) mod dispatcher;
+pub(in crate::store) mod execution;
 pub(in crate::store) mod fields;
 pub(in crate::store) mod history;
 pub(in crate::store) mod launches;

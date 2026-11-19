@@ -70,6 +70,10 @@
 //! older schema copies a board without replacing it, which is why it came with a schema step:
 //! the [`guard`] refuses that build's copy.
 //!
+//! `execution_attempt:⟨uuid⟩`, `execution_fact:[uuid, seq]`, `execution_fence:[kind, …]` and
+//! `execution_artifact:[uuid, name]` are execution attempts, from schema 23 (`crate::execution`):
+//! schemaless and with no event, as no reader caches them.
+//!
 //! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
 //! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
 //! builds of other schemas write it and a line written moves no marker.
@@ -92,7 +96,7 @@ use crate::store::Program;
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. Protocol changes can require a wider version step and retirement of old read tokens:
 /// an already-open store does not repeat its opening check.
-pub const VERSION: i64 = 22;
+pub const VERSION: i64 = 23;
 
 /// Structural mutations plus all committed session changes, including deletions and re-creations.
 /// The separate structural record keeps the retired legacy scalar outside this identity.
@@ -525,6 +529,18 @@ DEFINE FIELD IF NOT EXISTS first ON usage TYPE float;
 DEFINE FIELD IF NOT EXISTS last ON usage TYPE float;
 DEFINE INDEX IF NOT EXISTS usage_slug ON usage FIELDS slug;
 DEFINE INDEX IF NOT EXISTS usage_handle ON usage FIELDS handle;
+
+-- Schema 23: execution attempts (`crate::execution`): an attempt's immutable identity beside its
+-- revisioned state, its append-only facts, the fences its admission writes and its collected
+-- artifacts. Schemaless and with no event: no reader caches them, and a write moves no marker.
+DEFINE TABLE IF NOT EXISTS execution_attempt SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS execution_attempt_task ON execution_attempt FIELDS task, created;
+DEFINE INDEX IF NOT EXISTS execution_attempt_due ON execution_attempt FIELDS open, due;
+DEFINE TABLE IF NOT EXISTS execution_fact SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS execution_fact_attempt ON execution_fact FIELDS attempt, seq;
+DEFINE TABLE IF NOT EXISTS execution_fence SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS execution_artifact SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS execution_artifact_attempt ON execution_artifact FIELDS attempt, name;
 
 DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN {
