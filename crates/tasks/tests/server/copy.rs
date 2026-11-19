@@ -123,6 +123,7 @@ fn quarter_board() -> Dump {
         delivery_keys: Vec::new(),
         asks: Vec::new(),
         usages: Vec::new(),
+        workflow: Vec::new(),
     }
 }
 

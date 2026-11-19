@@ -197,6 +197,7 @@ pub fn everything() -> Dump {
                 last: NOW + 1.0,
             },
         ],
+        workflow: Vec::new(),
     }
 }
 
@@ -699,7 +700,7 @@ fn tables(f: &Fixture) -> Vec<String> {
     names
 }
 
-const BOARD_TABLES: [&str; 27] = [
+const BOARD_TABLES: [&str; 28] = [
     "artifact_ledger",
     "ask",
     "barred_key",
@@ -726,6 +727,7 @@ const BOARD_TABLES: [&str; 27] = [
     "task_session",
     "unanswered_restore",
     "usage",
+    "workflow",
     "writer",
 ];
 

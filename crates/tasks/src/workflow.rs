@@ -14,6 +14,7 @@ use symphony_plugin::execution::Principal;
 
 mod builtin;
 mod validate;
+pub use crate::store::workflow::{Active, Recorded, TaskPosition, Transition};
 pub use builtin::{builtin, legacy_pair};
 
 /// A project's file, at the top of the tree a commit holds.

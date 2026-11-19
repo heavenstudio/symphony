@@ -122,7 +122,7 @@ use Kind::{Array, Bool, Float, Int, Object, Text};
 
 /// The board's tables, including `words` (the full-text indexes, [`WORDS`]) and `copied_fields`
 /// (the imported fields' numeric spellings, [`super::copy`]).
-pub(in crate::store) const TABLES: [Table; 25] = [
+pub(in crate::store) const TABLES: [Table; 26] = [
     Table {
         name: "recovery",
         columns: &[req("generation", Text)],
@@ -134,6 +134,24 @@ pub(in crate::store) const TABLES: [Table; 25] = [
     Table {
         name: "copied_fields",
         columns: &[req("original", Text)],
+    },
+    Table {
+        name: "workflow",
+        columns: &[
+            of(
+                "kind",
+                &[
+                    "active",
+                    "definition",
+                    "activation",
+                    "event",
+                    "receipt",
+                    "intent",
+                ],
+            ),
+            req("body", Object),
+            req("at", Float),
+        ],
     },
     Table {
         name: "task",
@@ -451,6 +469,72 @@ BEGIN
 END
 $f$;
 
+-- A task's workflow position, and the status of a task that has one, change only beside the
+-- transition recorded for them, whatever writes them: SurrealDB's `workflow_position` event.
+CREATE OR REPLACE FUNCTION board_workflow_position() RETURNS trigger LANGUAGE plpgsql AS $f$
+DECLARE
+    was jsonb := CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE OLD.fields -> '_board' -> 'workflow' END;
+    w jsonb := NEW.fields -> '_board' -> 'workflow';
+    e jsonb;
+BEGIN
+    IF was IS NOT DISTINCT FROM w AND (was IS NULL OR OLD.status = NEW.status) THEN
+        RETURN NEW;
+    END IF;
+    IF was IS NOT NULL AND w = was THEN
+        RAISE EXCEPTION '%', 'refused: workflow: the status of ' || NEW.slug
+            || ' follows its workflow position, which its workflow operations move';
+    END IF;
+    IF w IS NULL THEN
+        RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug
+            || ' keeps its workflow position: only an activation returns a task to the board writers';
+    END IF;
+    IF was IS NOT NULL AND (w -> 'revision') IS DISTINCT FROM to_jsonb((was ->> 'revision')::bigint + 1) THEN
+        RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug || ' moves from workflow revision '
+            || (was ->> 'revision') || ' only to the next';
+    END IF;
+    IF was IS NULL AND EXISTS (SELECT 1 FROM workflow
+        WHERE id = jsonb_build_array('event', NEW.slug, (w ->> 'revision')::bigint + 1)) THEN
+        RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug || ' moved on from workflow revision '
+            || (w ->> 'revision') || '; it never returns to a position it left';
+    END IF;
+    SELECT body INTO e FROM workflow WHERE id = jsonb_build_array('event', NEW.slug, w -> 'revision');
+    IF e IS NULL OR e -> 'slug' IS DISTINCT FROM to_jsonb(NEW.slug)
+        OR e -> 'revision' IS DISTINCT FROM w -> 'revision'
+        OR e -> 'to' IS DISTINCT FROM jsonb_build_object('phase', w -> 'phase', 'state', w -> 'state')
+        OR e -> 'resume' IS DISTINCT FROM w -> 'resume'
+        OR e -> 'generation' IS DISTINCT FROM w -> 'generation'
+        OR e -> 'digest' IS DISTINCT FROM w -> 'digest'
+        OR e -> 'status' IS DISTINCT FROM to_jsonb(NEW.status) THEN
+        RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug
+            || ' is at a workflow position only beside the transition recorded for it';
+    END IF;
+    RETURN NEW;
+END
+$f$;
+
+-- A recorded definition, activation, transition or receipt is never changed, and the active
+-- generation moves forward only to an activation recorded for it: SurrealDB's
+-- `workflow_history` and `workflow_active` events.
+CREATE OR REPLACE FUNCTION board_workflow_history() RETURNS trigger LANGUAGE plpgsql AS $f$
+DECLARE
+    activation jsonb;
+BEGIN
+    IF OLD.kind IN ('definition', 'activation', 'event', 'receipt') OR OLD.kind <> NEW.kind THEN
+        RAISE EXCEPTION '%', 'refused: workflow: a recorded ' || OLD.kind || ' is never changed';
+    END IF;
+    IF NEW.kind = 'active' THEN
+        SELECT body INTO activation FROM workflow
+            WHERE id = jsonb_build_array('activation', NEW.body -> 'generation');
+        IF activation IS NULL OR activation -> 'digest' IS DISTINCT FROM NEW.body -> 'digest'
+            OR (OLD.body ->> 'generation')::bigint >= (NEW.body ->> 'generation')::bigint THEN
+            RAISE EXCEPTION '%',
+                'refused: workflow: the active generation moves forward only to an activation recorded for it';
+        END IF;
+    END IF;
+    RETURN NEW;
+END
+$f$;
+
 CREATE OR REPLACE FUNCTION board_bump() RETURNS void LANGUAGE plpgsql AS $f$
 BEGIN
     IF current_setting('board.bumped', true) IS DISTINCT FROM 'yes' THEN
@@ -735,6 +819,10 @@ CREATE OR REPLACE TRIGGER callback_state_changed AFTER INSERT OR UPDATE OR DELET
          FOR EACH ROW EXECUTE FUNCTION board_callback_changed();
 CREATE OR REPLACE TRIGGER said AFTER INSERT OR UPDATE OR DELETE ON message \
          FOR EACH ROW EXECUTE FUNCTION board_said();
+CREATE OR REPLACE TRIGGER task_workflow BEFORE INSERT OR UPDATE ON task \
+         FOR EACH ROW EXECUTE FUNCTION board_workflow_position();
+CREATE OR REPLACE TRIGGER workflow_history BEFORE UPDATE ON workflow \
+         FOR EACH ROW EXECUTE FUNCTION board_workflow_history();
 ",
     );
     sql
@@ -911,7 +999,7 @@ mod tests {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 25);
+        assert_eq!(names.len(), 26);
         let defined = define();
         for name in names {
             assert!(

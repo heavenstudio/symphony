@@ -48,6 +48,7 @@ pub(in crate::store) mod thread_window;
 pub(in crate::store) mod unanswered;
 pub(in crate::store) mod waits;
 pub(in crate::store) mod work;
+pub(in crate::store) mod workflow;
 pub(in crate::store) mod write;
 pub(in crate::store) mod writers;
 

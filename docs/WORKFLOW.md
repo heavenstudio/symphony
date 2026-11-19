@@ -17,9 +17,10 @@ implementation unchanged; `candidate` selects the immutable built-in v1 definiti
 
 The selected activation contract is automatic activation of a valid committed definition when
 the board reads it, with complete mappings and prerequisites required, as decided by
-[the activation card](DECISIONS.md#configurable-workflow-activation). That automatic transaction,
-persistence in both stores, retained live-position/blocked-resume mappings, all-writer fences
-and authoritative admission remain implementation work. A candidate's validation or a host
+[the activation card](DECISIONS.md#configurable-workflow-activation). Its records and the fences
+on every writer are on the board ([below](#records-on-the-board)); that automatic transaction,
+retained live-position/blocked-resume mappings and authoritative admission remain implementation
+work. A candidate's validation or a host
 prerequisite check is not activation. The [graph design](analysis/configurable-delivery-workflow.md)
 describes the remaining system; artifact policy receipts and execution attempts retain their
 separate ownership.
@@ -40,6 +41,29 @@ principal, and a principal holds only the capabilities a grant names: the defini
 declaration mints nothing, and an unknown capability fails the prerequisites. A principal is
 `symphony_plugin::execution::Principal`, built by the host from what it authenticated (an agent
 session by its handle, the local owner, a board service), never read from a request.
+
+## Records on the board
+
+From board schema 23 a custom workflow's records are one `workflow` table in both stores, each a
+`kind` and a `body` under a compound id: the active generation (`['active']`), each definition by
+its digest, each activation by its generation, and each transition of a task by its slug and the
+workflow revision it made (`['event', SLUG, REVISION]`). A task the workflow holds keeps its
+position in `fields._board.workflow`: its pair, the pair a blocked task resumes to, the generation
+and digest it was last moved under, and its workflow revision, which only its own transitions move.
+The position, and the status it projects to, change only in the one write that records their
+transition (`symphony_board::workflow::Transition`), from the revision the writer read; of two
+writers from one revision one commits, and the other is refused as `stale_task`.
+
+The database holds every writer to that, the board's own writers and its generic field, import
+and copy paths included. A write that changes a task's position, or the status of a task that has
+one, is refused unless the position is the next revision and the transition recorded for it names
+the same pair, resume, generation, digest and status. A position is never removed, and a task is
+never put back at a position its later transitions left. A recorded definition, activation,
+transition or receipt is never changed, and the active generation moves forward only to an
+activation recorded for it. `Store::raw` refuses the table. A board with no custom workflow holds
+none of these records, its export is the text it was, and every other write runs as before. The
+whole-board copy carries the records before the tasks, so a copy that lost them cannot restore a
+task the workflow holds. A reader one schema behind keeps and ignores the position.
 
 ## Definition format 1
 

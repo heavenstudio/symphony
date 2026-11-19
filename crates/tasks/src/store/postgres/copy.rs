@@ -35,7 +35,8 @@ pub(in crate::store) fn copy(tables: &[&str], millis: u64) -> Pg<'static> {
     at_ text;
     rows_ bigint;
 BEGIN
-DELETE FROM said;\n",
+DELETE FROM said;
+DELETE FROM workflow;\n",
     );
     for table in tables {
         let _ = writeln!(
@@ -73,7 +74,7 @@ END;",
 }
 
 /// Every table of the dump: its name in the dump, its table, and the order of its key.
-const DUMPED: [(&str, &str, &str); 11] = [
+const DUMPED: [(&str, &str, &str); 12] = [
     ("tasks", "task", "sid"),
     ("task_links", "link", "slug, kind, target"),
     ("sessions", "session", "handle"),
@@ -85,6 +86,7 @@ const DUMPED: [(&str, &str, &str); 11] = [
     ("delivery_keys", "delivery_key", "slug, key"),
     ("asks", "ask", "sid"),
     ("usages", "usage", "handle, slug, role, model, speed, round"),
+    ("workflow", "workflow", "id"),
 ];
 
 /// Every row of the board, in the shape the copy reads, each table in the order of its key, as
@@ -96,6 +98,11 @@ pub(in crate::store) static DUMP: std::sync::LazyLock<String> = std::sync::LazyL
             let mut read = whole("d", table);
             if *table == "task" {
                 read.push_str(" - 'version'");
+            }
+            // A workflow record is named by its id, which the task fence finds it by.
+            if *table == "workflow" {
+                read = "jsonb_build_object('key', d.id, 'kind', d.kind, 'body', d.body, 'at', d.at)"
+                    .to_string();
             }
             format!(
                 "'{name}', coalesce((SELECT jsonb_agg({read} ORDER BY {order}) FROM {table} d), '[]'::jsonb)"
