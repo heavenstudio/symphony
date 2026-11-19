@@ -16,7 +16,7 @@
 use serde_json::{Value, json};
 
 use crate::cache_pages::{PARTS, VALUES, keeps, kept, notice, shows, store_opened};
-use crate::chrome::Chrome;
+use crate::chrome::{Chrome, WEB_SOCKET};
 use crate::common;
 use crate::site::{Answered, Site, asked_keys, query};
 
@@ -227,20 +227,40 @@ pub(super) fn outline_once(answers: &[Answered], status: u16) {
     assert_eq!(answer.status, status, "{answer:?}");
 }
 
-/// The feed requests' cursors, in order.
-fn feed_cursors(site: &Site) -> Vec<String> {
-    site.targets()
+/// The feeds the page shown opened, in order: the sockets Chrome made for it since it was opened,
+/// each by its address. Never the stand-in's log of requests: a page re-subscribes its feed once
+/// its sections name themselves, 200 ms or more after it is live, and the stand-in reads that
+/// request in a thread of its own, so the first visit's last feed can enter the log after the
+/// return visit began, and be counted as the return's (run 52196220, at a load average over 100).
+fn feeds(chrome: &mut Chrome) -> Vec<String> {
+    chrome
+        .requests()
+        .into_iter()
+        .filter(|request| request.kind == WEB_SOCKET)
+        .map(|request| request.url)
+        .filter(|url| is_feed(url))
+        .collect()
+}
+
+/// Whether a socket's address `url` is the feed's, whatever its query.
+fn is_feed(url: &str) -> bool {
+    url.split_once("://")
+        .and_then(|(_, rest)| rest.find('/').map(|at| &rest[at..]))
+        .is_some_and(|target| target.split('?').next() == Some(symphony_api::FEED_PATH))
+}
+
+/// The cursor each of `feeds` opened from, in order.
+fn feed_cursors(feeds: &[String]) -> Vec<String> {
+    feeds
         .iter()
-        .filter(|target| target.starts_with(symphony_api::FEED_PATH))
         .filter_map(|target| query(target, "since"))
         .collect()
 }
 
-/// The sections each feed request named, in order.
-fn feed_sections(site: &Site) -> Vec<Vec<String>> {
-    site.targets()
+/// The sections each of `feeds` named, in order.
+fn feed_sections(feeds: &[String]) -> Vec<Vec<String>> {
+    feeds
         .iter()
-        .filter(|target| target.starts_with(symphony_api::FEED_PATH))
         .map(|target| {
             query(target, "sections")
                 .and_then(|keys| serde_json::from_str(&keys).ok())
@@ -291,7 +311,6 @@ fn a_warm_document_draws_its_outline_and_sections_before_any_answer_and_an_uncha
         before,
         "drawn before any read was answered"
     );
-    let feeds = feed_cursors(&site).len();
     hold(&site, false);
     shows(&mut chrome, LIVE, "the warm visit, once checked");
     retitled(&mut chrome, &site, DOC, 4191, "Kept, retitled");
@@ -302,7 +321,9 @@ fn a_warm_document_draws_its_outline_and_sections_before_any_answer_and_an_uncha
         "every section kept is current: none is read again"
     );
     assert_eq!(
-        feed_cursors(&site)[feeds..].first().map(String::as_str),
+        feed_cursors(&feeds(&mut chrome))
+            .first()
+            .map(String::as_str),
         Some("4190"),
         "the feed opens from the cursor the 304 names, not the kept copy's"
     );
@@ -329,7 +350,6 @@ fn a_warm_document_checked_at_once_opens_one_feed_naming_the_sections_it_drew_fr
     };
     visit(&mut chrome, &site);
     chrome.open("about:blank");
-    let feeds = feed_sections(&site).len();
     // Nothing held: the 304 comes back as fast as the stand-in answers, before the sections' slots
     // have come near the screen and named themselves.
     let before = answered(&site);
@@ -337,7 +357,7 @@ fn a_warm_document_checked_at_once_opens_one_feed_naming_the_sections_it_drew_fr
     shows(&mut chrome, LIVE, "the warm visit, checked");
     retitled(&mut chrome, &site, DOC, 4183, "Kept, retitled");
     outline_once(&since(&site, &before, "/api/document"), 304);
-    let opened = &feed_sections(&site)[feeds..];
+    let opened = feed_sections(&feeds(&mut chrome));
     assert_eq!(
         opened,
         [vec!["card:palette", "intro", "lamps"]],
