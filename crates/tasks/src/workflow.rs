@@ -13,8 +13,10 @@ use symphony_api::workflow::{Definition, FORMAT, Pair, Revision, Source};
 use symphony_plugin::execution::{Principal, PrincipalKind};
 
 pub mod activate;
+pub mod admit;
 mod builtin;
 mod validate;
+pub use crate::store::admission::Receipt;
 pub use crate::store::workflow::{Active, Followed, Recorded, TaskPosition, Transition};
 pub use activate::Host;
 pub use builtin::{builtin, legacy_pair};

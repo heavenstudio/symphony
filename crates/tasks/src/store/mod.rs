@@ -21,6 +21,7 @@ use std::hash::{BuildHasher, RandomState};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub(crate) mod admission;
 mod artifacts;
 pub(crate) mod asks;
 mod beside;
@@ -699,6 +700,16 @@ impl Store {
         } else {
             Which::Slug(slug)
         };
+        // A task a custom workflow holds moves, and is staffed, by its workflow's edges alone.
+        let decide = |view: &View| {
+            let change = decide(view)?;
+            match view.task(slug) {
+                Ok(task) if workflow::held(task) && change.moves_or_staffs() => {
+                    Err(refused(workflow::explicit_action(slug)))
+                }
+                _ => Ok(change),
+            }
+        };
         self.retrying(|| {
             let mut ruled = self.ruled(&which, slug, cap, &decide)?;
             if let Some((to, what)) = &ruled.change.gains {
@@ -1136,6 +1147,19 @@ struct Change {
     needs: Option<Value>,
     /// What the block it makes waits on, the board's own field ([`crate::waits_on::Blocked`]).
     blocked: Option<Value>,
+}
+
+impl Change {
+    /// Whether it moves the task, blocks it, or adds or drops an executor, a reviewer or a
+    /// reservation: what a custom workflow's edges alone do to a task it holds. The orchestrator's
+    /// role is the board's coordination, which its writers keep.
+    fn moves_or_staffs(&self) -> bool {
+        let staffing = |role: &str| role != "orchestrator";
+        self.status.is_some()
+            || self.blocked.is_some()
+            || self.add.as_ref().is_some_and(|r| staffing(&r.role))
+            || self.drop.iter().any(|(_, role)| staffing(role))
+    }
 }
 
 /// A start a rule makes: a claim or a move into an open status, the orchestrator role taken, or a

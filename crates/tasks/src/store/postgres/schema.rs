@@ -481,8 +481,9 @@ BEGIN
         RETURN NEW;
     END IF;
     IF was IS NOT NULL AND w = was THEN
-        RAISE EXCEPTION '%', 'refused: workflow: the status of ' || NEW.slug
-            || ' follows its workflow position, which its workflow operations move';
+        RAISE EXCEPTION '%', 'refused: explicit_action_required: the status of ' || NEW.slug
+            || ' follows its workflow position, which only its workflow edges move (just tasks '
+            || 'workflow actions ' || NEW.slug || ')';
     END IF;
     IF w IS NULL THEN
         RAISE EXCEPTION '%', 'refused: workflow: ' || NEW.slug

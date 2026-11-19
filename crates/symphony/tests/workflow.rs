@@ -945,14 +945,17 @@ edges = [{ id = "accept", label = "Accept", from = { phase = "build", state = "a
 "#;
 
 #[test]
-fn candidate_is_strict_and_runtime_activation_is_explicitly_unsupported() {
+fn candidate_is_strict_and_activation_takes_what_the_local_host_supports() {
     let d = candidate(CUSTOM).unwrap();
     assert_eq!(d.definition().phases[0].id, "build");
-    assert!(
-        Project::parse(Path::new("/tmp/demo"), CUSTOM)
-            .unwrap_err()
-            .contains("unsupported_activation")
+    assert_eq!(
+        Project::parse(Path::new("/tmp/demo"), CUSTOM).unwrap_err(),
+        "symphony.toml: unsupported_activation: unsupported capability: accept"
     );
+    let owned = CUSTOM
+        .replace("\"accept\"]", "\"owner\"]")
+        .replace("capability = \"accept\"", "capability = \"owner\"");
+    assert!(Project::parse(Path::new("/tmp/demo"), &owned).is_ok());
     for (from, to) in [
         ("format = 1", "format = 1\nunknown = true"),
         ("close_covered", "deploy_shell"),

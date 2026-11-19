@@ -1,6 +1,7 @@
 //! Strict candidate reader and immutable delivery-workflow definitions, re-exported from the
 //! board, which runs them (`symphony_board::workflow`, docs/WORKFLOW.md). Ordinary project reads
-//! refuse custom activation until the all-writer storage/admission boundary is available.
+//! accept a custom workflow the local host supports, which the board activates once the project's
+//! default branch commits it, and refuse one it does not, naming what it needs.
 
 use symphony_api::workflow::{Definition, Revision, Source};
 pub use symphony_board::workflow::{Mapping, Validated, builtin, candidate, prerequisites};
@@ -40,15 +41,20 @@ pub fn committed(root: &std::path::Path, reference: &str) -> Result<(Validated, 
     read().map_err(|e| format!("workflow committed source: {e}"))
 }
 
-/// Runtime reads may use only the omitted configuration in this contract-only release.
-/// A custom candidate equal to the default is still explicit custom configuration.
+/// A custom workflow is valid, its mappings map onto it, and the local host supports all it
+/// needs (`symphony_board::workflow::activate::supported`): a capability its grants name, and
+/// nothing this release cannot run yet. Refused as `unsupported_activation`, naming what, so the
+/// project learns before its default branch commits a workflow the board would not activate.
 pub(super) fn require_supported(
     definition: Option<&Definition>,
     mappings: &[Mapping],
 ) -> Result<(), String> {
     if let Some(definition) = definition {
-        Validated::new(definition.clone())?.check_mappings(mappings)?;
-        return Err("symphony.toml: unsupported_activation: custom workflow requires the authoritative storage/admission engine".into());
+        let validated = Validated::new(definition.clone())?;
+        validated.check_mappings(mappings)?;
+        let host = symphony_board::workflow::Host::local();
+        return symphony_board::workflow::activate::supported(&validated, &host)
+            .map_err(|why| format!("symphony.toml: unsupported_activation: {why}"));
     }
     if !mappings.is_empty() {
         return Err("symphony.toml: workflow_mappings: no [workflow] to map onto".into());

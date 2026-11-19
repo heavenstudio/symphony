@@ -67,6 +67,10 @@ pub(in crate::store) fn create(new: &Creating) -> String {
     }
     block.push_str(CREATE);
     block.push('\n');
+    if new.placed {
+        block.push_str(super::workflow::PLACED);
+        block.push('\n');
+    }
     if new.receipt {
         block.push_str(&field_set("_symphony,owner_save", "v -> 'owner_save'"));
         block.push('\n');
@@ -502,6 +506,7 @@ mod tests {
             receipt,
             red,
             arm,
+            placed: false,
         };
         let marks = [
             field_set("_symphony,owner_save", "v -> 'owner_save'"),

@@ -169,6 +169,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             ("move", "move a task to another status, --reason saying why"),
             (
+                "workflow",
+                "a custom workflow: show it, a task's actions, apply an edge",
+            ),
+            (
                 "say",
                 "post on a task's thread, --to owner, @orchestrator or HANDLE",
             ),
@@ -493,6 +497,38 @@ still names the task: you run already.
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+"#,
+    ),
+    (
+        "workflow",
+        r#"usage: just tasks workflow [-h] [--as ACTOR] [--revision N] [--key KEY] [--input NAME=TEXT] [--json] ACTION [SLUG] [EDGE]
+"#,
+        r#"usage: just tasks workflow [-h] [--as ACTOR] [--revision N] [--key KEY] [--input NAME=TEXT] [--json] ACTION [SLUG] [EDGE]
+
+A custom workflow the board activated from the project's default branch
+(docs/WORKFLOW.md). `show` prints its revision, positions and edges, or says
+none is active. `actions SLUG` prints where the task stands, its workflow
+revision, and each edge that leaves it with what stops you taking it now: a
+preview, never a permit. `apply SLUG EDGE --revision N` takes the edge as
+you, through the board's one admission, from the revision you read: a task
+moved since is refused as stale_task, so read its actions again. A task a
+custom workflow holds moves and is staffed by its edges alone: move, claim,
+release, role, reserve and the verdicts refuse it as explicit_action_required.
+
+positional arguments:
+  ACTION                show, actions or apply
+  SLUG                  the task (actions, apply)
+  EDGE                  the edge to take (apply)
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+  --revision N          the task's workflow revision you read (apply)
+  --key KEY             the request's key: the same key and request answer the
+                        first result, another request under it is refused
+                        (default SLUG@REVISION:EDGE)
+  --input NAME=TEXT     an input the edge declares, again for each
+  --json                the answer as JSON
 "#,
     ),
     (

@@ -119,11 +119,13 @@ impl Store {
         if let Some(assignee) = &new.assignee {
             let _ = write!(said, " for {assignee}");
         }
+        let placing = self.placing(new)?;
         let creating = sql::Creating {
             acts: new.by != OWNER,
             receipt: receipt.is_some(),
             red: red.is_some(),
             arm: arm.is_some(),
+            placed: placing.is_some(),
         };
         let body = || both(sql::create(&creating), Pg::script(pg::create(&creating)));
         let mut vars = self.acting(
@@ -137,6 +139,8 @@ impl Store {
                 "taken": format!("{REFUSED}task {} already exists", new.slug),
                 "unassignable": new.assignee.as_ref()
                     .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),
+                "placed": placing.as_ref().map(crate::workflow::Transition::position),
+                "placing": placing,
             }),
         );
         if red.is_some()

@@ -54,3 +54,36 @@ fn a_document_save_after_a_close_is_refused_and_writes_nothing() {
     );
     assert_eq!(tree.read("docs/A.md"), "# A\n\nText.\n");
 }
+
+#[test]
+fn the_owners_workflow_operation_names_its_task_and_carries_a_whole_request() {
+    let tree = Tree::new();
+    let saves = Saves::start(&tree.root);
+    let refused = |payload: Value| {
+        let failure = saves.post("", WORKFLOW_APPLY, &payload).unwrap_err();
+        (failure.status, failure.error)
+    };
+    assert_eq!(
+        refused(json!({"request": {}})),
+        (400, "slug is required".to_string())
+    );
+    let (status, error) = refused(json!({"slug": "sim/a", "request": {"task": "sim/a"}}));
+    assert_eq!(status, 400);
+    assert!(
+        error.starts_with("request: not a workflow operation: "),
+        "{error}"
+    );
+    let request = json!({
+        "project": "sim", "task": "sim/b", "edge": "claim",
+        "expected": {"workflow": {"format": 1, "digest": "d", "source": {"commit": "c", "project_blob": "b"}},
+            "activation_generation": 1, "task_revision": 1, "at": {"phase": "build", "state": "available"}},
+        "input_revisions": {}, "idempotency_key": "k", "inputs": {},
+    });
+    assert_eq!(
+        refused(json!({"slug": "sim/a", "request": request})),
+        (
+            400,
+            "request: its task is sim/b, not the slug sim/a".to_string()
+        )
+    );
+}

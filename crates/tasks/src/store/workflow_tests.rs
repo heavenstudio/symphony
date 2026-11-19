@@ -162,8 +162,14 @@ fn no_writer_moves_a_managed_task_past_its_record() {
         f.store.record_transition(&held, 0).unwrap();
         let moved_by_hand = refused(f.store.move_to("sim/held", "ready", &worker));
         assert!(
-            moved_by_hand.contains("follows its workflow position"),
+            moved_by_hand.starts_with("explicit_action_required: a custom workflow holds sim/held"),
             "{backend:?}: {moved_by_hand}"
+        );
+        // The owner's own move meets the fence itself.
+        let owner = refused(f.store.move_to("sim/held", "cancelled", "owner"));
+        assert!(
+            owner.starts_with("explicit_action_required: the status of sim/held follows its"),
+            "{backend:?}: {owner}"
         );
         // A field nothing in the workflow reads is the board's to change, as ever.
         task().set(json!({"title": "Jump, renamed"})).unwrap();

@@ -359,6 +359,8 @@ pub(in crate::store) struct Creating {
     pub(in crate::store) red: bool,
     /// It is filed on an arm ([`ARM`]).
     pub(in crate::store) arm: bool,
+    /// A custom workflow is active, and it starts at the initial pair (`super::workflow::PLACED`).
+    pub(in crate::store) placed: bool,
 }
 
 /// A new task ([`CREATE`]) with the marks `new` names, its line on the thread (`$said`) and, where
@@ -372,8 +374,13 @@ pub(in crate::store) fn create(new: &Creating) -> String {
         String::new()
     };
     let arm_mark = if new.arm { ARM } else { "" };
+    let placed = if new.placed {
+        super::workflow::PLACED
+    } else {
+        ""
+    };
     format!(
-        "{act}{CREATE}\n{stamp}\n{marked}\n{arm_mark}\n{}\n{}",
+        "{act}{CREATE}\n{placed}\n{stamp}\n{marked}\n{arm_mark}\n{}\n{}",
         logged("$slug", "$actor", "'system'", "$said", "NONE"),
         block_cancelled_dependencies(false)
     )

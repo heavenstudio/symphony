@@ -323,14 +323,10 @@ impl Store {
 
     /// `transition` recorded and its task put where it goes, in one write, when the task is at
     /// workflow revision `expected` (0 for a task no workflow held yet); refused as `stale_task`
-    /// at any other. The one write of a position: activation and admission call it, nothing else.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "activation and admission, the slices after storage, call it"
-        )
-    )]
+    /// at any other: the fences' tests' own write of a position. The board writes one only in an
+    /// activation (`Store::activate_workflow`), an admitted operation (`Store::apply_operation`)
+    /// and a filing (`Store::placing`).
+    #[cfg(test)]
     pub(crate) fn record_transition(
         &self,
         transition: &Transition,
@@ -345,6 +341,20 @@ impl Store {
         self.retrying(|| self.transact::<Value>(both(sql::RECORD, pg::record()), vars.clone()))
             .map(drop)
     }
+}
+
+/// Whether a custom workflow holds `task`: its row carries a workflow position.
+pub(super) fn held(task: &crate::rows::TaskRow) -> bool {
+    (task.fields.get("_board")).is_some_and(|board| board.contains_key("workflow"))
+}
+
+/// The refusal of a legacy move or staffing of `slug`, a task a custom workflow holds.
+pub(crate) fn explicit_action(slug: &str) -> String {
+    format!(
+        "explicit_action_required: a custom workflow holds {slug}, which moves and is staffed by \
+         its edges alone; read them with `just tasks workflow actions {slug}` and take one with \
+         `just tasks workflow apply {slug} EDGE`"
+    )
 }
 
 /// An activation refused in the planner's words, which name the workflow where they do not.

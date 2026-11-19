@@ -488,7 +488,7 @@ DEFINE EVENT OVERWRITE workflow_position ON task
     LET $w = $after.fields._board.workflow;
     LET $was = $before.fields._board.workflow ?? NONE;
     IF $was != NONE AND $w = $was {
-        THROW string::concat('refused: workflow: the status of ', $after.slug, ' follows its workflow position, which its workflow operations move');
+        THROW string::concat('refused: explicit_action_required: the status of ', $after.slug, ' follows its workflow position, which only its workflow edges move (just tasks workflow actions ', $after.slug, ')');
     };
     IF $w = NONE { THROW string::concat('refused: workflow: ', $after.slug, ' keeps its workflow position: only an activation returns a task to the board writers'); };
     IF $was != NONE AND $w.revision != $was.revision + 1 {
