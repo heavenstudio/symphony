@@ -37,6 +37,7 @@ mod common;
 mod components;
 mod desktop_stub;
 mod document_cards;
+mod document_gallery;
 mod document_landing;
 mod feed_deltas;
 #[path = "../../../../tools/test-support/script_std.rs"]

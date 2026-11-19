@@ -245,7 +245,12 @@ and the media layer send alike, answered through its callback (a select by the v
 or none, the viewer by the step asked, 0 to close) and closed by its owner. A page that shows media
 mounts the media layer (`media-layer.ts`) before it: started by the first media it shows, it scales
 the mockups' frames, loads a viewer's script, runs the views' buttons and opens a picture in the
-menus' picture viewer, all of it ending with the kind's mount. A document's
+menus' picture viewer, all of it ending with the kind's mount. Each picture it makes a button is
+named by its alt, else its figure's caption (`nameOf`), and takes the focus as it opens, so the
+viewer, whose Full size link opens the picture itself in a tab of its own, gives the focus back to
+it. A card's compare row (`.compare`, `src/docs.css`) holds up to four pictures on one line and
+wraps more into a gallery, each captioned by the server from its source's alt
+(`crates/symphony/src/render/cards.rs`). A document's
 contents watch (`contents.ts`: the outline folded on its own while a drawn table is wider than its
 box, unless the reader chose) is no part of it: it runs from the mount of a body that has the
 outline to its unmount, under the signal of that body's own effect (`DocumentBody`).
