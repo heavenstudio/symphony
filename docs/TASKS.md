@@ -2026,7 +2026,10 @@ lands is decided by the checks below, every stamp the task needs standing on the
 reviewer's approve among them where it needs review. So `symphony init` allows `just land` with no permission prompt, and writes no ask
 rule; one an older init wrote, for the marker or for `just tasks land`, a run removes. A
 project's own `land` recipe gets the same allow rule, and its own landing policy decides
-what it lands. An orchestrator lands an approved task without asking the owner. In a project
+what it lands. A task a custom workflow holds lands by its graph alone, through the prepare and
+finalize edges of the adapter `default_land`; its approve is read from the workflow, the head it
+read being the `head` input kept on that transition's receipt and never a verdict message, which
+a workflow's approve writes none of ([WORKFLOW](WORKFLOW.md#external-effects)). An orchestrator lands an approved task without asking the owner. In a project
 whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
 `tasks land` refuses by any route, naming that justfile. A land is its merge, its move,
 its push and its close: it runs no generator and no sweep, and nothing slow is on its

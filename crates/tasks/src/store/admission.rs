@@ -165,6 +165,17 @@ impl Store {
             let at = self.now();
             let admitted = admit::admit(context, &decided.facts, principal, host, request, at)
                 .map_err(refusal)?;
+            // A caller's word never prepares or finalizes: the edge's adapter takes it.
+            if let Some(adapter) = crate::workflow::effect::external(&admitted.transition.effects) {
+                return Err(refusal(Refusal::new(
+                    RefusalCode::ExplicitActionRequired,
+                    format!(
+                        "edge {} is the adapter {adapter}'s to take, with what it reads of the \
+                         effect itself: no request prepares or finalizes one",
+                        request.edge
+                    ),
+                )));
+            }
             let transition = &admitted.transition;
             let status = transition.status.clone();
             let taking = Taking {
@@ -546,6 +557,8 @@ fn stopped(failure: Failure) -> Error {
     }
 }
 
+mod effects;
+pub use effects::{Finalized, Reviewed};
 mod recovery;
 pub(in crate::store) use recovery::Released;
 
