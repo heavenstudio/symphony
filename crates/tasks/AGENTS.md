@@ -103,7 +103,9 @@ unanswered post (PULL, recovery and the reap read it). Who hears what:
 `herdr`): `startup.rs` a launch's start, `restore.rs`, `close.rs` and `cleanup.rs`, `screen.rs` what
 the owner may be looking at, `procs.rs` what under a terminal is work, `place.rs` its tab, `reap.rs`
 and `reap/` the idle sweep the Symphony runs every five minutes, `recover.rs` the resume of a
-conversation an unanswered post waits on, `staff.rs` a staffing pass, `defaults.rs` the agent and
+conversation an unanswered post waits on, `attempts.rs` hc as the execution provider each launch,
+restore and close records an attempt through
+([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md#local-terminals)), `staff.rs` a staffing pass, `defaults.rs` the agent and
 model a launch starts, `running.rs` the machine's agents. `bin/fake-hc.rs` stands in for hc and the
 app in tests.
 
@@ -135,7 +137,8 @@ reads ([TASKS](../../docs/TASKS.md#gate-decisions)), `red.rs` the red mark.
 ([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md)): `coordinator.rs` admission, controls and
 the worker's step, `rules.rs` the transitions it decides on what a write read, `evidence.rs`
 collection, cleanup and eligibility, `record.rs` the row and its facts, `keys.rs` the ids and
-operation keys; `store/execution.rs` with its statements is their store.
+operation keys, `view.rs` the board scope every host of a project's attempts uses
+(`board_scope`); `store/execution.rs` with its statements is their store.
 
 ### The rules of work
 
