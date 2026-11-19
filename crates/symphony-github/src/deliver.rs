@@ -6,7 +6,9 @@
 //!
 //! `publish` and `merge` first read the protection of the base branch ([`crate::preflight`]) and
 //! refuse where it does not hold a delivery to its evidence; evidence that blocks is still
-//! said there, by its checks alone on the pull request already bound.
+//! said there, by its checks alone on the pull request already bound. Who bypasses the rules is
+//! read with a third token, the policy token, which goes to [`crate::preflight::Reader`] and
+//! nowhere else: no verb here sends it with anything but that one read.
 //!
 //! - `publish` pushes the head to the branch named as the task, never forced and only to an
 //!   `origin` that names the repository the settings do; finds the pull request of that branch
@@ -24,13 +26,13 @@
 //!
 //! Every write is journaled before it is made, and what it would make is looked for first. The
 //! pull request's public text is the task's curated text ([`crate::state::Draft`]) or, with
-//! none, its slug: never a brief, a thread or the title the land hands over. Neither token is in
+//! none, its slug: never a brief, a thread or the title the land hands over. No token is in
 //! an argument, a URL, an environment variable, the journal, the state or a line said here.
 
 use crate::config::{Config, PullRequests, Repository};
 use crate::credential;
 use crate::github::clean_title;
-use crate::preflight::{self, Operation, Wanted};
+use crate::preflight::{self, Operation, Reader, Wanted};
 use crate::reconcile::{Context, Outcome};
 use crate::state::{Binding, Entry, Event, Pull, State, Store};
 use crate::transport::{Failure, Request, Transport};
@@ -402,13 +404,27 @@ impl Run<'_> {
             landing_app: self.config.landing_app_id.unwrap_or_default(),
             operation: Operation::Task,
         };
-        match preflight::check(host, &wanted) {
+        // The policy token is read anew each time, and sent nowhere but through the reader.
+        let read = match self.connect(
+            self.config.policy_token_file.as_deref(),
+            "policy_token_file",
+        ) {
+            Ok(transport) => {
+                let reader = Reader::new(transport.as_ref(), self.repository.clone());
+                preflight::check(host, &reader, &wanted)
+            }
+            Err(stopped) if stopped["state"] == json!("refused") => {
+                Err(preflight::unread(&wanted, &text(&stopped, "why")))
+            }
+            Err(stopped) => Err(stopped),
+        };
+        match read {
             Ok(policy) => {
                 self.journal(Event::Ack, "policy", slug, &policy.digest, json!(base));
                 Ok(())
             }
             Err(stopped) => {
-                if stopped["kind"] == json!("policy") {
+                if stopped["kind"] == json!("policy") && stopped["missing"].is_array() {
                     let id = crate::digest(&["policy", slug, base]);
                     self.journal(
                         Event::Failed,
@@ -458,7 +474,8 @@ impl Run<'_> {
                 let id = crate::digest(&["pull", slug, base]);
                 self.journal(Event::Intent, "pull", slug, &id, Value::Null);
                 // A draft: nothing merges it, by anyone, until this program marks it ready at
-                // the merge the land asks for.
+                // the merge the land asks for. It stays ready after a merge GitHub refuses,
+                // and the rulesets hold it: the landing App alone merges, through this program.
                 let sent = json!({
                     "title": title, "body": body, "head": slug, "base": base, "draft": true,
                 });
@@ -1031,7 +1048,7 @@ pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome 
     };
     let _ = writeln!(
         out,
-        "{} (id {id}{}), {base}: checks from App {}, merged by App {}",
+        "{} (id {id}{}), {base}: checks from App {}, merged by App {}, bypass lists read by App {}",
         repository.full_name(),
         if bound.is_some() {
             ", as bound here"
@@ -1039,7 +1056,8 @@ pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome 
             ", bound to nothing here yet"
         },
         config.checks_app_id.unwrap_or_default(),
-        config.landing_app_id.unwrap_or_default()
+        config.landing_app_id.unwrap_or_default(),
+        config.policy_app_id.unwrap_or_default()
     );
     let wanted = Wanted {
         repository: id,
@@ -1048,7 +1066,16 @@ pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome 
         landing_app: config.landing_app_id.unwrap_or_default(),
         operation: Operation::Task,
     };
-    match preflight::check(&host, &wanted) {
+    let policy = match connect(
+        ctx,
+        config.policy_token_file.as_deref(),
+        "policy_token_file",
+    ) {
+        Ok(policy) => policy,
+        Err(answer) => return stopped(out, &answer),
+    };
+    let reader = Reader::new(policy.as_ref(), repository.clone());
+    match preflight::check(&host, &reader, &wanted) {
         Ok(policy) => {
             let _ = writeln!(
                 out,

@@ -88,6 +88,8 @@ struct Written {
     checks_token_file: Option<PathBuf>,
     checks_app_id: Option<i64>,
     landing_app_id: Option<i64>,
+    policy_token_file: Option<PathBuf>,
+    policy_app_id: Option<i64>,
     #[serde(default)]
     close_issues: bool,
 }
@@ -127,6 +129,13 @@ pub struct Config {
     /// delivery: the one actor the default branch's rules let update it
     /// ([`crate::preflight`]), never the App that writes the checks.
     pub landing_app_id: Option<i64>,
+    /// Where the token that reads who bypasses the default branch's rulesets is: an installation
+    /// token of a third GitHub App, which GitHub shows those lists because it may write the
+    /// repository's administration. It is sent with two kinds of read and nothing else
+    /// ([`crate::preflight::Reader`]), never the token that merges or writes the checks.
+    pub policy_token_file: Option<PathBuf>,
+    /// That App's number: neither of the other two.
+    pub policy_app_id: Option<i64>,
     /// Whether a delivered task's mapped issue is closed once the board closed the task.
     pub close_issues: bool,
 }
@@ -182,6 +191,60 @@ fn repository(text: &str) -> Result<Repository, String> {
     })
 }
 
+/// What a delivery's settings leave out: every App and token it needs.
+fn delivery(written: &Written) -> Result<(), String> {
+    if written.checks_token_file.is_none() || written.checks_app_id.is_none() {
+        return Err(
+            "pull_requests = \"publish\" needs checks_token_file and checks_app_id: the GitHub \
+             App whose checks the branch's protection takes, and a token of its own"
+                .into(),
+        );
+    }
+    if written.landing_app_id.is_none() {
+        return Err(
+            "pull_requests = \"publish\" needs landing_app_id: the GitHub App token_file's token \
+             is of, the one actor the default branch's rules let update it"
+                .into(),
+        );
+    }
+    if written.checks_token_file == written.token_file {
+        return Err(
+            "checks_token_file is token_file: what writes the checks is never what merges".into(),
+        );
+    }
+    if written.policy_token_file.is_none() || written.policy_app_id.is_none() {
+        return Err(
+            "pull_requests = \"publish\" needs policy_token_file and policy_app_id: the GitHub \
+             App GitHub shows who bypasses the default branch's rules, and a token of its own"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// The policy token and its App are neither of the other two, written or not enabled.
+fn apart(written: &Written) -> Result<(), String> {
+    if written.policy_app_id.is_some()
+        && [written.landing_app_id, written.checks_app_id].contains(&written.policy_app_id)
+    {
+        return Err(
+            "policy_app_id is landing_app_id or checks_app_id: what reads who bypasses the rules \
+             neither merges nor writes the checks"
+                .into(),
+        );
+    }
+    if written.policy_token_file.is_some()
+        && [&written.token_file, &written.checks_token_file].contains(&&written.policy_token_file)
+    {
+        return Err(
+            "policy_token_file is token_file or checks_token_file: the token that reads who \
+             bypasses the rules is a token of its own"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 /// The settings `text` gives.
 ///
 /// # Errors
@@ -203,6 +266,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
     for (key, file) in [
         ("token_file", &written.token_file),
         ("checks_token_file", &written.checks_token_file),
+        ("policy_token_file", &written.policy_token_file),
     ] {
         if file.as_ref().is_some_and(|file| !file.is_absolute()) {
             return Err(wrong(format!(
@@ -213,6 +277,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
     for (key, id) in [
         ("checks_app_id", written.checks_app_id),
         ("landing_app_id", written.landing_app_id),
+        ("policy_app_id", written.policy_app_id),
     ] {
         if id.is_some_and(|id| id <= 0) {
             return Err(wrong(format!("{key} is a GitHub App's number")));
@@ -223,6 +288,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
             "landing_app_id is checks_app_id: what merges is never what writes the checks".into(),
         ));
     }
+    apart(&written).map_err(wrong)?;
     if written.enabled {
         if repository.is_none() {
             return Err(wrong("enabled needs repository = \"OWNER/NAME\"".into()));
@@ -239,27 +305,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
             )));
         }
         if written.pull_requests == PullRequests::Publish {
-            if written.checks_token_file.is_none() || written.checks_app_id.is_none() {
-                return Err(wrong(
-                    "pull_requests = \"publish\" needs checks_token_file and checks_app_id: the \
-                     GitHub App whose checks the branch's protection takes, and a token of its \
-                     own"
-                    .into(),
-                ));
-            }
-            if written.landing_app_id.is_none() {
-                return Err(wrong(
-                    "pull_requests = \"publish\" needs landing_app_id: the GitHub App token_file's \
-                     token is of, the one actor the default branch's rules let update it"
-                        .into(),
-                ));
-            }
-            if written.checks_token_file == written.token_file {
-                return Err(wrong(
-                    "checks_token_file is token_file: what writes the checks is never what merges"
-                        .into(),
-                ));
-            }
+            delivery(&written).map_err(wrong)?;
         }
     }
     Ok(Config {
@@ -274,6 +320,8 @@ pub fn parse(text: &str) -> Result<Config, String> {
         checks_token_file: written.checks_token_file,
         checks_app_id: written.checks_app_id,
         landing_app_id: written.landing_app_id,
+        policy_token_file: written.policy_token_file,
+        policy_app_id: written.policy_app_id,
         close_issues: written.close_issues,
     })
 }
