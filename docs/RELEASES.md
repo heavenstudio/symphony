@@ -878,16 +878,18 @@ the hour, and its green release refreshes the server and its projects
   whatever the count ([the owner's A](DECISIONS.md#schema-landing-then-release), 2026-11-19).
   Main's build moves this repository's board at its first command after the landing
   ([TASKS](TASKS.md#where-it-lives)), and the machine's server, a release's, then writes nothing
-  to it until a release at the new schema serves it ([the switch](#the-switch)): the run brings
-  that release in one run, not at the count's. The orchestrator who landed it runs `just release`
-  once the land is done ([who runs it](#who-runs-it)), unless the land's own `--due` started a
-  run, which is that run. Such a landing waits, approved, while a run or the release candidate
-  holds the release (`just release --status`: `next run: in progress`, or a candidate open),
-  since a run started then judges nothing of main's newest commit ([main while it is
-  open](#main-while-it-is-open)), and lands once neither does. A second one waits until `current`
-  names a release serving the first's schema (`--status`'s `machine:` and `last refresh:` lines),
-  so the board is never two schemas ahead of the server, which reads nothing of a board that far
-  ahead.
+  to it until a release at the new schema serves it ([the switch](#the-switch)). The run starts
+  now rather than at the count's, and nothing else is shortened: a red one is held as the release
+  candidate as any run is ([the release candidate](#the-release-candidate)), and `current` then
+  moves under the refresh's rule on writers as for any release ([the refresh](#the-refresh)).
+  The orchestrator who landed it runs `just release` once the land is done ([who runs
+  it](#who-runs-it)), unless the land's own `--due` started a run, which is that run. Such a
+  landing waits, approved, while a run or the release candidate holds the release (`just release
+  --status`: `next run: in progress`, or a candidate open), since a run started then judges
+  nothing of main's newest commit ([main while it is open](#main-while-it-is-open)), and lands
+  once neither does. A second one waits until `current` names a release serving the first's
+  schema (`--status`'s `machine:` and `last refresh:` lines), so the board is never two schemas
+  ahead of the server, which reads nothing of a board that far ahead.
 
 ## The refresh
 
