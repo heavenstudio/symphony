@@ -703,7 +703,7 @@ mod tests {
 
 /// The tables a move takes by the dump ([`Store::dump`], [`Store::copy`]).
 #[cfg(test)]
-const DUMPED: [&str; 11] = [
+const DUMPED: [&str; 15] = [
     "task",
     "link",
     "session",
@@ -715,6 +715,10 @@ const DUMPED: [&str; 11] = [
     "task_session",
     "ask",
     "usage",
+    "execution_attempt",
+    "execution_fact",
+    "execution_fence",
+    "execution_artifact",
 ];
 
 /// The tables a move leaves, each with why nothing of the board is lost with it.
