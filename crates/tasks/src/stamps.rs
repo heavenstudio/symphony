@@ -234,7 +234,14 @@ impl Catalogue {
     /// The catalogue the main checkout `main` has committed at its head, as the land reads its
     /// settings there ([`crate::land::Settings::of`]): the Symphony's own with no file.
     pub fn of(main: &Path) -> Result<Catalogue, String> {
-        let at = format!("HEAD:{MANIFEST}");
+        Catalogue::committed(main, "HEAD")
+    }
+
+    /// The catalogue the commit `commit` of the main checkout `main`'s repository holds: the
+    /// Symphony's own with no file there. What a land that merged is judged by is the one its
+    /// merge's first parent holds, the head's being by then the branch's own.
+    pub fn committed(main: &Path, commit: &str) -> Result<Catalogue, String> {
+        let at = format!("{commit}:{MANIFEST}");
         if !succeeds(main, &["cat-file", "-e", &at]) {
             return Ok(Catalogue::symphony());
         }

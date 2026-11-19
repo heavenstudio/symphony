@@ -72,17 +72,19 @@ impl DefaultLand<'_> {
             pull: None,
             head: head.into(),
             policy: self.policy(&self.default_ref()),
-            evidence: self.evidence(slug, head)?,
+            evidence: self.evidence(slug, head, "HEAD")?,
             destination: self.default_ref(),
         })
     }
 
     /// The revision of `slug`'s evidence at `head`: a digest of the stamps it needs, which of them
-    /// stand there by the board's readers, and the review the workflow recorded.
-    fn evidence(&self, slug: &str, head: &str) -> Result<String, String> {
+    /// stand there by the board's readers, and the review the workflow recorded. The stamps it
+    /// needs are the ones the catalogue `policy` commits names: the main checkout's head before a
+    /// merge, the merge's first parent after it.
+    fn evidence(&self, slug: &str, head: &str, policy: &str) -> Result<String, String> {
         let task = self.store.get(slug).map_err(|e| e.to_string())?;
         let thread = self.store.thread(slug).map_err(|e| e.to_string())?;
-        let needed = Needed::of(&task, self.main, Some(head))?;
+        let needed = Needed::under(&task, self.main, policy, Some(head))?;
         let read = needs::Evidence::of(self.store, self.env, self.main, slug, &thread, &needed);
         let (met, missing) = needs::standing(&needed, head, &read);
         let reviewed = self.store.reviewed(slug).map_err(|e| e.to_string())?;
@@ -126,9 +128,10 @@ impl Adapter for DefaultLand<'_> {
             return Ok(None);
         };
         // The policy in force when it merged is the one the default branch held before the merge:
-        // what the branch itself brings is the landing's own change.
-        let policy = self.policy(&format!("{merge}^1"));
-        let evidence = self.evidence(&intent.slug, &intent.bindings.head)?;
+        // what the branch itself brings is the landing's own change, its stamp catalogue too.
+        let before = format!("{merge}^1");
+        let policy = self.policy(&before);
+        let evidence = self.evidence(&intent.slug, &intent.bindings.head, &before)?;
         Ok(Some(Outcome {
             receipt: merge,
             policy,

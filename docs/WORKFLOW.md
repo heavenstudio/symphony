@@ -154,7 +154,10 @@ An edge whose effect is `prepare` or `finalize` changes something outside the bo
 is taken only through its adapter's boundary (`symphony_board::workflow::effect`,
 `Store::prepare_effect`, `dispatch_effect`, `finalize_effect`), never by a plain operation: an
 operation naming one is refused as `explicit_action_required`, so a prepared effect never completes
-on a caller's word. The host registers each adapter by name (`Host::adapters`), and the adapter
+on a caller's word. The refusal names what takes the edge where a command of the board's does
+(`just land SLUG` for a landing's adapter, the default's or the project's own), and a task's next
+actions list the edge with that code for every principal, so `just tasks workflow actions` says it
+is taken by `just land SLUG`, never applied. The host registers each adapter by name (`Host::adapters`), and the adapter
 itself answers what its system holds (`effect::Adapter`): its bindings as they are now, and the
 result of an effect it reads back.
 
@@ -168,7 +171,7 @@ result of an effect it reads back.
 - **Dispatch** comes before anything is sent. The intent stands only while the task is still at
   the revision the prepare made, under the generation that admitted it, with every binding the
   adapter reads now equal to the one recorded. Otherwise it is withdrawn, for good, and the
-  dispatch refused as `stale_input` naming what moved: a task taken out of its prepared pair by
+  dispatch refused as `stale_input` naming what moved, as a finalize that meets it withdrawn is: a task taken out of its prepared pair by
   another edge cancels its reservation this way. An adapter then checks the real head once more
   as it acts, by merging the bound commit itself and never a branch name.
 - **Finalize** takes the finalize edge only on a result the adapter read back from its system
@@ -199,7 +202,10 @@ landing binds the repository's common folder, the branch's tip, the project file
 branch commits as the policy revision, a digest of the stamps needed and standing with that
 review as the evidence revision, and the default branch. After the merge it reads back its own
 record of it, a merge of the bound head the default branch holds, and finalizes with that commit.
-A land run again finishes an interrupted one from its intent, merging nothing twice. A managed
+A land run again finishes an interrupted one from its intent, merging nothing twice. The evidence it reads back is judged by the stamp catalogue
+the merge's first parent commits, as the policy revision is: the main checkout's head holds the
+branch's own project file by then, and a branch that changes `[stamps]` owes no recovery for its
+own change. A managed
 task is not delivered by a pull request (`[land] delivery`) yet.
 
 **A project's own landing** takes the same three calls under the name `project_land`, with an

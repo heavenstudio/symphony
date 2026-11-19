@@ -236,7 +236,9 @@ pub fn admit(
 
 /// The edges leaving the task's pair, each with what stops `principal` taking it now: a preview,
 /// never a permit, which shows an action the principal cannot take with the reason, and names the
-/// authority it needs without saying who holds it.
+/// authority it needs without saying who holds it. An edge that prepares or finalizes an external
+/// effect is never a caller's to take, whoever asks: it is listed as `explicit_action_required`,
+/// its adapter's ([`super::effect::taken_by`]).
 pub fn next_actions(
     context: Context,
     facts: &Facts,
@@ -252,6 +254,9 @@ pub fn next_actions(
                     .into_iter()
                     .map(|r| r.code)
                     .collect();
+            if super::effect::external(&edge.effects).is_some() {
+                unavailable.push(RefusalCode::ExplicitActionRequired);
+            }
             unavailable.dedup();
             NextAction {
                 edge: edge.id.clone(),

@@ -197,6 +197,15 @@ pub fn external(effects: &[Effect]) -> Option<&str> {
     })
 }
 
+/// What takes the edges of `adapter` on `slug`, as a refusal and a list of actions name it: the
+/// landing command for a landing's adapter, the Symphony's default or the project's own, which
+/// one recipe runs; none for an adapter with no command of the board's.
+pub fn taken_by(adapter: &str, slug: &str) -> Option<String> {
+    [DEFAULT_LAND, PROJECT_LAND]
+        .contains(&adapter)
+        .then(|| format!("`just land {slug}`"))
+}
+
 /// Why `intent`'s reservation no longer stands, none while it does: the workflow active is not the
 /// one that admitted its prepare, the task has moved since (or no workflow holds it), or a binding
 /// reads another value `now`.
@@ -213,8 +222,9 @@ pub fn stale(
             if active.generation != intent.generation || active.digest != intent.digest =>
         {
             return Some(format!(
-                "the workflow activated again since it was prepared (generation {}, then {})",
-                active.generation, intent.generation
+                "the workflow activated again since it was prepared (generation {} when prepared, \
+                 {} now)",
+                intent.generation, active.generation
             ));
         }
         Some(_) => {}
