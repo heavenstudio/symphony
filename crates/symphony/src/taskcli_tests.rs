@@ -73,3 +73,37 @@ fn with_no_build_it_runs_tasks_from_the_search_path_and_a_failed_start_says_how_
         "{why}"
     );
 }
+
+#[test]
+fn a_board_run_without_names_runs_with_none_of_them_inherited_or_given() {
+    let tree = Tree::new();
+    let path = tree.write(
+        "bin/tasks",
+        "#!/bin/sh\ncat > /dev/null\nprintf '{\"ok\": {\"given\": \"%s\", \"kept\": \"%s\", \"inherited\": \"%s\"}}' \
+         \"$TASKS_SERVER\" \"$KEPT\" \"$CARGO_MANIFEST_DIR\"\n",
+    );
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let env = [
+        ("TASKS_SERVER".to_string(), "127.0.0.1:1".to_string()),
+        ("KEPT".to_string(), "kept".to_string()),
+    ];
+    let cli = vec![path.display().to_string()];
+    let said = |board: CliBoard| board.call("version", &json!({})).unwrap();
+    let whole = said(CliBoard::with_command(cli.clone(), &env, &tree.root));
+    assert_eq!(whole["given"], "127.0.0.1:1");
+    assert_eq!(whole["kept"], "kept");
+    let cleared = said(
+        CliBoard::with_command(cli, &env, &tree.root)
+            .without(&["TASKS_SERVER", "CARGO_MANIFEST_DIR"]),
+    );
+    assert_eq!(cleared["given"], "", "a name given and cleared is cleared");
+    assert_eq!(cleared["kept"], "kept", "the rest are kept");
+    assert_eq!(
+        cleared["inherited"], "",
+        "and one this process has is not inherited"
+    );
+    // Cargo gives its tests their package's folder, so the clearing above is of a real variable.
+    if let Ok(dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        assert_eq!(whole["inherited"], dir.as_str());
+    }
+}

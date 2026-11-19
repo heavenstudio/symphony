@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appPath, linkable, webAddress } from "./links";
+import { appPath, linkable, taskSlug, webAddress } from "./links";
 import { CASES } from "./testing";
 
 /**
@@ -120,5 +120,33 @@ describe("a web address", () => {
       expect(webAddress(`https://h${space}x`), JSON.stringify(space)).toBe(false);
     }
     expect(webAddress("https://h\u{feff}x"), "a byte-order mark is no space to Rust").toBe(true);
+  });
+});
+
+describe("a task's page the server names", () => {
+  it("is an app path holding /task/, its slug what follows, to a query or a fragment", () => {
+    expect(taskSlug("/task/tools/x")).toBe("tools/x");
+    expect(taskSlug("/symphony/task/tests/release-red-update-alpha-23")).toBe(
+      "tests/release-red-update-alpha-23",
+    );
+    expect(taskSlug("/task/tools/x#message-4")).toBe("tools/x");
+    expect(taskSlug("/task/tools/x?tab=thread")).toBe("tools/x");
+  });
+
+  it("is none for another path, an address of another host or a task with no slug", () => {
+    for (const other of [
+      "/docs/TASKS.md",
+      "/tasks",
+      "/task/",
+      "/task/#x",
+      "task/tools/x",
+      "//evil.example/task/x",
+      "/\\evil.example/task/x",
+      "https://h/task/x",
+      "javascript:/task/x",
+      "",
+    ]) {
+      expect(taskSlug(other), JSON.stringify(other)).toBeNull();
+    }
   });
 });

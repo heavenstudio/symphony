@@ -338,8 +338,17 @@ fn a_task_is_alike_another_only_in_its_holders_health() {
         std::slice::from_ref(&stale)
     ));
     type Change = fn(&mut symphony_api::Task);
-    let changes: [(&str, Change); 9] = [
+    let changes: [(&str, Change); 10] = [
         ("body", |t| t.body.push('.')),
+        ("workflow", |t| {
+            t.workflow = Some(symphony_api::workflow::TaskPlace {
+                phase: "build".into(),
+                state: "working".into(),
+                resume: None,
+                revision: 1,
+                manual: None,
+            });
+        }),
         ("status", |t| t.status = "review".into()),
         ("updated", |t| t.updated += 1.0),
         ("depends", |t| t.depends.push("work/other".into())),
@@ -464,4 +473,58 @@ fn owned_json_publication_keeps_exact_tokens_key_order_versions_history_and_noti
     assert_eq!(page.board.version, u64::MAX);
     hub.publish(page, vec![]);
     assert_eq!(page.board.version, u64::MAX);
+}
+
+/// A task a custom workflow moves sends its new place alone; one with no place sends none, and a
+/// place is never taken away.
+#[test]
+fn a_new_workflow_place_is_sent_as_the_field_that_changed() {
+    let task: symphony_api::Task = serde_json::from_value(json!({
+        "slug": OPEN, "title": "Open", "body": "The brief", "status": "ready", "priority": 2,
+        "parent": null, "created_by": "owner", "created": 1.0, "updated": 2.0, "links": [],
+        "depends": [], "instruction": false, "roles": [],
+    }))
+    .unwrap();
+    let at = |state: &str, revision: u64| symphony_api::workflow::TaskPlace {
+        phase: "build".into(),
+        state: state.into(),
+        resume: None,
+        revision,
+        manual: None,
+    };
+    let sent = |before: &symphony_api::Task, after: &symphony_api::Task| {
+        let mut changes = Vec::new();
+        super::task_changes(
+            &mut changes,
+            std::slice::from_ref(before),
+            std::slice::from_ref(after),
+        );
+        changes
+    };
+    let placed = symphony_api::Task {
+        workflow: Some(at("available", 1)),
+        ..task.clone()
+    };
+    let changes = sent(&task, &placed);
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0]["region"], "task-fields");
+    assert_eq!(
+        changes[0]["data"]["fields"],
+        json!({"workflow": {"phase": "build", "state": "available", "revision": 1}})
+    );
+    let moved = symphony_api::Task {
+        status: "in_progress".into(),
+        workflow: Some(at("working", 2)),
+        ..task.clone()
+    };
+    assert_eq!(
+        sent(&placed, &moved)[0]["data"]["fields"],
+        json!({"status": "in_progress",
+               "workflow": {"phase": "build", "state": "working", "revision": 2}})
+    );
+    assert!(sent(&moved, &moved).is_empty());
+    assert!(sent(&task, &task).is_empty());
+    // A place is never taken away: a read that lost it sends no field that would clear it.
+    let lost = sent(&placed, &task);
+    assert!(lost.is_empty(), "{lost:?}");
 }

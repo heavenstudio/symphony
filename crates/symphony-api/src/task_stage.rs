@@ -44,6 +44,15 @@ pub struct WaitingBoard {
     pub kinds: Vec<(String, usize)>,
     /// Every column after the selected wait kind, including columns outside the requested page.
     pub columns: Vec<WaitingColumn>,
+    /// Open tasks a custom workflow holds by their coordination state's ID, ordered by ID, before
+    /// the selected wait kind and state: empty, and left out, on a board with none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<(String, usize)>,
+    /// The active custom workflow's activation generation: absent on a board whose own writers keep
+    /// its tasks, so a page draws a workflow's phases and states only where one is active, and
+    /// reads its definition again when it changes (docs/WORKFLOW.md, "The app").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<u64>,
 }
 
 /// One waiting column's ordinary and blocked tasks and earliest status entry.

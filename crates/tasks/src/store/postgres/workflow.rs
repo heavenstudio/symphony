@@ -57,7 +57,10 @@ pub(in crate::store) fn standings() -> Pg<'static> {
     'tasks', coalesce((SELECT jsonb_agg(jsonb_build_object(
         'slug', slug, 'version', version, 'status', status,
         'position', fields #> '{_board,workflow}',
-        'blocked_from', fields #> '{_board,blocked,from}') ORDER BY slug)
+        'blocked_from', fields #> '{_board,blocked,from}',
+        'accepted', (SELECT w.body -> 'accepted' FROM workflow w
+            WHERE w.id = jsonb_build_array('event', task.slug, task.fields #> '{_board,workflow,revision}')))
+        ORDER BY slug)
         FROM task WHERE status NOT IN ('done', 'cancelled') OR fields #> '{_board,workflow}' IS NOT NULL),
         '[]'::jsonb))",
     )
@@ -116,14 +119,18 @@ pub(in crate::store) fn admission() -> Pg<'static> {
         "jsonb_build_object(
     'active', (SELECT body FROM workflow WHERE id = '[\"active\"]'::jsonb),
     'task', (SELECT jsonb_build_object('slug', slug, 'version', version, 'status', status,
-        'created_by', created_by, 'position', fields #> '{_board,workflow}')
+        'created_by', created_by, 'position', fields #> '{_board,workflow}',
+        'accepted', (SELECT w.body -> 'accepted' FROM workflow w
+            WHERE w.id = jsonb_build_array('event', task.slug, task.fields #> '{_board,workflow,revision}')))
         FROM task WHERE slug = v ->> 'slug'),
-    'roles', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', handle, 'role', role))
-        FROM role WHERE slug = v ->> 'slug'), '[]'::jsonb),
+    'roles', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', handle, 'role', role,
+        'expires', expires)) FROM role WHERE slug = v ->> 'slug'), '[]'::jsonb),
     'dependencies', coalesce((SELECT jsonb_agg(target) FROM link
         WHERE slug = v ->> 'slug' AND kind = 'dep'), '[]'::jsonb),
     'found', coalesce((SELECT jsonb_agg(jsonb_build_object('slug', t.slug, 'version', t.version,
-        'status', t.status, 'position', t.fields #> '{_board,workflow}'))
+        'status', t.status, 'position', t.fields #> '{_board,workflow}',
+        'accepted', (SELECT w.body -> 'accepted' FROM workflow w
+            WHERE w.id = jsonb_build_array('event', t.slug, t.fields #> '{_board,workflow,revision}'))))
         FROM task t JOIN link l ON l.target = t.slug
         WHERE l.slug = v ->> 'slug' AND l.kind = 'dep'), '[]'::jsonb),
     'receipt', (SELECT body FROM workflow WHERE id = v -> 'receipt'),
@@ -161,10 +168,6 @@ BEGIN
             WHERE NOT EXISTS (SELECT 1 FROM role WHERE id = jsonb_build_array(v ->> 'slug', r ->> 'handle', r ->> 'role'))) THEN
         RAISE EXCEPTION 'stale';
     END IF;
-    IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'add') AS a JOIN role ON role.slug = v ->> 'slug'
-            AND role.role IN (a ->> 'role', 'reserved') AND role.handle <> a ->> 'handle') THEN
-        RAISE EXCEPTION 'stale';
-    END IF;
     PERFORM 1 FROM session WHERE handle IN (SELECT s ->> 'handle' FROM jsonb_array_elements(v -> 'seen') AS s)
         FOR SHARE;
     IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'seen') AS s
@@ -181,6 +184,10 @@ BEGIN
     END IF;
     DELETE FROM role WHERE id IN (SELECT jsonb_build_array(v ->> 'slug', d ->> 'handle', d ->> 'role')
         FROM jsonb_array_elements(v -> 'drop') AS d);
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'add') AS a JOIN role ON role.slug = v ->> 'slug'
+            AND role.role IN (a ->> 'role', 'reserved') AND role.handle <> a ->> 'handle') THEN
+        RAISE EXCEPTION 'stale';
+    END IF;
     INSERT INTO role (id, slug, handle, role, since, expires)
         SELECT jsonb_build_array(v ->> 'slug', a ->> 'handle', a ->> 'role'), a ->> 'slug',
             a ->> 'handle', a ->> 'role', (a ->> 'since')::double precision, NULL
@@ -223,6 +230,16 @@ INSERT INTO workflow (id, kind, body, at) VALUES (jsonb_build_array('event', v -
     v -> 'placing', (v -> 'placing' ->> 'at')::double precision);
 UPDATE task SET fields = board_fields(id, fields, '{_board,workflow}', v -> 'placed')
     WHERE slug = v ->> 'slug';";
+
+/// Twin of `super::super::surreal::workflow::TRANSITIONS`, by the primary key, in the order the
+/// ids are given.
+pub(in crate::store) fn transitions() -> Pg<'static> {
+    Pg::read(
+        "coalesce((SELECT jsonb_agg(w.body ORDER BY i.n) \
+            FROM jsonb_array_elements(v -> 'ids') WITH ORDINALITY i(id, n) \
+            JOIN workflow w ON w.id = i.id), '[]')",
+    )
+}
 
 /// Twin of `super::super::surreal::workflow::MAPPINGS`.
 pub(in crate::store) fn mappings() -> Pg<'static> {

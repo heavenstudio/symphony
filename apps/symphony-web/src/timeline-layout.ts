@@ -27,6 +27,7 @@ import type {
   GateSpan,
   GateState,
   Offset,
+  PlaceSpan,
   Round,
   RoundVerdict,
   Run,
@@ -630,6 +631,102 @@ export function gateChanges(timeline: TaskTimeline): Row[] {
   return rows;
 }
 
+// A custom workflow's places (docs/WORKFLOW.md, "The app").
+
+/** What a stretch of places shares: its phase, its state, or both, its place. */
+export type PlaceKey = "phase" | "state" | "place";
+
+/** Places in a row that share one phase, one state or one place: one stretch, from the first's
+ * move to the next stretch's (the task's close, or now, for the last). */
+export interface PlaceStretch {
+  id: string;
+  label: string;
+  /** The board status its first place projects to, which it is coloured by. */
+  status: string;
+  from: number;
+  to: number;
+  /** Who moved the task there, and by which edge (none for an activation's move). */
+  by: string;
+  edge: string | null;
+}
+
+function placeOf(place: PlaceSpan, key: PlaceKey): [string, string] {
+  if (key === "phase") return [place.phase, place.phase_label];
+  if (key === "state") return [place.state, place.state_label];
+  return [`${place.phase}/${place.state}`, `${place.phase_label} · ${place.state_label}`];
+}
+
+/** The stretches of `timeline`'s places that share their `key`, oldest first: none for a task no
+ * workflow held. Each is the clock's time there, never the machine's on runs. */
+export function stretches(timeline: TaskTimeline, key: PlaceKey): PlaceStretch[] {
+  const end = timeline.closed ?? timeline.now;
+  const drawn: PlaceStretch[] = [];
+  for (const place of timeline.places ?? []) {
+    const [id, label] = placeOf(place, key);
+    const last = drawn[drawn.length - 1];
+    if (last?.id === id) continue;
+    if (last !== undefined) last.to = place.from;
+    drawn.push({
+      id,
+      label,
+      status: place.status,
+      from: place.from,
+      to: end,
+      by: place.by,
+      edge: place.edge ?? null,
+    });
+  }
+  return drawn;
+}
+
+/** The time `timeline`'s task spent at each phase or state (`key`), all its stretches there told,
+ * in the order it first came to each: "Build 3 h · Review 52 m". None for a task no workflow held. */
+export function placeTotals(timeline: TaskTimeline, key: "phase" | "state"): string | null {
+  const spent = new Map<string, [string, number]>();
+  for (const stretch of stretches(timeline, key)) {
+    const [, seconds] = spent.get(stretch.id) ?? [stretch.label, 0];
+    spent.set(stretch.id, [stretch.label, seconds + (stretch.to - stretch.from)]);
+  }
+  if (spent.size === 0) return null;
+  return [...spent.values()].map(([label, seconds]) => `${label} ${took(seconds)}`).join(" · ");
+}
+
+/** All of a stretch, for a pointer resting on it: how long, from when to when, who moved the
+ * task there and by which edge. */
+function stretchTitle(stretch: PlaceStretch, length: string, clock: (at: number) => string) {
+  const how = stretch.edge === null ? "" : ` (${stretch.edge.replaceAll("_", " ")})`;
+  return (
+    `${stretch.label} ${length}, from ${clock(stretch.from)} to ${clock(stretch.to)}, ` +
+    `moved there by ${stretch.by}${how}`
+  );
+}
+
+/** The phone's row of a place's stretch, under the stage it began in, its bar its share of the
+ * longest step's: striped while the task is still there. */
+export function placeRow(stretch: PlaceStretch, timeline: TaskTimeline, share: Share): Row {
+  const seconds = stretch.to - stretch.from;
+  const length = took(seconds);
+  const open = timeline.closed === undefined || timeline.closed === null;
+  return {
+    start: stretch.from,
+    day: null,
+    at: clockOf(timeline, stretch.from),
+    sub: true,
+    event: false,
+    tone: statusTone(stretch.status),
+    label: stretch.label,
+    took: length,
+    bar: {
+      wait: 0,
+      waitTone: "primary",
+      work: share(seconds),
+      running: open && stretch.to === timeline.now,
+    },
+    word: null,
+    title: stretchTitle(stretch, length, (at) => clockOf(timeline, at)),
+  };
+}
+
 /**
  * The phone's list: each stage, and under it the builds, tests and gate changes that began while
  * it went on, by time. A stage left before a minute was out (one that would read "0 m") has no
@@ -637,13 +734,16 @@ export function gateChanges(timeline: TaskTimeline): Row[] {
  */
 export function rows(timeline: TaskTimeline): Row[] {
   const now = timeline.now;
+  const places = stretches(timeline, "place");
   const longest = [
     ...timeline.stages.filter((stage) => !closed(stage)).map((stage) => stageSeconds(stage, now)),
     ...timeline.runs.map((run) => waited(run, now) + ran(run, now)),
+    ...places.map((stretch) => stretch.to - stretch.from),
   ].reduce((most, seconds) => Math.max(most, seconds), 60);
   const share: Share = (seconds) => (nonNegative(seconds) / longest) * BAR_SPAN;
   const under = [
     ...timeline.runs.map((run) => runRow(run, timeline, share)),
+    ...places.map((stretch) => placeRow(stretch, timeline, share)),
     ...gateChanges(timeline),
   ].sort((a, b) => totalCmp(a.start, b.start));
   let next = 0;
@@ -962,6 +1062,29 @@ function stageSegs(timeline: TaskTimeline, scale: Scale): Seg[] {
   return segs;
 }
 
+/** A place lane: each stretch of the task's places that shares one phase, or one state (`key`). */
+function placeSegs(timeline: TaskTimeline, scale: Scale, key: "phase" | "state"): Seg[] {
+  return stretches(timeline, key).flatMap((stretch): Seg[] => {
+    const width = scale.width(stretch.from, stretch.to);
+    if (!(width > 0)) return [];
+    const length = took(stretch.to - stretch.from);
+    return [
+      {
+        left: scale.at(stretch.from),
+        width,
+        tone: statusTone(stretch.status),
+        look: "solid",
+        text: fitted(`${stretch.label} ${length}`, length, width),
+        after: null,
+        under: null,
+        row: 0,
+        title: stretchTitle(stretch, length, (at) => scale.clock(at)),
+        stop: true,
+      },
+    ];
+  });
+}
+
 /** The executor lane: each claim, the first saying so where one executor held them all, each
  * naming its executor where several did. */
 function claimSegs(timeline: TaskTimeline, scale: Scale, one: boolean): Seg[] {
@@ -1169,6 +1292,21 @@ export function lanes(timeline: TaskTimeline): Lanes {
       segs: stageSegs(timeline, scale),
     },
   ];
+  if ((timeline.places ?? []).length > 0) {
+    for (const [key, name] of [
+      ["phase", "Phase"],
+      ["state", "State"],
+    ] as const) {
+      drawn.push({
+        key,
+        name,
+        who: "",
+        rows: 1,
+        dense: false,
+        segs: placeSegs(timeline, scale, key),
+      });
+    }
+  }
   if (timeline.history) {
     const roles = timeline.history.roles.filter((role) => role.role === "orchestrator");
     const segs: Seg[] = roles.map((role) => {
@@ -1449,12 +1587,41 @@ function readLane(value: unknown): GateLane | null {
   return isText(name) && states !== null ? { name, states } : null;
 }
 
+/** A place a custom workflow put the task at, or none for one not in the shape this client
+ * reads. */
+function readPlace(value: unknown): PlaceSpan | null {
+  const [phase, phase_label, state, state_label, status, by, from] = [
+    field(value, "phase"),
+    field(value, "phase_label"),
+    field(value, "state"),
+    field(value, "state_label"),
+    field(value, "status"),
+    field(value, "by"),
+    field(value, "from"),
+  ];
+  const edge = optionalText(field(value, "edge"));
+  if (
+    !isText(phase) ||
+    !isText(phase_label) ||
+    !isText(state) ||
+    !isText(state_label) ||
+    !isText(status) ||
+    !isText(by) ||
+    !isNumber(from) ||
+    edge === undefined
+  ) {
+    return null;
+  }
+  return { phase, phase_label, state, state_label, status, from, by, edge };
+}
+
 /**
  * `/api/task-timeline`'s answer as this client reads it, or none for one without what the
  * timeline draws. A field serde defaults (a list, a count, a flag, a word) takes its default when
  * absent, an `Option` is none when absent or null, and a word a newer server writes for a verdict,
  * a run's result or a gate's state reads as the catch-all (`#[serde(other)]`). The slug, which
- * nothing draws, is not checked.
+ * nothing draws, is not checked. Places it cannot read are left out, never the timeline, as the
+ * server leaves out a task's it cannot read.
  */
 export function readTimeline(value: unknown): TaskTimeline | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
@@ -1470,6 +1637,7 @@ export function readTimeline(value: unknown): TaskTimeline | null {
   const rounds = listOf(field(value, "rounds"), readRound);
   const runs = listOf(field(value, "runs"), readRun);
   const gates = listOf(field(value, "gates"), readLane);
+  const places = listOf(field(value, "places"), readPlace) ?? [];
   const rawHistory = field(value, "history");
   const history =
     rawHistory === undefined || rawHistory === null ? undefined : readHistory(rawHistory);
@@ -1505,6 +1673,7 @@ export function readTimeline(value: unknown): TaskTimeline | null {
     rounds,
     runs,
     gates,
+    ...(places.length === 0 ? {} : { places }),
     ...(history === undefined ? {} : { history }),
   };
 }

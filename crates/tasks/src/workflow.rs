@@ -15,14 +15,17 @@ use symphony_plugin::execution::{Principal, PrincipalKind};
 pub mod activate;
 pub mod admit;
 mod builtin;
+pub mod effect;
+pub mod operate;
 pub mod recover;
 mod validate;
-pub use crate::store::admission::Receipt;
+pub use crate::store::admission::{Finalized, Receipt, Reviewed, Settled};
 pub use crate::store::workflow::{
-    Active, Followed, Recorded, Recovered, TaskPosition, Transition, Trigger,
+    Active, Followed, Moved, Recorded, Recovered, TaskPosition, Transition, Trigger,
 };
 pub use activate::Host;
 pub use builtin::{builtin, legacy_pair};
+pub use operate::Operating;
 
 /// A project's file, at the top of the tree a commit holds.
 const FILE: &str = "symphony.toml";

@@ -9,10 +9,15 @@
 //!    stamps; where it is not, in review or blocked, or done by an approve ([`not_ready`]).
 //! 3. **Standing on the tip** ([`standing`]): `review` by the land's approval check, each other
 //!    stamp by its reader. A missing one refuses, naming each and who gives it ([`refusal`]).
+//!
+//! The task's gate decisions ([`crate::gates`]) are read with them: a waiver for the tip lifts its
+//! stamp there ([`Needed::of`]), one for another tip lifts nothing and the refusal names it, and
+//! each raise must be carried in its file at the tip ([`raises`]).
 
 use super::short;
 use crate::cli::Env;
 use crate::cli::machine_work::recorded::{self, Record};
+use crate::gates::{self, Decision, Kind, Limit, grouped};
 use crate::stamps::{Catalogue, Needs, family, read, said};
 use crate::{Message, Store, Task};
 use std::path::Path;
@@ -27,24 +32,55 @@ pub const PICTURES: &str = "pictures";
 pub const OWNER: &str = "owner";
 
 /// The stamps a land requires of a task at its branch's tip, and the assessment they came from.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Needed {
     /// In the catalogue's order.
     pub stamps: Vec<String>,
     /// The task's assessment, when one was written.
     pub needs: Option<Needs>,
+    /// The task's gate decisions that stand ([`crate::Task::gates`]).
+    pub decisions: Vec<Decision>,
+    /// The waivers that lifted a stamp at the tip, which `stamps` leaves out.
+    pub waived: Vec<Decision>,
+    /// The waivers of a stamp it needs given for another tip, which lift nothing there.
+    pub elsewhere: Vec<Decision>,
 }
 
 impl Needed {
     /// What `task` needs at `tip` (its branch's; none before it has one), from the catalogue the
     /// main checkout `main` commits ([`Catalogue::of`]) and its assessment ([`read::needed`]). Each
     /// task is judged by its assessment and the catalogue.
+    ///
+    /// A waiver among its gate decisions for `tip` lifts its stamp; one for another tip lifts
+    /// nothing ([`gates::waivers`]).
     pub fn of(task: &Task, main: &Path, tip: Option<&str>) -> Result<Needed, String> {
-        let catalogue = Catalogue::of(main)?;
+        Needed::under(task, main, "HEAD", tip)
+    }
+
+    /// [`Needed::of`] by the catalogue the commit `commit` holds ([`Catalogue::committed`]), not
+    /// the main checkout's head: what the task needed before its own merge moved that head.
+    pub fn under(
+        task: &Task,
+        main: &Path,
+        commit: &str,
+        tip: Option<&str>,
+    ) -> Result<Needed, String> {
+        let catalogue = Catalogue::committed(main, commit)?;
         let needs = task.needs();
+        let mut stamps = read::needed(&catalogue, needs.as_ref(), tip);
+        let decisions = task.gates();
+        let (here, elsewhere) = gates::waivers(&decisions, &catalogue, &stamps, tip);
+        let (waived, elsewhere): (Vec<Decision>, Vec<Decision>) = (
+            here.into_iter().cloned().collect(),
+            elsewhere.into_iter().cloned().collect(),
+        );
+        stamps.retain(|stamp| !waived.iter().any(|waiver| waiver.gate == *stamp));
         Ok(Needed {
-            stamps: read::needed(&catalogue, needs.as_ref(), tip),
+            stamps,
             needs,
+            decisions,
+            waived,
+            elsewhere,
         })
     }
 
@@ -68,7 +104,7 @@ impl Needed {
     /// Whether the land says what the task needs: it was assessed, or needs more than `review`,
     /// the one stamp a land went by before stamps.
     pub fn told(&self) -> bool {
-        self.needs.is_some() || self.stamps != [REVIEW]
+        self.needs.is_some() || self.stamps != [REVIEW] || !self.waived.is_empty()
     }
 
     /// Why its assessment does not stand on `tip`: it read another commit, or the brief alone, so
@@ -112,7 +148,25 @@ impl Needed {
         for (name, detail) in met {
             line.push_str(&format!("; {name}: {detail}"));
         }
+        for waiver in &self.waived {
+            line.push_str(&format!(
+                "; {} waived by the gate decision of {}: {}",
+                waiver.gate, waiver.by, waiver.why
+            ));
+        }
         line
+    }
+
+    /// What a missing stamp `name`'s detail adds where a waiver of it was given for another tip
+    /// than `tip`: that it lifts nothing here.
+    fn waived_elsewhere(&self, name: &str, tip: &str) -> Option<String> {
+        let waiver = self.elsewhere.iter().find(|waiver| waiver.gate == name)?;
+        Some(format!(
+            "its waiver by {} was for {}, not the tip {}: a waiver is for one tip alone",
+            waiver.by,
+            short(waiver.tip.as_deref().unwrap_or_default()),
+            short(tip)
+        ))
     }
 
     /// What the landing's line of a task that needed no review adds: the stamps it needed and the
@@ -250,10 +304,13 @@ pub fn standing(
         if reading.met {
             met.push((name.clone(), reading.detail));
         } else {
-            let detail = match name.as_str() {
+            let mut detail = match name.as_str() {
                 TESTS => tests_missing(evidence, tip, reading.detail),
                 _ => reading.detail,
             };
+            if let Some(elsewhere) = needed.waived_elsewhere(name, tip) {
+                detail = format!("{detail}; {elsewhere}");
+            }
             missing.push(Missing {
                 name: name.clone(),
                 detail,
@@ -261,6 +318,60 @@ pub fn standing(
         }
     }
     (met, missing)
+}
+
+/// Each raise among `decisions` read in the checkout `dir` at the tip `tip` and on the default
+/// branch at `base` ([`gates::at`]): carried, where the tip's file sets the limit to the number
+/// decided; not carried, where the tip holds the default branch's number still or one below it,
+/// which lands, the decision having raised nothing and a limit lowered needing none; else the
+/// refusal, a number above the default branch's that no decision gave, or a limit the tip or the
+/// default branch no longer sets once. Said as the landing's line says each.
+pub fn raises(
+    dir: &Path,
+    base: &str,
+    tip: &str,
+    decisions: &[Decision],
+) -> Result<Vec<String>, String> {
+    let mut said = Vec::new();
+    for decision in decisions.iter().filter(|d| d.kind == Kind::Raise) {
+        let to = decision.to.unwrap_or_default();
+        let decided = format!("{} by {}", decision.said(), decision.by);
+        let limit = Limit::parse(&decision.gate)?;
+        let held = gates::at(dir, tip, &limit)
+            .map_err(|why| format!("{decided}, but at the tip {}: {why}", short(tip)))?;
+        if held == to {
+            said.push(format!("{decided}, carried at {}", short(tip)));
+            continue;
+        }
+        match gates::at(dir, base, &limit) {
+            Ok(main) if held == main => {
+                said.push(format!(
+                    "{decided}, not carried: the tip {} holds {} as the default branch does",
+                    short(tip),
+                    grouped(held)
+                ));
+                continue;
+            }
+            Ok(main) if held < main => {
+                said.push(format!(
+                    "{decided}, not carried: the tip {} lowers it to {}, below the default \
+                     branch's {}, which needs no decision",
+                    short(tip),
+                    grouped(held),
+                    grouped(main)
+                ));
+                continue;
+            }
+            _ => {}
+        }
+        return Err(format!(
+            "{decided}, but the tip {} sets it to {}, which no decision gave: a raise lands at \
+             the number decided",
+            short(tip),
+            grouped(held)
+        ));
+    }
+    Ok(said)
 }
 
 /// Whether the owner's approve is all `missing` holds: the task then waits on the owner alone.

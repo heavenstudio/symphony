@@ -29,6 +29,7 @@ fn task(fields: BTreeMap<String, BTreeMap<String, FieldValue>>) -> Task {
         waits_on: None,
         review_rounds: None,
         from: None,
+        workflow: None,
     }
 }
 
@@ -62,4 +63,62 @@ fn a_task_without_board_fields_writes_none_and_reads_with_none() {
     let text = serde_json::to_string(&task).unwrap();
     assert!(!text.contains("fields"), "{text}");
     assert_eq!(serde_json::from_str::<Task>(&text).unwrap(), task);
+}
+
+/// A task a custom workflow holds carries its place; any other task's text is the text it was, no
+/// `workflow` key in it, and a reader before the field reads the place as nothing.
+#[test]
+fn a_tasks_workflow_place_is_sent_only_where_a_workflow_holds_it() {
+    use symphony_api::workflow::{ManualRecovery, Pair, TaskPlace};
+    let plain = task(BTreeMap::new());
+    let text = serde_json::to_string(&plain).unwrap();
+    assert!(!text.contains("workflow"), "{text}");
+    let held = Task {
+        workflow: Some(TaskPlace {
+            phase: "build".into(),
+            state: "blocked".into(),
+            resume: Some(Pair {
+                phase: "build".into(),
+                state: "working".into(),
+            }),
+            revision: 4,
+            manual: Some(ManualRecovery {
+                trigger: "lost_holder".into(),
+                holder: "amber-heron".into(),
+                role: "executor".into(),
+            }),
+        }),
+        ..plain.clone()
+    };
+    let value = serde_json::to_value(&held).unwrap();
+    assert_eq!(
+        value["workflow"],
+        serde_json::json!({"phase": "build", "state": "blocked",
+            "resume": {"phase": "build", "state": "working"}, "revision": 4,
+            "manual": {"trigger": "lost_holder", "holder": "amber-heron", "role": "executor"}})
+    );
+    assert_eq!(serde_json::from_value::<Task>(value.clone()).unwrap(), held);
+    let bare = Task {
+        workflow: Some(TaskPlace {
+            resume: None,
+            manual: None,
+            ..held.workflow.clone().unwrap()
+        }),
+        ..plain.clone()
+    };
+    assert_eq!(
+        serde_json::to_value(&bare).unwrap()["workflow"],
+        serde_json::json!({"phase": "build", "state": "blocked", "revision": 4})
+    );
+    // A change carries a new place alone.
+    let change = symphony_api::TaskFields {
+        workflow: held.workflow.clone(),
+        ..symphony_api::TaskFields::default()
+    };
+    let fields = serde_json::to_value(&change).unwrap();
+    assert_eq!(fields.as_object().unwrap().len(), 1, "{fields}");
+    assert_eq!(
+        serde_json::to_value(symphony_api::TaskFields::default()).unwrap(),
+        serde_json::json!({})
+    );
 }

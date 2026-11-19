@@ -490,6 +490,7 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
              next run: after 20 more landings (0 of 20), or the scheduled run\n\
              last publish: none recorded\n\
              last refresh: none recorded\n\
+             schema updates: none recorded\n\
              machine: no release is installed in {}: a project's build is the machine's server\n",
             fixture.root.join("machine").display()
         )
@@ -555,6 +556,7 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
             published.as_str(),
             "  not published: [releases] publish is off",
             "last refresh: none recorded",
+            "schema updates: none recorded",
             machine.as_str(),
         ]
     );

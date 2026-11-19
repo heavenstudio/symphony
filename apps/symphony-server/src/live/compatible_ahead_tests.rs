@@ -157,6 +157,7 @@ fn a_board_one_ahead_is_written_by_the_tick_and_a_save_only_when_its_step_keeps_
     let holders = quiet.holders("orchestrator");
     let dispatched = hub.health.report(hub.now()).dispatch.ok;
     let notice = hub.server_notice.borrow().clone();
+    let writes = hub.writes();
     let (status, said) = saved(&hub, json!({ "slug": "tools/quiet", "priority": 1 }));
     let priority = board.get("tools/quiet").unwrap().priority;
     if listed {
@@ -170,6 +171,7 @@ fn a_board_one_ahead_is_written_by_the_tick_and_a_save_only_when_its_step_keeps_
         );
         assert_eq!(dispatched, 1, "the tick dispatched");
         assert_eq!(notice, "", "the pages say nothing of the schema");
+        assert_eq!(writes, Some(true), "/api/projects says it writes the board");
         assert_eq!((status, said), (200, json!({ "ok": true })));
         assert_eq!(priority, 1);
     } else {
@@ -182,7 +184,15 @@ fn a_board_one_ahead_is_written_by_the_tick_and_a_save_only_when_its_step_keeps_
         assert_eq!(asks.len(), 1, "the ask stays open");
         assert_eq!(holders, ["amber-heron"], "nothing was given");
         assert_eq!(dispatched, 0, "the tick dispatched nothing");
-        assert_eq!(notice, super::health::read_only(symphony_board::SCHEMA + 1));
+        assert_eq!(
+            notice,
+            super::health::read_only(symphony_board::SCHEMA + 1, None)
+        );
+        assert_eq!(
+            writes,
+            Some(false),
+            "/api/projects says it only reads the board"
+        );
         assert_ne!(status, 200, "{said}");
         let said = said.to_string();
         assert!(

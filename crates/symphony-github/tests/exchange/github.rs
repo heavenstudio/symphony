@@ -1,6 +1,7 @@
 //! A GitHub repository held in memory, answering the calls the exchange makes as GitHub does:
 //! the repository, its issues listed by update and paged, one issue, its creation and edit, and
-//! its comments, and for a delivery its pull requests, their merge and a commit's checks. A test
+//! its comments, for a delivery its pull requests, their merge and a commit's checks, and for a
+//! release its tag and the release of that tag. A test
 //! may protect its default branch by rulesets, which it then answers the rules of and holds a
 //! merge to, as GitHub does. A test
 //! sets it up, plants a fault on a coming request, and reads what it was
@@ -56,6 +57,11 @@ struct Inner {
     reader: Option<i64>,
     /// The requests each App made, as `asked` keeps them for all.
     asked_as: Vec<(i64, String, String)>,
+    /// The tags, each with the commit it names and, where it is annotated, its own object's name.
+    tags: BTreeMap<String, (String, Option<String>)>,
+    /// The tags GitHub made itself, for a release whose tag it did not hold.
+    tags_made: Vec<String>,
+    releases: Vec<Value>,
 }
 
 pub(crate) struct Fake(Mutex<Inner>);
@@ -90,6 +96,9 @@ impl Fake {
             acting: 0,
             reader: None,
             asked_as: Vec::new(),
+            tags: BTreeMap::new(),
+            tags_made: Vec::new(),
+            releases: Vec::new(),
             made: 100,
             about: json!({
                 "default_branch": "main", "archived": false, "allow_squash_merge": true,
@@ -192,6 +201,32 @@ impl Fake {
             .filter(|(by, ..)| *by == app)
             .map(|(_, method, path)| (method.clone(), path.clone()))
             .collect()
+    }
+
+    /// The annotated tag `name` pushed, naming `commit`.
+    pub(crate) fn tag(&self, name: &str, commit: &str) {
+        let object = format!("{:0>40}", format!("7a9{}", name.len()));
+        (self.inner().tags).insert(name.into(), (commit.into(), Some(object)));
+    }
+
+    /// The lightweight tag `name` pushed, naming `commit`.
+    pub(crate) fn tag_light(&self, name: &str, commit: &str) {
+        (self.inner().tags).insert(name.into(), (commit.into(), None));
+    }
+
+    /// The releases, in the order they were made.
+    pub(crate) fn releases(&self) -> Vec<Value> {
+        self.inner().releases.clone()
+    }
+
+    /// The release of `tag` removed there, as a person would.
+    pub(crate) fn remove_release(&self, tag: &str) {
+        (self.inner().releases).retain(|release| release["tag_name"] != json!(tag));
+    }
+
+    /// The tags GitHub made itself for a release.
+    pub(crate) fn tags_made(&self) -> Vec<String> {
+        self.inner().tags_made.clone()
     }
 
     /// From now a ruleset's bypass list is shown to the App `app` alone.
@@ -528,6 +563,9 @@ impl Inner {
 
     /// A delivery's calls: a branch's pull requests, their merge and a commit's checks.
     fn delivery(&mut self, method: &str, parts: &[&str], query: &str, sent: &Value) -> Response {
+        if let Some(response) = self.released(method, parts, sent) {
+            return response;
+        }
         match (method, parts) {
             ("GET", ["pulls"]) => {
                 let value = |name: &str| {
@@ -617,6 +655,63 @@ impl Inner {
             ("GET", _) => self.protection(parts, query),
             _ => answer(404, &json!({"message": "Not Found"})),
         }
+    }
+
+    /// A release's calls: one by its tag, its creation, and a tag read as a reference and as its
+    /// own object. As GitHub, a release whose tag is not there makes the tag, at the commit asked.
+    fn released(&mut self, method: &str, parts: &[&str], sent: &Value) -> Option<Response> {
+        let missing = || answer(404, &json!({"message": "Not Found"}));
+        Some(match (method, parts) {
+            ("GET", ["releases", "tags", tag]) => {
+                match (self.releases.iter()).find(|release| release["tag_name"] == json!(tag)) {
+                    Some(release) => answer(200, release),
+                    None => missing(),
+                }
+            }
+            ("POST", ["releases"]) => {
+                let tag = sent["tag_name"].as_str().unwrap_or_default().to_string();
+                if (self.releases.iter()).any(|release| release["tag_name"] == json!(tag)) {
+                    return Some(answer(
+                        422,
+                        &json!({"message": "Validation Failed", "errors": [{"code": "already_exists"}]}),
+                    ));
+                }
+                if !self.tags.contains_key(&tag) {
+                    let at = sent["target_commitish"].as_str().unwrap_or("main");
+                    self.tags.insert(tag.clone(), (at.to_string(), None));
+                    self.tags_made.push(tag.clone());
+                }
+                self.made += 1;
+                let mut release = sent.clone();
+                release["id"] = json!(600 + self.made);
+                release["html_url"] = json!(format!(
+                    "https://github.com/{}/{}/releases/tag/{tag}",
+                    self.owner, self.name
+                ));
+                self.releases.push(release.clone());
+                answer(201, &release)
+            }
+            ("GET", ["git", "ref", "tags", tag]) => match self.tags.get(*tag) {
+                Some((commit, object)) => answer(
+                    200,
+                    &json!({"ref": format!("refs/tags/{tag}"), "object": match object {
+                        Some(object) => json!({"type": "tag", "sha": object}),
+                        None => json!({"type": "commit", "sha": commit}),
+                    }}),
+                ),
+                None => missing(),
+            },
+            ("GET", ["git", "tags", sha]) => {
+                match (self.tags.values()).find(|(_, object)| object.as_deref() == Some(*sha)) {
+                    Some((commit, _)) => answer(
+                        200,
+                        &json!({"sha": sha, "object": {"type": "commit", "sha": commit}}),
+                    ),
+                    None => missing(),
+                }
+            }
+            _ => return None,
+        })
     }
 
     /// The rules in effect for a branch, a page of them, and one ruleset.

@@ -94,6 +94,15 @@ main`), `just land ui/first-task --as calm-swift` merges the branch, closes the 
 when there is an `origin`. `just symphony` serves the project's documents and board at the address
 it prints.
 
+## GitHub
+
+Symphony needs no GitHub. An optional program, `symphony-github`, connects a project's board to
+one repository on GitHub.com: issues carrying a label become proposals, tasks you choose are
+published as issues, and `just land` can deliver a task as a pull request that GitHub squashes
+once the evidence it writes there as checks allows it. It is not among the packages above, so it
+is built from this repository, and delivery needs three GitHub Apps installed on the repository.
+[Setting up GitHub](docs/GITHUB_SETUP.md) gives every step in order and how to check it works.
+
 ## As a library
 
 A project with plugins of its own takes Symphony's versioned libraries from crates.io, or from

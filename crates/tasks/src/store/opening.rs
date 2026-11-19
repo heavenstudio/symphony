@@ -515,6 +515,7 @@ impl Store {
             process_scan: super::kept::Scan::default(),
             hand_off: None,
             giving: false,
+            settling: None,
             inbox_pool: Mutex::new(None),
             limits: crate::limits::Held::default(),
             named_server: false,

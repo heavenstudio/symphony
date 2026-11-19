@@ -37,6 +37,11 @@ landing](TASKS.md#the-default-landing)). A change to a test or a check (`[land] 
 keeps `review`, since a loosened test or check is how a red turns green unfixed. A change of
 settings' values needs `tests` alone, the settings check ([by kind](#evidence-by-kind-of-change)).
 
+A gate that must give way for one task gives way by its orchestrator's recorded decision, never
+by a word in a terminal: a limit raised, or a waivable stamp waived at one tip
+([gate decisions](TASKS.md#gate-decisions)). A red test, a missing review where the stamps name
+one and the owner's approve are never waived.
+
 Where review is needed, a reviewer reads the diff against the evidence and judges whether it is
 good enough for the change's risk, and builds or runs nothing the task's recorded runs at the
 tip already show green ([no second build in review](#no-second-build-in-review)), never the
@@ -420,8 +425,11 @@ fix whose orchestrator lands only a fix changing no test or check (RULES.md
 rerun each failure alone (each failed test, else the step's own command, a test run's a target at a
 time), the load when it ended and the commits since the last green run
 (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
-stops short of deciding is the red `tests/release-red-run`. A test red on load is answered by its
-discard ([time in tests](#time-in-tests)). A run red in a check holds its commit
+stops short of deciding is the red `tests/release-red-run`. Before it files a red, the run reruns
+each failed test alone, one at a time, over the same build (below): one that fails again is red,
+its task saying it failed twice, and one that passes alone is no red, and has one p1 task of its
+run's ([RELEASES](RELEASES.md#the-release-run), step 5). A test red on load all the same is
+answered by its discard ([time in tests](#time-in-tests)). A run red in a check holds its commit
 as the release candidate while its reds' own tasks fix it on the branch `release-candidate`, then
 reruns what was red and what the fixes changed, and releases that commit and its fixes alone
 ([RELEASES](RELEASES.md#the-release-candidate)). It is the one place every test runs
@@ -551,7 +559,11 @@ publishes one client before scheduling, so no browser case builds or relinks whi
 run. Every test receives the build's binaries through `SYMPHONY_TEST_TASKS_BINARY` and
 `SYMPHONY_TEST_BINARIES`; a caller's values win. Each Cargo call keeps the workspace build's
 feature graph and its build-script/proc-macro debug info, so no concurrent batch relinks anything.
-Every server, store and browser still takes its own folder and a port the system picks.
+Cargo still makes each binary's copy in the target folder again at every call, removing it first,
+so before scheduling the runner makes each copy the build lists a hard link to the file it copies,
+which every later call leaves in place: a batch that starts never leaves another's test without
+the binary it runs. Every server, store and browser still takes its own folder and a port the
+system picks.
 
 Nextest and the Cargo batches keep live logs in `tests-lanes/` beside the step's log
 (`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), with the binary metadata beside
@@ -566,6 +578,20 @@ at once (at least one); each batch's output follows whole in the step's log once
 Signals reach the foreground batches, which are waited for before the runner exits, and a forced
 stop leaves their live output at the named paths. Native failures retain Cargo's target lists;
 nextest failures retain their own events. A batch is green only on an explicit exit status of zero.
+
+**A failure rerun alone.** The runner names the folder of its lanes' logs first (`test-lanes:
+logs in FOLDER`), keeps there the client its tests ran against beside the binary metadata, and
+says last that it ran every lane it was asked for (`test-lanes: ended: every lane asked for ran`),
+a line a run cut short never reaches. `tools/test-lanes.sh --alone FOLDER ARGS` reruns one
+failure of that run alone over its build, ARGS as a red's rerun line names it (`-p PACKAGE --test
+TARGET -- NAME --exact`, a target with no name for one rerun whole, `--workspace` and a kind for a
+lane's own line). A test, or a target whole, runs by nextest from the folder's `binaries.json`, by
+the filterset of its package, kind, binary and name, with no retry, `--no-tests fail` and the
+release profile's timeouts; a doctest, or the ignored runner fixture, by Cargo as its lane runs
+it; a lane's own line, or a shared-fixture target whole, as that lane alone, its logs in
+`FOLDER/alone`. Nothing is built again, and it exits as the rerun did. The release run reruns each
+failure of a red tests step this way, at most 12, before it files a red
+([RELEASES](RELEASES.md#the-release-run), step 5).
 
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
@@ -609,12 +635,20 @@ test. No such recipe exists yet, so nothing is `#[ignore]`d for a quiet machine;
 lets go so waits in the release run until that recipe lands, and is then listed below with its
 promise and the owner's word.
 
-**A test red on load in the release run is discarded.** A rerun neither fails nor passes on the
-machine's load, so a test that fails a release run, or the release candidate's rerun, because of
-load (it passes alone, or its failure is a wall-clock bound, a sleep-ordered step or a timeout
-under load) is answered by its red's own fix removing it from the tree, with one line on the red's
-thread naming the test, the evidence it is load (its runs alone and the failing line) and what it
-proved. This rule is the owner's approval: no card is put to them to discard it. If what it
+**A test that fails in the release run and passes alone is no red.** The run reruns each failed
+test alone, one at a time, in the same checkout and over the same build, up to 12: one that passes
+alone holds no release, and the run files one p1 task for all such tests of it, outside the red
+series, which finds why, then fixes the code or the runner, rewrites the test on a condition, a
+count, CPU time or an injected clock, or discards it with one line on its thread; one that fails
+again is red, its task saying it failed twice ([RELEASES](RELEASES.md#the-release-run), step 5).
+A retry of nextest's never counts as a pass, and no timeout or budget is widened for a rerun.
+
+**A test red on load in the release run all the same is discarded.** A rerun neither fails nor
+passes on the machine's load, so a red test that failed alone too, or was not rerun, because of
+load (its failure is a wall-clock bound, a sleep-ordered step or a timeout under load), in a
+release run or the release candidate's rerun, is answered by its red's own fix removing it from
+the tree, with one line on the red's thread naming the test, the evidence it is load (its runs
+alone and the failing line) and what it proved. This rule is the owner's approval: no card is put to them to discard it. If what it
 proved matters, a follow-up task may bring it back written on a condition, a count, CPU time or an
 injected clock; the release does not wait for that. No rerun is spent on it, no rewrite of it is waited for, and
 nobody lowers the machine's load to help a run pass: an orchestrator holds no other work back to
@@ -728,10 +762,19 @@ it. A task whose change adds weight to a shipped binary (a dependency or a depen
 library the binary did not reach before) runs `just size-check` at its tip and posts the sizes with
 its evidence. A binary past its line there is the task's own to take back before review, in its
 branch, by a reduction first: bytes of its own code, or of anything else that binary links. A
-raise of its line is the exception RULES.md `workflow/release-reds-first` names for a budget: in a
-commit of its own that names the growth, with the task's thread saying why no reduction will do, to
-the binary's size plus 4 % and never higher, landed only on a fresh reviewer's approve
-([the default landing](TASKS.md#the-default-landing)).
+raise of its line is the exception RULES.md `workflow/release-reds-first` names for a budget, and
+it is the task's orchestrator's decision, never its executor's: recorded with `just tasks gate
+SLUG tools/size-budget.toml:NAME --raise NEW --why WHY --as HANDLE`
+([gate decisions](TASKS.md#gate-decisions)), then made in a commit of its own that names the
+growth, with the task's thread saying why no reduction will do, landed only on a fresh reviewer's
+approve ([the default landing](TASKS.md#the-default-landing)) and only at the number decided, or
+below the default branch's should a further cut lower it.
+`NEW` is the caller's number, which the command does not check: for a size line the house form is
+[the rule above](#where-a-line-stands), the binary's size as `just size-check` measures it at the
+task's tip plus 4 %, rounded down to a multiple of 10,000 bytes, never higher. A first-visit cap
+of the client's ([its guide](../apps/symphony-web/AGENTS.md)) is raised the same way, a decision
+naming its constant (`apps/symphony-web-tests/tests/browser/main.rs:TASKS_FIRST_VISIT_BYTES`)
+with the bytes measured on the fixture.
 
 The landings that each stayed under a line can still cross it together, and the release run finds
 that: a red of its size step, fixed the same way, a reduction first. To find what grew, the red's

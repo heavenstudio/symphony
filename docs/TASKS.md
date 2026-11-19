@@ -209,6 +209,9 @@ lines first and moves the board only when every writer seen there in the last we
 own (a binary of a release installed in the machine folder, `releases/NAME/bin/`, on this host,
 which the `current` the refresh then points takes on) or was built at the release's schema; when
 the only writers behind are a release's own, its migrate runs with `--leave-behind`, naming them.
+A line on this host whose program is gone from its path, nothing there or a file written since
+the line's last possible write, is not counted, and is left behind the same way
+([a writer gone from its path](RELEASES.md#the-refresh)).
 Any other writer behind holds the release: the refresh names each to rebuild, moves no board of
 any project and leaves `current` where it was, until each is rebuilt and run once and the
 refresh's retry moves them all. Every board is snapshotted before the first moves; a migrate that
@@ -1401,7 +1404,9 @@ Minor 2 adds one read, for the program that makes a task's evidence public
 It is the reading the land itself goes by, one function, and stricter than the default land in
 what ties evidence to the head: the assessment is of the head, so one of another commit or of the
 brief waives nothing and none is no waiver; the approve names the head, never covering it by
-time; and every stamp is said, a waived one with who waived it and why.
+time; and every stamp is said, a waived one with who waived it and why, the assessment or a
+[gate decision](#gate-decisions) for the head. A raise a gate decision gave that the head does
+not carry is among `blocking`, as it refuses the default land.
 
 ### A task a custom workflow holds
 
@@ -1524,7 +1529,12 @@ The rules a port must copy, in this order:
 - **state.** A matched run is `running_test`. Else a quiet subagent waiting on a process is `running_test` (`phase:
   running`), or, when the processes cannot be listed or the board cannot tell whether one there is its,
   `running_test` with `phase: unknown`. Else the terminal's status
-  (`working`, `blocked` is `waiting_on_input`, `idle` and `done` are `idle`). Else the board's health: live is `working`,
+  (`working`, `blocked` is `waiting_on_input`, `idle` and `done` are `idle`). Else, for a session that is neither an
+  orchestrator nor the chat and whose listener the idle sweep's last round confirmed, `idle` once it is at rest:
+  outside any tool call (its `busy_until` passed) and its last tool call more than 90 s ago (`LIVE_SECONDS`, the
+  window its health reads live for), when it connected standing for that call before its first. The confirmation
+  keeps such a session seen, so its health reads live after each round and stale between two, and says nothing of
+  whether it works. Else the board's health: live is `working`,
   stale `idle`, lost or left `gone`. A matched run, and a process its subagent waits on, also lift `stale` and `lost` to
   `live`; processes that cannot be listed, or one whose ownership cannot be told, make them `unknown`.
 - **A probe that fails** is `unavailable` in `probes`, and the answer is built from the board; a failing branch lookup is an
@@ -1591,7 +1601,13 @@ the sole automatic recovery attempt described above.
 What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, the
 owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, GIVEN (one line for every task the board gave the recipient since its last read, [Tasks and roles](#tasks-and-roles)), BLOCKED, WATCH, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
 child, never once a pass (a child it already hears as stale is not also listed idle, in a pushed PULL, a wait
-or `tasks pull` alike). WATCH says the pane watch could not ask hc, while it looks for no BLOCKED: once hc has
+or `tasks pull` alike). No such line is said of a child whose listener answers the idle sweep, so one at rest is
+listed idle whatever its health, and its entry stays through each round: said once. A session with no terminal
+is listed by its last tool call ([the agents API](#the-agents-api)), and the recipient's callback state keeps the
+beat each one was told idle at (`pull_idle`, from the PULL it acknowledged, which older dispatchers leave as it
+is): a dispatcher that does not list such a session forgets its entry, and this one still reads it as told while
+the session rests on that beat, so two builds on one board say it once. A new tool call is a new beat, and the
+rest after it is said again. WATCH says the pane watch could not ask hc, while it looks for no BLOCKED: once hc has
 failed at every sample for 30 s, never for one slow answer that the next sample answers, and again only after
 hc has answered. A gap of more than 30 s between two samples is time nobody sampled, the machine asleep or no
 server, and the stretch starts again at the sample after it
@@ -1901,6 +1917,11 @@ time for finished work) and slug. It is passed back only with the same view, sea
 activity, status and wait kind. A malformed cursor or one from the default view is refused.
 An empty page has no cursor. The task board opts into this projection for its stage columns and
 wait-kind strip; other listing callers retain the default view.
+On a board a custom workflow holds tasks on, this projection puts a held task in its phase's
+column (`phase:ID`, which `status=` selects in this view alone), `waiting` adds the active
+generation and the open tasks by state, and `wait=state:ID` lists a state's
+([WORKFLOW](WORKFLOW.md#the-app)); the default view counts and selects a held task by its
+status.
 
 The default listing retains its legacy **Waiting for your sign-off** selection. The waiting
 board keeps these tasks in their own stages, with their named decision on the card, rather
@@ -2035,7 +2056,10 @@ lands is decided by the checks below, every stamp the task needs standing on the
 reviewer's approve among them where it needs review. So `symphony init` allows `just land` with no permission prompt, and writes no ask
 rule; one an older init wrote, for the marker or for `just tasks land`, a run removes. A
 project's own `land` recipe gets the same allow rule, and its own landing policy decides
-what it lands. An orchestrator lands an approved task without asking the owner. In a project
+what it lands. A task a custom workflow holds lands by its graph alone, through the prepare and
+finalize edges of the adapter `default_land`; its approve is read from the workflow, the head it
+read being the `head` input kept on that transition's receipt and never a verdict message, which
+a workflow's approve writes none of ([WORKFLOW](WORKFLOW.md#external-effects)). An orchestrator lands an approved task without asking the owner. In a project
 whose justfile runs a `land` of its own (`just --show land` is not the Symphony's),
 `tasks land` refuses by any route, naming that justfile. A land is its merge, its move,
 its push and its close: it runs no generator and no sweep, and nothing slow is on its
@@ -2067,7 +2091,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   `@orchestrator`, holds the task blocked from review (`Store::hold_blocked_on`, keeping its
   slot, on `check:owner`, the owner's approve of the tip, which reads as his decision: [what a
   task waits on](#what-a-task-waits-on)), or leaves it done by its approve, until the owner approves the tip
-  on the task's page. A land of a task that needed no review says on its landing line the stamps and the
+  on the task's page. A stamp a [gate decision](#gate-decisions) waived for the tip is not
+  needed there; a raise one gave must be carried in its file at the tip. A land of a task that needed no review says on its landing line the stamps and the
   whole tip they stood on (`landed SLUG on main at MERGE; its needs (tests) stood at SHA`),
   the commit it vouched for, as an approve names one.
 - **Approved by someone else.** Where it needs review, the task's last verdict is an
@@ -2699,10 +2724,13 @@ is one commit on that tip, of the generators' outputs alone, and it becomes a ta
   key is the one recorded, and for a generator with no key no path outside the generators'
   outputs changed.
 - **Stale is cancelled, and never delivered.** A round that finds other inputs cancels the task,
-  saying why, and makes the newest tip, a task of its own. A pull request the cancelled task was
+  saying why, and makes the newest tip, a task of its own. One the board never took (a run cut
+  short before it filed it) has no task to cancel: its branch is deleted with the record, where
+  it is still at the commit made. A pull request the cancelled task was
   bound to is told by a snapshot that blocks, so the check the host requires fails there, unless it was closed or merged meanwhile; while
   that could not be told (`regenerate.withdrawn` names the task) its checks may still pass,
-  the round says so, and each later round tells it again. A task whose merge was asked for is
+  the round says so and why (the host's reason, or the task's status where its evidence still
+  stands, as it does for one named and not yet cancelled), and each later round tells it again. A task whose merge was asked for is
   never cancelled: the host may hold its commit, and its land settles it.
 - **What the land checks.** A task the record names is delivered only as made: its branch at the
   recorded commit, that commit one commit on the recorded tip, which the remote default branch
@@ -2810,7 +2838,8 @@ build, its output appended to `symphony/tasks/land/regenerate.log` (set aside as
   It is part of the round, under its lock, and never cut short because main moved: only
   its time limit or a signal ends it, and a signal ends the regenerator with it, nothing
   judged. A round discarded as stale, or one that stopped, is not checked: the round after
-  it checks the newer tip. A check that fails, runs past its time or cannot run files
+  it checks the newer tip. Nor is a commit the same check last passed on, which a round
+  whose generated task waits for its pull request takes again at each start. A check that fails, runs past its time or cannot run files
   `tests/main-red-check` at p0, marked red, a task of its own beside the generators' reds,
   or adds a line to the one open while it stays red; its text says no more than is known
   (one past its time or one that could not run neither passed nor failed). A later round
@@ -3027,10 +3056,12 @@ landing](#the-default-landing)).
   and the thread's evidence.
 - **`just tasks stamps [SLUG]`** prints the catalogue, where it was read and each stamp's
   `met`, `applies` and `skips`, the stamps a task nobody assessed needs marked `(needed by
-  default)`. Given a task, it adds what an assessor reads first: `NEEDS`, the needs as they
+  default)` and those a gate decision may waive `(waivable at one tip by a gate decision)`.
+  Given a task, it adds what an assessor reads first: `NEEDS`, the needs as they
   stand (the newest assessment, its tip, who and why, or the catalogue's defaults with none);
   `TIP`, its branch and that branch's tip in the main checkout (none before the branch is made,
-  when an assessment reads the brief alone); and `CHECK PATHS`, the paths the branch changes
+  when an assessment reads the brief alone); `GATES`, the task's gate decisions that stand
+  ([below](#gate-decisions)); and `CHECK PATHS`, the paths the branch changes
   since it left the default branch that `[land] check_paths` names, which the `review` guideline asks
   for, so an assessor need not find the tests in a diff.
 - **`just tasks runs SLUG [--tip SHA]`** prints what the recorder kept of the task at its
@@ -3069,7 +3100,61 @@ landing](#the-default-landing)).
   a stamp when unsure, and writes the needs with `--tip` the whole commit `stamps` printed. For
   a change of settings (above) it names `tests` alone, with no post of the owner's needed to
   leave `review` out, and where it names `tests` its reason names the runs that prove the
-  change, never a suite that has nothing to do with it.
+  change, never a suite that has nothing to do with it. It reads the task's gate decisions
+  ([below](#gate-decisions)) as decisions, never as claims.
+
+### Gate decisions
+
+A quality gate that must give way for one task gives way by a decision the board records, where
+its assessor, its reviewer and its land read it, never by a word in a terminal or in chat alone
+(`crates/tasks/src/gates.rs`). `just tasks gate SLUG GATE (--raise NEW | --waive [--tip TIP])
+--why WHY --as HANDLE` gives one:
+
+- **Who.** The task's orchestrator: the session holding that role on it when it is given. The
+  board refuses it to a session that executed the task or work under it, and to one that reviews
+  it or gave it a verdict, whatever role it holds besides, so neither decides its own gate. The
+  owner's word in chat is the orchestrator's to record, its reason naming it. (The owner's own
+  form on the task's page is to come: the board's write of a decision takes a session.)
+- **A raise** names a limit as `PATH:NAME`: the one line of the file `PATH` that sets `NAME` to a
+  number, a TOML key or a Rust constant (`tools/size-budget.toml:symphony`,
+  `apps/symphony-web-tests/tests/browser/main.rs:TASKS_FIRST_VISIT_BYTES`). Its file is one
+  `[land] check_paths` names whole, so the change keeps a fresh reviewer. The command reads the
+  number it raises from the default branch in the main checkout, and `NEW` is the caller's
+  number, above it: the command holds it to no house rule ([a size line's is
+  CHECKS's](CHECKS.md#a-red-at-the-size-check)). The raise reaches the gate as the change of that
+  line committed on the task's branch, its commit of its own and its message the account (what
+  grew, what was taken back first, what was measured), so it lands with the task and holds for
+  every task after.
+- **A waiver** names a stamp the catalogue marks waivable ([PROJECT_FILE](PROJECT_FILE.md#stampsname),
+  `just tasks stamps` marks it), for one tip: `--tip`, else the task's branch's tip, resolved to
+  the whole commit in the main checkout. In the Symphony's catalogue that is `pictures` alone:
+  `tests` (a red or missing test run), `review` (a missing review where the stamps name one) and
+  `owner` (the owner's own word, given by approving) are never waived, and a catalogue cannot
+  mark them so.
+- **The record** is the board's own field `fields._board.gates`, every decision kept, the newest
+  on a gate standing, out of `just tasks field`'s reach; each is a line on the thread: `gate
+  tools/size-budget.toml:symphony raised 12,390,000 -> 12,400,000: WHY; by HANDLE`, `gate
+  pictures waived at 1a2b3c4: WHY; by HANDLE`. `just tasks stamps SLUG` lists those that stand
+  (`GATES`). It refuses an empty reason, a raise that names no limit set once in a check's file
+  or no number above the default branch's, `--tip` on a raise, a waiver of a stamp the catalogue
+  does not let it waive, a task cancelled, and a task done with no land of it still to come:
+  an approve leaves its task done until its land (the `unlanded` mark, or a custom workflow's
+  pair it does not mark terminal), which still takes a decision. No schema moves: the field is
+  the task's own.
+- **The land** ([below](#the-default-landing)) reads them at the tip. A waiver for the tip lifts
+  its stamp there, and the land's line says so; one for another tip lifts nothing, and the
+  refusal of the stamp names it. A raise lands only where the tip sets its limit to the number
+  decided, its line naming the decision; at another number above the default branch's it
+  refuses to `@executor`; where the tip holds the default branch's number still, or lowers it
+  below that (a limit lowered needs no decision), the raise raised nothing, and it lands saying
+  so. The land of a task a custom workflow holds reads them before its prepare edge, and a
+  decision is part of the evidence its intent binds; a land delivered by a pull request reads
+  them the same way ([its evidence](#the-evidence-of-a-task-at-its-head)). The task page draws a stamp a decision waived
+  at the tip as waived, with the decision's author, reason and tip.
+- **The assessor and the reviewer.** The assessor names no `owner` stamp for a limit a raise
+  names, and keeps `review` for it; the reviewer still judges that the cut came first and the
+  account is true, and its verdict names each decision at the tip, a raise it judged or a waiver
+  it saw. A limit raised in a diff that no decision names is a changes.
 
 ## Subtasks
 

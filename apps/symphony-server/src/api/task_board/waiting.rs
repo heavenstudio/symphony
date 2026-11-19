@@ -41,9 +41,10 @@ fn since(task: &Task) -> f64 {
 }
 
 /// Only the board's named block can be blocked. Its derived `nobody` line can name a dependency
-/// that disappeared; that is still a real block. An unnamed legacy block is ordinary work.
+/// that disappeared; that is still a real block. An unnamed legacy block is ordinary work. A task
+/// a custom workflow holds is blocked by its state, which the board's own block never names.
 fn normalize(task: &mut Task) {
-    if task.status != "blocked" {
+    if task.status != "blocked" || task.workflow.is_some() {
         return;
     }
     let named = task.waits_on.as_ref().is_some_and(|waits| {
@@ -80,12 +81,25 @@ fn original(task: &Task) -> &str {
         .unwrap_or("ready")
 }
 
-fn stage<'a>(task: &'a Task, work: &MachineWork, activity: bool) -> &'a str {
-    if task.status == "blocked" {
-        original(task)
+/// The column `task` goes in: a blocked task the board's own writers keep in the status it was
+/// blocked from, any other where every listing puts it ([`super::column`]), a task a custom
+/// workflow holds in its phase's, blocked or not.
+fn stage(task: &Task, work: &MachineWork, activity: bool) -> String {
+    if task.status == "blocked" && task.workflow.is_none() {
+        original(task).to_string()
     } else {
-        work.task_stage(task, activity).as_str()
+        super::column(work, task, activity)
     }
+}
+
+/// A wait facet that selects open held tasks by their coordination state, then the state's ID: the
+/// tasks it selects are listed across their phases, as a wait kind's are, under the kind's own
+/// `wait` (docs/WORKFLOW.md, "The app").
+const STATE: &str = "state:";
+
+/// The coordination state of a task a custom workflow holds; none for one the board's writers keep.
+fn state(task: &Task) -> Option<&str> {
+    task.workflow.as_ref().map(|place| place.state.as_str())
 }
 
 fn key(task: &Task, stage: &str, across: bool) -> Key {
@@ -122,10 +136,13 @@ fn refusal(request: &Request) -> Option<String> {
         return Some("view=waiting selects board columns, not hierarchy, holders, signoff or a blocked column".into());
     }
     query(request, "wait")
-        .filter(|kind| !WAITS_KINDS.contains(&kind.as_str()))
+        .filter(|kind| {
+            !WAITS_KINDS.contains(&kind.as_str())
+                && !kind.strip_prefix(STATE).is_some_and(super::workflow_id)
+        })
         .map(|kind| {
             format!(
-                "unknown wait kind {kind:?}: expected {}",
+                "unknown wait kind {kind:?}: expected {} or {STATE}STATE",
                 WAITS_KINDS.join(", ")
             )
         })
@@ -136,6 +153,7 @@ pub(super) fn project(
     mut tasks: Tasks,
     work: MachineWork,
     signoff: Vec<String>,
+    workflow: Option<u64>,
 ) -> Response {
     if let Some(why) = refusal(request) {
         return error(StatusCode::BAD_REQUEST, why);
@@ -147,13 +165,21 @@ pub(super) fn project(
         Ok(cursor) if cursor.as_ref().is_none_or(|key| key.3.is_finite()) => cursor,
         _ => return error(StatusCode::BAD_REQUEST, "invalid waiting-board cursor"),
     };
-    let wait = query(request, "wait");
+    let facet = query(request, "wait");
+    let selected_state = (facet.as_deref())
+        .and_then(|wanted| wanted.strip_prefix(STATE))
+        .map(str::to_string);
+    let wait = facet.filter(|_| selected_state.is_none());
+    let across = wait.is_some() || selected_state.is_some();
     let status = query(request, "status");
     let activity = query(request, "activity").as_deref() == Some("1");
     let mut waiting = WaitingBoard {
         kinds: WAITS_KINDS.iter().map(|kind| ((*kind).into(), 0)).collect(),
         columns: Vec::new(),
+        states: Vec::new(),
+        workflow,
     };
+    let mut states = std::collections::BTreeMap::<String, usize>::new();
     for task in &mut tasks.tasks {
         normalize(task);
         if !task.is_finished() {
@@ -162,20 +188,26 @@ pub(super) fn project(
                 .position(|one| *one == kind(task))
                 .unwrap_or(1);
             waiting.kinds[rank].1 += 1;
+            if let Some(state) = state(task) {
+                *states.entry(state.into()).or_default() += 1;
+            }
         }
     }
+    waiting.states = states.into_iter().collect();
     tasks.tasks.retain(|task| {
         wait.as_ref()
             .is_none_or(|wanted| !task.is_finished() && kind(task) == wanted)
+            && (selected_state.as_ref())
+                .is_none_or(|wanted| !task.is_finished() && state(task) == Some(wanted.as_str()))
     });
     let mut columns = std::collections::BTreeMap::<String, WaitingColumn>::new();
     let mut lifecycle = std::collections::BTreeMap::<String, usize>::new();
     for task in &tasks.tasks {
         let stage = stage(task, &work, activity);
         let column = columns
-            .entry(stage.into())
+            .entry(stage.clone())
             .or_insert_with(|| WaitingColumn {
-                status: stage.into(),
+                status: stage,
                 ..WaitingColumn::default()
             });
         if task.status == "blocked" {
@@ -201,10 +233,10 @@ pub(super) fn project(
         .into_iter()
         .filter_map(|task| {
             let stage = stage(&task, &work, activity);
-            if status.as_ref().is_some_and(|wanted| wanted != stage) {
+            if status.as_ref().is_some_and(|wanted| *wanted != stage) {
                 return None;
             }
-            let key = key(&task, stage, wait.is_some());
+            let key = key(&task, &stage, across);
             Some((key, task))
         })
         .collect();
@@ -286,6 +318,7 @@ mod ordering_study {
                 },
                 MachineWork::default(),
                 vec![],
+                None,
             );
             axum::body::to_bytes(response.into_body(), usize::MAX)
                 .await
@@ -307,7 +340,7 @@ mod ordering_study {
                             let mut task = task.clone();
                             normalize(&mut task);
                             (
-                                key(&task, stage(&task, &MachineWork::default(), false), across),
+                                key(&task, &stage(&task, &MachineWork::default(), false), across),
                                 task,
                             )
                         })

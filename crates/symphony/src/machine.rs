@@ -21,6 +21,7 @@ mod identity;
 mod registry;
 pub mod release;
 pub mod switch;
+pub mod updates;
 
 pub use folder::dir;
 pub use identity::{installation_id, installation_id_in};

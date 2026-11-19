@@ -25,6 +25,7 @@ pub(in crate::store) mod cap;
 pub(in crate::store) mod copy;
 pub(in crate::store) mod depends;
 pub(in crate::store) mod dispatcher;
+pub(in crate::store) mod effects;
 pub(in crate::store) mod execution;
 pub(in crate::store) mod fields;
 pub(in crate::store) mod history;
@@ -51,6 +52,7 @@ pub(in crate::store) mod unanswered;
 pub(in crate::store) mod waits;
 pub(in crate::store) mod work;
 pub(in crate::store) mod workflow;
+pub(in crate::store) mod workflow_events;
 pub(in crate::store) mod write;
 pub(in crate::store) mod writers;
 
@@ -74,12 +76,13 @@ pub(in crate::store) fn claimable() -> Pg<'static> {
 
 /// A rule's write ([`write::write`]) with what its change adds, as `super::surreal::rule` adds
 /// it: what a block waited on removed by a change of status out of blocked, what it waits on
-/// written (`blocked`), the move's `reason` posted after its line, the task's `needs` written, its
-/// mark of an approve not landed set or lifted (`unlanded`), a change of status (`moved`, whether
-/// to cancelled) settling its hold and its dependants, and the slot counters it `holds` guarded.
+/// written (`blocked`), the move's `reason` posted after its line, the task's `needs` and its
+/// `gates` written, its mark of an approve not landed set or lifted (`unlanded`), a change of
+/// status (`moved`, whether to cancelled) settling its hold and its dependants, and the slot
+/// counters it `holds` guarded.
 pub(in crate::store) fn rule(
     reason: bool,
-    needs: bool,
+    (needs, gates): (bool, bool),
     unlanded: bool,
     blocked: bool,
     moved: Option<bool>,
@@ -108,6 +111,9 @@ pub(in crate::store) fn rule(
     }
     if needs {
         add(&work::field_set("_board,needs", "v -> 'needs'"));
+    }
+    if gates {
+        add(&work::field_set("_board,gates", "v -> 'gates'"));
     }
     if unlanded {
         add(&work::field_set("_board,unlanded", work::UNLANDED));
@@ -764,7 +770,7 @@ mod tests {
 
     /// `rule`'s block, which a rule's write is.
     fn ruled(reason: bool, needs: bool, blocked: bool, moved: Option<bool>, holds: bool) -> String {
-        match rule(reason, needs, needs, blocked, moved, holds, false) {
+        match rule(reason, (needs, needs), needs, blocked, moved, holds, false) {
             Pg::Script(block, None) => block.into_owned(),
             other => panic!("a rule is a block answering its own: {other:?}"),
         }
@@ -780,6 +786,7 @@ mod tests {
             work::field_set("_board,blocked", "v -> 'blocked'"),
             work::reason_written(),
             work::field_set("_board,needs", "v -> 'needs'"),
+            work::field_set("_board,gates", "v -> 'gates'"),
             work::field_set("_board,unlanded", work::UNLANDED),
             cap::HOLDING.to_string(),
             work::block_cancelled_dependencies(true),

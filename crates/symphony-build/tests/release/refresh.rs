@@ -27,6 +27,8 @@ use symphony::machine::{Entry, Registry};
 const RELEASE: &str = "release-2026-11-12";
 /// The release a run a day later tags.
 const NEXT: &str = "release-2026-11-13";
+/// The release a run two days later tags.
+const LATER: &str = "release-2026-11-14";
 /// What names the stand-in for cargo.
 const BUILDER: &str = "SYMPHONY_RELEASE_BUILDER";
 /// The refresh's wait for the machine's server, in seconds, where the server has followed by the
@@ -76,9 +78,12 @@ fn executable(path: &Path, text: &str) {
 /// Its server and its board answer what the install asks at that schema, and its `tasks migrate`
 /// logs to `migrated.log` where it ran and how many snapshots every project there held then,
 /// fails while `migrate-red` is there, or `migrate-red-ID` for the project in the folder `ID`, and
-/// otherwise moves the board its checkout reaches to that schema: its path.
+/// otherwise moves the board its checkout reaches to that schema: its path. Any other `tasks api`
+/// request goes to the board's own binary, on the scratch database `filed` of the server of the
+/// board its checkout reaches: what a refresh files on a project's board lands there.
 pub(super) fn builder(fixture: &Fixture, schema: i64) -> String {
     let root = fixture.root.display().to_string();
+    let real = super::common::tasks_binary();
     fs::write(fixture.root.join("schema"), schema.to_string()).unwrap();
     let stand_in = fixture.root.join("stand-in");
     executable(
@@ -90,8 +95,12 @@ pub(super) fn builder(fixture: &Fixture, schema: i64) -> String {
         &stand_in.join("tasks"),
         &format!(
             "#!/bin/sh\ncase \"$1\" in\n\
-             api) cat > /dev/null\n\
+             api) req=$(cat)\n\
+             case \"$req\" in *'\"method\": \"version\"'*|*'\"method\":\"version\"'*)\n\
              echo '{{\"ok\": {{\"api\": {{\"major\": 1, \"minor\": 14}}, \"schema\": @SCHEMA@}}}}' ;;\n\
+             *) addr=$(sed -n 's/.*\"addr\": *\"\\([^\"]*\\)\".*/\\1/p' .git/symphony/tasks/server.json)\n\
+             printf '%s' \"$req\" | TASKS_SERVER=\"$addr\" TASKS_DATABASE=filed '{real}' api ;;\n\
+             esac ;;\n\
              migrate) kept=$(ls '{root}'/*/.git/symphony/tasks/snapshots/*.surql 2>/dev/null | wc -l)\n\
              echo \"tasks $* in $PWD, $(echo $kept) snapshots\" >> '{root}/migrated.log'\n\
              if [ -e '{root}/migrate-red' ] || [ -e \"{root}/migrate-red-${{PWD##*/}}\" ]; then \
@@ -242,12 +251,18 @@ fn aged(client: &Client, by: f64) {
 
 /// A line on the board `client` reaches of `program` at `path` on this host at `schema`, seen now.
 fn writes(client: &Client, program: &str, path: &Path, schema: i64) {
+    wrote(client, program, path, schema, 0.0);
+}
+
+/// [`writes`], its line seen `ago` seconds before now.
+fn wrote(client: &Client, program: &str, path: &Path, schema: i64, ago: f64) {
     let host = symphony_board::sys::hostname();
     let path = path.to_string_lossy().into_owned();
     let seen = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs_f64();
+        .as_secs_f64()
+        - ago;
     Raw::on(client)
         .row("writer", json!([host, path]))
         .put(
@@ -267,11 +282,14 @@ fn this_writer() -> String {
 
 /// A stand-in for the machine's server on a private port, recorded in the machine folder: each
 /// `/api/front` is answered as `answer()` says then (a pid, the root it serves, and the release it
-/// is, if any), or as a server not yet serving (503) while that says none.
+/// is, if any, at the board schema that release's manifest names), or as a server not yet serving
+/// (503) while that says none. Its project list (`/api/projects`) is the machine folder's
+/// `listed.json` while there is one, else the front's answer, which lists no project.
 fn server_as(
     fixture: &Fixture,
     answer: impl Fn() -> Option<(i64, String, Option<String>)> + Send + 'static,
 ) -> u16 {
+    let folder = machine(fixture);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
@@ -290,16 +308,29 @@ fn server_as(
                 let _ = write!(stream, "HTTP/1.0 503 Service Unavailable\r\n\r\n");
                 continue;
             };
-            let front = json!({
-                "pid": pid,
-                "port": port,
-                "root": root,
-                "ready": true,
-                "app": null,
-                "tailnet": null,
-                "release": release,
-            })
-            .to_string();
+            let listed = fs::read_to_string(folder.join("listed.json")).ok();
+            let schema = (release.as_ref())
+                .and_then(|name| {
+                    fs::read_to_string(folder.join("releases").join(name).join("manifest.json"))
+                        .ok()
+                })
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                .and_then(|manifest| manifest["schema"].as_i64())
+                .unwrap_or(0);
+            let front = match listed.filter(|_| asked.starts_with(b"GET /api/projects")) {
+                Some(listed) => listed,
+                None => json!({
+                    "pid": pid,
+                    "port": port,
+                    "root": root,
+                    "ready": true,
+                    "app": null,
+                    "tailnet": null,
+                    "schema": schema,
+                    "release": release,
+                })
+                .to_string(),
+            };
             let _ = write!(
                 stream,
                 "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{front}",
@@ -492,7 +523,7 @@ fn a_refresh_installs_moves_the_boards_its_writers_allow_points_current_and_wait
     assert!(
         out.contains(&format!(
             "release: refresh: {NEXT} serves board schema 19, as the release current names serves \
-             19: no board moves\n"
+             19: only a board left behind it moves\n"
         )),
         "{out}"
     );
@@ -578,7 +609,10 @@ fn a_lagging_writer_holds_every_board_and_current_until_it_is_rebuilt() {
     let status = fixture.run(NOW + 60.0, &["--status"], 0);
     assert!(
         status.contains("last refresh: green, 1 step left to its project, of ")
-            && status.contains("  refresh-alpha the project's to finish, filed nowhere here; log ")
+            && status.contains(
+                "  refresh-alpha the project's to finish, its schema update's task filed (below); \
+                 log "
+            )
             && status.contains(
                 "  by hand: each writer named behind the release is rebuilt at its schema and run \
                  once, which records it;"
@@ -624,6 +658,97 @@ fn a_lagging_writer_holds_every_board_and_current_until_it_is_rebuilt() {
     assert_eq!(alpha_board.schema("tasks").unwrap(), Some(19));
     assert_eq!(beta_board.schema("tasks").unwrap(), Some(19));
     assert_eq!([untouched(&alpha), untouched(&beta)], before);
+}
+
+/// A writer's line keeps its program's path alone, so the refresh looks at what is there now, on
+/// this host, and runs none of it: nothing at the path, or a file written after the line's last
+/// possible write, is a program that can write no more, said and left behind by name. The build
+/// that wrote, still at its path, holds the release as before.
+#[test]
+fn a_writer_gone_from_its_path_is_said_and_holds_no_board_and_one_still_there_does() {
+    let (fixture, _) = refreshing();
+    let alpha = a_project(&fixture, "alpha", &[]);
+    let beta = a_project(&fixture, "beta", &[]);
+    registered(&fixture, &[("alpha", &alpha, &[]), ("beta", &beta, &[])]);
+    let host = symphony_board::sys::hostname();
+    // alpha's writers behind: a build named by its hash, superseded and removed, and a build
+    // rebuilt at its path since it last wrote there, two hours ago.
+    let (alpha_board, _, alpha_client) = board_at(&alpha, 18);
+    Raw::on(&alpha_client).table("writer").delete().unwrap();
+    let removed = fixture.root.join("builds-of/alpha/bin/tasks-0a1b2c");
+    let rebuilt = fixture.root.join("builds-of/alpha/rs-bin/agent-send");
+    executable(&rebuilt, "#!/bin/sh\nexit 9\n");
+    wrote(&alpha_client, "tasks-0a1b2c", &removed, 18, DAY);
+    wrote(&alpha_client, "agent-send", &rebuilt, 18, 2.0 * 3600.0);
+    // beta's writer behind is the build that wrote just now, where it was.
+    let (beta_board, _, beta_client) = board_at(&beta, 18);
+    Raw::on(&beta_client).table("writer").delete().unwrap();
+    let standing = fixture.root.join("builds-of/beta/bin/tasks");
+    executable(&standing, "#!/bin/sh\nexit 9\n");
+    writes(&beta_client, "tasks", &standing, 18);
+    let builder = builder(&fixture, 19);
+    let surreal = super::board::surreal().to_string_lossy().into_owned();
+    let extra = [
+        (BUILDER, builder.as_str()),
+        ("SYMPHONY_SURREAL", surreal.as_str()),
+    ];
+
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    let not_counted = format!(
+        "; not counted, as its program is gone: agent-send at schema 18 ({} on {host}, last seen \
+         2 h ago): the file at its path was written after it last ran there, a build that has not \
+         opened this board; tasks-0a1b2c at schema 18 ({} on {host}, last seen 24 h ago): nothing \
+         is at its path now\n",
+        rebuilt.display(),
+        removed.display()
+    );
+    assert!(
+        out.contains(&format!(
+            "release: refresh: alpha: its board can move from schema 18 to 19, and stays at 18 \
+             while beta holds the release{not_counted}"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "release: refresh: beta: the project's to finish: its board stays at schema 18: a \
+             writer seen there in the last week is behind {RELEASE}'s schema 19: tasks at schema \
+             18 ({} on {host}, last seen ",
+            standing.display()
+        )),
+        "{out}"
+    );
+    assert_eq!(alpha_board.schema("tasks").unwrap(), Some(18));
+    assert!(migrated(&fixture).is_empty());
+    assert_eq!(current(&fixture), None);
+
+    // beta's build removed too: both boards move, each leaving its gone writers behind by name,
+    // as the release's migrate reads the lines again.
+    fs::remove_file(&standing).unwrap();
+    let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "release: refresh: alpha: its board moved from schema 18 to 19 by {RELEASE}'s own \
+             `tasks migrate --leave-behind`, its store snapshotted first to {}{not_counted}",
+            snapshot(&alpha, 19, RELEASE).display()
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "`tasks migrate --leave-behind`, its store snapshotted first to {}; not counted, as \
+             its program is gone: tasks at schema 18 ({} on {host}, last seen ",
+            snapshot(&beta, 19, RELEASE).display(),
+            standing.display()
+        )) && out.contains(" ago): nothing is at its path now\n"),
+        "{out}"
+    );
+    assert_eq!(alpha_board.schema("tasks").unwrap(), Some(19));
+    assert_eq!(beta_board.schema("tasks").unwrap(), Some(19));
+    assert_eq!(migrated(&fixture).lines().count(), 2);
+    assert_eq!(current(&fixture).as_deref(), Some(RELEASE));
 }
 
 #[test]
@@ -682,7 +807,19 @@ fn every_snapshot_comes_first_and_a_move_that_fails_partway_is_finished_by_the_r
     assert!(migrated(&fixture).is_empty(), "no migrate ran");
     assert_eq!(schemas(), [Some(18), Some(18), Some(18)]);
     assert_eq!(current(&fixture), None);
-    assert!(fixture.reds()["tests/release-red-refresh-gamma"].red());
+    // gamma's failed move is its update's one task; alpha's and beta's wait on it, filing nothing.
+    assert!(
+        out.contains(
+            "release: refresh: updates: gamma@19 failed: the snapshot of its store failed"
+        ) && out.contains("; filed tests/release-red-update-gamma-19 on this repository's board\n")
+            && out.contains("release: refresh: updates: alpha@19 waits: ")
+            && out.contains("release: refresh: updates: beta@19 waits: "),
+        "{out}"
+    );
+    assert_eq!(
+        fixture.reds().keys().collect::<Vec<_>>(),
+        ["tests/release-red-update-gamma-19"]
+    );
 
     // Every snapshot taken, then beta's migrate fails: alpha's board stays moved, gamma's waits,
     // and current is not pointed.
@@ -716,10 +853,24 @@ fn every_snapshot_comes_first_and_a_move_that_fails_partway_is_finished_by_the_r
     );
     assert_eq!(schemas(), [Some(19), Some(18), Some(18)]);
     assert_eq!(current(&fixture), None);
+    // beta's failed move files its own update's task; gamma's stays open, as its update is not
+    // complete.
     assert!(
-        out.contains("release: filed tests/release-red-refresh-beta")
-            && out.contains("release: closed tests/release-red-refresh-gamma"),
+        out.contains("; filed tests/release-red-update-beta-19 on this repository's board\n")
+            && out.contains("release: refresh: updates: gamma@19 waits: "),
         "{out}"
+    );
+    let reds = fixture.reds();
+    assert_eq!(
+        reds.keys().collect::<Vec<_>>(),
+        [
+            "tests/release-red-update-beta-19",
+            "tests/release-red-update-gamma-19"
+        ]
+    );
+    assert!(
+        reds.values()
+            .all(|red| symphony_board::red::open(&red.status))
     );
 
     // The retry takes alpha's board as moved, moves the other two and points current.
@@ -731,8 +882,7 @@ fn every_snapshot_comes_first_and_a_move_that_fails_partway_is_finished_by_the_r
             "release: refresh: alpha: its board is at schema 19, {RELEASE}'s or past it: nothing \
              to move\n"
         )) && out.contains("release: refresh: beta: its board moved from schema 18 to 19 by ")
-            && out.contains("release: refresh: gamma: its board moved from schema 18 to 19 by ")
-            && out.contains("release: closed tests/release-red-refresh-beta"),
+            && out.contains("release: refresh: gamma: its board moved from schema 18 to 19 by "),
         "{out}"
     );
     assert_eq!(
@@ -743,6 +893,48 @@ fn every_snapshot_comes_first_and_a_move_that_fails_partway_is_finished_by_the_r
     );
     assert_eq!(schemas(), [Some(19), Some(19), Some(19)]);
     assert_eq!(current(&fixture).as_deref(), Some(RELEASE));
+    // Every board moved, but no server answers to write them: each update waits, and the tasks of
+    // the two that failed stay open until a server writes their boards.
+    for id in ["alpha", "beta", "gamma"] {
+        assert!(
+            out.contains(&format!(
+                "release: refresh: updates: {id}@19 waits: no server answers on this machine to \
+                 write it\n"
+            )),
+            "{out}"
+        );
+    }
+    assert!(
+        fixture
+            .reds()
+            .values()
+            .all(|red| symphony_board::red::open(&red.status))
+    );
+
+    // The release's server answers: every update served, and each task closed, none filed again.
+    release_server(&fixture, RELEASE, true);
+    let (code, out, err) = fixture.release_with(NOW + 360.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    for slug in [
+        "tests/release-red-update-beta-19",
+        "tests/release-red-update-gamma-19",
+    ] {
+        assert!(
+            out.contains(&format!(
+                "release: refresh: updates: closed {slug} on this repository's \
+                 board: "
+            )),
+            "{out}"
+        );
+        assert_eq!(fixture.reds()[slug].status, "cancelled");
+    }
+    assert_eq!(fixture.reds().len(), 2, "no task filed again");
+    let ledger = ledger(&fixture);
+    let served: Vec<(&str, usize)> = (ledger.updates.iter())
+        .filter(|update| update.served.is_some())
+        .map(|update| (update.id.as_str(), update.failures.len()))
+        .collect();
+    assert_eq!(served, [("alpha@19", 0), ("beta@19", 1), ("gamma@19", 1)]);
 }
 
 #[test]
@@ -771,7 +963,9 @@ fn what_cannot_be_judged_is_left_out_and_every_board_that_holds_the_release_is_n
     // gamma's last was seen over a week ago.
     let _fresh_board = Board::started(&fresh);
     let (_alpha_board, _, alpha_client) = board_at(&alpha, 18);
-    let gate = Path::new("/work/alpha/.target/debug/gate-review");
+    // A program of the project's own, where it wrote from: a path with nothing at it holds none.
+    let gate = &fixture.root.join("builds-of/alpha/debug/gate-review");
+    executable(gate, "#!/bin/sh\nexit 9\n");
     writes(&alpha_client, "gate-review", gate, 18);
     let _beta_board = board_at(&beta, 18);
     let (gamma_board, _, gamma_client) = board_at(&gamma, 18);
@@ -980,14 +1174,27 @@ fn a_failed_move_is_red_and_leaves_current_where_it_was_until_a_refresh_gets_thr
         )),
         "{out}"
     );
+    // The failed move is its update's one task, on this repository's board, and no red of the step.
+    let slug = "tests/release-red-update-alpha-19";
     assert!(
-        out.contains("release: filed tests/release-red-refresh-alpha"),
+        out.contains(&format!(
+            "release: refresh: updates: alpha@19 failed: {NEXT}'s `tasks migrate` in {}",
+            alpha.display()
+        )) && out.contains(&format!("; filed {slug} on this repository's board\n")),
         "{out}"
     );
     assert_eq!(current(&fixture).as_deref(), Some(RELEASE));
     assert_eq!(board.schema("tasks").unwrap(), Some(18));
     assert!(fs::read_to_string(&kept).unwrap().contains("sim/kept"));
-    assert!(fixture.reds()["tests/release-red-refresh-alpha"].red());
+    let reds = fixture.reds();
+    assert_eq!(reds.keys().collect::<Vec<_>>(), [slug], "{out}");
+    assert!(reds[slug].red() && reds[slug].priority == 0);
+    let failures = |fixture: &Fixture| -> Vec<String> {
+        (fixture.thread(slug).into_iter())
+            .filter(|post| post.starts_with("Failure "))
+            .collect()
+    };
+    assert_eq!(failures(&fixture).len(), 1);
 
     // Green again: moved, current pointed, the server waited for, and the red closed. What the
     // server's reload said before `current` moved is quoted as said before it.
@@ -1021,15 +1228,70 @@ fn a_failed_move_is_red_and_leaves_current_where_it_was_until_a_refresh_gets_thr
         )),
         "{out}"
     );
+    // Moved and pointed, but the server never came to write the board: the same update failed
+    // again, a post on its task, which stays open.
     assert!(
-        out.contains("release: closed tests/release-red-refresh-alpha"),
+        out.contains(&format!(
+            "release: refresh: updates: alpha@19 failed: the machine's server, the release {RELEASE} \
+             at schema 18, does not write its board at schema 19: "
+        )) && out.contains(&format!("; heard on {slug}, this repository's board\n")),
         "{out}"
     );
+    assert_eq!(failures(&fixture).len(), 2);
+    assert!(symphony_board::red::open(&fixture.reds()[slug].status));
     assert_eq!(board.schema("tasks").unwrap(), Some(19));
     assert_eq!(
         board.recorded(),
         Some(running),
         "the same database, never restarted"
+    );
+
+    // The server follows by its hand-off: the update is served, timed from that line, and closed.
+    release_server(&fixture, RELEASE, true);
+    let moved = (ledger(&fixture)
+        .newest("alpha", 19)
+        .unwrap()
+        .reached
+        .clone())
+    .unwrap();
+    assert!(moved.source.starts_with("this refresh's move"), "{moved:?}");
+    fs::write(
+        &log,
+        format!(
+            "[{}] · Symphony reload: replacement pid 4343 ready; draining pid 4242\n",
+            utc(moved.at + 1.0)
+        ),
+    )
+    .unwrap();
+    let (code, out, err) = fixture.release_with(NOW + DAY + 240.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(
+            "release: refresh: updates: alpha@19 served: the machine's server writes \
+             alpha's board at schema 19 (at the board's schema; its project list says nothing of \
+             writes)"
+        ) && out.contains(&format!(
+            "release: refresh: updates: closed {slug} on this repository's board: alpha@19\n"
+        )),
+        "{out}"
+    );
+    assert_eq!(fixture.reds()[slug].status, "cancelled");
+    let ledger = ledger(&fixture);
+    let update = ledger.newest("alpha", 19).unwrap();
+    assert_eq!(update.failures.len(), 2);
+    assert!(
+        (update.served.as_ref().unwrap().source).starts_with("the server's hand-off"),
+        "{update:?}"
+    );
+    assert_eq!(
+        update.served_by.as_deref(),
+        Some(NEXT),
+        "the release whose server wrote it"
+    );
+    assert_eq!(
+        update.release.as_deref(),
+        Some(NEXT),
+        "the release serving it, installed"
     );
 }
 
@@ -1077,13 +1339,48 @@ fn a_board_not_running_holds_the_release_and_one_from_before_the_writer_record_i
     assert!(out.contains(&own), "{out}");
     assert!(out.contains("current is not pointed at"), "{out}");
     assert_eq!(current(&fixture), None);
-    assert!(fixture.reds()["tests/release-red-refresh-alpha"].red());
+    // Each failed, whether a server answers or not: alpha's database down and old's board its
+    // project's, neither of which any release here writes, so both on this repository's board.
+    let (alpha_red, old_red) = (
+        "tests/release-red-update-alpha-19",
+        "tests/release-red-update-old-19",
+    );
+    assert!(
+        out.contains("release: refresh: updates: alpha@19 failed: the board's database in ")
+            && out.contains(&format!("; filed {alpha_red} on this repository's board\n"))
+            && out.contains("release: refresh: updates: old@19 failed: its board is at schema 17")
+            && out.contains(&format!("; filed {old_red} on this repository's board\n")),
+        "{out}"
+    );
+    assert_eq!(
+        fixture.reds().keys().collect::<Vec<_>>(),
+        [alpha_red, old_red]
+    );
+    assert!(
+        fixture.reds()[alpha_red]
+            .body
+            .contains("its board's database is down"),
+        "{}",
+        fixture.reds()[alpha_red].body
+    );
 
-    // alpha gone from the registry: old's board, behind every release, holds nothing.
+    // alpha gone from the registry: old's board, behind every release, holds nothing; alpha's
+    // update ends with its task, and old's fails again on its own.
     registered(&fixture, &[("old", &old, &[])]);
     let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains(&own), "{out}");
+    assert!(
+        out.contains(
+            "release: refresh: updates: alpha@19 ended unserved: its project is no longer \
+             registered on this machine\n"
+        ) && out.contains(&format!(
+            "updates: closed {alpha_red} on this repository's board"
+        )) && out.contains(&format!("; heard on {old_red}, this repository's board\n")),
+        "{out}"
+    );
+    assert_eq!(fixture.reds()[alpha_red].status, "cancelled");
+    assert!(symphony_board::red::open(&fixture.reds()[old_red].status));
     assert_eq!(current(&fixture).as_deref(), Some(RELEASE));
     assert_eq!(old_board.schema("tasks").unwrap(), Some(17));
     assert!(migrated(&fixture).is_empty());
@@ -1139,4 +1436,337 @@ fn a_board_whose_move_could_replace_its_database_is_left_running_and_unmoved() {
         "the same database, never restarted"
     );
     assert_eq!(current(&fixture), None);
+}
+
+/// The scratch database `filed` on the board server at `addr`, where the stand-in's own board
+/// binary files what a refresh files on that project's board.
+fn filed(addr: &str) -> symphony_board::Store {
+    symphony_board::Store::with(
+        Client::new(addr, "sf", "filed"),
+        Box::new(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs_f64()
+        }),
+        Box::new(|_| false),
+        "this-host",
+    )
+    .unwrap()
+}
+
+/// The texts on `slug`'s thread on `store`, oldest first.
+fn posts(store: &symphony_board::Store, slug: &str) -> Vec<String> {
+    (store.thread(slug).unwrap().into_iter())
+        .map(|message| message.text)
+        .collect()
+}
+
+/// `seconds` since the epoch as the server's log writes a time: `YYYY-MM-DDTHH:MM:SS.mmmZ`, in UTC.
+fn utc(seconds: f64) -> String {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a time since the epoch, in milliseconds"
+    )]
+    let millis = (seconds * 1000.0).floor() as i64;
+    let (days, of_day) = (millis.div_euclid(86_400_000), millis.rem_euclid(86_400_000));
+    // The civil date of a day since 1970-01-01 (Howard Hinnant's civil_from_days).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let of_era = z - era * 146_097;
+    let year_of_era = (of_era - of_era / 1460 + of_era / 36_524 - of_era / 146_096) / 365;
+    let of_year = of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted = (5 * of_year + 2) / 153;
+    let day = of_year - (153 * shifted + 2) / 5 + 1;
+    let month = if shifted < 10 {
+        shifted + 3
+    } else {
+        shifted - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
+        of_day / 3_600_000,
+        of_day / 60_000 % 60,
+        of_day / 1000 % 60,
+        of_day % 1000
+    )
+}
+
+#[test]
+fn a_time_in_the_servers_log_is_written_in_utc_to_the_millisecond() {
+    assert_eq!(utc(0.0), "1970-01-01T00:00:00.000Z");
+    assert_eq!(utc(951_825_600.25), "2000-02-29T12:00:00.250Z");
+    assert_eq!(utc(1_795_089_079.778), "2026-11-19T11:51:19.778Z");
+}
+
+/// The machine's ledger of schema updates.
+fn ledger(fixture: &Fixture) -> symphony::machine::updates::Ledger {
+    symphony::machine::updates::Ledger::read(&machine(fixture)).unwrap()
+}
+
+/// Each update in the ledger, as `ID: served|open|left, failures N[, task SLUG on ID[ (closed)]]`.
+fn updates(fixture: &Fixture) -> Vec<String> {
+    (ledger(fixture).updates.iter())
+        .map(|update| {
+            let state = if update.served.is_some() {
+                "served"
+            } else if update.left.is_some() {
+                "left"
+            } else {
+                "open"
+            };
+            let task = (update.task.as_ref()).map_or_else(String::new, |task| {
+                let closed = if task.closed { " (closed)" } else { "" };
+                format!(", task {} on {}{closed}", task.slug, task.project)
+            });
+            format!(
+                "{}: {state}, failures {}{task}",
+                update.id,
+                update.failures.len()
+            )
+        })
+        .collect()
+}
+
+/// This repository's board at schema 19, moved by main's own build ahead of every release: its
+/// update waits while no release serves 19, and the release that does is pointed at though
+/// alpha's writer is behind, beta moving and alpha left at 18. This repository's update is served,
+/// timed from its board reaching 19 and from that release's install; alpha's fails: one red task
+/// on alpha's own board, filed through the installed release of its schema; a retry posts its
+/// second failure on that same task, and a later release at the same schema is pointed at all the
+/// same, its third; the refresh that moves alpha once its writer is rebuilt closes it. Every update
+/// served the first time files nothing, the ledger keeps each, and a refresh with nothing to do
+/// changes nothing.
+#[test]
+fn a_board_ahead_points_current_forward_and_a_failed_update_is_one_task_until_it_is_served() {
+    let (fixture, _) = refreshing();
+    // Main commits no schema source here, so any build makes its board, at 19 as main's would.
+    fixture.land("crates/tasks/src/schema.rs", None, "no schema source");
+    let alpha = a_project(&fixture, "alpha", &[]);
+    let beta = a_project(&fixture, "beta", &[]);
+    let main = fixture.main.clone();
+    registered(
+        &fixture,
+        &[
+            ("symphony", &main, &[]),
+            ("alpha", &alpha, &[]),
+            ("beta", &beta, &[]),
+        ],
+    );
+    let (ours_board, _, _) = board_at(&main, 19);
+    let (alpha_board, alpha_running, alpha_client) = board_at(&alpha, 18);
+    let (beta_board, _, beta_client) = board_at(&beta, 18);
+    aged(&beta_client, 8.0 * DAY);
+    aged(&alpha_client, 8.0 * DAY);
+    release_server(&fixture, "release-0", true);
+    let surreal = super::board::surreal().to_string_lossy().into_owned();
+    let builder = builder(&fixture, 18);
+    let extra = [
+        (BUILDER, builder.as_str()),
+        ("SYMPHONY_SURREAL", surreal.as_str()),
+        ("SYMPHONY_RELEASE_RELOAD_SECONDS", FOLLOWED),
+    ];
+
+    // The first release, at the projects' schema: theirs served at once, no task anywhere, and
+    // this repository's waiting for a release serving 19.
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(current(&fixture).as_deref(), Some(RELEASE), "{out}");
+    assert_eq!(
+        updates(&fixture),
+        [
+            "symphony@19: open, failures 0",
+            "alpha@18: served, failures 0",
+            "beta@18: served, failures 0"
+        ],
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "release: refresh: updates: symphony@19 waits: no release serving schema 19 is \
+             installed yet\n"
+        ),
+        "{out}"
+    );
+    assert!(!out.contains("release-red-update-"), "{out}");
+
+    // Alpha's own build at 18 has just run, and is where it ran from.
+    let own_build = fixture.root.join("builds-of/alpha/release/tasks");
+    executable(&own_build, "#!/bin/sh\nexit 9\n");
+    writes(&alpha_client, "tasks", &own_build, 18);
+    fs::write(fixture.root.join("schema"), "19").unwrap();
+    fixture.land("crates/core/next.txt", Some("b\n"), "the next release");
+    let (code, out, err) = fixture.release_with(NOW + DAY, &["--check", CHECK], &extra);
+    assert_eq!(
+        code, 0,
+        "a project left behind is its update's task, not a red: {out}{err}"
+    );
+    assert!(
+        out.contains(
+            "release: refresh: this repository's board is at schema 19, which the release current \
+             names does not serve (it serves 18): no project's board holds current, each moving as \
+             its own writers allow\n"
+        ),
+        "{out}"
+    );
+    assert_eq!(
+        current(&fixture).as_deref(),
+        Some(NEXT),
+        "forward despite alpha: {out}"
+    );
+    assert_eq!(ours_board.schema("tasks").unwrap(), Some(19));
+    assert_eq!(beta_board.schema("tasks").unwrap(), Some(19));
+    assert_eq!(
+        alpha_board.schema("tasks").unwrap(),
+        Some(18),
+        "its writer holds alpha's board"
+    );
+    let slug = "tests/release-red-update-alpha-19";
+    assert!(
+        out.contains("release: refresh: updates: alpha@19 failed: its board stays at schema 18: ")
+            && out.contains(&format!("; filed {slug} on alpha's board\n")),
+        "{out}"
+    );
+    assert!(out.contains("updates: symphony@19 served"), "{out}");
+    assert!(out.contains("updates: beta@19 served"), "{out}");
+    let ours = ledger(&fixture).newest("symphony", 19).unwrap().clone();
+    assert_eq!(ours.release.as_deref(), Some(NEXT), "{ours:?}");
+    assert_eq!(ours.served_by.as_deref(), Some(NEXT), "{ours:?}");
+    assert!(
+        ours.total().is_some() && ours.after_available().is_some(),
+        "{ours:?}"
+    );
+    assert!(ours.after_available() <= ours.total(), "{ours:?}");
+    assert!(
+        fixture.reds().is_empty(),
+        "nothing on this repository's board: {out}"
+    );
+    let theirs = filed(&alpha_running.addr);
+    let task = theirs.get(slug).unwrap();
+    assert_eq!(task.priority, 0);
+    assert!(task.red(), "red work, staffed as a red is");
+    assert!(symphony_board::red::open(&task.status), "{}", task.status);
+    let failures: Vec<String> = (posts(&theirs, slug).into_iter())
+        .filter(|post| post.starts_with("Failure "))
+        .collect();
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(
+        failures[0].starts_with("Failure 1 of alpha@19 (run "),
+        "{failures:?}"
+    );
+
+    // A retry finds it again: the same task, a second failure posted on it, and no other; current
+    // stays where the forward move pointed it, and the retry says so.
+    let (code, out, err) = fixture.release_with(NOW + DAY + 60.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(&format!("; heard on {slug}, alpha's board\n")),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!("names {NEXT} (as it did)"))
+            && !out.contains("current is not pointed"),
+        "{out}"
+    );
+    let failures: Vec<String> = (posts(&theirs, slug).into_iter())
+        .filter(|post| post.starts_with("Failure "))
+        .collect();
+    assert_eq!(failures.len(), 2, "{failures:?}");
+    assert!(
+        failures[1].starts_with("Failure 2 of alpha@19 (run "),
+        "{failures:?}"
+    );
+    let filed_there: Vec<String> = (theirs.tasks(None).unwrap().into_iter())
+        .map(|task| task.slug)
+        .collect();
+    assert_eq!(filed_there, [slug], "never a second task for one update");
+
+    // A later release at the same schema, alpha still behind: a board left behind holds neither
+    // current nor another, so current is pointed at it, and alpha's one task hears a third failure.
+    fixture.land(
+        "crates/core/later.txt",
+        Some("c\n"),
+        "a later release at the same schema",
+    );
+    let (code, out, err) = fixture.release_with(NOW + 2.0 * DAY, &["--check", CHECK], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        current(&fixture).as_deref(),
+        Some(LATER),
+        "alpha left behind holds nothing: {out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "names {LATER} (it named {NEXT}, which stays installed)"
+        )) && !out.contains("current is not pointed"),
+        "{out}"
+    );
+    assert_eq!(alpha_board.schema("tasks").unwrap(), Some(18), "{out}");
+    assert!(
+        out.contains(&format!("; heard on {slug}, alpha's board\n")),
+        "{out}"
+    );
+    let failures: Vec<String> = (posts(&theirs, slug).into_iter())
+        .filter(|post| post.starts_with("Failure "))
+        .collect();
+    assert_eq!(failures.len(), 3, "{failures:?}");
+    let filed_there: Vec<String> = (theirs.tasks(None).unwrap().into_iter())
+        .map(|task| task.slug)
+        .collect();
+    assert_eq!(filed_there, [slug], "nothing else filed there");
+    assert!(fixture.reds().is_empty(), "nor here: {out}");
+
+    // Alpha's writer rebuilt at 19: the next refresh moves its board, the update is served and its
+    // task closed; the ledger keeps every update with its failures.
+    Raw::on(&alpha_client).table("writer").delete().unwrap();
+    writes(
+        &alpha_client,
+        "tasks",
+        Path::new("/work/alpha/.target/release/tasks"),
+        19,
+    );
+    let (code, out, err) = fixture.release_with(NOW + 2.0 * DAY + 60.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(alpha_board.schema("tasks").unwrap(), Some(19), "{out}");
+    assert!(
+        snapshot(&alpha, 19, LATER).is_file(),
+        "snapshotted just before its own move by the release current serves: {out}"
+    );
+    assert_eq!(current(&fixture).as_deref(), Some(LATER), "{out}");
+    assert!(
+        out.contains("updates: alpha@19 served")
+            && out.contains(&format!(
+                "updates: closed {slug} on alpha's board: alpha@19"
+            )),
+        "{out}"
+    );
+    assert_eq!(theirs.get(slug).unwrap().status, "cancelled");
+    assert_eq!(
+        updates(&fixture),
+        [
+            "symphony@19: served, failures 0",
+            "alpha@18: served, failures 0",
+            "beta@18: served, failures 0",
+            &format!("alpha@19: served, failures 3, task {slug} on alpha (closed)"),
+            "beta@19: served, failures 0",
+        ]
+    );
+    // A refresh with nothing to do changes nothing.
+    let before = ledger(&fixture);
+    let (code, out, err) = fixture.release_with(NOW + 2.0 * DAY + 120.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(ledger(&fixture), before, "{out}");
+    // The status says them, the newest served first, each with where its times come from.
+    let (code, status, err) = fixture.release_with(NOW + 2.0 * DAY + 180.0, &["--status"], &extra);
+    assert_eq!(code, 0, "{status}{err}");
+    assert!(
+        status.contains("\nschema updates: 0 open, 5 served (ledger ")
+            && status.contains("\n  served beta@19 ")
+            && status.contains("\n  served alpha@19 ")
+            && status.contains(&format!(
+                "{NEXT} by {NEXT}'s manifest, written by its install"
+            )),
+        "{status}"
+    );
 }

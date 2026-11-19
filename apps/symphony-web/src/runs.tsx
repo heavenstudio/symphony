@@ -1,11 +1,12 @@
 // The Runs page, `/runs` (docs/RUNS.md, *The Runs page*): what runs and waits for the project on
-// this machine now, then every run newest first with its filters, and a run (`/runs?run=ID`) opened
-// on its steps, the tests it failed and its log. Now is the machine work the board reads
-// (`/api/machine-work`); the list is RUNS_PATH a page at a time, a run RUN_PATH and its log
+// this machine now, the machine's schema updates, then every run newest first with its filters, and
+// a run (`/runs?run=ID`) opened on its steps, the tests it failed and its log. Now is the machine
+// work the board reads (`/api/machine-work`); the schema updates are SCHEMA_UPDATES_PATH, the
+// machine's ledger of them; the list is RUNS_PATH a page at a time, a run RUN_PATH and its log
 // RUN_LOG_PATH, which read the project's day files and never the board. The page keeps nothing on
-// the device but its filters and opens no feed: while it is open it reads Now every NOW_MS, and its
-// list's first page, or a run that has not ended, every LIST_MS or NOW_MS, naming the last answer's
-// tag; each read ends with what asked for it.
+// the device but its filters and opens no feed: while it is open it reads Now every NOW_MS, and the
+// schema updates, its list's first page, or a run that has not ended, every LIST_MS or NOW_MS,
+// naming the last answer's tag; each read ends with what asked for it.
 
 import {
   type CSSProperties,
@@ -17,6 +18,7 @@ import {
 } from "react";
 import { Button } from "./button";
 import { whenShown } from "./feed";
+import { taskSlug } from "./links";
 import { useMount } from "./mount";
 import { href } from "./project";
 import { Failure, getIf, getJson, said } from "./request";
@@ -39,7 +41,12 @@ import {
   type RunLog,
   type RunPage,
   type RunsPage as RunsAnswer,
+  SCHEMA_UPDATES_PATH,
+  type SchemaUpdate,
+  type SchemaUpdates,
   type Suite,
+  type UpdateState,
+  type UpdateTime,
 } from "./wire";
 import { plural } from "./words";
 
@@ -168,6 +175,37 @@ export function readRunLog(value: unknown): RunLog | null {
     to,
     text,
   };
+}
+
+const UPDATE_STATES: UpdateState[] = ["open", "served", "left"];
+
+function isUpdateTime(value: unknown): value is UpdateTime {
+  return (
+    isNumber(field(value, "at")) && isText(field(value, "source")) && isText(field(value, "words"))
+  );
+}
+
+/** Whether `value` is a schema update with every field the page draws, each of its type. */
+export function isSchemaUpdate(value: unknown): value is SchemaUpdate {
+  return (
+    ["id", "project"].every((key) => isText(field(value, key))) &&
+    ["schema", "generation", "failures"].every((key) => isNumber(field(value, key))) &&
+    UPDATE_STATES.includes(field(value, "state") as UpdateState) &&
+    ["reached", "available", "served"].every((key) => optional(isUpdateTime)(field(value, key))) &&
+    ["total_said", "after_available_said", "failure", "task"].every((key) =>
+      optionalText(field(value, key)),
+    )
+  );
+}
+
+/** The machine's schema updates as the page reads them, or none for a value without what it draws. */
+export function readSchemaUpdates(value: unknown): SchemaUpdates | null {
+  const updates = field(value, "updates");
+  const unread = field(value, "unread");
+  if (!Array.isArray(updates) || !updates.every(isSchemaUpdate) || !optionalText(unread)) {
+    return null;
+  }
+  return { updates, unread: (unread as string | null | undefined) ?? null };
 }
 
 /** One operation of what runs now: its machine, its state and what it is. */
@@ -733,6 +771,152 @@ export function ListView({ list, error, running, at, loadingMore, onMore }: List
   );
 }
 
+/** Each update's state, its mark and its word, as its row says it. */
+export const UPDATE_WORDS: Record<UpdateState, [string, string]> = {
+  open: ["◷", "waiting"],
+  served: ["✓", "served"],
+  left: ["↩", "went back"],
+};
+
+/** The updates as the section lists them: the open ones first, each part newest first. */
+export function updateRows(updates: SchemaUpdate[]): SchemaUpdate[] {
+  return [
+    ...updates.filter((update) => update.state === "open"),
+    ...updates.filter((update) => update.state !== "open"),
+  ];
+}
+
+/** One of an update's times as its row says it: its name, when, its source's name and words. */
+export interface ShownTime {
+  name: string;
+  said: string;
+  source: string;
+  words: string;
+}
+
+/**
+ * When an update's times came, each named and said in UTC, a time on the day of the one before it
+ * by its hour alone, with its source's name (the server's, as `release --status` names it) and the
+ * record's whole words, which its row shows on hover.
+ */
+export function updateTimes(update: SchemaUpdate): ShownTime[] {
+  const named: [string, UpdateTime | null][] = [
+    ["reached", update.reached],
+    ["release installed", update.available],
+    ["served", update.served],
+  ];
+  let before: number | null = null;
+  const times: ShownTime[] = [];
+  for (const [name, time] of named) {
+    if (time === null) continue;
+    const day = (at: number) => new Date(at * 1000).toISOString().slice(0, 10);
+    const said =
+      before !== null && day(before) === day(time.at)
+        ? `${new Date(time.at * 1000).toISOString().slice(11, 16)} UTC`
+        : when(time.at);
+    times.push({ name, said: `${name} ${said}`, source: time.source, words: time.words });
+    before = time.at;
+  }
+  return times;
+}
+
+/**
+ * One update: its board and schema, how long it took and since the release, when (each time's
+ * record on hover) and where the times come from, and its failures and task.
+ */
+function UpdateRow({ update }: { update: SchemaUpdate }) {
+  const [mark, word] = UPDATE_WORDS[update.state];
+  const times = updateTimes(update);
+  const sources = [...new Set(times.map((time) => time.source))];
+  const generation = update.generation > 1 ? `, generation ${update.generation}` : "";
+  const slug = update.task === null ? null : taskSlug(update.task);
+  return (
+    <li className="runs-op update-row" data-update={update.id} data-state={update.state}>
+      <span className="run-result" data-result={update.state === "open" ? "waiting" : update.state}>
+        <span className="run-mark" aria-hidden="true">
+          {mark}
+        </span>
+        <span className="run-word">{word}</span>
+      </span>
+      <span className="run-label">{`${update.project} board · schema ${update.schema}${generation}`}</span>
+      <span
+        className="run-time"
+        title="From its board reaching the schema to the server writing it"
+      >
+        {update.total_said ?? ""}
+      </span>
+      <span className="run-where">
+        {times.map((time, at) => (
+          <span key={time.name} title={time.words}>
+            {at > 0 && " · "}
+            {time.said}
+          </span>
+        ))}
+      </span>
+      <span className="run-who">
+        {update.after_available_said === null
+          ? ""
+          : `${update.after_available_said} after its release`}
+      </span>
+      {sources.length > 0 && (
+        <span className="update-sources">{`Times from ${sources.join("; ")}`}</span>
+      )}
+      {(update.failures > 0 || slug !== null) && (
+        <span className="run-note">
+          {update.failures > 0 &&
+            `${update.failures} failed ${update.failures === 1 ? "refresh" : "refreshes"}${update.failure === null ? "" : `, the last: ${update.failure}`}`}
+          {slug !== null && update.task !== null && (
+            <>
+              {update.failures > 0 && " · "}
+              {"task "}
+              <a href={update.task}>{slug}</a>
+            </>
+          )}
+        </span>
+      )}
+    </li>
+  );
+}
+
+export interface UpdatesViewProps {
+  updates: SchemaUpdates | null;
+  error: string | null;
+}
+
+/**
+ * The machine's schema updates: each registered project's board reaching a schema, and how long
+ * until this machine's server wrote it, the open ones first. A task is the server's whole path,
+ * never the project's base, as the server names it under the project whose board holds it.
+ */
+export function UpdatesView({ updates, error }: UpdatesViewProps) {
+  const rows = updateRows(updates?.updates ?? []);
+  const unread = error ?? updates?.unread ?? null;
+  return (
+    <section className="runs-updates" aria-labelledby="runs-updates-title">
+      <h2 id="runs-updates-title">Schema updates</h2>
+      <p className="runs-quiet runs-updates-sub">
+        This machine's boards moving to a new schema, and how long until its server wrote each.
+      </p>
+      {unread !== null && (
+        <p className="runs-error" role="alert">
+          {`The schema updates could not be read: ${unread}`}
+        </p>
+      )}
+      {updates === null ? (
+        error === null && <p className="runs-quiet">Reading the schema updates…</p>
+      ) : rows.length === 0 ? (
+        updates.unread === null && <p className="runs-quiet">No schema update recorded yet.</p>
+      ) : (
+        <ol className="runs-ops">
+          {rows.map((update) => (
+            <UpdateRow key={update.id} update={update} />
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 /** A wait between two reads: `pause`, or a test's own. */
 export type Wait = (ms: number, signal: AbortSignal) => Promise<void>;
 
@@ -824,6 +1008,38 @@ export async function followList(
   }
 }
 
+/**
+ * Reads the machine's schema updates at once and then every LIST_MS while the page is shown
+ * (through `wait`), naming the last answer's tag so a ledger no refresh changed answers `304`, until
+ * `signal` ends it or the server has no such thing (a `404`).
+ */
+export async function followUpdates(
+  signal: AbortSignal,
+  told: Told<SchemaUpdates>,
+  wait: Wait = pause,
+): Promise<void> {
+  let etag = "";
+  while (!signal.aborted) {
+    try {
+      const answer = await getIf(SCHEMA_UPDATES_PATH, etag, signal);
+      if (signal.aborted) return;
+      if (answer.same) {
+        told.answered(null);
+      } else {
+        const read = readSchemaUpdates(answer.value);
+        if (read === null) throw new Error("The schema updates' answer is not schema updates");
+        etag = answer.etag;
+        told.answered(read);
+      }
+    } catch (error) {
+      if (signal.aborted) return;
+      told.failed(failure(error, !isMissing(error)), isMissing(error));
+      if (isMissing(error)) return;
+    }
+    await wait(LIST_MS, signal);
+  }
+}
+
 /** The page of the runs `filters` take asked for before `before`, read under `signal`. */
 export async function readOlder(
   filters: Filters,
@@ -874,6 +1090,8 @@ function RunsHome({ now, nowError, at }: { now: Now | null; nowError: string | n
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [updates, setUpdates] = useState<SchemaUpdates | null>(null);
+  const [updatesError, setUpdatesError] = useState<string | null>(null);
   // What is shown, for the reads that build on it; a new choice of filters starts it again.
   const shown = useRef<ListState | null>(null);
   const asked = useRef(filters);
@@ -896,6 +1114,19 @@ function RunsHome({ now, nowError, at }: { now: Now | null; nowError: string | n
     });
     return () => controller.abort();
   }, [filters]);
+  useEffect(() => {
+    const controller = new AbortController();
+    void followUpdates(controller.signal, {
+      answered(read) {
+        if (read !== null) setUpdates(read);
+        setUpdatesError(null);
+      },
+      failed(why) {
+        setUpdatesError(why);
+      },
+    });
+    return () => controller.abort();
+  }, []);
   const ask = (next: Filters) => {
     save(FILTERS_KEY, filterQuery(next));
     shown.current = null;
@@ -944,6 +1175,7 @@ function RunsHome({ now, nowError, at }: { now: Now | null; nowError: string | n
         )}
       </header>
       <NowView now={now} error={nowError} at={at} />
+      <UpdatesView updates={updates} error={updatesError} />
       <section className="runs-list" aria-labelledby="runs-list-title">
         <h2 id="runs-list-title">Every run</h2>
         <FiltersView

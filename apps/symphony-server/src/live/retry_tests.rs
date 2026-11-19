@@ -651,3 +651,38 @@ fn readable_board_dispatch_failure_does_not_stall_reads_chat_or_another_project(
     );
     listener.received("New owner work after success");
 }
+
+#[test]
+fn the_clocks_give_settles_a_held_tasks_lost_holder_once_under_its_retry() {
+    use crate::testing::board::{held_flow, take_edge};
+    use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+    let tree = Tree::new();
+    let (hub, _clock) = clocked(&tree);
+    let fixture = Fixture::new(Seed::default());
+    let (orch, amber) = (fixture.session("orchestrator"), fixture.session("worker"));
+    fixture
+        .store
+        .activate_workflow(&held_flow(), &symphony_board::workflow::Host::local())
+        .unwrap();
+    fixture
+        .store
+        .create(&symphony_board::NewTask::new("sim/jump", "Jump", &orch))
+        .unwrap();
+    take_edge(&fixture.store, "sim/jump", &amber, "claim");
+    fixture.advance(LIVE_SECONDS + STALE_SECONDS + 1.0);
+    fixture.store.touch(&orch).unwrap();
+    let at = || {
+        let p = fixture
+            .store
+            .workflow_position("sim/jump")
+            .unwrap()
+            .unwrap();
+        format!("{}/{}@{}", p.phase, p.state, p.revision)
+    };
+    // With no session pulling, waiting, watching or writing, the clock recovers the lost holder
+    // by its position's action, and says it wrote; once.
+    assert!(hub.give(&fixture.store, &fixture.store.clock_board().unwrap()));
+    assert_eq!(at(), "build/available@3");
+    assert!(!hub.give(&fixture.store, &fixture.store.clock_board().unwrap()));
+    assert_eq!(at(), "build/available@3");
+}

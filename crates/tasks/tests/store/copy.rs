@@ -1,6 +1,6 @@
 //! The copy of a whole board: a dump in JSON, which `Store::copy` puts on either database in one
-//! transaction (`tasks-copy` on SurrealDB), and `Store::dump` reads it back in the same shape, each
-//! table in the order of its key.
+//! transaction (`tasks-copy`, into the database the board is in), and `Store::dump` reads it back in
+//! the same shape, each table in the order of its key.
 
 use crate::children::Child as _;
 use crate::common::{Backend, Fixture, NOW, Seed, client, server_addr, session, task};
@@ -11,7 +11,7 @@ use symphony_board::rows::{
     SessionRow, TaskRow, TaskSessionRow, UsageRow,
 };
 use symphony_board::sys::{self, Command};
-use symphony_board::{Database, Error, Store, cli, copy_main};
+use symphony_board::{Database, Error, Opening, Store, cli, copy_main};
 
 /// One row of every table, each optional column both set and not, in key order.
 pub fn everything() -> Dump {
@@ -235,17 +235,53 @@ fn no_env() -> cli::Env {
     cli::Env::default()
 }
 
-/// The environment of a run that reaches `db` on the tests' server, as `TASKS_SERVER` and
-/// `TASKS_DATABASE` point a run at a board.
-fn board_env(db: &symphony_board::rpc::Client) -> cli::Env {
+/// The environment of a run that reaches `db` on the tests' server of its database, as
+/// `TASKS_SERVER` and `TASKS_DATABASE` point a run at a board.
+fn board_env(db: &Database) -> cli::Env {
     cli::Env {
         vars: [
-            ("TASKS_SERVER".to_string(), server_addr()),
+            ("TASKS_SERVER".to_string(), db.addr()),
             ("TASKS_DATABASE".to_string(), db.database().to_string()),
         ]
         .into_iter()
         .collect(),
         cwd: std::env::temp_dir(),
+    }
+}
+
+/// `tasks-copy ARGS` in `env` with `input` on its standard input: its exit code, what it said and
+/// what it refused.
+fn copied(args: &[&str], env: &cli::Env, input: &[u8]) -> (i32, String, String) {
+    let args: Vec<String> = args.iter().map(|word| (*word).to_string()).collect();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = copy_main(&args, env, &mut &input[..], &mut out, &mut err);
+    (
+        code,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+/// The board `db` holds, read by a store of the test's own.
+fn held(db: &Database) -> Dump {
+    Store::opening_on(
+        db.another(),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        "host",
+        &Opening::write(),
+    )
+    .unwrap()
+    .dump()
+    .unwrap()
+}
+
+/// How the copy names where it copied: SurrealDB's namespace and database, PostgreSQL's database.
+fn place(db: &Database) -> String {
+    if db.is_postgresql() {
+        format!("{} at {}", db.database(), db.addr())
+    } else {
+        format!("sf/{} at {}", db.database(), db.addr())
     }
 }
 
@@ -872,54 +908,136 @@ fn a_big_dump_refused_late_leaves_the_board_and_nothing_else() {
     assert_eq!(tables(&f), BOARD_TABLES);
 }
 
-#[test]
-fn board_copies_into_the_board_the_environment_reaches() {
-    let db = client();
-    let dump = serde_json::to_vec(&everything()).unwrap();
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let args = ["--board".to_string()];
-    let code = copy_main(
-        &args,
-        &board_env(&db),
-        &mut dump.as_slice(),
-        &mut out,
-        &mut err,
-    );
-    assert_eq!((code, String::from_utf8(err).unwrap()), (0, String::new()));
-    let said = String::from_utf8(out).unwrap();
-    assert!(
-        said.starts_with("tasks-copy: 2 tasks, ")
-            && said.ends_with(&format!(
-                " into sf/{} at {}\n",
-                db.database(),
-                server_addr()
-            )),
-        "{said}"
-    );
-    assert_eq!(Store::open(db).unwrap().dump().unwrap(), everything());
+on_both! {
+    fn board_copies_into_the_board_the_environment_reaches(backend: Backend) {
+        let db = backend.database();
+        let dump = serde_json::to_vec(&everything()).unwrap();
+        let (code, said, err) = copied(&["--board"], &board_env(&db), &dump);
+        assert_eq!((code, err.as_str()), (0, ""));
+        assert!(
+            said.starts_with("tasks-copy: 2 tasks, ")
+                && said.ends_with(&format!(" into {}\n", place(&db))),
+            "{said}"
+        );
+        assert_eq!(held(&db), everything());
+    }
+
+    fn board_out_writes_the_boards_dump_as_the_copy_reads_it_on_one_line(backend: Backend) {
+        let f = Fixture::on(backend, Seed { dump: everything() });
+        let env = board_env(&f.other_database());
+        let (code, text, err) = copied(&["--board", "--out"], &env, b"");
+        assert_eq!((code, err.as_str()), (0, ""));
+        assert_eq!(text.lines().count(), 1);
+        assert_eq!(Dump::from_json(&text).unwrap(), everything());
+        assert_eq!(
+            f.store.dump().unwrap(),
+            everything(),
+            "reading it writes nothing"
+        );
+    }
+
+    /// The address form takes either server: SurrealDB's `HOST:PORT`, PostgreSQL's socket.
+    fn the_copy_command_copies_into_the_database_at_an_address(backend: Backend) {
+        let db = backend.database();
+        let dump = serde_json::to_vec(&everything()).unwrap();
+        let (code, said, err) = copied(&[&db.addr(), db.database()], &no_env(), &dump);
+        assert_eq!((code, err.as_str()), (0, ""));
+        assert!(said.ends_with(&format!(" into {}\n", place(&db))), "{said}");
+        assert_eq!(held(&db), everything());
+    }
 }
 
+/// One board read out of each database is one document, byte for byte: what was copied into
+/// SurrealDB, written out, copied into PostgreSQL from that and written out again.
 #[test]
-fn board_out_writes_the_boards_dump_as_the_copy_reads_it_on_one_line() {
-    let f = Fixture::new(Seed { dump: everything() });
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    let args = ["--board".to_string(), "--out".to_string()];
-    let code = copy_main(
-        &args,
-        &board_env(&f.other_client()),
-        &mut &b""[..],
-        &mut out,
-        &mut err,
-    );
-    assert_eq!((code, String::from_utf8(err).unwrap()), (0, String::new()));
-    let text = String::from_utf8(out).unwrap();
-    assert_eq!(text.lines().count(), 1);
-    assert_eq!(Dump::from_json(&text).unwrap(), everything());
-    assert_eq!(
-        f.store.dump().unwrap(),
-        everything(),
-        "reading it writes nothing"
-    );
+fn board_out_is_the_same_document_from_either_database() {
+    for board in [everything(), many_words(), a_big_board()] {
+        let surreal = Fixture::on(Backend::SurrealDb, Seed { dump: board });
+        let env = board_env(&surreal.other_database());
+        let (code, from_surreal, err) = copied(&["--board", "--out"], &env, b"");
+        assert_eq!((code, err.as_str()), (0, ""));
+        let postgres = Backend::PostgreSql.database();
+        let env = board_env(&postgres);
+        let (code, _, err) = copied(&["--board"], &env, from_surreal.as_bytes());
+        assert_eq!((code, err.as_str()), (0, ""));
+        let (code, from_postgres, err) = copied(&["--board", "--out"], &env, b"");
+        assert_eq!((code, err.as_str()), (0, ""));
+        assert!(
+            from_postgres == from_surreal,
+            "the two documents differ ({} and {} bytes)",
+            from_surreal.len(),
+            from_postgres.len()
+        );
+    }
+}
+
+/// A PostgreSQL board that cannot be read is refused as PostgreSQL's, naming the board's
+/// database, its socket and what says its state, in one line, and never as SurrealDB's.
+#[test]
+fn a_postgresql_board_that_does_not_answer_is_refused_by_name() {
+    let nowhere = std::env::temp_dir().join(format!("no-pg-{}", std::process::id()));
+    let addr = format!("postgresql:{}", nowhere.display());
+    let env = cli::Env {
+        vars: [("TASKS_SERVER".to_string(), addr.clone())].into(),
+        cwd: std::env::temp_dir(),
+    };
+    for (args, env) in [
+        (&["--board", "--out"][..], &env),
+        (&["--board"], &env),
+        (&[addr.as_str()], &no_env()),
+    ] {
+        let (code, out, err) = copied(args, env, b"{}");
+        assert_eq!((code, out.as_str()), (2, ""), "{args:?}");
+        assert_eq!(err.lines().count(), 1, "{err}");
+        assert!(
+            err.starts_with(&format!(
+                "❌ tasks-copy: PostgreSQL: the board's PostgreSQL is not answering on {}",
+                nowhere.join(".s.PGSQL.5432").display()
+            )),
+            "{err}"
+        );
+        assert!(
+            err.ends_with(&format!(
+                " (the board's database tasks at {addr}: `just tasks database` says what serves \
+                 it and whether it is held)\n"
+            )),
+            "{err}"
+        );
+        assert!(!err.contains("SurrealDB"), "{err}");
+    }
+}
+
+/// A PostgreSQL server is named by its socket's folder, an absolute path: any other is refused
+/// before anything is reached, saying which argument or variable named it.
+#[test]
+fn a_postgresql_address_that_is_no_absolute_folder_is_refused() {
+    for socket in ["", "relative/folder", "//host/folder"] {
+        let addr = format!("postgresql:{socket}");
+        let (code, out, err) = copied(&[&addr], &no_env(), b"{}");
+        assert_eq!((code, out.as_str()), (2, ""), "{addr}");
+        assert_eq!(
+            err,
+            format!(
+                "❌ tasks-copy: ADDR {addr:?} must name an absolute PostgreSQL socket folder as \
+                 postgresql:/path\n"
+            )
+        );
+        let env = cli::Env {
+            vars: [("TASKS_SERVER".to_string(), addr.clone())].into(),
+            cwd: std::env::temp_dir(),
+        };
+        let (code, _, err) = copied(&["--board", "--out"], &env, b"");
+        assert_eq!(
+            (code, err),
+            (
+                2,
+                format!(
+                    "❌ tasks-copy: TASKS_SERVER={addr:?} must name an absolute PostgreSQL socket \
+                     folder as postgresql:/path\n"
+                )
+            )
+        );
+    }
 }
 
 #[test]

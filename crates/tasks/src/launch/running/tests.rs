@@ -34,6 +34,7 @@ fn session(handle: &str, kind: &str, pane: Option<&str>) -> Agent {
         state: "working",
         detail: None,
         health: Health::Live,
+        confirmed: false,
         last_tool_call: None,
         last_message: None,
         slots: None,
