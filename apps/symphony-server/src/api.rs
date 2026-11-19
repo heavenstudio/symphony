@@ -23,7 +23,7 @@ mod task_diff;
 mod validated;
 mod warm;
 
-use failure::{task_failure, unavailable};
+pub(crate) use failure::{task_failure, unavailable};
 use feed_socket::Said;
 #[cfg(test)]
 pub(crate) use warm::settling;
@@ -71,6 +71,7 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::SCHEMA_UPDATES_PATH,
     symphony_api::workflow::WORKFLOW_PATH,
     symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
+    symphony_api::TASK_ATTEMPTS_PATH,
 ];
 
 type Request = axum::http::Request<()>;
@@ -218,6 +219,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             | symphony_api::TASK_DIFF_PATH
             | symphony_api::TASK_DIFF_FILE_PATH
             | symphony_api::workflow::WORKFLOW_ACTIONS_PATH
+            | symphony_api::TASK_ATTEMPTS_PATH
     ) && let Err(why) = argument(&request, "slug")
     {
         return Some(error(StatusCode::BAD_REQUEST, why));
@@ -536,6 +538,24 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             .await
         }
         "/api/feed" => feed(hub, scope, request).await,
+        // A task's execution attempts, the board's own read, the same for every branch: the local
+        // owner's, or the visitor's hosted admission verified (`crate::attempts`).
+        symphony_api::TASK_ATTEMPTS_PATH => {
+            let slug = query(&request, "slug").unwrap_or_default();
+            let asker = crate::hosted::admission(&request).map_or(
+                crate::attempts::Asker::Local,
+                |admitted| {
+                    let context = admitted.context();
+                    crate::attempts::Asker::hosted(&context.actor, &context.policy_revision)
+                },
+            );
+            match crate::spawn::blocking(move || crate::attempts::read(&hub, &slug, &asker)).await
+            {
+                Ok(Ok(attempts)) => no_store(Json(attempts)),
+                Ok(Err((code, e))) => error(code, e),
+                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            }
+        }
         // The board's active custom workflow, and the local owner's next actions on one task it
         // holds (docs/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
         symphony_api::workflow::WORKFLOW_PATH | symphony_api::workflow::WORKFLOW_ACTIONS_PATH => {

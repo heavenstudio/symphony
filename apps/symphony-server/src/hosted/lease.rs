@@ -19,6 +19,11 @@ pub(crate) fn admission<B>(request: &Request<B>) -> Option<&Admission> {
 }
 
 impl Admission {
+    /// The authority the host established for this request: who, on what, under which policy.
+    pub(crate) fn context(&self) -> &Context {
+        &self.context
+    }
+
     pub(super) async fn new(
         boundary: Boundary,
         identity: Identity,
