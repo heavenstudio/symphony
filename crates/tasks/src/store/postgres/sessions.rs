@@ -117,11 +117,14 @@ pub(in crate::store) fn leave() -> Pg<'static> {
     use crate::stages::{EVERY_ROLE, RELEASED};
     Pg::script(format!("{}\n{}
 IF {HELD_ORCHESTRATING} <> v -> 'held' THEN RAISE EXCEPTION 'stale'; END IF;
-DECLARE slug_ text; ready_ boolean;
+DECLARE slug_ text; ready_ boolean; held_ boolean;
 BEGIN
-    FOR slug_ IN SELECT DISTINCT slug FROM role WHERE handle = v ->> 'actor' ORDER BY slug LOOP
-        DELETE FROM role WHERE slug = slug_ AND handle = v ->> 'actor';
-        ready_ := (SELECT status = 'in_progress' FROM task WHERE slug = slug_) AND NOT EXISTS (SELECT 1 FROM role WHERE slug = slug_ AND role = 'executor');
+    FOR slug_ IN SELECT DISTINCT r.slug FROM role r JOIN task t ON t.slug = r.slug
+            WHERE r.handle = v ->> 'actor' AND (r.role = 'orchestrator' OR t.fields #> '{{_board,workflow}}' IS NULL)
+            ORDER BY r.slug LOOP
+        held_ := (SELECT fields #> '{{_board,workflow}}' IS NOT NULL FROM task WHERE slug = slug_);
+        DELETE FROM role WHERE slug = slug_ AND handle = v ->> 'actor' AND (NOT held_ OR role = 'orchestrator');
+        ready_ := NOT held_ AND (SELECT status = 'in_progress' FROM task WHERE slug = slug_) AND NOT EXISTS (SELECT 1 FROM role WHERE slug = slug_ AND role = 'executor');
         UPDATE task SET version = version + 1, status = CASE WHEN ready_ THEN 'ready' ELSE status END, updated = CASE WHEN ready_ THEN (v ->> 'now')::double precision ELSE updated END WHERE slug = slug_;
         {}
     END LOOP;

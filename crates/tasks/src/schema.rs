@@ -74,6 +74,16 @@
 //! `execution_artifact:[uuid, name]` are execution attempts, from schema 23 (`crate::execution`):
 //! schemaless and with no event, as no reader caches them.
 //!
+//! `workflow:[KIND, …]` is a custom delivery workflow's record, from schema 24 (`store/workflow.rs`,
+//! docs/WORKFLOW.md): the active generation (`['active']`), an immutable definition by its digest,
+//! an activation by its generation, a task's transition by its slug and workflow revision, a
+//! receipt by its principal and key, and an external intent. A task the workflow holds keeps its
+//! position in `fields._board.workflow`. Two events are the fence every writer meets, whatever
+//! it is: a task's position, or the status of a task that has one, changes only beside the
+//! transition recorded for it (`workflow_position`), and a recorded definition, activation,
+//! transition or receipt is never changed (`workflow_history`). A board with no custom workflow
+//! holds no such record and meets neither.
+//!
 //! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
 //! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
 //! builds of other schemas write it and a line written moves no marker.
@@ -96,7 +106,7 @@ use crate::store::Program;
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. Protocol changes can require a wider version step and retirement of old read tokens:
 /// an already-open store does not repeat its opening check.
-pub const VERSION: i64 = 23;
+pub const VERSION: i64 = 24;
 
 /// Structural mutations plus all committed session changes, including deletions and re-creations.
 /// The separate structural record keeps the retired legacy scalar outside this identity.
@@ -468,6 +478,58 @@ DEFINE FIELD IF NOT EXISTS body ON artifact_ledger TYPE object FLEXIBLE;
 DEFINE TABLE IF NOT EXISTS recovery SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS generation ON recovery TYPE string;
 IF !record::exists(recovery:board) { CREATE recovery:board SET generation = <string> rand::uuid::v4() RETURN NONE; };
+
+-- Schema 24: custom delivery workflows' records, and the fences on them (`store/workflow.rs`).
+DEFINE TABLE IF NOT EXISTS workflow SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS kind ON workflow TYPE string
+    ASSERT $value IN ['active', 'definition', 'activation', 'event', 'receipt', 'intent'];
+DEFINE FIELD IF NOT EXISTS body ON workflow TYPE object FLEXIBLE;
+DEFINE FIELD IF NOT EXISTS at ON workflow TYPE float;
+DEFINE EVENT OVERWRITE workflow_position ON task
+    WHEN $event != 'DELETE' AND (($before.fields._board.workflow ?? NONE) != ($after.fields._board.workflow ?? NONE)
+        OR (($before.fields._board.workflow ?? NONE) != NONE AND $before.status != $after.status)
+        OR (($after.fields._board.workflow ?? NONE) = NONE AND $before.status IN ['done', 'cancelled']
+            AND $after.status NOT IN ['done', 'cancelled']))
+    THEN {
+    LET $w = $after.fields._board.workflow ?? NONE;
+    LET $was = $before.fields._board.workflow ?? NONE;
+    IF $was = NONE AND $w = NONE {
+        IF record::exists(workflow:['active']) {
+            THROW string::concat('refused: explicit_action_required: ', $after.slug, ' has no workflow position, and a custom workflow is active: it leaves ', $before.status, ' only by a write that places it at its mapped pair');
+        };
+    } ELSE {
+        IF $was != NONE AND $w = $was {
+            THROW string::concat('refused: explicit_action_required: the status of ', $after.slug, ' follows its workflow position, which only its workflow edges move (just tasks workflow actions ', $after.slug, ')');
+        };
+        IF $w = NONE { THROW string::concat('refused: workflow: ', $after.slug, ' keeps its workflow position: only an activation returns a task to the board writers'); };
+        IF $was != NONE AND $w.revision != $was.revision + 1 {
+            THROW string::concat('refused: workflow: ', $after.slug, ' moves from workflow revision ', <string>$was.revision, ' only to the next');
+        };
+        IF $was = NONE AND (SELECT VALUE kind FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision + 1])) != NONE {
+            THROW string::concat('refused: workflow: ', $after.slug, ' moved on from workflow revision ', <string>$w.revision, '; it never returns to a position it left');
+        };
+        LET $e =(SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision]));
+        IF $e = NONE OR $e.slug != $after.slug OR $e.revision != $w.revision
+            OR $e.to != { phase: $w.phase, state: $w.state } OR ($e.resume ?? NONE) != ($w.resume ?? NONE)
+            OR $e.generation != $w.generation OR $e.digest != $w.digest OR $e.status != $after.status {
+            THROW string::concat('refused: workflow: ', $after.slug, ' is at a workflow position only beside the transition recorded for it');
+        };
+    };
+};
+DEFINE EVENT OVERWRITE workflow_history ON workflow
+    WHEN $event = 'UPDATE' AND ($before.kind IN ['definition', 'activation', 'event', 'receipt'] OR $before.kind != $after.kind)
+    THEN {
+    THROW string::concat('refused: workflow: a recorded ', $before.kind, ' is never changed');
+};
+DEFINE EVENT OVERWRITE workflow_active ON workflow
+    WHEN $event = 'UPDATE' AND $after.kind = 'active'
+    THEN {
+    LET $activation = (SELECT VALUE body FROM ONLY type::record('workflow', ['activation', $after.body.generation]));
+    IF $activation = NONE OR $activation.digest != $after.body.digest
+        OR $before.body.generation >= $after.body.generation {
+        THROW 'refused: workflow: the active generation moves forward only to an activation recorded for it';
+    };
+};
 
 DEFINE TABLE IF NOT EXISTS callback_state SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_state_address ON callback_state FIELDS address;

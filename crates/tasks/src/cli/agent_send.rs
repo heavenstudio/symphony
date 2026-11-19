@@ -1,6 +1,6 @@
 //! The standalone agent messenger. Only transport and registration belong to the task board.
 
-use super::{Env, connect};
+use super::{Env, connect_unfollowing};
 use crate::Error;
 use std::io::Write;
 
@@ -61,7 +61,7 @@ pub fn main(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write
         );
         return 2;
     };
-    let store = match connect(&env) {
+    let store = match connect_unfollowing(&env) {
         Ok(store) => store,
         Err(why) => {
             let _ = writeln!(err, "✖ {why}");

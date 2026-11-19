@@ -1007,7 +1007,10 @@ impl Store {
         type Rank = (bool, i64, bool, bool, i64);
         let mut best: Option<(Rank, Task)> = None;
         for task in view.tasks() {
-            if waiting.contains(task.slug.as_str()) {
+            // A task a custom workflow holds is taken by its edges alone (docs/WORKFLOW.md).
+            if waiting.contains(task.slug.as_str())
+                || crate::store::workflow::position_held(&task.fields)
+            {
                 continue;
             }
             let reservers: Vec<&str> = (task.roles.iter())

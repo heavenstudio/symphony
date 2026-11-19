@@ -83,7 +83,9 @@ RETURN {{
 /// Cancellation does not satisfy a prerequisite. Block its unfinished dependents, or the task
 /// being created/moved if one of its prerequisites was cancelled earlier, in the same transaction.
 /// Already blocked work still needs each new cancellation's reason on its thread. The line ends with
-/// the status the dependent held, `(was ready)`, which `depends` gives it back.
+/// the status the dependent held, `(was ready)`, which `depends` gives it back. A dependent a
+/// custom workflow holds is its workflow's: only its edges move it, whose dependency predicates
+/// refuse it while the prerequisite is cancelled (docs/WORKFLOW.md).
 pub(in crate::store) fn block_cancelled_dependencies(cancelling: bool) -> String {
     // Ordinary moves/creates use link_slug's index; only cancellation needs the reverse lookup.
     let scope = if cancelling {
@@ -96,6 +98,7 @@ pub(in crate::store) fn block_cancelled_dependencies(cancelling: bool) -> String
             AND {scope}
             AND type::record('task', target).status = 'cancelled'
             AND type::record('task', slug).status NOT IN ['done', 'cancelled']
+            AND type::record('task', slug).fields._board.workflow = NONE
             ORDER BY slug, target;
 FOR $dependent IN array::distinct($blocked_links.slug) {{
     LET $cancelled = $blocked_links.filter(|$link| $link.slug = $dependent).target;
@@ -354,6 +357,10 @@ pub(in crate::store) const OWNER_SAVE: &str =
 /// is not known which.
 pub(in crate::store) const OWNER_SAVED: &str = "SELECT VALUE slug FROM task WHERE created_by = 'owner' AND fields._symphony.owner_save = $receipt LIMIT 2;";
 
+/// A filing as the board's own, refused (`$unplaced`) while a custom workflow is active: it is
+/// filed again at the workflow's initial pair (`super::workflow::PLACED`).
+const UNPLACED: &str = "IF record::exists(workflow:['active']) { THROW $unplaced };\n";
+
 /// What a new task's write turns on.
 pub(in crate::store) struct Creating {
     /// A session files it, not the owner.
@@ -364,6 +371,8 @@ pub(in crate::store) struct Creating {
     pub(in crate::store) red: bool,
     /// It is filed on an arm ([`ARM`]).
     pub(in crate::store) arm: bool,
+    /// A custom workflow is active, and it starts at the initial pair (`super::workflow::PLACED`).
+    pub(in crate::store) placed: bool,
 }
 
 /// A new task ([`CREATE`]) with the marks `new` names, its line on the thread (`$said`) and, where
@@ -377,8 +386,13 @@ pub(in crate::store) fn create(new: &Creating) -> String {
         String::new()
     };
     let arm_mark = if new.arm { ARM } else { "" };
+    let (unplaced, placed) = if new.placed {
+        ("", super::workflow::PLACED)
+    } else {
+        (UNPLACED, "")
+    };
     format!(
-        "{act}{CREATE}\n{stamp}\n{marked}\n{arm_mark}\n{}\n{}",
+        "{act}{unplaced}{CREATE}\n{placed}\n{stamp}\n{marked}\n{arm_mark}\n{}\n{}",
         logged("$slug", "$actor", "'system'", "$said", "NONE"),
         block_cancelled_dependencies(false)
     )

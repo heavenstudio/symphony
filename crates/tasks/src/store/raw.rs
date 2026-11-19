@@ -141,6 +141,7 @@ impl Rows<'_> {
     /// `fields` set on the rows there are, a null unsetting its field: a row that is not there
     /// is not made.
     pub fn set(&self, fields: Value) -> Result<(), Error> {
+        self.writable()?;
         let fields = object(fields);
         let vars = values("s", &fields);
         let rows = self.rows();
@@ -150,6 +151,7 @@ impl Rows<'_> {
 
     /// `field` of the rows there are, moved by `by`.
     pub fn add(&self, field: &str, by: impl Into<Value>) -> Result<(), Error> {
+        self.writable()?;
         plain(field);
         let vars = Map::from_iter([("by".to_string(), by.into())]);
         let rows = self.rows();
@@ -159,6 +161,7 @@ impl Rows<'_> {
 
     /// The one row made with `fields`, or changed where it is there.
     pub fn put(&self, fields: Value) -> Result<(), Error> {
+        self.writable()?;
         let fields = object(fields);
         let vars = values("s", &fields);
         let one = self.one();
@@ -168,6 +171,7 @@ impl Rows<'_> {
 
     /// The one row made with `fields`: an error where it is there already.
     pub fn create(&self, fields: Value) -> Result<(), Error> {
+        self.writable()?;
         let fields = object(fields);
         let vars = values("s", &fields);
         let one = self.one();
@@ -177,9 +181,25 @@ impl Rows<'_> {
 
     /// The rows removed.
     pub fn delete(&self) -> Result<(), Error> {
+        self.writable()?;
         let rows = self.rows();
         self.ask(&sql::delete(&rows), pg::delete(&rows), Map::new())
             .map(drop)
+    }
+
+    /// Refused for a workflow's records, which its activation and its operations alone write
+    /// (`super::workflow`): a row set here past every rule would be a transition nobody admitted,
+    /// and the task fence would take it for one. A task's position needs its record, so it is
+    /// not written here either.
+    fn writable(&self) -> Result<(), Error> {
+        if self.table == "workflow" {
+            return Err(Error::Refused(
+                "workflow: a workflow's records are written by its activation and its operations \
+                 alone, never past them"
+                    .into(),
+            ));
+        }
+        Ok(())
     }
 
     fn rows(&self) -> sql::Rows<'_> {

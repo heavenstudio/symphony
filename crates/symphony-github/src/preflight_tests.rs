@@ -146,6 +146,46 @@ fn a_rule_nobody_bypasses_narrows_the_methods_and_one_somebody_does_narrows_none
 }
 
 #[test]
+fn a_repository_that_imports_permits_merge_commits_beside_squash_and_no_linear_history() {
+    assert_eq!(Operation::of(false), Operation::Task);
+    assert_eq!(Operation::of(true), Operation::Imports);
+    assert_eq!(Operation::Imports.permitted(), ["merge", "squash"]);
+    let imports = Wanted {
+        operation: Operation::Imports,
+        ..WANTED
+    };
+    let mut merges = repository();
+    merges["allow_merge_commit"] = json!(true);
+    let mut both = rules();
+    both[0]["parameters"]["allowed_merge_methods"] = json!(["merge", "squash"]);
+    assert_eq!(
+        judge(&merges, &both, &bypasses(), &imports),
+        Vec::<String>::new()
+    );
+    // Squash alone is a task's, and not what imports too.
+    assert_eq!(
+        judge(&merges, &rules(), &bypasses(), &imports),
+        ["main permits these merge methods: squash; a delivery takes exactly: merge, squash"]
+    );
+    // A rule that requires a linear history refuses the merge commit an import is, and only that.
+    let linear = json!({"type": "required_linear_history", "ruleset_id": 1});
+    both.push(linear.clone());
+    assert_eq!(
+        judge(&merges, &both, &bypasses(), &imports),
+        [
+            "a rule requires a linear history of main, which refuses the merge commit an import \
+             is delivered by"
+        ]
+    );
+    let mut tasks = rules();
+    tasks.push(linear);
+    assert_eq!(
+        judge(&repository(), &tasks, &bypasses(), &WANTED),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn what_github_says_of_an_actor_is_said_in_plain_characters() {
     let mut bypasses = bypasses();
     bypasses.insert(

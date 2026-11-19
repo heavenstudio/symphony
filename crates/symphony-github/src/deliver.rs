@@ -21,6 +21,13 @@
 //!   (`sha`, which GitHub refuses a merge of any other head by), after reading that it is not
 //!   merged already. The pull request is opened as a draft and stays one until then: this verb
 //!   marks it ready, by the one GraphQL mutation GitHub has for that, just before it asks.
+//!
+//! An import (`operation` `import`, with the `upstream`'s address and the commit it imports) is
+//! the one delivery merged by a merge commit, titled as a land's own merge. Only settings that
+//! name `upstream_id` deliver one, and before its head is pushed and again before its merge the
+//! upstream is read at its address and held to that number, never the repository delivered to,
+//! and refused where a private repository's history would go into a public one
+//! ([`Run::upstream`]). A request of another operation is squashed, whatever it asks.
 //! - `result` reads the bound pull request and writes nothing.
 //! - `landed` records the commit, and closes the task's mapped issue where `close_issues` says.
 //!
@@ -100,22 +107,30 @@ impl Remote for Git {
     }
 }
 
-/// Whether the remote address `url` is `repository` on GitHub.com.
-#[must_use]
-pub fn names(url: &str, repository: &Repository) -> bool {
+/// The `OWNER/NAME` a remote address `url` on GitHub.com names, as written; none for another host.
+fn path(url: &str) -> Option<&str> {
     let rest = [
         "https://github.com/",
         "ssh://git@github.com/",
         "git@github.com:",
     ]
     .iter()
-    .find_map(|start| url.strip_prefix(start));
-    let Some(rest) = rest else {
-        return false;
-    };
+    .find_map(|start| url.strip_prefix(start))?;
     let rest = rest.strip_suffix('/').unwrap_or(rest);
-    let rest = rest.strip_suffix(".git").unwrap_or(rest);
-    rest.eq_ignore_ascii_case(&repository.full_name())
+    Some(rest.strip_suffix(".git").unwrap_or(rest))
+}
+
+/// Whether the remote address `url` is `repository` on GitHub.com.
+#[must_use]
+pub fn names(url: &str, repository: &Repository) -> bool {
+    path(url).is_some_and(|rest| rest.eq_ignore_ascii_case(&repository.full_name()))
+}
+
+/// The repository on GitHub.com the remote address `url` names; none for another host or for
+/// what is no plain `OWNER/NAME`.
+#[must_use]
+pub fn repository(url: &str) -> Option<Repository> {
+    crate::config::repository(path(url)?).ok()
 }
 
 /// An answer that made or found nothing, said for the land to carry.
@@ -213,6 +228,28 @@ struct Snapshot {
     eligible: bool,
     revision: String,
     stamps: Vec<Stamp>,
+    #[serde(default)]
+    assessment: Option<Assessed>,
+}
+
+/// What a snapshot's assessment says, as far as a delivery reads it: the head it read, and the
+/// upstream commit it names that head an import of, where it names one.
+#[derive(Deserialize)]
+struct Assessed {
+    #[serde(default)]
+    tip: Option<String>,
+    #[serde(default)]
+    import: Option<String>,
+}
+
+/// What a request says it delivers: an import of `commit` from the repository at `url`, or none.
+fn import(request: &Value) -> Option<(String, String)> {
+    (request["operation"] == json!("import")).then(|| {
+        (
+            text(&request["upstream"], "url"),
+            text(&request["upstream"], "commit"),
+        )
+    })
 }
 
 #[derive(Deserialize)]
@@ -402,7 +439,7 @@ impl Run<'_> {
             base,
             checks_app: self.config.checks_app_id.unwrap_or_default(),
             landing_app: self.config.landing_app_id.unwrap_or_default(),
-            operation: Operation::Task,
+            operation: Operation::of(self.config.upstream_id.is_some()),
         };
         // The policy token is read anew each time, and sent nowhere but through the reader.
         let read = match self.connect(
@@ -437,6 +474,71 @@ impl Run<'_> {
                 Err(stopped)
             }
         }
+    }
+
+    /// The upstream an import of `request` is of, held to what the settings pin, read now with the
+    /// merging token `host` carries: the repository at the request's address is the one of
+    /// `upstream_id`, not the one bound (`id`), and its history is taken into this repository only
+    /// where that makes nothing private public. Its number and name.
+    fn upstream(&self, host: &Host<'_>, request: &Value, id: i64) -> Result<Value, Stopped> {
+        let (url, commit) = import(request).unwrap_or_default();
+        let Some(pinned) = self.config.upstream_id else {
+            return Err(refused(format!(
+                "the settings name no upstream_id: no import is delivered here, from {} or any \
+                 other",
+                clean_title(&url)
+            )));
+        };
+        let Some(upstream) = repository(&url).filter(|_| self::commit(&commit)) else {
+            return Err(refused(
+                "an import names its upstream by its address on GitHub.com and the commit it \
+                 imports whole",
+            ));
+        };
+        let theirs = Host {
+            transport: host.transport,
+            repository: upstream.clone(),
+        };
+        let said = upstream.full_name();
+        let value = match theirs.get("")? {
+            (200, value) => value,
+            (301, _) => return Err(refused(format!("the upstream {said} moved (301)"))),
+            (status, _) => {
+                return Err(refused(format!(
+                    "the upstream {said} is not readable with the merging token ({status})"
+                )));
+            }
+        };
+        if value["id"] != json!(pinned) {
+            return Err(refused(format!(
+                "the upstream {said} is repository {}, not the {pinned} upstream_id pins: nothing \
+                 is imported from another",
+                value["id"]
+            )));
+        }
+        if pinned == id {
+            return Err(refused(
+                "upstream_id is the repository delivered to: an import is of another",
+            ));
+        }
+        let (_, ours) = host.get("")?;
+        match (value["private"].as_bool(), ours["private"].as_bool()) {
+            (Some(false), _) | (Some(true), Some(true)) => {}
+            (Some(true), Some(false)) => {
+                return Err(refused(format!(
+                    "the upstream {said} is private and {} is not: an import would publish its \
+                     history",
+                    self.repository.full_name()
+                )));
+            }
+            _ => {
+                return Err(refused(
+                    "whether the upstream or this repository is private is not shown: an import \
+                     is made only where nothing private is published",
+                ));
+            }
+        }
+        Ok(json!({"id": pinned, "name": clean_title(&said)}))
     }
 
     /// The pull request of the branch `slug` into `base`: the one bound, the open one found by
@@ -615,8 +717,17 @@ impl Run<'_> {
                 "the head is a whole commit, and the branches plain names",
             ));
         }
-        // Refused before anything is pushed, where a stamp names no check.
+        // Refused before anything is pushed, where a stamp names no check, or where the evidence
+        // that stands is of another operation than the one asked for.
         checks(&snapshot, 0).map_err(refused)?;
+        let named = (snapshot.assessment.as_ref())
+            .filter(|read| read.tip.as_deref() == Some(head.as_str()))
+            .and_then(|read| read.import.clone());
+        if snapshot.eligible && named != import(request).map(|(_, commit)| commit) {
+            return Err(refused(
+                "the evidence names another import, or none, than the operation asked for",
+            ));
+        }
         let origin = remote.url().map_err(refused)?;
         if !names(&origin, &self.repository) {
             return Err(refused(format!(
@@ -639,6 +750,12 @@ impl Run<'_> {
             }
             return self.blocked(&host, &snapshot, id, &name, stopped);
         }
+        // An import's head carries its upstream's history: pushed only where the upstream is
+        // the one pinned, and only where that publishes nothing private.
+        let upstream = match import(request) {
+            Some(_) => self.upstream(&host, request, id)?,
+            None => Value::Null,
+        };
         (remote.push(&head, &snapshot.slug)).map_err(|why| {
             refused(format!(
                 "{} was not pushed to the branch {} of {name}: {}",
@@ -671,12 +788,16 @@ impl Run<'_> {
         }
         let wanted = checks(&snapshot, id).map_err(refused)?;
         self.stand(&wanted, &head, &snapshot.slug)?;
-        Ok(json!({
+        let mut published = json!({
             "state": "published",
             "repository": {"id": id, "name": name},
             "pull": {"number": pull.number, "url": pull.url},
             "head": now["head"]["sha"],
-        }))
+        });
+        if !upstream.is_null() {
+            published["upstream"] = upstream;
+        }
+        Ok(published)
     }
 
     /// Evidence that blocks, said on a branch whose policy does not hold: its checks written on
@@ -769,8 +890,16 @@ impl Run<'_> {
 
     fn merge(&mut self, request: &Value) -> Result<Value, Stopped> {
         let (slug, head) = (text(request, "slug"), text(request, "head"));
-        if !commit(&head) || request["method"] != json!("squash") {
-            return Err(refused("a merge is a squash of one whole commit"));
+        let imported = import(request);
+        let method = if imported.is_some() {
+            "merge"
+        } else {
+            "squash"
+        };
+        if !commit(&head) || request["method"] != json!(method) {
+            return Err(refused(
+                "a merge is of one whole commit: a task's squashed, an import's by a merge commit",
+            ));
         }
         let transport = self.connect(self.config.token_file.as_deref(), "token_file")?;
         let host = Host {
@@ -806,16 +935,32 @@ impl Run<'_> {
             return Err(refused("the pull request names no base branch"));
         }
         self.protected(&host, id, &base, &slug)?;
+        if imported.is_some() {
+            self.upstream(&host, request, id)?;
+        }
         if now["draft"] == json!(true) {
             self.ready(&host, &slug, &pull, &now)?;
         }
-        let title = match self.state.drafts.get(&slug) {
-            Some(draft) => format!("{slug}: {}", draft.title),
-            None => slug.clone(),
+        // An import's commit is titled as a land's own merge is, which the release cadence counts.
+        let (title, message) = match (&imported, self.state.drafts.get(&slug)) {
+            (Some((_, commit)), _) => (
+                format!("Merge branch '{slug}'"),
+                format!(
+                    "Merged from {head} by pull request #{}, an import of {commit}.",
+                    pull.number
+                ),
+            ),
+            (None, Some(draft)) => (
+                format!("{slug}: {}", draft.title),
+                format!("Squashed from {head} by pull request #{}.", pull.number),
+            ),
+            (None, None) => (
+                slug.clone(),
+                format!("Squashed from {head} by pull request #{}.", pull.number),
+            ),
         };
         let sent = json!({
-            "sha": head, "merge_method": "squash", "commit_title": title,
-            "commit_message": format!("Squashed from {head} by pull request #{}.", pull.number),
+            "sha": head, "merge_method": method, "commit_title": title, "commit_message": message,
         });
         let id = crate::digest(&["merge", &slug, &head]);
         self.journal(Event::Intent, "merge", &slug, &id, json!(pull.number));
@@ -1064,7 +1209,7 @@ pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome 
         base,
         checks_app: config.checks_app_id.unwrap_or_default(),
         landing_app: config.landing_app_id.unwrap_or_default(),
-        operation: Operation::Task,
+        operation: Operation::of(config.upstream_id.is_some()),
     };
     let policy = match connect(
         ctx,

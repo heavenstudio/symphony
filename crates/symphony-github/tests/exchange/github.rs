@@ -49,6 +49,8 @@ struct Inner {
     /// The rulesets that apply to the default branch, by number: each with its `rules`, its
     /// `bypass_actors` (none where the asker is not shown them) and where it is from.
     rulesets: BTreeMap<i64, Value>,
+    /// Other repositories the token reads, by `OWNER/NAME`: what each says of itself.
+    neighbours: BTreeMap<String, Value>,
     /// The one GitHub App shown a ruleset's `bypass_actors`, as GitHub shows them only to who
     /// may write the ruleset; none is every asker, for the exchange that reads no ruleset.
     reader: Option<i64>,
@@ -95,6 +97,7 @@ impl Fake {
                 "allow_auto_merge": false, "permissions": {"admin": false, "push": true},
             }),
             rulesets: BTreeMap::new(),
+            neighbours: BTreeMap::new(),
         }))
     }
 
@@ -287,6 +290,17 @@ impl Fake {
         }
     }
 
+    /// Another repository, `full_name`, the token reads as saying `about` of itself from now; a
+    /// null `about` makes it unreadable.
+    pub(crate) fn neighbour(&self, full_name: &str, about: Value) {
+        let mut inner = self.inner();
+        if about.is_null() {
+            inner.neighbours.remove(full_name);
+        } else {
+            inner.neighbours.insert(full_name.into(), about);
+        }
+    }
+
     /// What the repository says of itself changed, field by field.
     pub(crate) fn set_repository(&self, fields: &Value) {
         let mut inner = self.inner();
@@ -414,6 +428,10 @@ impl Inner {
         }
         let (path, query) = path.split_once('?').unwrap_or((path, ""));
         let root = format!("/repos/{}/{}", self.owner, self.name);
+        let other = (path.strip_prefix("/repos/")).and_then(|name| self.neighbours.get(name));
+        if let (Some(about), "GET") = (other, method) {
+            return answer(200, about);
+        }
         let Some(rest) = path.strip_prefix(&root) else {
             let status = if self.moved { 301 } else { 404 };
             return answer(status, &json!({"message": "Not Found"}));

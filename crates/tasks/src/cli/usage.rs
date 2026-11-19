@@ -169,6 +169,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             ("move", "move a task to another status, --reason saying why"),
             (
+                "workflow",
+                "a custom workflow: show it, a task's actions, apply, recover",
+            ),
+            (
                 "say",
                 "post on a task's thread, --to owner, @orchestrator or HANDLE",
             ),
@@ -496,6 +500,42 @@ options:
 "#,
     ),
     (
+        "workflow",
+        r#"usage: just tasks workflow [-h] [--as ACTOR] [--revision N] [--key KEY] [--input NAME=TEXT] [--json] ACTION [SLUG] [EDGE]
+"#,
+        r#"usage: just tasks workflow [-h] [--as ACTOR] [--revision N] [--key KEY] [--input NAME=TEXT] [--json] ACTION [SLUG] [EDGE]
+
+A custom workflow the board activated from the project's default branch
+(docs/WORKFLOW.md). `show` prints its revision, positions and edges, or says
+none is active. `actions SLUG` prints where the task stands, its workflow
+revision, and each edge that leaves it with what stops you taking it now: a
+preview, never a permit. `apply SLUG EDGE --revision N` takes the edge as
+you, through the board's one admission, from the revision you read: a task
+moved since is refused as stale_task, so read its actions again. `recover
+SLUG HOLDER` asks the board's recovery for a holder whose session is lost or
+left: its position's lost-holder action lets its roles go, or keeps them for
+a person, and stays or moves to the pair it names. A task a custom workflow
+holds moves and is staffed by its edges alone: move, claim, role, reserve,
+handover and the verdicts refuse it as explicit_action_required, and release
+and leave let go by its position's recovery.
+
+positional arguments:
+  ACTION                show, actions, apply or recover
+  SLUG                  the task (actions, apply, recover)
+  EDGE                  the edge to take (apply), or the lost holder (recover)
+
+options:
+  -h, --help            show this help message and exit
+  --as ACTOR
+  --revision N          the task's workflow revision you read (apply)
+  --key KEY             the request's key: the same key and request answer the
+                        first result, another request under it is refused
+                        (default SLUG@REVISION:EDGE)
+  --input NAME=TEXT     an input the edge declares, again for each
+  --json                the answer as JSON
+"#,
+    ),
+    (
         "limits",
         r#"usage: just tasks limits [-h] [--as ACTOR]
 "#,
@@ -654,10 +694,12 @@ options:
     ),
     (
         "needs",
-        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] --why WHY
+        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] [--import IMPORT]
+                        --why WHY
                         slug stamps [stamps ...]
 "#,
-        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] --why WHY
+        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] [--import IMPORT]
+                        --why WHY
                         slug stamps [stamps ...]
 
 As the task's assessor, write the stamps it needs, from the catalogue `just
@@ -665,6 +707,14 @@ tasks stamps` lists, with the tip read and why: the board's own field, and a
 line on its thread saying them and what it needed before. Refused to a session
 that executed the task or work under it, orchestrates or orchestrated it, or
 filed it, and on an empty reason or a stamp the catalogue lacks.
+
+A head that merges a commit of the project's upstream ([land.upstream]) is an
+import: with --import, the assessment names that commit, resolved to the whole
+commit, beside the head --tip names, and a land delivered by a pull request
+merges that head by a merge commit, keeping the upstream's history. An import
+named at no tip is refused; one named at another tip than the head delivers
+nothing, and a head of upstream commits whose assessment names none is never
+squashed.
 
 positional arguments:
   slug
@@ -675,6 +725,9 @@ options:
   --as ACTOR
   --tip TIP   the commit the assessment read, resolved to the whole commit;
               left out, the assessment read the brief alone
+  --import IMPORT
+              the upstream commit the head imports, resolved to the whole
+              commit; only with --tip
   --why WHY   one line for each stamp it left out or added
 "#,
     ),

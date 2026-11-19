@@ -463,7 +463,7 @@ impl Project {
     /// [`Project::load`]'s to look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
         let file = Self::written(text)?;
-        workflow::require_supported(file.workflow.as_ref())?;
+        workflow::require_supported(text)?;
         if let Some(refusal) = File::refusal(&file.unknown(text)) {
             return Err(refusal);
         }
@@ -488,7 +488,7 @@ impl Project {
             return Ok((Self::plain(root), Vec::new(), Vec::new()));
         };
         let file = Self::written(&text)?;
-        workflow::require_supported(file.workflow.as_ref())?;
+        workflow::require_supported(&text)?;
         let (unknown, retired) = (file.unknown(&text), file.retired(&text));
         let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
         Ok((project, unknown, retired))
@@ -774,6 +774,9 @@ impl Project {
             .is_some_and(|program| program.trim().is_empty())
         {
             return Err("[land] delivery names no command: leave it out to land here".into());
+        }
+        if let Some(upstream) = land.upstream.take() {
+            upstream.judged()?;
         }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(

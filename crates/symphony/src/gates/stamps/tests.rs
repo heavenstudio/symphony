@@ -46,6 +46,7 @@ fn assessed(stamps: &[&str], tip: Option<&str>) -> Needs {
         tip: tip.map(str::to_string),
         by: "slate-owl".into(),
         why: "a page's look and a store query".into(),
+        import: None,
     }
 }
 
