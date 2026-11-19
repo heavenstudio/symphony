@@ -5,6 +5,25 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### GitHub delivery
+
+- [ ] **github-delivery-policy-reader** — The two Apps you approved work on the throwaway repository: GitHub refused every merge it should and let the landing App's squash through. One thing they cannot do is read who is allowed past the rules. Before each land, Symphony is to check that nobody is let past the evidence rule and that the landing App alone is let past the update rule; GitHub shows that list to neither App, so the check answers "unknown" and a land refuses. May a third, read-only identity be added to read it? A: yes, a third App used for that reading alone, tried on the throwaway repository first with the smallest permission that might show the list. B: no third identity: a person confirms the lists by hand when delivery is turned on, and lands do not check them after. C: neither, and pull-request landing stays off. Recommended: A, because only a reading at each land notices a list changed later. Approve and say A, B or C in the note, or comment. [[analysis/github-pr-landing#Permissions and protection]]
+  [2026-11-19 01:35] agent — Posted for the board task `tools/github-pr-verified-activation`, with the preflight's needs from `tools/github-delivery-preflight`.
+
+    **What was measured** on the throwaway repository, with each App's own token and reads only:
+
+    - Both Apps read every rule and its settings: the pull request, the check and the App it must come from, squash alone, no force push, no deletion, restricted updates.
+    - Each reads its own standing: the check publisher is let past neither rule set, the landing App past the update rule only. That is as designed.
+    - Neither is shown either list of who else is let past. An administrator's login sees them: empty on the evidence rule, the landing App alone on the update rule.
+
+    **Under A,** the third App is registered as the two were, from your signed-in browser, installed on the throwaway repository alone, with no webhook. It never merges and never writes a check, and its key is kept as theirs are, outside every checkout and shown nowhere. Its permission is tried there before anything else: Administration (read) first. GitHub's documentation says the list is shown only to those who can edit the rule set, so read may not be enough. If only Administration (write) shows it, nothing is granted: that comes back to you as a card of its own, since it could change the rules it reads.
+
+    **Under B,** the rules are still read at every land, and each App's own standing with them. What goes unread is whether someone else was added to a list after the day a person looked.
+
+    **Earlier verdicts checked.** **github-delivery-proof-setup**, approved, covers two Apps and says neither gets Administration; a third identity that reads the repository's administration is not what it described, so it is asked here and changes nothing of the two.
+
 ## Auto-approved: spot-check
 
 ### Releases
