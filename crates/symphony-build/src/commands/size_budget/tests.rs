@@ -319,7 +319,9 @@ fn what_the_clients_line_counts_does_not_move_with_how_many_files_its_builds_sha
             &files,
             &built(1, &[("symphony-server", 1_000)]),
         );
-        measure(&tree.root, &tree.path("release")).unwrap().remove(4)
+        measure(&tree.root, &tree.path("release"))
+            .unwrap()
+            .remove(4)
     };
     assert_eq!(builds_json(&shared).len(), builds_json(&apart).len());
     let page = 5 + builds_json(&shared).len() as u64;
@@ -347,7 +349,10 @@ fn what_the_clients_line_counts_does_not_move_with_how_many_files_its_builds_sha
 fn a_client_file_no_kept_build_names_or_a_build_naming_no_file_is_an_error_not_a_pass() {
     // What `size-budget` says of a client of `builds` (none: no builds.json) and `files`.
     let refused = |builds: Option<&[&[&str]]>, files: &[(&str, usize)]| -> String {
-        let (budget, built) = (budget(10_000, 50, &[]), built(1, &[("symphony-server", 1_000)]));
+        let (budget, built) = (
+            budget(10_000, 50, &[]),
+            built(1, &[("symphony-server", 1_000)]),
+        );
         let tree = match builds {
             Some(builds) => kept_checkout(&budget, builds, files, &built),
             None => checkout(&budget, files, &built),
@@ -394,7 +399,10 @@ fn a_client_file_no_kept_build_names_or_a_build_naming_no_file_is_an_error_not_a
     for (name, files) in [
         ("gone.js", &[("assets/sh.js", 1)][..]),
         ("../index.html", &[("assets/sh.js", 1), ("index.html", 1)]),
-        ("deeper/two.js", &[("assets/sh.js", 1), ("assets/deeper/two.js", 1)]),
+        (
+            "deeper/two.js",
+            &[("assets/sh.js", 1), ("assets/deeper/two.js", 1)],
+        ),
         ("", &[("assets/sh.js", 1)]),
     ] {
         assert_eq!(
@@ -409,7 +417,10 @@ fn a_client_file_no_kept_build_names_or_a_build_naming_no_file_is_an_error_not_a
     for (text, said) in [
         ("not json", "expected"),
         ("{\"keep\": 3}", "missing field `builds`"),
-        ("{\"builds\": [{\"shell\": \"sh.js\"}]}", "missing field `files`"),
+        (
+            "{\"builds\": [{\"shell\": \"sh.js\"}]}",
+            "missing field `files`",
+        ),
     ] {
         let tree = checkout(&budget(10_000, 50, &[]), &[], &built(1, &[]));
         tree.write(&format!("{CLIENT}/{KEPT}"), text);

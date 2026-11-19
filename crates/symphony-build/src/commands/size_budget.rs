@@ -274,13 +274,18 @@ fn folder(folder: &Path) -> io::Result<Distribution> {
     for build in &kept.builds {
         let mut weight = 0;
         for name in build.files.iter().collect::<BTreeSet<_>>() {
+            // A file directly in `assets/`, as `publish-client` names them: a name with a `/`
+            // would reach below it.
             let path = format!("assets/{name}");
-            let bytes = files.get(&path).filter(|_| plain(name)).ok_or_else(|| {
-                io::Error::other(format!(
-                    "{KEPT}: the build {} names {name:?}, which is no file of assets/",
-                    build.shell
-                ))
-            })?;
+            let bytes = files
+                .get(&path)
+                .filter(|_| !name.contains('/'))
+                .ok_or_else(|| {
+                    io::Error::other(format!(
+                        "{KEPT}: the build {} names {name:?}, which is no file of assets/",
+                        build.shell
+                    ))
+                })?;
             weight += bytes;
             named.insert(path);
         }
@@ -312,11 +317,6 @@ fn under(folder: &Path, path: &Path) -> io::Result<String> {
     parts
         .map(|parts| parts.join("/"))
         .ok_or_else(|| io::Error::other(format!("{}: no UTF-8 name", path.display())))
-}
-
-/// Whether a build's `name` is a file directly in `assets/`, as `publish-client` names them.
-fn plain(name: &str) -> bool {
-    !name.is_empty() && name != "." && name != ".." && !name.contains('/')
 }
 
 /// Where the rule sets a binary's line at `bytes`: its size plus [`MARGIN_PERCENT`], rounded down
