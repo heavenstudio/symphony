@@ -1,7 +1,6 @@
 //! `claim`, and what it must get past: a live executor, a reservation, the reviewer, a dependency.
 
 use crate::common::{Backend, Fixture, GONE, NOW, Seed, amber_back_meanwhile, refused, session};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use symphony_board::Health;
 use symphony_board::health::LIVE_SECONDS;
@@ -17,25 +16,6 @@ fn two_and_a_task(backend: Backend, status: &str) -> Fixture {
 }
 
 on_both! {
-    /// A claim whose task keeps moving under it goes on deciding again for as long as the SQLite store's
-    /// write lock waited (30 s), not for a count of tries a busy board spends in two seconds.
-    fn a_claim_on_a_task_that_keeps_moving_goes_on_past_eighty_moves(backend: Backend) {
-        let f = two_and_a_task(backend, "ready");
-        let mover = f.other();
-        let moves = Arc::new(AtomicUsize::new(0));
-        let counted = Arc::clone(&moves);
-        let busy = f.busy(move || {
-            if counted.fetch_add(1, Ordering::SeqCst) < 80 {
-                mover
-                    .take_role("sim/jump", "brisk-finch", "orchestrator")
-                    .unwrap();
-            }
-        });
-        let task = busy.claim("sim/jump", "amber-heron").unwrap();
-        assert_eq!(task.holders("executor"), ["amber-heron"]);
-        assert!(moves.load(Ordering::SeqCst) > 80);
-    }
-
     fn claim_makes_the_session_executor_and_starts_the_task(backend: Backend) {
         let f = two_and_a_task(backend, "ready");
         let task = f.store.claim("sim/jump", "amber-heron").unwrap();

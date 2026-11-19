@@ -161,6 +161,8 @@ pub(crate) struct Hub {
     /// What the hub wakes as it finds or loses its board ([`Hub::has_board`]): its server's
     /// maintenance, given as the hub starts ([`Hub::wake_at_board`]).
     board_wakers: OnceLock<Arc<Wakers>>,
+    /// What the documents' loop calls after each refresh ([`Hub::after_refresh`]).
+    refreshed: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// Whether `trees` is what git last listed: unset before the first listing and after one that
     /// failed, when the owner's asks on a branch wait ([`symphony::owner_asks::Reading::listed`]).
     listed: std::sync::atomic::AtomicBool,
@@ -388,6 +390,7 @@ impl Hub {
             rescan: std::sync::atomic::AtomicBool::new(false),
             documents_waker: OnceLock::new(),
             board_wakers: OnceLock::new(),
+            refreshed: OnceLock::new(),
             listed: std::sync::atomic::AtomicBool::new(false),
             one_cards: RwLock::new(Arc::default()),
             marks: RwLock::new(Arc::default()),
@@ -555,6 +558,13 @@ impl Hub {
     /// Given once, as the hub starts; a second giving is ignored.
     pub(crate) fn wake_at_board(&self, wakers: Arc<Wakers>) {
         let _ = self.board_wakers.set(wakers);
+    }
+
+    /// Call `then` after each refresh of the documents: the server's saves take up again what
+    /// they keep for delivery by pull request, which a checkout that moved may have settled.
+    /// Given once, as the hub starts; a second giving is ignored.
+    pub(crate) fn after_refresh(&self, then: Box<dyn Fn() + Send + Sync>) {
+        let _ = self.refreshed.set(then);
     }
 
     /// Ask the documents' loop to scan the branches again, though no file moved, and wake it.
@@ -2255,6 +2265,9 @@ fn documents(
             if let Err(e) = measured("document event", || hub.refresh_docs(Some(&dirty))) {
                 eprintln!("· Symphony data refresh failed: {e}");
             }
+            if let Some(then) = hub.refreshed.get() {
+                then();
+            }
         }
         hub.watch(&mut watcher, &mut watched);
     }
@@ -3255,6 +3268,35 @@ mod tests {
         );
         if let Err(stall) = out {
             panic!("{stall}; still pending: {:?}", pending(&hub, ""));
+        }
+        stopped(&hub);
+    }
+
+    /// Each refresh of the documents calls what the hub was given for after it
+    /// ([`Hub::after_refresh`]): the server's saves take up again what they keep for delivery by
+    /// pull request there, which is what drops a delivered save once a land moved the checkout.
+    #[test]
+    fn a_refresh_of_the_documents_calls_what_was_given_for_after_it() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let tree = Tree::new();
+        let root = proposing(&tree, "- [ ] **branch-card** — A branch proposal.\n");
+        let hub = waking(&root);
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        hub.after_refresh(Box::new(move || {
+            counted.fetch_add(1, SeqCst);
+        }));
+        // A second giving is ignored: the first stays the one called.
+        hub.after_refresh(Box::new(|| panic!("given second, never called")));
+        assert_eq!(calls.load(SeqCst), 0, "nothing refreshed yet");
+        hub.ask_rescan();
+        let called = test_time::until_true(
+            "the refresh to call what was given for after it",
+            test_time::backstop(Duration::from_secs(20)),
+            || calls.load(SeqCst) > 0,
+        );
+        if let Err(stall) = called {
+            panic!("{stall}");
         }
         stopped(&hub);
     }

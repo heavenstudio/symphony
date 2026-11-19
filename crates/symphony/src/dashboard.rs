@@ -350,7 +350,7 @@ pub fn snapshot(
     build: &str,
 ) -> Result<Snapshot, ReviewError> {
     // A checkout with no documents yet still has its board, branch cards and agents.
-    let mut docs = board::documents(root)?;
+    let mut docs = board::documents_shown(root)?;
     let mut progress = progress(root);
     // Distinct proposals remain separate decisions; only main's older copy is suppressed.
     // Branch discovery already removes identical copies carried by stacked branches.

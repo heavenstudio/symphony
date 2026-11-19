@@ -101,7 +101,7 @@ under MIT: crates.io is the package manager their versions live in
 - **The helpers:** `symphony-env`, `symphony-args`, `symphony-schema`, `process-cwd` and
   `repository-read`, each on a version line of its own from 1.0.0.
 - **The product:** the library and its `symphony` command as `symphony-app`, the board
-  (`symphony-board`: `tasks`, `agent-send`, `tasks-copy` and `tasks-reclaim`), the server
+  (`symphony-board`: `tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim` and `tasks-move`), the server
   (`symphony-server`), the Chrome driver `symphony shot` drives as `symphony-chrome`, and the app's
   wire types (`symphony-api`). One version for the five, from 0.1.0, each requiring the others at
   exactly it (`=0.1.0`), so they are always taken together; below 1.0, it promises no name.
@@ -872,6 +872,24 @@ the hour, and its green release refreshes the server and its projects
   run has checked a commit, the count starts again from it, and the next landing that brings it to
   the count starts the next run. Between `--due`'s look and the run's start, a run that took the
   lock first refuses the second, which is not doubled either (*One run at a time*, above).
+- **A landing that moves the board's schema** (it raises `VERSION` in
+  `crates/tasks/src/schema.rs`, which its `Consumer-Note: board` trailer says,
+  [CHECKS](CHECKS.md#what-a-landing-tells-a-consumer)) is followed at once by a release run,
+  whatever the count ([the owner's A](DECISIONS.md#schema-landing-then-release), 2026-11-19).
+  Main's build moves this repository's board at its first command after the landing
+  ([TASKS](TASKS.md#where-it-lives)), and the machine's server, a release's, then writes nothing
+  to it until a release at the new schema serves it ([the switch](#the-switch)). The run starts
+  now rather than at the count's, and nothing else is shortened: a red one is held as the release
+  candidate as any run is ([the release candidate](#the-release-candidate)), and `current` then
+  moves under the refresh's rule on writers as for any release ([the refresh](#the-refresh)).
+  The orchestrator who landed it runs `just release` once the land is done ([who runs
+  it](#who-runs-it)), unless the land's own `--due` started a run, which is that run. Such a
+  landing waits, approved, while a run or the release candidate holds the release (`just release
+  --status`: `next run: in progress`, or a candidate open), since a run started then judges
+  nothing of main's newest commit ([main while it is open](#main-while-it-is-open)), and lands
+  once neither does. A second one waits until `current` names a release serving the first's
+  schema (`--status`'s `machine:` and `last refresh:` lines), so the board is never two schemas
+  ahead of the server, which reads nothing of a board that far ahead.
 
 ## The refresh
 
@@ -928,7 +946,10 @@ Once a release's tag is pushed, the run does this, in order:
   from schema N to M, and stays at N while X holds the release`). Otherwise every board is
   snapshotted through its running database, all of them before the first move
   (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the
-  newest 5 kept): a snapshot that fails is red and no board moves. Then each board is moved in
+  newest 5 kept; for a board on PostgreSQL `before-schema-N-RELEASE.sql`, `pg_dump`'s text of
+  the board's database, which `psql` restores): a snapshot that fails is red and no board moves.
+  A board on PostgreSQL is read on that engine, by the PostgreSQL programs its project names, and
+  waits on no SurrealDB version, as a release pins none of the machine's PostgreSQL. Then each board is moved in
   turn by the release's own `tasks migrate` (`releases/RELEASE/bin/tasks`) run in the project's
   main checkout, the one command that moves a project's board, and its schema is read again. Where
   the only writers behind are a release's own, it runs with `--leave-behind`, which names them;
@@ -1112,7 +1133,7 @@ with no build of its own runs that release from then on. Nothing else goes back 
 the newer release moved stays at that release's schema, which the older release's server reads
 and writes nothing to ([the switch](#the-switch)) and the older release's `tasks` refuses. Its
 store as it was before the move is the snapshot the refresh took
-(`before-schema-N-RELEASE.surql`), and a board put back to it is one that went back, which the
+(`before-schema-N-RELEASE.surql`, or `.sql` of a board on PostgreSQL), and a board put back to it is one that went back, which the
 owner accepts ([TASKS](TASKS.md#a-board-that-went-back)). Pointing `current` on the machine whose
 server is the shared one is the owner's word, as any switch of that server is. The next green
 refresh points `current` at the release it installs.
@@ -1124,7 +1145,10 @@ nothing else. An orchestrator pushes main and never a tag ([AGENTS](../AGENTS.md
 cannot be taken back once a project fetches it, so running `just release` or
 `just release --commit` by hand and installing its schedule are the owner's call: an orchestrator
 does either only on the owner's word. The cadence's run has that word (*The cadence*, above): a
-land starts `--due` without asking, and the release it runs is automatic. So has a green release's
+land starts `--due` without asking, and the release it runs is automatic. So has the run that
+follows a landing that moves the board's schema (*The cadence*, above): the orchestrator who
+landed it runs `just release` without asking each time, the owner's standing word for those runs
+alone, and any other run by hand stays the owner's call. So has a green release's
 refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
 run without asking on a red refresh's task once it is fixed, or once a project finished what its
 step left to it (each writer named rebuilt and run once). The machine's server is not the

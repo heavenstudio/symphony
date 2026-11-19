@@ -24,7 +24,15 @@ pub struct Dump {
     pub delivery_keys: Vec<DeliveryKeyRow>,
     pub asks: Vec<AskRow>,
     pub usages: Vec<UsageRow>,
-    /// A custom delivery workflow's records, from schema 23; none on a board that never had one,
+    /// Execution attempts (`crate::execution`), each row whole as the board keeps it: schemaless,
+    /// so the copy carries what it holds without a column of its own. An attempt's row names its
+    /// `attempt`, a fact its `attempt` and `seq`, a fence its `key`, an artifact its `attempt` and
+    /// `name`: each its own record's id.
+    pub execution_attempts: Vec<Value>,
+    pub execution_facts: Vec<Value>,
+    pub execution_fences: Vec<Value>,
+    pub execution_artifacts: Vec<Value>,
+    /// A custom delivery workflow's records, from schema 24; none on a board that never had one,
     /// whose export is then the text it was before, which a binary from before reads.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub workflow: Vec<WorkflowRow>,
@@ -54,6 +62,10 @@ impl Dump {
             delivery_keys: table(&mut tables, "delivery_keys")?,
             asks: table(&mut tables, "asks")?,
             usages: table(&mut tables, "usages")?,
+            execution_attempts: table(&mut tables, "execution_attempts")?,
+            execution_facts: table(&mut tables, "execution_facts")?,
+            execution_fences: table(&mut tables, "execution_fences")?,
+            execution_artifacts: table(&mut tables, "execution_artifacts")?,
             workflow: table(&mut tables, "workflow")?,
         };
         match tables.keys().next() {
@@ -323,7 +335,7 @@ pub struct UsageRow {
     pub last: f64,
 }
 
-/// A custom delivery workflow's record (`crate::schema`'s `workflow`, from schema 23): the parts
+/// A custom delivery workflow's record (`crate::schema`'s `workflow`, from schema 24): the parts
 /// of its id, its kind, what it records and when it was written. Its key is its id because a
 /// record names what it is of (`['event', slug, revision]`), and the task fence finds a task's
 /// transition by it.

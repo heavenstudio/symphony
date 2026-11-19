@@ -348,7 +348,8 @@ impl Store {
             self.record_writer(&how.program, &how.schema, how.access, line);
             return Err(Failure::Stop(Error::Refused(format!(
                 "{board} is hosted and would be moved forward or made, which its deployment's \
-                 migration alone does: nothing was written"
+                 migration alone does: its tables and rows are as they were, and this \
+                 program's line among its writers says it is behind"
             ))));
         }
         if let Board::Hosted(client) = &self.db

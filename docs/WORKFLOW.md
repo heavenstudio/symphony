@@ -176,7 +176,7 @@ attempts (`tools/workflow-operations`, `tools/workflow-attempt-integration`).
 
 ## Records on the board
 
-From board schema 23 a custom workflow's records are one `workflow` table in both stores, each a
+From board schema 24 a custom workflow's records are one `workflow` table in both stores, each a
 `kind` and a `body` under a compound id: the active generation (`['active']`), each definition by
 its digest, each activation by its generation, and each transition of a task by its slug and the
 workflow revision it made (`['event', SLUG, REVISION]`). A task the workflow holds keeps its

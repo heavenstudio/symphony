@@ -331,3 +331,102 @@ fn what_the_reload_said_is_its_last_line_since_current_moved_or_its_last_before_
         none
     );
 }
+
+/// A board on PostgreSQL is judged and snapshotted as it runs, by the machine's own PostgreSQL:
+/// a release pins none, so its move waits on no SurrealDB version, and its snapshot is
+/// `pg_dump`'s text.
+#[test]
+fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_dump() {
+    use symphony_board::server::postgres;
+    let dir = std::env::temp_dir().join(format!("refresh-pg-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let root = dir.join("alpha");
+    let common = root.join(".git");
+    fs::create_dir_all(&common).unwrap();
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let programs = postgres::discover_programs(&workspace).unwrap();
+    fs::write(
+        root.join("symphony.toml"),
+        format!(
+            "[project]\nid = \"alpha\"\n[board]\npostgresql = {:?}\n",
+            programs.display().to_string()
+        ),
+    )
+    .unwrap();
+    let home = Home::in_common(&common, Some(Path::new("/no/surreal")));
+    home.initialize_backend(Engine::PostgreSql).unwrap();
+    let pg = home.project_postgresql(&root).unwrap();
+    let serving = pg.ensure().unwrap();
+    let store = symphony_board::Store::opening_on(
+        symphony_board::pg::Client::new(&serving.socket, symphony_board::DATABASE).into(),
+        Box::new(|| 1_800_000_000.0),
+        Box::new(|_| true),
+        "this-host",
+        &symphony_board::Opening::write(),
+    )
+    .unwrap();
+    store
+        .create(&symphony_board::NewTask::new(
+            "sim/kept",
+            "A task the snapshot holds",
+            "owner",
+        ))
+        .unwrap();
+    let entry: Entry = serde_json::from_value(serde_json::json!({
+        "id": "alpha", "name": "alpha", "root": root, "pin": 1,
+    }))
+    .unwrap();
+    let logs = dir.join("logs");
+    fs::create_dir_all(&logs).unwrap();
+    let against = Against {
+        // No repository: the SurrealDB a release pins cannot be read, and is not asked for.
+        root: &dir,
+        ours: &dir,
+        machine: &dir.join("machine"),
+        tag: "release-2026-11-20",
+        commit: "0000000",
+        logs: &logs,
+        surreal: None,
+        until: super::super::waits::far(),
+    };
+    let schema = symphony_board::SCHEMA;
+    let at = judge(&entry, &common, schema, &against);
+    assert!(
+        matches!(&at.verdict, Verdict::Done(said) if said.contains("nothing to move")),
+        "a board at the release's schema"
+    );
+    // This test's own line among the writers is behind the next schema, and holds the move.
+    let held = judge(&entry, &common, schema + 1, &against);
+    assert!(matches!(&held.verdict, Verdict::Theirs { holds: true, .. }));
+    store.raw().table("writer").delete().unwrap();
+    let mut moving = judge(&entry, &common, schema + 1, &against);
+    assert!(
+        matches!(&moving.verdict, Verdict::Move { live, leave: false } if *live == schema),
+        "no writer behind, and no SurrealDB pin to wait on"
+    );
+    snapshot(&mut moving, &against).unwrap();
+    let kept = common.join(format!(
+        "symphony/tasks/snapshots/before-schema-{}-release-2026-11-20.sql",
+        schema + 1
+    ));
+    assert_eq!(moving.snapshot.as_deref(), Some(kept.as_path()));
+    let text = fs::read_to_string(&kept).unwrap();
+    assert!(
+        text.contains("CREATE TABLE") && text.contains("sim/kept"),
+        "{text}"
+    );
+    assert_eq!(
+        pg.current().unwrap().map(|s| s.pid),
+        Some(serving.pid),
+        "still serving"
+    );
+    // Stopped, it is red and nothing is started.
+    pg.stop().unwrap();
+    let stopped = judge(&entry, &common, schema + 1, &against);
+    assert!(
+        matches!(&stopped.verdict, Verdict::Red(why) if why.contains("is not running")),
+        "a board whose PostgreSQL does not run"
+    );
+    assert!(pg.current().unwrap().is_none());
+    fs::remove_dir_all(&dir).unwrap();
+}
