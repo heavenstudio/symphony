@@ -43,17 +43,22 @@ fn reader(fixture: &Fixture, schema: Schema) -> Result<Store, String> {
 
 /// A scratch native recipient. Its stop wakes accept and joins the owned thread; frame reads have
 /// only a stall backstop. The short socket path is unique to this fixture's database.
-struct Listener {
-    path: PathBuf,
+pub(super) struct Listener {
+    pub(super) path: PathBuf,
     stopped: Arc<AtomicBool>,
     messages: mpsc::Receiver<String>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Listener {
-    fn new(fixture: &Fixture) -> Self {
+    pub(super) fn new(fixture: &Fixture) -> Self {
+        Self::named(fixture, "")
+    }
+
+    /// Another of `fixture`'s listeners, told apart by `name`.
+    pub(super) fn named(fixture: &Fixture, name: &str) -> Self {
         let path = PathBuf::from(format!(
-            "/tmp/symphony-retry-{}-{}.sock",
+            "/tmp/symphony-retry-{}-{}{name}.sock",
             std::process::id(),
             fixture.store.client().database()
         ));
@@ -119,7 +124,7 @@ impl Listener {
         }
     }
 
-    fn through(&self, marker: &str) -> Vec<String> {
+    pub(super) fn through(&self, marker: &str) -> Vec<String> {
         let mut messages = Vec::new();
         loop {
             let frame = self

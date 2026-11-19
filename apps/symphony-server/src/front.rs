@@ -28,9 +28,9 @@ pub(crate) use port_file::port_file;
 use port_file::{clear_port, record_port};
 
 /// Allow a cold launcher build, but end a stuck command before the next five-minute sweep.
-const SWEEP_TIMEOUT: Duration = Duration::from_secs(240);
+pub(crate) const SWEEP_TIMEOUT: Duration = Duration::from_secs(240);
 /// How far past its interval a round may start before the log says the worker was stalled.
-const LATE_SWEEP: Duration = Duration::from_secs(30);
+pub(crate) const LATE_SWEEP: Duration = Duration::from_secs(30);
 /// Existing connection-shutdown grace, also used to bound a rejected socket's read-side drain.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 /// How long a replaced generation lets the requests it accepted finish before it ends anyway, as
@@ -1400,6 +1400,10 @@ pub(crate) fn maintenance_worker(
             // The board's nonblocking reap lock admits one sweeper across all servers.
             // Log before waiting on output: a hung child must still leave its actual start time.
             eprintln!("· idle-session sweep{of} started");
+            // The tick waits after a sleep for a round begun after the wake (`live::presence`).
+            if let Some(hub) = shared.api.get() {
+                hub.sweep_began();
+            }
             let swept = match crate::live::measured(&format!("idle-session sweep{of}"), || {
                 let mut command = Command::new(board_build(&shared.root)?);
                 command.arg("reap").current_dir(&shared.root);
@@ -1444,6 +1448,10 @@ pub(crate) fn maintenance_worker(
                 "· idle-session sweep{of} ended after {:.3}s",
                 started.elapsed().as_secs_f64()
             );
+            // Answered or failed, the round has looked at the listeners it could: the tick may judge.
+            if let (Some(_), Some(hub)) = (&swept, shared.api.get()) {
+                hub.sweep_ended();
+            }
             // A cancelled sweep says nothing of the board, nor does one that found no board
             // ([`symphony_board::board_health::absent`]); the hub is there once the server is. The
             // record keeps the error on one line, cut when long; the log above keeps it whole.

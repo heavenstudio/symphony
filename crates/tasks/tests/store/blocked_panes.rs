@@ -418,3 +418,59 @@ fn a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent(ba
     assert!(blocked(next.drain(&f, &executor, &current)).is_empty(), "one episode is said once");
 }
 }
+
+on_both! {
+fn a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_wakes(backend: Backend) {
+    if !paired_child("blocked_panes::a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_wakes", backend) {
+        return;
+    }
+    // The night of the incident: no tool call since before the sleep, its turn retrying its
+    // model at each wake, then ended on an error at its prompt, its listener answering throughout.
+    let f = Fixture::on(backend, crate::common::Seed::default());
+    let orch = f.session("orchestrator");
+    let mut child = symphony_board::NewSession::new("worker");
+    child.parent = Some(orch.clone());
+    let worker = f.session_with(child);
+    f.task("tests/quiet");
+    f.store.take_role("tests/quiet", &orch, "orchestrator").unwrap();
+    f.store.claim("tests/quiet", &worker).unwrap();
+    launch(&f, "tests/quiet", &worker, "t2");
+    // Its terminal, named for it: the agents view finds a terminal of no conversation by name.
+    let terminal = |status: &str| {
+        let mut terminal = pane("t2", status);
+        terminal["name"] = json!(worker);
+        terminal
+    };
+    panes(Some(json!([terminal("working")])));
+    let o = listen(&f, &orch);
+    assert!(o.text().starts_with(BUSY_PULL));
+    let w = listen(&f, &worker);
+    // The barrier's sender, whose own write is no sign of the child's.
+    let sender = f.session("worker");
+    let state = std::env::temp_dir().join(format!(
+        "quiet-at-prompt-{}-{}.json",
+        std::process::id(),
+        f.store.database().database()
+    ));
+    // Each wake as the server takes it: the sweep's round first, then the clock's tick.
+    let wake = || {
+        f.advance(1800.0);
+        crate::common::sweep_presence(&f.store, state.clone());
+        tick(&f);
+        o.drain(&f, &sender, &orch)
+    };
+    for _ in 0..3 {
+        assert_eq!(wake(), Vec::<String>::new(), "a turn under way is not idle");
+    }
+    panes(Some(json!([terminal("idle")])));
+    assert_eq!(
+        wake(),
+        ["PULL idle=1 (was 0)".to_string(), format!("idle {worker}")],
+        "at its prompt, idle: said once, neither LOST nor takeover"
+    );
+    for _ in 0..3 {
+        assert_eq!(wake(), Vec::<String>::new(), "not again at each wake");
+    }
+    drop(w);
+}
+}
