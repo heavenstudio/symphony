@@ -1221,6 +1221,7 @@ fn the_reds_own_land_advances_the_candidate_to_its_newest_approved_commit() {
             from: tip.clone(),
             to: two.clone(),
             merge: merge.clone(),
+            delivered: None,
         }]
     );
     assert_eq!(
@@ -1792,4 +1793,240 @@ fn its_bounds_are_the_projects() {
     assert_eq!(Bounds::of(&releases).seconds(), 3600.0);
     releases.candidate_reruns = 0;
     assert!(!releases.holds_candidates());
+}
+
+/// [`SLUG`]'s `head` squashed onto `scratch`'s main as a pull request delivers it, its receipt
+/// kept and its head retained: the receipt.
+fn delivered(scratch: &Scratch, head: &str) -> Receipt {
+    scratch.checkout(&["main"]);
+    let receipt = crate::release::receipts::tests::squash(&scratch.root, SLUG, head);
+    crate::release::receipts::tests::keep(&scratch.root, &receipt);
+    receipt
+}
+
+#[test]
+fn a_land_a_pull_request_delivered_advances_the_candidate_to_the_head_its_receipt_kept() {
+    let tree = Tree::new();
+    let scratch = Scratch::new(&tree);
+    let (tip, [_, two], _) = fixing(&scratch);
+    let receipt = delivered(&scratch, &two);
+    let main = scratch.head();
+    assert_ne!(receipt.squash, two);
+    // No approve and no landed line on its thread: the land was cut after its receipt and
+    // before it closed the task. The head the receipt kept vouches for itself.
+    let board = Fake::default();
+    let mut candidate = candidate_at(&tip);
+    let said = settle(
+        &mut candidate,
+        &line(&scratch, &main, Some(&main)),
+        &board,
+        NOW + 60.0,
+        BOUNDS,
+    );
+    assert_eq!(
+        candidate.commit, two,
+        "the head, never the squash: {said:?}"
+    );
+    assert!(
+        candidate.open(),
+        "a head its squash delivered is on the line"
+    );
+    assert_eq!(
+        candidate.reds[0].answer,
+        Some(Answer::Landed {
+            merge: receipt.squash.clone(),
+            commit: two.clone()
+        })
+    );
+    assert_eq!(
+        candidate.advances,
+        vec![Advance {
+            slug: SLUG.into(),
+            from: tip.clone(),
+            to: two.clone(),
+            merge: receipt.squash.clone(),
+            delivered: Some(Delivered {
+                head: two.clone(),
+                parent: receipt.parent.clone(),
+                repository: 11,
+                name: "owner/repository".into(),
+                pull: 5,
+                revision: "r1".into(),
+            }),
+        }]
+    );
+    assert_eq!(
+        said,
+        vec![format!(
+            "advanced the release candidate from {} to {}, the newest approved commit of {SLUG}'s \
+             land ({}), the squash of {} by pull request #5 of owner/repository",
+            short(&tip),
+            short(&two),
+            short(&receipt.squash),
+            short(&two)
+        )]
+    );
+    // Settled again, and again after its record is read back: nothing more is done or said.
+    let once = candidate.clone();
+    let folder = tree.path("release");
+    std::fs::create_dir_all(&folder).unwrap();
+    write(&folder, &candidate).unwrap();
+    let mut read_back = read(&folder).unwrap().unwrap();
+    assert_eq!(read_back, once);
+    for candidate in [&mut candidate, &mut read_back] {
+        let again = settle(
+            candidate,
+            &line(&scratch, &main, Some(&main)),
+            &board,
+            NOW + 60.0,
+            BOUNDS,
+        );
+        assert_eq!(again, Vec::<String>::new());
+        assert_eq!(*candidate, once);
+    }
+    // Its branch follows without a force: from the tip the run set it to.
+    let mut steered = candidate_at(&tip);
+    assert_eq!(steer(&scratch.root, &mut steered), None);
+    candidate.branch.clone_from(&steered.branch);
+    assert_eq!(steer(&scratch.root, &mut candidate), None);
+    assert_eq!(commit(&scratch.root, REFERENCE).unwrap(), two);
+}
+
+#[test]
+fn an_advance_by_a_land_merged_here_is_recorded_as_it_was_before_receipts() {
+    let advance = Advance {
+        slug: SLUG.into(),
+        from: "a".repeat(40),
+        to: "b".repeat(40),
+        merge: "c".repeat(40),
+        delivered: None,
+    };
+    let text = serde_json::to_string(&advance).unwrap();
+    assert!(!text.contains("delivered"), "{text}");
+    assert_eq!(serde_json::from_str::<Advance>(&text).unwrap(), advance);
+}
+
+#[test]
+fn a_delivered_head_that_merged_main_never_brings_main_into_the_candidate() {
+    let tree = Tree::new();
+    let scratch = Scratch::new(&tree);
+    let (tip, [_, two], _) = fixing(&scratch);
+    // The branch catches up with main, as one settling a conflict does, and that head is delivered.
+    scratch.checkout(&[SLUG]);
+    let caught_up = scratch.merge("main", &format!("Merge branch 'main' into {SLUG}"));
+    let receipt = delivered(&scratch, &caught_up);
+    let main = scratch.head();
+    let settled = |board: &Fake| {
+        let mut candidate = candidate_at(&tip);
+        let said = settle(
+            &mut candidate,
+            &line(&scratch, &main, Some(&main)),
+            board,
+            NOW + 60.0,
+            BOUNDS,
+        );
+        (candidate, said)
+    };
+    // An approve names the fix before it caught up: the candidate takes that commit alone.
+    let approved = Fake {
+        approves: vec![(SLUG.into(), vec![format!("approve: {two}: the fix")])],
+        ..Fake::default()
+    };
+    let (candidate, said) = settled(&approved);
+    assert_eq!(candidate.commit, two, "{said:?}");
+    assert!(candidate.open(), "{said:?}");
+    assert_eq!(
+        candidate.advances[0].delivered.as_ref().unwrap().head,
+        caught_up
+    );
+    // With none, the delivered head holds main's commits, and the candidate is dropped as for
+    // any land with no commit of the fix alone: main's tip is what is run then.
+    let (candidate, said) = settled(&Fake::default());
+    assert_eq!(candidate.state, State::Dropped);
+    assert_eq!(
+        said,
+        vec![format!(
+            "dropped the release candidate: {SLUG} landed ({}) with no approved commit that \
+             descends from the candidate ({}) and holds beyond it nothing main held before the \
+             land",
+            short(&receipt.squash),
+            short(&tip)
+        )]
+    );
+}
+
+#[test]
+fn a_receipt_whose_head_is_gone_makes_the_candidate_wait_and_drops_nothing() {
+    let tree = Tree::new();
+    let scratch = Scratch::new(&tree);
+    let (tip, [_, two], _) = fixing(&scratch);
+    scratch.checkout(&["main"]);
+    let receipt = Receipt {
+        head: "f".repeat(40),
+        ..crate::release::receipts::tests::squash(&scratch.root, SLUG, &two)
+    };
+    let path = Receipt::path(
+        &crate::release::receipts::lands(&scratch.root).unwrap(),
+        SLUG,
+    );
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_string(&receipt).unwrap()).unwrap();
+    let main = scratch.head();
+    let mut candidate = candidate_at(&tip);
+    let board = Fake {
+        statuses: vec![(SLUG.into(), "in_progress".into())],
+        ..Fake::default()
+    };
+    let said = settle(
+        &mut candidate,
+        &line(&scratch, &main, None),
+        &board,
+        NOW + 60.0,
+        BOUNDS,
+    );
+    assert_eq!(candidate.commit, tip);
+    assert!(candidate.open(), "{said:?}");
+    assert!(candidate.advances.is_empty());
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].starts_with(&format!(
+            "{SLUG}'s land ({}) cannot be read, so it waits: ",
+            short(&receipt.squash)
+        )),
+        "{said:?}"
+    );
+}
+
+#[test]
+fn a_candidate_past_a_release_on_a_delivered_head_is_not_passed_by_it() {
+    let tree = Tree::new();
+    let scratch = Scratch::new(&tree);
+    let (_, [_, two], _) = fixing(&scratch);
+    // An earlier candidate was released on the head `two`, which its squash delivered to main;
+    // main's tip after it is held as the next candidate.
+    let receipt = delivered(&scratch, &two);
+    let tip = scratch.commit("a.txt", "next\n", "the next candidate");
+    let released = |at: &str, remote: &str| {
+        let mut candidate = candidate_at(&tip);
+        let line = Line {
+            newest: Some(("release-2026-11-12", at)),
+            ..line(&scratch, remote, None)
+        };
+        let said = settle(&mut candidate, &line, &Fake::default(), NOW, BOUNDS);
+        (candidate, said)
+    };
+    let (candidate, said) = released(&two, &tip);
+    assert!(candidate.open(), "{said:?}");
+    assert_eq!(said, Vec::<String>::new());
+    // The same release with its receipt gone is on no line the candidate holds: dropped, as a
+    // release that passed it is.
+    std::fs::remove_file(Receipt::path(
+        &crate::release::receipts::lands(&scratch.root).unwrap(),
+        SLUG,
+    ))
+    .unwrap();
+    let (candidate, said) = released(&two, &tip);
+    assert_eq!(candidate.state, State::Dropped, "{said:?}");
+    assert!(said[0].contains("passed it"), "{said:?}");
+    let _ = receipt;
 }

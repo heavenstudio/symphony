@@ -12,7 +12,7 @@ use symphony_board::NewSession;
 use super::{CHECK, Fixture, NOW, git};
 
 /// The red task of the stand-in check.
-const RED: &str = "tests/release-red-verify";
+pub(super) const RED: &str = "tests/release-red-verify";
 
 /// The fixture holding release candidates, with `releases` more lines of its `[releases]` table
 /// (its bounds the project's defaults unless they say).
@@ -33,7 +33,7 @@ pub(super) fn holding(releases: &str) -> Fixture {
 
 /// The fixture holding the commit that plants `red` as the release candidate, after its first
 /// run: the commit.
-fn held(fixture: &Fixture) -> String {
+pub(super) fn held(fixture: &Fixture) -> String {
     let red = fixture.land("red", Some("planted"), "a red change");
     let out = fixture.night(NOW, 1);
     assert!(
@@ -55,7 +55,7 @@ pub(super) fn record(fixture: &Fixture) -> serde_json::Value {
 }
 
 /// The commit the local branch `release-candidate` names, none when there is no such branch.
-fn branch(fixture: &Fixture) -> Option<String> {
+pub(super) fn branch(fixture: &Fixture) -> Option<String> {
     let at = git(
         &fixture.main,
         &[
@@ -108,7 +108,7 @@ pub(super) fn approve(fixture: &Fixture, hands: &Hands, slug: &str, commit: &str
 
 /// The branch `slug` started at `release-candidate`, `file` written with `text` (removed with
 /// none) and committed: the commit.
-fn fix(fixture: &Fixture, slug: &str, file: &str, text: Option<&str>) -> String {
+pub(super) fn fix(fixture: &Fixture, slug: &str, file: &str, text: Option<&str>) -> String {
     git(
         &fixture.main,
         &["checkout", "-q", "-b", slug, "release-candidate"],
@@ -144,7 +144,7 @@ pub(super) fn land(fixture: &Fixture, slug: &str, push: bool) -> String {
 
 /// `release --due SLUG MERGE` with the stand-in check at `now`, as the land's command runs it,
 /// which must end with `code`: its stdout.
-fn due(fixture: &Fixture, now: f64, slug: &str, merge: &str, code: i32) -> String {
+pub(super) fn due(fixture: &Fixture, now: f64, slug: &str, merge: &str, code: i32) -> String {
     fixture.run(now, &["--check", CHECK, "--due", slug, merge], code)
 }
 

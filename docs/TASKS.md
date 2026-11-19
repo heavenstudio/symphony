@@ -2511,9 +2511,11 @@ a request already made does not recall it. The receipt names the revision that w
 
 What else writes the default branch lands nothing there while the key is set, each refused by
 name: the regenerator, and a save of a document from the app, refused where it begins, before a
-file is written, and again where an edit is handed to the committer and in the commit itself. The release cadence refuses to
-count the landings of a line whose tip sets the key, since a squash is no merge of the land's: no
-release run is due by landings there and no release candidate is advanced, each saying so
+file is written, and again where an edit is handed to the committer and in the commit itself. The release cadence counts
+a squash by its receipt, and a release candidate advances to the head the receipt kept
+([RELEASES](RELEASES.md#the-cadence)); a land run again after it was cut while dispatching starts
+nothing a second time, so a release run its landing made due is asked for by the next landing or
+the release run's `--due`, run by hand
 ([RELEASES](RELEASES.md#the-cadence)). The sweep keeps the worktree and branch of a squashed
 head, which it finds in no history.
 
