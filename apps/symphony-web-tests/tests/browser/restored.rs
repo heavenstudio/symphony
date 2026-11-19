@@ -894,6 +894,157 @@ fn reconnect_pills_are_statuses_and_leave_document_reading_layout_unchanged() {
     }
 }
 
+/// The board's stages of the notice case, twelve tasks in each.
+const NOTICE_STAGES: [&str; 6] = [
+    "concept",
+    "design",
+    "ready",
+    "in_progress",
+    "review",
+    "done",
+];
+
+/// Every row of `status`'s column mounted, each because its own slot came on screen and the
+/// page's viewport observer saw it ([`Chrome::reveal`](super::chrome::Chrome::reveal)): a scroll
+/// to the column's end mounts the rows between only where a frame falls between the scrolls.
+fn mount_notice_rows(browser: &mut super::chrome::Chrome, status: &str) {
+    browser.reveal(&format!("#column-{status}"));
+    browser.until(
+        &format!("{status}'s twelve row slots"),
+        &format!("document.querySelectorAll('[data-status={status}] [id^=row-]').length === 12"),
+    );
+    for i in 0..12 {
+        browser.reveal(&format!("[id='row-notice/{status}-{i}']"));
+    }
+    assert_eq!(
+        browser.eval(&format!(
+            "document.querySelectorAll('[data-status={status}] .taskcard').length"
+        )),
+        json!(12),
+        "{status}: a row once mounted stays mounted"
+    );
+}
+
+/// A server notice and a failed board snapshot leave the board's loaded rows, its box and the
+/// reading offset exactly where they were, at a phone's width, a small phone's and a desk's, and
+/// the page's recovery neither clamps the page nor loses a fetched row. Every wait is on its
+/// condition ([`Chrome::until`](super::chrome::Chrome::until)).
+#[test]
+fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    let tasks: Vec<_> = NOTICE_STAGES.iter().flat_map(|status| (0..12).map(move |i| json!({
+        "slug": format!("notice/{status}-{i}"),
+        "title": format!("Loaded {status} task {i} keeps its real row through an unavailable board snapshot"),
+        "body": "", "status": status, "priority":1, "parent":null, "created_by":"owner",
+        "created":0.0, "updated":4102444800.0, "links":[], "depends":[], "roles":[],
+        "instruction":false
+    }))).collect();
+    site.set_json(
+        "/api/task-board",
+        &json!({
+            "tasks":tasks, "statuses":NOTICE_STAGES,
+            "counts":NOTICE_STAGES.map(|s| (s,12)), "signoff":[], "next":null
+        }),
+    );
+    let Some(mut browser) = chrome() else { return };
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1024,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
+    browser.open(&site.url("/tasks"));
+    browser.until(
+        "the board, following its feed",
+        "document.querySelector('.kanban') !== null && document.querySelector('main')?.dataset.feed==='live'",
+    );
+    // Mount every real row before narrowing. The first-page placeholder is deliberately taller
+    // than a short fetched row; that loading transition must not be mistaken for a reconnect
+    // notice moving settled content.
+    for status in NOTICE_STAGES {
+        mount_notice_rows(&mut browser, status);
+    }
+    assert_eq!(
+        browser.eval("document.querySelectorAll('.taskcard').length"),
+        json!(72)
+    );
+    for width in [300, 390, 1024] {
+        let phone = width <= 760;
+        let rows = if phone { 12 } else { 72 };
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
+        );
+        browser.until(
+            &format!("{width}px: the stage columns drawn"),
+            &format!(
+                "document.querySelectorAll('.waiting-columns .column').length === {}",
+                if phone { 1 } else { 8 }
+            ),
+        );
+        // A change of width remounts the stage lists; mount each shown stage's rows again.
+        let shown = if phone {
+            &NOTICE_STAGES[4..5]
+        } else {
+            &NOTICE_STAGES[..]
+        };
+        for status in shown {
+            mount_notice_rows(&mut browser, status);
+        }
+        browser.eval("scrollTo(0,0)");
+        browser.until(
+            &format!("{width}px: the shown stages' row slots"),
+            &format!("document.querySelectorAll('.waiting-columns [id^=row-]').length === {rows}"),
+        );
+        browser.until(
+            &format!("{width}px: each column's first row drawn"),
+            "[...document.querySelectorAll('.waiting-columns .column:not([data-status=build]):not([data-status=test])')].every(column => column.querySelector('[id^=row-]:first-child .taskcard'))",
+        );
+        browser.eval("scrollTo(0,document.documentElement.scrollHeight)");
+        browser.until(
+            &format!("{width}px: every shown row drawn at the board's end"),
+            &format!("document.querySelectorAll('.taskcard').length === {rows}"),
+        );
+        browser.eval("document.documentElement.style.overflowAnchor='none';scrollTo({top:1200,behavior:'instant'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        browser.eval("window.keptScroll=scrollY;window.keptBoard=document.querySelector('.kanban');window.keptBox=JSON.stringify(keptBoard.getBoundingClientRect().toJSON());window.keptRows=[...document.querySelectorAll('.taskcard')];window.keptIds=keptRows.map(e=>e.dataset.slug).join(',')");
+        site.server_notice("The review server is reconnecting to its task database.");
+        browser.until(
+            &format!("{width}px: the server notice shown"),
+            "document.querySelector('.page-notices .server-notice')?.textContent.includes('task database') === true",
+        );
+        assert_notice_surface(&mut browser, ".page-notices .server-notice", "status");
+        assert_eq!(browser.eval("scrollY===keptScroll && JSON.stringify(keptBoard.getBoundingClientRect().toJSON())===keptBox"), json!(true), "{width}px: server notice must leave the board box and reading offset exact");
+        site.fail_route("/api/task-board", true);
+        site.fail_feeds(usize::MAX);
+        site.drop_feeds();
+        // Every read that fails here (the check's counts, each column's first page) is one the
+        // page tries again by itself, and says so.
+        browser.until(
+            &format!("{width}px: the board-fetch alert, the feed stale"),
+            "document.querySelector('main')?.dataset.feed==='stale' && document.querySelector('.page-notices [role=alert]')?.textContent==='Board snapshot unavailable (the server answered 500). Trying again…'",
+        );
+        assert_notice_surface(&mut browser, ".page-notices [role=alert]", "alert");
+        assert_eq!(browser.eval("scrollY===keptScroll && JSON.stringify(keptBoard.getBoundingClientRect().toJSON())===keptBox && [...document.querySelectorAll('.taskcard')].every((e,i)=>e===keptRows[i]) && keptRows.map(e=>e.dataset.slug).join(',')===keptIds"), json!(true), "{width}px: failed snapshots must retain all mounted row identities, the board height and reading offset");
+        browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        assert_eq!(browser.eval(r#"(() => {
+            const notice=document.querySelector('.page-notices').getBoundingClientRect();
+            const last=[...document.querySelectorAll('.taskcard')].map(card=>card.getBoundingClientRect()).sort((a,b)=>b.bottom-a.bottom)[0];
+            return last.height>0 && last.top>=0 && last.bottom<=notice.top && notice.bottom<=innerHeight;
+        })()"#), json!(true), "{width}px: the last real card clears the whole notice stack");
+        browser.eval("window.failureHeight=document.documentElement.scrollHeight;window.failureScroll=scrollY");
+        site.fail_route("/api/task-board", false);
+        site.fail_feeds(0);
+        browser.until(
+            &format!("{width}px: the feed live again, the alert gone"),
+            "document.querySelector('main')?.dataset.feed==='live' && !document.querySelector('.page-notices [role=alert]')",
+        );
+        site.server_notice("");
+        browser.until(
+            &format!("{width}px: the server notice gone"),
+            "!document.querySelector('.page-notices .server-notice')",
+        );
+        assert_eq!(browser.eval("scrollY===failureScroll && document.documentElement.scrollHeight===failureHeight && [...document.querySelectorAll('.taskcard')].map(e=>e.dataset.slug).join(',')===keptIds"), json!(true), "{width}px: recovery must not clamp the page or lose fetched rows");
+    }
+}
+
 // A long document's end content clears the reconnect notice at a phone's width and a desk's, and
 // two real toasts show whole: above the notice where it floats over the window (1024 px), at their
 // own place above the dock where it is in the page's flow (390 px, `noticeGeometry`).
