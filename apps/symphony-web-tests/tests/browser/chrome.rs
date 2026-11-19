@@ -82,10 +82,14 @@ impl Chrome {
         self.0.eval(expression).asserted()
     }
 
-    /// Approach a lazy region's slot, then let its ordinary viewport observer mount it. Both are
-    /// waits [`Chrome::until`] their condition: the slot mounts in the frame its observer runs in,
-    /// which a loaded machine's renderer can hold back over many of the page's turns, so no count
-    /// of them bounds it.
+    /// Approach a lazy region's slot as the reader does, then let its ordinary viewport observer
+    /// mount it. The reader's scroll starts with their own input (a wheel), which ends whatever
+    /// holds the page's place: the shell's hold of a row while the rows near it draw, and the
+    /// board's return to the place its history entry keeps once it draws again. A script's scroll
+    /// alone ends neither, and they put the page back where they hold it in the next frame, before
+    /// the observer looks, so the slot is never seen. Both waits are [`Chrome::until`] their
+    /// condition: the slot mounts in the frame its observer runs in, which a loaded machine's
+    /// renderer can hold back over many of the page's turns, so no count of them bounds it.
     pub fn reveal(&mut self, selector: &str) {
         let slot = format!("document.querySelector({})", json!(selector));
         self.until(
@@ -93,7 +97,7 @@ impl Chrome {
             &format!("{slot} !== null"),
         );
         self.eval(&format!(
-            "{slot}.scrollIntoView({{block:'center',inline:'center'}})"
+            "dispatchEvent(new WheelEvent('wheel')); {slot}.scrollIntoView({{block:'center',inline:'center'}})"
         ));
         self.until(
             &format!("the lazy slot mounted: {selector}"),

@@ -894,6 +894,11 @@ fn reconnect_pills_are_statuses_and_leave_document_reading_layout_unchanged() {
     }
 }
 
+/// What starts each of the notice case's own scrolls: the reader's input (a wheel), which ends
+/// whatever holds the page's place, as [`Chrome::reveal`](super::chrome::Chrome::reveal)'s does, so
+/// the page stays where the case put it and only what it then does moves it.
+const READER: &str = "dispatchEvent(new WheelEvent('wheel'));";
+
 /// The board's stages of the notice case, twelve tasks in each.
 const NOTICE_STAGES: [&str; 6] = [
     "concept",
@@ -989,7 +994,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         for status in shown {
             mount_notice_rows(&mut browser, status);
         }
-        browser.eval("scrollTo(0,0)");
+        browser.eval(&format!("{READER}scrollTo(0,0)"));
         browser.until(
             &format!("{width}px: the shown stages' row slots"),
             &format!("document.querySelectorAll('.waiting-columns [id^=row-]').length === {rows}"),
@@ -998,12 +1003,14 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
             &format!("{width}px: each column's first row drawn"),
             "[...document.querySelectorAll('.waiting-columns .column:not([data-status=build]):not([data-status=test])')].every(column => column.querySelector('[id^=row-]:first-child .taskcard'))",
         );
-        browser.eval("scrollTo(0,document.documentElement.scrollHeight)");
+        browser.eval(&format!(
+            "{READER}scrollTo(0,document.documentElement.scrollHeight)"
+        ));
         browser.until(
             &format!("{width}px: every shown row drawn at the board's end"),
             &format!("document.querySelectorAll('.taskcard').length === {rows}"),
         );
-        browser.eval("document.documentElement.style.overflowAnchor='none';scrollTo({top:1200,behavior:'instant'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        browser.eval(&format!("document.documentElement.style.overflowAnchor='none';{READER}scrollTo({{top:1200,behavior:'instant'}});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))"));
         browser.eval("window.keptScroll=scrollY;window.keptBoard=document.querySelector('.kanban');window.keptBox=JSON.stringify(keptBoard.getBoundingClientRect().toJSON());window.keptRows=[...document.querySelectorAll('.taskcard')];window.keptIds=keptRows.map(e=>e.dataset.slug).join(',')");
         site.server_notice("The review server is reconnecting to its task database.");
         browser.until(
@@ -1023,7 +1030,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         );
         assert_notice_surface(&mut browser, ".page-notices [role=alert]", "alert");
         assert_eq!(browser.eval("scrollY===keptScroll && JSON.stringify(keptBoard.getBoundingClientRect().toJSON())===keptBox && [...document.querySelectorAll('.taskcard')].every((e,i)=>e===keptRows[i]) && keptRows.map(e=>e.dataset.slug).join(',')===keptIds"), json!(true), "{width}px: failed snapshots must retain all mounted row identities, the board height and reading offset");
-        browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        browser.eval(&format!("{READER}scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))"));
         assert_eq!(browser.eval(r#"(() => {
             const notice=document.querySelector('.page-notices').getBoundingClientRect();
             const last=[...document.querySelectorAll('.taskcard')].map(card=>card.getBoundingClientRect()).sort((a,b)=>b.bottom-a.bottom)[0];
