@@ -712,12 +712,8 @@ impl<'a> Side<'a> {
                     }
                     // SurrealDB makes a database of its own in every store, which defines
                     // nothing: only one that holds something is another's.
-                    let info = crate::rpc::Client::new(&running.addr, &ns, &db)
-                        .query("INFO FOR DB;", json!({}))
-                        .map_err(|why| {
-                            ServerError::Io(format!("{ns}/{db} could not be read: {why}"))
-                        })?;
-                    if !defines_nothing(info.first().unwrap_or(&Value::Null)) {
+                    let info = super::reclaim::defined(running, &ns, &db)?;
+                    if !defines_nothing(&info) {
                         others.push(format!("{ns}/{db}"));
                     }
                 }
