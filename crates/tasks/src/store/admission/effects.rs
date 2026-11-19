@@ -9,9 +9,9 @@
 //! caller's word never prepares or finalizes.
 
 use super::{
-    Decided, Error, Failure, Host, OperationRequest, Receipt, Refusal, RefusalCode, Store, Taking,
-    admit, agent, context, fenced, pg, receipt_id, refusal, relied_on, request_digest, sender, sql,
-    sql_cap, surreal,
+    Decided, Error, Failure, Host, OperationRequest, Receipt, Refusal, RefusalCode, Store, admit,
+    applied, context, joins_said, pg, receipt_id, refusal, request_digest, sender, sql, sql_cap,
+    surreal,
 };
 use crate::store::statement::both;
 use crate::workflow::effect::{self, Adapter, Bindings, Intent, Stage};
@@ -101,13 +101,11 @@ impl Store {
     /// for changes, or no edge it took recorded one.
     pub fn reviewed(&self, slug: &str) -> Result<Option<Reviewed>, Error> {
         use symphony_api::workflow::Effect;
-        let Some(position) = self.workflow_position(slug)? else {
+        if self.workflow_position(slug)?.is_none() {
             return Ok(None);
-        };
-        for revision in (1..=position.revision).rev() {
-            let Some(transition) = self.workflow_transition(slug, revision)? else {
-                continue;
-            };
+        }
+        // Every transition of the task in one read, newest first.
+        for transition in self.workflow_transitions(slug)?.into_iter().rev() {
             let review = (transition.effects.iter()).find_map(|e| match e {
                 Effect::Review { approved } => Some(*approved),
                 _ => None,
@@ -216,7 +214,7 @@ impl Store {
                 bindings.head,
                 transition.revision
             );
-            let mut vars = applied(self, &decided, &admitted, principal, request, &digest, at)?;
+            let (mut vars, _) = applied(self, &decided, &admitted, principal, request, &digest, at)?;
             vars["said"] = json!(said);
             vars["intent"] = json!(intent);
             self.apply_with(
@@ -361,16 +359,7 @@ impl Store {
                 });
             }
             Stage::Dispatched | Stage::Finalized => {}
-            Stage::Prepared => {
-                return Err(refused(
-                    RefusalCode::ExplicitActionRequired,
-                    format!(
-                        "{} was never dispatched: nothing was sent under it, so nothing is \
-                         finalized",
-                        intent.id
-                    ),
-                ));
-            }
+            Stage::Prepared => return Err(undispatched(&intent)),
             Stage::Withdrawn => return Err(withdrawn(&intent)),
         }
         let Some(outcome) = adapter.outcome(&intent).map_err(unread)? else {
@@ -397,7 +386,10 @@ impl Store {
             let stage_was = held.stage;
             match stage_was {
                 Stage::Dispatched | Stage::Finalized => {}
-                Stage::Prepared | Stage::Withdrawn => return Err(Failure::Again),
+                // A dispatch run again withdrew it since this finalize read it: reading it again
+                // finds the same, so it is answered now.
+                Stage::Withdrawn => return Err(Failure::Stop(withdrawn(&held))),
+                Stage::Prepared => return Err(Failure::Stop(undispatched(&held))),
             }
             let position = standing.task.as_ref().and_then(|t| t.position.as_ref());
             let mut recovery =
@@ -470,7 +462,8 @@ impl Store {
             }
             let digest = request_digest(&request);
             let at = transition.at;
-            let mut vars = applied(self, &decided, &admitted, principal, &request, &digest, at)?;
+            let (mut vars, _) =
+                applied(self, &decided, &admitted, principal, &request, &digest, at)?;
             vars["said"] = json!(said);
             vars["recipient"] = json!(recipient);
             vars["intent"] = json!(next);
@@ -642,67 +635,13 @@ impl Store {
             "v ->> 'said'",
             "v ->> 'recipient'",
         );
+        let (joins, joins_pg) = joins_said(&vars);
         let body = both(
-            format!("{}{surreal_intent}{logged}{guard}", sql::APPLY),
-            pg::workflow::apply(&format!("{pg_intent}\n    {pg_logged}"), guarded),
+            format!("{}{surreal_intent}{logged}{joins}{guard}", sql::APPLY),
+            pg::workflow::apply(&format!("{pg_intent}\n    {pg_logged}{joins_pg}"), guarded),
         );
         self.written(body, vars, slug).map(drop)
     }
-}
-
-/// The variables of `sql::APPLY` for `admitted`, as [`Store::apply_operation`] gives them: its
-/// receipt under the request's key, the roles relied on, added and dropped, the dependencies and
-/// the slot counters fenced.
-fn applied(
-    store: &Store,
-    decided: &Decided,
-    admitted: &admit::Admitted,
-    principal: &Principal,
-    request: &OperationRequest,
-    digest: &str,
-    at: f64,
-) -> Result<Value, Failure> {
-    let slug = request.task.as_str();
-    let transition: &Transition = &admitted.transition;
-    let taking = Taking {
-        status: &transition.status,
-        acquires: admitted.acquires,
-        add: &admitted.add,
-        what: format!("{slug} cannot take {}", request.edge),
-    };
-    let slots = store.taken(decided, taking, principal)?;
-    let receipt = Receipt {
-        principal: principal.clone(),
-        key: request.idempotency_key.clone(),
-        slug: slug.to_string(),
-        request: digest.to_string(),
-        sent: request.clone(),
-        transition: transition.id.clone(),
-        effects: transition.effects.clone(),
-    };
-    let row = |(handle, role): &(String, String)| json!({"slug": slug, "handle": handle, "role": role, "since": at});
-    let pair = |(handle, role): &(String, String)| json!({"handle": handle, "role": role});
-    Ok(json!({
-        "slug": slug,
-        "version": decided.task.version,
-        "generation": decided.active.generation,
-        "digest": decided.active.digest,
-        "dependencies": fenced(decided, request),
-        "holding": relied_on(&decided.facts, principal, request, context(decided))
-            .iter().map(pair).collect::<Vec<_>>(),
-        "add": admitted.add.iter().map(row).collect::<Vec<_>>(),
-        "drop": admitted.drop.iter().map(pair).collect::<Vec<_>>(),
-        "receipt": receipt_id(principal, &request.idempotency_key),
-        "receipt_body": receipt,
-        "actor": agent(principal),
-        "transition": transition,
-        "position": transition.position(),
-        "moved": transition.status != decided.task.status,
-        "sender": sender(principal),
-        "now": at,
-        "slots": slots,
-        "seen": [],
-    }))
 }
 
 /// The adapter's name, refused unless the host registered it.
@@ -726,6 +665,16 @@ fn unread(why: String) -> Error {
     refused(
         RefusalCode::UnsupportedAdapter,
         format!("the adapter could not read what its effect is bound to: {why}"),
+    )
+}
+
+fn undispatched(intent: &Intent) -> Error {
+    refused(
+        RefusalCode::ExplicitActionRequired,
+        format!(
+            "{} was never dispatched: nothing was sent under it, so nothing is finalized",
+            intent.id
+        ),
     )
 }
 

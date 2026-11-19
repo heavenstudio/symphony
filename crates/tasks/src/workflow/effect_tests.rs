@@ -124,10 +124,13 @@ fn a_reservation_stands_only_under_its_workflow_at_its_revision_with_its_binding
     assert_eq!(stale(&intent, Some(&same), Some(&here), None), None);
     let none = stale(&intent, None, Some(&here), None).unwrap();
     assert!(none.contains("no custom workflow is active"), "{none}");
-    for other in [active(3, "d2"), active(2, "d3")] {
-        let said = stale(&intent, Some(&other), Some(&here), None).unwrap();
-        assert!(said.contains("activated again"), "{said}");
-    }
+    // The prepared generation is said first, then the one active now.
+    assert_eq!(
+        stale(&intent, Some(&active(3, "d2")), Some(&here), None).unwrap(),
+        "the workflow activated again since it was prepared (generation 2 when prepared, 3 now)"
+    );
+    let digest = stale(&intent, Some(&active(2, "d3")), Some(&here), None).unwrap();
+    assert!(digest.contains("activated again"), "{digest}");
     let unheld = stale(&intent, Some(&same), None, None).unwrap();
     assert_eq!(unheld, "no workflow holds sim/a now");
     let moved = stale(&intent, Some(&same), Some(&position(6)), None).unwrap();
@@ -212,4 +215,15 @@ fn a_stage_says_its_word_as_the_record_does() {
     ] {
         assert_eq!(serde_json::to_value(stage).unwrap(), stage.as_str());
     }
+}
+
+#[test]
+fn a_landings_adapter_is_taken_by_the_land_command_and_another_by_none() {
+    for adapter in [DEFAULT_LAND, PROJECT_LAND] {
+        assert_eq!(
+            taken_by(adapter, "sim/a").as_deref(),
+            Some("`just land sim/a`")
+        );
+    }
+    assert_eq!(taken_by("deployer", "sim/a"), None);
 }

@@ -370,10 +370,27 @@ fn the_board_writers_neither_move_nor_staff_a_task_the_workflow_holds() {
         };
         explicit(f.store.claim("sim/a", "amber"));
         explicit(f.store.move_to("sim/a", "in_progress", "orch"));
-        explicit(f.store.reserve("sim/a", "amber", 60.0));
         explicit(f.store.take_role("sim/a", "birch", "reviewer"));
         explicit(f.store.move_to("sim/a", "cancelled", "owner"));
+        // A reservation is the board's coordination, as a launch makes it: it stands on held
+        // work, admission refuses another's claim while it is live, and the reserver's own claim
+        // consumes it.
+        f.store.reserve("sim/a", "birch", 60.0).unwrap();
+        let reserved = take(&f.store, "sim/a", &agent_session("amber"), "claim");
+        assert!(
+            refused(reserved).contains("sim/a is reserved for birch"),
+            "{backend:?}"
+        );
+        // Lapsed, it stands against nothing: the claim that takes the edge drops it.
+        f.advance(61.0);
+        for handle in ["amber", "birch", "orch"] {
+            f.store.touch(handle).unwrap();
+        }
         take(&f.store, "sim/a", &agent_session("amber"), "claim").unwrap();
+        assert!(
+            !(f.store.get("sim/a").unwrap().roles.iter()).any(|r| r.role == "reserved"),
+            "{backend:?}"
+        );
         // A lost executor is no takeover's: its position's recovery answers it.
         f.advance(crate::health::LIVE_SECONDS + crate::health::STALE_SECONDS + 1.0);
         f.store.touch("birch").unwrap();

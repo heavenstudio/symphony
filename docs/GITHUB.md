@@ -5,6 +5,10 @@ answers [a land delivered by a pull request](#delivering-a-land) there. It is op
 off: a project that never commits its settings file runs none of it, and its
 board, its pages and its landing are as they are without it.
 
+To set it up, follow [Setting up GitHub](GITHUB_SETUP.md): building the program, the token, the
+GitHub Apps and rulesets a delivery needs, each step in order, and how to check it works. This
+page is the reference those steps link to.
+
 It is a program of its own (`crates/symphony-github`). It reaches the board through
 [`tasks api`](TASKS.md#the-tasks-api) and nothing else, GitHub through `curl`, and keeps what it
 must remember in the folder the board names for it. No other package of the workspace builds with
@@ -311,7 +315,8 @@ squash (`crates/symphony-github/src/preflight.rs`). Where they do not hold it an
 with `kind` `policy` and each thing missing, and pushes, opens, marks and merges nothing; an
 answer GitHub did not give is `unavailable`, never a pass. `preflight` says the same to an
 operator. The adapter edits no rule, ruleset, protection or visibility: putting them right is a
-repository administrator's act on GitHub, and nothing here turns delivery on.
+repository administrator's act on GitHub ([the steps](GITHUB_SETUP.md#delivery-by-pull-request)),
+and nothing here turns delivery on.
 
 It makes three kinds of read. Two are with `token_file`'s token: the repository, and the rules
 in effect for the branch (`GET /repos/OWNER/NAME/rules/branches/BRANCH`, every page), which
@@ -384,59 +389,11 @@ an organization's ruleset was not tried; where it does not, a rule from one hold
   records it. It is told at the next land, so until the update restriction above is in force a
   green check can outlive its evidence where a person can merge.
 
-## Setting a repository up for delivery
-
-What a person with the organization's and the repository's administration does on GitHub, in
-this order. The adapter does none of it and no agent does it without that person's word.
-
-**Read this first.** The update restriction of step 4 stops every direct push to the default
-branch the moment it is active, a land's own push among them, and with it whatever else
-commits there by pushing. So it is turned on together with the settings of step 6 and not
-before, and only once everything that reaches the default branch is delivered by a pull
-request. Until then steps 1 to 3 change nothing a land does.
-
-1. **Three GitHub Apps** in the organization, each with no webhook and installed on the one
-   repository alone ("Only select repositories"). GitHub adds Metadata (read) to each.
-
-   | App | Repository permissions | Its number is |
-   | --- | --- | --- |
-   | the check publisher | Checks: Read and write | `checks_app_id` |
-   | the landing App | Contents: Read and write; Pull requests: Read and write; Issues: Read and write only where `close_issues` is set | `landing_app_id` |
-   | the policy reader | Administration: Read and write | `policy_app_id` |
-
-   The policy reader's permission is the one that can change or remove the rules of step 4; it
-   is asked because GitHub shows a ruleset's bypass list to nothing less
-   ([the rights each read needs](#the-protection-a-delivery-needs)).
-2. **A private key for each App**, kept outside every checkout and readable by its owner
-   alone. Whoever holds a key can act as its App.
-3. **The repository's merge settings**: squash merging allowed, merge commits and rebase
-   merging not, auto-merge off.
-4. **Two rulesets** on the default branch, both active:
-   - one with an empty bypass list that requires a pull request with squash as its one merge
-     method, requires the status check `symphony/eligible` from the check publisher (its App
-     chosen as the source, and "require branches to be up to date" off), blocks force pushes
-     and restricts deletions;
-   - one that restricts updates, with the landing App as its only bypass actor.
-5. **A current installation token of each App** in a file of its own (`token_file`,
-   `checks_token_file`, `policy_token_file`), limited to the one repository, as
-   [the token](#the-token) says. GitHub expires each within the hour.
-6. **The settings**, landed on the default branch: `symphony-github.toml` with `enabled`,
-   `repository`, `pull_requests = "publish"`, the three files and the three numbers, and
-   `[land] delivery` in `symphony.toml` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)).
-
-A repository that imports an upstream ([delivering an import](#delivering-an-import)) differs in
-three of these: step 3 allows merge commits beside squash; step 4's first ruleset names merge
-beside squash as its pull request's methods, and no ruleset requires a linear history; and step
-6 adds `upstream_id` to `symphony-github.toml` and `[land.upstream]` to `symphony.toml`
-([PROJECT_FILE](PROJECT_FILE.md#landupstream)).
-
-Then `symphony-github preflight` says whether a delivery would go on, and names each thing
-missing where it would not. Other Apps installed on the repository are worth a look as well:
-one that holds Administration can edit the rules, whatever these steps set.
-
 ## Checking it
 
-`just test-rs -p symphony-github` runs its tests: each module's own, the exchange on a board
+A setup of a repository of your own is checked by `status`, `preview` and `preflight`
+([Setting up GitHub](GITHUB_SETUP.md#checking-it)). The program itself is checked by its tests:
+`just test-rs -p symphony-github` runs them: each module's own, the exchange on a board
 and a repository held in memory with every failure above planted, and the exchange on a real
 scratch board through `tasks api` with its requests made by a real `curl` to a loopback server.
 The delivery's verbs are asked of the same repository in memory, which answers pull requests,

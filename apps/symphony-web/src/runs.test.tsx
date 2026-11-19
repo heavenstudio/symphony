@@ -15,6 +15,7 @@ import {
   followList,
   followNow,
   followRun,
+  followUpdates,
   freshness,
   isRunLine,
   LIST_MS,
@@ -42,6 +43,7 @@ import {
   readRunLog,
   readRunPage,
   readRunsPage,
+  readSchemaUpdates,
   refreshed,
   result,
   runHref,
@@ -52,12 +54,25 @@ import {
   stepBars,
   type Told,
   took,
+  UpdatesView,
+  updateRows,
+  updateTimes,
   type Wait,
   when,
   wholeLines,
 } from "./runs";
 import { aMachine, anOperation, asking, aWork, memoryStorage, reply, server } from "./testing";
-import { RUN_LOG_MOST, RUN_LOG_TAIL, type RunLine, type RunLog, type RunPage } from "./wire";
+import {
+  RUN_LOG_MOST,
+  RUN_LOG_TAIL,
+  type RunLine,
+  type RunLog,
+  type RunPage,
+  SCHEMA_UPDATES_PATH,
+  type SchemaUpdate,
+  type SchemaUpdates,
+  type UpdateTime,
+} from "./wire";
 
 /** Sunday 2026-11-15, 00:00 UTC. */
 const TODAY = 1_794_700_800;
@@ -1103,6 +1118,7 @@ describe("the page", () => {
       /^<main class="runs-page"><div class="runs" data-ready="loading" aria-busy="true">/,
     );
     expect(html).toContain("Reading what runs now…");
+    expect(html).toContain("Reading the schema updates…");
     expect(html).toContain("Loading the runs…");
     expect(html).toContain('<option value="lint" selected="">lint</option>');
   });
@@ -1112,5 +1128,289 @@ describe("the page", () => {
     const html = renderToStaticMarkup(<RunsPage />);
     expect(html).toContain('class="runs run-page" data-ready="loading"');
     expect(html).toContain("Loading the run…");
+  });
+});
+
+/** 2026-11-19, 00:00 UTC. */
+const DAY = 1_795_046_400;
+
+/** The record of a board's first store at its schema, as the ledger holds its words. */
+const SEEN = "schema-seen.log: the first store that saw the board at this schema";
+
+/** The record of a release's install: no colon, its words its name. */
+const MANIFEST = "release-2026-11-19's manifest, written by its install";
+
+/** The record of the server's first write at the schema. */
+const HANDED = "the server's hand-off: its reload's line in server.log";
+
+/** A time at `at` from the record `words`, named by its words before their first colon. */
+const stamp = (at: number, words: string): UpdateTime => ({
+  at,
+  source: words.split(":")[0] ?? words,
+  words,
+});
+
+/** The `alpha` board's update to schema 23: reached 08:05:09, its release installed 09:34:29 and
+ * served 12:51:19 on 2026-11-19, as the server says it. */
+function aServed(fields: Partial<SchemaUpdate> = {}): SchemaUpdate {
+  return {
+    id: "alpha@23",
+    project: "alpha",
+    schema: 23,
+    generation: 1,
+    state: "served",
+    reached: stamp(DAY + 29_109, SEEN),
+    available: stamp(DAY + 34_469, MANIFEST),
+    served: stamp(DAY + 46_279, HANDED),
+    total: 17_170,
+    total_said: "4 h 46 min",
+    after_available: 11_810,
+    after_available_said: "3 h 16 min",
+    failures: 0,
+    failure: null,
+    task: null,
+    ...fields,
+  };
+}
+
+/** The `beta` board's update to schema 24, in its second generation, open and failed twice. */
+function aFailing(fields: Partial<SchemaUpdate> = {}): SchemaUpdate {
+  return aServed({
+    id: "beta@24.2",
+    project: "beta",
+    schema: 24,
+    generation: 2,
+    state: "open",
+    reached: stamp(DAY + 50_000, SEEN),
+    available: stamp(DAY + 50_100, MANIFEST),
+    served: null,
+    total: null,
+    total_said: null,
+    after_available: null,
+    after_available_said: null,
+    failures: 2,
+    failure: "the server still reads the board at 23",
+    task: "/symphony/task/tests/release-red-update-beta-24-g2",
+    ...fields,
+  });
+}
+
+describe("the schema updates", () => {
+  const answer = (updates: SchemaUpdate[], unread: string | null = null): SchemaUpdates => ({
+    updates,
+    unread,
+  });
+
+  it("read the fields the section draws, each of its type, and refuse an answer without them", () => {
+    const read = answer([aServed(), aFailing()]);
+    expect(readSchemaUpdates(read)).toEqual(read);
+    expect(readSchemaUpdates({ updates: [] })).toEqual(answer([]));
+    expect(readSchemaUpdates({ updates: [], unread: "/m/updates.json: no" })).toEqual(
+      answer([], "/m/updates.json: no"),
+    );
+    for (const [what, value] of [
+      ["no updates", { unread: null }],
+      ["a state it does not know", answer([aServed({ state: "gone" as SchemaUpdate["state"] })])],
+      [
+        "a time with no source",
+        answer([aServed({ reached: { at: 1, words: "x" } as SchemaUpdate["reached"] })]),
+      ],
+      [
+        "a time with no record's words",
+        answer([aServed({ reached: { at: 1, source: "x" } as SchemaUpdate["reached"] })]),
+      ],
+      ["a wait not said", answer([aServed({ total_said: 4 as unknown as string })])],
+      ["a task that is no text", answer([aFailing({ task: 1 as unknown as string })])],
+      ["no count of failures", answer([aServed({ failures: null as unknown as number })])],
+      ["an unread that is no text", { updates: [], unread: 1 }],
+    ] as const) {
+      expect(readSchemaUpdates(value), what).toBeNull();
+    }
+  });
+
+  it("are read at once and on the list's timer naming the last tag, until a 404", async () => {
+    const asked = server();
+    const page = new AbortController();
+    const { waited, wait } = waits(page, 4);
+    const { told, check } = telling<SchemaUpdates>();
+    const done = followUpdates(page.signal, check, wait);
+    const read = answer([aServed()]);
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe(SCHEMA_UPDATES_PATH);
+    asked[0]?.answer(reply(200, read, "u1"));
+    await asking(asked, 2);
+    asked[1]?.answer(new Response(null, { status: 304 }));
+    await asking(asked, 3);
+    asked[2]?.answer(reply(200, { updates: "none" }, "u2"));
+    await asking(asked, 4);
+    asked[3]?.answer(reply(404, { error: "no such route" }));
+    await done;
+    expect(told).toEqual([
+      ["answered", read],
+      ["answered", null],
+      ["failed", "The schema updates' answer is not schema updates. Trying again…", false],
+      ["failed", "no such route (the server answered 404).", true],
+    ]);
+    expect(waited).toEqual([LIST_MS, LIST_MS, LIST_MS]);
+  });
+
+  it("are told nothing once the page that asked is gone", async () => {
+    const asked = server();
+    for (const late of [reply(200, answer([aServed()])), reply(503, {})]) {
+      const page = new AbortController();
+      const { told, check } = telling<SchemaUpdates>();
+      const at = asked.length;
+      const done = followUpdates(page.signal, check, async () => {});
+      await asking(asked, at + 1);
+      page.abort();
+      expect(asked[at]?.signal?.aborted).toBe(true);
+      asked[at]?.answer(late);
+      await done;
+      expect(told).toEqual([]);
+    }
+  });
+
+  it("list the open ones first, each part newest first as the server sent it", () => {
+    const older = aServed({ id: "alpha@22", schema: 22 });
+    const open = aFailing();
+    const left = aServed({ id: "gamma@23", project: "gamma", state: "left", served: null });
+    expect(updateRows([aServed(), older, open, left]).map((update) => update.id)).toEqual([
+      "beta@24.2",
+      "alpha@23",
+      "alpha@22",
+      "gamma@23",
+    ]);
+  });
+
+  it("say each time in UTC, one on the day of the one before by its hour, with its source", () => {
+    expect(updateTimes(aServed())).toEqual([
+      {
+        name: "reached",
+        said: "reached Thu 19 Nov, 08:05 UTC",
+        source: "schema-seen.log",
+        words: SEEN,
+      },
+      {
+        name: "release installed",
+        said: "release installed 09:34 UTC",
+        source: MANIFEST,
+        words: MANIFEST,
+      },
+      { name: "served", said: "served 12:51 UTC", source: "the server's hand-off", words: HANDED },
+    ]);
+    const nextDay = aServed({
+      served: stamp(DAY + 86_400 + 60, "this refresh found the server writing it"),
+    });
+    expect(updateTimes(nextDay)[2]?.said).toBe("served Fri 20 Nov, 00:01 UTC");
+    expect(updateTimes(aServed({ reached: null, served: null }))).toEqual([
+      {
+        name: "release installed",
+        said: "release installed Thu 19 Nov, 09:34 UTC",
+        source: MANIFEST,
+        words: MANIFEST,
+      },
+    ]);
+  });
+
+  it("draw a served one with its wait, the part after its release and each time's source", () => {
+    const html = renderToStaticMarkup(<UpdatesView updates={answer([aServed()])} error={null} />);
+    expect(html).toContain('<h2 id="runs-updates-title">Schema updates</h2>');
+    expect(html).toContain('data-update="alpha@23" data-state="served"');
+    expect(html).toContain(
+      '<span class="run-result" data-result="served"><span class="run-mark" aria-hidden="true">✓</span><span class="run-word">served</span></span>',
+    );
+    expect(html).toContain('<span class="run-label">alpha board · schema 23</span>');
+    expect(html).toContain(">4 h 46 min</span>");
+    expect(html).toContain('<span class="run-who">3 h 16 min after its release</span>');
+    expect(html).toContain(
+      '<span title="schema-seen.log: the first store that saw the board at this schema">reached Thu 19 Nov, 08:05 UTC</span>',
+    );
+    expect(html).toContain(
+      '<span title="the server&#x27;s hand-off: its reload&#x27;s line in server.log"> · served 12:51 UTC</span>',
+    );
+    expect(html).toContain(
+      '<span class="update-sources">Times from schema-seen.log; release-2026-11-19&#x27;s manifest, written by its install; the server&#x27;s hand-off</span>',
+    );
+    expect(html).not.toContain("run-note");
+    const once = renderToStaticMarkup(
+      <UpdatesView
+        updates={answer([
+          aServed({ reached: stamp(DAY, MANIFEST), served: null, available: null }),
+        ])}
+        error={null}
+      />,
+    );
+    expect(once, "a source named once").toContain(
+      '<span class="update-sources">Times from release-2026-11-19&#x27;s manifest, written by its install</span>',
+    );
+    const none = renderToStaticMarkup(
+      <UpdatesView
+        updates={answer([aServed({ reached: null, available: null, served: null })])}
+        error={null}
+      />,
+    );
+    expect(none, "no time, no source").not.toContain("update-sources");
+  });
+
+  it("draw the failures of one no longer open, and a task with no failure said, each as it is", () => {
+    const once = aServed({ failures: 1, failure: "the server read 22" });
+    const html = renderToStaticMarkup(
+      <UpdatesView
+        updates={answer([once, aFailing({ id: "beta", failures: 0, failure: null })])}
+        error={null}
+      />,
+    );
+    expect(html).toContain(
+      '<span class="run-note">1 failed refresh, the last: the server read 22</span>',
+    );
+    expect(html).toContain(
+      '<span class="run-note">task <a href="/symphony/task/tests/release-red-update-beta-24-g2">tests/release-red-update-beta-24-g2</a></span>',
+    );
+    const unnamed = renderToStaticMarkup(
+      <UpdatesView updates={answer([aServed({ failures: 3, failure: null })])} error={null} />,
+    );
+    expect(unnamed).toContain('<span class="run-note">3 failed refreshes</span>');
+    const elsewhere = renderToStaticMarkup(
+      <UpdatesView updates={answer([aFailing({ task: "https://h/task/x" })])} error={null} />,
+    );
+    expect(elsewhere, "only a path of the app is linked").not.toContain("<a ");
+  });
+
+  it("draw an open one first, waiting, with its failures and its task's page as the server names it", async () => {
+    vi.resetModules();
+    vi.stubGlobal("document", {
+      getElementById: () => ({ textContent: '{"name":"","register":"","base":"/alpha"}' }),
+    });
+    const { UpdatesView: View } = await import("./runs");
+    const html = renderToStaticMarkup(
+      <View updates={answer([aServed(), aFailing()])} error={null} />,
+    );
+    expect(html.indexOf('data-update="beta@24.2"')).toBeLessThan(
+      html.indexOf('data-update="alpha@23"'),
+    );
+    expect(html).toContain(
+      '<span class="run-result" data-result="waiting"><span class="run-mark" aria-hidden="true">◷</span><span class="run-word">waiting</span></span>',
+    );
+    expect(html).toContain('<span class="run-label">beta board · schema 24, generation 2</span>');
+    expect(html).toContain("2 failed refreshes, the last: the server still reads the board at 23");
+    expect(html).toContain(
+      '<a href="/symphony/task/tests/release-red-update-beta-24-g2">tests/release-red-update-beta-24-g2</a>',
+    );
+    expect(html).not.toContain('href="/alpha/symphony/');
+  });
+
+  it("say none is recorded, a ledger not read, a failed read and the first read under way", () => {
+    const view = (updates: SchemaUpdates | null, error: string | null = null) =>
+      renderToStaticMarkup(<UpdatesView updates={updates} error={error} />);
+    expect(view(answer([]))).toContain('<p class="runs-quiet">No schema update recorded yet.</p>');
+    const unread = view(answer([], "/m/updates.json: format 2 is a later build's"));
+    expect(unread).toContain(
+      "The schema updates could not be read: /m/updates.json: format 2 is a later build&#x27;s",
+    );
+    expect(unread).not.toContain("No schema update recorded yet.");
+    const failed = view(null, "No answer. Trying again…");
+    expect(failed).toContain("The schema updates could not be read: No answer. Trying again…");
+    expect(failed).not.toContain("Reading the schema updates…");
+    expect(view(null)).toContain("Reading the schema updates…");
   });
 });

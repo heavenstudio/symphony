@@ -16,6 +16,148 @@ fn pair(phase: &str, state: &str) -> Pair {
     }
 }
 
+#[test]
+fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
+    let full = json!({
+        "phase": "build", "state": "working", "resume": {"phase": "build", "state": "available"},
+        "generation": 2, "revision": 7, "digest": "d1",
+        "manual": {"trigger": "lost_holder", "holder": "amber", "role": "executor", "manual": true},
+    });
+    let with = |key: &str, value: Value| {
+        let mut changed = full.clone();
+        changed[key] = value;
+        changed
+    };
+    let without = |key: &str| {
+        let mut changed = full.clone();
+        changed.as_object_mut().unwrap().remove(key);
+        changed
+    };
+    let cases = [
+        full.clone(),
+        without("resume"),
+        without("manual"),
+        with("resume", Value::Null),
+        with("manual", Value::Null),
+        with(
+            "manual",
+            json!({"trigger": "release", "holder": "a", "role": "reviewer", "manual": false}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "attempt_failure", "holder": "ab12", "role": "checker",
+                   "manual": true, "attempt": "ab12", "exhausted": null}),
+        ),
+        // Each refused as its decoder refuses it.
+        without("digest"),
+        without("generation"),
+        with("revision", json!("7")),
+        with("revision", json!(-1)),
+        with("revision", json!(7.5)),
+        with("phase", json!(1)),
+        with("extra", json!(1)),
+        with("resume", json!({"phase": "build"})),
+        with(
+            "resume",
+            json!({"phase": "build", "state": "a", "extra": 1}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "gone", "holder": "a", "role": "r", "manual": true}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "release", "holder": "a", "role": "r", "manual": "yes"}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "release", "holder": "a", "role": "r", "manual": true, "x": 1}),
+        ),
+        with("manual", json!("lost_holder")),
+        with(
+            "manual",
+            json!({"trigger": "attempt_failure", "holder": "a", "role": "r", "manual": true, "attempt": 7}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "attempt_failure", "holder": "a", "role": "r", "manual": true, "exhausted": false}),
+        ),
+        json!(["build", "working"]),
+        Value::Null,
+    ];
+    let mut read = 0;
+    for case in cases {
+        let decoded: Option<TaskPosition> = serde_json::from_value(case.clone()).ok();
+        assert_eq!(TaskPosition::of(&case), decoded, "{case}");
+        read += usize::from(decoded.is_some());
+    }
+    assert_eq!(read, 7, "the cases the decoder reads");
+    let position = TaskPosition::of(&full).unwrap();
+    assert_eq!(
+        (position.at(), position.revision),
+        (pair("build", "working"), 7)
+    );
+
+    // A transition's body is read for what the alarm says of it, whatever else it records.
+    let body =
+        serde_json::to_value(moved("sim/a", 2, pair("build", "working"), "in_progress")).unwrap();
+    let read = Moved::of(&body).unwrap();
+    assert_eq!(
+        (read.slug.as_str(), read.revision, read.status.as_str()),
+        ("sim/a", 2, "in_progress")
+    );
+    assert_eq!(read.at, body["at"].as_f64().unwrap());
+    for missing in ["slug", "revision", "status", "at"] {
+        let mut short = body.clone();
+        short.as_object_mut().unwrap().remove(missing);
+        assert_eq!(Moved::of(&short), None, "{missing}");
+    }
+}
+
+/// Every position the types can hold, each optional field set and each trigger, is read by field
+/// as it is written: a field the types gain breaks the literals below and a trigger breaks the
+/// match, and each fails here until `TaskPosition::of` reads it, so a position a newer writer
+/// records is never read as no position.
+#[test]
+fn every_position_the_types_hold_is_read_by_field_as_it_is_written() {
+    let triggers = [
+        Trigger::Release,
+        Trigger::LostHolder,
+        Trigger::AttemptFailure,
+        Trigger::CancellationAcknowledged,
+    ]
+    .map(|trigger| match trigger {
+        // A trigger the enum gains stops compiling here: list it above as well.
+        Trigger::Release
+        | Trigger::LostHolder
+        | Trigger::AttemptFailure
+        | Trigger::CancellationAcknowledged => trigger,
+    });
+    for (trigger, attempt) in triggers
+        .into_iter()
+        .zip([None, None, Some("ab12"), Some("cd34")])
+    {
+        let position = TaskPosition {
+            phase: "build".into(),
+            state: "working".into(),
+            resume: Some(pair("build", "available")),
+            generation: 2,
+            revision: 7,
+            digest: "d1".into(),
+            manual: Some(Recovered {
+                trigger,
+                holder: "amber".into(),
+                role: "executor".into(),
+                manual: true,
+                attempt: attempt.map(str::to_string),
+                exhausted: attempt.map(|_| "rework".to_string()),
+            }),
+        };
+        let written = serde_json::to_value(&position).unwrap();
+        assert_eq!(TaskPosition::of(&written), Some(position), "{written}");
+    }
+}
+
 fn owner() -> Principal {
     Principal::new(PrincipalKind::Human, "local".into(), "owner".into())
 }

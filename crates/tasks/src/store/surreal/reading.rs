@@ -67,6 +67,11 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> (String, V
         ),
         _ => ("[]", "[]"),
     };
+    let pull_lets = if matches!(which, Which::Pullable(_)) {
+        CLAIM_STATUSES
+    } else {
+        ""
+    };
     let (slot_lets, slots) = if matches!(which, Which::Starting(_) | Which::SlotHoldings) {
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), super::super::cap::vars())
         {
@@ -92,7 +97,8 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> (String, V
     vars["executing"] = json!(EXECUTING);
     native_bounds(&mut vars);
     let read = format!(
-        "LET $tasks = ({pick});
+        "{pull_lets}
+             LET $tasks = ({pick});
              LET $slugs = $tasks.slug;
              LET $slot_wanted = $slugs;
              LET $view_roles = (SELECT slug, handle, role, since, expires FROM role{scope} ORDER BY since, handle);
@@ -118,6 +124,14 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> (String, V
     );
     (read, vars)
 }
+
+/// `$pullable` widened by the statuses that the positions an executor's claim edge leaves project
+/// to, in the active custom workflow: a task it holds is offered by its claim
+/// ([`crate::Store::next_for`]), whatever status that position projects to. The definition is
+/// read by its id, and the task read stays on its status index.
+pub(in crate::store) const CLAIM_STATUSES: &str = "LET $claiming = (SELECT VALUE body.definition FROM ONLY type::record('workflow', ['definition', (SELECT VALUE body.digest FROM ONLY workflow:['active']) ?? ''])) ?? { positions: [], edges: [] };
+LET $claimed_at = $claiming.edges.filter(|$e| $e.automatic != true AND array::len($e.effects.filter(|$f| $f.kind = 'acquire_role' AND $f.role = 'executor')) > 0).from;
+LET $pullable = array::union($pullable, $claiming.positions.filter(|$p| $p.at IN $claimed_at).legacy);";
 
 /// The sessions a read's answer can show ([`Sessions::Shown`]), each by its id, never a scan of
 /// the table: a handle the board holds no session of gives no row, as the whole list has none.

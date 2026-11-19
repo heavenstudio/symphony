@@ -168,6 +168,8 @@ impl Store {
         let taking = Taking {
             status: &transition.status,
             acquires: recovery.acquires,
+            held: decided.holds_now(),
+            holds: decided.holds_at(&transition.to),
             add: &[],
             what: format!(
                 "{slug} cannot move to {}/{} by its recovery",

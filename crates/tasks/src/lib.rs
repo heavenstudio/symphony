@@ -49,6 +49,7 @@ pub mod confine;
 pub mod covering;
 pub mod execution;
 pub mod folders;
+pub mod gates;
 pub mod git;
 pub mod health;
 mod json_object;
@@ -100,8 +101,8 @@ pub use store::{
     PIPELINE, PULLABLE, Pick, Presence, Program, ROLES, Raw, RawRows, ReportRead, ReportTask, Role,
     SLOT_READS, STATUSES, SearchHit, SearchSource, Session, StageRecord, Store,
     THREAD_WINDOW_LIMIT, Task, TaskStamp, ThreadWindow, UNANSWERED_WAIT, UNANSWERED_WAIT_VAR,
-    Unfresh, WRITERS_RECENT, WRITERS_SINCE, Writer, approved, can_transition, covered_by,
-    covered_line, landing, leases_ended, leases_past, reviewer_verdict,
+    Unfresh, WRITERS_EVERY, WRITERS_RECENT, WRITERS_SINCE, Writer, approved, can_transition,
+    covered_by, covered_line, landing, leases_ended, leases_past, reviewer_verdict,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

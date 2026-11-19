@@ -319,3 +319,59 @@ fn a_projects_older_record_is_in_its_repositorys_install_folder() {
         Some(common.join(INSTALL))
     );
 }
+
+#[test]
+fn what_the_running_server_writes_is_its_project_lists_word_and_nothing_where_it_says_none() {
+    use std::io::BufRead;
+    let tree = Tree::new();
+    let machine = tree.path("machine");
+    assert_eq!(writes(&machine), None, "no record, no server");
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tree.write("machine/server.json", &format!("{{\"port\":{port}}}"));
+    let lists = [
+        (
+            "200 OK",
+            r#"{"projects": [{"id": "alpha", "writes": true}, {"id": "beta", "writes": false},
+               {"id": "gamma", "writes": null}, {"id": "delta"}, {"name": "no id"}]}"#,
+        ),
+        ("200 OK", r#"{"projects": "not a list"}"#),
+        ("200 OK", "not json"),
+        ("404 Not Found", "{}"),
+    ];
+    let answering = std::thread::spawn(move || {
+        for (status, body) in lists {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert!(line.starts_with("GET /api/projects "), "{line}");
+            while reader.read_line(&mut line).unwrap() > 2 {
+                line.clear();
+            }
+            write!(
+                stream,
+                "HTTP/1.1 {status}\r\nConnection: close\r\n\r\n{body}"
+            )
+            .unwrap();
+        }
+    });
+    assert_eq!(
+        writes(&machine).unwrap(),
+        [
+            ("alpha".to_string(), Some(true)),
+            ("beta".to_string(), Some(false)),
+            ("gamma".to_string(), None),
+        ],
+        "one it cannot say of is None; one listed with no word of writes (an older server's), \
+         or with no id, is left out"
+    );
+    for _ in 0..3 {
+        assert_eq!(
+            writes(&machine),
+            None,
+            "an answer that is no project list is none"
+        );
+    }
+    answering.join().unwrap();
+}

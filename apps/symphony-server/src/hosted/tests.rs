@@ -565,6 +565,7 @@ async fn route_query_and_body_aliases_cannot_choose_another_scope() {
         "/api/front",
         "/api/projects",
         "/api/machine-work",
+        "/api/schema-updates",
         "/api/agent-focus",
         "/api/agent-screen",
         "/api/task-offer",
