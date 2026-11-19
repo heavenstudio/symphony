@@ -1134,8 +1134,11 @@ the newer release moved stays at that release's schema, which the older release'
 and writes nothing to ([the switch](#the-switch)) and the older release's `tasks` refuses. Its
 store as it was before the move is the snapshot the refresh took
 (`before-schema-N-RELEASE.surql`, or `.sql` of a board on PostgreSQL), and a board put back to it is one that went back, which the
-owner accepts ([TASKS](TASKS.md#a-board-that-went-back)). Pointing `current` on the machine whose
-server is the shared one is the owner's word, as any switch of that server is. The next green
+owner accepts ([TASKS](TASKS.md#a-board-that-went-back)). Pointing `current` back on the machine whose
+server is the shared one is the owner's word. Pointing it forward is not: while this
+repository's board is at a schema the release `current` names does not serve, an orchestrator
+points `current` at the newest green release that serves it, at once and without asking, and
+another project's pages save nothing until that project takes the release. The next green
 refresh points `current` at the release it installs.
 
 ## Who runs it
