@@ -157,6 +157,12 @@ impl Entry {
         })
     }
 
+    /// Whether the entry names its paths whole, with no table to narrow them to: so any change to
+    /// one counts, as a raise of a limit in it must ([`crate::gates`]).
+    pub fn whole(&self) -> bool {
+        self.table.is_none()
+    }
+
     /// Whether the entry names the project's `path`, its parts joined by `/`, its table aside: a
     /// table's entry names its file alone.
     pub fn names(&self, path: &str) -> bool {

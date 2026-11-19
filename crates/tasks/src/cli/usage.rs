@@ -188,6 +188,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "as its assessor: the stamps a task needs, at a tip, and why",
             ),
             (
+                "gate",
+                "as its orchestrator: raise a limit, or waive a stamp at one tip",
+            ),
+            (
                 "done",
                 "close a subtask, or a task covered by another's landing",
             ),
@@ -666,8 +670,8 @@ The stamps a land can require, from the main checkout's committed
 symphony.toml ([stamps], else the Symphony's own four), each with whether a
 task no assessment has read needs it, how the land knows it stands, where it
 applies and where it does not. With a slug, then the task's needs as they
-stand, its branch's tip and the paths [land] check_paths names that the branch
-changes: what an assessor reads first.
+stand, its gate decisions, its branch's tip and the paths [land] check_paths
+names that the branch changes: what an assessor reads first.
 
 positional arguments:
   slug
@@ -737,6 +741,47 @@ options:
               the upstream commit the head imports, resolved to the whole
               commit; only with --tip
   --why WHY   one line for each stamp it left out or added
+"#,
+    ),
+    (
+        "gate",
+        r#"usage: just tasks gate [-h] [--as ACTOR] [--raise RAISE | --waive]
+                       [--tip TIP] --why WHY
+                       slug gate
+"#,
+        r#"usage: just tasks gate [-h] [--as ACTOR] [--raise RAISE | --waive]
+                       [--tip TIP] --why WHY
+                       slug gate
+
+As the task's orchestrator, give one of its quality gates way by a decision the
+board records: the board's own field, and a line on its thread its assessor,
+its reviewer and its land read. Refused to a session that executed the task or
+work under it, reviews it or gave it a verdict, or does not orchestrate it; the
+owner's word in chat is recorded by the orchestrator, its reason naming it.
+
+A raise names a limit as PATH:NAME, the one line of PATH that sets NAME to a
+number (tools/size-budget.toml:symphony), in a file [land] check_paths names,
+so the change keeps a fresh reviewer. Its number now is read from the default
+branch; RAISE is the number it goes to, which the task commits in that file on
+its branch, its message the account, and the land reads it there.
+
+A waiver names a stamp the catalogue marks waivable (`just tasks stamps`), for
+the tip --tip names, else the branch's tip: the land does not require that
+stamp at that commit alone. tests, review and owner are never waived.
+
+positional arguments:
+  slug
+  gate         PATH:NAME for a raise, a stamp for a waiver
+
+options:
+  -h, --help   show this help message and exit
+  --as ACTOR
+  --raise RAISE
+               the number the limit goes to, above the default branch's
+  --waive      waive the stamp at one tip
+  --tip TIP    the commit a waiver is for, resolved to the whole commit;
+               left out, the task's branch's tip
+  --why WHY    what was measured, and why the gate gives way
 "#,
     ),
     (
