@@ -46,6 +46,7 @@ mod install;
 mod nextest;
 mod notes;
 mod place;
+mod receipts;
 mod record;
 mod refresh;
 mod rerun;
@@ -1718,7 +1719,9 @@ fn closes(root: &Path, earlier: &[Run], record: &Run, key: &str) -> bool {
         Some(red) if red.commit.is_empty() => true,
         Some(red) => {
             !record.commit.is_empty()
-                && is_ancestor(root, &red.commit, &record.commit).unwrap_or(false)
+                && (receipts::Receipts::read(root))
+                    .holds(root, &red.commit, &record.commit)
+                    .unwrap_or(false)
         }
     }
 }
@@ -1849,9 +1852,12 @@ fn night(
     .map_err(Stop::Error)?;
     let main_line = format!("{remote}/{}", options.branch);
     let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
+    let delivered = receipts::Receipts::read(&repo.root);
     let mut candidate = match (&options.out_of_cycle, held) {
         (_, Some(held)) => {
-            if !is_ancestor(&repo.root, &held.commit, &tip).map_err(Stop::Error)? {
+            // On it by its history, or by the squash that delivered it there
+            // ([`receipts::Receipts::holds`]).
+            if !(delivered.holds(&repo.root, &held.commit, &tip)).map_err(Stop::Error)? {
                 return Err(Stop::Error(format!(
                     "the release candidate {} is not on {main_line}: only a commit on it is \
                      released",
@@ -1919,8 +1925,9 @@ fn night(
         }
         return Ok(());
     }
+    // A release on a head a pull request delivered is behind whatever holds its squash.
     if let Some(newest) = newest
-        && !is_ancestor(&repo.root, &newest.commit, &candidate).map_err(Stop::Error)?
+        && !(delivered.holds(&repo.root, &newest.commit, &candidate)).map_err(Stop::Error)?
     {
         let named = options.out_of_cycle.as_deref().unwrap_or(&main_line);
         let why = format!(
