@@ -141,9 +141,56 @@ fn board_answers_lost_after_the_write_are_settled_without_a_second_write() {
             .count()
     };
     assert_eq!(edits(&rig), 1);
+    // The brief's earlier words went into the journal with the intent, before the edit was
+    // dispatched: an edit whose answer was lost can be put back from them.
+    let journal = rig.journal();
+    let intent = journal
+        .iter()
+        .find(|e| e.kind == "pull" && e.event == Event::Intent)
+        .unwrap();
+    assert_eq!(intent.base["prior_title"], "Title", "{}", intent.base);
+    let prior = intent.base["prior_body"].as_str().unwrap();
+    assert!(
+        prior.starts_with("Imported from GitHub issue #1"),
+        "{prior}"
+    );
+    assert!(prior.ends_with("\n\nText."), "{prior}");
+    assert_eq!(intent.base["token"]["version"], 1, "{}", intent.base);
     rig.reconcile(&digest).ok();
     assert_eq!(edits(&rig), 1, "the edit is read back, not made again");
     assert_eq!(rig.preview().digest(), None);
+}
+
+#[test]
+fn a_brief_the_board_gives_no_token_for_is_not_rewritten() {
+    let rig = Rig::new("pull-unread", IMPORT);
+    let number = rig.github.open("Title", "Text.", &["symphony"]);
+    let slug = import_slug(77, number);
+    rig.sync();
+    rig.github.edit(number, "Title 2", "Text 2.");
+    let digest = rig.preview().digest().unwrap();
+    rig.board.unbind();
+    let ended = rig.reconcile(&digest);
+    assert_eq!(ended.code, 1);
+    assert!(
+        ended
+            .err
+            .contains("the board gives no token, so nothing was written"),
+        "{}",
+        ended.err
+    );
+    assert_eq!(rig.board.task(&slug).unwrap().title, "Title");
+    assert!(!rig.board.writes().iter().any(|w| w.starts_with("edit")));
+    let words: Vec<Event> = (rig.journal().iter())
+        .filter(|e| e.kind == "pull")
+        .map(|e| e.event)
+        .collect();
+    assert_eq!(words, [Event::Intent, Event::Failed]);
+    assert_eq!(rig.store().preview().unwrap(), None, "preview again");
+
+    rig.board.bind();
+    rig.sync();
+    assert_eq!(rig.board.task(&slug).unwrap().title, "Title 2");
 }
 
 #[test]
@@ -949,6 +996,148 @@ fn a_marker_anyone_wrote_maps_no_task_that_was_never_opted_in() {
     assert_eq!(rig.state().mappings["tools/a"].flag, Some(Flag::Conflict));
     assert_eq!(rig.github.writes(), 0);
     assert_eq!(rig.github.issue(number)["body"], planted.as_str());
+}
+
+/// A planted issue carrying a waiting curated text's marker, adopted as a conflict, then dropped
+/// by its operator: its number.
+fn dropped_planted(rig: &Rig) -> i64 {
+    rig.board.file("tools/a", "A", "brief");
+    draft(rig, "tools/a", "Public", "Ours.");
+    let planted = with_marker("A stranger's words.", &marker_for(77, "tools/a"));
+    let number = rig.github.open("Planted", &planted, &[]);
+    rig.sync();
+    rig.sync();
+    assert_eq!(rig.state().mappings["tools/a"].flag, Some(Flag::Conflict));
+    let waiting = rig.preview();
+    assert!(waiting.digest().is_none(), "{}", waiting.out);
+
+    let board_writes = rig.board.writes().len();
+    let dropped = rig.run(&["drop", "tools/a"]).ok();
+    let url = format!("https://github.com/o/n/issues/{number}");
+    assert!(
+        dropped
+            .out
+            .contains(&format!("no longer mapped to issue #{number} ({url})")),
+        "{}",
+        dropped.out
+    );
+    assert!(
+        dropped.out.contains("published as a new issue"),
+        "{}",
+        dropped.out
+    );
+    let state = rig.state();
+    assert!(state.mappings.is_empty() && state.resolutions.is_empty());
+    let issue_id = rig.github.issue(number)["id"].as_i64().unwrap();
+    assert!(state.dropped_from("tools/a", issue_id));
+    assert!(
+        state.drafts.contains_key("tools/a"),
+        "the curated text stays"
+    );
+    let journal = rig.journal();
+    let words: Vec<(&str, Event)> = (journal.iter().rev().take(2).rev())
+        .map(|e| (e.kind.as_str(), e.event))
+        .collect();
+    assert_eq!(words, [("drop", Event::Intent), ("drop", Event::Ack)]);
+    let intent = &journal[journal.len() - 2];
+    assert_eq!(intent.target, "tools/a");
+    assert_eq!(intent.base["issue_number"], number, "the mapping it drops");
+    assert_eq!(rig.github.writes(), 0);
+    assert_eq!(
+        rig.board.writes().len(),
+        board_writes,
+        "the drop wrote no board"
+    );
+    // Edited there, so the next listing reads it again.
+    rig.github.edit(number, "Planted", &format!("{planted}\n"));
+    number
+}
+
+#[test]
+fn a_mapping_dropped_is_not_adopted_again_and_its_curated_text_is_published_anew() {
+    let rig = Rig::new("drop", EXCHANGE);
+    let planted = dropped_planted(&rig);
+    let said = rig.sync();
+    assert!(
+        said.contains("which it was dropped from: not mapped"),
+        "{said}"
+    );
+    assert!(
+        said.contains("publish tools/a as a new public issue"),
+        "{said}"
+    );
+    let ours = rig.state().mappings["tools/a"].issue_number;
+    assert_ne!(ours, planted);
+    assert!(
+        rig.github.issue(ours)["body"]
+            .as_str()
+            .unwrap()
+            .starts_with("Ours."),
+    );
+    assert_eq!(rig.github.issue(planted)["title"], "Planted", "not written");
+
+    // Listed again beside the publication, still carrying its marker, it is neither a
+    // duplicate nor mapped.
+    let marked = with_marker("Planted again.", &marker_for(77, "tools/a"));
+    rig.github.edit(planted, "Planted again", &marked);
+    let said = rig.sync();
+    assert!(!said.contains("more than one issue"), "{said}");
+    assert_eq!(rig.state().mappings["tools/a"].issue_number, ours);
+    assert_eq!(
+        rig.github.writes(),
+        1,
+        "one issue made, nothing else written"
+    );
+
+    // Nothing is kept of a slug mapped to nothing.
+    let refused = rig.run(&["drop", "tools/b"]);
+    assert_eq!(refused.code, 1);
+    assert!(
+        refused.err.contains("tools/b is mapped to no issue"),
+        "{}",
+        refused.err
+    );
+}
+
+#[test]
+fn a_publication_lost_after_a_drop_is_found_and_the_dropped_issue_is_no_duplicate() {
+    let rig = Rig::new("drop-lost", EXCHANGE);
+    let planted = dropped_planted(&rig);
+    let digest = rig.preview().digest().unwrap();
+    rig.github
+        .fault("POST", "/repos/o/n/issues", Fault::LoseAnswer);
+    assert_eq!(rig.reconcile(&digest).code, 1);
+    assert_eq!(rig.github.issues().len(), 2, "GitHub made the issue");
+
+    // The same preview again: its search by marker passes the dropped issue by.
+    rig.reconcile(&digest).ok();
+    let ours = rig.state().mappings["tools/a"].issue_number;
+    assert_eq!(ours, 2);
+    assert_eq!(rig.github.issues().len(), 2, "no second publication");
+    assert_eq!(rig.github.issue(planted)["title"], "Planted");
+}
+
+#[test]
+fn a_publication_lost_after_a_drop_is_mapped_by_the_next_preview_beside_the_dropped_issue() {
+    let rig = Rig::new("drop-lost-preview", EXCHANGE);
+    let planted = dropped_planted(&rig);
+    let digest = rig.preview().digest().unwrap();
+    rig.github
+        .fault("POST", "/repos/o/n/issues", Fault::LoseAnswer);
+    assert_eq!(rig.reconcile(&digest).code, 1);
+
+    // A new preview lists both issues that carry the marker: one was dropped, so the other is
+    // the publication, not a duplicate of it.
+    let marked = with_marker("Planted again.", &marker_for(77, "tools/a"));
+    rig.github.edit(planted, "Planted", &marked);
+    let said = rig.sync();
+    assert!(!said.contains("more than one issue"), "{said}");
+    assert!(
+        said.contains("carries its marker and is mapped to it"),
+        "{said}"
+    );
+    assert_eq!(rig.state().mappings["tools/a"].issue_number, 2);
+    assert_eq!(rig.github.issues().len(), 2, "no second publication");
 }
 
 #[test]

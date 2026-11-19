@@ -3,7 +3,8 @@
 //! each side's edits met by the rule that one changed side updates the other and two conflict.
 
 use crate::Rig;
-use symphony_github::plan::{import_slug, marker_for};
+use symphony_github::config::Source as _;
+use symphony_github::plan::{find_marker, import_slug, longest_body, marker_for};
 use symphony_github::state::{Flag, Origin};
 
 const IMPORT: &str = "issues = \"import\"\nimport_labels = [\"symphony\"]";
@@ -49,9 +50,53 @@ fn with_no_settings_committed_nothing_is_read_written_or_kept() {
         "{}",
         refused.err
     );
+    for (args, why) in [
+        (&["resolve", "tools/a", "local"][..], "mapped to no issue"),
+        (&["drop", "tools/a"][..], "mapped to no issue"),
+    ] {
+        let refused = rig.run(args);
+        assert_eq!(refused.code, 1, "{args:?}");
+        assert!(refused.err.contains(why), "{}", refused.err);
+    }
+    let made: Vec<_> = std::fs::read_dir(&rig.dir.0)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        made,
+        ["secret"],
+        "preview, reconcile, resolve and drop made no state folder and no lock"
+    );
 
     assert!(rig.github.asked().is_empty(), "no request was made");
     assert!(rig.board.writes().is_empty(), "the board was not written");
+}
+
+#[test]
+fn turned_off_a_preview_kept_while_on_is_dropped_and_never_replayed() {
+    let rig = Rig::new("off-after-on", "issues = \"export\"");
+    rig.board.file("tools/a", "A", "brief");
+    draft(&rig, "tools/a", "Public", "Body.");
+    let digest = rig.preview().digest().unwrap();
+    let on = rig.settings.load().unwrap();
+
+    rig.settings.set(None);
+    let preview = rig.preview();
+    assert!(preview.out.contains("turned off"), "{}", preview.out);
+    assert!(
+        preview.out.contains("tools/a would be published"),
+        "what waits is shown: {}",
+        preview.out
+    );
+    assert_eq!(rig.store().preview().unwrap(), None, "the kept one dropped");
+
+    // On again under the very settings it was made under: nothing is replayed.
+    rig.enable("issues = \"export\"");
+    assert_eq!(rig.settings.load().unwrap().revision, on.revision);
+    let stale = rig.reconcile(&digest);
+    assert_eq!(stale.code, 1);
+    assert!(stale.err.contains("no preview"), "{}", stale.err);
+    assert_eq!(rig.github.writes(), 0, "nothing was published");
 }
 
 #[test]
@@ -515,6 +560,75 @@ fn remote_text_is_content_only() {
         None,
         "cleaned text reads the same next time"
     );
+}
+
+#[test]
+fn a_curated_text_an_issue_cannot_hold_whole_is_refused_and_the_longest_reads_back() {
+    let rig = Rig::new("long-curated", "issues = \"export\"");
+    rig.board.file("tools/a", "A", "brief");
+    let longest = longest_body();
+    let file = rig.dir.0.join("long.md");
+    let publish = |body: &str| {
+        std::fs::write(&file, body).unwrap();
+        let file = file.to_str().unwrap();
+        rig.run(&["publish", "tools/a", "--title", "T", "--body-file", file])
+    };
+    // One past what an issue holds whole with its marker's line, and one past what a read
+    // keeps at all: neither is cut with words calling it remote text, both are refused.
+    for length in [longest + 1, 70_000] {
+        let refused = publish(&"x".repeat(length));
+        assert_eq!(refused.code, 1, "{length}");
+        assert!(
+            refused
+                .err
+                .contains(&format!("longer than {longest} characters")),
+            "{}",
+            refused.err
+        );
+    }
+    assert!(!rig.dir.0.join("state").exists(), "nothing was kept");
+
+    publish(&"x".repeat(longest)).ok();
+    rig.sync();
+    let body = rig.github.issue(1)["body"].as_str().unwrap().to_string();
+    assert_eq!(body.chars().count(), symphony_github::github::BODY_CHARS);
+    assert_eq!(find_marker(&body), Some(marker_for(77, "tools/a").as_str()));
+    let again = rig.preview();
+    assert_eq!(
+        again.digest(),
+        None,
+        "read back as it was sent: {}",
+        again.out
+    );
+    assert_eq!(rig.state().mappings["tools/a"].flag, None);
+}
+
+#[test]
+fn an_imported_task_takes_no_curated_text() {
+    let rig = Rig::new("publish-import", EXCHANGE);
+    let number = rig.github.open("Title", "Text.", &["symphony"]);
+    let slug = import_slug(77, number);
+    rig.sync();
+    assert_eq!(rig.state().mappings[&slug].origin, Origin::Import);
+    let file = rig.dir.0.join("public.md");
+    std::fs::write(&file, "Public words.").unwrap();
+    let refused = rig.run(&[
+        "publish",
+        &slug,
+        "--title",
+        "Public",
+        "--body-file",
+        file.to_str().unwrap(),
+    ]);
+    assert_eq!(refused.code, 1);
+    assert!(
+        refused
+            .err
+            .contains(&format!("{slug} is imported from issue #{number}")),
+        "{}",
+        refused.err
+    );
+    assert!(rig.state().drafts.is_empty(), "no draft nothing reads");
 }
 
 #[test]

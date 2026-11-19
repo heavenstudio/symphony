@@ -8,9 +8,9 @@
 use crate::plan::Preview;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::Write as _;
+use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
 /// The repository the state is bound to, by its number, which a rename or a transfer keeps.
@@ -119,6 +119,10 @@ pub struct State {
     /// The pull request each delivered task is bound to, by its slug.
     #[serde(default)]
     pub pulls: BTreeMap<String, Pull>,
+    /// The issues an operator dropped from a task's mapping, by the task's slug and the issue's
+    /// id: none is mapped to that task again, or taken for its publication.
+    #[serde(default)]
+    pub dropped: BTreeMap<String, BTreeSet<i64>>,
     /// The `updated_at` the next listing starts from.
     pub cursor: Option<String>,
     /// The settings' revision the cursor was read under. Under another, what the listing
@@ -129,6 +133,16 @@ pub struct State {
     pub paused: Option<String>,
     /// The second before which nothing is sent.
     pub rate_limited_until: Option<i64>,
+}
+
+impl State {
+    /// Whether an operator dropped the issue `issue_id` from the task `slug`'s mapping.
+    #[must_use]
+    pub fn dropped_from(&self, slug: &str, issue_id: i64) -> bool {
+        self.dropped
+            .get(slug)
+            .is_some_and(|issues| issues.contains(&issue_id))
+    }
 }
 
 /// The state folder.
@@ -259,7 +273,8 @@ impl Store {
         }
     }
 
-    /// One more line of the journal, on disk before this returns.
+    /// One more line of the journal, on disk before this returns. A last line cut short by a
+    /// crash, which no line end closes, is cut away first: appended to, it would hide this one.
     ///
     /// # Errors
     ///
@@ -269,18 +284,39 @@ impl Store {
         let mut line = serde_json::to_string(entry).map_err(|error| wrong(&path, error))?;
         line.push('\n');
         let write = || -> std::io::Result<()> {
-            let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+            let mut file = OpenOptions::new()
+                .create(true)
+                .read(true)
+                .append(true)
+                .open(&path)?;
+            let length = file.metadata()?.len();
+            if length > 0 {
+                let mut last = [0];
+                file.seek(SeekFrom::End(-1))?;
+                file.read_exact(&mut last)?;
+                if last != *b"\n" {
+                    let text = fs::read(&path)?;
+                    let kept = text
+                        .iter()
+                        .rposition(|byte| *byte == b'\n')
+                        .map_or(0, |at| at + 1);
+                    file.set_len(u64::try_from(kept).map_err(std::io::Error::other)?)?;
+                }
+            }
             file.write_all(line.as_bytes())?;
             file.sync_all()
         };
         write().map_err(|error| wrong(&path, error))
     }
 
-    /// The journal, oldest first. A last line cut short by a crash is left out.
+    /// The journal, oldest first. What follows its last line end is a line cut short by a crash
+    /// before its operation went on, and is left out. Any other line that does not read is a
+    /// refusal naming it: a line dropped may be an intent, and an intent forgotten is an
+    /// operation made twice.
     ///
     /// # Errors
     ///
-    /// The file is there and could not be read.
+    /// The file is there and could not be read, or a line of it does not read.
     pub fn entries(&self) -> Result<Vec<Entry>, String> {
         let path = self.path("journal.jsonl");
         let text = match fs::read_to_string(&path) {
@@ -288,10 +324,25 @@ impl Store {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(wrong(&path, error)),
         };
-        Ok(text
-            .lines()
-            .filter_map(|line| serde_json::from_str(line).ok())
-            .collect())
+        let Some((ended, _cut_short)) = text.rsplit_once('\n') else {
+            return Ok(Vec::new());
+        };
+        ended
+            .split('\n')
+            .enumerate()
+            .map(|(index, line)| {
+                serde_json::from_str(line).map_err(|error| {
+                    wrong(
+                        &path,
+                        format!(
+                            "line {} does not read ({error}): an operation it names may be \
+                             forgotten, so nothing goes on until the line is put right",
+                            index + 1
+                        ),
+                    )
+                })
+            })
+            .collect()
     }
 }
 
@@ -330,7 +381,7 @@ pub struct Entry {
     /// The digest of the content it writes.
     pub digest: String,
     /// What it expects to find: the digest of the remote text it replaces, or the board's token
-    /// with its generation.
+    /// with its generation and the title and brief it replaces, which the board does not keep.
     pub base: Value,
     /// The settings' revision it was dispatched under.
     pub config: String,
