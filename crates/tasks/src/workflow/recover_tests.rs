@@ -275,3 +275,15 @@ fn a_recovery_that_acquires_a_slot_says_so_for_the_cap() {
     let released = recovering(&custom, &facts, "amber", None, Trigger::Release).unwrap();
     assert!(!released.acquires);
 }
+
+#[test]
+fn a_task_at_a_pair_the_workflow_does_not_declare_is_stale() {
+    let custom = custom(&staffed());
+    let facts = at(&custom, "verify", "nowhere", &[("birch", "reviewer")]);
+    assert_eq!(
+        recovering(&custom, &facts, "birch", None, Trigger::LostHolder)
+            .unwrap_err()
+            .to_string(),
+        "stale_workflow: sim/a is at verify/nowhere, which the active workflow does not declare"
+    );
+}

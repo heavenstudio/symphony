@@ -243,3 +243,46 @@ fn next_offers_no_task_a_workflow_holds() {
         assert_eq!(f.store.next_for("amber").unwrap(), None);
     }
 }
+
+#[test]
+fn a_release_it_cannot_finish_writes_nothing_and_one_the_workflow_has_no_say_in_is_the_boards() {
+    for backend in BACKENDS {
+        let f = board(backend, &workflow());
+        // orch holds sim/a's executor and its orchestrator: letting both go is refused whole,
+        // as the orchestrator's would leave the task with none.
+        take(&f.store, "sim/a", &agent_session("orch"), "claim").unwrap();
+        let before = f.store.dump().unwrap();
+        assert!(refused(f.store.release("sim/a", "orch", None)).starts_with(
+            "orch cannot let go of orchestrator on sim/a: sim/a would have no orchestrator"
+        ));
+        assert_eq!(f.store.dump().unwrap(), before);
+        // A task not on the board, and a session holding nothing there, meet the board's refusals.
+        assert_eq!(
+            refused(f.store.release("sim/none", "amber", None)),
+            "no task 'sim/none'"
+        );
+        assert!(
+            refused(f.store.release("sim/a", "amber", None))
+                .starts_with("amber holds no role on sim/a")
+        );
+    }
+}
+
+#[test]
+fn a_host_that_grants_its_recovery_service_nothing_recovers_no_holder() {
+    for backend in BACKENDS {
+        let f = board(backend, &workflow());
+        take(&f.store, "sim/a", &agent_session("amber"), "claim").unwrap();
+        lose_all_but(&f, &["birch", "orch"]);
+        let host = Host {
+            grants: crate::workflow::Grants::none().grant("owner", crate::workflow::local_owner()),
+            adapters: Vec::new(),
+        };
+        assert_eq!(
+            refused(f.store.recover_holder("sim/a", "amber", "birch", &host)),
+            "unauthorized: this host grants the board's recovery service no `recovery`: nobody \
+             recovers a holder here"
+        );
+        assert_eq!(f.store.get("sim/a").unwrap().status, "in_progress");
+    }
+}

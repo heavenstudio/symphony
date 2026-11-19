@@ -56,6 +56,12 @@ pub(in crate::store) fn field_set(path: &str, value: &str) -> String {
 /// given, or nothing, which lifts it, where the change's `unlanded` is null.
 pub(in crate::store) const UNLANDED: &str = "nullif(v -> 'unlanded', 'null'::jsonb)";
 
+/// A filing as the board's own, refused (`unplaced`) while a custom workflow is active: it is
+/// filed again at the workflow's initial pair (`super::workflow::PLACED`).
+const UNPLACED: &str = "IF EXISTS (SELECT 1 FROM workflow WHERE id = '[\"active\"]'::jsonb) THEN \
+    RAISE EXCEPTION '%', v ->> 'unplaced'; \
+END IF;";
+
 /// The write's refusal unless its actor is a red's filer: `filer` and `unfiled`.
 pub(in crate::store) const FILED: &str = "IF (SELECT kind FROM session WHERE handle = v ->> 'actor') IS DISTINCT FROM v ->> 'filer' THEN \
     RAISE EXCEPTION '%', v ->> 'unfiled'; \
@@ -67,6 +73,10 @@ pub(in crate::store) fn create(new: &Creating) -> String {
     let mut block = String::new();
     if new.acts {
         block.push_str(&act());
+        block.push('\n');
+    }
+    if !new.placed {
+        block.push_str(UNPLACED);
         block.push('\n');
     }
     block.push_str(CREATE);
@@ -512,15 +522,29 @@ mod tests {
             arm,
             placed: false,
         };
+        let placed = |acts| Creating {
+            placed: true,
+            ..new(acts, false, false, false)
+        };
         let marks = [
             field_set("_symphony,owner_save", "v -> 'owner_save'"),
             field_set("_board,red", "v -> 'red'"),
             field_set("_board,arm", "v -> 'arm'"),
         ];
+        // Filed as the board's own, refused in the write while a custom workflow is active.
         let bare = create(&new(false, false, false, false));
         assert!(
-            bare.starts_with(CREATE),
+            bare.starts_with(&format!("{UNPLACED}\n{CREATE}")),
             "the owner's task is no session's act"
+        );
+        assert!(!bare.contains(super::super::workflow::PLACED));
+        // Filed again at the workflow's initial pair: placed, never refused for it.
+        let at_initial = create(&placed(false));
+        assert!(at_initial.starts_with(&format!("{CREATE}\n{}", super::super::workflow::PLACED)));
+        assert!(!at_initial.contains(UNPLACED));
+        in_order(
+            &create(&placed(true)),
+            &[&act(), CREATE, super::super::workflow::PLACED],
         );
         assert!(marks.iter().all(|mark| !bare.contains(mark.as_str())));
         assert!(!bare.contains(FILED));
@@ -531,7 +555,7 @@ mod tests {
         in_order(
             &all,
             &[
-                &act, CREATE, &marks[0], FILED, &marks[1], &marks[2], &said, &blocks,
+                &act, UNPLACED, CREATE, &marks[0], FILED, &marks[1], &marks[2], &said, &blocks,
             ],
         );
         let red = create(&new(true, false, true, false));

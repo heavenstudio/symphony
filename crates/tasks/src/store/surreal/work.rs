@@ -357,6 +357,10 @@ pub(in crate::store) const OWNER_SAVE: &str =
 /// is not known which.
 pub(in crate::store) const OWNER_SAVED: &str = "SELECT VALUE slug FROM task WHERE created_by = 'owner' AND fields._symphony.owner_save = $receipt LIMIT 2;";
 
+/// A filing as the board's own, refused (`$unplaced`) while a custom workflow is active: it is
+/// filed again at the workflow's initial pair (`super::workflow::PLACED`).
+const UNPLACED: &str = "IF record::exists(workflow:['active']) { THROW $unplaced };\n";
+
 /// What a new task's write turns on.
 pub(in crate::store) struct Creating {
     /// A session files it, not the owner.
@@ -382,13 +386,13 @@ pub(in crate::store) fn create(new: &Creating) -> String {
         String::new()
     };
     let arm_mark = if new.arm { ARM } else { "" };
-    let placed = if new.placed {
-        super::workflow::PLACED
+    let (unplaced, placed) = if new.placed {
+        ("", super::workflow::PLACED)
     } else {
-        ""
+        (UNPLACED, "")
     };
     format!(
-        "{act}{CREATE}\n{placed}\n{stamp}\n{marked}\n{arm_mark}\n{}\n{}",
+        "{act}{unplaced}{CREATE}\n{placed}\n{stamp}\n{marked}\n{arm_mark}\n{}\n{}",
         logged("$slug", "$actor", "'system'", "$said", "NONE"),
         block_cancelled_dependencies(false)
     )

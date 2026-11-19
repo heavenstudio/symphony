@@ -122,7 +122,10 @@ sends the receipt's request again when its command is repeated.
 taking it now, its authority named without saying who holds it: never a permit.
 `Store::workflow_read` answers the active definition, revision and generation. A task filed while
 a custom workflow is active starts at the definition's initial pair, its first transition
-recorded in the write that files it, and a filing that asks for another status is refused.
+recorded in the write that files it, and a filing that asks for another status is refused. A
+filing is written as the board's own first, so a board with no workflow files it in one write as
+before; that write refuses itself where a workflow is active, and the task is filed again at the
+initial pair.
 The board's own writers neither move nor staff a task the workflow holds: a move, claim,
 reservation, verdict, block, close or takeover of its executor, reviewer or reservation refuses
 as `explicit_action_required`, naming `just tasks workflow actions`, and a status written past
