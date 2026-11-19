@@ -403,7 +403,9 @@ that does not load is said with its retry, and the board draws its own lanes mea
 by their `order`, then Build and Test, then any status the board's own writers still hold a task
 in; on a phone, a tab for every phase by its `phone_order`; on a desk, a button for each phase
 that is no column, which opens it as a list as Backlog opens; and a chip for each state with
-open tasks, which chooses its facet. A card names its place by its phase's and state's labels.
+open tasks, which chooses its facet, that strip led by the word Workflow; Build and Test read
+Machine build and Machine test there, as a phase may be named Build and a state Working. A card
+names its place by its phase's and state's labels.
 The phone tab the board keeps for a project is the phase's stable key, never its label, so a
 relabel keeps it, and a phase no longer drawn falls back to the first tab; the ghost drawn before
 the board's first read draws that tab, with the count the phase last had. The state facet

@@ -875,7 +875,7 @@ export function TaskBoard({
                 aria-current={opened === stage ? "page" : undefined}
                 onClick={() => setOpened(stage)}
               >
-                {statusLabel(stage)} {count(stage)}
+                {name(stage)} {count(stage)}
               </button>
             ))}
         </nav>
