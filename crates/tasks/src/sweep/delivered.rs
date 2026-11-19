@@ -3,11 +3,13 @@
 //! ([`crate::land::delivery`]), so the receipt the land kept once it proved the host's commit is
 //! what says the head landed, and only while git and the kept files bear all of it out now:
 //!
-//! * a [`Receipt`] kept under its own task's name whose `head` is exactly the commit asked about: a
-//!   branch that moved on, or an ancestor of a delivered head, is of another head;
-//! * that head still kept under [`RETAINED`]`SLUG`, so a branch deleted loses no commit;
-//! * its `squash` the commit it recorded: of that id, of the one parent and of the tree it wrote,
-//!   that tree being what git makes of merging the head into that parent, as the land proved it;
+//! * the head still kept under [`RETAINED`]`SLUG`, so a branch deleted loses no commit;
+//! * that task's [`Receipt`], kept under its own name, whose `head` is exactly the commit asked
+//!   about: a branch that moved on, or an ancestor of a delivered head, is of another head;
+//! * its `squash`, `parent` and `tree` each a whole object id, never a name, a short id or an
+//!   option git would read as one;
+//! * its `squash` a commit of that one parent and that tree, the tree git makes of merging the head
+//!   into that parent, as the land proved it;
 //! * that squash on the remote default branch as last fetched (`refs/remotes/`[`REMOTE`]`/main`)
 //!   and in main here: a delivery the main checkout has not followed yet is not landed here.
 //!
@@ -19,37 +21,17 @@
 //! `crates/tasks/tests/sweep/delivered.rs`.
 
 use super::{git, trigger};
-use crate::land::delivery::{Journal, RECEIPTS, RETAINED, Receipt};
+use crate::land::delivery::{Journal, RETAINED, Receipt};
 use crate::land::{FOLDER, REMOTE};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// The squash that delivered a head, as its receipt names it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Proof {
-    pub slug: String,
-    pub squash: String,
-    pub pull: i64,
-}
-
-impl Proof {
-    /// How a line says it: `squashed into main as S by pull request #N`.
-    pub fn said(&self) -> String {
-        let short = self.squash.get(..12).unwrap_or(&self.squash);
-        format!(
-            "squashed into main as {short} by pull request #{}",
-            self.pull
-        )
-    }
-}
-
-/// The deliveries of one repository, read once a sweep and only when a head is not in main.
+/// The deliveries of one repository, read only when a head is not in main, once per commit.
 pub struct Delivered {
     root: PathBuf,
     /// The lands' folder; none where `root` is in no repository.
     lands: Option<PathBuf>,
-    receipts: Option<Vec<Receipt>>,
-    proved: BTreeMap<String, Option<Proof>>,
+    proved: BTreeMap<String, Option<String>>,
 }
 
 impl Delivered {
@@ -60,29 +42,30 @@ impl Delivered {
         Delivered {
             root: root.to_path_buf(),
             lands,
-            receipts: None,
             proved: BTreeMap::new(),
         }
     }
 
-    /// The proof that `head` was delivered into `main`, a commit of the default branch here; once
-    /// per commit a sweep.
-    pub fn proof(&mut self, head: &str, main: &str) -> Option<Proof> {
-        if head.is_empty() {
+    /// How `head` was delivered into `main`, a commit of the default branch here, when a receipt
+    /// git bears out says it was: `squashed into main as S by pull request #N` ([`said`]).
+    pub fn proof(&mut self, head: &str, main: &str) -> Option<String> {
+        if !object(head) {
             return None;
         }
         if let Some(known) = self.proved.get(head) {
             return known.clone();
         }
-        let root = self.root.clone();
-        let proof = (self.receipts().iter())
-            .filter(|receipt| receipt.head == head)
-            .find(|receipt| borne_out(&root, receipt, main))
-            .map(|receipt| Proof {
-                slug: receipt.slug.clone(),
-                squash: receipt.squash.clone(),
-                pull: receipt.pull,
-            });
+        let proof = {
+            let lands = self.lands.as_deref()?;
+            let at = format!("--points-at={head}");
+            let under = RETAINED.trim_end_matches('/');
+            let retained = ["for-each-ref", &at, "--format=%(refname)", under];
+            let listed = git::stdout(&self.root, &retained).unwrap_or_default();
+            (listed.lines())
+                .filter_map(|name| Receipt::read(lands, name.strip_prefix(RETAINED)?))
+                .find(|receipt| receipt.head == head && borne_out(&self.root, receipt, main))
+                .map(|receipt| said(&receipt.squash, receipt.pull))
+        };
         self.proved.insert(head.to_string(), proof.clone());
         proof
     }
@@ -97,50 +80,38 @@ impl Delivered {
             journal.slug
         ))
     }
+}
 
-    /// Each file of the receipts' folder that reads as the receipt of the task its name is of.
-    fn receipts(&mut self) -> &[Receipt] {
-        let lands = self.lands.clone();
-        self.receipts.get_or_insert_with(|| {
-            let Some(lands) = lands else {
-                return Vec::new();
-            };
-            let Ok(entries) = std::fs::read_dir(lands.join(RECEIPTS)) else {
-                return Vec::new();
-            };
-            let mut read: Vec<Receipt> = (entries.filter_map(Result::ok))
-                .filter_map(|entry| {
-                    let path = entry.path();
-                    let text = std::fs::read_to_string(&path).ok()?;
-                    let receipt: Receipt = serde_json::from_str(&text).ok()?;
-                    (Receipt::path(&lands, &receipt.slug) == path).then_some(receipt)
-                })
-                .collect();
-            read.sort_by(|a, b| a.slug.cmp(&b.slug));
-            read
-        })
-    }
+/// How a line says a squash: `squashed into main as S by pull request #N`.
+fn said(squash: &str, pull: i64) -> String {
+    let short = squash.get(..12).unwrap_or(squash);
+    format!("squashed into main as {short} by pull request #{pull}")
+}
+
+/// Whether `id` is a whole object id, SHA-1's or SHA-256's.
+fn object(id: &str) -> bool {
+    matches!(id.len(), 40 | 64) && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Whether git, in `root`, bears out all `receipt` says of its head and `main` holds its squash.
 fn borne_out(root: &Path, receipt: &Receipt, main: &str) -> bool {
-    let (head, squash, parent) = (&receipt.head, &receipt.squash, &receipt.parent);
-    let retained = format!("{RETAINED}{}", receipt.slug);
-    if git::rev(root, &retained).as_deref() != Some(head.as_str()) {
+    let (head, squash, parent, tree) = (
+        &receipt.head,
+        &receipt.squash,
+        &receipt.parent,
+        &receipt.tree,
+    );
+    if ![squash, parent, tree].into_iter().all(|id| object(id)) {
         return false;
     }
-    // The commit by its whole id, so a receipt naming a branch or a short id proves nothing.
-    let recorded = format!("{squash}\t{parent}\t{}", receipt.tree);
-    let commit = git::stdout(root, &["log", "-1", "--format=%H%x09%P%x09%T", squash]);
-    if parent.is_empty() || commit.as_deref().map(str::trim) != Some(recorded.as_str()) {
+    let recorded = format!("{parent}\t{tree}");
+    let commit = git::stdout(root, &["log", "-1", "--format=%P%x09%T", squash]);
+    if commit.as_deref().map(str::trim) != Some(recorded.as_str()) {
         return false;
     }
     let merge = git::stdout(root, &["merge-tree", "--write-tree", parent, head]);
-    if merge.as_deref().and_then(|out| out.lines().next()) != Some(receipt.tree.as_str()) {
-        return false;
-    }
-    let tracking = format!("refs/remotes/{REMOTE}/main");
-    git::rev(root, &tracking).is_some_and(|remote| git::ancestor(root, squash, &remote))
+    merge.as_deref().and_then(|out| out.lines().next()) == Some(tree.as_str())
+        && git::ancestor(root, squash, &format!("refs/remotes/{REMOTE}/main"))
         && git::ancestor(root, squash, main)
 }
 
@@ -155,26 +126,37 @@ mod tests {
         std::fs::create_dir_all(&nowhere).unwrap();
         let mut delivered = Delivered::of(&nowhere);
         assert_eq!(delivered.proof("", "main"), None);
-        assert_eq!(delivered.proof(&"a".repeat(40), "main"), None);
-        // Asked again, it is answered from what was found.
+        assert_eq!(delivered.proof("main", "main"), None, "a name, not an id");
         assert_eq!(delivered.proof(&"a".repeat(40), "main"), None);
         assert_eq!(delivered.under_way("tools/any"), None);
         std::fs::remove_dir(&nowhere).unwrap();
     }
 
     #[test]
-    fn a_proof_says_its_squash_short_and_its_pull_request() {
-        let proof = |squash: &str| Proof {
-            slug: "tools/any".into(),
-            squash: squash.into(),
-            pull: 9,
-        };
+    fn an_object_id_is_whole_and_hexadecimal() {
+        assert!(object(&"0123456789abcdef".repeat(4)[..40]));
+        assert!(object(&"f".repeat(64)));
+        for not in [
+            "",
+            "main",
+            "abc1234",
+            &"a".repeat(39),
+            &"a".repeat(41),
+            &"g".repeat(40),
+            &format!("--output={}", "a".repeat(31)),
+        ] {
+            assert!(!object(not), "{not}");
+        }
+    }
+
+    #[test]
+    fn a_squash_is_said_short_with_its_pull_request() {
         assert_eq!(
-            proof(&"b".repeat(40)).said(),
+            said(&"b".repeat(40), 9),
             "squashed into main as bbbbbbbbbbbb by pull request #9"
         );
         assert_eq!(
-            proof("abc").said(),
+            said("abc", 9),
             "squashed into main as abc by pull request #9"
         );
     }

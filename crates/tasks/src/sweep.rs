@@ -318,7 +318,7 @@ pub struct Sweep {
     /// The branches of removed worktrees that stay, merged into main all the same, and why.
     pub kept_branches: Vec<Kept>,
     /// Of the branches deleted, those a pull request squashed into main, each with how its receipt
-    /// says so ([`delivered::Proof::said`]); the rest are in main's history.
+    /// says so ([`Delivered::proof`]); the rest are in main's history.
     pub squashed: BTreeMap<String, String>,
     /// The main checkout's folder of evidence set aside ([`aside::swept`]), measured against its
     /// cap ([`kept`]): said by a dry run, and by a sweep while it is past its cap.
@@ -760,7 +760,7 @@ fn landed(
     if merged(root, head, main, ancestry) {
         return Some("merged into main".into());
     }
-    delivered.proof(head, main).map(|proof| proof.said())
+    delivered.proof(head, main)
 }
 
 /// What a dry run says of `head` and `main`: merged, squashed into it, or how many commits it has
@@ -1368,8 +1368,8 @@ impl Landings<'_> {
             return true;
         }
         match self.delivered.proof(sha, self.main) {
-            Some(proof) => {
-                self.squashed.insert(name.to_string(), proof.said());
+            Some(said) => {
+                self.squashed.insert(name.to_string(), said);
                 true
             }
             None => false,

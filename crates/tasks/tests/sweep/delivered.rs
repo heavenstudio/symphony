@@ -303,6 +303,8 @@ fn a_forged_receipt_git_does_not_bear_out_proves_nothing() {
             &later_tree,
         ],
     );
+    let written = r.dir.join("written");
+    let option = format!("--output={}", written.display());
     let forged = [
         (
             "its squash named by a branch",
@@ -364,6 +366,27 @@ fn a_forged_receipt_git_does_not_bear_out_proves_nothing() {
                 ..receipt.clone()
             },
         ),
+        (
+            "an option in its squash's place",
+            Receipt {
+                squash: option.clone(),
+                ..receipt.clone()
+            },
+        ),
+        (
+            "an option in its parent's place",
+            Receipt {
+                parent: option.clone(),
+                ..receipt.clone()
+            },
+        ),
+        (
+            "an option in its tree's place",
+            Receipt {
+                tree: option.clone(),
+                ..receipt.clone()
+            },
+        ),
     ];
     for (what, forged) in forged {
         keep(&r, &forged);
@@ -375,6 +398,8 @@ fn a_forged_receipt_git_does_not_bear_out_proves_nothing() {
             "{what}"
         );
     }
+    // No git read an option a receipt put where an id goes: `git log --output=` writes a file.
+    assert!(!written.exists(), "{}", written.display());
     // The true receipt put back proves it again: the cases above failed on what they forged.
     keep(&r, &receipt);
     r.assert_removed(&wt, &r.sweep());
