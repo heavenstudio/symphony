@@ -214,12 +214,24 @@ fn an_effect_is_prepared_with_its_intent_dispatched_and_finalized_on_what_was_re
 fn a_callers_word_never_prepares_or_finalizes() {
     for backend in BACKENDS {
         let f = approved(backend, DEFAULT_LAND);
+        // The list of its actions says so before anyone asks: the edge is its adapter's.
+        let listed = |edge: &str| {
+            let next = (f.store)
+                .workflow_actions(SLUG, &orch(), &Host::local())
+                .unwrap();
+            let action = next.actions.into_iter().find(|a| a.edge == edge).unwrap();
+            action.unavailable
+        };
+        assert_eq!(
+            listed("prepare_land"),
+            vec![RefusalCode::ExplicitActionRequired]
+        );
         let why = refused(apply(&f.store, &orch(), &preparing(&f, "plain")));
-        assert!(
-            why.starts_with(
-                "explicit_action_required: edge prepare_land is the adapter default_land's to take"
-            ),
-            "{why}"
+        assert_eq!(
+            why,
+            "explicit_action_required: edge prepare_land is the adapter default_land's to take, \
+             with what it reads of the effect itself: no request prepares or finalizes one; `just \
+             land sim/a` takes it"
         );
         assert_eq!(position(&f), (pair("deliver", "approved"), 4));
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
@@ -229,9 +241,15 @@ fn a_callers_word_never_prepares_or_finalizes() {
         (confirm.inputs).insert("receipt".into(), InputValue::Revision("made-up".into()));
         let why = refused(apply(&f.store, &orch(), &confirm));
         assert!(
-            why.starts_with("explicit_action_required: edge confirm_land is the adapter"),
+            why.starts_with("explicit_action_required: edge confirm_land is the adapter")
+                && why.ends_with("; `just land sim/a` takes it"),
             "{why}"
         );
+        assert_eq!(
+            listed("confirm_land"),
+            vec![RefusalCode::ExplicitActionRequired]
+        );
+        assert_eq!(listed("send_back"), vec![]);
         assert_eq!(position(&f), (pair("deliver", "landing"), 5));
         assert_eq!(intent(&f).stage, Stage::Dispatched);
     }
@@ -618,6 +636,64 @@ fn the_review_standing_is_read_from_the_approves_transition_and_its_receipt() {
     }
 }
 
+/// An adapter that reads back what `inner` does, once `then` has run: what another process did
+/// between a finalize's first read of its intent and its write.
+struct Raced<'a> {
+    inner: &'a Fake,
+    then: Box<dyn Fn() + 'a>,
+}
+
+impl Adapter for Raced<'_> {
+    fn name(&self) -> &str {
+        self.inner.name
+    }
+
+    fn current(&self, intent: &Intent) -> Result<Bindings, String> {
+        self.inner.current(intent)
+    }
+
+    fn outcome(&self, intent: &Intent) -> Result<Option<Outcome>, String> {
+        (self.then)();
+        self.inner.outcome(intent)
+    }
+}
+
+#[test]
+fn a_finalize_that_meets_an_intent_withdrawn_since_it_read_it_answers_withdrawn_at_once() {
+    for backend in BACKENDS {
+        let f = approved(backend, DEFAULT_LAND);
+        let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
+        prepared(&f, &fake);
+        f.store.dispatch_effect(&fake, SLUG, 5).unwrap();
+        fake.happened("merge1");
+        // A dispatch run again, which reads another head and no merge, withdraws the intent
+        // after the finalize read it dispatched.
+        let other = "2222222222222222222222222222222222222222";
+        let mover = Fake::new(DEFAULT_LAND, &bindings(&f, other));
+        let raced = Raced {
+            inner: &fake,
+            then: Box::new(|| {
+                let why = refused(f.store.dispatch_effect(&mover, SLUG, 5));
+                assert!(
+                    why.starts_with("stale_input: sim/a@5 is withdrawn"),
+                    "{why}"
+                );
+            }),
+        };
+        let why = refused((f.store).finalize_effect(&orch(), &Host::local(), &raced, SLUG, 5));
+        assert_eq!(
+            why,
+            format!(
+                "stale_input: sim/a@5 is withdrawn, and nothing is sent under it: its head was \
+                 {HEAD} when prepared and is {other}"
+            )
+        );
+        let held = intent(&f);
+        assert_eq!((held.stage, held.receipt), (Stage::Withdrawn, None));
+        assert_eq!(position(&f), (pair("deliver", "landing"), 5));
+    }
+}
+
 #[test]
 fn a_projects_own_landing_takes_the_same_boundary_with_its_pull_request_bound() {
     for backend in BACKENDS {
@@ -661,7 +737,13 @@ fn a_host_that_registers_no_adapter_neither_activates_nor_admits_its_edges() {
         let prepare = (actions.actions.iter())
             .find(|a| a.edge == "prepare_land")
             .unwrap();
-        assert_eq!(prepare.unavailable, vec![RefusalCode::UnsupportedAdapter]);
+        assert_eq!(
+            prepare.unavailable,
+            vec![
+                RefusalCode::UnsupportedAdapter,
+                RefusalCode::ExplicitActionRequired
+            ]
+        );
         let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
         let why = refused((f.store).prepare_effect(
             &orch(),

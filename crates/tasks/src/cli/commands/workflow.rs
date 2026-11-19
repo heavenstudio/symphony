@@ -19,7 +19,9 @@ use super::{Context, Stop};
 use crate::Store;
 use crate::workflow::{Host, admit::word, agent_session};
 use std::collections::BTreeMap;
-use symphony_api::workflow::{Authority, InputValue, NextActions, OperationRequest, Pair};
+use symphony_api::workflow::{
+    Authority, InputValue, NextActions, Operation, OperationRequest, Pair, RefusalCode,
+};
 
 pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     match c.parsed.get("action").unwrap_or_default() {
@@ -135,8 +137,29 @@ fn action_lines(slug: &str, next: &NextActions) -> Vec<String> {
         if !a.required_inputs.is_empty() {
             line.push_str(&format!(", inputs {}", a.required_inputs.join(", ")));
         }
-        if !a.unavailable.is_empty() {
-            let codes: Vec<String> = a.unavailable.iter().map(word).collect();
+        // An effect's edge is its adapter's, never this command's, which its operation says:
+        // the code alone marks other edges too (a resume to a pair its block did not save).
+        let taker = match a.operation {
+            Operation::PrepareLand | Operation::ConfirmLand => {
+                Some(format!("taken by `just land {slug}`, never applied"))
+            }
+            Operation::PrepareExternal | Operation::ConfirmExternal => {
+                Some("taken by its adapter, never applied".to_string())
+            }
+            _ => None,
+        };
+        let theirs =
+            |code: &&RefusalCode| taker.is_some() && **code == RefusalCode::ExplicitActionRequired;
+        if a.unavailable.iter().any(|code| theirs(&code))
+            && let Some(taker) = &taker
+        {
+            line.push_str(&format!("  ({taker})"));
+        }
+        let codes: Vec<String> = (a.unavailable.iter())
+            .filter(|code| !theirs(code))
+            .map(word)
+            .collect();
+        if !codes.is_empty() {
             line.push_str(&format!("  (not now: {})", codes.join(", ")));
         }
         lines.push(line);
@@ -280,4 +303,90 @@ fn authorities(authority: &[Authority]) -> String {
 fn pretty(value: &impl serde::Serialize) -> String {
     let value = serde_json::to_value(value).expect("a workflow answer serializes");
     serde_json::to_string_pretty(&value).expect("JSON values serialize")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use symphony_api::workflow::{NextAction, PositionSnapshot, Revision, Source};
+
+    fn action(edge: &str, operation: Operation, unavailable: &[RefusalCode]) -> NextAction {
+        NextAction {
+            edge: edge.into(),
+            operation,
+            destination: Pair {
+                phase: "deliver".into(),
+                state: "landing".into(),
+            },
+            label: "Go".into(),
+            responsible: vec![Authority::TaskRole {
+                role: symphony_api::workflow::Role::Orchestrator,
+            }],
+            required_inputs: Vec::new(),
+            unavailable: unavailable.to_vec(),
+        }
+    }
+
+    #[test]
+    fn an_effects_edge_is_listed_as_its_adapters_and_never_as_one_to_apply() {
+        use RefusalCode::{ExplicitActionRequired, Unauthorized, UnsupportedAdapter};
+        let next = |snapshot: PositionSnapshot| NextActions {
+            snapshot,
+            actions: vec![
+                action(
+                    "prepare_land",
+                    Operation::PrepareLand,
+                    &[ExplicitActionRequired],
+                ),
+                action(
+                    "confirm_land",
+                    Operation::ConfirmLand,
+                    &[UnsupportedAdapter, ExplicitActionRequired],
+                ),
+                action(
+                    "deploy",
+                    Operation::PrepareExternal,
+                    &[ExplicitActionRequired],
+                ),
+                // The code alone is no adapter's: a resume to a pair its block did not save.
+                action("resume", Operation::Resume, &[ExplicitActionRequired]),
+                // An effect's edge with nothing stopping it names no taker.
+                action("external", Operation::ConfirmExternal, &[]),
+                action("send_back", Operation::Advance, &[Unauthorized]),
+                action("plain", Operation::Advance, &[]),
+            ],
+        };
+        let snapshot = PositionSnapshot {
+            workflow: Revision {
+                format: 1,
+                digest: "d1".into(),
+                source: Source {
+                    commit: "c1".into(),
+                    project_blob: "b1".into(),
+                },
+            },
+            activation_generation: 1,
+            task_revision: 4,
+            at: Pair {
+                phase: "deliver".into(),
+                state: "approved".into(),
+            },
+        };
+        let lines = action_lines("sim/a", &next(snapshot));
+        let tails: Vec<&str> = (lines[1..].iter())
+            .map(|line| line.split_once("its orchestrator").unwrap().1)
+            .collect();
+        assert_eq!(
+            tails,
+            [
+                "  (taken by `just land sim/a`, never applied)",
+                "  (taken by `just land sim/a`, never applied)  (not now: unsupported_adapter)",
+                "  (taken by its adapter, never applied)",
+                "  (not now: explicit_action_required)",
+                "",
+                "  (not now: unauthorized)",
+                "",
+            ]
+        );
+    }
 }

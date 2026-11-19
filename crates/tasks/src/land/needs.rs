@@ -40,7 +40,18 @@ impl Needed {
     /// main checkout `main` commits ([`Catalogue::of`]) and its assessment ([`read::needed`]). Each
     /// task is judged by its assessment and the catalogue.
     pub fn of(task: &Task, main: &Path, tip: Option<&str>) -> Result<Needed, String> {
-        let catalogue = Catalogue::of(main)?;
+        Needed::under(task, main, "HEAD", tip)
+    }
+
+    /// [`Needed::of`] by the catalogue the commit `commit` holds ([`Catalogue::committed`]), not
+    /// the main checkout's head: what the task needed before its own merge moved that head.
+    pub fn under(
+        task: &Task,
+        main: &Path,
+        commit: &str,
+        tip: Option<&str>,
+    ) -> Result<Needed, String> {
+        let catalogue = Catalogue::committed(main, commit)?;
         let needs = task.needs();
         Ok(Needed {
             stamps: read::needed(&catalogue, needs.as_ref(), tip),

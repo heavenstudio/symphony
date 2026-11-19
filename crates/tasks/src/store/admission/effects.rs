@@ -101,13 +101,11 @@ impl Store {
     /// for changes, or no edge it took recorded one.
     pub fn reviewed(&self, slug: &str) -> Result<Option<Reviewed>, Error> {
         use symphony_api::workflow::Effect;
-        let Some(position) = self.workflow_position(slug)? else {
+        if self.workflow_position(slug)?.is_none() {
             return Ok(None);
-        };
-        for revision in (1..=position.revision).rev() {
-            let Some(transition) = self.workflow_transition(slug, revision)? else {
-                continue;
-            };
+        }
+        // Every transition of the task in one read, newest first.
+        for transition in self.workflow_transitions(slug)?.into_iter().rev() {
             let review = (transition.effects.iter()).find_map(|e| match e {
                 Effect::Review { approved } => Some(*approved),
                 _ => None,
@@ -361,16 +359,7 @@ impl Store {
                 });
             }
             Stage::Dispatched | Stage::Finalized => {}
-            Stage::Prepared => {
-                return Err(refused(
-                    RefusalCode::ExplicitActionRequired,
-                    format!(
-                        "{} was never dispatched: nothing was sent under it, so nothing is \
-                         finalized",
-                        intent.id
-                    ),
-                ));
-            }
+            Stage::Prepared => return Err(undispatched(&intent)),
             Stage::Withdrawn => return Err(withdrawn(&intent)),
         }
         let Some(outcome) = adapter.outcome(&intent).map_err(unread)? else {
@@ -397,7 +386,10 @@ impl Store {
             let stage_was = held.stage;
             match stage_was {
                 Stage::Dispatched | Stage::Finalized => {}
-                Stage::Prepared | Stage::Withdrawn => return Err(Failure::Again),
+                // A dispatch run again withdrew it since this finalize read it: reading it again
+                // finds the same, so it is answered now.
+                Stage::Withdrawn => return Err(Failure::Stop(withdrawn(&held))),
+                Stage::Prepared => return Err(Failure::Stop(undispatched(&held))),
             }
             let position = standing.task.as_ref().and_then(|t| t.position.as_ref());
             let mut recovery =
@@ -726,6 +718,16 @@ fn unread(why: String) -> Error {
     refused(
         RefusalCode::UnsupportedAdapter,
         format!("the adapter could not read what its effect is bound to: {why}"),
+    )
+}
+
+fn undispatched(intent: &Intent) -> Error {
+    refused(
+        RefusalCode::ExplicitActionRequired,
+        format!(
+            "{} was never dispatched: nothing was sent under it, so nothing is finalized",
+            intent.id
+        ),
     )
 }
 

@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use symphony_api::workflow::{InputValue, OperationRequest, Pair};
 use symphony_board::Store;
 use symphony_board::land::adapter::DefaultLand;
+use symphony_board::stamps::Catalogue;
 use symphony_board::workflow::effect::{DEFAULT_LAND, Intent, Stage};
 use symphony_board::workflow::{Followed, Host, agent_session, follow, local_owner};
 use symphony_plugin::execution::Principal;
@@ -481,6 +482,48 @@ fn a_policy_changed_between_the_prepare_and_the_merge_records_the_merge_and_the_
         .find(|m| m.text.contains("RECOVERY REQUIRED"))
         .unwrap();
     assert_eq!(told.recipient.as_deref(), Some("@orchestrator"));
+}
+
+#[test]
+fn a_branch_that_changes_its_own_stamps_lands_with_no_recovery_owed() {
+    let r = Repo::new();
+    workflowed(&r);
+    let (people, wt, _) = submitted(&r, SLUG);
+    // The branch brings a catalogue under which it would need `tests` too: the main checkout's
+    // head names it once the merge is made, and the land is judged by the one it was prepared
+    // under, which the merge's first parent holds.
+    let text = fs::read_to_string(wt.join("symphony.toml")).unwrap();
+    write(
+        &wt,
+        "symphony.toml",
+        &format!("{text}\n[stamps.review]\n\n[stamps.tests]\ndefault = true\n"),
+    );
+    git(&wt, &["commit", "-qam", "tests needed by default"]);
+    let tip = head(&wt, "HEAD");
+    let rev = agent_session(&people.rev);
+    take(&r.board.store, SLUG, &rev, "approve", Some(&tip));
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap();
+    assert!(!line.contains("RECOVERY REQUIRED"), "{line}");
+    let merge = head(&r.root, "main");
+    assert_eq!(head(&r.root, "main^2"), tip);
+    // The head's catalogue is the branch's now, and names another need than the one bound.
+    let (before, after) = (
+        Catalogue::committed(&r.root, "main^1").unwrap().defaults(),
+        Catalogue::of(&r.root).unwrap().defaults(),
+    );
+    assert_eq!(before, ["review"]);
+    assert_eq!(after, ["tests", "review"]);
+    assert_eq!(at(&r, SLUG), (pair("deliver", "landed"), 6));
+    let intent = intent(&r, SLUG);
+    assert_eq!(intent.stage, Stage::Finalized);
+    assert_eq!(intent.receipt.as_deref(), Some(merge.as_str()));
+    assert_eq!(intent.recovery, None);
+    let thread = r.board.said(SLUG);
+    assert!(
+        !thread.iter().any(|l| l.contains("RECOVERY REQUIRED")),
+        "{thread:?}"
+    );
 }
 
 #[test]
