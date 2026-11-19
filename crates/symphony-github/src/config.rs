@@ -87,6 +87,7 @@ struct Written {
     export_label: Option<String>,
     checks_token_file: Option<PathBuf>,
     checks_app_id: Option<i64>,
+    landing_app_id: Option<i64>,
     #[serde(default)]
     close_issues: bool,
 }
@@ -122,6 +123,10 @@ pub struct Config {
     pub checks_token_file: Option<PathBuf>,
     /// That App's number: a check written by any other is not read as one of ours.
     pub checks_app_id: Option<i64>,
+    /// The number of the GitHub App `token_file`'s token is an installation token of, for a
+    /// delivery: the one actor the default branch's rules let update it
+    /// ([`crate::preflight`]), never the App that writes the checks.
+    pub landing_app_id: Option<i64>,
     /// Whether a delivered task's mapped issue is closed once the board closed the task.
     pub close_issues: bool,
 }
@@ -205,8 +210,18 @@ pub fn parse(text: &str) -> Result<Config, String> {
             )));
         }
     }
-    if written.checks_app_id.is_some_and(|id| id <= 0) {
-        return Err(wrong("checks_app_id is a GitHub App's number".into()));
+    for (key, id) in [
+        ("checks_app_id", written.checks_app_id),
+        ("landing_app_id", written.landing_app_id),
+    ] {
+        if id.is_some_and(|id| id <= 0) {
+            return Err(wrong(format!("{key} is a GitHub App's number")));
+        }
+    }
+    if written.landing_app_id.is_some() && written.landing_app_id == written.checks_app_id {
+        return Err(wrong(
+            "landing_app_id is checks_app_id: what merges is never what writes the checks".into(),
+        ));
     }
     if written.enabled {
         if repository.is_none() {
@@ -232,6 +247,13 @@ pub fn parse(text: &str) -> Result<Config, String> {
                     .into(),
                 ));
             }
+            if written.landing_app_id.is_none() {
+                return Err(wrong(
+                    "pull_requests = \"publish\" needs landing_app_id: the GitHub App token_file's \
+                     token is of, the one actor the default branch's rules let update it"
+                        .into(),
+                ));
+            }
             if written.checks_token_file == written.token_file {
                 return Err(wrong(
                     "checks_token_file is token_file: what writes the checks is never what merges"
@@ -251,6 +273,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
         export_label: written.export_label,
         checks_token_file: written.checks_token_file,
         checks_app_id: written.checks_app_id,
+        landing_app_id: written.landing_app_id,
         close_issues: written.close_issues,
     })
 }
@@ -296,7 +319,12 @@ struct ProjectTable {
     default_branch: Option<String>,
 }
 
-fn default_branch(main: &Path) -> Result<String, String> {
+/// The project's default branch, as the main checkout `main`'s `symphony.toml` names it.
+///
+/// # Errors
+///
+/// The file does not read, or names no branch.
+pub fn default_branch(main: &Path) -> Result<String, String> {
     let file = main.join("symphony.toml");
     let text = match std::fs::read_to_string(&file) {
         Ok(text) => text,
