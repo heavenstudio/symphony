@@ -971,7 +971,10 @@ the hour, and its green release refreshes the server and its projects
   whatever the count ([the owner's A](DECISIONS.md#schema-landing-then-release), 2026-11-19).
   Main's build moves this repository's board at its first command after the landing
   ([TASKS](TASKS.md#where-it-lives)), and the machine's server, a release's, then writes nothing
-  to it until a release at the new schema serves it ([the switch](#the-switch)). The run starts
+  to it until a release at the new schema serves it ([the switch](#the-switch)), unless the step is
+  declared to keep the Symphony writing and that server's release reads the record the declaration
+  writes ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). A declared step
+  changes nothing below: the run still starts at once, and a second step still waits. The run starts
   now rather than at the count's, and nothing else is shortened: a red one is held as the release
   candidate as any run is ([the release candidate](#the-release-candidate)), and `current` then
   moves under the refresh's rule on writers as for any release ([the refresh](#the-refresh)).
@@ -1088,8 +1091,9 @@ Once a release's tag is pushed, the run does this, in order:
   had, its snapshot kept; each after it stays where it was (`ID: its board can move from schema N
   to M, and stays at N while the move of ID's board failed`). Until the retry gets through, a
   moved board is ahead of the release `current` names (none, before the first): one schema ahead,
-  that release's server reads it and writes nothing to it, saying so on its pages, and two ahead it
-  refuses it ([the switch](#the-switch)); that release's `tasks` and `agent-send` refuse it
+  that release's server reads it and writes nothing to it, saying so on its pages, unless the step
+  keeps it writing ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)), and two
+  ahead it refuses it ([the switch](#the-switch)); that release's `tasks` and `agent-send` refuse it
   either way, naming themselves as the program to rebuild ([who writes a
   board](TASKS.md#who-writes-a-board)). The retry, `just release --refresh` once the failure's
   cause is fixed, judges every board again: one moved already is at the release's schema, with
@@ -1303,8 +1307,10 @@ A running project's build keeps serving until a stop and a start make the releas
 which is the owner's word for the shared server ([AGENTS](../AGENTS.md)). No start replaces a
 release's server. A board one schema ahead of the release (main's build moved it first) is read
 by its server, which writes nothing to it and says so on every page until a release at that schema
-serves it; a board two ahead, or a project at a newer pin, is refused until `current` names a
-release that serves it.
+serves it. The exception is a step declared to keep the Symphony writing, which a release from
+schema 25 on writes through
+([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). A board two ahead, or a
+project at a newer pin, is refused until `current` names a release that serves it.
 
 ### The way back
 
