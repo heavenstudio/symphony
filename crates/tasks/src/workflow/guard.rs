@@ -375,7 +375,7 @@ pub fn check(
     let id = &edge.id;
     // Every attestation given is read first: one for a guard the edge does not carry, or a second
     // for one guard, refuses rather than being passed over.
-    let mut by_guard: BTreeMap<String, (Attestation, &Signed)> = BTreeMap::new();
+    let mut by_guard: Vec<(Attestation, &Signed)> = Vec::new();
     let mut unverified: BTreeMap<String, String> = BTreeMap::new();
     for signed in guarding.given {
         let adapter = claimed_adapter(signed)
@@ -398,15 +398,13 @@ pub fn check(
                         ),
                     ));
                 }
-                let guard = attestation.guard.clone();
-                if by_guard
-                    .insert(guard.clone(), (attestation, signed))
-                    .is_some()
-                {
+                if by_guard.iter().any(|(a, _)| a.guard == attestation.guard) {
                     return Err(unavailable(format!(
-                        "two attestations were given for guard {guard} of {id}; give one"
+                        "two attestations were given for guard {} of {id}; give one",
+                        attestation.guard
                     )));
                 }
+                by_guard.push((attestation, signed));
             }
             Err(why) => {
                 unverified.insert(adapter, why);
@@ -440,7 +438,8 @@ pub fn check(
                 accepted.generation, accepted.epoch
             )));
         }
-        let Some((attestation, signed)) = by_guard.remove(guard_id) else {
+        let taken = by_guard.iter().position(|(a, _)| &a.guard == guard_id);
+        let Some((attestation, signed)) = taken.map(|at| by_guard.swap_remove(at)) else {
             return Err(unavailable(match unverified.get(adapter) {
                 Some(why) => format!(
                     "edge {id} is guarded by {guard_id}, and the attestation given from \
@@ -643,11 +642,12 @@ fn entering<'a>(definition: &'a Definition, pair: &Pair) -> impl Iterator<Item =
     })
 }
 
-/// The guards every edge entering `pair` carries, none where no guarded edge enters it.
-pub fn guarded_into(definition: &Definition, pair: &Pair) -> Option<BTreeSet<String>> {
+/// The guards every edge entering `pair` carries, in the order a validated definition sorts them,
+/// none where no guarded edge enters it.
+pub fn guarded_into<'d>(definition: &'d Definition, pair: &Pair) -> Option<&'d [String]> {
     entering(definition, pair)
         .find(|e| !e.guards.is_empty())
-        .map(|e| e.guards.iter().cloned().collect())
+        .map(|e| e.guards.as_slice())
 }
 
 /// Refused where a task could reach a pair a guarded edge enters by a route that lacks that
@@ -664,16 +664,15 @@ pub fn coverage(definition: &Definition) -> Result<(), String> {
             .find(|e| !e.guards.is_empty())
             .expect("guarded_into() found a guarded edge");
         for edge in entering(definition, pair) {
-            let carried: BTreeSet<String> = edge.guards.iter().cloned().collect();
-            if carried != guards {
+            if edge.guards != guards {
                 return Err(format!(
                     "unguarded route: edge {} enters {} under {}, and edge {} under {}; every \
                      edge entering a guarded pair carries the same guards",
                     edge.id,
                     named(pair),
-                    listed(&carried),
+                    listed(&edge.guards),
                     guarding.id,
-                    listed(&guards)
+                    listed(guards)
                 ));
             }
         }
@@ -682,7 +681,7 @@ pub fn coverage(definition: &Definition) -> Result<(), String> {
                 "unguarded route: {} is the initial pair, and edge {} enters it under {}",
                 named(pair),
                 guarding.id,
-                listed(&guards)
+                listed(guards)
             ));
         }
         for other in &definition.positions {
@@ -705,7 +704,7 @@ pub fn coverage(definition: &Definition) -> Result<(), String> {
                         named(&other.at),
                         named(pair),
                         guarding.id,
-                        listed(&guards)
+                        listed(guards)
                     ));
                 }
             }
@@ -714,11 +713,11 @@ pub fn coverage(definition: &Definition) -> Result<(), String> {
     Ok(())
 }
 
-fn listed(guards: &BTreeSet<String>) -> String {
+fn listed(guards: &[String]) -> String {
     if guards.is_empty() {
         return "no guard".into();
     }
-    guards.iter().cloned().collect::<Vec<_>>().join(", ")
+    guards.join(", ")
 }
 
 fn named(pair: &Pair) -> String {

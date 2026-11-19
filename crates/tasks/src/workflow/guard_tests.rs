@@ -715,7 +715,7 @@ fn a_guarded_pair_is_reached_only_under_its_guards() {
     assert_eq!(coverage(&base), Ok(()));
     assert_eq!(
         guarded_into(&base, &pair("verify", "accepted")),
-        Some(BTreeSet::from(["approved".to_string()]))
+        Some(&["approved".to_string()][..])
     );
     assert_eq!(guarded_into(&base, &pair("verify", "awaiting")), None);
     let mut around = base.clone();

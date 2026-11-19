@@ -593,7 +593,11 @@ fn a_board_made_at_22_or_23_migrates_to_24_with_its_rows_and_one_at_24_opens_as_
             );
 
             let current = open(Opening::write());
-            assert_eq!(version(&current), Some(24), "{backend:?} from {older}");
+            assert_eq!(
+                version(&current),
+                Some(Schema::this_build().version()),
+                "{backend:?} from {older}"
+            );
             assert_eq!(
                 current.get("sim/jump").unwrap(),
                 task,
@@ -628,11 +632,11 @@ fn a_board_made_at_22_or_23_migrates_to_24_with_its_rows_and_one_at_24_opens_as_
             let late = old.create(&NewTask::new("sim/late", "Late", "owner"));
             assert!(matches!(late, Err(Error::Refused(_))), "{late:?}");
 
-            // At 24 it opens as it is, with the one read.
+            // At this build's version it opens as it is, with the one read.
             let again = open(Opening::write());
             assert_eq!(again.database().requests(), 1, "{backend:?} from {older}");
             assert_eq!(again.get("sim/jump").unwrap().status, "in_progress");
-            assert_eq!(version(&again), Some(24));
+            assert_eq!(version(&again), Some(Schema::this_build().version()));
         }
     }
 }

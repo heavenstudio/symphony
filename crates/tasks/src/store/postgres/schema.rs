@@ -885,8 +885,12 @@ fn create(table: &Table) -> String {
             sql.push_str(" NOT NULL");
         }
         if !column.one_of.is_empty() {
-            let values: Vec<String> = column.one_of.iter().map(|v| format!("'{v}'")).collect();
-            let _ = write!(sql, " CHECK ({} IN ({}))", column.name, values.join(", "));
+            let _ = write!(
+                sql,
+                " CHECK ({} IN ({}))",
+                column.name,
+                quoted(column.one_of)
+            );
         }
         if let Some(json) = column.kind.json() {
             let _ = write!(sql, " CHECK (jsonb_typeof({}) = '{json}')", column.name);
@@ -894,6 +898,11 @@ fn create(table: &Table) -> String {
     }
     sql.push_str("\n);\n");
     sql
+}
+
+/// `values` as SQL text literals, separated by commas.
+fn quoted(values: &[&str]) -> String {
+    format!("'{}'", values.join("', '"))
 }
 
 /// `table`'s `kind` check made again from its definition, for a board whose table an older schema
@@ -907,22 +916,18 @@ fn kinds(table: &str) -> String {
         .iter())
     .find(|c| c.name == "kind")
     .expect("a table with a kind column");
-    let values: Vec<String> = column.one_of.iter().map(|v| format!("'{v}'")).collect();
-    let holds: Vec<String> = (column.one_of.iter())
-        .map(|v| format!("pg_get_constraintdef(c.oid) LIKE '%''{v}''%'"))
-        .collect();
+    let values = quoted(column.one_of);
     format!(
         "DO $kinds$ BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+    IF EXISTS (SELECT 1 FROM unnest(ARRAY[{values}]) AS k WHERE NOT EXISTS (
+            SELECT 1 FROM pg_constraint c
             WHERE c.conrelid = '{table}'::regclass AND c.conname = '{table}_kind_check'
-            AND {}) THEN
+            AND strpos(pg_get_constraintdef(c.oid), '''' || k || '''') > 0)) THEN
         ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {table}_kind_check,
-            ADD CONSTRAINT {table}_kind_check CHECK (kind IN ({}));
+            ADD CONSTRAINT {table}_kind_check CHECK (kind IN ({values}));
     END IF;
 END $kinds$;
-",
-        holds.join("\n            AND "),
-        values.join(", ")
+"
     )
 }
 

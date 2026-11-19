@@ -251,15 +251,13 @@ impl Store {
                 .collect();
             let guarded = !slots.is_empty();
             // Each authority once, however many guards it met.
-            let authorities: Vec<Value> = (admitted.guards.iter())
-                .map(|g| {
-                    let state = json!({"adapter": g.adapter, "epoch": g.epoch,
-                        "generation": g.generation, "state": g.state});
-                    (g.adapter.as_str(), state)
-                })
-                .collect::<std::collections::BTreeMap<_, _>>()
-                .into_values()
-                .collect();
+            let mut authorities: Vec<Value> = Vec::new();
+            for g in &admitted.guards {
+                if authorities.iter().all(|a| a["adapter"] != g.adapter.as_str()) {
+                    authorities.push(json!({"adapter": g.adapter, "epoch": g.epoch,
+                        "generation": g.generation, "state": g.state}));
+                }
+            }
             let admission = (!admitted.guards.is_empty()).then(|| Admission {
                 slug: slug.to_string(),
                 revision: transition.revision,

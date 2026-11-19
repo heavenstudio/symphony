@@ -472,10 +472,7 @@ fn past_no_guard(
     };
     let stood = held
         && from == Some(to)
-        && old
-            .and_then(|old| super::guard::guarded_into(old, to))
-            .as_ref()
-            == Some(&guards);
+        && old.and_then(|old| super::guard::guarded_into(old, to)) == Some(guards);
     if stood {
         return Ok(());
     }
@@ -483,7 +480,7 @@ fn past_no_guard(
         "{slug} would {stands} {}, which only edges guarded by {} enter; activation never takes a \
          task past a guard: map it to a pair before it",
         named(to),
-        guards.into_iter().collect::<Vec<_>>().join(", ")
+        guards.join(", ")
     ))
 }
 
