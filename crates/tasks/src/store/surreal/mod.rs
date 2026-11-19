@@ -89,8 +89,12 @@ pub(in crate::store) fn rule(
     blocked: bool,
     moved: Option<bool>,
     holds: bool,
+    placed: bool,
 ) -> String {
-    let mut body = String::from(WRITE);
+    // A task reopened under a custom workflow is placed first, so the rule's own write meets a
+    // task the workflow holds at the status it moves to (`workflow::REOPEN_PLACED`).
+    let mut body = String::from(if placed { workflow::REOPEN_PLACED } else { "" });
+    body.push_str(WRITE);
     if moved.is_some() {
         body.push_str(work::UNBLOCKED);
     }

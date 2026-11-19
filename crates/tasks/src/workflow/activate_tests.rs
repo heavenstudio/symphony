@@ -555,3 +555,92 @@ fn a_status_that_is_no_board_status_is_refused() {
         Err("sim/odd has the status waiting, which is no board status".into())
     );
 }
+
+fn placing(mappings: &[(Pair, Pair)]) -> Placing {
+    let two = custom(&format!("{TWO}{MAPPED}"));
+    let mut placing = Placing {
+        definition: two.definition.definition().clone(),
+        mappings: two.mappings,
+        generation: 4,
+        digest: "d".repeat(64),
+    };
+    for (from, to) in mappings {
+        placing.mappings.retain(|m| m.from != *from);
+        placing.mappings.push(Mapping {
+            from: from.clone(),
+            to: to.clone(),
+        });
+    }
+    placing
+}
+
+fn reopened(placing: &Placing, status: &str, roles: &[(&str, &str)]) -> Result<Transition, String> {
+    let roles: Vec<(String, String, bool)> = (roles.iter())
+        .map(|(h, r)| (h.to_string(), r.to_string(), true))
+        .collect();
+    let task = Reopening {
+        slug: "sim/a",
+        left: "done",
+        status,
+        roles: &roles,
+    };
+    placing.reopened(&task, &by(), 7.0)
+}
+
+#[test]
+fn a_reopened_task_is_placed_where_the_activation_maps_its_status_as_its_first_transition() {
+    let placed = reopened(&placing(&[]), "review", &[]).unwrap();
+    assert_eq!(
+        placed,
+        Transition {
+            id: "sim/a@1".into(),
+            slug: "sim/a".into(),
+            revision: 1,
+            generation: 4,
+            digest: "d".repeat(64),
+            edge: None,
+            operation: None,
+            activation: None,
+            from: Some(pair("done", "approved")),
+            to: pair("verify", "awaiting"),
+            resume: None,
+            status: "review".into(),
+            principal: by(),
+            effects: Vec::new(),
+            key: None,
+            recovery: None,
+            at: 7.0,
+        }
+    );
+}
+
+#[test]
+fn a_reopening_the_active_workflow_cannot_place_is_refused_naming_the_pair() {
+    // Its reviewer holds it: built-in v1's held review, which nothing maps.
+    assert_eq!(
+        reopened(&placing(&[]), "review", &[("birch", "reviewer")]).unwrap_err(),
+        "workflow_mappings: sim/a reopens at review/held, which the workflow no longer declares; \
+         map it to a pair it declares"
+    );
+    // A mapping to a pair of another status.
+    let elsewhere = placing(&[(pair("ready", "available"), pair("verify", "awaiting"))]);
+    assert_eq!(
+        reopened(&elsewhere, "ready", &[]).unwrap_err(),
+        "workflow_mappings: sim/a reopens at verify/awaiting, which stands for review, not ready, \
+         the status its move asks for"
+    );
+    // A mapping that would accept it.
+    let accepted = placing(&[(
+        pair("review", "awaiting_review"),
+        pair("verify", "accepted"),
+    )]);
+    assert!(
+        reopened(&accepted, "review", &[])
+            .unwrap_err()
+            .starts_with("sim/a would stand at verify/accepted with the outcome")
+    );
+    assert_eq!(
+        reopened(&placing(&[]), "nowhere", &[]).unwrap_err(),
+        "sim/a has the status nowhere, which is no board status"
+    );
+}

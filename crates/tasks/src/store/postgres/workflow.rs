@@ -224,6 +224,24 @@ INSERT INTO workflow (id, kind, body, at) VALUES (jsonb_build_array('event', v -
 UPDATE task SET fields = board_fields(id, fields, '{_board,workflow}', v -> 'placed')
     WHERE slug = v ->> 'slug';";
 
+/// Twin of `super::super::surreal::workflow::MAPPINGS`.
+pub(in crate::store) fn mappings() -> Pg<'static> {
+    Pg::read(
+        "(SELECT body -> 'mappings' FROM workflow WHERE id = jsonb_build_array('activation', v -> 'generation'))",
+    )
+}
+
+/// Twin of `super::super::surreal::workflow::REOPEN_PLACED`.
+pub(in crate::store) const REOPEN_PLACED: &str = "IF coalesce((SELECT (body ->> 'generation')::bigint FROM workflow
+        WHERE id = '[\"active\"]'::jsonb FOR SHARE), 0) <> (v -> 'placing' ->> 'generation')::bigint THEN
+    RAISE EXCEPTION 'stale';
+END IF;
+INSERT INTO workflow (id, kind, body, at) VALUES (jsonb_build_array('event', v ->> 'slug', 1), 'event',
+    v -> 'placing', (v -> 'placing' ->> 'at')::double precision);
+UPDATE task SET status = v -> 'placing' ->> 'status',
+    fields = board_fields(id, fields, '{_board,workflow}', v -> 'placed')
+    WHERE slug = v ->> 'slug';";
+
 pub(in crate::store) fn receipt() -> Pg<'static> {
     Pg::read("(SELECT body FROM workflow WHERE id = v -> 'receipt')")
 }

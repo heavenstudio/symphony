@@ -83,8 +83,15 @@ pub(in crate::store) fn rule(
     blocked: bool,
     moved: Option<bool>,
     holds: bool,
+    placed: bool,
 ) -> Pg<'static> {
-    let mut body = write::write();
+    // Twin of `super::surreal::rule`'s placement first.
+    let mut body = if placed {
+        format!("{}\n", workflow::REOPEN_PLACED)
+    } else {
+        String::new()
+    };
+    body.push_str(&write::write());
     let mut add = |part: &str| {
         body.push('\n');
         body.push_str(part);
@@ -744,7 +751,7 @@ mod tests {
 
     /// `rule`'s block, which a rule's write is.
     fn ruled(reason: bool, needs: bool, blocked: bool, moved: Option<bool>, holds: bool) -> String {
-        match rule(reason, needs, needs, blocked, moved, holds) {
+        match rule(reason, needs, needs, blocked, moved, holds, false) {
             Pg::Script(block, None) => block.into_owned(),
             other => panic!("a rule is a block answering its own: {other:?}"),
         }

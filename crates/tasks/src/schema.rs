@@ -483,25 +483,33 @@ DEFINE FIELD IF NOT EXISTS body ON workflow TYPE object FLEXIBLE;
 DEFINE FIELD IF NOT EXISTS at ON workflow TYPE float;
 DEFINE EVENT OVERWRITE workflow_position ON task
     WHEN $event != 'DELETE' AND (($before.fields._board.workflow ?? NONE) != ($after.fields._board.workflow ?? NONE)
-        OR (($before.fields._board.workflow ?? NONE) != NONE AND $before.status != $after.status))
+        OR (($before.fields._board.workflow ?? NONE) != NONE AND $before.status != $after.status)
+        OR (($after.fields._board.workflow ?? NONE) = NONE AND $before.status IN ['done', 'cancelled']
+            AND $after.status NOT IN ['done', 'cancelled']))
     THEN {
-    LET $w = $after.fields._board.workflow;
+    LET $w = $after.fields._board.workflow ?? NONE;
     LET $was = $before.fields._board.workflow ?? NONE;
-    IF $was != NONE AND $w = $was {
-        THROW string::concat('refused: explicit_action_required: the status of ', $after.slug, ' follows its workflow position, which only its workflow edges move (just tasks workflow actions ', $after.slug, ')');
-    };
-    IF $w = NONE { THROW string::concat('refused: workflow: ', $after.slug, ' keeps its workflow position: only an activation returns a task to the board writers'); };
-    IF $was != NONE AND $w.revision != $was.revision + 1 {
-        THROW string::concat('refused: workflow: ', $after.slug, ' moves from workflow revision ', <string>$was.revision, ' only to the next');
-    };
-    IF $was = NONE AND (SELECT VALUE kind FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision + 1])) != NONE {
-        THROW string::concat('refused: workflow: ', $after.slug, ' moved on from workflow revision ', <string>$w.revision, '; it never returns to a position it left');
-    };
-    LET $e =(SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision]));
-    IF $e = NONE OR $e.slug != $after.slug OR $e.revision != $w.revision
-        OR $e.to != { phase: $w.phase, state: $w.state } OR ($e.resume ?? NONE) != ($w.resume ?? NONE)
-        OR $e.generation != $w.generation OR $e.digest != $w.digest OR $e.status != $after.status {
-        THROW string::concat('refused: workflow: ', $after.slug, ' is at a workflow position only beside the transition recorded for it');
+    IF $was = NONE AND $w = NONE {
+        IF record::exists(workflow:['active']) {
+            THROW string::concat('refused: explicit_action_required: ', $after.slug, ' has no workflow position, and a custom workflow is active: it leaves ', $before.status, ' only by a write that places it at its mapped pair');
+        };
+    } ELSE {
+        IF $was != NONE AND $w = $was {
+            THROW string::concat('refused: explicit_action_required: the status of ', $after.slug, ' follows its workflow position, which only its workflow edges move (just tasks workflow actions ', $after.slug, ')');
+        };
+        IF $w = NONE { THROW string::concat('refused: workflow: ', $after.slug, ' keeps its workflow position: only an activation returns a task to the board writers'); };
+        IF $was != NONE AND $w.revision != $was.revision + 1 {
+            THROW string::concat('refused: workflow: ', $after.slug, ' moves from workflow revision ', <string>$was.revision, ' only to the next');
+        };
+        IF $was = NONE AND (SELECT VALUE kind FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision + 1])) != NONE {
+            THROW string::concat('refused: workflow: ', $after.slug, ' moved on from workflow revision ', <string>$w.revision, '; it never returns to a position it left');
+        };
+        LET $e =(SELECT VALUE body FROM ONLY type::record('workflow', ['event', $after.slug, $w.revision]));
+        IF $e = NONE OR $e.slug != $after.slug OR $e.revision != $w.revision
+            OR $e.to != { phase: $w.phase, state: $w.state } OR ($e.resume ?? NONE) != ($w.resume ?? NONE)
+            OR $e.generation != $w.generation OR $e.digest != $w.digest OR $e.status != $after.status {
+            THROW string::concat('refused: workflow: ', $after.slug, ' is at a workflow position only beside the transition recorded for it');
+        };
     };
 };
 DEFINE EVENT OVERWRITE workflow_history ON workflow

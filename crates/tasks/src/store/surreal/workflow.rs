@@ -8,6 +8,9 @@ pub(in crate::store) const ACTIVE: &str =
 /// The definition recorded under `$digest`, or NULL.
 pub(in crate::store) const DEFINITION: &str = "RETURN (SELECT VALUE body FROM ONLY type::record('workflow', ['definition', $digest])) ?? NULL;";
 
+/// The mappings activation `$generation` recorded, or NULL.
+pub(in crate::store) const MAPPINGS: &str = "RETURN (SELECT VALUE body.mappings FROM ONLY type::record('workflow', ['activation', $generation])) ?? NULL;";
+
 /// The task `$slug`'s workflow position, refused when there is no such task: NULL for a task the
 /// board's own writers keep.
 pub(in crate::store) const POSITION: &str = "
@@ -149,6 +152,17 @@ IF ((SELECT VALUE body.generation FROM ONLY workflow:['active']) ?? 0) != $placi
 CREATE type::record('workflow', ['event', $slug, 1])
     CONTENT { kind: 'event', body: $placing, at: $placing.at } RETURN NONE;
 UPDATE type::record('task', $slug) SET fields._board.workflow = $placed RETURN NONE;";
+
+/// A task with no position placed at `$placed` by `$placing`, its first transition, as a board
+/// writer's move takes it out of done or cancelled: its status and its position in one write, so
+/// the move that follows meets a task the workflow holds already (`workflow_position`). Read
+/// again where an activation came between.
+pub(in crate::store) const REOPEN_PLACED: &str = "
+IF ((SELECT VALUE body.generation FROM ONLY workflow:['active']) ?? 0) != $placing.generation { THROW 'stale' };
+CREATE type::record('workflow', ['event', $slug, 1])
+    CONTENT { kind: 'event', body: $placing, at: $placing.at } RETURN NONE;
+UPDATE type::record('task', $slug) SET status = $placing.status, fields._board.workflow = $placed RETURN NONE;
+";
 
 /// The receipt `$receipt` names, or NULL.
 pub(in crate::store) const RECEIPT: &str =

@@ -223,9 +223,11 @@ impl Store {
     ) -> Result<Followed, Error> {
         use crate::workflow::activate;
         let digest = &custom.revision.digest;
-        // What each write opening asks first, in one small read: is it the active one already.
+        // What each write opening asks first, in one small read: is it the active one already. A
+        // commit that changed something else names another revision of the same workflow, which
+        // stays active as it was: only a commit that changes the workflow activates.
         if let Some(active) = self.workflow_active()?
-            && active.digest == *digest
+            && self.activated_as(&active, custom)?
         {
             return Ok(Followed::Unchanged(active));
         }
@@ -237,7 +239,7 @@ impl Store {
             let read: Standings =
                 self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
             if let Some(active) = &read.active
-                && active.digest == *digest
+                && self.activated_as(active, custom)?
             {
                 return Ok(Followed::Unchanged(active.clone()));
             }
@@ -340,6 +342,83 @@ impl Store {
         decoded(body, "active workflow")
     }
 
+    /// Whether `active` is `custom` already: its revision, or a definition and mappings that are
+    /// `custom`'s, recorded from another commit. The digest names the commit as well as the
+    /// workflow, so the definition and the mappings are read only where the digests differ.
+    fn activated_as(
+        &self,
+        active: &Active,
+        custom: &crate::workflow::Custom,
+    ) -> Result<bool, Error> {
+        if active.digest == custom.revision.digest {
+            return Ok(true);
+        }
+        let Some(recorded) = self.workflow_definition(&active.digest)? else {
+            return Ok(false);
+        };
+        if recorded.revision.format != custom.revision.format
+            || recorded.definition != *custom.definition.definition()
+        {
+            return Ok(false);
+        }
+        let sorted = |mappings: &[crate::workflow::Mapping]| {
+            let mut pairs: Vec<(&Pair, &Pair)> =
+                mappings.iter().map(|m| (&m.from, &m.to)).collect();
+            pairs.sort_by(|a, b| {
+                (&a.0.phase, &a.0.state, &a.1.phase, &a.1.state)
+                    .cmp(&(&b.0.phase, &b.0.state, &b.1.phase, &b.1.state))
+            });
+            pairs
+                .into_iter()
+                .map(|(f, t)| (f.clone(), t.clone()))
+                .collect::<Vec<_>>()
+        };
+        let mappings = self
+            .workflow_mappings(active.generation)?
+            .unwrap_or_default();
+        Ok(sorted(&mappings) == sorted(&custom.mappings))
+    }
+
+    /// The mappings activation `generation` recorded, or none for an activation not recorded.
+    pub fn workflow_mappings(
+        &self,
+        generation: u64,
+    ) -> Result<Option<Vec<crate::workflow::Mapping>>, Error> {
+        let body: Value = self.retrying(|| {
+            self.read(
+                both(sql::MAPPINGS, pg::mappings()),
+                json!({"generation": generation}),
+            )
+        })?;
+        decoded(body, "workflow mappings")
+    }
+
+    /// The active workflow as a write that reopens a task with no position places it
+    /// ([`crate::workflow::activate::Placing`]), or none on a board that never activated one.
+    pub(in crate::store) fn placing_context(
+        &self,
+    ) -> Result<Option<crate::workflow::activate::Placing>, Error> {
+        let Some(active) = self.workflow_active()? else {
+            return Ok(None);
+        };
+        let unrecorded = |what: &str| {
+            Error::Db(format!(
+                "the active workflow's {what} (generation {}) is not recorded",
+                active.generation
+            ))
+        };
+        let recorded =
+            (self.workflow_definition(&active.digest)?).ok_or_else(|| unrecorded("definition"))?;
+        let mappings =
+            (self.workflow_mappings(active.generation)?).ok_or_else(|| unrecorded("activation"))?;
+        Ok(Some(crate::workflow::activate::Placing {
+            definition: recorded.definition,
+            mappings,
+            generation: active.generation,
+            digest: active.digest,
+        }))
+    }
+
     /// The definition recorded under `digest`, or none.
     pub fn workflow_definition(&self, digest: &str) -> Result<Option<Recorded>, Error> {
         let body: Value = self.retrying(|| {
@@ -401,6 +480,16 @@ pub(crate) fn explicit_action(slug: &str) -> String {
         "explicit_action_required: a custom workflow holds {slug}, which moves and is staffed by \
          its edges alone; read them with `just tasks workflow actions {slug}` and take one with \
          `just tasks workflow apply {slug} EDGE`"
+    )
+}
+
+/// How the database refuses a write that takes `slug`, a task with no workflow position, out of
+/// done or cancelled while a custom workflow is active (`workflow_position`), up to the status it
+/// left: [`crate::Store`]'s rule then places it in the write that moves it.
+pub(crate) fn unplaced(slug: &str) -> String {
+    format!(
+        "explicit_action_required: {slug} has no workflow position, and a custom workflow is \
+         active: it leaves "
     )
 }
 

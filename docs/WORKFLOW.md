@@ -53,14 +53,23 @@ request extends it.
 Every command that opens a project's live board to write follows the workflow its default
 branch commits (`workflow::follow`, `Store::follow_committed`): a project that commits no
 `[workflow]` on a board that never activated one reads the branch tip and writes nothing, and a
-repository without that branch commits nothing. A committed definition whose digest is not the
-active one is activated, in one transaction fenced on the active generation and on the version
-of every task it reads (`Store::activate_workflow`). It records the definition under its digest,
+repository without that branch commits nothing. A committed definition, or mappings, other than
+the active one's is activated, in one transaction fenced on the active generation and on the
+version of every task it reads (`Store::activate_workflow`); a commit that changes neither, any
+landing of other files, leaves the active generation, every task's version and every record as
+they were, and the active revision names the commit that activated it. It records the definition under its digest,
 places every task a workflow holds and every open task the board's writers keep, records each
 move as a transition by the board's activation service and the activation with the mappings it
 applied, and moves the active generation to it. A task whose pair, resume pair and status stay
-keeps its revision; done and cancelled tasks the board's writers kept stay theirs. A new commit of
-identical content is a new generation that moves nothing.
+keeps its revision; done and cancelled tasks the board's writers kept stay theirs until a write
+of theirs takes one out of done or cancelled (the default landing sends an approved task back to
+review, say): that write places it, as its first transition, where built-in v1's pair for the
+status it moves to stands on the active workflow, declared or mapped by the activation's
+mappings, and is refused, naming the pair, where nothing maps it, the mapping would give it an
+outcome, satisfied dependants or a completion, or the pair stands for another status. The database
+refuses every other write that takes a task with no position out of done or cancelled while a
+workflow is active. A new commit of other mappings or another definition (a label) is a new
+generation, which moves no task whose pair it still declares.
 
 The whole activation is refused, nothing written and the previous workflow left active, and the
 command says why on stderr and runs on: a capability, adapter or guard the host does not support

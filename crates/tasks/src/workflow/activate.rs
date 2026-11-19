@@ -251,6 +251,94 @@ pub fn plan(
     Ok(plan)
 }
 
+/// The active workflow as a write that reopens a task with no position reads it: its definition,
+/// the mappings its activation recorded, and its generation and digest.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Placing {
+    pub definition: Definition,
+    pub mappings: Vec<Mapping>,
+    pub generation: u64,
+    pub digest: String,
+}
+
+/// A task with no position that a board writer's move takes out of `left` (done or cancelled) to
+/// `status`, and the roles held on it after the move.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Reopening<'a> {
+    pub slug: &'a str,
+    pub left: &'a str,
+    pub status: &'a str,
+    pub roles: &'a [(String, String, bool)],
+}
+
+impl Placing {
+    /// Where `task` stands once its move leaves done or cancelled: built-in v1's pair for the
+    /// status it moves to (held where its executor or reviewer holds it, as activation reads a
+    /// kept task), itself where the active definition declares it, else where the activation's
+    /// mappings send it; recorded as its first transition, from v1's pair for the status it left,
+    /// made by `by`. Refused, naming the pair, where nothing maps it, where the mapping would give
+    /// it an outcome, a satisfaction or a completion it lacks, or where the pair projects another
+    /// status than its move asks for.
+    pub fn reopened(
+        &self,
+        task: &Reopening<'_>,
+        by: &Principal,
+        at: f64,
+    ) -> Result<Transition, String> {
+        let slug = task.slug;
+        let standing = Standing {
+            slug: slug.into(),
+            version: 0,
+            status: task.status.into(),
+            position: None,
+            blocked_from: None,
+            roles: task.roles.to_vec(),
+        };
+        let (from, _) = legacy_standing(&standing)?;
+        let legacy = builtin();
+        let source = position_of(&legacy, &from).ok_or_else(|| {
+            format!(
+                "{slug} would reopen at {}, which the board's own workflow does not declare",
+                named(&from)
+            )
+        })?;
+        let mappings: BTreeMap<&Pair, &Pair> =
+            self.mappings.iter().map(|m| (&m.from, &m.to)).collect();
+        let to = placed(&self.definition, &mappings, slug, &from, "reopens at")?;
+        let destination =
+            position_of(&self.definition, &to).expect("placed() names a declared pair");
+        fabricates_nothing(slug, source, destination)?;
+        let status = projection(destination.legacy);
+        if status != task.status {
+            return Err(format!(
+                "workflow_mappings: {slug} reopens at {}, which stands for {status}, not {}, the \
+                 status its move asks for",
+                named(&to),
+                task.status
+            ));
+        }
+        Ok(Transition {
+            id: Transition::id_of(slug, 1),
+            slug: slug.into(),
+            revision: 1,
+            generation: self.generation,
+            digest: self.digest.clone(),
+            edge: None,
+            operation: None,
+            activation: None,
+            from: super::legacy_pair(task.left),
+            to,
+            resume: None,
+            status,
+            principal: by.clone(),
+            effects: Vec::new(),
+            key: None,
+            recovery: None,
+            at,
+        })
+    }
+}
+
 /// Built-in v1's pair for a task the board's existing writers kept, and the pair a blocked one
 /// resumes to: its blocked source's, none when the board recorded none.
 fn legacy_standing(task: &Standing) -> Result<(Pair, Option<Pair>), String> {

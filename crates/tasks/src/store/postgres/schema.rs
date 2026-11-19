@@ -477,7 +477,17 @@ DECLARE
     w jsonb := NEW.fields -> '_board' -> 'workflow';
     e jsonb;
 BEGIN
-    IF was IS NOT DISTINCT FROM w AND (was IS NULL OR OLD.status = NEW.status) THEN
+    IF was IS NULL AND w IS NULL THEN
+        IF TG_OP = 'UPDATE' AND OLD.status IN ('done', 'cancelled')
+            AND NEW.status NOT IN ('done', 'cancelled')
+            AND EXISTS (SELECT 1 FROM workflow WHERE id = jsonb_build_array('active') FOR SHARE) THEN
+            RAISE EXCEPTION '%', 'refused: explicit_action_required: ' || NEW.slug
+                || ' has no workflow position, and a custom workflow is active: it leaves '
+                || OLD.status || ' only by a write that places it at its mapped pair';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF was IS NOT DISTINCT FROM w AND OLD.status = NEW.status THEN
         RETURN NEW;
     END IF;
     IF was IS NOT NULL AND w = was THEN

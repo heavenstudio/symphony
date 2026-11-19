@@ -188,47 +188,82 @@ fn a_first_activation_places_every_open_task_and_records_why() {
     }
 }
 
+/// A mapping of built-in v1's held review, which [`MAPPED`] leaves out.
+const HELD: &str = r#"
+[[workflow_mappings]]
+from = { phase = "review", state = "held" }
+to = { phase = "verify", state = "awaiting" }
+"#;
+
 #[test]
-fn a_new_commit_of_the_same_workflow_is_a_generation_that_moves_nothing() {
+fn only_a_commit_that_changes_the_workflow_activates_it() {
     for backend in BACKENDS {
         let f = board(backend);
         let first = at_commit(&mapped(), 'a');
         f.store.activate_workflow(&first, &Host::local()).unwrap();
-        let before = f.store.workflow_position("sim/ready").unwrap().unwrap();
-        let events = f
-            .store
-            .raw()
-            .table("workflow")
-            .matching(json!({"kind": "event"}))
-            .count();
-        let second = at_commit(&mapped(), 'b');
-        assert_eq!(
-            f.store.activate_workflow(&second, &Host::local()),
-            Ok(Followed::Activated(Active {
-                generation: 2,
-                digest: second.revision.digest.clone()
-            }))
-        );
-        assert_eq!(
-            f.store.workflow_position("sim/ready").unwrap(),
-            Some(before)
-        );
+        let active = Active {
+            generation: 1,
+            digest: first.revision.digest.clone(),
+        };
+        // Another commit of the same workflow (any landing): the generation, every task's version
+        // and every record stay as they were, and so does what a request was read from.
+        let before = f.store.dump().unwrap();
+        let read = f.store.workflow_read().unwrap();
+        let position = f.store.workflow_position("sim/ready").unwrap();
         assert_eq!(
             f.store
-                .raw()
-                .table("workflow")
-                .matching(json!({"kind": "event"}))
-                .count(),
-            events
+                .activate_workflow(&at_commit(&mapped(), 'b'), &Host::local()),
+            Ok(Followed::Unchanged(active.clone())),
+            "{backend:?}"
         );
+        assert_eq!(f.store.dump().unwrap(), before, "{backend:?}");
+        assert_eq!(f.store.workflow_read().unwrap(), read);
+        // A commit of other mappings, or of another definition (a label), changes the workflow:
+        // each is a generation, which moves no task its definition still declares.
+        let events = || {
+            (f.store.raw().table("workflow"))
+                .matching(json!({"kind": "event"}))
+                .count()
+                .unwrap()
+        };
+        let recorded = events();
+        let remapped = at_commit(&custom(&format!("{TWO}{MAPPED}{HELD}")), 'c');
+        assert_eq!(
+            f.store.activate_workflow(&remapped, &Host::local()),
+            Ok(Followed::Activated(Active {
+                generation: 2,
+                digest: remapped.revision.digest.clone()
+            }))
+        );
+        let relabelled = TWO.replace(r#"label = "Build""#, r#"label = "Make""#);
+        assert_ne!(relabelled, TWO);
+        let relabelled = at_commit(&custom(&format!("{relabelled}{MAPPED}{HELD}")), 'd');
+        assert_eq!(
+            f.store.activate_workflow(&relabelled, &Host::local()),
+            Ok(Followed::Activated(Active {
+                generation: 3,
+                digest: relabelled.revision.digest.clone()
+            }))
+        );
+        assert_eq!(f.store.workflow_position("sim/ready").unwrap(), position);
+        assert_eq!(events(), recorded);
         let activation = f
             .store
             .raw()
-            .row("workflow", json!(["activation", 2]))
+            .row("workflow", json!(["activation", 3]))
             .get()
             .unwrap();
         assert_eq!(activation["body"]["moved"], json!(0), "{backend:?}");
-        assert_eq!(activation["body"]["previous"]["generation"], json!(1));
+        assert_eq!(activation["body"]["previous"]["generation"], json!(2));
+        // The same definition and mappings again, from yet another commit: still generation 3.
+        assert_eq!(
+            f.store
+                .activate_workflow(&at_commit(&relabelled, 'e'), &Host::local()),
+            Ok(Followed::Unchanged(Active {
+                generation: 3,
+                digest: relabelled.revision.digest.clone()
+            }))
+        );
     }
 }
 

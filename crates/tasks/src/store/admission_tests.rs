@@ -424,3 +424,105 @@ fn a_task_filed_under_the_workflow_starts_at_its_initial_pair_on_the_record() {
         );
     }
 }
+
+#[test]
+fn a_task_closed_before_the_activation_is_placed_by_the_move_that_reopens_it() {
+    for backend in BACKENDS {
+        // sim/late approved by birch before any workflow is active: done, with no position.
+        let seed = Seed::default()
+            .session("birch")
+            .session("orch")
+            .task("sim/late", "review")
+            .role("sim/late", "birch", "reviewer")
+            .role("sim/late", "orch", "orchestrator")
+            .task("sim/gone", "cancelled");
+        let f = Fixture::on(backend, seed);
+        (f.store)
+            .verdict("sim/late", "birch", "approve", "good")
+            .unwrap();
+        f.store
+            .activate_workflow(&custom(&format!("{TWO}{MAPPED}")), &Host::local())
+            .unwrap();
+        assert_eq!(f.store.workflow_position("sim/late").unwrap(), None);
+        // Its reviewer holds it still, so it reopens at built-in v1's held review, which nothing
+        // maps: the move is refused, naming the pair, and writes nothing.
+        let before = f.store.dump().unwrap();
+        assert_eq!(
+            refused(f.store.move_to("sim/late", "review", "birch")),
+            "workflow_mappings: sim/late reopens at review/held, which the workflow no longer \
+             declares; map it to a pair it declares",
+            "{backend:?}"
+        );
+        assert_eq!(f.store.dump().unwrap(), before);
+        // Mapped by the next workflow commit, the move places it in its own write.
+        let held = r#"
+[[workflow_mappings]]
+from = { phase = "review", state = "held" }
+to = { phase = "verify", state = "awaiting" }
+"#;
+        // The mappings live in the project file, so a commit of them is a file of another blob.
+        let mut remapped = custom(&format!("{TWO}{MAPPED}{held}"));
+        let mut source = remapped.revision.source.clone();
+        source.project_blob = "3".repeat(40);
+        remapped.revision = remapped.definition.revision(source).unwrap();
+        let generation = f
+            .store
+            .activate_workflow(&remapped, &Host::local())
+            .unwrap();
+        assert!(
+            matches!(
+                generation,
+                crate::store::workflow::Followed::Activated(crate::store::workflow::Active {
+                    generation: 2,
+                    ..
+                })
+            ),
+            "{generation:?}"
+        );
+        let task = f.store.move_to("sim/late", "review", "birch").unwrap();
+        assert_eq!(task.status, "review");
+        let position = f.store.workflow_position("sim/late").unwrap().unwrap();
+        assert_eq!(
+            (position.at(), position.revision, position.generation),
+            (pair("verify", "awaiting"), 1, 2)
+        );
+        let event = (f.store.raw())
+            .row("workflow", json!(["event", "sim/late", 1]))
+            .get()
+            .unwrap();
+        let placed: Transition = serde_json::from_value(event["body"].clone()).unwrap();
+        assert_eq!(
+            (
+                placed.from,
+                placed.principal,
+                placed.edge,
+                placed.activation
+            ),
+            (
+                Some(pair("done", "approved")),
+                agent_session("birch"),
+                None,
+                None
+            )
+        );
+        // Held now: the board's writers refuse it.
+        assert_eq!(
+            refused(f.store.move_to("sim/late", "in_progress", "birch")),
+            crate::store::workflow::explicit_action("sim/late")
+        );
+        // A write past them meets the database's fence: a cancelled task with no position leaves
+        // cancelled only placed.
+        assert_eq!(
+            refused(
+                f.store
+                    .raw()
+                    .row("task", "sim/gone")
+                    .set(json!({"status": "ready"}))
+            ),
+            "explicit_action_required: sim/gone has no workflow position, and a custom workflow \
+             is active: it leaves cancelled only by a write that places it at its mapped pair",
+            "{backend:?}"
+        );
+        assert_eq!(f.store.get("sim/gone").unwrap().status, "cancelled");
+    }
+}
