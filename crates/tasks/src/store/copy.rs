@@ -329,8 +329,16 @@ impl Store {
         } else {
             self.retrying(|| self.transact(dump(), json!({})))?
         };
-        // The execution tables' rows in the order of their ids, as neither database orders a
-        // document's fields alike.
+        // The execution tables' rows in the order of their ids, and each row's fields in one order
+        // at every depth, as the two databases neither return rows nor order a document's fields
+        // alike (PostgreSQL's jsonb keeps the shorter keys first).
+        let rows = [
+            &mut dump.execution_attempts,
+            &mut dump.execution_facts,
+            &mut dump.execution_fences,
+            &mut dump.execution_artifacts,
+        ];
+        rows.into_iter().flatten().for_each(Value::sort_all_objects);
         let text = |value: &Value| value.to_string();
         dump.execution_attempts
             .sort_by_key(|row| text(&row["attempt"]));
