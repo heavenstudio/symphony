@@ -2833,9 +2833,11 @@ mod tests {
             f.store.client().requests() - before,
             regions.join(", ")
         );
+        // Two small reads, and the active workflow's one, which a relabel's new generation needs
+        // as it moves no task (`Hub::workflow_read`): no sign-off thread read, no column counts.
         assert_eq!(
             f.store.client().requests() - before,
-            2,
+            3,
             "no sign-off thread read"
         );
         assert_eq!(regions, ["task-fields", "session", "counts"]);
