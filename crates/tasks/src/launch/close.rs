@@ -31,6 +31,7 @@
 //! restore line, and nothing is killed; one a close recorded closed already (stopped before it
 //! retired the callback) writes nothing more. Either way the callback is retired by the same rule.
 
+use super::attempts::{Ended, Local};
 use super::cleanup::{Judged, Running, foreground_idle, restore_line, stored_session};
 use super::hc::{self, BOARD_LABEL, HANDLE_LABEL, Hc, Object, text_of};
 use super::screen::{self, NotClosed};
@@ -49,6 +50,8 @@ struct Ask<'a> {
     processes: &'a Processes,
     slug: &'a str,
     handle: &'a str,
+    /// The local provider, for the closer: the terminal's execution attempt is stopped as it.
+    local: Local<'a>,
     why: String,
     hold: u64,
 }
@@ -87,6 +90,7 @@ pub fn close(
         processes,
         slug,
         handle,
+        local: Local::new(store, hc, crate::workflow::agent_session(actor)),
         why: format!("{CLOSED_BY}{actor}"),
         hold,
     };
@@ -109,19 +113,51 @@ fn holding(ask: &Ask<'_>, task: &Task, board: SessionRow) -> Result<Closure, Err
     let judged = judge(ask, &terminal)?;
     let read = ask.store.callbacks()?.remove(ask.handle);
     let finished = |now: &Object| still_closable(ask, now, &judged);
-    match screen::close_unseen(ask.hc, &address, &finished) {
-        Ok(()) => {}
-        Err(NotClosed::Kept(kept)) => {
+    // The kill is the close's own last look, made as the answer to the terminate its execution
+    // attempt owes, or as it is where the terminal runs under none.
+    let mut stays = None;
+    let mut kill = || {
+        screen::close_unseen(ask.hc, &address, &finished).map_err(|kept| {
+            let said = match &kept {
+                NotClosed::Kept(why) => why.clone(),
+                NotClosed::Refused(problem) => problem.0.clone(),
+            };
+            stays = Some(kept);
+            said
+        })
+    };
+    let attempt = ask.local.bound_to(&slugs(&mine, ask.slug), ask.handle, &address)?;
+    let stopped = match attempt {
+        Some(attempt) => {
+            let evidence = format!("terminal {address} {}", ask.why);
+            let Ended { closed, board } = ask.local.stop(&attempt.id, &evidence, &mut kill);
+            if closed.is_none() {
+                board?;
+                kill().ok();
+                Ok(())
+            } else {
+                board
+            }
+        }
+        None => {
+            kill().ok();
+            Ok(())
+        }
+    };
+    match stays {
+        None => {}
+        Some(NotClosed::Kept(kept)) => {
             return Err(refused(format!("terminal {address} stays: {kept}")));
         }
-        Err(NotClosed::Refused(problem)) => return Err(problem.into()),
+        Some(NotClosed::Refused(problem)) => return Err(problem.into()),
     }
     let written = (|| {
         record(ask, &mine, &address)?;
         if let Target::Found = target {
             record_found(ask, &terminal, role, board)?;
         }
-        retire(ask, &address, read.as_ref(), &ask.why)
+        retire(ask, &address, read.as_ref(), &ask.why)?;
+        stopped
     })();
     match written {
         Ok(()) => Ok(closure(&address, ask, &ask.why)),
@@ -132,6 +168,13 @@ fn holding(ask: &Ask<'_>, task: &Task, board: SessionRow) -> Result<Closure, Err
         ))),
         Err(problem) => Err(problem),
     }
+}
+
+/// The tasks `handle`'s records name, and `slug`: where its terminal's execution attempt may be.
+fn slugs<'a>(mine: &'a [TaskSessionRow], slug: &'a str) -> Vec<&'a str> {
+    std::iter::once(slug)
+        .chain(mine.iter().map(|record| record.slug.as_str()))
+        .collect()
 }
 
 fn refused(why: String) -> Error {
@@ -212,6 +255,14 @@ fn gone(ask: &Ask<'_>, target: &Target, mine: &[TaskSessionRow]) -> Result<Closu
             .close_task_session_as(record, GONE, &restore, ask.hold)?;
     }
     retire(ask, pane, read.as_ref(), why)?;
+    // Its execution attempt, if it still reads live, is observed gone.
+    if let Some(attempt) = ask
+        .local
+        .bound_to(&slugs(mine, ask.slug), ask.handle, pane)?
+    {
+        let evidence = format!("terminal {pane}: {GONE}");
+        ask.local.end(&attempt.id, false, &evidence, &mut || Ok(())).board?;
+    }
     Ok(closure(pane, ask, why))
 }
 

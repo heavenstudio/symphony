@@ -6,7 +6,7 @@ use super::hc::{self, Hc, Object, text, text_of};
 use super::procs::{self, busy_reason, named};
 use super::reap::NOT_REAPED_KINDS;
 use super::screen::{self, NotClosed};
-use super::{GONE, LaunchError, Processes, READY_STATES, gone};
+use super::{GONE, LaunchError, Processes, READY_STATES, attempts, gone};
 use crate::health::FINISHED;
 use crate::rows::TaskSessionRow;
 use crate::{Error, NewLaunch, Store, Task};
@@ -223,6 +223,7 @@ pub fn cleanup_as(
         let restore = restore_line(&s.slug, &s.handle);
         if !dry_run {
             store.close_task_session(&s.slug, &s.handle, GONE, &restore)?;
+            attempts::closed(store, hc, &s.handle, &s.pane, GONE)?;
         }
         result.push(Closure {
             pane: s.pane.clone(),
@@ -290,6 +291,9 @@ pub fn cleanup_as(
                 }) {
                     Ok(done) => closure.closed = done,
                     Err(kept) => closure = kept,
+                }
+                if let (true, Some(handle)) = (closure.closed, &closure.handle) {
+                    attempts::closed(store, hc, handle, &address, &closure.why)?;
                 }
             }
             result.push(closure);
@@ -392,6 +396,7 @@ pub fn cleanup_as(
             }
             if let Some(handle) = &handle {
                 record_closure(store, handle, &terminal, why)?;
+                attempts::closed(store, hc, handle, &address, why)?;
             }
         }
         result.push(closure);

@@ -1,6 +1,8 @@
-//! A launch that fails after registration releases its handle and the resources it made.
+//! A launch that fails after registration releases its handle and the resources it made, and ends
+//! the execution attempt it admitted: cancelled, the close of its terminal the answer to the
+//! terminate it owes ([`Local::abandon`]).
 
-use super::{Machine, git, hc::Hc};
+use super::{Machine, attempts::Local, git, hc::Hc};
 use crate::{Error, Store};
 use std::path::Path;
 
@@ -11,18 +13,26 @@ pub(super) fn failed(
     handle: &str,
     terminal: &str,
     made: Option<&Path>,
+    attempt: Option<(&Local<'_>, &str)>,
     mut problem: Error,
 ) -> Error {
     let mut incomplete = Vec::new();
-    let closed = if terminal.is_empty() {
-        true
-    } else {
-        match hc.close(terminal) {
-            Ok(()) => true,
-            Err(why) => {
-                incomplete.push(format!("terminal {terminal}: {why}"));
-                false
+    let closing = match attempt {
+        Some((local, id)) => {
+            let (closing, board) = local.abandon(id, hc, terminal, &problem.to_string());
+            if let Err(why) = board {
+                incomplete.push(format!("execution attempt {id}: {why}"));
             }
+            closing
+        }
+        None if terminal.is_empty() => Ok(()),
+        None => hc.close(terminal).map_err(|why| why.0),
+    };
+    let closed = match closing {
+        Ok(()) => true,
+        Err(why) => {
+            incomplete.push(format!("terminal {terminal}: {why}"));
+            false
         }
     };
     if let Err(why) = store.leave(handle) {

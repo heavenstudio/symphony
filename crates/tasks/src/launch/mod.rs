@@ -22,6 +22,8 @@
 //! cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the periodic
 //! sweep of idle agents (`just tasks clean` runs one). [`close`] closes one agent's terminal on its
 //! orchestrator's word, whatever it holds, recorded the same way, under the rules its module gives.
+//! Each launch, restore and close is recorded as an execution attempt as well, hc its provider
+//! ([`attempts`]): the records above, and their readers, are as they were.
 //! For a command an agent ran unasked (`just tasks`), a launch and a restore start an agent only in
 //! the project, and a launch's first message is its skill's alone ([`Bounds`]).
 //!
@@ -41,6 +43,7 @@
 //! Every hc call goes through [`hc::Hc`], whose binaries are `$HC_BIN` (default `hc`) and
 //! `$HERDR_APP_BIN` (default `herdr-app`); the tests (`tests/launch/`) point both at `fake-hc`.
 
+pub mod attempts;
 mod bounds;
 mod checkout;
 mod cleanup;
@@ -407,8 +410,15 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
         ..NewSession::default()
     })?;
     let handle = session.row.handle;
+    let actor = if ask.actor.is_empty() {
+        crate::workflow::board_service("launch")
+    } else {
+        crate::workflow::agent_session(&ask.actor)
+    };
+    let local = attempts::Local::new(store, hc, actor);
     let mut terminal = String::new();
     let mut checkout_made = false;
+    let mut attempt = None;
     let started = (|| {
         take_up(store, ask, &handle)?;
         if made_worktree {
@@ -429,6 +439,10 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
                 ["--session-id", &conversation],
             )
         };
+        let text = prompt_text(slug, &handle, &ask.prompt, agent, role);
+        // Admitted, its start owed, before hc is started.
+        let admitted = local.admit(&task, role, &handle, &where_, &text)?.id;
+        attempt = Some(admitted.clone());
         start_confirmed(
             hc,
             m,
@@ -440,9 +454,11 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
                 agent,
                 resumed_codex: false,
                 args,
-                text: &prompt_text(slug, &handle, &ask.prompt, agent, role),
+                text: &text,
             },
+            (&local, &admitted),
         )?;
+        local.running(&admitted, Some(conversation.as_str()).filter(|_| agent != "codex"))?;
         let claude_session = if agent == "codex" {
             // The thread is known once the agent registers its callback (`just tasks callback`).
             "codex:".to_string()
@@ -473,6 +489,7 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
             &handle,
             &terminal,
             checkout_made.then_some(path.as_path()),
+            attempt.as_deref().map(|id| (&local, id)),
             problem,
         )
     })
@@ -596,14 +613,10 @@ struct Start<'launch> {
     text: &'launch str,
 }
 
-/// Start in the stream's tab and confirm the message (`startup`); leave the terminal for the caller.
-fn start_confirmed(
-    hc: &dyn Hc,
-    m: &Machine,
-    terminal: &mut String,
-    start: &Start<'_>,
-) -> Result<startup::Message, LaunchError> {
-    let mut place = place(hc, &m.project(), start.stream)?;
+/// Start `start`'s agent in its stream's tab, in a terminal of its own: its address, and where it
+/// shows.
+fn open(hc: &dyn Hc, m: &Machine, start: &Start<'_>) -> Result<(String, place::Place), LaunchError> {
+    let place = place(hc, &m.project(), start.stream)?;
     let mut argv = vec!["env".to_string(), format!("TASKS_SESSION={}", start.handle)];
     argv.extend(m.board_env.iter().map(|(k, v)| format!("{k}={v}")));
     argv.push(start.agent.into());
@@ -629,13 +642,36 @@ fn start_confirmed(
     ]);
     call.extend(argv.iter().map(String::as_str));
     let made = hc.json(&call)?;
-    *terminal = made
+    let address = made
         .get("address")
         .and_then(Value::as_str)
         .filter(|a| !a.is_empty())
         .ok_or_else(|| LaunchError("hc run answered no terminal address".into()))?
         .to_string();
-    startup::first_message(
+    Ok((address, place))
+}
+
+/// Start in the stream's tab, as the start of `attempt` (the local provider's, and the attempt's
+/// id), and confirm the message (`startup`); leave the terminal for the caller.
+fn start_confirmed(
+    hc: &dyn Hc,
+    m: &Machine,
+    terminal: &mut String,
+    start: &Start<'_>,
+    attempt: (&attempts::Local<'_>, &str),
+) -> Result<startup::Message, Error> {
+    let (local, id) = attempt;
+    let mut placed = None;
+    local.start(id, &mut || {
+        let (address, place) = open(hc, m, start)?;
+        terminal.clone_from(&address);
+        placed = Some(place);
+        Ok(address)
+    })?;
+    let Some(mut place) = placed else {
+        return Err(LaunchError("hc run answered no terminal address".into()).into());
+    };
+    let message = startup::first_message(
         hc,
         terminal,
         start.agent,
@@ -643,7 +679,8 @@ fn start_confirmed(
         start.resumed_codex,
         &mut || name_place(hc, &mut place),
         &*m.sleep,
-    )
+    )?;
+    Ok(message)
 }
 
 /// Whether a recorded pane is gone: a herdr pane id (`w1:p3`: herdr is no more), or a terminal of

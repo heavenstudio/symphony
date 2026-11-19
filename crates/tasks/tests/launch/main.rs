@@ -9,6 +9,7 @@ mod children;
 #[allow(dead_code)]
 mod common;
 
+mod attempts;
 mod cleanup;
 mod cleanup_kept;
 mod close;
