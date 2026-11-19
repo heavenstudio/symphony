@@ -1,6 +1,7 @@
 /* The panel's own rules: the `+` sheet's tabs and the tip of its collapse button, as the pinned
- * dioxus-components tabs and tooltip sheets write them. The sheet's, the activity list's, the
- * toasts' and the pending bar's rules are the shared sheet's (styles/frame.css). */
+ * dioxus-components tabs and tooltip sheets write them, and below them what the sheets hold once
+ * the panel has mounted. The boxes of the sheet and the activity panel, which the shell draws
+ * first, and the pending bar's rules are the shared sheet's (styles/frame.css). */
 
 #quick-sheet .collapse {
   display: inline-flex;
