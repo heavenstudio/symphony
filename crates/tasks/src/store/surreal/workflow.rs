@@ -14,12 +14,12 @@ RETURN IF $active = NONE { NULL } ELSE { {
     revision: (SELECT VALUE body.revision FROM ONLY type::record('workflow', ['definition', $active.digest])) ?? NULL,
 } };";
 
-/// The definition recorded under `$digest`, or NULL.
 /// The transitions `$ids` name (`['event', SLUG, REVISION]`), each read by its id, in their order:
 /// none for an id with no record.
 pub(in crate::store) const TRANSITIONS: &str =
     "SELECT VALUE body FROM $ids.map(|$i| type::record('workflow', $i));";
 
+/// The definition recorded under `$digest`, or NULL.
 pub(in crate::store) const DEFINITION: &str = "RETURN (SELECT VALUE body FROM ONLY type::record('workflow', ['definition', $digest])) ?? NULL;";
 
 /// The mappings activation `$generation` recorded, or NULL.
