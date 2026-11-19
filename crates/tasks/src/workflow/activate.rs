@@ -43,8 +43,8 @@ impl Host {
 /// The definition refused unless this host supports everything it needs: each capability it
 /// declares granted to someone, each adapter registered, and nothing this release cannot run yet.
 /// Guards wait on revision-bound guards; attempt-driven recovery, automatic edges and retry bounds
-/// wait on durable attempts; `accepted_output` dependencies and parent integration on their own
-/// follow-ups. Each refusal says which, so the project knows what it asked for.
+/// wait on durable attempts; `landed` dependencies and parent integration on their own follow-ups.
+/// Each refusal says which, so the project knows what it asked for.
 pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {
     let d = definition.definition();
     let granted = host.grants.supported();
@@ -116,13 +116,12 @@ pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {
     Ok(())
 }
 
-/// Why this release cannot check `dependency`, none for one it checks (`none`, `done`): an
-/// accepted output, and a landing, which the board knows only from its thread and its git.
+/// Why this release cannot check `dependency`, none for one it checks (`none`, `done`,
+/// `accepted_output`): a landing, which the board knows only from its thread and its git.
 fn unsupported_dependency(dependency: Dependency) -> Option<&'static str> {
     match dependency {
-        Dependency::None | Dependency::Done => None,
+        Dependency::None | Dependency::Done | Dependency::AcceptedOutput => None,
         Dependency::Landed => Some("landed"),
-        Dependency::AcceptedOutput => Some("accepted_output (tools/workflow-accepted-output)"),
     }
 }
 
@@ -136,8 +135,8 @@ fn named(pair: &Pair) -> String {
 }
 
 /// A task as activation reads it: its row's version, its status, where a workflow holds it, the
-/// status a blocked task came from, and the roles held on it, each with whether its holder is
-/// alive enough to hold it ([`crate::Health::holds`]).
+/// status a blocked task came from, the roles held on it, each with whether its holder is alive
+/// enough to hold it ([`crate::Health::holds`]), and the accepted output its last transition left.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Standing {
     pub slug: String,
@@ -146,6 +145,7 @@ pub struct Standing {
     pub position: Option<TaskPosition>,
     pub blocked_from: Option<String>,
     pub roles: Vec<(String, String, bool)>,
+    pub accepted: Option<String>,
 }
 
 /// What an activation writes: each task moved, by its transition, from the version and workflow
@@ -212,9 +212,14 @@ pub fn plan(
         let destination = position_of(new, &to).expect("placed() names a declared pair");
         fabricates_nothing(slug, source, destination)?;
         let status = projection(destination.legacy);
-        let changes =
+        let moves =
             task.position.is_none() || from != to || resume != resume_from || status != task.status;
-        if (changes || source.staffing != destination.staffing)
+        // A pair that stops satisfying dependants supersedes the output accepted there, recorded
+        // as a transition that moves nothing; a mapping never accepts one.
+        let accepted =
+            super::admit::accepted_after(Some(source), destination, task.accepted.as_deref(), None);
+        let changes = moves || accepted != task.accepted;
+        if (moves || source.staffing != destination.staffing)
             && let Some((handle, role, _)) = task
                 .roles
                 .iter()
@@ -251,6 +256,7 @@ pub fn plan(
                 effects: Vec::new(),
                 key: None,
                 recovery: None,
+                accepted,
                 at,
             },
         });
@@ -300,6 +306,7 @@ impl Placing {
             position: None,
             blocked_from: None,
             roles: task.roles.to_vec(),
+            accepted: None,
         };
         let (from, _) = legacy_standing(&standing)?;
         let source = super::builtin::position_at(&from).ok_or_else(|| {
@@ -339,6 +346,8 @@ impl Placing {
             effects: Vec::new(),
             key: None,
             recovery: None,
+            // No edge accepted the output of a task the board's own writers kept.
+            accepted: None,
             at,
         })
     }

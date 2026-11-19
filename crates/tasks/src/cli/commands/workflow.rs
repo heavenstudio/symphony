@@ -10,7 +10,10 @@
 //! `apply` sends the task's workflow revision the session read (`--revision`, which `actions`
 //! prints), never the one it finds: a task another moved since is refused as stale, so the
 //! session reads it again before it acts. Its key (`--key`, by default the task, the revision and
-//! the edge) makes a repeated command answer the first one's result.
+//! the edge) makes a repeated command answer the first one's result. An edge depending on
+//! accepted outputs takes the one the session names of each task it depends on
+//! (`--accept SLUG=OUTPUT`, which `actions` prints), never the one standing when it is sent: an
+//! output superseded since is refused as stale_input.
 
 use super::{Context, Stop};
 use crate::Store;
@@ -85,7 +88,28 @@ fn actions(store: &Store, c: &mut Context) -> Result<(), Stop> {
     for line in action_lines(&slug, &next) {
         c.say(&line);
     }
+    for line in output_lines(&store.accepted_outputs(&slug)?) {
+        c.say(&line);
+    }
     Ok(())
+}
+
+/// The task's own accepted output, and the one standing for each task an edge leaving it takes
+/// the accepted output of, with the `--accept` that names it.
+fn output_lines(outputs: &crate::store::admission::Outputs) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(own) = &outputs.own {
+        lines.push(format!("  its accepted output: {own}"));
+    }
+    for (slug, output) in &outputs.takes {
+        lines.push(match output {
+            Some(output) => {
+                format!("  takes {slug}'s accepted output {output} (--accept {slug}={output})")
+            }
+            None => format!("  takes {slug}'s accepted output: none stands"),
+        });
+    }
+    lines
 }
 
 /// The snapshot, then each edge: where it goes, its label, who takes it and what stops it.
@@ -146,6 +170,13 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
             .ok_or_else(|| Stop::Refused(format!("--input is NAME=TEXT, not {given:?}")))?;
         inputs.insert(name.to_string(), InputValue::Text(value.to_string()));
     }
+    let mut input_revisions = BTreeMap::new();
+    for given in c.parsed.all("accept") {
+        let (prerequisite, output) = given
+            .split_once('=')
+            .ok_or_else(|| Stop::Refused(format!("--accept is SLUG=OUTPUT, not {given:?}")))?;
+        input_revisions.insert(prerequisite.to_string(), output.to_string());
+    }
     let key = (c.parsed.get("key").map(str::to_string))
         .unwrap_or_else(|| format!("{slug}@{revision}:{edge}"));
     let request = OperationRequest {
@@ -153,7 +184,7 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
         task: slug.clone(),
         edge,
         expected: snapshot,
-        input_revisions: BTreeMap::new(),
+        input_revisions,
         idempotency_key: key,
         inputs,
     };
@@ -164,7 +195,8 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
             if (receipt.sent.task.as_str(), receipt.sent.edge.as_str())
                 == (request.task.as_str(), request.edge.as_str())
                 && receipt.sent.expected.task_revision == revision
-                && receipt.sent.inputs == request.inputs =>
+                && receipt.sent.inputs == request.inputs
+                && receipt.sent.input_revisions == request.input_revisions =>
         {
             receipt.sent
         }
