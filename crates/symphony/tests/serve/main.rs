@@ -328,11 +328,13 @@ fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_a
 }
 
 /// The commands the binary lists: the Symphony's own, which a test build holds with no plugin.
-const COMMANDS: [&str; 16] = [
+const COMMANDS: [&str; 18] = [
     "status",
     "reply",
     "ask",
     "triage",
+    "render-card",
+    "landing-checks",
     "verdict-asks",
     "docs-audit",
     "settings-check",
