@@ -213,14 +213,38 @@ impl Store {
                 "slots": slots,
                 "seen": [],
             });
-            let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
+            // Each role the edge gives its taker is said as the board's own join says it, so every
+            // reader of who held a task's roles (a fresh reviewer's, a post's recipient, where the
+            // time went) reads it from the thread as it reads a join (`Store::ever_held`).
+            let joined: Vec<String> = (admitted.add.iter())
+                .map(|(handle, role)| format!("{handle} joined as {role}"))
+                .collect();
+            let mut vars = vars;
+            vars["joined"] = json!(joined);
+            let mut logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
+            let mut logged_pg =
+                pg::logged("v ->> 'slug'", "v ->> 'sender'", "'system'", "v ->> 'said'", "NULL");
+            for i in 0..joined.len() {
+                logged.push_str(&surreal::logged(
+                    "$slug",
+                    "$sender",
+                    "'system'",
+                    &format!("$joined[{i}]"),
+                    "NONE",
+                ));
+                logged_pg.push('\n');
+                logged_pg.push_str(&pg::logged(
+                    "v ->> 'slug'",
+                    "v ->> 'sender'",
+                    "'system'",
+                    &format!("v -> 'joined' ->> {i}"),
+                    "NULL",
+                ));
+            }
             let guard = if guarded { sql_cap::GUARD } else { "" };
             let body = both(
                 format!("{}{logged}{guard}", sql::APPLY),
-                pg::workflow::apply(
-                    &pg::logged("v ->> 'slug'", "v ->> 'sender'", "'system'", "v ->> 'said'", "NULL"),
-                    guarded,
-                ),
+                pg::workflow::apply(&logged_pg, guarded),
             );
             self.written(body, vars, slug)?;
             Ok(receipt)
@@ -546,7 +570,9 @@ fn stopped(failure: Failure) -> Error {
     }
 }
 
+mod operations;
 mod recovery;
+pub use operations::Settled;
 pub(in crate::store) use recovery::Released;
 
 #[cfg(test)]

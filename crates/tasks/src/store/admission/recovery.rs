@@ -251,7 +251,9 @@ fn vars(
         "seen": seen,
         "receipt": null,
         "receipt_body": null,
-        "actor": (by != crate::store::work::OWNER).then_some(by),
+        // The owner and the board itself are no sessions the write could check is still there.
+        "actor": (by != crate::store::work::OWNER && by != crate::store::messages::BOARD)
+            .then_some(by),
         "transition": recovery.transition,
         "position": recovery.transition.as_ref().map(Transition::position),
         "moved": *status != decided.task.status,

@@ -474,6 +474,15 @@ pub(crate) fn position_held(
     (fields.get("_board")).is_some_and(|board| board.contains_key("workflow"))
 }
 
+/// The position a task's board fields hold, none for a task the board's own writers keep (or one
+/// whose position is not in the board's shape, which the database's fences never write).
+pub(crate) fn task_position(
+    fields: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
+) -> Option<TaskPosition> {
+    let position = fields.get("_board")?.get("workflow")?;
+    serde_json::from_value(position.clone()).ok()
+}
+
 /// The refusal of a legacy move or staffing of `slug`, a task a custom workflow holds.
 pub(crate) fn explicit_action(slug: &str) -> String {
     format!(
