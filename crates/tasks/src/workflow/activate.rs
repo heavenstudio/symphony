@@ -306,8 +306,8 @@ pub fn returning(
             _ => None,
         };
         let resumes = resume.as_ref().map(|pair| pair.phase.as_str());
-        if let Some((handle, role, _)) = (task.roles.iter())
-            .find(|(_, role, holds)| *holds && !keeps(&status, resumes, role))
+        if let Some((handle, role, _)) =
+            (task.roles.iter()).find(|(_, role, holds)| *holds && !keeps(&status, resumes, role))
         {
             return Err(format!(
                 "{slug} is held by {handle} as its {role}, and it would return to {status}, where \

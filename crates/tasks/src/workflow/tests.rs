@@ -99,7 +99,9 @@ fn a_file_without_a_workflow_is_none_and_its_mappings_map_onto_built_in_v1() {
         "workflow_mappings: build/working -> deploy/queued names a destination the workflow \
          does not declare"
     );
-    let twice = format!("{BACK}[[workflow_mappings]]\nfrom = {{ phase = \"build\", state = \"working\" }}\nto = {{ phase = \"ready\", state = \"available\" }}\n");
+    let twice = format!(
+        "{BACK}[[workflow_mappings]]\nfrom = {{ phase = \"build\", state = \"working\" }}\nto = {{ phase = \"ready\", state = \"available\" }}\n"
+    );
     assert_eq!(
         written(&twice).unwrap_err(),
         "workflow_mappings: build/working is mapped twice"
@@ -299,7 +301,10 @@ fn the_committed_reader_reads_the_branch_tip_and_nothing_uncommitted() {
     assert_eq!(custom.mappings.len(), 2);
     assert_eq!(custom.revision.source.commit, tip);
     custom.definition.check_revision(&custom.revision).unwrap();
-    assert!(read.returning.is_empty(), "a custom definition's mappings are its own");
+    assert!(
+        read.returning.is_empty(),
+        "a custom definition's mappings are its own"
+    );
 
     // What the working tree and the index hold changes nothing until it is committed.
     fs::write(repo.0.join(FILE), "[workflow]\nformat = 999\n").unwrap();

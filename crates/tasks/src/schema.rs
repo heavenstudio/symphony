@@ -80,8 +80,8 @@
 //! receipt by its principal and key, and an external intent. A task the workflow holds keeps its
 //! position in `fields._board.workflow`. Two events are the fence every writer meets, whatever
 //! it is: a task's position, or the status of a task that has one, changes only beside the
-//! transition recorded for it (`workflow_position`; from schema 25 a position goes, beside the
-//! transition an activation recorded as a return to the board's writers made), and a recorded definition, activation,
+//! transition recorded for it (`workflow_position`), a position going only beside the transition
+//! made by an activation recorded as a return to the board's writers, and a recorded definition, activation,
 //! transition or receipt is never changed (`workflow_history`). A board with no custom workflow
 //! holds no such record and meets neither.
 //!

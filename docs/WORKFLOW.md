@@ -53,7 +53,7 @@ request extends it.
 Every command that opens a project's live board to write follows the workflow its default
 branch commits (`workflow::follow`, `Store::follow_committed`), but `agent-send`, whose message
 moves no task and whose program links none of the workflow: a project that commits no
-`[workflow]` on a board that never activated one reads the branch tip and writes nothing, and a
+`[workflow]` on a board with none active reads the branch tip and writes nothing, and a
 repository without that branch commits nothing. A committed definition, or mappings, other than
 the active one's is activated, in one transaction fenced on the active generation and on the
 version of every task it reads (`Store::activate_workflow`); a commit that changes neither, any
@@ -80,9 +80,38 @@ acknowledgement that moves work, automatic edges and retry bounds, which need du
 finalize, as no adapter runs here yet and a prepared intent never completes on a caller's word; a
 pair or resume pair neither declared nor mapped; a mapping onto a position recording an outcome, satisfied dependants or a completion its
 source lacks; and a task whose live executor or reviewer it would move or restaff. A live holder
-stands in for a live attempt until durable attempts are read here. A file that drops `[workflow]`
-after an activation is refused as well: returning to the board's own writers is not supported
-yet, and rolling back is a forward activation of another committed definition with mappings.
+stands in for a live attempt until durable attempts are read here. Rolling back is a forward
+activation: of another committed definition with mappings, or of none
+([below](#returning-to-the-boards-own-writers)).
+
+### Returning to the board's own writers
+
+A file that drops `[workflow]` after an activation returns the board to its existing writers, as
+the next generation's activation (`Store::return_to_default`, `activate::returning`). Its
+`[[workflow_mappings]]` then map onto built-in v1: every task the workflow holds, closed ones
+too, goes to the v1 pair it stands at where v1 declares that pair, else to its mapped one, and a
+task returning blocked maps the pair it resumes to the same way. In one transaction, fenced as
+any activation is, each task takes the status its v1 pair stands for, a blocked one a block
+record naming the status it came from (waiting on `parked`), and loses its position; the move
+is recorded as a transition by the board's activation service, the activation is recorded as a
+return with the commit and the mappings it applied, and no generation is left active. The
+definitions, activations, transitions and receipts recorded before it stay, and each task keeps
+the workflow revision its return made (`fields._board.workflow_retired`), which a later
+activation or reopening continues from. A concept, design or review pair is recorded as v1's
+held one where the task's executor or reviewer holds it, as the board reads it from then on.
+
+From that write the board is one with no custom workflow: its own commands move, claim, review
+and close every task again, `tasks workflow` and the api answer that none is active, and an
+operation admitted under the workflow it left is refused. A later commit of a `[workflow]`
+activates it as the generation after the return's.
+
+The whole return is refused, nothing written and the custom generation left active, on a pair or
+a blocked task's resume pair that v1 neither declares nor has mapped to it; a mapping onto a v1
+position recording an outcome, satisfied dependants or a completion its source lacks (unfinished
+work mapped to done, say); and a live executor or reviewer on a task returning to a status where
+the board's writers keep no such holder (`activate::keeps`): an executor is kept in concept,
+design, in_progress and review, a reviewer in review, and either on a blocked task by the status
+it resumes to. A lost holder's role row returns with the task, the board's writers' to recover.
 
 ## Admission
 
@@ -190,11 +219,12 @@ writers from one revision one commits, and the other is refused as `stale_task`.
 The database holds every writer to that, the board's own writers and its generic field, import
 and copy paths included. A write that changes a task's position, or the status of a task that has
 one, is refused unless the position is the next revision and the transition recorded for it names
-the same pair, resume, generation, digest and status. A position is never removed, and a task is
-never put back at a position its later transitions left. A recorded definition, activation,
+the same pair, resume, generation, digest and status. A position goes only beside the next
+transition recorded for its task by an activation recorded as a return, at the status that
+transition names, and a task is never put back at a position its later transitions left. A recorded definition, activation,
 transition or receipt is never changed, and the active generation moves forward only to an
-activation recorded for it. `Store::raw` refuses the table. A board with no custom workflow holds
-none of these records, its export is the text it was, and every other write runs as before. The
+activation recorded for it, or goes in the write of a return. `Store::raw` refuses the table. A board that never activated a custom
+workflow holds none of these records, its export is the text it was, and every other write runs as before. The
 whole-board copy carries the records before the tasks, so a copy that lost them cannot restore a
 task the workflow holds. A reader one schema behind keeps and ignores the position.
 

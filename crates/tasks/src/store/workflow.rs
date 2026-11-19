@@ -5,7 +5,7 @@
 //!
 //! Nothing but this module writes them, and the schema's fences hold every writer to that: a
 //! task's position, or the status of a task that has one, changes only in the write that records
-//! its transition, and a recorded definition, activation, transition or receipt is never changed
+//! its transition, a position goes only in the return that retires it, and a recorded definition, activation, transition or receipt is never changed
 //! (`crate::schema`'s `workflow_position`, `workflow_history` and `workflow_active`, and their
 //! PostgreSQL twins). `Store::raw` refuses the table, and `Store::set_field` the board's own
 //! fields. A board with no custom workflow holds none of this, and every other write meets the
@@ -297,7 +297,10 @@ impl Store {
                 "at": at,
             });
             match self.retrying(|| {
-                self.transact::<Value>(both(sql::RETURN_DEFAULT, pg::return_default()), vars.clone())
+                self.transact::<Value>(
+                    both(sql::RETURN_DEFAULT, pg::return_default()),
+                    vars.clone(),
+                )
             }) {
                 Ok(_) => return Ok(Followed::Returned { generation }),
                 Err(Error::Refused(why))

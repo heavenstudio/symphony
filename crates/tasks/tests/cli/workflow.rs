@@ -228,3 +228,43 @@ fn a_session_recovers_a_lost_holders_task_which_pull_and_next_offer_to_no_claim(
     assert!(!pulled.contains("sim/jump"), "{pulled}");
     assert!(c.ok(&birch, &["next"]).starts_with("nothing to take"));
 }
+
+#[test]
+fn after_a_return_the_boards_own_commands_move_the_task_again() {
+    let c = Case::new();
+    let amber = c.register("worker");
+    c.store()
+        .activate_workflow(&flow(), &Host::local())
+        .unwrap();
+    c.ok(&amber, &["create", "sim/jump", "Jump departure"]);
+    c.ok(
+        &amber,
+        &["workflow", "apply", "sim/jump", "claim", "--revision", "1"],
+    );
+    // The default branch commits a file with no [workflow], its mappings onto the board's pairs.
+    let back = "[[workflow_mappings]]\nfrom = { phase = \"build\", state = \"working\" }\nto = { phase = \"in_progress\", state = \"working\" }\n";
+    let committed = symphony_board::workflow::Committed {
+        commit: "3".repeat(40),
+        custom: None,
+        returning: written(back).unwrap().1,
+    };
+    assert_eq!(
+        c.store().follow_committed(&committed, &Host::local()),
+        Ok(symphony_board::workflow::Followed::Returned { generation: 2 })
+    );
+    assert_eq!(
+        c.ok(&amber, &["workflow", "show"]),
+        "no custom workflow is active: the board's own writers keep its tasks\n"
+    );
+    let shown = c.ok(&amber, &["show", "sim/jump"]);
+    assert!(shown.contains("[in_progress"), "{shown}");
+    // Its executor came back with it, and sends it to review by the board's own move.
+    c.ok(&amber, &["move", "sim/jump", "review"]);
+    let edge = c.run_as(
+        &amber,
+        &["workflow", "apply", "sim/jump", "submit", "--revision", "3"],
+        "",
+    );
+    assert_eq!(edge.code, 1, "{}", edge.out);
+    assert!(!edge.err.is_empty());
+}

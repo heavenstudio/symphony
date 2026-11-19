@@ -294,6 +294,68 @@ fn the_database_never_changes_a_recorded_transition_or_moves_the_active_generati
 }
 
 #[test]
+fn the_database_retires_a_position_only_beside_a_returns_transition() {
+    for backend in BACKENDS {
+        let f = Fixture::on(backend, Seed::default());
+        managed(&f, "sim/jump");
+        managed(&f, "sim/two");
+        // The next transition of each, as an activation's: 7 an ordinary one, 8 a return.
+        by_hand(
+            &f,
+            "CREATE workflow:['activation', 7] CONTENT { kind: 'activation', body: { generation: 7, digest: 'd7' }, at: 1.0 } RETURN NONE;
+             CREATE workflow:['activation', 8] CONTENT { kind: 'activation', body: { generation: 8, digest: 'builtin-v1', returned: true }, at: 1.0 } RETURN NONE;
+             CREATE workflow:['event', 'sim/jump', 2] CONTENT { kind: 'event', body: { slug: 'sim/jump', revision: 2, status: 'ready', activation: 7 }, at: 1.0 } RETURN NONE;
+             CREATE workflow:['event', 'sim/two', 2] CONTENT { kind: 'event', body: { slug: 'sim/two', revision: 2, status: 'ready', activation: 8 }, at: 1.0 } RETURN NONE;
+             RETURN NONE;",
+            "INSERT INTO workflow (id, kind, body, at) VALUES \
+             ('[\"activation\", 7]', 'activation', '{\"generation\": 7, \"digest\": \"d7\"}', 1.0), \
+             ('[\"activation\", 8]', 'activation', '{\"generation\": 8, \"digest\": \"builtin-v1\", \"returned\": true}', 1.0), \
+             ('[\"event\", \"sim/jump\", 2]', 'event', '{\"slug\": \"sim/jump\", \"revision\": 2, \"status\": \"ready\", \"activation\": 7}', 1.0), \
+             ('[\"event\", \"sim/two\", 2]', 'event', '{\"slug\": \"sim/two\", \"revision\": 2, \"status\": \"ready\", \"activation\": 8}', 1.0);",
+        )
+        .unwrap();
+        let retire = |slug: &str, status: &str| {
+            f.store.raw().row("task", slug).set(json!({
+                "status": status,
+                "fields._board.workflow": null,
+            }))
+        };
+        let keeps = "keeps its workflow position: only an activation that returns the board to \
+                     its own writers retires it";
+        // Beside an activation that is no return.
+        let ordinary = refused(retire("sim/jump", "ready"));
+        assert!(ordinary.contains(keeps), "{backend:?}: {ordinary}");
+        // Beside a return's transition, at another status than it recorded.
+        let elsewhere = refused(retire("sim/two", "done"));
+        assert!(elsewhere.contains(keeps), "{backend:?}: {elsewhere}");
+        assert!(f.store.workflow_position("sim/two").unwrap().is_some());
+        // Beside it, at its status: the position goes, and the task is the board's writers'.
+        retire("sim/two", "ready").unwrap();
+        assert_eq!(f.store.workflow_position("sim/two").unwrap(), None);
+        assert_eq!(
+            f.store.get("sim/two").unwrap().status,
+            "ready",
+            "{backend:?}"
+        );
+        f.store
+            .raw()
+            .row("task", "sim/two")
+            .set(json!({"status": "review"}))
+            .unwrap();
+        // It never returns to the position its return left.
+        let first = moved("sim/two", 1, pair("build", "working"), "in_progress");
+        let back = refused(f.store.raw().row("task", "sim/two").set(json!({
+            "status": "in_progress",
+            "fields._board.workflow": first.position(),
+        })));
+        assert!(
+            back.contains("sim/two moved on from workflow revision 1"),
+            "{backend:?}: {back}"
+        );
+    }
+}
+
+#[test]
 fn a_copy_carries_the_workflow_and_refuses_positions_without_their_records() {
     for backend in BACKENDS {
         let f = Fixture::on(backend, Seed::default());
@@ -529,7 +591,11 @@ fn a_board_made_at_an_older_schema_migrates_to_this_one_with_its_rows_and_then_o
                 .unwrap();
             }
             assert_eq!(version(&old), Some(older));
-            assert_eq!(defines(&old, "workflow"), older >= 24, "{backend:?} at {older}");
+            assert_eq!(
+                defines(&old, "workflow"),
+                older >= 24,
+                "{backend:?} at {older}"
+            );
             assert_eq!(
                 defines(&old, "execution_attempt"),
                 older >= 23,

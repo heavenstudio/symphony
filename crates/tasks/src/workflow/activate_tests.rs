@@ -714,14 +714,24 @@ fn a_return_sends_each_held_task_to_its_mapped_built_in_pair_and_status() {
     let moved: Vec<(&str, Pair, Option<Pair>, &str)> = (plan.moved.iter())
         .map(|m| {
             let t = &m.transition;
-            (t.slug.as_str(), t.to.clone(), t.resume.clone(), t.status.as_str())
+            (
+                t.slug.as_str(),
+                t.to.clone(),
+                t.resume.clone(),
+                t.status.as_str(),
+            )
         })
         .collect();
     assert_eq!(
         moved,
         vec![
             ("sim/ready", pair("ready", "available"), None, "ready"),
-            ("sim/working", pair("in_progress", "working"), None, "in_progress"),
+            (
+                "sim/working",
+                pair("in_progress", "working"),
+                None,
+                "in_progress"
+            ),
             (
                 "sim/blocked",
                 pair("blocked", "waiting"),
@@ -755,7 +765,10 @@ fn a_return_keeps_a_pair_built_in_v1_declares_and_drops_a_resume_pair_off_a_bloc
     ready.position.as_mut().unwrap().resume = Some(pair("nowhere", "known"));
     let plan = returning(&definition, &[], &[ready], 2, &by(), 60.0).unwrap();
     let t = &plan.moved[0].transition;
-    assert_eq!((t.to.clone(), t.resume.clone()), (pair("ready", "available"), None));
+    assert_eq!(
+        (t.to.clone(), t.resume.clone()),
+        (pair("ready", "available"), None)
+    );
 }
 
 #[test]
@@ -773,7 +786,10 @@ fn a_return_is_refused_whole_on_a_pair_or_resume_pair_nothing_maps() {
     let mut blocked = held_at("sim/blocked", "blocked", "build", "blocked");
     blocked.position.as_mut().unwrap().resume = Some(pair("build", "working"));
     assert_eq!(
-        returned(&mappings, &[held_at("sim/a", "ready", "build", "available"), blocked]),
+        returned(
+            &mappings,
+            &[held_at("sim/a", "ready", "build", "available"), blocked]
+        ),
         Err(
             "workflow_mappings: sim/blocked resumes to build/working, which the workflow no \
              longer declares; map it to a pair it declares"
@@ -795,11 +811,11 @@ fn a_return_never_fabricates_an_outcome_satisfaction_or_completion() {
         mappings.push(Mapping { from, to });
         mappings
     };
-    let working = held_at("sim/working", "in_progress", "build", "working");
+    let working = [held_at("sim/working", "in_progress", "build", "working")];
     assert_eq!(
         returned(
             &onto(pair("build", "working"), pair("done", "completed")),
-            &[working.clone()]
+            &working
         ),
         Err(
             "sim/working would stand at done/completed with the outcome Success that \
@@ -810,7 +826,7 @@ fn a_return_never_fabricates_an_outcome_satisfaction_or_completion() {
     assert!(
         returned(
             &onto(pair("build", "working"), pair("done", "approved")),
-            &[working.clone()]
+            &working
         )
         .unwrap_err()
         .contains("with its dependants satisfied that build/working does not record")
@@ -818,7 +834,7 @@ fn a_return_never_fabricates_an_outcome_satisfaction_or_completion() {
     assert!(
         returned(
             &onto(pair("build", "working"), pair("cancelled", "cancelled")),
-            &[working]
+            &working
         )
         .unwrap_err()
         .contains("with the outcome Cancellation")
@@ -890,7 +906,11 @@ fn the_boards_writers_keep_an_executor_through_review_and_a_reviewer_in_review()
         assert_eq!(keeps(status, None, "executor"), executor, "{status}");
         assert_eq!(keeps(status, None, "reviewer"), reviewer, "{status}");
         assert!(keeps(status, None, "orchestrator") && keeps(status, None, "reserved"));
-        assert_eq!(keeps("blocked", Some(status), "executor"), executor, "{status}");
+        assert_eq!(
+            keeps("blocked", Some(status), "executor"),
+            executor,
+            "{status}"
+        );
     }
     assert!(keeps("blocked", None, "executor") && keeps("blocked", None, "reviewer"));
 }
