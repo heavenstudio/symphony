@@ -2,11 +2,14 @@
 
 When a landing moves this repository's board to a new schema, the machine's server, the release
 `current` names, reads the board one schema ahead and writes nothing to it until a release at that
-schema serves it. [Its card](../DECISIONS.md#schema-landing-then-release) shortened that window to
-one release run, started by the orchestrator right after such a landing. This page weighs the two
-ways that card named to remove the window instead, and a third met on the way, and recommends one.
-It is a design: nothing here is built. The choice is
-[its card](../DECISIONS.md#schema-move-keeps-pages-writing).
+schema serves it. [Its card](../DECISIONS.md#schema-landing-then-release) took the wait for the
+release count out of that window: the orchestrator starts a release run right after such a
+landing. This page weighs the two ways that card named to remove the window instead, and a third
+met on the way, and recommends one.
+
+A is the way chosen ([its card](../DECISIONS.md#schema-move-keeps-pages-writing)), and nothing of
+it is built: this page is its design, and building it is work of its own. Until then the window is
+as [the window](#the-window) says.
 
 ## The window
 
@@ -20,7 +23,7 @@ command once a schema lands (`crates/tasks/src/live.rs`, [TASKS](../TASKS.md#whe
 the board is ahead of the machine's server from that command until the refresh points `current` at
 a release of the new schema and the server follows it ([the switch](../RELEASES.md#the-switch)).
 
-While it lasts, the server reads and writes nothing (`board_read` in
+While it lasts, the server reads the board and writes nothing to it (`board_read` in
 `apps/symphony-server/src/live/machine_work.rs`, its notice `read_only` in
 `apps/symphony-server/src/live/health.rs`):
 
@@ -33,11 +36,17 @@ While it lasts, the server reads and writes nothing (`board_read` in
 The agents' own board commands go on: they run main's build, at the board's schema, and their
 writes are delivered by the detached `tasks dispatch`.
 
-**How long.** One release run under [the cadence's rule](../RELEASES.md#the-cadence) for a landing
-that moves the board's schema: 17 to 37 minutes when green, longer when
-the run is red or a release candidate holds the release. A second schema landing waits until a
-release serving the first is `current`, so the board is never two ahead, which the server would
-not read at all.
+**How long.** Until a release at the new schema is `current` and the server has followed it, which
+no rule bounds. [The cadence's rule](../RELEASES.md#the-cadence) for a landing that moves the
+board's schema starts the release run at once, and that removes only the wait for the count. A
+green run takes 17 to 37 minutes, the install and the refresh included, as
+[its card](../DECISIONS.md#schema-landing-then-release) reads the runs since 2026-11-16. A red run
+holds its commit as the release candidate until its fixes land and a rerun is green: 27 minutes to
+16 hours from a counted run's start to its release, on that card. And the refresh points `current`
+only once every writer seen on the other projects' boards is at the new schema, which held two
+releases of 2026-11-18 for 1 h 50 and 1 h 08. A second schema landing waits until a release
+serving the first is `current`, so the board is never two ahead, which the server would not read
+at all.
 
 **How often.** Nine schema steps landed from 2026-11-10 to 11-18, 14 to 22, and two tasks hold a
 23 now.
@@ -129,9 +138,12 @@ journal or is refused as it is today, and an event added runs for them as for an
 is a rule held in code alone. A step that adds a table of workflow states and, in code only,
 refuses a task's move its state does not allow, listed by mistake, would let the server move tasks
 past that check while the window lasts: a card's cancel, a document save's move to review. The
-newer build would then find tasks in states its rule says cannot be. Nothing is lost, and the harm
-is bounded by the server's own writes within one release run; it is found by the newer build's
-reads and put right by a fix of those tasks.
+newer build would then find tasks in states its rule says cannot be. Writes like these can break
+what the rule keeps true of the board. What is lost, whether anything notices, and whether it can
+be put right all depend on the rule: nothing here promises the newer build finds them, nor that a
+fix can bring back what they changed. What the mechanism does bound is who: only the server's own
+writes, for as long as the board stays ahead of it, which a red run or the refresh's wait on
+writers can make hours ([the window](#the-window)).
 
 **The writers involved.** One: the Symphony's store in the machine's server, at the schema of the
 release `current` names. Every other writer is refused as now.
@@ -222,9 +234,10 @@ to write, each tested; and a project with no build of its own has none to hand t
 A. It removes the window for the kind of step that has been most of them, six of the last nine, and
 leaves the rest as now. Its declaration is one line per step, checked on the database by a test on
 the step's own branch and on the code by its review, and failing closed: a step that says nothing
-keeps the window. A wrong line is bounded to the server's own writes during one release run, and
-the one writer it lets through is the server: every program that writes the board under its own
-name is refused one ahead as now.
+keeps the window. A wrong line reaches only the server's own writes, for as long as the board stays
+ahead of it, though what those writes break depends on the rule it missed; and the one writer it
+lets through is the server: every program that writes the board under its own name is refused one
+ahead as now.
 
 B removes the window for every step, but moves its cost onto everything else here: under B1 every
 board command and every schema feature carries the board's schema for hours at each step, and a
@@ -232,4 +245,9 @@ wrong declaration stops the agents rather than the pages; under B2 every board f
 release. C needs no declaration, but it leaves the clock's writes paused, and it moves the owner's
 writes out of the server into a program agents also run.
 
-Without either, the approved rule stands: one release run after each schema landing.
+Without either, the cadence's rule stands alone: a release run started at once after each schema
+landing, and the window until its release is `current`.
+
+A is the way chosen ([its card](../DECISIONS.md#schema-move-keeps-pages-writing)). Nothing of it is
+built yet; until it is, and until a release carrying it is `current`, every schema landing keeps
+the window as above.

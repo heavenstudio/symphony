@@ -5,28 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### Releases
-
-- [ ] **schema-move-keeps-pages-writing** — After a landing that changes the board's layout (its schema), your pages save nothing, and the server sends no reminders to agents, until a release with that layout is on the machine: one release run, under 40 minutes when green, now that the orchestrator starts it at once. Most such changes only add tables of their own, which the server never writes: the last six did. Should the server keep writing through such a change? A: yes, when the change says it only adds tables of its own, a test checking that on its branch: the server keeps writing a board one layout ahead, and a change that touches anything it writes waits for the release run as now. B: this board moves only when a release brings its layout, as the other projects' boards do: your pages wait minutes, but here every board command runs one layout ahead of the board until then, and a board feature or fix landed here works on this board only from that release. C: as now, your pages wait one release run after each such landing. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/schema-move-read-only-window#Recommendation]]
-  [2026-11-19 08:05] agent — Posted for the board task `tools/no-read-only-window-after-a-schema-move`, the fourth way **schema-landing-then-release** proposed and left undecided. Nothing of it is built.
-
-    **What A changes.** Each layout change says, in one line, whether it leaves the server's writes as they were; one that says nothing does not, and keeps the wait. A test on its branch refuses the line when the change touched a table that existed before, and its reviewer reads it for a rule in code alone. Only the server is let through: every other program that writes the board is refused one layout ahead, as now.
-
-    **What a wrong line costs under A.** Caught on its branch when the change is in the database. A rule held in code alone, wrongly declared, would let the server's own writes skip it for one release run, such as a cancel the new rule forbids: tasks in a state the new build says cannot be, put right by a fix. Nothing is lost.
-
-    **What it would have done.** 17 to 22, six layout changes from 2026-11-11 to 11-18, only added tables: none would have stopped your pages. 14 to 16 changed existing tables and would have. Of the two changes to 23 waiting now, `tools/durable-provider-attempts` would keep your pages writing and `tools/workflow-runtime`, which checks every write of a task, would not. A pays from the first change after a release that carries it; building it is a layout change of its own, with one last wait.
-
-    **What B costs.** Either every board feature that comes with a layout change checks the board's layout at each write for hours, and a wrong line stops every agent's commands rather than your pages; or this repository's board commands run the release's build, as a project with no build of its own, and a board fix landed here waits for a release, 27 minutes to 16 hours since 2026-11-16.
-
-    **Under every option** the release run after a layout change still runs, and a second layout change waits until a release serving the first is current.
-
-    **Earlier verdicts checked.**
-    - **schema-landing-then-release** (A) decides what follows such a landing, a release run at once, and leaves this way undecided by its own words: no option here changes that run.
-    - **board-schema-at-update** (C) moves a board only once its writers are at the new layout, and keeps this board moving with main. A and C keep both; B ends the second, so it is asked here.
-    - **live-board-schema-moves** (A) chose for two tasks and sets no rule.
-
 ## Auto-approved: spot-check
 
 ### Releases
@@ -303,6 +281,26 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### Releases
 
+- [r] **schema-move-keeps-pages-writing** — After a landing that changes the board's layout (its schema), your pages save nothing, and the server sends no reminders to agents, until a release with that layout is on the machine: one release run, under 40 minutes when green, now that the orchestrator starts it at once. Most such changes only add tables of their own, which the server never writes: the last six did. Should the server keep writing through such a change? A: yes, when the change says it only adds tables of its own, a test checking that on its branch: the server keeps writing a board one layout ahead, and a change that touches anything it writes waits for the release run as now. B: this board moves only when a release brings its layout, as the other projects' boards do: your pages wait minutes, but here every board command runs one layout ahead of the board until then, and a board feature or fix landed here works on this board only from that release. C: as now, your pages wait one release run after each such landing. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/schema-move-read-only-window#Recommendation]]
+  [2026-11-19 08:05] agent — Posted for the board task `tools/no-read-only-window-after-a-schema-move`, the fourth way **schema-landing-then-release** proposed and left undecided. Nothing of it is built.
+
+    **What A changes.** Each layout change says, in one line, whether it leaves the server's writes as they were; one that says nothing does not, and keeps the wait. A test on its branch refuses the line when the change touched a table that existed before, and its reviewer reads it for a rule in code alone. Only the server is let through: every other program that writes the board is refused one layout ahead, as now.
+
+    **What a wrong line costs under A.** Caught on its branch when the change is in the database. A rule held in code alone, wrongly declared, would let the server's own writes skip it for one release run, such as a cancel the new rule forbids: tasks in a state the new build says cannot be, put right by a fix. Nothing is lost.
+
+    **What it would have done.** 17 to 22, six layout changes from 2026-11-11 to 11-18, only added tables: none would have stopped your pages. 14 to 16 changed existing tables and would have. Of the two changes to 23 waiting now, `tools/durable-provider-attempts` would keep your pages writing and `tools/workflow-runtime`, which checks every write of a task, would not. A pays from the first change after a release that carries it; building it is a layout change of its own, with one last wait.
+
+    **What B costs.** Either every board feature that comes with a layout change checks the board's layout at each write for hours, and a wrong line stops every agent's commands rather than your pages; or this repository's board commands run the release's build, as a project with no build of its own, and a board fix landed here waits for a release, 27 minutes to 16 hours since 2026-11-16.
+
+    **Under every option** the release run after a layout change still runs, and a second layout change waits until a release serving the first is current.
+
+    **Earlier verdicts checked.**
+    - **schema-landing-then-release** (A) decides what follows such a landing, a release run at once, and leaves this way undecided by its own words: no option here changes that run.
+    - **board-schema-at-update** (C) moves a board only once its writers are at the new layout, and keeps this board moving with main. A and C keep both; B ends the second, so it is asked here.
+    - **live-board-schema-moves** (A) chose for two tasks and sets no rule.
+  [2026-11-19 08:04] owner · approved — A
+  [2026-11-19 08:06] agent — Your "A" chooses compatibility declared for each schema change: the server may keep writing one schema ahead only when that change preserves its writes; an undeclared or incompatible change stays read-only, and other writers keep their existing guard. We will carry that choice into implementation after this design is published. Two corrections to the proposal remain: a wrong declaration can violate data invariants, so no-loss or automatic repair is not guaranteed; and immediate release start does not bound the wait when verification or the refresh writer gate holds it. The immediate-release rule and the hold on a second schema change remain. Nothing is implemented yet.
+  [2026-11-19 08:06] agent · resolved
 - [r] **schema-landing-then-release** — When a task that changes the board's layout (its schema) lands, this project's pages stop saving until a release with that layout runs on the machine: the board still shows, but your verdicts, messages and changes wait or are refused, and reach no agent. Today that lasts until the next release run, which comes every 20 landings, so for hours. What should follow such a landing? A: the orchestrator starts a release run right after it, without asking each time: your pages wait for that run, under 40 minutes when it is green, at the cost of one run outside the count. B: the approved task waits and lands just before the count's next run, its landing the one that starts it: your pages wait for the same run and nothing extra runs, at the cost of holding the task for up to 20 landings. C: as now: it lands when approved, and your pages wait until the count brings a release. Recommended: A. Approve and say A, B or C in the note, or comment. [[RELEASES#The switch]]
   [2026-11-19 04:52] agent — Posted for the board task `docs/schema-landing-then-release-card`. Two tasks would each change the schema: `tools/durable-provider-attempts` (in review) and `tools/workflow-runtime` (in progress), both to 23 on their branches, so the second to land becomes 24. Read on 2026-11-19 at 04:50: main and release-2026-11-19, which `current` names and the machine's server runs, are at schema 22.
 
