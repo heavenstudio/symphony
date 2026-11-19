@@ -355,3 +355,56 @@ fn the_transitions_of_held_tasks_are_read_by_their_ids_oldest_first() {
         assert!(f.store.transitions(&[]).unwrap().is_empty());
     }
 }
+
+/// [`REVIEWED`] with a second edge from build/available that gives the executor's role, taken on
+/// `authority`.
+fn two_claims(authority: &str) -> Custom {
+    let pick_up = format!(
+        r#"  {{ id = "pick-up", label = "Pick up", from = {{ phase = "build", state = "available" }}, to = {{ phase = "build", state = "working" }}, operation = "claim", authority = [{authority}], inputs = [], dependencies = "done", guards = [], effects = [{{ kind = "acquire_role", role = "executor" }}, {{ kind = "slot", policy = "acquire" }}], automatic = false, human_wait = false }},
+  {{ id = "block","#
+    );
+    custom(&format!(
+        "{}{MAPPED}",
+        REVIEWED.replace(r#"  { id = "block","#, &pick_up)
+    ))
+}
+
+#[test]
+fn a_claim_by_its_role_takes_the_one_open_edge_of_several_and_refuses_a_choice_between_open_ones() {
+    for backend in BACKENDS {
+        let host = Host::local();
+        let amber = agent_session("amber");
+        let on = |definition: &Custom| {
+            let f = Fixture::on(
+                backend,
+                Seed::default().session("amber").task("sim/a", "ready"),
+            );
+            f.store.activate_workflow(definition, &host).unwrap();
+            f
+        };
+        // The owner's edge is closed to an agent: the claim takes the one left open.
+        let f = on(&two_claims(
+            r#"{ kind = "project_capability", capability = "owner" }"#,
+        ));
+        let claimed = (f.store)
+            .claim_by_workflow("sim/a", &amber, &host, Role::Executor)
+            .unwrap();
+        assert_eq!(claimed.transition, "sim/a@2");
+        assert_eq!(
+            events(&f, "sim/a").last().unwrap().1.as_deref(),
+            Some("claim"),
+            "{backend:?}"
+        );
+        // Two open to it: which to take is the agent's, never the board's.
+        let f = on(&two_claims(r#"{ kind = "task_role", role = "executor" }"#));
+        assert_eq!(
+            refused(
+                f.store
+                    .claim_by_workflow("sim/a", &amber, &host, Role::Executor)
+            ),
+            "explicit_action_required: 2 edges leaving sim/a's build/available give the executor \
+             role (claim, pick-up): take one with `just tasks workflow apply sim/a EDGE --revision 1`"
+        );
+        assert_eq!(position(&f, "sim/a").at(), pair("build", "available"));
+    }
+}

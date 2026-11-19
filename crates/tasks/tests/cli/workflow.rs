@@ -472,3 +472,47 @@ fn an_edge_to_a_terminal_position_finishes_the_task_closing_what_was_launched_on
     assert_eq!(p.addresses(), Vec::<String>::new());
     assert_eq!(board.get("sim/jump").unwrap().status, "done");
 }
+
+#[test]
+fn a_staffing_pass_starts_the_role_a_held_tasks_open_claim_edge_gives_and_none_while_it_is_held() {
+    let p = super::launch::Terminals::new("held-staff");
+    p.manifest("[agents]\nlaunch = { default = \"claude\", model = \"opus\" }\n");
+    let board = p.board();
+    board
+        .activate_workflow(&reviewed(), &Host::local())
+        .unwrap();
+    p.staffed();
+    let staff = || {
+        let ran = p.run(&["staff", "--dry-run"]);
+        assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+        ran.out
+    };
+    // At build/available its claim gives the executor's role.
+    assert_eq!(
+        staff(),
+        "staff sim/jump: would launch claude on opus as executor\n"
+    );
+    // Claimed, the role is held: no edge leaving build/working gives one.
+    let amber = (board.register(&NewSession::new("worker")).unwrap())
+        .row
+        .handle;
+    let claimed = p.as_(&amber, &["claim", "sim/jump"]);
+    assert_eq!(claimed.code, 0, "{}", claimed.err);
+    assert_eq!(staff(), "staff: no eligible work\n");
+    // Submitted, its review edge gives the reviewer's role, on the branch its slug names.
+    let submitted = p.as_(
+        &amber,
+        &["workflow", "apply", "sim/jump", "submit", "--revision", "2"],
+    );
+    assert_eq!(submitted.code, 0, "{}", submitted.err);
+    super::launch::git(&p.env.cwd, &["branch", "sim/jump"]);
+    // The tip the branch was made at, as `git branch` writes it.
+    let tip = std::fs::read_to_string(p.env.cwd.join(".git/refs/heads/sim/jump")).unwrap();
+    assert_eq!(
+        staff(),
+        format!(
+            "staff sim/jump: would launch claude on opus as reviewer (review sim/jump at {})\n",
+            tip.trim()
+        )
+    );
+}
