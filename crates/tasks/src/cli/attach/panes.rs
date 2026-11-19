@@ -1,5 +1,6 @@
 //! The pane watch ([`pane_watch`]): BLOCKED once for a session it oversees ([`overseen`]) whose hc
-//! terminal waits on an approval or a question, and WATCH once while hc cannot be asked.
+//! terminal waits on an approval or a question, and WATCH once hc has failed at every sample for
+//! [`OUTAGE_SECONDS`].
 
 use crate::cli::agents::{Answer, Pane, find_pane};
 use crate::orchestration::{Owners, claimable_work, hears, told_of};
@@ -14,6 +15,14 @@ const LEGACY_WAIT: &str = "its terminal waits on an approval or a question";
 const OUTAGE: &str = " — blocked terminals go unreported until it answers";
 const OBSERVED_OUTAGE: &str =
     " — blocked terminals may have gone unreported; inspect hc before acting";
+
+/// How long hc fails at every sample before the watch says WATCH, in seconds; and the longest gap
+/// between two samples that still continues an outage. One failed sample is a slow answer under
+/// load, which the next answers. A longer gap is time the clock did not sample (the machine
+/// asleep, or no server), which is nobody's outage: the stretch starts again at the sample after
+/// it. The figure is the slack a sweep round may start late before the server takes the gap for
+/// a sleep (`apps/symphony-server/src/live/presence.rs`).
+pub const OUTAGE_SECONDS: f64 = 30.0;
 
 fn generated_key(key: &str) -> bool {
     key.strip_prefix("pane-")
@@ -91,13 +100,40 @@ impl Blocked {
 #[serde(default)]
 pub struct PaneWatch {
     pub blocked: BTreeMap<String, Blocked>,
+    /// Whether WATCH was said of the outage under way: not again until hc answers.
     pub unanswered: bool,
+    /// While no WATCH is said, when hc began failing at every sample: the first failed sample
+    /// since it last answered, or since a gap longer than [`OUTAGE_SECONDS`]. None while it answers.
+    pub unanswered_since: Option<f64>,
+    /// The last sample hc failed, beside `unanswered_since`: how far apart the samples are.
+    pub unanswered_at: Option<f64>,
     /// Per-current-launch observed identities and counter watermarks, retained across resolved
     /// samples. A watermark is neither current blocked status, prompt identity nor native liveness.
     pub known: BTreeMap<String, Blocked>,
 }
 
 impl PaneWatch {
+    /// A sample at `now` that hc failed with `why`: WATCH once it has failed at every sample for
+    /// [`OUTAGE_SECONDS`], and nothing again while it goes on failing, so the record stays as it is.
+    fn failed_sample(&mut self, now: f64, why: &str, emit: &mut dyn FnMut(&str)) {
+        if self.unanswered {
+            return;
+        }
+        let since = match (self.unanswered_since, self.unanswered_at) {
+            (Some(since), Some(at)) if (0.0..=OUTAGE_SECONDS).contains(&(now - at)) => since,
+            // The first failed sample, or the first after a gap: a sleep, or a clock set back.
+            _ => now,
+        };
+        self.unanswered_since = Some(since);
+        self.unanswered_at = Some(now);
+        if now - since >= OUTAGE_SECONDS {
+            emit(&format!(
+                "WATCH hc unanswered at observation: {why}{OBSERVED_OUTAGE}"
+            ));
+            self.unanswered = true;
+        }
+    }
+
     fn observed_pane<'panes>(
         &self,
         board: &Board,
@@ -392,15 +428,17 @@ pub fn overseen<'b>(board: &'b Board, handle: &'b str) -> Overseen<'b> {
     }
 }
 
-/// One look at the panes of the `overseen` sessions launched into one still open (`open`, oldest
-/// first) for a task the recipient hears of: BLOCKED for each whose terminal hc reports `blocked`
-/// and did not at the last look, and WATCH once when hc cannot be asked. `panes` is asked only
-/// when there is a terminal to look at. Returns what the watch remembers for the next look.
+/// One look at `now` at the panes of the `overseen` sessions launched into one still open (`open`,
+/// oldest first) for a task the recipient hears of: BLOCKED for each whose terminal hc reports
+/// `blocked` and did not at the last look, and WATCH once hc has failed at every sample for
+/// [`OUTAGE_SECONDS`], while no BLOCKED is looked for. `panes` is asked only when there is a
+/// terminal to look at. Returns what the watch remembers for the next look.
 pub fn pane_watch(
     board: &Board,
     overseen: &Overseen,
     open: &[TaskSessionRow],
     panes: &dyn Fn() -> Answer<Vec<Pane>>,
+    now: f64,
     before: &PaneWatch,
     emit: &mut dyn FnMut(&str),
 ) -> PaneWatch {
@@ -417,12 +455,7 @@ pub fn pane_watch(
     let panes = match panes() {
         Ok(panes) => panes,
         Err(why) => {
-            if !before.unanswered {
-                emit(&format!(
-                    "WATCH hc unanswered at observation: {why}{OBSERVED_OUTAGE}"
-                ));
-            }
-            after.unanswered = true;
+            after.failed_sample(now, &why, emit);
             return after;
         }
     };
@@ -443,6 +476,9 @@ pub fn pane_watch(
             emit(&format!("BLOCKED {who} {} {} — {WAITED}", b.task, b.pane));
         }
     }
+    // An answer ends the outage, said or not, and the next is judged afresh.
     after.unanswered = false;
+    after.unanswered_since = None;
+    after.unanswered_at = None;
     after
 }

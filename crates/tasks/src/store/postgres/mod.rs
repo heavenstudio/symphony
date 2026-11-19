@@ -5,7 +5,8 @@
 //! A statement here is one of the shapes of [`Pg`]. Its variables are the one `jsonb` the store
 //! hands it, `v` in its text, a field of it read as `v ->> 'name'` (text) or `v -> 'name'`
 //! (`jsonb`), and nothing a caller wrote is ever spliced into one. A read is an expression over
-//! `v`, its value the answer. A write is a PL/pgSQL block that reads `v` the same way, after the
+//! `v`, its value the answer, or where that value would hold long lists, a statement for each
+//! list, an item a row ([`Pg::Listed`]). A write is a PL/pgSQL block that reads `v` the same way, after the
 //! schema's guard when it is one ([`GUARD`]), and gives its answer as `board_answer`, or is
 //! followed by the read whose value is the answer. A request's statements, and the guard before
 //! them, run in one transaction on the client's connection ([`crate::pg`]), REPEATABLE READ: a
@@ -24,6 +25,7 @@ pub(in crate::store) mod cap;
 pub(in crate::store) mod copy;
 pub(in crate::store) mod depends;
 pub(in crate::store) mod dispatcher;
+pub(in crate::store) mod execution;
 pub(in crate::store) mod fields;
 pub(in crate::store) mod history;
 pub(in crate::store) mod launches;
@@ -71,12 +73,13 @@ pub(in crate::store) fn claimable() -> Pg<'static> {
 
 /// A rule's write ([`write::write`]) with what its change adds, as `super::surreal::rule` adds
 /// it: what a block waited on removed by a change of status out of blocked, what it waits on
-/// written (`blocked`), the move's `reason` posted after its line, the task's `needs` written, a
-/// change of status (`moved`, whether to cancelled) settling its hold and its dependants, and the
-/// slot counters it `holds` guarded.
+/// written (`blocked`), the move's `reason` posted after its line, the task's `needs` written, its
+/// mark of an approve not landed set or lifted (`unlanded`), a change of status (`moved`, whether
+/// to cancelled) settling its hold and its dependants, and the slot counters it `holds` guarded.
 pub(in crate::store) fn rule(
     reason: bool,
     needs: bool,
+    unlanded: bool,
     blocked: bool,
     moved: Option<bool>,
     holds: bool,
@@ -98,6 +101,9 @@ pub(in crate::store) fn rule(
     if needs {
         add(&work::field_set("_board,needs", "v -> 'needs'"));
     }
+    if unlanded {
+        add(&work::field_set("_board,unlanded", work::UNLANDED));
+    }
     if let Some(cancelled) = moved {
         add(cap::HOLDING);
         add(&work::block_cancelled_dependencies(cancelled));
@@ -115,6 +121,12 @@ pub(in crate::store) enum Pg<'a> {
     Nothing,
     /// An expression over `v` whose value is the answer.
     Read(Cow<'a, str>),
+    /// A read of long lists, each list a statement of its own that answers an item a row, all in
+    /// the request's one transaction and so of one snapshot ([`Listed`]). One value of the same
+    /// lists is built whole in the backend that answers it, in several times its size of memory,
+    /// which the backend keeps until its connection ends, at its command's end: thirty commands
+    /// reading a board at once then hold thirty boards.
+    Listed(Listed),
     /// A PL/pgSQL block over `v`, then the expression whose value is the answer, or none for the
     /// block's own `board_answer`.
     Script(Cow<'a, str>, Option<Cow<'a, str>>),
@@ -148,24 +160,39 @@ impl<'a> Pg<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub(in crate::store) enum Request {
     /// Each statement's text and whether it takes the variables as its `$1`, all in one
-    /// transaction; the answer is the value of the one at `answer`.
+    /// transaction, and which of them give the answer.
     Steps {
         steps: Vec<(String, bool)>,
-        answer: usize,
+        answer: Gives,
     },
     /// One simple query, which answers nothing.
     Simple(String),
+}
+
+/// Which of a request's statements give its answer.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::store) enum Gives {
+    /// The value of the statement at this place.
+    Value(usize),
+    /// Each list's key and the statement whose rows are its items, and the statement whose value
+    /// is the object's other fields ([`joined`]).
+    Lists {
+        lists: Vec<(&'static str, usize)>,
+        rest: Option<usize>,
+    },
 }
 
 /// The statements `statement` sends, behind the schema's guard when `guarded`; none for
 /// [`Pg::Nothing`].
 ///
 /// A request carries its variables once, in its first statement, and only its last answers
-/// anything at length: a read alone binds them, and any other request sets them first ([`VARS`],
-/// which answers nothing), where every statement after it reads them.
+/// anything at length, or each statement of its lists: a read of one statement binds them, and
+/// any other request sets them first ([`VARS`], which answers nothing), where every statement
+/// after it reads them.
 pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request> {
     let mut steps = Vec::new();
-    let set = guarded || matches!(statement, Pg::Script(..) | Pg::Within(..));
+    let several = matches!(statement, Pg::Listed(listed) if listed.statements() > 1);
+    let set = guarded || several || matches!(statement, Pg::Script(..) | Pg::Within(..));
     if set {
         steps.push((VARS.to_string(), true));
     }
@@ -177,6 +204,19 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
         Pg::Nothing => return None,
         Pg::Simple(sql) => return Some(Request::Simple(sql.to_string())),
         Pg::Read(expression) => steps.push((answered(expression, from), !set)),
+        Pg::Listed(listed) => {
+            let mut lists = Vec::new();
+            for list in &listed.lists {
+                lists.push((list.key, steps.len()));
+                steps.push((list.rows(&listed.with, from), !set));
+            }
+            let rest = listed.rest.as_ref().map(|rest| {
+                steps.push((answered(&listed.object(rest), from), !set));
+                steps.len() - 1
+            });
+            let answer = Gives::Lists { lists, rest };
+            return Some(Request::Steps { steps, answer });
+        }
         Pg::Within(millis, block) => {
             steps.push((within(*millis), false));
             steps.push((script(block), false));
@@ -190,7 +230,7 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
             }
         }
     }
-    let answer = steps.len() - 1;
+    let answer = Gives::Value(steps.len() - 1);
     Some(Request::Steps { steps, answer })
 }
 
@@ -217,6 +257,137 @@ const ANSWER: &str = "SELECT nullif(current_setting('board.answer', true), '')";
 /// `expression`'s value, as `jsonb` text, `v` the variables `from` gives ([`BOUND`], [`SET`]).
 fn answered(expression: &str, from: &str) -> String {
     format!("SELECT to_jsonb(({expression}))::text FROM (SELECT {from} AS v) AS board_vars")
+}
+
+/// A read of long lists ([`Pg::Listed`]): the common table expressions its statements start
+/// with (none: empty), its lists, and the other fields of its object, the arguments of a
+/// `jsonb_build_object`. With no other fields, its one list is the answer, and has no key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::store) struct Listed {
+    pub with: String,
+    pub lists: Vec<List>,
+    pub rest: Option<String>,
+}
+
+/// One list of a [`Listed`] read: the field it is, each item's value (an expression over a row
+/// of `from`), the rows it lists, with their condition, and the order they come in: plain values
+/// of a row, each ascending or `DESC`, with `, ` between them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::store) struct List {
+    pub key: &'static str,
+    pub item: String,
+    pub from: String,
+    pub order: String,
+}
+
+impl List {
+    /// The list as one value.
+    fn whole(&self) -> String {
+        let List {
+            item, from, order, ..
+        } = self;
+        format!("coalesce((SELECT jsonb_agg({item} ORDER BY {order}) FROM {from}), '[]')")
+    }
+
+    /// The list's items, a row each in its order, after `with`, `v` the variables `vars` gives.
+    /// The order is the statement's own, by the list's ordering values, each a column beside
+    /// the item: no order of a subquery's is relied on.
+    fn rows(&self, with: &str, vars: &str) -> String {
+        let List {
+            item, from, order, ..
+        } = self;
+        let (mut places, mut by) = (String::new(), Vec::new());
+        for (at, term) in order.split(", ").enumerate() {
+            let (value, down) = match term.strip_suffix(" DESC") {
+                Some(value) => (value, " DESC"),
+                None => (term, ""),
+            };
+            places.push_str(&format!(", {value} AS place{at}"));
+            by.push(format!("n.place{at}{down}"));
+        }
+        format!(
+            "SELECT n.item FROM (SELECT {vars} AS v) AS board_vars, \
+             LATERAL ({}SELECT ({item})::text AS item{places} FROM {from}) AS n ORDER BY {}",
+            with_clause(with),
+            by.join(", ")
+        )
+    }
+}
+
+/// `with` as a query's WITH clause, or nothing for none.
+fn with_clause(with: &str) -> String {
+    match with {
+        "" => String::new(),
+        with => format!("WITH {with} "),
+    }
+}
+
+impl Listed {
+    /// How many statements answer it: one for each list, and one for its other fields.
+    fn statements(&self) -> usize {
+        self.lists.len() + usize::from(self.rest.is_some())
+    }
+
+    /// The object of `fields` (the arguments of a `jsonb_build_object`), as an expression.
+    fn object(&self, fields: &str) -> String {
+        format!(
+            "({}SELECT jsonb_build_object({fields}))",
+            with_clause(&self.with)
+        )
+    }
+
+    /// The read as one expression, each list whole: for a read of few rows that follows a block.
+    pub(in crate::store) fn whole(&self) -> String {
+        let mut fields: Vec<String> = (self.lists.iter())
+            .map(|list| format!("'{}', {}", list.key, list.whole()))
+            .collect();
+        fields.extend(self.rest.clone());
+        self.object(&fields.join(", "))
+    }
+}
+
+/// The JSON text of a [`Listed`] read's answer: each list's items under its key, then the other
+/// fields of `rest`, an object's text; or the one list alone, where there is no `rest`.
+pub(in crate::store) fn joined(lists: &[(&str, Vec<&str>)], rest: Option<&str>) -> String {
+    let list = |items: &[&str]| format!("[{}]", items.join(","));
+    let Some(rest) = rest else {
+        return lists
+            .first()
+            .map_or_else(|| "[]".into(), |(_, items)| list(items));
+    };
+    let keyed: Vec<String> = (lists.iter())
+        .map(|(key, items)| format!("\"{key}\":{}", list(items)))
+        .collect();
+    // The other fields, after their object's opening brace: none of them is an object that
+    // closes at once, which takes no comma before it.
+    let fields = rest.trim_start().strip_prefix('{').unwrap_or(rest);
+    let between = if keyed.is_empty() || fields.trim_start().starts_with('}') {
+        ""
+    } else {
+        ","
+    };
+    format!("{{{}{between}{fields}", keyed.join(","))
+}
+
+/// The rows of `from` read as [`row`] reads one, in `order`, as a list an item a row: [`rows`]
+/// as a statement of its own, `alias` naming a row.
+pub(in crate::store) fn listed(alias: &str, from: &str, order: &str) -> Pg<'static> {
+    list_of(row(alias), from, order)
+}
+
+/// The list of `item` (an expression over a row of `from`) for each row of `from`, in `order`,
+/// an item a row.
+pub(in crate::store) fn list_of(item: String, from: &str, order: &str) -> Pg<'static> {
+    Pg::Listed(Listed {
+        with: String::new(),
+        lists: vec![List {
+            key: "",
+            item,
+            from: from.into(),
+            order: order.into(),
+        }],
+        rest: None,
+    })
 }
 
 /// `block` as a statement of its own: `v` the variables, `sid_` and `ts_` the line [`logged`]
@@ -347,7 +518,7 @@ mod tests {
                         .into(),
                     true
                 )],
-                answer: 0
+                answer: Gives::Value(0)
             })
         );
         let Some(Request::Steps { steps, answer }) = request(&Pg::script("NULL;"), true) else {
@@ -370,7 +541,7 @@ mod tests {
         assert_eq!(steps[1].0, GUARD);
         assert!(steps[2].0.contains("\nNULL;\n"), "{}", steps[2].0);
         assert_eq!(steps[3].0, ANSWER);
-        assert_eq!(answer, 3);
+        assert_eq!(answer, Gives::Value(3));
         let Some(Request::Steps { steps, answer }) = request(&Pg::script_then("NULL;", "v"), false)
         else {
             panic!("a script is steps");
@@ -383,7 +554,7 @@ mod tests {
              AS board_vars",
             "the read after the block takes the variables its first statement set"
         );
-        assert_eq!(answer, 2);
+        assert_eq!(answer, Gives::Value(2));
         let Some(Request::Steps { steps, .. }) = request(&Pg::read("v"), true) else {
             panic!("a read is steps");
         };
@@ -402,7 +573,7 @@ mod tests {
             "the bound is set after the guard and right before the block it bounds"
         );
         assert!(steps[3].0.contains("\nNULL;\n"), "{}", steps[3].0);
-        assert_eq!((steps[4].0.as_str(), answer), (ANSWER, 4));
+        assert_eq!((steps[4].0.as_str(), answer), (ANSWER, Gives::Value(4)));
         assert_eq!(request(&Pg::Nothing, true), None);
         assert_eq!(
             request(&Pg::Simple("CREATE TABLE t ();".into()), false),
@@ -410,9 +581,170 @@ mod tests {
         );
     }
 
+    /// A read of the lists `keys`, each of table `t`'s rows by `id`, with `rest` beside them.
+    fn listing(keys: &[&'static str], rest: Option<&str>) -> Listed {
+        let list = |key| List {
+            key,
+            item: "to_jsonb(t)".into(),
+            from: "t WHERE t.at > (v ->> 'since')::bigint".into(),
+            order: "t.at, t.id".into(),
+        };
+        Listed {
+            with: String::new(),
+            lists: keys.iter().copied().map(list).collect(),
+            rest: rest.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_list_alone_is_one_statement_that_binds_the_variables_and_orders_its_own_rows() {
+        let Pg::Listed(read) = listed("t", "t WHERE t.at > 1", "t.at, t.id") else {
+            panic!("a list is listed");
+        };
+        assert_eq!((read.with.as_str(), read.rest.as_deref()), ("", None));
+        assert_eq!(read.lists.len(), 1);
+        assert_eq!(read.lists[0].item, row("t"));
+        assert_eq!(
+            request(&Pg::Listed(listing(&[""], None)), false),
+            Some(Request::Steps {
+                steps: vec![(
+                    "SELECT n.item FROM (SELECT $1::jsonb AS v) AS board_vars, \
+                     LATERAL (SELECT (to_jsonb(t))::text AS item, t.at AS place0, t.id AS place1 \
+                     FROM t WHERE t.at > (v ->> 'since')::bigint) AS n \
+                     ORDER BY n.place0, n.place1"
+                        .into(),
+                    true
+                )],
+                answer: Gives::Lists {
+                    lists: vec![("", 0)],
+                    rest: None
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn a_list_orders_by_each_of_its_values_in_turn_ascending_or_descending() {
+        let mut list = listing(&[""], None).lists.remove(0);
+        list.order = "t.at DESC, t.id".into();
+        let rows = list.rows("", BOUND);
+        assert!(
+            rows.contains("AS item, t.at AS place0, t.id AS place1 FROM t "),
+            "{rows}"
+        );
+        assert!(
+            rows.ends_with(" AS n ORDER BY n.place0 DESC, n.place1"),
+            "{rows}"
+        );
+        list.order = "t.at".into();
+        let rows = list.rows("", BOUND);
+        assert!(rows.ends_with(", t.at AS place0 FROM t WHERE t.at > (v ->> 'since')::bigint) AS n ORDER BY n.place0"), "{rows}");
+    }
+
+    #[test]
+    fn a_read_of_lists_sets_its_variables_once_and_answers_a_statement_a_list_then_the_rest() {
+        let mut read = listing(&["tasks", "roles"], Some("'latest', 7"));
+        read.with = "picked AS (SELECT 1)".into();
+        for guarded in [false, true] {
+            let Some(Request::Steps { steps, answer }) =
+                request(&Pg::Listed(read.clone()), guarded)
+            else {
+                panic!("a read of lists is steps");
+            };
+            let before = 1 + usize::from(guarded);
+            assert_eq!(steps.len(), before + 3, "{guarded}");
+            assert_eq!(binding(&steps), [0], "the variables are sent once");
+            assert_eq!(steps[0].0, VARS);
+            assert_eq!(steps[before - 1].0 == GUARD, guarded);
+            for list in &steps[before..before + 2] {
+                assert!(
+                    list.0.starts_with(&format!(
+                        "SELECT n.item FROM (SELECT {SET} AS v) AS board_vars, \
+                         LATERAL (WITH picked AS (SELECT 1) SELECT (to_jsonb(t))::text AS item,"
+                    )),
+                    "{}",
+                    list.0
+                );
+                assert!(
+                    list.0.ends_with(" AS n ORDER BY n.place0, n.place1"),
+                    "{}",
+                    list.0
+                );
+            }
+            assert_eq!(
+                steps[before + 2].0,
+                answered(
+                    "(WITH picked AS (SELECT 1) SELECT jsonb_build_object('latest', 7))",
+                    SET
+                )
+            );
+            assert_eq!(
+                answer,
+                Gives::Lists {
+                    lists: vec![("tasks", before), ("roles", before + 1)],
+                    rest: Some(before + 2)
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn a_read_of_lists_as_one_value_is_its_object_with_each_list_whole() {
+        let mut read = listing(&["tasks"], Some("'latest', 7"));
+        let tasks = "'tasks', coalesce((SELECT jsonb_agg(to_jsonb(t) ORDER BY t.at, t.id) \
+                     FROM t WHERE t.at > (v ->> 'since')::bigint), '[]')";
+        assert_eq!(
+            read.whole(),
+            format!("(SELECT jsonb_build_object({tasks}, 'latest', 7))")
+        );
+        read.with = "picked AS (SELECT 1)".into();
+        read.rest = None;
+        assert_eq!(
+            read.whole(),
+            format!("(WITH picked AS (SELECT 1) SELECT jsonb_build_object({tasks}))")
+        );
+    }
+
+    #[test]
+    fn an_answer_in_lists_joins_to_the_text_of_its_one_value() {
+        let parsed = |text: String| -> serde_json::Value {
+            serde_json::from_str(&text).unwrap_or_else(|why| panic!("{why}: {text}"))
+        };
+        let tasks = vec![r#"{"slug": "a"}"#, r#"{"slug": "b, c"}"#];
+        assert_eq!(
+            parsed(joined(
+                &[("tasks", tasks.clone()), ("roles", vec![])],
+                Some(r#"{"known": true, "latest": 7}"#)
+            )),
+            serde_json::json!({
+                "tasks": [{"slug": "a"}, {"slug": "b, c"}],
+                "roles": [],
+                "known": true,
+                "latest": 7
+            })
+        );
+        assert_eq!(
+            parsed(joined(&[("", tasks)], None)),
+            serde_json::json!([{"slug": "a"}, {"slug": "b, c"}])
+        );
+        assert_eq!(joined(&[("", vec![])], None), "[]");
+        assert_eq!(joined(&[], None), "[]");
+        assert_eq!(
+            joined(&[("tasks", vec!["1"])], Some(r#"{"a": []}"#)),
+            r#"{"tasks":[1],"a": []}"#
+        );
+        // An object of no other fields, and one of no lists, are still one object.
+        assert_eq!(
+            joined(&[("tasks", vec![]), ("roles", vec!["2"])], Some("{}")),
+            r#"{"tasks":[],"roles":[2]}"#
+        );
+        assert_eq!(joined(&[], Some(r#"{"a": 1}"#)), r#"{"a": 1}"#);
+        assert_eq!(joined(&[], Some("{}")), "{}");
+    }
+
     /// `rule`'s block, which a rule's write is.
     fn ruled(reason: bool, needs: bool, blocked: bool, moved: Option<bool>, holds: bool) -> String {
-        match rule(reason, needs, blocked, moved, holds) {
+        match rule(reason, needs, needs, blocked, moved, holds) {
             Pg::Script(block, None) => block.into_owned(),
             other => panic!("a rule is a block answering its own: {other:?}"),
         }
@@ -428,6 +760,7 @@ mod tests {
             work::field_set("_board,blocked", "v -> 'blocked'"),
             work::reason_written(),
             work::field_set("_board,needs", "v -> 'needs'"),
+            work::field_set("_board,unlanded", work::UNLANDED),
             cap::HOLDING.to_string(),
             work::block_cancelled_dependencies(true),
             cap::GUARD.to_string(),

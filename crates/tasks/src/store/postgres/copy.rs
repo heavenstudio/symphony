@@ -19,7 +19,7 @@ use super::{Pg, row};
 use std::fmt::Write as _;
 
 /// The copy's one transaction: each of `tables` emptied and filled from `v -> table`, its rows as
-/// the dump gives them with their ids, each sender's last word made again by the messages'
+/// the dump gives them with their ids (a schemaless table's each `{id, doc}`), each sender's last word made again by the messages'
 /// trigger, the counters set to `last` and `last_ts` (messages), `last_task` and `last_ask`, and
 /// the board's recovery generation replaced ([`super::recovery::ROTATE`]), which is its answer.
 ///
@@ -72,8 +72,9 @@ END;",
     Pg::Within(millis, block.into())
 }
 
-/// Every table of the dump: its name in the dump, its table, and the order of its key.
-const DUMPED: [(&str, &str, &str); 11] = [
+/// Every table of the dump: its name in the dump, its table, and the order of its key (a
+/// schemaless table's in any, which `Store::dump` puts in its own).
+const DUMPED: [(&str, &str, &str); 15] = [
     ("tasks", "task", "sid"),
     ("task_links", "link", "slug, kind, target"),
     ("sessions", "session", "handle"),
@@ -85,6 +86,10 @@ const DUMPED: [(&str, &str, &str); 11] = [
     ("delivery_keys", "delivery_key", "slug, key"),
     ("asks", "ask", "sid"),
     ("usages", "usage", "handle, slug, role, model, speed, round"),
+    ("execution_attempts", "execution_attempt", "id"),
+    ("execution_facts", "execution_fact", "id"),
+    ("execution_fences", "execution_fence", "id"),
+    ("execution_artifacts", "execution_artifact", "id"),
 ];
 
 /// Every row of the board, in the shape the copy reads, each table in the order of its key, as
@@ -114,6 +119,10 @@ pub(in crate::store) static DUMP: std::sync::LazyLock<String> = std::sync::LazyL
 /// whole: a null inside one is a value SurrealDB keeps, where the read of a row's own unset fields
 /// would take it out.
 fn whole(alias: &str, table: &str) -> String {
+    if schema::table(table).is_some_and(|table| table.columns.is_empty()) {
+        // A schemaless row is its document, whole.
+        return format!("{alias}.doc");
+    }
     let nested: Vec<&str> = (schema::table(table).map_or(&[][..], |table| table.columns))
         .iter()
         .filter(|column| matches!(column.kind, Kind::Object | Kind::Array))

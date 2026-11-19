@@ -1,9 +1,9 @@
 //! The board's PostgreSQL, beside its SurrealDB ([`Postgres`]): the machine's own, installed by its
 //! package manager, from the folder of programs the project file names (`[board] postgresql`)
 //! or found on `PATH` ([`discover_programs`];
-//! [its card](../../../../docs/DECISIONS.md#postgresql-binary-source)). It serves only a board
-//! kept in a scratch place, whose server ends with the process that started it;
-//! [`Home::board_server`] selects it by the home's durable engine identity. No live home starts it.
+//! [its card](../../../../docs/DECISIONS.md#postgresql-binary-source)). It serves the board whose
+//! home's durable engine identity names it ([`Home::board_server`]): a scratch home's by
+//! [`Home::initialize_backend`], any other's by the move alone ([`super::moving`]).
 //!
 //! Its data is `postgresql/` in the board's folder, made by `initdb` at the first start in a folder
 //! beside it and renamed into place, so an `initdb` cut short never leaves a half-made one where a
@@ -15,10 +15,12 @@
 //! It listens on a Unix socket alone, never on TCP, in a folder of its own under `/tmp`
 //! ([`socket_folder`]), private to this user: macOS refuses a socket path over 103 bytes, which a
 //! board's folder under a checkout passes. Its server runs under a supervisor of its own session
-//! ([`SUPERVISED`]), which writes the server's log, says when the server is ready to accept
-//! connections, and ends the server once the starter's [`Lifeline`] reads its end: a scratch
-//! SurrealDB's rule. A start waits for that word, never polls; a stop is PostgreSQL's fast shutdown,
-//! waited for by `pg_ctl`. Both take the board's starters' lock, as SurrealDB's do.
+//! ([`SUPERVISED`]), which writes the server's log and says when the server is ready to accept
+//! connections. A board's in a scratch place ends once the starter's [`Lifeline`] reads its end,
+//! a scratch SurrealDB's rule; any other board's outlives its starter, as its SurrealDB does, and
+//! ends at a stop or a hold. A start waits for the supervisor's word, never polls; a stop is
+//! PostgreSQL's fast shutdown, waited for by `pg_ctl`. Both take the board's starters' lock, as
+//! SurrealDB's do.
 
 use super::scratch::{Lifeline, scratch};
 use super::starters::Doing;
@@ -49,8 +51,9 @@ pub const SOCKET_PATH_MAX: usize = 103;
 /// The socket's file in its folder, PostgreSQL's name for port 5432.
 pub const SOCKET_FILE: &str = ".s.PGSQL.5432";
 
-/// The supervisor of a board's PostgreSQL, run by `sh -c` with the server `"$0"`, its data `"$1"`
-/// and its log `"$2"`, the starter's [`Lifeline`] as its input and a pipe of the starter's as its
+/// The supervisor of a board's PostgreSQL, run by `sh -c` with the server `"$0"`, its data `"$1"`,
+/// its log `"$2"` and whose it is `"$3"` ([`OWNED`], or [`APART`] with no watchdog and nothing as
+/// its input), the starter's [`Lifeline`] as its input and a pipe of the starter's as its
 /// output. That output hears two lines, then its end: the server's pid, then `ready` once the
 /// server logs that it is ready to accept connections (in the `C` locale its settings set), or
 /// `ended` once it ends without. The server's output goes through a
@@ -66,11 +69,14 @@ const SUPERVISED: &str = r#"exec 3<&0 </dev/null 4>&1 >/dev/null 2>&1
     server=$!
     echo "$server" >&4
     exec 4>&-
-    ( while IFS= read -r line; do :; done <&3; kill -INT "$server"; kill -TERM "$server" ) &
-    watchdog=$!
+    watchdog=
+    if [ "$3" = owned ]; then
+        ( while IFS= read -r line; do :; done <&3; kill -INT "$server"; kill -TERM "$server" ) &
+        watchdog=$!
+    fi
     exec 3<&-
     wait "$server"
-    kill "$watchdog"
+    [ -z "$watchdog" ] || kill "$watchdog"
 } | {
     exec 3<&-
     ready=
@@ -88,6 +94,11 @@ const SUPERVISED: &str = r#"exec 3<&0 </dev/null 4>&1 >/dev/null 2>&1
     done
     [ -n "$ready" ] || echo ended >&4
 } &"#;
+
+/// [`SUPERVISED`]'s word for a server that ends with the process that started it.
+const OWNED: &str = "owned";
+/// [`SUPERVISED`]'s word for a server that outlives its starter.
+const APART: &str = "apart";
 
 /// A board's PostgreSQL, serving: its postmaster, the folder its socket is in (a connection's
 /// `host`), and the release of the programs that serve it.
@@ -142,18 +153,23 @@ impl Postgres {
         version_at(&self.programs).map_err(ServerError::Io)
     }
 
-    /// Its server, answering: the one running on its data, else one started now. A board outside
-    /// a scratch place is refused before anything is made: no live board runs on PostgreSQL yet.
-    /// The first start makes the data ([`Postgres::make`]); every start writes its settings and
-    /// its socket's folder, starts the server supervised and waits, the board's patience at most,
-    /// for its word that it is ready, or that it ended. One that says neither by then is left
-    /// running, never signalled, and the caller told so: it is replaying its log, or stuck, and
-    /// ends with this process. Under the starters' lock.
+    /// Its server, answering: the one running on its data, else one started now. The first start
+    /// makes the data ([`Postgres::make`]); every start writes its settings and its socket's
+    /// folder, starts the server supervised and waits, the board's patience at most, for its word
+    /// that it is ready, or that it ended. One that says neither by then is left running, never
+    /// signalled, and the caller told so: it is replaying its log, or stuck. A scratch board's
+    /// ends with this process ([`Postgres::owned`]); any other's outlives it. Refused while the
+    /// board is held. Under the starters' lock.
     pub fn ensure(&self) -> Result<Serving, ServerError> {
-        self.scratch_only()?;
         let _starters = self.home.lock(Doing::Starting)?;
         self.home.allow_postgresql()?;
         self.home.unheld()?;
+        self.serve()
+    }
+
+    /// [`Postgres::ensure`] under the caller's starters' lock, also while that caller holds the
+    /// board stopped: the move's own server on the held data ([`super::moving`]).
+    pub(super) fn serve(&self) -> Result<Serving, ServerError> {
         let version = self.version()?;
         if let Some(serving) = self.running(&version)? {
             return Ok(serving);
@@ -170,20 +186,12 @@ impl Postgres {
         self.start(version)
     }
 
-    pub(super) fn scratch_only(&self) -> Result<(), ServerError> {
-        if !self
-            .home
+    /// Whether its server ends with the process that starts it: a board in a scratch place
+    /// ([`scratch`]), or one a caller says so of ([`Home::supervised`]).
+    fn owned(&self) -> bool {
+        self.home
             .supervised
             .unwrap_or_else(|| scratch(&self.home.dir))
-        {
-            return Err(ServerError::Io(format!(
-                "the board at {} is not in a scratch place: PostgreSQL serves only a board under \
-                 the temporary folder or a checkout's artifacts/, whose server ends with the \
-                 process that started it",
-                self.home.dir.display()
-            )));
-        }
-        Ok(())
     }
 
     /// The data made by `initdb` when it is not there (it holds no `PG_VERSION`), in a folder
@@ -301,16 +309,24 @@ impl Postgres {
                 == Some(&self.program("postgres").display().to_string())
     }
 
-    /// The server started under its supervisor ([`SUPERVISED`]) on this process's lifeline, and
-    /// waited for until it says it is ready or ended, the board's patience at most.
+    /// The server started under its supervisor ([`SUPERVISED`]), on this process's lifeline when
+    /// it is this process's own ([`Postgres::owned`]), and waited for until it says it is ready or
+    /// ended, the board's patience at most.
     fn start(&self, version: String) -> Result<Serving, ServerError> {
         let log = self.log();
         let from = fs::metadata(&log).map_or(0, |meta| meta.len());
-        let lifeline = Lifeline::of_this_process()
-            .map_err(io("could not make a lifeline for", &self.home.dir))?;
-        let input = lifeline
-            .reader()
-            .map_err(io("could not hand a lifeline to", &self.data()))?;
+        let owned = self.owned();
+        let input = if owned {
+            let lifeline = Lifeline::of_this_process()
+                .map_err(io("could not make a lifeline for", &self.home.dir))?;
+            Stdio::from(
+                lifeline
+                    .reader()
+                    .map_err(io("could not hand a lifeline to", &self.data()))?,
+            )
+        } else {
+            Stdio::null()
+        };
         let postgres = self.program("postgres");
         let child = command("/bin/sh")
             .new_session()
@@ -320,7 +336,8 @@ impl Postgres {
             .arg(&postgres)
             .arg(self.data())
             .arg(&log)
-            .stdin(Stdio::from(input))
+            .arg(if owned { OWNED } else { APART })
+            .stdin(input)
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
@@ -335,8 +352,13 @@ impl Postgres {
                 return Err(ServerError::NotUp(format!(
                     "the board's PostgreSQL has not said it is ready within {} s: it is still \
                      starting (a server replaying a long log takes minutes) or stuck, and is \
-                     left running, never signalled; it ends with this process. Its log is {}",
+                     left running, never signalled{}. Its log is {}",
                     self.home.patience.as_secs(),
+                    if owned {
+                        "; it ends with this process"
+                    } else {
+                        ""
+                    },
                     log.display()
                 )));
             }
@@ -363,22 +385,20 @@ impl Postgres {
     /// stopping by then is left to finish, the caller told so, and never sent a second signal.
     /// Under the starters' lock.
     pub fn stop(&self) -> Result<Option<Serving>, ServerError> {
-        self.scratch_only()?;
         let _starters = self.home.lock(Doing::Stopping)?;
         self.home.allow_postgresql()?;
         self.home.unheld()?;
         self.stop_held()
     }
 
-    /// The selected scratch server already running, without starting it.
+    /// The selected server already running, without starting it.
     pub fn current(&self) -> Result<Option<Serving>, ServerError> {
-        self.scratch_only()?;
         self.home.allow_postgresql()?;
         self.running(&self.version()?)
     }
 
     /// Stop under the caller's starters' lock, also while that caller holds the board stopped.
-    fn stop_held(&self) -> Result<Option<Serving>, ServerError> {
+    pub(super) fn stop_held(&self) -> Result<Option<Serving>, ServerError> {
         let Some(record) = self.recorded() else {
             self.socket_removed();
             return Ok(None);
@@ -587,8 +607,10 @@ fn version_at(programs: &Path) -> Result<String, String> {
 /// TCP, a socket this user alone reaches, messages in English (the start waits for one), times
 /// in UTC; and sized for 512 MiB: 128 MiB of shared buffers, 4 MiB for a sort or a hash in each
 /// of 64 connections and 32 MiB for each of two autovacuum workers come to 448 MiB, which leaves
-/// out each backend's own memory, no parallel query (each worker a process of its own). What a
-/// loaded board takes is measured by the slice that loads one.
+/// out each backend's own memory, no parallel query (each worker a process of its own). A
+/// backend's own memory is what its largest statement took, kept until its connection ends,
+/// which is why the store's long reads answer an item a row (`store/postgres/mod.rs`'s
+/// `Pg::Listed`); what a loaded board takes is `examples/board_load.rs`'s to measure.
 pub fn settings(socket: &Path) -> String {
     format!(
         "# The board's PostgreSQL (crates/tasks/src/server/postgres.rs), written at each start.\n\

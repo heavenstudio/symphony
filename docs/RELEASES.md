@@ -101,7 +101,7 @@ under MIT: crates.io is the package manager their versions live in
 - **The helpers:** `symphony-env`, `symphony-args`, `symphony-schema`, `process-cwd` and
   `repository-read`, each on a version line of its own from 1.0.0.
 - **The product:** the library and its `symphony` command as `symphony-app`, the board
-  (`symphony-board`: `tasks`, `agent-send`, `tasks-copy` and `tasks-reclaim`), the server
+  (`symphony-board`: `tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim` and `tasks-move`), the server
   (`symphony-server`), the Chrome driver `symphony shot` drives as `symphony-chrome`, and the app's
   wire types (`symphony-api`). One version for the five, from 0.1.0, each requiring the others at
   exactly it (`=0.1.0`), so they are always taken together; below 1.0, it promises no name.
@@ -640,6 +640,44 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   covered by a red's task whose land has not advanced it yet, it waits for that land; covered by
   any other landing, its fix is on main and not in the candidate, which is dropped. One cancelled
   with no landing is answered, its fix made outside this repository.
+- **The advance of a fix a pull request delivered.** There the host squashes the fix into main
+  and the candidate still takes the fix's own commits, both read from the land's one receipt: the
+  squash is the landing, its one parent is main before the land, and the head the receipt kept
+  (reachable under `refs/symphony/delivered/SLUG`, as no history of main holds it) is what
+  landed. The same test picks the commit, among the commits an approve named and that head, which
+  vouches for itself: the squash was asked for under evidence that stood on it, so a land cut
+  before it closed the task advances the candidate all the same. Main is never merged into the
+  candidate: a head that merged main gives the commit approved before that merge, or none, which
+  drops it. The record's advance keeps the squash (`merge`), the commit taken (`to`) and, under
+  `delivered`, the receipt's head, parent, repository, pull request and evidence revision. A
+  receipt whose head is gone from the repository makes the candidate wait, said. The candidate's
+  tip is then a commit main does not hold in its history, and neither is the release tagged on it:
+  each is on the line by the squash that delivered it there, read from the receipts, which is how
+  the candidate stays open, how its rerun is allowed, how the count goes on from that release and
+  how the next release of main's tip is one that moved forward. A pull request that did not
+  merge leaves no receipt, and the red waits as for any task still open. Once the candidate
+  advanced so, `release-candidate` names a head main's history does not hold, and a delivery
+  refuses a head that merges a commit the remote's default branch lacks, so on such a line a
+  red's fix never merges `release-candidate`. A fix that starts at `release-candidate` after the
+  advance holds no such merge and is delivered as any head. One started before the advance and
+  not yet published or approved is rebased onto `release-candidate` before its assessment and
+  review: that is a new head, so its assessment, each stamp and its approve are of the rebased
+  head, and nothing gathered on the old one counts. One already published, or approved, is left
+  as it is: nothing is rewritten behind an approval or a pull request, which a delivery never
+  forces, and neither is main or a release's tag. Its land then answers no advance, as it does
+  not descend from the candidate's tip, and drops the candidate, so main's tip, which holds
+  both squashes, is what is run. Fixing a candidate's reds one after the other, each started at
+  the candidate as the one before left it, keeps it. One limit is the receipts' own: a task has
+  one receipt, so a slug delivered a second time replaces it; the count then misses the first
+  squash, and a release tagged on the first head is held by nothing, which a person judges until
+  [[task:tools/github-delivery-receipt-history]] keeps each delivery's receipt: a repeated
+  delivery of one task is not supported here. The entries a delivered landing said
+  ([its notes](#its-notes)) are read from the head its receipt kept, as the squash carries none,
+  and a release tagged on a delivered head stays in the notes of every release after it by the
+  same reading. A fix that changes what
+  the client is built from is not delivered so yet: a delivery refuses a head that changes a
+  generator's outputs, and the candidate's fix must commit them, so that fix waits for the
+  delivery of generated outputs and its red stays open, or the candidate is dropped.
 - **The rerun.** Once every red is answered, the candidate's tip is rerun: by the `--due` of the
   land that answered the last red, else by the next landing's, the next scheduled run, or `just
   release --rerun`, an orchestrator's retry. It waits for no regenerator, as a fix commits the
@@ -730,8 +768,8 @@ The candidate is dropped, and a run of main's tip is due at once, whatever the c
   main before any approve;
 - a red's task was closed as covered by a landing that did not advance it, its fix on main and not
   in the candidate;
-- a release it does not descend from was tagged (one on main passed it), or its tip is not on
-  `origin/main`;
+- a release it does not hold was tagged (one on main passed it), or its tip is not on
+  `origin/main`, each by its history or by the squash that delivered it there;
 - or `just release --drop`, an orchestrator's act, drops it.
 
 A release of its tip tagged by other means ends it as released. Each bound is read whenever it is
@@ -758,15 +796,23 @@ the hour, and its green release refreshes the server and its projects
 
 - **The count** is `[releases] every_landings` in `symphony.toml`, 20 unless the project says. `0`
   turns the cadence off, and then only the scheduled run or `just release` releases.
-- **A line that delivers by pull request** (`[land] delivery` in the project file its tip
-  commits, [TASKS](TASKS.md#a-land-delivered-by-a-pull-request)) is not counted: its tasks land
-  as squashed commits, which are no merges, so the count refuses by name, no run is due by
-  landings there, and a release candidate's settle says the same and advances nothing.
 - **A landing** is a merge on the main line's first-parent line whose subject names a branch:
   "Merge branch 'SLUG'", the merge `just land` makes, or "Merge branch 'SLUG' into BRANCH", git's
   own made by hand. A merge of the default branch itself ("Merge branch 'main' into SLUG", a task
   catching up, which reached the line), of another repository's branch or of a remote-tracking
-  branch is none, and neither is any other commit.
+  branch is none, and neither is any other commit but a squash a receipt names.
+- **A land delivered by a pull request** (`[land] delivery`,
+  [TASKS](TASKS.md#a-land-delivered-by-a-pull-request)) is one squashed commit of one parent,
+  which is no merge, so it is a landing by its receipt alone: the file the land keeps once it
+  proved the commit the host made (`receipts/SLUG.json` in the lands' folder), read by
+  `crates/symphony-build/src/release/receipts.rs`. A commit on the line counts as the landing of
+  the receipt's task when it is the receipt's squash and git bears the receipt out: its one parent
+  and its tree are the ones recorded. No subject, patch or pull request title makes a landing, so
+  a squash with no receipt is none. A receipt that names a commit on the line which is not the
+  one it recorded stops the count by name (`landings: cannot be counted: the receipt of SLUG …`)
+  and no run starts by landings until a person has judged it; `just release` by hand still runs.
+  Merges and squashes count on one line together, and a line with no receipt counts as it always
+  did.
 - **Counted since** the newest release on that line, or a later run that checked something on it,
   green or red, whichever is nearer the tip. A run that stopped short before its first check (a
   fetch that failed, a process in its folders) is not counted from. So a red tip is counted from
@@ -801,6 +847,17 @@ the hour, and its green release refreshes the server and its projects
   `symphony-build` and makes the link or renews it (`tools/rs-bin.sh --link symphony-build` does
   it alone). A main checkout that links none starts no count: the land shows its refusal. No
   landing is lost meanwhile: the next count reads them all from git.
+- **A landing whose command never ran.** The count is read from the line and the receipts each
+  time, never added to by the command, so a land cut between its merge and its `on_land` (a
+  delivered land's receipt is kept before the task is closed and the command started) loses no
+  landing: the next count asked takes it, and one told twice is counted once. What it does lose is
+  the asking. Nothing counts by itself, so when that landing was the one that made a run due and
+  no other landing follows, no run starts until something asks: `--status` says
+  `next run: due: N of M landed; the next landing starts it, or `just release --due``, and
+  `just release --due`, an orchestrator's retry, starts it, as the scheduled run does at its hour.
+  A land run again after such a cut does not start the command a second time
+  ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)): a project's command need not be safe
+  to run twice.
 - **The release candidate holds it.** Before it counts, `--due` settles the release candidate
   under the run's lock ([the advance](#the-release-candidate)), unless a run holds the lock, which
   settles it itself. While one is open and a red of it waits, the count starts nothing, however
@@ -815,6 +872,24 @@ the hour, and its green release refreshes the server and its projects
   run has checked a commit, the count starts again from it, and the next landing that brings it to
   the count starts the next run. Between `--due`'s look and the run's start, a run that took the
   lock first refuses the second, which is not doubled either (*One run at a time*, above).
+- **A landing that moves the board's schema** (it raises `VERSION` in
+  `crates/tasks/src/schema.rs`, which its `Consumer-Note: board` trailer says,
+  [CHECKS](CHECKS.md#what-a-landing-tells-a-consumer)) is followed at once by a release run,
+  whatever the count ([the owner's A](DECISIONS.md#schema-landing-then-release), 2026-11-19).
+  Main's build moves this repository's board at its first command after the landing
+  ([TASKS](TASKS.md#where-it-lives)), and the machine's server, a release's, then writes nothing
+  to it until a release at the new schema serves it ([the switch](#the-switch)). The run starts
+  now rather than at the count's, and nothing else is shortened: a red one is held as the release
+  candidate as any run is ([the release candidate](#the-release-candidate)), and `current` then
+  moves under the refresh's rule on writers as for any release ([the refresh](#the-refresh)).
+  The orchestrator who landed it runs `just release` once the land is done ([who runs
+  it](#who-runs-it)), unless the land's own `--due` started a run, which is that run. Such a
+  landing waits, approved, while a run or the release candidate holds the release (`just release
+  --status`: `next run: in progress`, or a candidate open), since a run started then judges
+  nothing of main's newest commit ([main while it is open](#main-while-it-is-open)), and lands
+  once neither does. A second one waits until `current` names a release serving the first's
+  schema (`--status`'s `machine:` and `last refresh:` lines), so the board is never two schemas
+  ahead of the server, which reads nothing of a board that far ahead.
 
 ## The refresh
 
@@ -871,7 +946,10 @@ Once a release's tag is pushed, the run does this, in order:
   from schema N to M, and stays at N while X holds the release`). Otherwise every board is
   snapshotted through its running database, all of them before the first move
   (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the
-  newest 5 kept): a snapshot that fails is red and no board moves. Then each board is moved in
+  newest 5 kept; for a board on PostgreSQL `before-schema-N-RELEASE.sql`, `pg_dump`'s text of
+  the board's database, which `psql` restores): a snapshot that fails is red and no board moves.
+  A board on PostgreSQL is read on that engine, by the PostgreSQL programs its project names, and
+  waits on no SurrealDB version, as a release pins none of the machine's PostgreSQL. Then each board is moved in
   turn by the release's own `tasks migrate` (`releases/RELEASE/bin/tasks`) run in the project's
   main checkout, the one command that moves a project's board, and its schema is read again. Where
   the only writers behind are a release's own, it runs with `--leave-behind`, which names them;
@@ -1055,7 +1133,7 @@ with no build of its own runs that release from then on. Nothing else goes back 
 the newer release moved stays at that release's schema, which the older release's server reads
 and writes nothing to ([the switch](#the-switch)) and the older release's `tasks` refuses. Its
 store as it was before the move is the snapshot the refresh took
-(`before-schema-N-RELEASE.surql`), and a board put back to it is one that went back, which the
+(`before-schema-N-RELEASE.surql`, or `.sql` of a board on PostgreSQL), and a board put back to it is one that went back, which the
 owner accepts ([TASKS](TASKS.md#a-board-that-went-back)). Pointing `current` on the machine whose
 server is the shared one is the owner's word, as any switch of that server is. The next green
 refresh points `current` at the release it installs.
@@ -1067,7 +1145,10 @@ nothing else. An orchestrator pushes main and never a tag ([AGENTS](../AGENTS.md
 cannot be taken back once a project fetches it, so running `just release` or
 `just release --commit` by hand and installing its schedule are the owner's call: an orchestrator
 does either only on the owner's word. The cadence's run has that word (*The cadence*, above): a
-land starts `--due` without asking, and the release it runs is automatic. So has a green release's
+land starts `--due` without asking, and the release it runs is automatic. So has the run that
+follows a landing that moves the board's schema (*The cadence*, above): the orchestrator who
+landed it runs `just release` without asking each time, the owner's standing word for those runs
+alone, and any other run by hand stays the owner's call. So has a green release's
 refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
 run without asking on a red refresh's task once it is fixed, or once a project finished what its
 step left to it (each writer named rebuilt and run once). The machine's server is not the

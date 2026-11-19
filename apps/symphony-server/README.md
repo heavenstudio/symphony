@@ -499,8 +499,12 @@ the board; generated branches that fail to land remain available.
 Branch-checkout saves remain for that
 branch's executor to commit. Verdict filing runs off the save path, and the
 shared server calls the board's locked `reap` every five minutes for each project it
-serves that has a board, each on its own schedule (`front::maintenance`). Private foreground
-servers do no session maintenance, including when they use a copied scratch board.
+serves that has a board, each on its own schedule (`front::maintenance`). After a sleep, that
+project's clock tick holds its callback dispatch and its give until a round begun after the wake
+has ended, or a round's timeout and the slack it may start late within (240 + 30 s) of awake
+time have passed (`live::presence`). Private foreground
+servers do no session maintenance, including when they use a copied scratch board, and so never
+hold their tick.
 
 Branch questions retain a docs-relative storage path and put the full branch
 page URL in the question. Quick chat from a branch uses the chat home and the

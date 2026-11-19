@@ -10,9 +10,14 @@
 # growth and why no reduction will do, to the size plus 4 % and never higher, on a fresh reviewer's
 # approve (docs/CHECKS.md, "Where a line stands" and "A red at the size check").
 
-# Every regular file under apps/symphony-server/client/public, as the server's build script embeds
-# them: the generations `symphony-build publish-client` keeps.
-client = 1_530_000
+# The builds `symphony-build publish-client` keeps under apps/symphony-server/client/public, which
+# the server's build script embeds: each build whole, a file two builds share counted for each, and
+# index.html and builds.json once (docs/CHECKS.md "Size budgets"). At c0d5409's distribution that is
+# 2,272,465 bytes: builds of 756,886, 754,713 and 755,142 and 5,724 of page; the line is that plus
+# 4 %. It replaces 1,530,000, a line on every file once (1,568,481 there), which moved with how many
+# files the builds share and not with what they weigh: the builds grew 2,173 bytes, while the
+# shared chunk's change renamed 23 of the newest build's 32 files, so no reduction will do.
+client = 2_360_000
 
 # Each binary's file; symphony-server's less the client above, which it embeds.
 [binaries]
@@ -26,5 +31,15 @@ symphony = 12_390_000
 # measurement: 6,479,680 / 3,037,536 bytes; each line is that plus 4%, rounded down to 10,000.
 # Reader-only migration separation and shared I/O construction were measured first; see the
 # lifecycle task's link maps and reduction evidence. No profile or dependency changed.
-tasks = 6_730_000
+# The generated-output delivery adds about 34 KB to tasks (text 6,514,454 on main, 6,548,822
+# with it): the regenerator's pending record, its recovery after each cut, the land's two
+# readings of a generated head and the telling of a cancelled task's pull request. Main's own
+# tasks is 6,711,120, a 16 KB page from the former line, 6,730,000. Taken back first, about 8 KB:
+# the record kept as lines in place of derived serde, one landing for the telling, one name for
+# a generation, refusals in plain words. The 14 KB left over is behaviour a review read (the
+# telling, the recovery), which no line is worth; nothing elsewhere in tasks comes back without
+# rewriting another module (the heaviest are the store's, the commands' and derived readers).
+# Measured 6,744,208; the line is that plus 4%, rounded down to 10,000. Independent review is
+# required.
+tasks = 7_010_000
 agent-send = 3_150_000

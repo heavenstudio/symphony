@@ -2,7 +2,7 @@
 
 The `symphony-board` crate (this folder) is the task board: its store over SurrealDB, the database
 server it starts in `symphony/tasks/` in the git common dir, and the binaries `tasks`
-(`just tasks`), `agent-send` (`just agent-send`), `tasks-copy` and `tasks-reclaim`. The workspace,
+(`just tasks`), `agent-send` (`just agent-send`), `tasks-copy`, `tasks-reclaim` and `tasks-move`. The workspace,
 the Cargo wrapper and the toolchain pin are [the root guide's](../../AGENTS.md#rust).
 
 This guide is what to know before changing the crate: where each job lives, the invariants a change
@@ -26,7 +26,7 @@ board's first, Python, command line did). Every build of `tasks`, this crate's a
 project's board-only one, is `cli::process_main` and nothing else: a `main` of its own that calls
 `cli::main` delivers in every write and starts no dispatcher (`tests/server/dispatch.rs`).
 `bin/agent-send.rs` is `cli/agent_send.rs`; `bin/tasks-copy.rs` and `bin/tasks-reclaim.rs` say their
-own. `cli/api.rs` is `tasks api` ([TASKS](../../docs/TASKS.md#the-tasks-api)), `cli/agents.rs` the
+own, and `bin/tasks-move.rs` is `move_cli.rs`: a program apart, so `tasks` links no move. `cli/api.rs` is `tasks api` ([TASKS](../../docs/TASKS.md#the-tasks-api)), `cli/agents.rs` the
 agents API ([TASKS](../../docs/TASKS.md#the-agents-api)), `cli/beat.rs` the heartbeat hook,
 `usage.rs` and `usage/transcript.rs` what its beats read of the session's own transcript, kept
 beside the bound keys and never in the database
@@ -124,6 +124,14 @@ task's evidence it and `tasks api` go by
 ([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
 the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `red.rs` the red mark.
 
+### Execution attempts
+
+`execution.rs` and `execution/` are the attempts a project's execution provider runs
+([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md)): `coordinator.rs` admission, controls and
+the worker's step, `rules.rs` the transitions it decides on what a write read, `evidence.rs`
+collection, cleanup and eligibility, `record.rs` the row and its facts, `keys.rs` the ids and
+operation keys; `store/execution.rs` with its statements is their store.
+
 ### The rules of work
 
 `slots.rs` with `store/cap.rs` is the cap on an orchestrator's open work
@@ -149,9 +157,12 @@ release and reclaim takes, `ending.rs` the asks to end, `apart.rs` a start off a
 server selection, `export.rs` what a refresh reads of a running board, and
 `scratch.rs` a fixture's supervised server. `postgres.rs` is the board's PostgreSQL beside it,
 the machine's own from `[board] postgresql` or discovered on `PATH`, which `Home` starts and stops
-for a scratch board alone, on a socket under `/tmp` and no TCP; `postgres/lifecycle.rs` its hold,
-stopped-cluster snapshot, scratch recovery and vacuum
-([POSTGRESQL](../../docs/POSTGRESQL.md)). `port.rs` is a child
+for the board whose identity names it, on a socket under `/tmp` and no TCP;
+`postgres/lifecycle.rs` its hold, stopped-cluster snapshot, recovery into a scratch home or over
+its own board, and vacuum ([POSTGRESQL](../../docs/POSTGRESQL.md)). `moving.rs` moves a board's
+store between the engines and holds the journalled switch a restore over a board shares; a
+table added to the board is placed as copied, carried or left in `store/copy.rs`, whose test
+fails on one that is none, since a move would drop it. `port.rs` is a child
 server's loopback port.
 
 `pg.rs` is the socket client of that PostgreSQL. `pg/external.rs` is the hosted board's settings,
@@ -391,7 +402,13 @@ of message, delivery, role, session or callback_state (`schema.rs`'s doc lists t
 reads in proportion to what it is asked (`store/unanswered.rs`). The `perf` target plans every such
 statement and every event's; a new statement or a changed condition on those paths runs it (below).
 A transaction over many rows avoids what costs more than linearly on the engine: an index a copy
-inserts into, an event that UPSERTs (`schema.rs`).
+inserts into, an event that UPSERTs (`schema.rs`). On PostgreSQL the whole-board read and the
+reads that are one plain list of rows (`listed`, `list_of`) answer an item a row (`Pg::Listed`,
+`store/postgres/mod.rs`), not one `jsonb_agg` value, which the backend builds whole, in several
+times its size, and keeps until its command ends. A thread, several threads, the task tree, an
+inbox's lines since its last look, the open asks and the list of every session
+(`sessions::sessions`) are still one value; a new read of a list that grows with the board is
+written as `Pg::Listed` ([the measurement](../../docs/analysis/board-store-baseline.md#postgresqls-memory-peak-measured-2026-11-18)).
 
 ### Time in tests
 

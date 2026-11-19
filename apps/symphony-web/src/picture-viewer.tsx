@@ -1,8 +1,9 @@
 // The picture viewer, as the overlay module draws it for the media layer of any page
 // (media-layer.ts asks for it through the shell's `reviewOverlay`): a modal dialog that behaves as
 // the pinned primitive's does (dioxus-primitives `dialog`, with its focus trap, `focus-trap.js`),
-// holding the picture. Its buttons, and Escape, a press outside the picture's box or the focus
-// leaving it, answer the page with a direction: -1 and 1 move through the pictures, 0 closes.
+// holding the picture, which the box fits to the screen: "Full size" opens the picture itself in a
+// tab of its own, at its own size. Its buttons, and Escape, a press outside the picture's box or the
+// focus leaving it, answer the page with a direction: -1 and 1 move through the pictures, 0 closes.
 // Opened, it takes the focus to its first button and keeps Tab within itself; closed, it gives the
 // focus back to what held it.
 
@@ -122,6 +123,8 @@ export function PictureViewer({ photos, at, command }: PictureViewerProps) {
   if (!open) return null;
   const photo = photos[at];
   const multiple = photos.length > 1;
+  // What a picture with no name is called: its place among those shown.
+  const place = multiple ? `Picture ${at + 1} / ${photos.length}` : "Picture";
   return (
     <div id="media-lightbox" data-state="open" className="dx-dialog-backdrop">
       <div
@@ -143,16 +146,19 @@ export function PictureViewer({ photos, at, command }: PictureViewerProps) {
               <Button type="button" onClick={() => command(0)}>
                 Close
               </Button>
+              <a className="lightbox-full" href={photo.src} target="_blank" rel="noopener">
+                Full size
+              </a>
               {multiple && (
                 <Button type="button" aria-label="Next picture" onClick={() => command(1)}>
                   →
                 </Button>
               )}
             </div>
-            <img src={photo.src} alt={photo.caption} />
+            <img src={photo.src} alt={photo.caption === "" ? place : photo.caption} />
             <div className="lightbox-caption">
               {photo.caption}
-              {multiple && ` · ${at + 1} / ${photos.length}`}
+              {multiple && (photo.caption === "" ? place : ` · ${at + 1} / ${photos.length}`)}
             </div>
           </>
         )}

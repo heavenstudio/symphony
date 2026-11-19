@@ -162,10 +162,12 @@ pub const MERGING: &str = "> **Merging.** This worktree is in the middle of a me
 fn source(render: &Render, rel: &str, scope: &str) -> Result<(PathBuf, String, bool), String> {
     let path = target(render.root(), rel, true)?;
     let text = crate::text::read_text(&path).map_err(|e| e.to_string())?;
+    let file = crate::project::Project::of(render.root()).file(rel);
     if scope.is_empty() {
+        // The owner's saves a project that delivers by pull request still keeps are shown.
+        let text = crate::commit::pending::shown(render.root(), &file, text);
         return Ok((path, text, false));
     }
-    let file = crate::project::Project::of(render.root()).file(rel);
     Ok(
         match crate::merging::committed(render.root(), &file, &text) {
             Some(committed) => (path, committed, true),
@@ -353,6 +355,20 @@ pub fn document_marked(
         let mut notice: Vec<symphony_api::Section> = wire(render.typed_sections(MERGING, rel));
         for section in &mut notice {
             section.key = "merging".into();
+            (section.start, section.end, section.part) = (0, 0, None);
+            finish(section, render.root(), rel, scope);
+        }
+        doc.sections.splice(0..0, notice);
+    }
+    if scope.is_empty()
+        && let Some(note) = crate::commit::pending::note(
+            render.root(),
+            &crate::project::Project::of(render.root()).file(rel),
+        )
+    {
+        let mut notice: Vec<symphony_api::Section> = wire(render.typed_sections(&note, rel));
+        for section in &mut notice {
+            section.key = crate::commit::pending::NOTE.into();
             (section.start, section.end, section.part) = (0, 0, None);
             finish(section, render.root(), rel, scope);
         }

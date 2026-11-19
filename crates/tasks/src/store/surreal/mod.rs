@@ -21,6 +21,7 @@ pub(in crate::store) mod cap;
 pub(in crate::store) mod copy;
 pub(in crate::store) mod depends;
 pub(in crate::store) mod dispatcher;
+pub(in crate::store) mod execution;
 pub(in crate::store) mod fields;
 pub(in crate::store) mod history;
 pub(in crate::store) mod launches;
@@ -78,11 +79,13 @@ pub(in crate::store) const THREADS: &str = "RETURN {
 
 /// A rule's write ([`WRITE`]) with what its change adds: what a block waited on removed by a
 /// change of status out of blocked, what it waits on written (`blocked`), the move's `reason`
-/// posted after its line, the task's `needs` written, a change of status (`moved`, whether to
-/// cancelled) settling its hold and its dependants, and the slot counters it `holds` guarded.
+/// posted after its line, the task's `needs` written, its mark of an approve not landed set or
+/// lifted (`unlanded`), a change of status (`moved`, whether to cancelled) settling its hold and
+/// its dependants, and the slot counters it `holds` guarded.
 pub(in crate::store) fn rule(
     reason: bool,
     needs: bool,
+    unlanded: bool,
     blocked: bool,
     moved: Option<bool>,
     holds: bool,
@@ -100,6 +103,9 @@ pub(in crate::store) fn rule(
     }
     if needs {
         body.push_str(work::NEEDS_WRITTEN);
+    }
+    if unlanded {
+        body.push_str(work::UNLANDED_WRITTEN);
     }
     if let Some(cancelled) = moved {
         body.push_str(&format!(

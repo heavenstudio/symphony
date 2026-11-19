@@ -2,6 +2,8 @@ import { renderToStaticMarkup as render } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
   blocked,
+  Ends,
+  ends,
   OrchestratorBanner,
   savedStage,
   WaitCard,
@@ -24,7 +26,84 @@ const task = (kind: string, who = "named", hours = 1) =>
     waits_on: { kind, who, why: "A reason", since: now - hours * 3600 },
   });
 
+/** What a drawn card says, its tags out: a cut line's two parts read as one text. */
+const said = (html: string) => html.replace(/<[^>]*>/g, "");
+
+describe("a cut line's end", () => {
+  it.each([
+    ["", "", ""],
+    ["work/task", "work/task", ""],
+    ["exactly-16-chars", "exactly-16-chars", ""],
+    // The first break among the last 16 characters, so the longest end that starts at one.
+    ["tools/review-app-verdicts-recovery-alpha", "tools/review-app-verdicts", "-recovery-alpha"],
+    ["On docs/research-handoff-register-beta", "On docs/research-handoff", "-register-beta"],
+    [
+      "Saved owner answer waits for candidate gamma",
+      "Saved owner answer waits for",
+      " candidate gamma",
+    ],
+    // A break that would leave an end of fewer than ten characters is passed over.
+    ["a-text-of-many-characters-ending-", "a-text-of-many-characte", "rs-ending-"],
+    ["seventeen-chars-x", "sevente", "en-chars-x"],
+    // No break among them: the last ten characters.
+    ["anunbrokenwordofthirtycharacters", "anunbrokenwordofthirty", "characters"],
+  ])("cuts %j into %j and %j", (text, head, tail) => {
+    expect(ends(text)).toEqual([head, tail]);
+    expect(ends(text).join("")).toBe(text);
+  });
+  it("never cuts inside a character", () => {
+    const text = `${"x".repeat(21)}😀${"y".repeat(9)}`;
+    expect(ends(text)).toEqual(["x".repeat(21), `😀${"y".repeat(9)}`]);
+  });
+  it("draws both parts with nothing between them, and no empty end", () => {
+    expect(render(<Ends text="tools/review-app-verdicts-recovery-alpha" />)).toBe(
+      '<span class="cut-head">tools/review-app-verdicts</span><span class="cut-tail">-recovery-alpha</span>',
+    );
+    expect(render(<Ends text="work/task" />)).toBe('<span class="cut-head">work/task</span>');
+  });
+});
+
 describe("waiting cards", () => {
+  it("tells apart cards whose title, slug, wait and reason differ only at the end", () => {
+    const cards = ["alpha", "beta", "gamma"].map((end) =>
+      render(
+        <WaitCard
+          task={aTask(`tools/review-app-verdicts-saved-owner-answer-recovery-${end}`, {
+            title: `Symphony could not commit an owner answer for candidate ${end}`,
+            status: "blocked",
+            from: "ready",
+            waits_on: {
+              kind: "task",
+              who: `docs/research-handoff-owner-answer-register-${end}`,
+              why: `Saved owner answer recovery waits for candidate ${end}`,
+              since: now,
+            },
+          })}
+          now={now}
+        />,
+      ),
+    );
+    const tails = cards.map((html) =>
+      [...html.matchAll(/class="cut-tail">([^<]*)</g)].map((found) => found[1]),
+    );
+    expect(tails).toEqual([
+      ["-recovery-alpha", "-register-alpha", " candidate alpha"],
+      ["-recovery-beta", "-register-beta", " candidate beta"],
+      ["-recovery-gamma", "-register-gamma", " candidate gamma"],
+    ]);
+    expect(said(cards[0] ?? "")).toContain(
+      "tools/review-app-verdicts-saved-owner-answer-recovery-alpha",
+    );
+  });
+  it("is closed until its button opens it, which names the task and says its state", () => {
+    const html = render(<WaitCard task={task("check")} now={now} />);
+    expect(html).not.toContain("data-open");
+    expect(html).toContain(
+      '<button type="button" class="card-more" aria-expanded="false" aria-label="Show all of A clear title">▾</button>',
+    );
+    expect(html.indexOf("card-more")).toBeGreaterThan(html.indexOf('class="prio"'));
+    expect(html.indexOf("card-more")).toBeLessThan(html.indexOf('class="task-wait"'));
+  });
   it.each([undefined, null, 0, 1, 3])("draws only known positive review counts (%s)", (rounds) => {
     for (const status of ["review", "done", "cancelled"]) {
       const t = aTask("work/task", {
@@ -50,10 +129,12 @@ describe("waiting cards", () => {
     if (["working", "queued"].includes(kind)) t.status = "ready";
     expect(waitLabel(t)).toBe(line);
     const html = render(<WaitCard task={t} now={now} />);
-    expect(html).toContain(line);
+    expect(said(html)).toContain(line);
     expect(html).toContain("A reason");
     expect(html).toContain("1 h");
-    expect(html.indexOf("A clear title")).toBeLessThan(html.indexOf("<code>work/task"));
+    expect(html.indexOf("A clear title")).toBeLessThan(
+      html.indexOf('<code><span class="cut-head">work/task'),
+    );
   });
   it("shows no document or role chips and preserves the priority edge", () => {
     const t = {
@@ -196,5 +277,7 @@ it("names the working holder and their role from the authoritative wait line", (
   });
   const html = render(<WaitCard task={t} now={now} />);
   expect(html).toContain('title="executor amber (stale)"');
-  expect(html).toContain(">executor amber (stale)</span>");
+  expect(html).toContain(
+    '<span class="cut-head">executor</span><span class="cut-tail"> amber (stale)</span>',
+  );
 });

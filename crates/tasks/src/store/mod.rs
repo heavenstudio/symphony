@@ -33,6 +33,7 @@ mod copy;
 mod database;
 mod depends;
 mod dispatcher;
+pub(crate) mod execution;
 mod fields;
 mod history;
 mod kept;
@@ -76,6 +77,7 @@ pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, ChatSeat, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
 pub use cap::STATEMENTS as SLOT_READS;
+pub use copy::{CARRIED, leases_ended, leases_past};
 pub use database::Database;
 pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;
@@ -554,7 +556,8 @@ impl Store {
         })
     }
 
-    /// A reviewer's `approve` (the task is done) or `changes` (back to its executor). The reviewer
+    /// A reviewer's `approve` (the task is done, and marked approved and not landed until a landing
+    /// closes it, [`crate::orchestration::unlanded`]) or `changes` (back to its executor). The reviewer
     /// is fresh (RULES.md `workflow/reviewers-not-the-owner`), by the rule the land goes by
     /// ([`Held::unfresh`]), so the board takes no verdict the land would refuse afterwards: a
     /// session that ever executed the task, or a work subtask under it, gives it none, whatever
@@ -617,6 +620,8 @@ impl Store {
                     text: said.clone(),
                     recipient: (!approve).then(|| "@executor".into()),
                 }),
+                // Done, and its land still somebody's to make: marked until a landing closes it.
+                unlanded: approve.then(|| json!(view.now)),
                 ..Change::default()
             })
         })?;
@@ -706,16 +711,17 @@ impl Store {
             }
             let (view, change) = (&ruled.view, &ruled.change);
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let (reason, needs, blocked, moved, holds) = (
+            let (reason, needs, unlanded, blocked, moved, holds) = (
                 change.reason.is_some(),
                 change.needs.is_some(),
+                change.unlanded.is_some(),
                 change.blocked.is_some(),
                 (change.status.as_deref()).map(|status| status == "cancelled"),
                 !ruled.slots.is_empty(),
             );
             let body = both(
-                surreal::rule(reason, needs, blocked, moved, holds),
-                pg::rule(reason, needs, blocked, moved, holds),
+                surreal::rule(reason, needs, unlanded, blocked, moved, holds),
+                pg::rule(reason, needs, unlanded, blocked, moved, holds),
             );
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
@@ -809,25 +815,44 @@ impl Store {
 }
 
 /// `once` tried until it gives its result or refuses, again each time the board moved under it,
-/// for `patience` at most: each try again counted on this thread ([`Store::tried_again_here`]).
+/// for `patience` of the wall clock at most, sleeping the backoff's wait between two tries
+/// ([`retried_on`]).
 #[inline(never)]
 fn retried<T>(
     patience: Duration,
     once: &mut dyn FnMut() -> Result<T, Failure>,
 ) -> Result<T, Error> {
     let began = Instant::now();
+    retried_on(patience, &|| began.elapsed(), &rest, once)
+}
+
+/// The store's rest between two tries of a call that met a board moving under it.
+fn rest(wait: Duration) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the named helper of RULES.md code/no-timed-waits for a retry with backoff: the board store's"
+    )]
+    std::thread::sleep(wait);
+}
+
+/// `once` tried until it gives its result or refuses, again each time the board moved under it,
+/// for as long as `elapsed` is short of `patience`, however many tries that takes: each try again
+/// counted on this thread ([`Store::tried_again_here`]), after `rest` for the backoff's next wait.
+/// Its clock and its rest are its caller's, so a test moves them and never waits on either.
+fn retried_on<T>(
+    patience: Duration,
+    elapsed: &dyn Fn() -> Duration,
+    rest: &dyn Fn(Duration),
+    once: &mut dyn FnMut() -> Result<T, Failure>,
+) -> Result<T, Error> {
     let mut attempt = 0;
     loop {
         match once() {
             Ok(done) => return Ok(done),
             Err(Failure::Stop(error)) => return Err(error),
-            Err(Failure::Again) if began.elapsed() < patience => {
+            Err(Failure::Again) if elapsed() < patience => {
                 TRIED_AGAIN.with(|tried| tried.set(tried.get() + 1));
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "the named helper of RULES.md code/no-timed-waits for a retry with backoff: the board store's"
-                )]
-                std::thread::sleep(backoff(attempt));
+                rest(backoff(attempt));
                 attempt += 1;
             }
             Err(Failure::Again) => {
@@ -1135,6 +1160,10 @@ struct Change {
     needs: Option<Value>,
     /// What the block it makes waits on, the board's own field ([`crate::waits_on::Blocked`]).
     blocked: Option<Value>,
+    /// The mark of a task approved and not landed, the board's own field
+    /// ([`crate::orchestration::UNLANDED`]): when its approve was given, or null to lift it, as its
+    /// landing's line and a move back to review do.
+    unlanded: Option<Value>,
 }
 
 /// A start a rule makes: a claim or a move into an open status, the orchestrator role taken, or a
@@ -1208,6 +1237,7 @@ impl Change {
             "move_reason": self.reason,
             "needs": self.needs,
             "blocked": self.blocked,
+            "unlanded": self.unlanded,
         })
     }
 }
@@ -1271,7 +1301,7 @@ fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
     let (read, vars) = reading(which, sessions);
     let statement = Statement {
         surreal: read.into(),
-        postgres: Some(Pg::read(pg::reading::reading(which, sessions))),
+        postgres: Some(pg::reading::reading(which, sessions)),
     };
     (statement, vars)
 }

@@ -25,7 +25,7 @@ prose published pushed ran so started successful the this to when written
 # reruns alone, and the client a release candidate's fix commits.
 own apps/symphony-server/src/api/client.rs symphony-ui-dist
 own crates/symphony-build/src/commands/crates_check.rs crates-check
-own crates/symphony-build/src/commands/size_budget.rs size-check
+own crates/symphony-build/src/commands/size_budget.rs client-update size-check
 own crates/symphony-build/src/release.rs release verify
 own crates/symphony-build/src/release/board.rs client-update release test-rs
 own crates/symphony-build/src/release/cadence.rs release

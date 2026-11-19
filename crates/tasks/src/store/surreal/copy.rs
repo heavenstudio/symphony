@@ -2,7 +2,8 @@
 
 use std::fmt::Write as _;
 
-/// Every row of the board, in the shape the copy reads, each table in the order of its key.
+/// Every row of the board, in the shape the copy reads, each table in the order of its key; the
+/// execution tables' in any, which `Store::dump` puts in theirs.
 pub(in crate::store) const DUMP: &str = "RETURN {
     tasks: (SELECT * OMIT id, version FROM task ORDER BY sid),
     task_links: (SELECT * OMIT id FROM link ORDER BY slug, kind, target),
@@ -15,6 +16,10 @@ pub(in crate::store) const DUMP: &str = "RETURN {
     delivery_keys: (SELECT * OMIT id FROM delivery_key ORDER BY slug, key),
     asks: (SELECT * OMIT id FROM ask ORDER BY sid),
     usages: (SELECT * OMIT id FROM usage ORDER BY handle, slug, role, model, speed, round),
+    execution_attempts: (SELECT * OMIT id FROM execution_attempt),
+    execution_facts: (SELECT * OMIT id FROM execution_fact),
+    execution_fences: (SELECT * OMIT id FROM execution_fence),
+    execution_artifacts: (SELECT * OMIT id FROM execution_artifact),
 };";
 
 /// What the copy in one transaction says in SurrealQL: nothing, as a board on SurrealDB is copied

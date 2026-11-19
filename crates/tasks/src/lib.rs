@@ -47,6 +47,7 @@ pub mod cli;
 pub mod codex_queue;
 pub mod confine;
 pub mod covering;
+pub mod execution;
 pub mod folders;
 pub mod git;
 pub mod health;
@@ -57,6 +58,7 @@ pub mod limits;
 pub mod live;
 pub mod local;
 mod maps;
+mod move_cli;
 pub mod on_land;
 pub mod on_review;
 pub mod orchestration;
@@ -79,6 +81,7 @@ pub mod slots;
 pub mod stages;
 pub mod stamps;
 mod store;
+pub use move_cli::{MOVE_HELP, MOVE_USAGE, move_main};
 pub mod sweep;
 pub mod sys;
 pub mod usage;
@@ -90,14 +93,14 @@ pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::recovery;
 pub use store::{
-    ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
-    Callback, ChatSeat, CoveredLine, Database, Error, Filed, Given, HandOff, Held, KINDS,
+    ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, CARRIED,
+    COVERED, Callback, ChatSeat, CoveredLine, Database, Error, Filed, Given, HandOff, Held, KINDS,
     LANDS_FROM, LATE_SECONDS, Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, On, Opening,
     PIPELINE, PULLABLE, Pick, Presence, Program, ROLES, Raw, RawRows, ReportRead, ReportTask, Role,
     SLOT_READS, STATUSES, SearchHit, SearchSource, Session, StageRecord, Store,
     THREAD_WINDOW_LIMIT, Task, TaskStamp, ThreadWindow, UNANSWERED_WAIT, UNANSWERED_WAIT_VAR,
     Unfresh, WRITERS_RECENT, WRITERS_SINCE, Writer, approved, can_transition, covered_by,
-    covered_line, landing, reviewer_verdict,
+    covered_line, landing, leases_ended, leases_past, reviewer_verdict,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

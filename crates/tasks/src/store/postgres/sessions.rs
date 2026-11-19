@@ -149,9 +149,13 @@ pub(in crate::store) fn bound_agents() -> Pg<'static> {
         "coalesce((SELECT jsonb_agg(jsonb_build_object('handle', handle, 'agent', agent)) FROM session WHERE agent IS NOT NULL AND left_at IS NULL), '[]')",
     )
 }
+/// The bound sessions that have not left, each with what its binding keeps, an item a row: on a
+/// board of many sessions a long list.
 pub(in crate::store) fn agent_bindings() -> Pg<'static> {
-    Pg::read(
-        "coalesce((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object('handle', s.handle, 'agent', s.agent, 'in_process', coalesce(c.doc -> 'in_process', 'false'), 'worktree', coalesce(c.doc -> 'worktree', '\"\"'), 'branch', coalesce(c.doc -> 'branch', '\"\"'), 'placed_at', coalesce(c.doc -> 'placed_at', '0'), 'stay_from', coalesce(c.doc -> 'stay_from', c.doc -> 'placed_at', '0'), 'placed_boot', c.doc -> 'placed_boot', 'last_boot', c.doc -> 'last_boot', 'boot_uncertain', coalesce(c.doc -> 'boot_uncertain', 'false')))) FROM session s LEFT JOIN callback_state c ON c.id = jsonb_build_array('binding', s.agent) WHERE s.agent IS NOT NULL AND s.left_at IS NULL), '[]')",
+    super::list_of(
+        "jsonb_strip_nulls(jsonb_build_object('handle', s.handle, 'agent', s.agent, 'in_process', coalesce(c.doc -> 'in_process', 'false'), 'worktree', coalesce(c.doc -> 'worktree', '\"\"'), 'branch', coalesce(c.doc -> 'branch', '\"\"'), 'placed_at', coalesce(c.doc -> 'placed_at', '0'), 'stay_from', coalesce(c.doc -> 'stay_from', c.doc -> 'placed_at', '0'), 'placed_boot', c.doc -> 'placed_boot', 'last_boot', c.doc -> 'last_boot', 'boot_uncertain', coalesce(c.doc -> 'boot_uncertain', 'false')))".into(),
+        "session s LEFT JOIN callback_state c ON c.id = jsonb_build_array('binding', s.agent) WHERE s.agent IS NOT NULL AND s.left_at IS NULL",
+        "s.handle",
     )
 }
 

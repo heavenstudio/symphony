@@ -24,6 +24,14 @@ pub struct Dump {
     pub delivery_keys: Vec<DeliveryKeyRow>,
     pub asks: Vec<AskRow>,
     pub usages: Vec<UsageRow>,
+    /// Execution attempts (`crate::execution`), each row whole as the board keeps it: schemaless,
+    /// so the copy carries what it holds without a column of its own. An attempt's row names its
+    /// `attempt`, a fact its `attempt` and `seq`, a fence its `key`, an artifact its `attempt` and
+    /// `name`: each its own record's id.
+    pub execution_attempts: Vec<Value>,
+    pub execution_facts: Vec<Value>,
+    pub execution_fences: Vec<Value>,
+    pub execution_artifacts: Vec<Value>,
 }
 
 impl Dump {
@@ -50,6 +58,10 @@ impl Dump {
             delivery_keys: table(&mut tables, "delivery_keys")?,
             asks: table(&mut tables, "asks")?,
             usages: table(&mut tables, "usages")?,
+            execution_attempts: table(&mut tables, "execution_attempts")?,
+            execution_facts: table(&mut tables, "execution_facts")?,
+            execution_fences: table(&mut tables, "execution_fences")?,
+            execution_artifacts: table(&mut tables, "execution_artifacts")?,
         };
         match tables.keys().next() {
             Some(name) => Err(format!(

@@ -2,7 +2,8 @@
 //!
 //! The orchestrator's monitor (`just tasks-attach --kind orchestrator`) hears messages, verdicts and
 //! status changes. It does not hear that a ready task has nobody on it, that an in-progress task's
-//! executor is gone, that a review has no reviewer, or that a branch landed under a task still open.
+//! executor is gone, that a review has no reviewer, that a branch landed under a task still open, or
+//! that a task its reviewer approved was never landed.
 //! This looks at the board for exactly those, and prints one header line and the first six of each:
 //!
 //! ```text
@@ -32,6 +33,15 @@
 //! PULL 14:05 executing=4 ready_unstaffed=2 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0 review_alarm=10/4
 //!   review_alarm: review 10, in progress 4, more than 2× since 09:40
 //!   review_alarm p1 tools/x — X   (in review since 11-07 21:12; missing certificate, review)
+//! ```
+//!
+//! A task its reviewer approved reads done before its land. While no landing has closed it
+//! ([`crate::orchestration::unlanded`]) [`UNLANDED_SECONDS`] after its approve it is listed as
+//! [`UNLANDED`], counted in the header only when there is one, with when it was approved and what
+//! its landing's record says it waits on:
+//!
+//! ```text
+//!   approved_unlanded p2 tools/x — X   (approved 11-17 09:12, not landed; its landing waits on tests)
 //! ```
 //!
 //! A task in review whose record says a reviewer asked changes of the branch's tip now is rework:
@@ -86,12 +96,18 @@ pub const ALARM_SHOWN: usize = 5;
 pub const REWORK_NOTE: &str = "in review; changes asked of its tip";
 /// The entry and line of an orchestrator past the limit on the open tasks it holds the role on.
 pub const OVER_LIMIT: &str = "over_limit";
+/// The list of the tasks a reviewer approved that no landing has closed
+/// ([`crate::orchestration::unlanded`]): done on the board, their land still somebody's to make.
+pub const UNLANDED: &str = "approved_unlanded";
+/// How long an approved task may go without its land before the digest lists it: ten minutes. Its
+/// orchestrator hears the approve as a VERDICT line and lands it; only one left unlanded is said.
+pub const UNLANDED_SECONDS: f64 = 600.0;
 /// A count a PULL could not say, as its recipient's next one is measured against.
 pub const UNKNOWN: &str = "unknown";
 /// One successful canonical observation, retained across scheduling and recipient scoping.
 pub(crate) type Holdings = BTreeMap<String, BTreeSet<String>>;
 /// The categories, in the order they are listed; `idle` holds handles, the others tasks.
-pub const CATEGORIES: [&str; 8] = [
+pub const CATEGORIES: [&str; 9] = [
     "red_unstaffed",
     "ready_unstaffed",
     "dependency_blocked",
@@ -99,6 +115,7 @@ pub const CATEGORIES: [&str; 8] = [
     "review_unreviewed",
     "unanswered",
     "landed_open",
+    UNLANDED,
     "idle",
 ];
 
@@ -303,8 +320,13 @@ impl Digest {
         let counts: Vec<_> = (self.counts().into_iter())
             .filter(|(name, _, _)| known(name))
             .collect();
+        // A count the last PULL did not carry, kept out of a header at zero, has not moved: a
+        // PULL said before the list existed said nothing of it.
         let mut moved: Vec<String> = (counts.iter())
-            .filter(|(name, value, _)| said.counts.get(*name) != Some(value))
+            .filter(|(name, value, shown)| match said.counts.get(*name) {
+                Some(was) => was != value,
+                None => *shown,
+            })
             .map(|(name, value, _)| {
                 let was = said.counts.get(*name).map_or("none", String::as_str);
                 format!("{name}={value} (was {was})")
@@ -380,8 +402,10 @@ impl Digest {
             .iter()
             .chain(CATEGORIES.iter())
             .map(|name| {
-                let compact =
-                    matches!(*name, "dependency_blocked" | "unanswered" | "red_unstaffed");
+                let compact = matches!(
+                    *name,
+                    "dependency_blocked" | "unanswered" | "red_unstaffed" | UNLANDED
+                );
                 let count = self.count(name);
                 (*name, count.to_string(), !compact || count > 0)
             })
@@ -839,6 +863,20 @@ pub(crate) fn digest_on(
                     .push(t.clone());
             }
             _ => {}
+        }
+        // Approved and never landed: done to a reader, and still somebody's to land. A landing's
+        // line on its thread, which a build that lifts no mark may have written, says it landed.
+        if let Some(approved) = crate::orchestration::unlanded(t)
+            && now - approved >= UNLANDED_SECONDS
+            && !posted.contains(&t.slug)
+        {
+            found.entry(UNLANDED).or_default().push(t.clone());
+            let waits = crate::alarm::Waits::of(t).filter(|waits| !waits.on.is_empty());
+            let waits = waits.map_or_else(String::new, |waits| {
+                format!("; its landing waits on {}", waits.on.join(", "))
+            });
+            let note = format!("approved {}, not landed{waits}", when(approved, now));
+            notes.insert(t.slug.clone(), note);
         }
         let open = t.status == "in_progress" || t.status == "review";
         if open && (posted.contains(&t.slug) || landed.is_some_and(|landed| landed(t))) {

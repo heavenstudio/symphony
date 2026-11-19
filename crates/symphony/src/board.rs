@@ -117,6 +117,37 @@ pub fn documents(root: &Path) -> Result<Vec<Doc>, ReviewError> {
     Ok(docs)
 }
 
+/// [`documents`], each document an owner's save still waits on read as that save leaves it
+/// ([`crate::commit::pending::shown`]): what the server's dashboard counts, so a card the owner
+/// answered in a project that delivers by pull request does not wait on the owner again until
+/// its pull request lands.
+pub fn documents_shown(root: &Path) -> Result<Vec<Doc>, ReviewError> {
+    let mut docs = documents(root)?;
+    let saves = crate::commit::pending::saves(root);
+    if saves.is_empty() {
+        return Ok(docs);
+    }
+    let project = Project::of(root);
+    let mut read = std::collections::BTreeSet::new();
+    for save in &saves {
+        if !read.insert(&save.file) {
+            continue;
+        }
+        let route = project.route(&save.file);
+        let Some(doc) = (docs.iter_mut()).find(|doc| Some(&doc.path) == route.as_ref()) else {
+            continue;
+        };
+        let Ok(text) = read_text(&root.join(&save.file)) else {
+            continue;
+        };
+        let text = crate::commit::pending::shown(root, &save.file, text);
+        let lines = splitlines(&text);
+        doc.comments = parse_comments(&lines);
+        doc.decisions = parse_decisions(&lines);
+    }
+    Ok(docs)
+}
+
 /// Open comments and open decisions, in file order, one block each.
 fn open_comment_lines(plugins: &Plugins, docs: &[Doc]) -> Vec<String> {
     let mut lines = Vec::new();

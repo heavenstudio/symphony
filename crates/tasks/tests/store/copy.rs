@@ -4,6 +4,7 @@
 
 use crate::children::Child as _;
 use crate::common::{Backend, Fixture, NOW, Seed, client, server_addr, session, task};
+use serde_json::json;
 use std::time::Duration;
 use symphony_board::rows::{
     AskRow, BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, HeldRow, LinkRow, MessageRow, RoleRow,
@@ -197,8 +198,36 @@ pub fn everything() -> Dump {
                 last: NOW + 1.0,
             },
         ],
+        // Execution attempts' rows are documents, each its record's id among its fields, in the
+        // order of those ids; a field unset is absent, an object or a list kept whole.
+        execution_attempts: vec![json!({
+            "attempt": ATTEMPT, "task": "sim/jump", "configuration": "fake", "created": 1_000,
+            "identity": {"lane": "executor", "handle": "amber-heron",
+                "input": {"task_revision": "r1", "manifest": {"reference": "m", "digest": "md"}},
+                "capabilities": {"operations": ["Start", "Observe"], "authoritative_absence": false}},
+            "state": {"dispatch": "terminal", "ending": "succeeded", "sequence": 1, "pending": null},
+            "revision": 4, "open": false, "live": false, "epoch": 2, "facts": 2,
+        })],
+        execution_facts: vec![
+            json!({"attempt": ATTEMPT, "seq": 1, "at": 1_000,
+                "fact": {"kind": "admitted", "initiator": {"kind": "Human", "issuer": "local", "subject": "owner"}}}),
+            json!({"attempt": ATTEMPT, "seq": 2, "at": 1_200, "fact": {"kind": "ended", "ending": "succeeded"}}),
+        ],
+        execution_fences: vec![
+            json!({"key": ["capacity", "pool"], "reserved": [], "limit": 2}),
+            json!({"key": ["lane", "sim/jump", "executor"], "attempt": ATTEMPT}),
+            json!({"key": ["request", "the-key"], "attempt": ATTEMPT, "digest": "dd"}),
+        ],
+        execution_artifacts: vec![json!({
+            "attempt": ATTEMPT, "name": "logs/run.txt", "at": 1_500,
+            "artifact": {"name": "logs/run.txt", "reference": "store://1", "digest": "ad", "size": 12,
+                "generation": "g1", "runtime_epoch": 0, "verified": true},
+        })],
     }
 }
+
+/// The attempt `everything` holds.
+const ATTEMPT: &str = "00112233445566778899aabbccddeeff";
 
 /// An environment that names no board: the commands given an address read nothing from it.
 fn no_env() -> cli::Env {
@@ -597,7 +626,8 @@ fn a_postgresql_copy_the_server_ends_says_the_rows_it_reached_and_leaves_the_boa
             "copied_fields",
             "it had copied 2 of task, 2 of link, 2 of session, 2 of role, 2 of message, 1 of \
              delivery, 1 of barred_key, 1 of task_session, 1 of delivery_key, 2 of ask, 2 of \
-             usage and was at its counters",
+             usage, 1 of execution_attempt, 2 of execution_fact, 3 of execution_fence, 1 of \
+             execution_artifact and was at its counters",
         ),
     ] {
         client
@@ -699,7 +729,7 @@ fn tables(f: &Fixture) -> Vec<String> {
     names
 }
 
-const BOARD_TABLES: [&str; 27] = [
+const BOARD_TABLES: [&str; 31] = [
     "artifact_ledger",
     "ask",
     "barred_key",
@@ -710,6 +740,10 @@ const BOARD_TABLES: [&str; 27] = [
     "counter",
     "delivery",
     "delivery_key",
+    "execution_artifact",
+    "execution_attempt",
+    "execution_fact",
+    "execution_fence",
     "link",
     "message",
     "meta",
