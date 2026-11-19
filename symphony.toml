@@ -9,11 +9,11 @@ id = "symphony"
 [agents]
 panes = "hc"
 worktrees = "../symphony-wt"
-launch = { default = "claude", model = "fable" }
+launch = { default = "claude", model = "opus" }
 
 [agents.models]
-reviewer = "fable"
-executor = "fable"
+reviewer = "opus"
+executor = "opus"
 orchestrator = "fable"
 assessor = "haiku"
 

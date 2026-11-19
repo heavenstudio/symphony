@@ -6,7 +6,8 @@
 //! for it ([`state`]). Nothing here is linked into the board, the library or the server, and
 //! nothing runs it but an operator: `preview` shows what a reconcile would do, and `reconcile`
 //! does the preview it is handed by digest ([`reconcile`]). `deliver` answers a land delivered by
-//! a pull request (`[land] delivery`, [`deliver`]), which the land runs and no one else.
+//! a pull request (`[land] delivery`, [`deliver`]), which the land runs and no one else, and
+//! reads the repository's protection before it does ([`preflight`]).
 
 #![forbid(unsafe_code)]
 
@@ -17,6 +18,7 @@ pub mod credential;
 pub mod deliver;
 pub mod github;
 pub mod plan;
+pub mod preflight;
 pub mod reconcile;
 pub mod state;
 pub mod transport;
