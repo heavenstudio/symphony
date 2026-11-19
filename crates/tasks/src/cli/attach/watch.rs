@@ -104,6 +104,10 @@ fn look(
     if kind == "orchestrator" && store.give_if_due(&board) {
         board = store.board()?;
     }
+    // And settles what the tasks a workflow holds need of the board itself ([`Store::settle_held`]).
+    if kind == "orchestrator" && store.settle_held_if_due(&board) {
+        board = store.board()?;
+    }
     let mut now = seen(&board, handle, kind);
     let holdings = (kind == "orchestrator" && w.pull_every.is_some())
         .then(|| store.slot_holdings())

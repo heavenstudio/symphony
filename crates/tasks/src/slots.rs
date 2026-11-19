@@ -57,6 +57,12 @@ pub const HELD: &str = "blocked, held";
 pub const KEY: &str = "orchestrator_slots";
 
 /// One task as the ledger reads it.
+///
+/// A task a custom workflow holds is counted by its position's slot policy (docs/WORKFLOW.md,
+/// "Operations"): it holds a slot while that policy is `acquire` or `retain` ([`Entry::slot`]),
+/// whatever status the position projects to, so a reviewer's position that acquires counts as
+/// work, a held block that retains keeps its slot, and a position that releases frees it. That slot
+/// is task WIP, the cap on an orchestrator's open work, never an execution attempt's capacity.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry<'a> {
     pub slug: &'a str,
@@ -74,12 +80,24 @@ pub struct Entry<'a> {
     pub executors: Vec<&'a str>,
     /// Filed for a red ([`crate::red`]): while it is open, it and the work under it take no slot.
     pub red: bool,
+    /// For a task a custom workflow holds, whether its position's slot policy holds a slot; none
+    /// for any other task, which holds one by its status.
+    pub slot: Option<bool>,
 }
 
 impl<'a> Entry<'a> {
-    /// Whether it holds a slot: in an open status, or blocked under a hold.
+    /// Whether it holds a slot: by its position's slot policy where a workflow holds it, else in
+    /// an open status, or blocked under a hold.
     pub fn open(&self) -> bool {
-        OPEN.contains(&self.status) || (self.held && self.status == "blocked")
+        self.slot.unwrap_or_else(|| {
+            OPEN.contains(&self.status) || (self.held && self.status == "blocked")
+        })
+    }
+
+    /// Whether it is work in review the cap does not count: a task in review that no workflow
+    /// holds. A held task's position counts by its own slot policy, whatever it projects to.
+    fn in_review(&self) -> bool {
+        self.slot.is_none() && self.status == REVIEW
     }
 
     /// Its status as a refusal names it.
@@ -174,8 +192,19 @@ impl<'a> Ledger<'a> {
 
     /// The ledger of a whole board as one read gave it, which reads no hold: blocked work a hold
     /// keeps open is not counted. Use [`crate::Store::slot_holdings`] for the canonical counted
-    /// feature keys including valid holds and the admission view's presence handling.
+    /// feature keys including valid holds and the admission view's presence handling. A task a
+    /// custom workflow holds is counted by its position's slot policy on `operating`, when given
+    /// ([`Ledger::of_board_on`]); here, by the status it projects to.
     pub fn of_board(board: &'a Board) -> Ledger<'a> {
+        Ledger::of_board_on(board, None)
+    }
+
+    /// [`Ledger::of_board`], each task a custom workflow holds counted by its position's slot
+    /// policy on `operating` ([`Entry::slot`]).
+    pub fn of_board_on(
+        board: &'a Board,
+        operating: Option<&crate::workflow::Operating>,
+    ) -> Ledger<'a> {
         let tasks = board.tasks.iter().map(|t| Entry {
             slug: &t.slug,
             branch: t.branch.as_deref(),
@@ -192,6 +221,7 @@ impl<'a> Ledger<'a> {
                 .map(|r| r.handle.as_str())
                 .collect(),
             red: t.red(),
+            slot: operating.and_then(|o| o.holds_slot(t)),
         });
         let parents = (board.sessions.iter())
             .filter_map(|s| Some((s.row.handle.as_str(), s.row.parent.as_deref()?)));
@@ -221,6 +251,16 @@ impl<'a> Ledger<'a> {
                     task.executors.push(executor);
                 }
             }
+        }
+        after
+    }
+
+    /// The ledger once `slug`, a task a custom workflow holds, stands at a position whose slot
+    /// policy holds a slot (`holds`) or releases it ([`Entry::slot`]).
+    pub fn slotted(&self, slug: &str, holds: bool) -> Ledger<'a> {
+        let mut after = self.clone();
+        if let Some(task) = after.tasks.get_mut(slug) {
+            task.slot = Some(holds);
         }
         after
     }
@@ -361,7 +401,7 @@ impl<'a> Ledger<'a> {
     /// So a reviewer's mirror or instruction subtask under a task in review is that task's review,
     /// whatever its own status, as red work is judged by the red above it.
     fn reviewing(&self, slug: &'a str) -> bool {
-        let in_review = |at: &str| self.tasks.get(at).is_some_and(|t| t.status == REVIEW);
+        let in_review = |at: &str| self.tasks.get(at).is_some_and(Entry::in_review);
         in_review(slug) || self.chain(slug).into_iter().any(in_review)
     }
 

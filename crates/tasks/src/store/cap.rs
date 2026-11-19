@@ -130,6 +130,11 @@ struct Row {
     /// Read for a held task alone: the stamp its hold must match.
     #[serde(default)]
     updated: Option<f64>,
+    /// Where a custom workflow holds it, its position (`fields._board.workflow`), by whose slot
+    /// policy it holds a slot ([`crate::slots::Entry::slot`]).
+    /// Null for a task no workflow holds: a plain value, as the positions are below.
+    #[serde(default)]
+    position: Value,
     /// Blocked under a hold that keeps its slot.
     #[serde(skip)]
     held: bool,
@@ -155,6 +160,12 @@ pub(super) struct Read {
     counted: Vec<(String, i64)>,
     /// Each red's counter, by slug.
     reds: Vec<(String, i64)>,
+    /// The active custom workflow's positions, each its pair and slot policy (`phase`, `state`,
+    /// `slot`); none while no workflow is active. One plain value read by field, as `Row`'s
+    /// position is: no reader of their own, nor of a list or an option of values, is inlined
+    /// into the cap's (tools/size-budget.toml).
+    #[serde(default)]
+    positions: Value,
 }
 
 impl Read {
@@ -285,6 +296,9 @@ impl Store {
         if opens.unmarks {
             after = after.unmarked(slug);
         }
+        if let Some(holds) = opens.slot {
+            after = after.slotted(slug, holds);
+        }
         let refusal = |full: slots::Full<'_>, cap: usize| {
             let place = after.place(slug);
             let children: Vec<&str> = if place.by_parent && place.owners.contains(&full.owner) {
@@ -383,6 +397,7 @@ mod tests {
             instruction: Some(false),
             red: None,
             updated: Some(updated),
+            position: Value::Null,
             held: false,
         }
     }
@@ -407,6 +422,7 @@ mod tests {
             roles: Vec::new(),
             counted: Vec::new(),
             reds: Vec::new(),
+            positions: Value::Null,
         };
         let kept: Vec<(String, bool)> = read.kept().map(|r| (r.slug, r.held)).collect();
         assert_eq!(kept, [("kept".to_string(), true)]);

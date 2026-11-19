@@ -338,12 +338,13 @@ impl Record {
     }
 }
 
-/// Where `env`'s board keeps its recorded work: the folder `TASKS_WORK` names; for a board
+/// Where `env`'s board keeps its recorded work: the folder `TASKS_WORK` names, from its working
+/// directory when it is no whole path (a recorder apart from its command works elsewhere); for a board
 /// `TASKS_SERVER` names without it, none; else `symphony/tasks/work/` in the git common dir of its
 /// working directory, `work.<database>/` for a database other than the live one.
 pub fn folder(env: &Env) -> Option<PathBuf> {
     if let Some(named) = env.var(FOLDER_VAR) {
-        return Some(PathBuf::from(named));
+        return Some(env.cwd.join(named));
     }
     if env.var("TASKS_SERVER").is_some() {
         return None;

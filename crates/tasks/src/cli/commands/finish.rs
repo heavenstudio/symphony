@@ -2,7 +2,6 @@
 //! review starts its tip's verify, the board's `on_review` command, said in one line.
 
 use super::{Context, panes};
-use crate::health::FINISHED;
 use crate::on_review::{self, Started};
 use crate::sweep::trigger;
 use crate::{Store, Task};
@@ -25,9 +24,11 @@ pub(super) fn after_move(store: &Store, c: &mut Context, task: &Task) {
     }
 }
 
-/// A finished task's terminals close and the worktree sweep is asked for.
+/// A finished task's terminals close and the worktree sweep is asked for: finished by its
+/// recorded facts, so a task a custom workflow holds by its terminal position, never the status it
+/// projects to ([`Store::finished`]).
 pub(super) fn after_finish(store: &Store, c: &mut Context, task: &Task) {
-    if !FINISHED.contains(&task.status.as_str()) {
+    if !store.finished(task).unwrap_or(false) {
         return;
     }
     panes::close_finished(store, c, &task.slug);

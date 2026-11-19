@@ -116,6 +116,10 @@ FOR $dependent IN array::distinct($blocked_links.slug) {{
 pub(in crate::store) const NEEDS_WRITTEN: &str =
     "\nUPDATE type::record('task', $slug) SET fields._board.needs = $needs RETURN NONE;";
 
+/// The write of [`Change::gates`] after the rule's own ([`super::super::WRITE`]).
+pub(in crate::store) const GATES_WRITTEN: &str =
+    "\nUPDATE type::record('task', $slug) SET fields._board.gates = $gates RETURN NONE;";
+
 /// The write of [`Change::unlanded`] after the rule's own: the mark of a task approved and not
 /// landed set to when its approve was given, or lifted where `$unlanded` is null; a task that
 /// carries none is left as it is.
