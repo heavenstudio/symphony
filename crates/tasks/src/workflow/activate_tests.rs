@@ -331,8 +331,9 @@ fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
                 .into()
         )
     );
-    // Its bound is exhausted to a pair it neither leaves nor enters, where the count of its takes
-    // would restart at each.
+    // Its bound is exhausted off every cycle through it: a pair it leaves or enters, or one the
+    // task passes on a lap (build/working, by claim and submit, back to verify/checking), would
+    // restart the count of its takes every lap.
     let exhausted_to = |phase: &'static str, state: &'static str| {
         move |d: &mut Definition| {
             let edge = rework(d);
@@ -340,16 +341,36 @@ fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
             edge.retry.as_mut().unwrap().exhausted = pair(phase, state);
         }
     };
+    let on_a_lap = Err(
+        "unsupported edge rework: an automatic edge's retry is exhausted to a pair on a cycle \
+         through it"
+            .to_string(),
+    );
     for (phase, state) in [("verify", "checking"), ("verify", "stuck")] {
-        assert_eq!(
-            supports(&exhausted_to(phase, state)),
-            Err(
-                "unsupported edge rework: an automatic edge's retry is exhausted to a pair it \
-                 leaves or enters"
-                    .into()
-            )
-        );
+        assert_eq!(supports(&exhausted_to(phase, state)), on_a_lap);
     }
+    // build/working, manual by its cancellation_acknowledged, which every lap passes.
+    assert_eq!(
+        supports(&|d| rework(d).retry.as_mut().unwrap().exhausted = pair("build", "working")),
+        on_a_lap
+    );
+    // verify/stuck reached on a lap by a recovery's target: a lost executor sent there.
+    assert_eq!(
+        supports(&|d| {
+            let working = position_mut(d, &pair("build", "working"));
+            working.recovery.as_mut().unwrap().lost_holder.target = Some(pair("verify", "stuck"));
+        }),
+        on_a_lap
+    );
+    // The failure action of the edge's own source is the bound's to replace: no lap passes it.
+    assert_eq!(
+        supports(&|d| {
+            let checking = position_mut(d, &pair("verify", "checking"));
+            checking.recovery.as_mut().unwrap().attempt_failure.target =
+                Some(pair("verify", "stuck"));
+        }),
+        Ok(())
+    );
     // One automatic edge out of a pair, so the board never chooses.
     let twice = supports(&|d| {
         let mut again = rework(d).clone();
@@ -590,7 +611,7 @@ fn a_live_holder_keeps_its_task_from_moving_until_its_work_drains() {
         Err(
             "sim/working is held by amber as its executor, and activation would move it or \
              change its staffing; a live holder's session drains first (release it, or let its \
-             work finish), as it is no attempt the board sees yet"
+             work finish), as it may be no attempt the board sees"
                 .into()
         )
     );

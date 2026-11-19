@@ -52,7 +52,13 @@ failure takes the automatic edge out of the task's pair within its retry bound, 
 `attempt_failure` action, and a cancel that took its `cancellation_acknowledged` action; a
 success, a stop or a supersession moves nothing, nor an ending from where the task no longer
 stands, which stays on the attempt ([WORKFLOW](WORKFLOW.md#attempts)). A refusal of the proposal
-never fails the coordinator's call: the ending is recorded either way.
+never fails the coordinator's call: the ending is recorded either way. A local terminal is
+proposed the same way ([local terminals](#local-terminals)): a close, cleanup or the idle sweep
+ends it stopped, which moves nothing; a start hc refuses is a failure and a launch's or restore's
+rollback a cancel that took, each from where the task stood when the launch admitted it. A
+reviewer's launch takes its claim edge first. An executor claims only once its session starts,
+after its attempt was admitted, so from its claim on that attempt's endings are from a pair the
+task has left and move nothing; a lost holder's recovery answers for it instead.
 
 ## The worker
 

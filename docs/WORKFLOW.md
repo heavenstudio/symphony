@@ -80,8 +80,11 @@ The whole activation is refused, nothing written and the previous workflow left 
 command says why on stderr and runs on: a capability, adapter or guard the host does not support
 (every guard, until revision-bound guards); an automatic edge that another automatic edge leaves
 its pair beside, that asks for inputs, gives a role or prepares or finalizes an effect (which
-admission refuses every taker, the board among them), whose retry bound is exhausted to the pair
-it leaves or enters (where the count of its takes would restart at each), or that no authority of
+admission refuses every taker, the board among them), whose retry bound is exhausted to a pair
+on a cycle through it (reached from where it goes and reaching where it leaves, by any edge or a
+recovery action's target, its source's own `attempt_failure` action aside, which the bound
+replaces): the count of its takes restarts there, so a lap that passes it would never run the
+bound out; or that no authority of
 which the host grants the board's recovery service, which alone takes it ([attempts](#attempts));
 a retry bound on an edge a caller takes, as the board counts only its own takes;
 `landed` dependencies and parent integration; a prepare or finalize of an
@@ -91,8 +94,9 @@ source lacks; a task it would record a transition for (a move, or an output it s
 it stays) or restaff while it has a live execution attempt no cancel was asked of
 (`Store::live_attempts`), as that attempt's ending would be pinned to a revision the task no
 longer stands at; and a task it would move or restaff while a live executor or reviewer holds it,
-whose local session is no attempt the board sees until local launches are recorded as attempts
-(`tools/local-provider-attempts`). An attempt is never rebound to another position: it drains
+whose session may be no attempt: one launched before local terminals were attempts
+([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md#local-terminals)), or not by the board's launcher. An
+attempt is never rebound to another position: it drains
 (let it end) or is invalidated (cancel it, after which no result of it is eligible), and a task
 activation keeps where it stands keeps its attempts. A file that drops `[workflow]`
 after an activation is refused as well: returning to the board's own writers is not supported

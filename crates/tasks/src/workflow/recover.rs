@@ -390,8 +390,8 @@ pub fn observed(
 /// whose `transitions` these are, since the task last stood at `exhausted`, where its retry bound
 /// sends it: whoever brought it there (the bound itself, a person or an activation), its next
 /// failures start a fresh count. A caller's take of an edge of that id, under a definition where
-/// it was not automatic, is no take of the board's. Activation keeps `exhausted` off the pairs the
-/// edge leaves and enters ([`super::activate::supported`]), so a take never restarts the count.
+/// it was not automatic, is no take of the board's. Activation keeps `exhausted` off every cycle
+/// through the edge ([`super::activate::supported`]), so no lap of its retries restarts the count.
 fn taken(transitions: &[Transition], edge: &Edge, exhausted: &Pair) -> u32 {
     // An edge's transition records what it recovered only where the board took it.
     let board =

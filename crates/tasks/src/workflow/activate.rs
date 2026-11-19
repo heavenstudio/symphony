@@ -117,10 +117,11 @@ fn unsupported_dependency(dependency: Dependency) -> Option<&'static str> {
 /// source pair (docs/WORKFLOW.md, "Attempts"), none where it can: another automatic edge leaves
 /// that pair, so the board could not choose; it asks inputs, which the board has none of to give;
 /// it gives a role, which only an agent session holds, or prepares or finalizes an effect, which
-/// only its adapter takes; its retry bound is exhausted to the pair it leaves or enters, where the
-/// count of its takes would restart at each ([`super::recover::observed`]); or none of its
-/// authorities is a capability `host` grants the board's recovery service, which takes it. Each
-/// reason is fixed text, the edge named by the refusal that carries it.
+/// only its adapter takes; its retry bound is exhausted to a pair on a cycle through it, which the
+/// task passes every lap, so the count of its takes, which restarts there, never runs out
+/// ([`super::recover::observed`], [`laps`]); or none of its authorities is a capability `host`
+/// grants the board's recovery service, which takes it. Each reason is fixed text, the edge named
+/// by the refusal that carries it.
 fn automatic(d: &Definition, edge: &Edge, host: &Host) -> Option<&'static str> {
     let service = super::board_service("recovery");
     let authorized = edge.authority.iter().any(|authority| match authority {
@@ -136,10 +137,8 @@ fn automatic(d: &Definition, edge: &Edge, host: &Host) -> Option<&'static str> {
         Some("an automatic edge gives a role, which only an agent session takes")
     } else if super::effect::external(&edge.effects).is_some() {
         Some("an automatic edge prepares or finalizes an effect, which only its adapter takes")
-    } else if (edge.retry.as_ref())
-        .is_some_and(|r| r.exhausted == edge.from || r.exhausted == edge.to)
-    {
-        Some("an automatic edge's retry is exhausted to a pair it leaves or enters")
+    } else if (edge.retry.as_ref()).is_some_and(|r| laps(d, edge, &r.exhausted)) {
+        Some("an automatic edge's retry is exhausted to a pair on a cycle through it")
     } else if !authorized {
         Some(
             "no authority of this automatic edge is a capability the host grants the board's recovery service",
@@ -147,6 +146,43 @@ fn automatic(d: &Definition, edge: &Edge, host: &Host) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// Whether `at` lies on a cycle through `edge`: reached from where it goes, and reaching where it
+/// leaves, by the moves `d` declares, each edge whoever takes it and each recovery action's
+/// target. The one move left out is the `attempt_failure` action of the edge's own source, which
+/// its retry bound replaces, sending the task to its exhausted pair instead.
+fn laps(d: &Definition, edge: &Edge, at: &Pair) -> bool {
+    let reaches = |start: &Pair, goal: &Pair| {
+        let mut seen = vec![start];
+        let mut next = 0;
+        while let Some(&here) = seen.get(next) {
+            if here == goal {
+                return true;
+            }
+            next += 1;
+            let actions = (d.positions.iter())
+                .filter(|p| p.at == *here)
+                .filter_map(|p| p.recovery.as_ref())
+                .flat_map(|r| {
+                    let failure = (*here != edge.from).then_some(&r.attempt_failure);
+                    [&r.release, &r.lost_holder, &r.cancellation_acknowledged]
+                        .into_iter()
+                        .chain(failure)
+                });
+            let moves = (d.edges.iter())
+                .filter(|e| e.from == *here)
+                .map(|e| &e.to)
+                .chain(actions.filter_map(|a| a.target.as_ref()));
+            for to in moves {
+                if !seen.contains(&to) {
+                    seen.push(to);
+                }
+            }
+        }
+        false
+    };
+    reaches(&edge.to, at) && reaches(at, &edge.from)
 }
 
 fn named(pair: &Pair) -> String {
@@ -284,8 +320,8 @@ pub fn plan(
 /// of (its `attempts`), where activation `changes` its position (records it a transition, which leaves the
 /// attempt's ending pinned to a revision the task no longer stands at) or `restaffs` it, as an
 /// attempt is never rebound to another position (let it end, or cancel it); or a live executor or
-/// reviewer where it moves or restaffs it, whose local session is no attempt the board sees until
-/// local launches are recorded as attempts (tools/local-provider-attempts).
+/// reviewer where it moves or restaffs it, whose session may be no attempt: one launched before
+/// local terminals were attempts, or not by the board's launcher.
 fn drained(task: &Standing, changes: bool, restaffs: bool) -> Result<(), String> {
     let slug = &task.slug;
     if let Some(live) = task.attempts.first().filter(|_| changes || restaffs) {
@@ -301,7 +337,7 @@ fn drained(task: &Standing, changes: bool, restaffs: bool) -> Result<(), String>
         return Err(format!(
             "{slug} is held by {handle} as its {role}, and activation would move it or change \
              its staffing; a live holder's session drains first (release it, or let its work \
-             finish), as it is no attempt the board sees yet"
+             finish), as it may be no attempt the board sees"
         ));
     }
     Ok(())
