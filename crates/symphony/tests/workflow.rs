@@ -1221,3 +1221,78 @@ fn workflow_mappings_are_a_known_key_checked_against_the_workflow() {
     assert!(problem.contains("no [workflow] to map onto"), "{problem}");
     assert!(!problem.contains("unknown"), "{problem}");
 }
+
+/// The Ed25519 base point: a key that reads, whose secret no test needs.
+const AUTHORITY_KEY: &str =
+    "ed25519:5866666666666666666666666666666666666666666666666666666666666666";
+
+#[test]
+fn workflow_authorities_are_a_known_key_committed_for_a_guarded_workflow_and_its_project() {
+    let owned = CUSTOM
+        .replace("capabilities = [\"accept\"]", "capabilities = [\"owner\"]")
+        .replace("capability = \"accept\"", "capability = \"owner\"");
+    let root = Path::new("/tmp/demo");
+    Project::parse(root, &owned).expect("the owner's workflow is supported");
+    let guarded = owned
+        .replacen("adapters = []", "adapters = [\"approvals\"]", 1)
+        .replacen(
+            "guards = []",
+            "guards = [{ id = \"approved\", adapter = \"approvals\" }]",
+            1,
+        )
+        .replacen(
+            "dependencies = \"none\", guards = []",
+            "dependencies = \"none\", guards = [\"approved\"]",
+            1,
+        );
+    let authority = |adapter: &str, key: &str| {
+        format!(
+            "[[workflow_authorities]]\nadapter = \"{adapter}\"\nissuer = \"ledger\"\n\
+             contract = 1\nkey = \"{key}\"\n"
+        )
+    };
+    let project = "[project]\nid = \"demo\"\n";
+    let unattested = Project::parse(root, &guarded).unwrap_err();
+    assert!(
+        unattested.contains("unsupported_activation: unsupported guard: approved"),
+        "{unattested}"
+    );
+    let anonymous = format!("{guarded}{}", authority("approvals", AUTHORITY_KEY));
+    assert!(
+        Project::parse(root, &anonymous)
+            .unwrap_err()
+            .contains("[project] id names none")
+    );
+    let committed = format!(
+        "{guarded}{project}{}",
+        authority("approvals", AUTHORITY_KEY)
+    );
+    Project::parse(root, &committed).expect("a guard with its authority committed is supported");
+    let elsewhere = format!(
+        "{guarded}{project}{}",
+        authority("elsewhere", AUTHORITY_KEY)
+    );
+    assert!(
+        Project::parse(root, &elsewhere)
+            .unwrap_err()
+            .contains("elsewhere is no adapter the workflow declares")
+    );
+    let unread = format!("{guarded}{project}{}", authority("approvals", "rsa:00"));
+    assert!(
+        Project::parse(root, &unread)
+            .unwrap_err()
+            .contains("not ed25519:HEX")
+    );
+    let alone = authority("approvals", AUTHORITY_KEY);
+    assert!(
+        Project::parse(root, &alone)
+            .unwrap_err()
+            .contains("workflow_authorities: no [workflow] to guard")
+    );
+    let tree = tree::Tree::new();
+    tree.write("symphony.toml", &alone);
+    Project::of(&tree.root);
+    let problem = Project::problem(&tree.root).unwrap();
+    assert!(problem.contains("no [workflow] to guard"), "{problem}");
+    assert!(!problem.contains("unknown"), "{problem}");
+}

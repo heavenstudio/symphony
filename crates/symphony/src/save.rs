@@ -37,8 +37,9 @@ pub const ROUTES: [&str; 14] = [
 ];
 
 /// The owner's operation on a task a custom workflow holds, through the board's one admission
-/// (`symphony_board::Store::apply_operation`): `{"slug": SLUG, "request": OperationRequest}`, the
-/// principal the local owner, never one the payload names.
+/// (`symphony_board::Store::apply_attested`): `{"slug": SLUG, "request": OperationRequest}`, with
+/// `"attestations": [Signed]` for a guarded edge, the principal the local owner, never one the
+/// payload names.
 pub const WORKFLOW_APPLY: &str = "/api/workflow-apply";
 
 /// The routes that write to one task, named by the payload's `slug`.
@@ -409,10 +410,19 @@ impl Saves {
                     )
                     .into());
                 }
-                let result = self.store()?.apply_operation(
+                // A guarded edge's attestations, each the project authority's signed word: none
+                // where the payload gives none.
+                let attestations: Vec<symphony_api::workflow::Signed> =
+                    match payload.get("attestations") {
+                        None | Some(Value::Null) => Vec::new(),
+                        Some(given) => serde_json::from_value(given.clone())
+                            .map_err(|e| format!("attestations: not signed statements: {e}"))?,
+                    };
+                let result = self.store()?.apply_attested(
                     &symphony_board::workflow::local_owner(),
                     &symphony_board::workflow::Host::local(),
                     &request,
+                    &attestations,
                 )?;
                 Ok(json!({"ok": true, "result": result}))
             }

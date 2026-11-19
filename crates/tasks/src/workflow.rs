@@ -1,5 +1,6 @@
 //! Delivery-workflow definitions as the board runs them (docs/WORKFLOW.md): the strict reader of
-//! a project file's `[workflow]` and `[[workflow_mappings]]`, normalization, revision identity,
+//! a project file's `[workflow]`, `[[workflow_mappings]]` and `[[workflow_authorities]]`,
+//! normalization, revision identity,
 //! the host's prerequisites and capability grants, built-in definition v1, and the reader of the
 //! project file the default branch commits, which is the only file a board activates from.
 //!
@@ -15,14 +16,18 @@ use symphony_plugin::execution::{Principal, PrincipalKind};
 pub mod activate;
 pub mod admit;
 mod builtin;
+pub mod guard;
 pub mod recover;
 mod validate;
+pub use crate::store::admission::Admission;
 pub use crate::store::admission::Receipt;
+pub use crate::store::guard::{Authorities, Observing};
 pub use crate::store::workflow::{
     Active, Followed, Recorded, Recovered, TaskPosition, Transition, Trigger,
 };
 pub use activate::Host;
 pub use builtin::{builtin, legacy_pair};
+pub use guard::Attester;
 
 /// A project's file, at the top of the tree a commit holds.
 const FILE: &str = "symphony.toml";
@@ -147,8 +152,53 @@ pub fn written(text: &str) -> Result<(Option<Validated>, Vec<Mapping>), String> 
     Ok((Some(validated), file.workflow_mappings))
 }
 
-/// The workflow a commit's project file sets: a custom definition with its revision and
-/// mappings, or none for a file with no `[workflow]` (the board's existing writers).
+/// The file's `[[workflow_authorities]]`, sorted by adapter and checked against `definition`
+/// ([`guard::check_attesters`]); refused where there is no `[workflow]` to guard, or no
+/// `[project] id` to bind an attestation to ([`attested_project`]).
+pub fn authorities(text: &str, definition: Option<&Validated>) -> Result<Vec<Attester>, String> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        #[serde(default)]
+        workflow_authorities: Vec<Attester>,
+    }
+    let file: File = toml::from_str(text).map_err(|e| format!("workflow: {e}"))?;
+    let mut attesters = file.workflow_authorities;
+    let Some(definition) = definition else {
+        if !attesters.is_empty() {
+            return Err("workflow_authorities: no [workflow] to guard".into());
+        }
+        return Ok(attesters);
+    };
+    if !attesters.is_empty() && attested_project(text).is_none() {
+        return Err(
+            "workflow_authorities: an attestation names the project it is for, and [project] \
+             id names none"
+                .into(),
+        );
+    }
+    guard::check_attesters(definition, &attesters)?;
+    attesters.sort();
+    Ok(attesters)
+}
+
+/// The `[project] id` the file commits, which every attestation names as the project it is for:
+/// the committed id alone, never one a machine's registry or folder gives, so a project's
+/// attestation reads the same on every board of it and on no other project's.
+pub fn attested_project(text: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        project: Option<Table>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Table {
+        id: Option<String>,
+    }
+    let file: File = toml::from_str(text).ok()?;
+    file.project?.id.filter(|id| !id.trim().is_empty())
+}
+
+/// The workflow a commit's project file sets: a custom definition with its revision, mappings
+/// and authorities, or none for a file with no `[workflow]` (the board's existing writers).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Committed {
     pub commit: String,
@@ -160,6 +210,12 @@ pub struct Custom {
     pub definition: Validated,
     pub revision: Revision,
     pub mappings: Vec<Mapping>,
+    /// The approval authorities its guards are verified by, sorted by adapter: the public keys
+    /// the default branch commits ([`guard::Attester`]).
+    pub authorities: Vec<Attester>,
+    /// The project an attestation is for ([`attested_project`]): none where no authority is
+    /// committed.
+    pub project: Option<String>,
 }
 
 /// The project file the tip of `branch` commits in the repository whose main checkout is `main`,
@@ -205,6 +261,10 @@ fn committed_at(main: &Path, branch: &str, commit: String) -> Result<Committed, 
     }
     let text = git(main, &["cat-file", "blob", blob]).map_err(refuse)?;
     let (definition, mappings) = written(&text).map_err(refuse)?;
+    let authorities = authorities(&text, definition.as_ref()).map_err(refuse)?;
+    let project = (!authorities.is_empty())
+        .then(|| attested_project(&text))
+        .flatten();
     let custom = match definition {
         None => None,
         Some(definition) => {
@@ -218,6 +278,8 @@ fn committed_at(main: &Path, branch: &str, commit: String) -> Result<Committed, 
                 definition,
                 revision,
                 mappings,
+                authorities,
+                project,
             })
         }
     };

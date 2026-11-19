@@ -7,9 +7,11 @@
 //! The principal is the host's, never the request's: the request fences intention (the snapshot
 //! the caller saw, its key, its inputs), and a principal holds a capability only through the
 //! host's grants ([`super::Grants`]). A task role is held on this task alone, a reviewer is fresh
-//! (`Held::unfresh`), and every check this release cannot make refuses: a guard, an adapter, an
-//! input revision, a dependency on a landing or an accepted output.
+//! (`Held::unfresh`), a guard is met only by an attestation the board verifies now
+//! ([`super::guard`]), and every check this release cannot make refuses: an adapter, an input
+//! revision no guard binds, a dependency on a landing or an accepted output.
 
+use super::guard::{self, Binding, Checked, Guarding};
 use super::{Host, TaskPosition, Transition};
 use crate::Held;
 use std::fmt;
@@ -76,14 +78,16 @@ pub struct Prerequisite {
     pub found: Option<(String, Option<TaskPosition>)>,
 }
 
-/// What an admitted operation writes: its transition, the role rows it adds and drops, and
-/// whether it takes a task slot under the cap.
+/// What an admitted operation writes: its transition, the role rows it adds and drops, whether
+/// it takes a task slot under the cap, and each guard it met, by the attestation and the
+/// authority's accepted state the write fences on.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Admitted {
     pub transition: Transition,
     pub add: Vec<(String, String)>,
     pub drop: Vec<(String, String)>,
     pub acquires: bool,
+    pub guards: Vec<Checked>,
 }
 
 /// The snapshot a caller fences its next request on.
@@ -98,14 +102,15 @@ pub fn snapshot(context: Context, position: &TaskPosition) -> PositionSnapshot {
 
 /// `request` admitted for `principal` on what `facts` read, at `at`, or refused with the first
 /// thing that stops it: a task no workflow holds, a stale workflow, generation or task, an edge
-/// unknown or not leaving the task's pair, then [`blockers`]. Capacity is the store's to decide,
-/// in the write ([`Admitted::acquires`]).
+/// unknown or not leaving the task's pair, then [`blockers`], its guards decided on `guarding`.
+/// Capacity is the store's to decide, in the write ([`Admitted::acquires`]).
 pub fn admit(
     context: Context,
     facts: &Facts,
     principal: &Principal,
     host: &Host,
     request: &OperationRequest,
+    guarding: &Guarding<'_>,
     at: f64,
 ) -> Result<Admitted, Refusal> {
     let position = held(facts)?;
@@ -164,12 +169,21 @@ pub fn admit(
             ),
         ));
     }
-    if let Some(refusal) = blockers(context, facts, principal, host, edge, Some(request))
-        .into_iter()
-        .next()
+    if let Some(refusal) = blockers(
+        context,
+        facts,
+        principal,
+        host,
+        edge,
+        Some(request),
+        Some(guarding),
+    )
+    .into_iter()
+    .next()
     {
         return Err(refusal);
     }
+    let guards = met(context, facts, principal, edge, request, guarding)?;
     let handle = agent(principal);
     let mut add = Vec::new();
     let mut drop = Vec::new();
@@ -231,7 +245,35 @@ pub fn admit(
                 policy: Slot::Acquire,
             }
         }),
+        guards,
     })
+}
+
+/// `edge`'s guards met by `guarding`'s attestations, each covering `request` taken by `principal`
+/// from where `facts` stands under the active workflow, in the project the activation recorded
+/// (`guarding`), never the one the request names ([`guard::check`]).
+fn met(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    edge: &Edge,
+    request: &OperationRequest,
+    guarding: &Guarding<'_>,
+) -> Result<Vec<Checked>, Refusal> {
+    let position = held(facts)?;
+    let from = position.at();
+    let binding = Binding {
+        project: guarding.project,
+        task: &facts.slug,
+        edge: &edge.id,
+        workflow: &context.revision.digest,
+        activation_generation: context.generation,
+        task_revision: position.revision,
+        at: &from,
+        input_revisions: &request.input_revisions,
+        principal,
+    };
+    guard::check(context.definition, edge, &binding, guarding)
 }
 
 /// The edges leaving the task's pair, each with what stops `principal` taking it now: a preview,
@@ -248,7 +290,7 @@ pub fn next_actions(
         .filter(|e| e.from == position.at() && !e.automatic)
         .map(|edge| {
             let mut unavailable: Vec<RefusalCode> =
-                blockers(context, facts, principal, host, edge, None)
+                blockers(context, facts, principal, host, edge, None, None)
                     .into_iter()
                     .map(|r| r.code)
                     .collect();
@@ -271,7 +313,8 @@ pub fn next_actions(
 }
 
 /// Everything that stops `principal` taking `edge` from where the task stands, in the order a
-/// refusal names them: what this release cannot run (an adapter, a guard), a human wait, the
+/// refusal names them: what this release cannot run (an adapter), a guard not met by the
+/// attestations `guarding` gives (any guard, for a preview, which gives none), a human wait, the
 /// authority, the inputs `request` gives (none for a preview), the dependencies, and a resume
 /// to a pair other than the one the block saved.
 pub fn blockers(
@@ -281,6 +324,7 @@ pub fn blockers(
     host: &Host,
     edge: &Edge,
     request: Option<&OperationRequest>,
+    guarding: Option<&Guarding<'_>>,
 ) -> Vec<Refusal> {
     let mut found = Vec::new();
     let id = &edge.id;
@@ -304,11 +348,14 @@ pub fn blockers(
             ),
         ));
     }
-    if let Some(guard) = edge.guards.first() {
-        found.push(Refusal::new(
-            RefusalCode::GuardUnavailable,
-            format!("edge {id} is guarded by {guard}, which no receipt answers here yet"),
-        ));
+    if !edge.guards.is_empty() {
+        let checked = match (request, guarding) {
+            (Some(request), Some(guarding)) => {
+                met(context, facts, principal, edge, request, guarding).err()
+            }
+            _ => guard::needs_attestation(edge),
+        };
+        found.extend(checked);
     }
     if edge.human_wait && principal.kind != PrincipalKind::Human {
         found.push(Refusal::new(
@@ -458,7 +505,8 @@ fn fresh(facts: &Facts, handle: &str, role: Role) -> Result<(), String> {
 }
 
 /// The request's inputs against the edge's: each one it declares given, none it does not, and no
-/// input revision, which the board records none of yet, so none is checked as current.
+/// input revision, which the board records none of yet, so none is checked as current, but on a
+/// guarded edge, whose attestations bind the input revisions it is taken on ([`guard::check`]).
 fn inputs(edge: &Edge, request: &OperationRequest) -> Vec<Refusal> {
     let mut found = Vec::new();
     for given in request.inputs.keys() {
@@ -477,7 +525,9 @@ fn inputs(edge: &Edge, request: &OperationRequest) -> Vec<Refusal> {
             ));
         }
     }
-    if let Some(name) = request.input_revisions.keys().next() {
+    if let Some(name) = request.input_revisions.keys().next()
+        && edge.guards.is_empty()
+    {
         found.push(Refusal::new(
             RefusalCode::StaleInput,
             format!(

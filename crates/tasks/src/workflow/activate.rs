@@ -37,27 +37,52 @@ impl Host {
     }
 }
 
-/// The definition refused unless this host supports everything it needs: each capability it
-/// declares granted to someone, each adapter registered, and nothing this release cannot run yet.
-/// Guards wait on revision-bound guards; attempt-driven recovery, automatic edges and retry bounds
-/// wait on durable attempts; `accepted_output` dependencies and parent integration on their own
-/// follow-ups. Each refusal says which, so the project knows what it asked for.
+/// The definition refused unless this host supports everything it needs, with no approval
+/// authority committed: [`supported_with`] for none, so any guard is refused.
 pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {
+    supported_with(definition, host, &[])
+}
+
+/// The definition refused unless this host supports everything it needs: each capability it
+/// declares granted to someone, each adapter registered or committed as an approval authority
+/// (`attesters`), and nothing this release cannot run yet. A guard needs its adapter's committed
+/// authority of a contract this release reads, and a graph that reaches a guarded pair by no
+/// other route ([`super::guard::coverage`]); attempt-driven recovery, automatic edges and retry
+/// bounds wait on durable attempts; `accepted_output` dependencies and parent integration on
+/// their own follow-ups. Each refusal says which, so the project knows what it asked for.
+pub fn supported_with(
+    definition: &Validated,
+    host: &Host,
+    attesters: &[super::Attester],
+) -> Result<(), String> {
     let d = definition.definition();
     let granted = host.grants.supported();
-    let adapters: Vec<&str> = host.adapters.iter().map(String::as_str).collect();
+    let adapters: Vec<&str> = (host.adapters.iter().map(String::as_str))
+        .chain(attesters.iter().map(|a| a.adapter.as_str()))
+        .collect();
+    for guard in &d.guards {
+        let Some(attester) = attesters.iter().find(|a| a.adapter == guard.adapter) else {
+            return Err(format!(
+                "unsupported guard: {} (its adapter {} needs an approval authority committed in \
+                 [[workflow_authorities]])",
+                guard.id, guard.adapter
+            ));
+        };
+        let contract = symphony_api::workflow::ATTESTATION_CONTRACT;
+        if attester.contract != contract {
+            return Err(format!(
+                "unsupported guard: {} (its authority {} speaks contract {}, and this release \
+                 reads {contract})",
+                guard.id, attester.adapter, attester.contract
+            ));
+        }
+    }
     super::prerequisites(
         definition,
         &granted.into_iter().collect::<Vec<_>>(),
         &adapters,
     )?;
-    if let Some(guard) = d.guards.first() {
-        return Err(format!(
-            "unsupported guard: {} (guards answer once revision-bound guards land, \
-             tools/workflow-revision-guards)",
-            guard.id
-        ));
-    }
+    super::guard::coverage(d)?;
     let attempts = "needs durable attempts (tools/workflow-attempt-integration)";
     for position in &d.positions {
         let at = named(&position.at);
@@ -204,6 +229,19 @@ pub fn plan(
             .transpose()?;
         let destination = position_of(new, &to).expect("placed() names a declared pair");
         fabricates_nothing(slug, source, destination)?;
+        let held = task.position.is_some();
+        past_no_guard(slug, old, new, held, Some(&from), &to, "stand at")?;
+        if let Some(resume) = &resume {
+            past_no_guard(
+                slug,
+                old,
+                new,
+                held,
+                resume_from.as_ref(),
+                resume,
+                "resume to",
+            )?;
+        }
         let status = projection(destination.legacy);
         let changes =
             task.position.is_none() || from != to || resume != resume_from || status != task.status;
@@ -308,6 +346,7 @@ impl Placing {
         let destination =
             position_of(&self.definition, &to).expect("placed() names a declared pair");
         fabricates_nothing(slug, source, destination)?;
+        past_no_guard(slug, None, &self.definition, false, None, &to, "reopen at")?;
         let status = projection(destination.legacy);
         if status != task.status {
             return Err(format!(
@@ -415,6 +454,39 @@ fn fabricates_nothing(slug: &str, source: &Position, destination: &Position) -> 
         return refuse(format!("the completion {:?}", destination.completion));
     }
     Ok(())
+}
+
+/// Refused where a task would come to stand at `to` (or resume to it), a pair only edges guarded by
+/// the same guards enter ([`super::guard::guarded_into`]), without having stood there already,
+/// `held` by `old` at `from`, under those guards: a mapping, a placement or a reopening never takes
+/// a task past a guard, as no attestation covers it.
+fn past_no_guard(
+    slug: &str,
+    old: Option<&Definition>,
+    new: &Definition,
+    held: bool,
+    from: Option<&Pair>,
+    to: &Pair,
+    stands: &str,
+) -> Result<(), String> {
+    let Some(guards) = super::guard::guarded_into(new, to) else {
+        return Ok(());
+    };
+    let stood = held
+        && from == Some(to)
+        && old
+            .and_then(|old| super::guard::guarded_into(old, to))
+            .as_ref()
+            == Some(&guards);
+    if stood {
+        return Ok(());
+    }
+    Err(format!(
+        "{slug} would {stands} {}, which only edges guarded by {} enter; activation never takes a \
+         task past a guard: map it to a pair before it",
+        named(to),
+        guards.into_iter().collect::<Vec<_>>().join(", ")
+    ))
 }
 
 /// A position's board status, as the task's row holds it.

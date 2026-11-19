@@ -48,6 +48,9 @@ pub(super) struct File {
     pub(super) workflow: Option<symphony_api::workflow::Definition>,
     /// Where tasks at pairs a newly committed workflow removed go when it activates.
     pub(super) workflow_mappings: Vec<symphony_board::workflow::Mapping>,
+    /// The approval authorities whose signed word meets the workflow's guards: each the public
+    /// half of a key the project holds (docs/WORKFLOW.md, "Guards").
+    pub(super) workflow_authorities: Vec<symphony_board::workflow::Attester>,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
     pub(super) unknown: Unknown,

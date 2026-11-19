@@ -127,9 +127,22 @@ pub(in crate::store) fn admission() -> Pg<'static> {
         FROM task t JOIN link l ON l.target = t.slug
         WHERE l.slug = v ->> 'slug' AND l.kind = 'dep'), '[]'::jsonb),
     'receipt', (SELECT body FROM workflow WHERE id = v -> 'receipt'),
-    'present', coalesce((SELECT left_at IS NULL FROM session WHERE handle = v ->> 'actor'), false))",
+    'present', coalesce((SELECT left_at IS NULL FROM session WHERE handle = v ->> 'actor'), false),
+    'project', (SELECT body -> 'project' FROM workflow
+        WHERE id = jsonb_build_array('activation',
+            (SELECT body -> 'generation' FROM workflow WHERE id = '[\"active\"]'::jsonb))),
+    'attesters', ATTESTERS,
+    'accepted', coalesce((SELECT jsonb_agg(w.body ORDER BY w.id) FROM workflow w
+        WHERE w.id IN (SELECT jsonb_build_array('authority', a ->> 'adapter')
+            FROM jsonb_array_elements(ATTESTERS) AS a)), '[]'::jsonb))"
+            .replace("ATTESTERS", ATTESTERS),
     )
 }
+
+/// The approval authorities the active activation commits, an empty array where none.
+pub(in crate::store) const ATTESTERS: &str = "coalesce((SELECT body -> 'authorities' FROM workflow
+        WHERE id = jsonb_build_array('activation',
+            (SELECT body -> 'generation' FROM workflow WHERE id = '[\"active\"]'::jsonb))), '[]'::jsonb)";
 
 /// `body`, the write of an admitted operation (`super::super::surreal::workflow::APPLY`), with
 /// the slot counters it holds guarded after it when `guarded` and its line `logged` on the
@@ -179,6 +192,17 @@ BEGIN
             WHERE handle = v ->> 'actor' AND left_at IS NULL) THEN
         RAISE EXCEPTION 'stale';
     END IF;
+    PERFORM 1 FROM workflow WHERE id IN (SELECT jsonb_build_array('authority', a ->> 'adapter')
+        FROM jsonb_array_elements(v -> 'authorities') AS a) FOR UPDATE;
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'authorities') AS a
+            WHERE NOT EXISTS (SELECT 1 FROM workflow w
+                WHERE w.id = jsonb_build_array('authority', a ->> 'adapter')
+                AND w.body ->> 'epoch' = a ->> 'epoch'
+                AND (w.body ->> 'generation')::bigint = (a ->> 'generation')::bigint
+                AND w.body ->> 'state' = a ->> 'state'
+                AND NOT coalesce((w.body ->> 'conflicted')::boolean, false))) THEN
+        RAISE EXCEPTION 'stale';
+    END IF;
     DELETE FROM role WHERE id IN (SELECT jsonb_build_array(v ->> 'slug', d ->> 'handle', d ->> 'role')
         FROM jsonb_array_elements(v -> 'drop') AS d);
     INSERT INTO role (id, slug, handle, role, since, expires)
@@ -202,6 +226,15 @@ BEGIN
     IF v ->> 'receipt' IS NOT NULL THEN
         INSERT INTO workflow (id, kind, body, at) VALUES (v -> 'receipt', 'receipt', v -> 'receipt_body',
             (v -> 'transition' ->> 'at')::double precision);
+    END IF;
+    UPDATE workflow SET body = jsonb_set(body, '{{admitted}}',
+            to_jsonb(coalesce((body ->> 'admitted')::bigint, 0) + 1))
+        WHERE id IN (SELECT jsonb_build_array('authority', a ->> 'adapter')
+            FROM jsonb_array_elements(v -> 'authorities') AS a);
+    IF v ->> 'admission' IS NOT NULL THEN
+        INSERT INTO workflow (id, kind, body, at) VALUES (
+            jsonb_build_array('admission', v ->> 'slug', v -> 'transition' -> 'revision'), 'admission',
+            v -> 'admission', (v -> 'transition' ->> 'at')::double precision);
     END IF;
     IF (v ->> 'moved')::boolean THEN
         DELETE FROM counter WHERE id = jsonb_build_array('hold', v ->> 'slug');
@@ -228,6 +261,14 @@ UPDATE task SET fields = board_fields(id, fields, '{_board,workflow}', v -> 'pla
 pub(in crate::store) fn mappings() -> Pg<'static> {
     Pg::read(
         "(SELECT body -> 'mappings' FROM workflow WHERE id = jsonb_build_array('activation', v -> 'generation'))",
+    )
+}
+
+/// Twin of `super::super::surreal::workflow::AUTHORITIES`.
+pub(in crate::store) fn authorities() -> Pg<'static> {
+    Pg::read(
+        "(SELECT jsonb_build_object('project', body -> 'project', 'authorities', body -> 'authorities')
+        FROM workflow WHERE id = jsonb_build_array('activation', v -> 'generation'))",
     )
 }
 

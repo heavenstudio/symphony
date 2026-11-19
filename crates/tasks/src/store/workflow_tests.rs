@@ -294,6 +294,64 @@ fn the_database_never_changes_a_recorded_transition_or_moves_the_active_generati
 }
 
 #[test]
+fn the_database_never_changes_an_admission_or_lowers_an_authority_within_its_epoch() {
+    for backend in BACKENDS {
+        let f = Fixture::on(backend, Seed::default());
+        by_hand(
+            &f,
+            "CREATE workflow:['admission', 'sim/a', 4] CONTENT { kind: 'admission', body: { edge: 'accept' }, at: 1.0 } RETURN NONE;
+             CREATE workflow:['authority', 'approvals'] CONTENT { kind: 'authority', body: { epoch: 'e1', generation: 3, state: 's3' }, at: 1.0 } RETURN NONE;
+             RETURN NONE;",
+            "INSERT INTO workflow (id, kind, body, at) VALUES \
+             ('[\"admission\", \"sim/a\", 4]', 'admission', '{\"edge\": \"accept\"}', 1.0), \
+             ('[\"authority\", \"approvals\"]', 'authority', \
+              '{\"epoch\": \"e1\", \"generation\": 3, \"state\": \"s3\"}', 1.0);",
+        )
+        .unwrap();
+        let admission = refused(by_hand(
+            &f,
+            "UPDATE workflow:['admission', 'sim/a', 4] SET body.edge = 'other' RETURN NONE; RETURN NONE;",
+            "UPDATE workflow SET body = body || '{\"edge\": \"other\"}' \
+             WHERE id = '[\"admission\", \"sim/a\", 4]';",
+        ));
+        assert_eq!(
+            admission, "workflow: a recorded admission is never changed",
+            "{backend:?}"
+        );
+        let lowered = refused(by_hand(
+            &f,
+            "UPDATE workflow:['authority', 'approvals'] SET body.generation = 2 RETURN NONE; RETURN NONE;",
+            "UPDATE workflow SET body = body || '{\"generation\": 2}' \
+             WHERE id = '[\"authority\", \"approvals\"]';",
+        ));
+        assert_eq!(
+            lowered,
+            "workflow: the generation the board accepted from an approval authority is never \
+             lowered within its epoch",
+            "{backend:?}"
+        );
+        // Forward within its epoch, a mark of conflict, or a new epoch at any generation is a move.
+        by_hand(
+            &f,
+            "UPDATE workflow:['authority', 'approvals'] SET body.generation = 4, body.conflicted = true RETURN NONE;
+             UPDATE workflow:['authority', 'approvals'] SET body.epoch = 'e2', body.generation = 1 RETURN NONE;
+             RETURN NONE;",
+            "UPDATE workflow SET body = body || '{\"generation\": 4, \"conflicted\": true}' \
+             WHERE id = '[\"authority\", \"approvals\"]'; \
+             UPDATE workflow SET body = body || '{\"epoch\": \"e2\", \"generation\": 1}' \
+             WHERE id = '[\"authority\", \"approvals\"]';",
+        )
+        .unwrap();
+        let retyped = refused(by_hand(
+            &f,
+            "UPDATE workflow:['authority', 'approvals'] SET kind = 'intent' RETURN NONE; RETURN NONE;",
+            "UPDATE workflow SET kind = 'intent' WHERE id = '[\"authority\", \"approvals\"]';",
+        ));
+        assert_eq!(retyped, "workflow: a recorded authority is never changed");
+    }
+}
+
+#[test]
 fn a_copy_carries_the_workflow_and_refuses_positions_without_their_records() {
     for backend in BACKENDS {
         let f = Fixture::on(backend, Seed::default());

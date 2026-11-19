@@ -13,17 +13,23 @@
 //!
 //! A request's key is the principal's: the same key with the same request answers the result the
 //! first one wrote, and the same key with another request is refused.
+//!
+//! A guarded edge is admitted only with the attestations its caller gives
+//! ([`Store::apply_attested`], `crate::workflow::guard`), and its write is fenced on each approval
+//! authority's state they were checked at: an observation the board accepts between the read and
+//! the write makes the admission decide again, on the authority's new generation.
 
 use super::postgres as pg;
 use super::surreal::{self, cap as sql_cap, workflow as sql};
 use super::{Error, Failure, Opens, Store, Which, statement::both};
 use crate::workflow::admit::{self, Context, Facts, Prerequisite, Refusal};
+use crate::workflow::guard::{Accepted, Attester, Checked, Guarding};
 use crate::workflow::{Active, Host, Recorded, TaskPosition, Transition};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use symphony_api::workflow::{
-    Authority, Effect, NextActions, OperationRequest, OperationResult, RefusalCode, Role,
+    Authority, Effect, NextActions, OperationRequest, OperationResult, RefusalCode, Role, Signed,
     WorkflowRead,
 };
 use symphony_plugin::execution::{Principal, PrincipalKind};
@@ -43,6 +49,23 @@ pub struct Receipt {
     pub effects: Vec<Effect>,
 }
 
+/// What a guarded edge's admission recorded (`workflow:['admission', SLUG, REVISION]`): the
+/// transition it admitted, by whom, on which input revisions, and each guard it met, with the
+/// attestation and the authority's accepted state. It is the board's audit of what it admitted,
+/// never an approval: the decisions stay in the project's ledger.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Admission {
+    pub slug: String,
+    pub revision: u64,
+    pub transition: String,
+    pub edge: String,
+    pub principal: Principal,
+    pub input_revisions: std::collections::BTreeMap<String, String>,
+    pub guards: Vec<Checked>,
+    pub at: f64,
+}
+
 #[derive(Deserialize)]
 struct Read {
     active: Option<Active>,
@@ -52,6 +75,12 @@ struct Read {
     found: Vec<Found>,
     receipt: Option<Receipt>,
     present: bool,
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
+    attesters: Vec<Attester>,
+    #[serde(default)]
+    accepted: Vec<Accepted>,
 }
 
 #[derive(Deserialize)]
@@ -77,7 +106,8 @@ struct Found {
     position: Option<TaskPosition>,
 }
 
-/// One read's decision context: the workflow active and its definition, and the task's facts.
+/// One read's decision context: the workflow active and its definition, the task's facts, and the
+/// approval authorities the activation commits with the state the board accepted from each.
 struct Decided {
     active: Active,
     recorded: Recorded,
@@ -85,6 +115,9 @@ struct Decided {
     task: TaskRead,
     found: Vec<Found>,
     receipt: Option<Receipt>,
+    project: Option<String>,
+    attesters: Vec<Attester>,
+    accepted: Vec<Accepted>,
 }
 
 impl Store {
@@ -123,12 +156,29 @@ impl Store {
     /// ([`admit::Refusal`]); capacity under the project's cap is decided in the write's own
     /// counters. Answers the transition it wrote, its effects and the principal's next actions
     /// after it. A request repeating a key the principal used answers that request's result when
-    /// it is the same request, and is refused when it is another.
+    /// it is the same request, and is refused when it is another. Given no attestation, a guarded
+    /// edge is refused ([`Store::apply_attested`]).
     pub fn apply_operation(
         &self,
         principal: &Principal,
         host: &Host,
         request: &OperationRequest,
+    ) -> Result<OperationResult, Error> {
+        self.apply_attested(principal, host, request, &[])
+    }
+
+    /// [`Store::apply_operation`], each guard of the edge met by one of `attestations`: signed by
+    /// the key the active activation commits for its authority, covering exactly this operation
+    /// and principal, passing, in its time, and at the authority's generation the board accepted
+    /// (`crate::workflow::guard::check`). The write is fenced on those accepted states and records
+    /// the admission (`workflow:['admission', SLUG, REVISION]`). A repeated key answers its
+    /// first result whatever attestations come with it: the operation is not taken twice.
+    pub fn apply_attested(
+        &self,
+        principal: &Principal,
+        host: &Host,
+        request: &OperationRequest,
+        attestations: &[Signed],
     ) -> Result<OperationResult, Error> {
         let board = self.database().database();
         if request.project != board {
@@ -163,8 +213,16 @@ impl Store {
             }
             let context = context(&decided);
             let at = self.now();
-            let admitted = admit::admit(context, &decided.facts, principal, host, request, at)
-                .map_err(refusal)?;
+            let guarding = Guarding {
+                project: decided.project.as_deref().unwrap_or_default(),
+                attesters: &decided.attesters,
+                accepted: &decided.accepted,
+                given: attestations,
+                now: at,
+            };
+            let admitted =
+                admit::admit(context, &decided.facts, principal, host, request, &guarding, at)
+                    .map_err(refusal)?;
             let transition = &admitted.transition;
             let status = transition.status.clone();
             let taking = Taking {
@@ -192,6 +250,26 @@ impl Store {
                 .map(pair)
                 .collect();
             let guarded = !slots.is_empty();
+            // Each authority once, however many guards it met.
+            let authorities: Vec<Value> = (admitted.guards.iter())
+                .map(|g| {
+                    let state = json!({"adapter": g.adapter, "epoch": g.epoch,
+                        "generation": g.generation, "state": g.state});
+                    (g.adapter.as_str(), state)
+                })
+                .collect::<std::collections::BTreeMap<_, _>>()
+                .into_values()
+                .collect();
+            let admission = (!admitted.guards.is_empty()).then(|| Admission {
+                slug: slug.to_string(),
+                revision: transition.revision,
+                transition: transition.id.clone(),
+                edge: request.edge.clone(),
+                principal: principal.clone(),
+                input_revisions: request.input_revisions.clone(),
+                guards: admitted.guards.clone(),
+                at,
+            });
             let vars = json!({
                 "slug": slug,
                 "version": decided.task.version,
@@ -212,6 +290,8 @@ impl Store {
                 "now": at,
                 "slots": slots,
                 "seen": [],
+                "authorities": authorities,
+                "admission": admission,
             });
             let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
             let guard = if guarded { sql_cap::GUARD } else { "" };
@@ -369,6 +449,9 @@ impl Store {
             task,
             found: read.found,
             receipt: read.receipt,
+            project: read.project,
+            attesters: read.attesters,
+            accepted: read.accepted,
         })
     }
 
@@ -552,3 +635,7 @@ pub(in crate::store) use recovery::Released;
 #[cfg(test)]
 #[path = "admission_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "admission/guard_tests.rs"]
+mod guard_tests;

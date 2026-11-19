@@ -35,6 +35,7 @@ mod database;
 mod depends;
 mod dispatcher;
 mod fields;
+pub(crate) mod guard;
 mod history;
 mod kept;
 mod launches;

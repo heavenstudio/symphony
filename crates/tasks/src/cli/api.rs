@@ -37,8 +37,8 @@ pub const MAJOR: i64 = 2;
 
 /// The api's minor within [`MAJOR`]: 1 added a task's `id`, `bound`, `edit_bound` and
 /// `integration_state`; 2 added `evidence`; 3 added `workflow_read`, `workflow_actions` and
-/// `workflow_apply`.
-pub const MINOR: i64 = 3;
+/// `workflow_apply`; 4 added `workflow_apply`'s `attestations` and `workflow_observe`.
+pub const MINOR: i64 = 4;
 
 /// Why a call has no result.
 enum Fail {
@@ -566,13 +566,31 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
                 &crate::workflow::Host::local()
             )?)
         }
+        // A guarded edge's `attestations`, each its project authority's signed word, none by
+        // default; `workflow_observe` hands the board that authority's signed observation.
         "workflow_apply" => {
-            args!(handle: actor, request: need);
+            args!(handle: actor, request: need, attestations: take);
             let (handle, request): (String, symphony_api::workflow::OperationRequest) =
                 (handle, request);
+            let attestations: Option<Vec<symphony_api::workflow::Signed>> = attestations;
             let principal = crate::workflow::agent_session(&handle);
             let store = board.get()?;
-            json!(store.apply_operation(&principal, &crate::workflow::Host::local(), &request)?)
+            json!(store.apply_attested(
+                &principal,
+                &crate::workflow::Host::local(),
+                &request,
+                attestations.as_deref().unwrap_or_default()
+            )?)
+        }
+        "workflow_observe" => {
+            args!(signed: need);
+            let signed: symphony_api::workflow::Signed = signed;
+            let (observed, authority) = match board.get()?.observe_authority(&signed)? {
+                crate::workflow::Observing::Accepted(a) => ("accepted", a),
+                crate::workflow::Observing::Unchanged(a) => ("unchanged", a),
+                crate::workflow::Observing::Conflicted(a) => ("conflicted", a),
+            };
+            json!({"observed": observed, "authority": authority})
         }
         "move" => {
             args!(slug: need, status: need, handle: actor, from: take, reason: take, on: take, why: take);

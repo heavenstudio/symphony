@@ -10,23 +10,30 @@
 //! `apply` sends the task's workflow revision the session read (`--revision`, which `actions`
 //! prints), never the one it finds: a task another moved since is refused as stale, so the
 //! session reads it again before it acts. Its key (`--key`, by default the task, the revision and
-//! the edge) makes a repeated command answer the first one's result.
+//! the edge) makes a repeated command answer the first one's result. A guarded edge takes the
+//! project authority's signed attestation of each guard (`--attestation FILE`, its JSON
+//! `{"payload", "signature"}`), and the input revisions it attests (`--input-revision NAME=REV`);
+//! `observe FILE` hands the board that authority's signed observation of its ledger, which moves
+//! the state its attestations are checked at ([`Store::observe_authority`]). Either file is the
+//! authority's word as it signed it: the board verifies it by the key the project commits, so
+//! whoever runs the command adds nothing to it.
 
 use super::{Context, Stop};
 use crate::Store;
-use crate::workflow::{Host, admit::word, agent_session};
+use crate::workflow::{Host, Observing, admit::word, agent_session};
 use std::collections::BTreeMap;
-use symphony_api::workflow::{Authority, InputValue, NextActions, OperationRequest, Pair};
+use symphony_api::workflow::{Authority, InputValue, NextActions, OperationRequest, Pair, Signed};
 
 pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     match c.parsed.get("action").unwrap_or_default() {
         "show" => show(store, c),
         "actions" => actions(store, c),
         "apply" => apply(store, c),
+        "observe" => observe(store, c),
         "recover" => recover(store, c),
         other => Err(Stop::Refused(format!(
-            "workflow takes show, actions SLUG, apply SLUG EDGE --revision N or recover SLUG \
-             HOLDER, not {other:?}"
+            "workflow takes show, actions SLUG, apply SLUG EDGE --revision N, observe FILE or \
+             recover SLUG HOLDER, not {other:?}"
         ))),
     }
 }
@@ -146,6 +153,16 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
             .ok_or_else(|| Stop::Refused(format!("--input is NAME=TEXT, not {given:?}")))?;
         inputs.insert(name.to_string(), InputValue::Text(value.to_string()));
     }
+    let mut input_revisions = BTreeMap::new();
+    for given in c.parsed.all("input_revision") {
+        let (name, value) = given.split_once('=').ok_or_else(|| {
+            Stop::Refused(format!("--input-revision is NAME=REVISION, not {given:?}"))
+        })?;
+        input_revisions.insert(name.to_string(), value.to_string());
+    }
+    let attestations = (c.parsed.all("attestation").iter())
+        .map(|path| signed(path, "--attestation"))
+        .collect::<Result<Vec<_>, _>>()?;
     let key = (c.parsed.get("key").map(str::to_string))
         .unwrap_or_else(|| format!("{slug}@{revision}:{edge}"));
     let request = OperationRequest {
@@ -153,7 +170,7 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
         task: slug.clone(),
         edge,
         expected: snapshot,
-        input_revisions: BTreeMap::new(),
+        input_revisions,
         idempotency_key: key,
         inputs,
     };
@@ -164,13 +181,14 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
             if (receipt.sent.task.as_str(), receipt.sent.edge.as_str())
                 == (request.task.as_str(), request.edge.as_str())
                 && receipt.sent.expected.task_revision == revision
-                && receipt.sent.inputs == request.inputs =>
+                && receipt.sent.inputs == request.inputs
+                && receipt.sent.input_revisions == request.input_revisions =>
         {
             receipt.sent
         }
         _ => request,
     };
-    let result = store.apply_operation(&principal, &host, &request)?;
+    let result = store.apply_attested(&principal, &host, &request, &attestations)?;
     if c.parsed.flag("json") {
         c.say(&serde_json::to_string_pretty(&result).expect("a result serializes"));
         return Ok(());
@@ -180,6 +198,51 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
         c.say(&line);
     }
     Ok(())
+}
+
+/// The authority's signed observation in `FILE` handed to the board, and what the board accepted
+/// from it.
+fn observe(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let path = required(c, "slug", "workflow observe FILE")?;
+    let observed = store.observe_authority(&signed(&path, "workflow observe")?)?;
+    let (what, accepted) = match &observed {
+        Observing::Accepted(a) => ("accepted", a),
+        Observing::Unchanged(a) => ("already at", a),
+        Observing::Conflicted(a) => ("in conflict at", a),
+    };
+    if c.parsed.flag("json") {
+        c.say(
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "observed": what, "authority": accepted,
+            }))
+            .expect("an accepted state serializes"),
+        );
+        return Ok(());
+    }
+    c.say(&format!(
+        "{}: {what} generation {} of {} ({}){}",
+        accepted.adapter,
+        accepted.generation,
+        accepted.epoch,
+        accepted.state,
+        if accepted.conflicted {
+            "; nothing it attests is admitted until it reports a state following this one"
+        } else {
+            ""
+        }
+    ));
+    Ok(())
+}
+
+/// The signed statement in the file at `path`: its JSON `{"payload", "signature"}`.
+fn signed(path: &str, flag: &str) -> Result<Signed, Stop> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| Stop::Refused(format!("{flag} {path}: {e}")))?;
+    serde_json::from_str(&text).map_err(|e| {
+        Stop::Refused(format!(
+            "{flag} {path}: not a signed statement ({{\"payload\", \"signature\"}}): {e}"
+        ))
+    })
 }
 
 /// `HOLDER`'s lost work on `SLUG` recovered by its position's lost-holder action, at the word of

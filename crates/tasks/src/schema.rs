@@ -73,12 +73,15 @@
 //! `workflow:[KIND, …]` is a custom delivery workflow's record, from schema 23 (`store/workflow.rs`,
 //! docs/WORKFLOW.md): the active generation (`['active']`), an immutable definition by its digest,
 //! an activation by its generation, a task's transition by its slug and workflow revision, a
-//! receipt by its principal and key, and an external intent. A task the workflow holds keeps its
-//! position in `fields._board.workflow`. Two events are the fence every writer meets, whatever
-//! it is: a task's position, or the status of a task that has one, changes only beside the
-//! transition recorded for it (`workflow_position`), and a recorded definition, activation,
-//! transition or receipt is never changed (`workflow_history`). A board with no custom workflow
-//! holds no such record and meets neither.
+//! receipt by its principal and key, and an external intent; and, for its guards
+//! (`workflow/guard.rs`), the state the board accepted from each approval authority
+//! (`['authority', ADAPTER]`) and each guarded edge's admission (`['admission', SLUG, REVISION]`).
+//! A task the workflow holds keeps its position in `fields._board.workflow`. Two events are the
+//! fence every writer meets, whatever it is: a task's position, or the status of a task that has
+//! one, changes only beside the transition recorded for it (`workflow_position`), and a recorded
+//! definition, activation, transition, receipt or admission is never changed, nor an authority's
+//! accepted generation lowered within its epoch (`workflow_history`). A board with no custom
+//! workflow holds no such record and meets neither.
 //!
 //! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
 //! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
@@ -102,7 +105,7 @@ use crate::store::Program;
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. Protocol changes can require a wider version step and retirement of old read tokens:
 /// an already-open store does not repeat its opening check.
-pub const VERSION: i64 = 23;
+pub const VERSION: i64 = 26;
 
 /// Structural mutations plus all committed session changes, including deletions and re-creations.
 /// The separate structural record keeps the retired legacy scalar outside this identity.
@@ -477,8 +480,8 @@ IF !record::exists(recovery:board) { CREATE recovery:board SET generation = <str
 
 -- Schema 23: custom delivery workflows' records, and the fences on them (`store/workflow.rs`).
 DEFINE TABLE IF NOT EXISTS workflow SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS kind ON workflow TYPE string
-    ASSERT $value IN ['active', 'definition', 'activation', 'event', 'receipt', 'intent'];
+DEFINE FIELD OVERWRITE kind ON workflow TYPE string
+    ASSERT $value IN ['active', 'definition', 'activation', 'event', 'receipt', 'intent', 'authority', 'admission'];
 DEFINE FIELD IF NOT EXISTS body ON workflow TYPE object FLEXIBLE;
 DEFINE FIELD IF NOT EXISTS at ON workflow TYPE float;
 DEFINE EVENT OVERWRITE workflow_position ON task
@@ -513,8 +516,13 @@ DEFINE EVENT OVERWRITE workflow_position ON task
     };
 };
 DEFINE EVENT OVERWRITE workflow_history ON workflow
-    WHEN $event = 'UPDATE' AND ($before.kind IN ['definition', 'activation', 'event', 'receipt'] OR $before.kind != $after.kind)
+    WHEN $event = 'UPDATE' AND ($before.kind IN ['definition', 'activation', 'event', 'receipt', 'admission'] OR $before.kind != $after.kind
+        OR ($before.kind = 'authority' AND $before.body.epoch = $after.body.epoch
+            AND $after.body.generation < $before.body.generation))
     THEN {
+    IF $before.kind = 'authority' AND $after.kind = 'authority' {
+        THROW 'refused: workflow: the generation the board accepted from an approval authority is never lowered within its epoch';
+    };
     THROW string::concat('refused: workflow: a recorded ', $before.kind, ' is never changed');
 };
 DEFINE EVENT OVERWRITE workflow_active ON workflow

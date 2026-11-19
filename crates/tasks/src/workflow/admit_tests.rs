@@ -66,6 +66,17 @@ fn request(custom: &Custom, facts: &Facts, edge: &str) -> OperationRequest {
     }
 }
 
+/// What a board with no approval authority gives admission: no attestation.
+fn unguarded() -> Guarding<'static> {
+    Guarding {
+        project: "sim",
+        attesters: &[],
+        accepted: &[],
+        given: &[],
+        now: 0.0,
+    }
+}
+
 fn amber() -> Principal {
     agent_session("amber")
 }
@@ -83,6 +94,7 @@ fn taking(
         principal,
         &Host::local(),
         &request,
+        &unguarded(),
         70.0,
     )
 }
@@ -120,7 +132,15 @@ fn admitted_on(
     };
     let mut request = request(custom, facts, edge);
     request.expected = snapshot(context, facts.position.as_ref().unwrap());
-    admit(context, facts, principal, &Host::local(), &request, 70.0)
+    admit(
+        context,
+        facts,
+        principal,
+        &Host::local(),
+        &request,
+        &unguarded(),
+        70.0,
+    )
 }
 
 #[test]
@@ -170,6 +190,7 @@ fn a_request_from_a_snapshot_that_moved_is_refused_by_what_moved() {
             &amber(),
             &Host::local(),
             &request,
+            &unguarded(),
             1.0,
         )
         .unwrap_err()
@@ -211,7 +232,15 @@ fn an_edge_the_workflow_does_not_declare_or_that_leaves_another_pair_is_unknown(
     let claim = request(&two, &facts, "claim");
     let mut free = facts;
     free.position = None;
-    let refused = admit(context(&two), &free, &amber(), &Host::local(), &claim, 1.0);
+    let refused = admit(
+        context(&two),
+        &free,
+        &amber(),
+        &Host::local(),
+        &claim,
+        &unguarded(),
+        1.0,
+    );
     assert_eq!(
         refused.unwrap_err().to_string(),
         "unknown_id: the workflow holds no position of sim/a: the board's own writers keep it"
@@ -277,7 +306,18 @@ fn a_capability_is_held_only_by_whom_the_host_grants_it() {
     let mut host = Host::local();
     host.grants = host.grants.grant("owner", amber());
     let request = request(&two, &facts, "block");
-    assert!(admit(context(&two), &facts, &amber(), &host, &request, 1.0).is_ok());
+    assert!(
+        admit(
+            context(&two),
+            &facts,
+            &amber(),
+            &host,
+            &request,
+            &unguarded(),
+            1.0
+        )
+        .is_ok()
+    );
 }
 
 #[test]
@@ -290,7 +330,15 @@ fn a_human_wait_takes_a_person_whatever_capability_an_agent_or_service_was_grant
         .grant("owner", board_service("recovery"));
     for principal in [amber(), board_service("recovery")] {
         let request = request(&two, &awaiting, "accept");
-        let refused = admit(context(&two), &awaiting, &principal, &host, &request, 1.0);
+        let refused = admit(
+            context(&two),
+            &awaiting,
+            &principal,
+            &host,
+            &request,
+            &unguarded(),
+            1.0,
+        );
         assert_eq!(code(refused), RefusalCode::HumanWait);
     }
     let accepted = taking(&two, &awaiting, &local_owner(), "accept").unwrap();
@@ -416,7 +464,15 @@ fn inputs_are_the_edges_own_and_no_input_revision_is_taken_as_current() {
     let send = |change: &dyn Fn(&mut OperationRequest)| {
         let mut request = request(&two, &facts, "claim");
         change(&mut request);
-        admit(context, &facts, &amber(), &Host::local(), &request, 1.0)
+        admit(
+            context,
+            &facts,
+            &amber(),
+            &Host::local(),
+            &request,
+            &unguarded(),
+            1.0,
+        )
     };
     let missing = send(&|_| {}).unwrap_err();
     assert_eq!(
@@ -574,5 +630,111 @@ fn the_next_actions_preview_each_edge_and_why_the_principal_cannot_take_it_now()
             .unwrap_err()
             .code,
         RefusalCode::UnknownId
+    );
+}
+
+#[test]
+fn a_guarded_edge_is_admitted_with_its_attestation_and_says_which_guard_it_met() {
+    use crate::workflow::guard::tests::{accepted, guarded, passing, sign_attestation};
+    let custom = guarded();
+    let facts = at(&custom, "verify", "awaiting");
+    let accepted = [accepted()];
+    let mut attestation = passing(&custom);
+    attestation
+        .input_revisions
+        .insert("design".into(), "r7".into());
+    let given = [sign_attestation(7, &attestation)];
+    let guarding = Guarding {
+        project: "sim",
+        attesters: &custom.authorities,
+        accepted: &accepted,
+        given: &given,
+        now: 200.0,
+    };
+    let mut request = request(&custom, &facts, "accept");
+    request.input_revisions.insert("design".into(), "r7".into());
+    let owner = local_owner();
+    let host = Host::local();
+    let admitted = admit(
+        context(&custom),
+        &facts,
+        &owner,
+        &host,
+        &request,
+        &guarding,
+        200.0,
+    )
+    .unwrap();
+    assert_eq!(admitted.transition.to, pair("verify", "accepted"));
+    assert_eq!(admitted.guards.len(), 1);
+    assert_eq!(admitted.guards[0].guard, "approved");
+    assert_eq!(admitted.guards[0].input_revisions, request.input_revisions);
+    // The request's own project is never the binding: the activation's is.
+    let mut elsewhere = request.clone();
+    elsewhere.project = "other".into();
+    assert!(
+        admit(
+            context(&custom),
+            &facts,
+            &owner,
+            &host,
+            &elsewhere,
+            &guarding,
+            200.0
+        )
+        .is_ok()
+    );
+    // Without an attestation, with another input revision, or for another principal: refused.
+    let bare = Guarding {
+        given: &[],
+        ..guarding
+    };
+    assert_eq!(
+        code(admit(
+            context(&custom),
+            &facts,
+            &owner,
+            &host,
+            &request,
+            &bare,
+            200.0
+        )),
+        RefusalCode::GuardUnavailable
+    );
+    let mut drifted = request.clone();
+    drifted.input_revisions.insert("design".into(), "r8".into());
+    assert_eq!(
+        code(admit(
+            context(&custom),
+            &facts,
+            &owner,
+            &host,
+            &drifted,
+            &guarding,
+            200.0
+        )),
+        RefusalCode::StaleInput
+    );
+    // The preview names the guard as what the edge waits on.
+    let preview = next_actions(context(&custom), &facts, &owner, &host).unwrap();
+    let accept = preview.actions.iter().find(|a| a.edge == "accept").unwrap();
+    assert!(accept.unavailable.contains(&RefusalCode::GuardUnavailable));
+    // An input revision on an edge no guard binds is still refused as unchecked.
+    let working = with_role(at(&custom, "build", "working"), "amber", "executor");
+    let mut on_submit = self::request(&custom, &working, "submit");
+    on_submit
+        .input_revisions
+        .insert("design".into(), "r7".into());
+    assert_eq!(
+        code(admit(
+            context(&custom),
+            &working,
+            &amber(),
+            &host,
+            &on_submit,
+            &unguarded(),
+            1.0
+        )),
+        RefusalCode::StaleInput
     );
 }

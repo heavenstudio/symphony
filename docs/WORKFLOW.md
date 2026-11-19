@@ -7,12 +7,14 @@ the reader of the project file the default branch commits; `symphony::project::w
 re-exports those items at their earlier paths. Existing public structs, Rust calls, task wire
 fields, CLI operations and board writers keep their meaning on a board with no custom workflow.
 A custom workflow's tasks move through the board's one admission ([below](#admission)), which
-`tasks workflow`, three `tasks api` methods and the owner's `/api/workflow-apply` reach.
+`tasks workflow`, three `tasks api` methods (and `workflow_observe`, an approval authority's
+report, [guards](#guards)) and the owner's `/api/workflow-apply` reach.
 
 The [project file](PROJECT_FILE.md#workflow) accepts `[workflow]`: `candidate(text)` reads and
 validates that table without activating it, and ordinary project reads accept a definition the
 local host supports and refuse any other with `unsupported_activation`, naming what it needs
-(`activate::supported`, [below](#activation-and-mappings)). Invalid definitions are refused with
+(`activate::supported_with`, [below](#activation-and-mappings)), and `[[workflow_authorities]]`,
+the public keys its guards are verified by ([guards](#guards)). Invalid definitions are refused with
 their validation error. `Project::of` reports the refusal through its existing project problem
 mechanism. Omission runs the current board implementation unchanged; `candidate` selects the
 immutable built-in v1 definition.
@@ -26,8 +28,10 @@ validation or a host prerequisite check is not activation. The
 [graph design](analysis/configurable-delivery-workflow.md) describes the remaining system:
 configured staffing, PULL, recovery and attempts (`tools/workflow-operations`,
 `tools/workflow-attempt-integration`), the app's reading of phases and actions
-(`app/workflow-actions`), landing adapters, guards and accepted outputs each have a task of their
-own; artifact policy receipts and execution attempts retain their separate ownership.
+(`app/workflow-actions`), landing adapters and accepted outputs each have a task of their own;
+a project's approval ledger stays its own, the board verifying only its signed word
+([guards](#guards)); artifact policy receipts and execution attempts retain their separate
+ownership.
 
 ## Activation and mappings
 
@@ -66,19 +70,23 @@ of theirs takes one out of done or cancelled (the default landing sends an appro
 review, say): that write places it, as its first transition, where built-in v1's pair for the
 status it moves to stands on the active workflow, declared or mapped by the activation's
 mappings, and is refused, naming the pair, where nothing maps it, the mapping would give it an
-outcome, satisfied dependants or a completion, or the pair stands for another status. The database
+outcome, satisfied dependants or a completion, the pair stands for another status, or only
+guarded edges enter it ([guards](#guards)). The database
 refuses every other write that takes a task with no position out of done or cancelled while a
-workflow is active. A new commit of other mappings or another definition (a label) is a new
-generation, which moves no task whose pair it still declares.
+workflow is active. A new commit of other mappings, another definition (a label) or other approval
+authorities (a changed key) is a new generation, which moves no task whose pair it still declares.
 
 The whole activation is refused, nothing written and the previous workflow left active, and the
-command says why on stderr and runs on: a capability, adapter or guard the host does not support
-(every guard, until revision-bound guards); recovery on attempt failure or cancellation
+command says why on stderr and runs on: a capability or adapter the host does not support; a
+guard with no approval authority committed for its adapter, or a pair a guarded edge enters that
+a route reaches without its guards ([guards](#guards)); recovery on attempt failure or cancellation
 acknowledgement that moves work, automatic edges and retry bounds, which need durable attempts;
 `accepted_output` and `landed` dependencies, parent integration, and an adapter's prepare or
 finalize, as no adapter runs here yet and a prepared intent never completes on a caller's word; a
 pair or resume pair neither declared nor mapped; a mapping onto a position recording an outcome, satisfied dependants or a completion its
-source lacks; and a task whose live executor or reviewer it would move or restaff. A live holder
+source lacks; a task it would place, or resume, at a pair only guarded edges enter, unless the task
+stood there already under the same guards; and a task whose live executor or reviewer it would
+move or restaff. A live holder
 stands in for a live attempt until durable attempts are read here. A file that drops `[workflow]`
 after an activation is refused as well: returning to the board's own writers is not supported
 yet, and rolling back is a forward activation of another committed definition with mappings.
@@ -88,7 +96,9 @@ yet, and rolling back is a forward activation of another committed definition wi
 Every move of a task a custom workflow holds is one typed operation admitted by the board
 (`Store::apply_operation`, `symphony_board::workflow::admit`), whatever surface sends it: `just
 tasks workflow apply SLUG EDGE --revision N`, the `workflow_apply` api method, the owner's
-`/api/workflow-apply`, or a linked Rust caller. The principal is the host's, never the request's:
+`/api/workflow-apply`, or a linked Rust caller. Each carries a guarded edge's attestations
+(`--attestation FILE`, `attestations`, `Store::apply_attested`), which every route verifies alike
+([guards](#guards)). The principal is the host's, never the request's:
 the CLI and the api bind the agent session the call names, which must be on the board and not
 have left, and refuse the owner, who acts from the Symphony as the local owner. An
 `OperationRequest` fences the caller's intention, not its authority.
@@ -99,12 +109,16 @@ project than the board's, or a task no workflow holds (`unknown_id`); a request 
 (`stale_workflow`, `stale_activation`, `stale_task`); an edge the definition does not declare, or
 one that leaves another pair (`unknown_id`); an automatic edge (`unsupported_writer`); a prepare,
 finalize or parent integration, which no host-verified adapter runs yet (`unsupported_adapter`);
-any guard (`guard_unavailable`); a human wait taken by anyone but a person (`human_wait`); a
+a guard its attestations do not meet ([guards](#guards): `guard_unavailable`, or `unknown_id`
+for an attestation of a guard the edge does not carry); a human wait taken by anyone but a person (`human_wait`); a
 principal meeting none of the edge's authorities (`unauthorized`); an input the edge does not
 declare (`unknown_id`), one it declares and the request lacks, an `acquire_role` taken by anyone
 but an agent, or a resume to a pair other than the one its block saved
-(`explicit_action_required`); any input revision, as the board records none (`stale_input`); a
-dependency predicate not met (`dependency`); and a start past the project's cap (`capacity`).
+(`explicit_action_required`); an input revision on an edge no guard binds, as the board records
+none (`stale_input`); a dependency predicate not met (`dependency`); and a start past the
+project's cap (`capacity`). Last come a guarded edge's attestations, each checked against the
+operation: one for another principal (`unauthorized`), one binding other input revisions
+(`stale_input`), and any other that fails (`guard_unavailable`).
 
 A task role is held on this task: a holder of its row, or, by an edge that takes the role, a
 session no other holder or reservation stands against, its own reservation consumed. A
@@ -117,18 +131,19 @@ on the board meets nothing.
 
 The write is one transaction that checks again everything the decision read: the active
 generation and digest, the task's version, each dependency's version, each role relied on, no
-other holder or reservation of a role taken, the key unused, the agent on the board, and the
-cap's counters. Anything moved since reads and decides again, so a request the board moved past
+other holder or reservation of a role taken, the key unused, the agent on the board, the cap's
+counters, and the state the board accepted from each approval authority a guard was met at. Anything moved since reads and decides again, so a request the board moved past
 is refused as stale, never replayed on where another left the task. The write records the
-transition and its receipt, drops and adds the role rows its effects name, puts the task at its
-pair and projected status, settles its hold when its status moves, and posts `took EDGE
+transition and its receipt, drops and adds the role rows its effects name, records a guarded
+edge's admission, puts the task at its pair and projected status, settles its hold when its status moves, and posts `took EDGE
 (SLUG@REVISION): FROM → TO` on its thread. It answers the transition's id, its effects and the
 principal's next actions. A key is its principal's: a request repeating it answers the first
-result when it is the same request, and is refused when it is another; `tasks workflow apply`
-sends the receipt's request again when its command is repeated.
+result when it is the same request, whatever attestations come with it, and is refused when it is
+another; `tasks workflow apply` sends the receipt's request again when its command is repeated.
 
 `Store::workflow_actions` previews each edge leaving the task's pair with what stops the principal
-taking it now, its authority named without saying who holds it: never a permit.
+taking it now, its authority named without saying who holds it: never a permit. A guarded edge
+always previews `guard_unavailable`, as only an attestation given with the operation meets it.
 `Store::workflow_read` answers the active definition, revision and generation. A task filed while
 a custom workflow is active starts at the definition's initial pair, its first transition
 recorded in the write that files it, and a filing that asks for another status is refused. A
@@ -144,6 +159,87 @@ writers keep. `just tasks next` and PULL offer no task a workflow holds to a cla
 unstaffed, orphaned or unreviewed (a working one counts as executing), and the board's block of
 a dependant whose prerequisite was cancelled leaves one to its edges' dependency predicates.
 Staffing and the launcher do not read the workflow yet (`tools/workflow-operations`).
+
+## Guards
+
+A guard is a decision the project keeps in its own approval ledger, which an edge needs before it
+is taken: a person's approval of a design, say. The board never holds the ledger and never decides
+a guard. The project's approval authority signs what its ledger decided, and the board verifies
+that signature by the key the project commits and admits the edge only on that word
+([the decision](DECISIONS.md#revision-bound-project-guards),
+[the analysis](analysis/revision-bound-transition-guards.md)). What it asks of a project, in
+plain words:
+
+- **It holds a signing key.** The project runs an authority over its ledger that holds an
+  Ed25519 signing key; its secret half never enters the repository, the board or a request.
+- **It commits the public half** in `[[workflow_authorities]]`, one for each adapter its guards
+  name, with the issuer it signs as and the explicit `[project] id` it signs for
+  ([PROJECT_FILE](PROJECT_FILE.md#workflow_authorities)). A guard with no authority committed for
+  its adapter leaves the workflow unsupported.
+- **A changed key is a new generation.** A changed key, issuer or authority is a commit of the
+  project file, so a new activation generation: every attestation made for the previous one stops
+  at once.
+- **It reports its ledger's state.** The authority signs observations of where its ledger stands:
+  an epoch (one run of its numbering), a generation that rises with every decision that could
+  change an answer, and a digest of that state, each naming the state it follows (none for its
+  first). It hands each to the board: `just tasks workflow observe FILE`, the `workflow_observe`
+  api method or `Store::observe_authority`. Whoever passes it on adds nothing: the board checks it.
+- **It attests each operation.** For an operation the ledger allows, the authority signs an
+  attestation of contract 1: the project, task, guard, edge, workflow digest and activation
+  generation, the task's workflow revision and the pair it is taken from, the input revisions it
+  covers, the principal (its kind, issuer and subject), its result (`pass`, `refuse` or
+  `unknown`) with the ledger facts a pass rests on and the reasons for another, the epoch and
+  generation it was decided at, and its time: issued no more than 30 s ahead of the board's
+  clock, expiring at most 900 s after it was issued. The caller gives it with the operation.
+
+The board accepts an observation only signed by the committed key, under the observation's own
+domain (a signature over an attestation's bytes is none), from an authority the active
+activation commits, and following the state it accepted before: the same state again changes
+nothing, a generation is never lowered within its epoch, a new epoch starts only from the accepted
+state, and nothing is skipped. Another state at the accepted generation marks the authority in
+conflict, and nothing it attests is admitted until it reports a state following that one. A
+refusal names the accepted state the authority reports again from.
+
+A guarded edge is admitted only with one attestation for each of its guards, each verified by the
+committed key under the attestation's domain and covering exactly the operation taken: the
+project the activation recorded (never the one a request names), the task, guard, edge, workflow,
+activation, workflow revision and pair, the principal the host bound (else `unauthorized`), the
+request's input revisions exactly (else `stale_input`), a pass resting on at least one fact, in its
+time, at the epoch and generation the board accepted from its authority now. Everything else fails
+closed as `guard_unavailable`: no observation accepted, a conflict, a refusal, an unknown, an
+attestation that does not verify or covers another operation, or one decided at an older
+generation (a decision revoked since) or a newer one (its observation not yet given). An
+attestation for a guard the edge does not carry is `unknown_id`, and two for one guard are refused.
+
+The write is fenced on each authority's accepted state it checked, and counts each admission on
+that authority's record: an observation accepted between an admission's read and its write makes
+the admission decide again on the new generation, and an admission between an observation's read
+and its write makes the observation decide again, so a revocation and an admission never pass
+each other. The write records the admission (`['admission', SLUG, REVISION]`): the transition, the
+principal, the input revisions, and each guard met with its attestation and the authority's
+state, the board's audit of what it admitted, never an approval. A request repeating its key
+answers its first result and admits nothing again.
+
+An effect that cannot be taken back (a merge, a push, a message out) is checked again right before
+it: `Store::revalidate_dispatch(SLUG, REVISION, FRESH)` refuses unless the task still stands where
+that transition left it, under the same activation, and each guard its admission met is met again
+now, by the attestations it recorded or by fresh ones covering the same operation, signed, in their
+time and at the generation the board accepts now. A decision revoked since, an expired
+attestation or an authority in conflict stops the effect. The landing adapters call it
+(`tools/workflow-landing-adapters`); a transition no guard admitted is checked on its position
+alone.
+
+A route never goes around a guard. An activation is refused where a pair a guarded edge enters is
+reached without its guards: by another edge into it under other guards or none, as the initial
+pair, or as a recovery's target from another position (a move within a pair and a block's resume
+are no route in); and an activation's placement, its mappings or a reopening never puts a task at
+a pair only guarded edges enter, unless it stood there already under the same guards.
+
+The board keeps each authority's accepted state across activations, so a new key goes on from
+the state the old one left. A whole-board copy or restore leaves the accepted states behind: its
+guards are refused until each authority reports again, as a first report. A restore of the
+database's own files would bring back an older accepted state, which only the attestations' expiry
+bounds until the authority reports its current one.
 
 ## Recovery
 
@@ -179,7 +275,9 @@ attempts (`tools/workflow-operations`, `tools/workflow-attempt-integration`).
 From board schema 23 a custom workflow's records are one `workflow` table in both stores, each a
 `kind` and a `body` under a compound id: the active generation (`['active']`), each definition by
 its digest, each activation by its generation, and each transition of a task by its slug and the
-workflow revision it made (`['event', SLUG, REVISION]`). A task the workflow holds keeps its
+workflow revision it made (`['event', SLUG, REVISION]`). From schema 26 it holds as well the state
+the board accepted from each approval authority (`['authority', ADAPTER]`) and each guarded
+edge's admission (`['admission', SLUG, REVISION]`) ([guards](#guards)). A task the workflow holds keeps its
 position in `fields._board.workflow`: its pair, the pair a blocked task resumes to, the generation
 and digest it was last moved under, and its workflow revision, which only its own transitions move.
 The position, and the status it projects to, change only in the one write that records their
@@ -191,11 +289,12 @@ and copy paths included. A write that changes a task's position, or the status o
 one, is refused unless the position is the next revision and the transition recorded for it names
 the same pair, resume, generation, digest and status. A position is never removed, and a task is
 never put back at a position its later transitions left. A recorded definition, activation,
-transition or receipt is never changed, and the active generation moves forward only to an
+transition, receipt or admission is never changed, the generation accepted from an approval
+authority is never lowered within its epoch, and the active generation moves forward only to an
 activation recorded for it. `Store::raw` refuses the table. A board with no custom workflow holds
 none of these records, its export is the text it was, and every other write runs as before. The
 whole-board copy carries the records before the tasks, so a copy that lost them cannot restore a
-task the workflow holds. A reader one schema behind keeps and ignores the position.
+task the workflow holds, and leaves the authorities' accepted states behind ([guards](#guards)). A reader one schema behind keeps and ignores the position.
 
 ## Definition format 1
 
@@ -213,7 +312,7 @@ are omitted in TOML or `null` in JSON; all other fields are required. Empty list
 | Position | `at` pair; optional `staffing` (`executor`, `reviewer`, `orchestrator`, omission means none); `slot`; `dependencies`; `unsuccessful_dependency`; booleans `accepts_work`, `terminal`, `satisfies_dependencies`; conservative `legacy`; optional `outcome`; `completion`; optional `recovery`. |
 | Recovery | Required actions `release`, `lost_holder`, `attempt_failure`, `cancellation_acknowledged`. Every staffed position declares all four. |
 | Recovery action | Optional `target` pair; boolean `manual`; `slot`; booleans `release_role` and `release_reservation`. No target means stay and requires explicit manual recovery. A target must be ordinary nonterminal coordination work without outcome, dependency-satisfaction or completion facts; completing work requires a typed edge. |
-| Guard | `id`, `adapter`: an opaque required policy receipt, with no executable expression or cached pass. |
+| Guard | `id`, `adapter`: a decision the project's approval authority for that adapter attests per operation ([guards](#guards)), with no executable expression or cached pass. |
 | Edge | `id`, nonempty `label`, exact `from` and `to` pairs, `operation`, optional legacy `alias`, nonempty `authority`, `inputs` ID list, `dependencies`, `guards` ID list, ordered `effects`, boolean `automatic`, optional `retry`, boolean `human_wait`. |
 | Retry | Positive unsigned `maximum`, `exhausted` pair with explicit manual recovery. |
 
