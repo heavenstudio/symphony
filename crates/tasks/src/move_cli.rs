@@ -227,11 +227,12 @@ mod tests {
         let (code, out, _) = ran(&["--version"]);
         assert_eq!(code, 0);
         assert!(out.starts_with("tasks-move "), "{out}");
+        const BOTH: &str = "one of postgresql, surrealdb or --restore SNAPSHOT";
         for (args, said) in [
-            (&[][..], "one of postgresql, surrealdb or --restore SNAPSHOT"),
+            (&[][..], BOTH),
             (&["oracle"], "the engine is postgresql or surrealdb"),
-            (&["postgresql", "surrealdb"], "one of postgresql, surrealdb"),
-            (&["postgresql", "--restore", "x"], "one of postgresql, surrealdb"),
+            (&["postgresql", "surrealdb"], BOTH),
+            (&["postgresql", "--restore", "x"], BOTH),
             (&["--restore"], "argument --restore: expected one SNAPSHOT"),
             (&["--restore", " "], "argument --restore: expected one SNAPSHOT"),
             (&["postgresql", "--as"], "argument --as: expected one argument"),
