@@ -464,14 +464,6 @@ impl Store {
         decoded(body, "workflow position")
     }
 
-    /// Every transition recorded of `slug`, by the workflow revision each made: none for a task no
-    /// workflow ever held.
-    pub fn workflow_transitions(&self, slug: &str) -> Result<Vec<Transition>, Error> {
-        let body: Value =
-            self.retrying(|| self.read(both(sql::EVENTS, pg::events()), json!({"slug": slug})))?;
-        Ok(decoded(body, "workflow transitions")?.unwrap_or_default())
-    }
-
     /// `transition` recorded and its task put where it goes, in one write, when the task is at
     /// workflow revision `expected` (0 for a task no workflow held yet); refused as `stale_task`
     /// at any other: the fences' tests' own write of a position. The board writes one only in an

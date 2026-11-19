@@ -217,22 +217,17 @@ fn parent_integration_and_adapters_are_unsupported() {
     let prepared = Validated::new(prepared).unwrap();
     let mut lander = Host::local();
     lander.adapters.push("lander".into());
+    // An adapter the host registers takes its edges; one it does not refuses the activation.
+    assert_eq!(supported(&prepared, &lander), Ok(()));
     assert_eq!(
-        supported(&prepared, &lander),
-        Err(
-            "unsupported edge prepare: an adapter's prepare or finalize \
-             (tools/workflow-landing-adapters)"
-                .into()
-        )
+        supported(&prepared, &Host::local()),
+        Err("unsupported adapter: lander".into())
     );
     definition.edges[0].dependencies = Dependency::Landed;
     let landed = Validated::new(definition.clone()).unwrap();
     assert_eq!(
         supported(&landed, &Host::local()),
-        Err(
-            "unsupported edge accept: a dependency on landed (tools/workflow-landing-adapters)"
-                .into()
-        )
+        Err("unsupported edge accept: a dependency on landed".into())
     );
     definition.edges[0].dependencies = Dependency::AcceptedOutput;
     let output = Validated::new(definition.clone()).unwrap();

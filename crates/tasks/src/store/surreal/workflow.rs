@@ -18,10 +18,6 @@ LET $task = (SELECT fields._board.workflow AS w FROM ONLY type::record('task', $
 IF $task = NONE { THROW string::concat('refused: no task ', $slug); };
 RETURN $task.w ?? NULL;";
 
-/// Every transition recorded of the task `$slug`, in the order of its record's id.
-pub(in crate::store) const EVENTS: &str =
-    "RETURN SELECT VALUE body FROM workflow:['event', $slug, NONE]..['event', $slug, ..];";
-
 /// The transition `$transition` of the task `$slug`, recorded, and the task put at `$position`
 /// with the status it projects to, in one write, from the workflow revision `$expected` (0 for a
 /// task no workflow held): refused as stale from any other, and the record made once, so of two

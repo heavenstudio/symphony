@@ -357,17 +357,24 @@ fn blocking(
         _ => {}
     }
     for effect in &edge.effects {
-        let adapter = match effect {
-            Effect::Prepare { adapter } | Effect::Finalize { adapter } => adapter.as_str(),
-            Effect::ParentIntegration => "parent integration",
+        let needs = match effect {
+            // An adapter the host registered takes its own edges (`super::effect`).
+            Effect::Prepare { adapter } | Effect::Finalize { adapter }
+                if host.adapters.contains(adapter) =>
+            {
+                continue;
+            }
+            Effect::Prepare { adapter } | Effect::Finalize { adapter } => {
+                format!("the adapter {adapter}, which this host does not register")
+            }
+            Effect::ParentIntegration => {
+                "parent integration, which no host-verified adapter runs here yet".to_string()
+            }
             _ => continue,
         };
         found.push(Refusal::new(
             RefusalCode::UnsupportedAdapter,
-            format!(
-                "edge {id} needs {adapter}, which no host-verified adapter runs here yet \
-                 (tools/workflow-landing-adapters)"
-            ),
+            format!("edge {id} needs {needs}"),
         ));
     }
     if let Some(guard) = edge.guards.first() {

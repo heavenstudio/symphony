@@ -42,6 +42,7 @@ import {
   legendStates,
   lookClass,
   nextRead,
+  placeTotals,
   type Row,
   readTimeline,
   roomCss,
@@ -632,6 +633,11 @@ export function TimelineDrawn({
   wide = false,
 }: DrawnProps) {
   const [first, machine] = totals(timeline);
+  // The clock's time at each phase and state, apart from the machine's on runs.
+  const places = [
+    ["Phases", placeTotals(timeline, "phase")],
+    ["States", placeTotals(timeline, "state")],
+  ] as const;
   const note = keptNote(timeline);
   const steps = rowLayout(timeline);
   const drawn = laneLayout(timeline);
@@ -648,6 +654,10 @@ export function TimelineDrawn({
             </>
           )}
         </p>
+        {places.map(
+          ([name, spent]) =>
+            spent !== null && <p key={name} className="tl-totals">{`${name}: ${spent}`}</p>,
+        )}
         {note !== null && <p className="tl-note">{note}</p>}
       </div>
       <div className="tl-body" id={BODY} ref={body}>

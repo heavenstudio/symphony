@@ -261,7 +261,9 @@ then checks the actual remote/head/target preconditions before sending the exter
 The intent is committed before external I/O. A stale or cancelled reservation found before
 dispatch refuses the effect. Finalization requires the authoritative remote squash/deployment
 receipt and the adapter's required reconciliation; provider or graph success alone cannot
-finalize delivery.
+finalize delivery. A managed approve writes no verdict message: the head a landing binds as
+reviewed is the `head` input of the approve transition's request, read back from its receipt.
+[WORKFLOW](../WORKFLOW.md#external-effects) is the contract as built.
 
 A request already in flight cannot be recalled by a later evidence withdrawal or cancellation.
 Reconciliation records the actual outcome against the policy/evidence snapshot that authorized

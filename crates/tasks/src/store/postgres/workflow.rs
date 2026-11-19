@@ -23,13 +23,6 @@ END IF;
     )
 }
 
-pub(in crate::store) fn events() -> Pg<'static> {
-    Pg::read(
-        "coalesce((SELECT jsonb_agg(body ORDER BY (body ->> 'revision')::bigint) FROM workflow
-            WHERE kind = 'event' AND body ->> 'slug' = v ->> 'slug'), '[]'::jsonb)",
-    )
-}
-
 #[cfg(test)]
 pub(in crate::store) fn record() -> Pg<'static> {
     Pg::script(

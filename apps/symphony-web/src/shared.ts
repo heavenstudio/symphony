@@ -97,3 +97,13 @@ export const STALE = store(false);
 
 /** The server's own notice, as its feed last said it; empty for none. */
 export const SERVER_NOTICE = store("");
+
+/**
+ * What a chunk a page imports when it needs it is imported through: Vite wraps each `import()` in
+ * a preload helper of its own, which the build resolves to this (vite.config.ts,
+ * `preloadHelper`), as nothing here preloads: so the helper is in the chunk every page shares,
+ * no file of its own that the board's and the task page's first visits would fetch.
+ */
+export function __vitePreload<T>(load: () => Promise<T>): Promise<T> {
+  return load();
+}

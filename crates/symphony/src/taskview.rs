@@ -235,7 +235,32 @@ fn task(t: &symphony_board::Task) -> Task {
         waits_on: None,
         review_rounds: None,
         from: None,
+        workflow: place(&t.fields),
     }
+}
+
+/// Where a custom workflow holds the task whose board fields are `stored`, as a page shows it: none
+/// for a task the board's own writers keep, and none for a position this build cannot read (a
+/// newer board's), which the page then draws as the board's own.
+pub fn place(
+    stored: &BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+) -> Option<symphony_api::workflow::TaskPlace> {
+    let held = stored.get("_board")?.get("workflow")?;
+    let position: symphony_board::workflow::TaskPosition =
+        serde_json::from_value(held.clone()).ok()?;
+    Some(symphony_api::workflow::TaskPlace {
+        phase: position.phase,
+        state: position.state,
+        resume: position.resume,
+        revision: position.revision,
+        manual: position.manual.filter(|exit| exit.manual).map(|exit| {
+            symphony_api::workflow::ManualRecovery {
+                trigger: exit.trigger.as_str().into(),
+                holder: exit.holder,
+                role: exit.role,
+            }
+        }),
+    })
 }
 
 /// The most of a brief the task page renders and sends. A longer brief's page carries the blocks

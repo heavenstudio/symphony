@@ -66,6 +66,7 @@ pub(crate) mod unanswered;
 mod waits;
 mod work;
 pub(crate) mod workflow;
+mod workflow_events;
 mod writers;
 
 use beside::Beside;
