@@ -389,9 +389,11 @@ case "$processors" in
 esac
 if [ "$at_once" -lt 1 ]; then at_once=1; fi
 
-# Cargo puts each binary of the workspace in the target folder as a copy of its build under deps/,
-# and every Cargo call makes that copy again, even one that builds nothing: it removes the copy,
-# then copies. One batch's call while another batch's test runs that binary (CARGO_BIN_EXE_NAME,
+# On macOS Cargo puts each binary of the workspace in the target folder as a copy of its build
+# under deps/, and every Cargo call makes that copy again, even one that builds nothing: it removes
+# the copy, then copies. Elsewhere it hard-links the binary to its build (copying only where it
+# cannot link), which a later call finds is its build already and leaves in place. One batch's
+# call that copies while another batch's test runs that binary (CARGO_BIN_EXE_NAME,
 # SYMPHONY_TEST_BINARIES, the libraries' runner) leaves the test finding no file there. So each
 # copy the build lists is made a hard link to the build it copies, renamed over it, and every later
 # call finds the copy is its build already and leaves it in place. A copy that is no build's is
@@ -468,6 +470,8 @@ slots() {
 
 if [ "${#started[@]}" -gt 0 ]; then
     link_binaries
+    # An interrupt since the client was published, the linking's among it, starts no lane.
+    if [ -n "$interrupted" ]; then exit "$interrupted"; fi
     printf 'test-lanes: lanes run at most %s at once (%s), each writing its log as it runs:\n' \
         "$at_once" "$why"
     for i in "${started[@]}"; do
