@@ -36,6 +36,20 @@ impl From<WorkflowRead> for Operating {
     }
 }
 
+/// Whether `task` is finished by its recorded facts, on `operating` where a custom workflow is
+/// active ([`Operating::finished`]): a task one holds at a terminal position, never by the status
+/// it projects to, and none at a pair it does not declare; any other task by the board's own done
+/// or cancelled.
+pub fn finished(operating: Option<&Operating>, task: &Task) -> bool {
+    match operating {
+        Some(operating) => operating.finished(task).unwrap_or(false),
+        None => {
+            !crate::store::workflow::position_held(&task.fields)
+                && crate::health::FINISHED.contains(&task.status.as_str())
+        }
+    }
+}
+
 /// A task the workflow holds, at a position the definition declares.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Placed<'a> {

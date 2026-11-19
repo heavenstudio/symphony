@@ -4,7 +4,7 @@
 use super::Case;
 use symphony_api::workflow::Source;
 use symphony_board::workflow::{Custom, Host, written};
-use symphony_board::{NewSession, NewTask};
+use symphony_board::{NewLaunch, NewSession, NewTask};
 
 /// Work built (available, then worked by its executor), then accepted by the owner.
 const FLOW: &str = r#"
@@ -391,4 +391,67 @@ fn a_launch_starts_the_role_a_held_tasks_edges_give_its_executor_reserving_and_i
         (board.get("sim/jump").unwrap().roles.iter())
             .any(|r| r.handle == reviewer.handle && r.role == "reviewer")
     );
+}
+
+#[test]
+fn an_edge_to_a_terminal_position_finishes_the_task_closing_what_was_launched_on_it() {
+    const SHIP: &str = r#"{ id = "ship", label = "Ship", from = { phase = "build", state = "working" }, to = { phase = "verify", state = "accepted" }, operation = "close_covered", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "outcome", outcome = "success", satisfies_dependencies = true }, { kind = "slot", policy = "release" }], automatic = false, human_wait = false },
+  "#;
+    let p = super::launch::Terminals::new("held-finish");
+    let board = p.board();
+    let orch = (board.register(&NewSession::new("orchestrator")).unwrap())
+        .row
+        .handle;
+    let shipping = FLOW.replace(r#"  { id = "accept","#, &format!(r#"  {SHIP}{{ id = "accept","#));
+    board
+        .activate_workflow(&custom(&shipping), &Host::local())
+        .unwrap();
+    board
+        .create(&NewTask::new("sim/jump", "Jump", &orch))
+        .unwrap();
+    let worker = (board.register(&NewSession::new("worker")).unwrap())
+        .row
+        .handle;
+    board
+        .record_launch(&NewLaunch {
+            slug: "sim/jump".into(),
+            handle: worker.clone(),
+            role: "executor".into(),
+            claude_session: "c".into(),
+            pane: "t1".into(),
+            ..NewLaunch::default()
+        })
+        .unwrap();
+    p.idle_terminal(&worker);
+    // An edge short of a terminal position closes nothing launched on it.
+    let claimed = p.as_(
+        &worker,
+        &["workflow", "apply", "sim/jump", "claim", "--revision", "1"],
+    );
+    assert!(
+        claimed.out.starts_with("took claim (sim/jump@2)\n") && !claimed.out.contains("closed pane"),
+        "{}{}",
+        claimed.out,
+        claimed.err
+    );
+    assert_eq!(p.addresses(), ["t1"]);
+    let shipped = p.as_(
+        &worker,
+        &["workflow", "apply", "sim/jump", "ship", "--revision", "2"],
+    );
+    assert_eq!(
+        (shipped.code, shipped.out.as_str(), shipped.err.as_str()),
+        (
+            0,
+            format!(
+                "took ship (sim/jump@3)\nsim/jump at verify/accepted, workflow revision 3 \
+                 (generation 1)\n  no edge leaves it\n→ closed pane t1 of {worker} (its tasks are \
+                 finished); restore: just tasks restore sim/jump {worker}\n"
+            )
+            .as_str(),
+            ""
+        )
+    );
+    assert_eq!(p.addresses(), Vec::<String>::new());
+    assert_eq!(board.get("sim/jump").unwrap().status, "done");
 }

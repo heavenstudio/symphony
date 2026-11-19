@@ -70,7 +70,7 @@ use place::{name_place, place, stream};
 pub use uuid::new_uuid;
 
 use crate::cli::{Env, probes};
-use crate::health::{FINISHED, RESERVE_SECONDS};
+use crate::health::RESERVE_SECONDS;
 use crate::rows::TaskSessionRow;
 use crate::sys;
 use crate::{Error, NewLaunch, NewSession, Store};
@@ -294,11 +294,7 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     // A task a custom workflow holds is finished by its position, and staffed by the edges
     // leaving it: a launch starts only a role one of them gives.
     let operating = store.operating_for(std::slice::from_ref(&task))?;
-    let finished = match &operating {
-        Some(operating) => operating.finished(&task).unwrap_or(false),
-        None => FINISHED.contains(&task.status.as_str()),
-    };
-    if finished {
+    if crate::workflow::operate::finished(operating.as_ref(), &task) {
         return Err(Error::Refused(format!("{slug} is {}", task.status)));
     }
     if let Some(placed) = operating.as_ref().and_then(|o| o.placed(&task)) {
@@ -495,10 +491,7 @@ fn live_executor_in(store: &Store, path: &Path) -> Result<Option<String>, Error>
     let records = store.all_task_sessions()?;
     // Finished by its recorded facts: a held task by its position, never its projected status.
     let operating = store.operating_for(&board.tasks)?;
-    let finished = |t: &crate::Task| match &operating {
-        Some(operating) => operating.finished(t).unwrap_or(false),
-        None => FINISHED.contains(&t.status.as_str()),
-    };
+    let finished = |t| crate::workflow::operate::finished(operating.as_ref(), t);
     for task in board.tasks.iter().filter(|t| !finished(t)) {
         for role in task
             .roles

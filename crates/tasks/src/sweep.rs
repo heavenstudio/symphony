@@ -119,7 +119,7 @@ mod verdicts;
 pub use aside::{SWEPT, swept};
 pub use command::{Request, command, command_connect};
 
-use crate::health::FINISHED;
+use crate::workflow::operate::{self, Operating};
 use crate::maps::Collect as _;
 use crate::rows::TaskSessionRow;
 use crate::{Error, Session, Store, Task, sys};
@@ -149,12 +149,16 @@ pub struct Facts {
     pub sessions: Vec<Session>,
     pub tasks: Vec<Task>,
     pub launches: Vec<TaskSessionRow>,
+    /// The custom workflow that holds some of `tasks`, by whose positions they are finished or
+    /// still worked on; none where it holds none.
+    pub operating: Option<Operating>,
 }
 
 impl Facts {
     pub fn read(store: &Store) -> Result<Facts, Error> {
         let board = store.board()?;
         Ok(Facts {
+            operating: store.operating_for(&board.tasks)?,
             sessions: board.sessions,
             tasks: board.tasks,
             launches: store.all_task_sessions()?,
@@ -183,7 +187,7 @@ impl Finished {
     /// Of task `slug`; none while it is not done or cancelled.
     pub fn of(store: &Store, slug: &str) -> Result<Finished, Error> {
         let mut found = Finished::default();
-        if !FINISHED.contains(&store.get(slug)?.status.as_str()) {
+        if !store.finished(&store.get(slug)?)? {
             return Ok(found);
         }
         let mut slugs = vec![slug.to_string()];
@@ -487,6 +491,8 @@ struct Index<'a> {
     tasks: BTreeMap<&'a str, &'a Task>,
     /// The tasks whose slug, with its last `/` as `-`, is a branch's name, by that name.
     spelled: BTreeMap<String, Vec<&'a Task>>,
+    /// The custom workflow by whose positions the tasks it holds are finished or still worked on.
+    operating: Option<&'a Operating>,
 }
 
 /// The branch name `slug` is worked on under when its last `/` is spelled `-`
@@ -530,6 +536,7 @@ impl<'a> Index<'a> {
                 .map(|t| (t.slug.as_str(), t))
                 .collect_map(),
             spelled: BTreeMap::new(),
+            operating: facts.operating.as_ref(),
         };
         for task in &facts.tasks {
             if let Some(name) = spelled(&task.slug) {
@@ -629,19 +636,34 @@ impl<'a> Index<'a> {
             .collect()
     }
 
+    /// Whether task `slug` is finished by its recorded facts ([`operate::finished`]): a task a
+    /// custom workflow holds by its terminal position, never the status it projects to.
+    fn done(&self, slug: &str) -> bool {
+        operate::finished(self.operating, self.tasks[slug])
+    }
+
+    /// Whether task `slug` may still be worked on or reviewed: one a custom workflow holds until
+    /// its position is terminal, whatever status it projects to; any other at a [`LIVE_TASK`]
+    /// status.
+    fn working(&self, slug: &str) -> bool {
+        let task = self.tasks[slug];
+        if crate::store::workflow::position_held(&task.fields) {
+            return !self.done(slug);
+        }
+        LIVE_TASK.contains(&task.status.as_str())
+    }
+
     /// Why a task still live keeps `path`, if one does.
     fn live(&self, path: &Path, branch: Option<&str>) -> Option<String> {
         self.tied(path, branch)
             .into_iter()
-            .find(|(slug, _)| LIVE_TASK.contains(&self.tasks[slug].status.as_str()))
+            .find(|(slug, _)| self.working(slug))
             .map(|(_, why)| why)
     }
 
-    /// Whether every task `path` is tied to is done or cancelled (or it is tied to none).
+    /// Whether every task `path` is tied to is finished (or it is tied to none).
     fn finished(&self, path: &Path, branch: Option<&str>) -> bool {
-        self.tied(path, branch)
-            .keys()
-            .all(|slug| FINISHED.contains(&self.tasks[slug].status.as_str()))
+        self.tied(path, branch).keys().all(|slug| self.done(slug))
     }
 
     /// Why the agent that worked in `path` has finished, as the board shows it: a session is bound
@@ -661,11 +683,7 @@ impl<'a> Index<'a> {
             return None;
         }
         let tied = self.tied(path, branch);
-        if tied.is_empty()
-            || !tied
-                .keys()
-                .all(|slug| FINISHED.contains(&self.tasks[slug].status.as_str()))
-        {
+        if tied.is_empty() || !tied.keys().all(|slug| self.done(slug)) {
             return None;
         }
         let (sessions, are) = if handles.len() == 1 {
@@ -976,11 +994,9 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     }
     if let (Some(checkout), Some(folder)) = (&checkout, &artifacts) {
         let stage = |slug: &str| index.tasks.get(slug).map(|task| task.status.clone());
-        let open: Vec<String> = index
-            .tasks
-            .values()
-            .filter(|task| !FINISHED.contains(&task.status.as_str()))
-            .map(|task| task.slug.clone())
+        let open: Vec<String> = (index.tasks.keys())
+            .filter(|slug| !index.done(slug))
+            .map(|slug| slug.to_string())
             .collect();
         let read = || mentions(root, &main, folder, store, &open);
         (result.set_aside, result.cap_unread) =
@@ -1603,6 +1619,53 @@ mod tests {
             BTreeSet::from(["sim/jump".to_string(), "tools/a-b/c".to_string()])
         );
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_task_a_workflow_holds_is_finished_by_its_terminal_position_never_its_projected_status() {
+        use crate::workflow::operate::tests::{held, legacy, reviewed};
+        let launched = |slug: &str| TaskSessionRow {
+            slug: slug.into(),
+            handle: "amber".into(),
+            worktree: format!("/nowhere/{slug}"),
+            ..TaskSessionRow::default()
+        };
+        let tasks = vec![
+            // Approved: it projects to done, yet its position is no terminal one.
+            held("sim/approved", "verify", "approved"),
+            held("sim/accepted", "verify", "accepted"),
+            held("sim/cancelled", "build", "cancelled"),
+            held("sim/awaiting", "verify", "awaiting"),
+            legacy("sim/done", "done"),
+            legacy("sim/review", "review"),
+        ];
+        let facts = Facts {
+            launches: tasks.iter().map(|t| launched(&t.slug)).collect(),
+            tasks,
+            sessions: Vec::new(),
+            operating: Some(reviewed()),
+        };
+        let index = Index::of(&facts, &[]);
+        for (slug, finished) in [
+            ("sim/approved", false),
+            ("sim/accepted", true),
+            ("sim/cancelled", true),
+            ("sim/awaiting", false),
+            ("sim/done", true),
+            ("sim/review", false),
+        ] {
+            let at = canonical(Path::new(&format!("/nowhere/{slug}")));
+            assert_eq!(index.finished(&at, None), finished, "{slug}");
+            assert_eq!(index.live(&at, None).is_some(), !finished, "{slug}");
+        }
+        // With no workflow read, a held task is never taken as finished by its status.
+        let unread = Facts {
+            operating: None,
+            ..facts.clone()
+        };
+        let index = Index::of(&unread, &[]);
+        let at = canonical(Path::new("/nowhere/sim/approved"));
+        assert!(!index.finished(&at, None));
     }
 
     #[test]

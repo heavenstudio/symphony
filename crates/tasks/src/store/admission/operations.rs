@@ -44,10 +44,8 @@ impl Store {
     /// any other when the board's writers keep it done or cancelled. Reads the workflow only for a
     /// task one holds.
     pub fn finished(&self, task: &crate::Task) -> Result<bool, Error> {
-        let Some(operating) = self.operating_for(std::slice::from_ref(task))? else {
-            return Ok(crate::health::FINISHED.contains(&task.status.as_str()));
-        };
-        Ok(operating.finished(task).unwrap_or(false))
+        let operating = self.operating_for(std::slice::from_ref(task))?;
+        Ok(crate::workflow::operate::finished(operating.as_ref(), task))
     }
 
     /// [`Store::settle_held`] where `board` holds anything to settle, its failure said on stderr:

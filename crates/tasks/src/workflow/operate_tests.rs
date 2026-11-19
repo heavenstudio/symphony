@@ -336,3 +336,21 @@ fn a_done_predicate_is_met_by_satisfying_positions_and_the_boards_done() {
         assert!(!w.dependencies_met(&needing(&[]), &edge, find), "{unchecked:?}");
     }
 }
+
+#[test]
+fn finished_is_a_terminal_position_for_held_work_and_done_or_cancelled_for_the_rest() {
+    let w = reviewed();
+    for (task, finished) in [
+        (held("sim/a", "verify", "approved"), false),
+        (held("sim/a", "verify", "accepted"), true),
+        (held("sim/a", "build", "cancelled"), true),
+        (legacy("sim/a", "done"), true),
+        (legacy("sim/a", "cancelled"), true),
+        (legacy("sim/a", "review"), false),
+    ] {
+        assert_eq!(super::finished(Some(&w), &task), finished, "{:?}", task.fields);
+    }
+    // No workflow read: a held task is never finished by the status it projects to.
+    assert!(!super::finished(None, &held("sim/a", "verify", "accepted")));
+    assert!(super::finished(None, &legacy("sim/a", "done")));
+}

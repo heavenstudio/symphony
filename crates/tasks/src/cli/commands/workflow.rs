@@ -179,6 +179,8 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
     for line in action_lines(&slug, &result.next) {
         c.say(&line);
     }
+    // An edge to a terminal position finishes the task: its terminals close and its sweep starts.
+    super::finish::after_finish(store, c, &store.get(&slug)?);
     Ok(())
 }
 
