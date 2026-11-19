@@ -115,8 +115,10 @@ fix takes the express path, and another run follows it. A candidate red
 ready work at once, by priority and slug, and first of everything (`red_unstaffed`) once nobody
 executes it 10 minutes after it was filed. An orchestrator staffs it before anything else, and one
 agent fixes it with the smallest checks that cover the repair, starting from the failing tests or
-the failing step rerun alone as its text names them. A red is fixed in the code, and a test red on
-load is discarded instead (`tests/no-test-fails-on-load`). A test or check is never loosened to
+the failing step rerun alone as its text names them. A test the run reran alone that passed is no
+red, and has a p1 task of its run's instead; a red is fixed in the code, and a test red on load all
+the same (it failed alone too, or was not rerun) is discarded in its fix instead
+(`tests/no-test-fails-on-load`). A test or check is never loosened to
 turn it green (an assertion widened, a timeout or a budget raised, a test ignored or moved out of
 the release run): a fix that must change one says on its thread why the code was not the thing to
 fix, and a fresh reviewer judges that. A budget or a cap that gives way, a red's or any task's,
@@ -264,12 +266,18 @@ docs/CHECKS.md lists each with its promise and the owner's word. No budget or to
 to pass. The workspace's one helper is `crates/test-time` (`cpu`, `wait::until`); how to use it:
 [CHECKS](docs/CHECKS.md#time-in-tests).
 
-A test that fails a release run or its rerun because of load is discarded, and the release moves
-on: a rerun neither fails nor passes on the machine's load. It is load when the test passes alone,
-or when its failure is a wall-clock bound, a sleep-ordered step or a timeout under load. The red's
-own fix removes it from the tree, with one line on the red's thread naming the test, the evidence
-it is load (its runs alone and the failing line) and what it proved. The owner has approved this
-for every such test already: no card is put to them to discard one.
+The release run reruns each test that failed in it alone, one at a time, in the same checkout and
+over the same build, up to 12 (docs/RELEASES.md, "The release run", step 5). One that passes alone
+is no red and holds no release: the run files one p1 task for all such tests of it, which finds
+why, then fixes the code or the runner, rewrites the test on a condition, a count, CPU time or an
+injected clock, or discards it with one line on its thread. One that fails again is red, its task
+saying it failed twice; a retry of nextest's never counts as a pass. A red test that failed alone
+too, or was not rerun, and fails on load all the same (its failure is a wall-clock bound, a
+sleep-ordered step or a timeout under load) is discarded, and the release moves on: a rerun neither
+fails nor passes on the machine's load. The red's own fix removes it from the tree, with one line on
+the red's thread naming the test, the evidence it is load (its runs alone and the failing line) and
+what it proved. The owner has approved this for every such test already: no card is put to them to
+discard one.
 If what it proved matters, a follow-up task may bring it back written on a condition, a count, CPU
 time or an injected clock, but the release does not wait for that. No rerun is spent on it, no
 rewrite is waited for, and nobody lowers the machine's load to help a run pass. A test that fails

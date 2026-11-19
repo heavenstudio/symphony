@@ -126,12 +126,15 @@ position that satisfies its dependants, or one the board's writers keep in done;
 
 The write is one transaction that checks again everything the decision read: the active
 generation and digest, the task's version, each dependency's version, each role relied on, no
-other holder or reservation of a role taken, the key unused, the agent on the board, and the
-cap's counters. Anything moved since reads and decides again, so a request the board moved past
+other holder or live reservation of a role taken, the key unused, the agent on the board, and the
+cap's counters. A reservation past its expiry, or held by a session lost or gone, stands against
+no claim: the write drops it, fenced on that session's beat as it was read. Anything moved since reads and decides again, so a request the board moved past
 is refused as stale, never replayed on where another left the task. The write records the
 transition and its receipt, drops and adds the role rows its effects name, puts the task at its
 pair and projected status, settles its hold when its status moves, and posts `took EDGE
-(SLUG@REVISION): FROM → TO` on its thread. It answers the transition's id, its effects and the
+(SLUG@REVISION): FROM → TO` on its thread, then `HANDLE joined as ROLE` for each role the edge
+gives, as the board's own join says it, so every reader of who held the task's roles (a fresh
+reviewer's rule among them) reads it there. It answers the transition's id, its effects and the
 principal's next actions. A key is its principal's: a request repeating it answers the first
 result when it is the same request, and is refused when it is another; `tasks workflow apply`
 sends the receipt's request again when its command is repeated.
@@ -144,15 +147,17 @@ recorded in the write that files it, and a filing that asks for another status i
 filing is written as the board's own first, so a board with no workflow files it in one write as
 before; that write refuses itself where a workflow is active, and the task is filed again at the
 initial pair.
-The board's own writers neither move nor staff a task the workflow holds: a move, claim,
-reservation, verdict, block, close or takeover of its executor, reviewer or reservation refuses
-as `explicit_action_required`, naming `just tasks workflow actions`, and a status written past
-them meets the database's fence with the same code; a release and a leave go by the position's
-recovery ([below](#recovery)). The orchestrator's role stays the board's coordination, which its
-writers keep. `just tasks next` and PULL offer no task a workflow holds to a claim, nor name one
-unstaffed, orphaned or unreviewed (a working one counts as executing), and the board's block of
-a dependant whose prerequisite was cancelled leaves one to its edges' dependency predicates.
-Staffing and the launcher do not read the workflow yet (`tools/workflow-operations`).
+The board's own writers neither move nor staff a task the workflow holds: a move, verdict,
+block, close, `Store::claim` (the api's claim) or takeover of its executor or reviewer refuses as
+`explicit_action_required`, naming `just tasks workflow actions`, and a status written past them
+meets the database's fence with the same code; a release and a leave go by the position's
+recovery ([below](#recovery)). The orchestrator's role and a reservation stay the board's
+coordination, which its writers keep: a launch reserves held work for the session it starts, and
+admission honours that reservation, and consumes it, when the session takes the edge. The
+board's block of a dependant whose prerequisite was cancelled leaves one to its edges' dependency
+predicates and its position's policy. `just tasks claim`, PULL, `next`, the launcher, staffing,
+the cap, the alarm and the sweeps read a held task by its position and edges
+([Operations](#operations)).
 
 ## Accepted outputs
 
@@ -182,7 +187,9 @@ output standing then. What a supersession does to a dependant already admitted o
 not this check's (`tools/workflow-revision-guards`). `just tasks workflow actions SLUG` prints the
 task's own output standing and, where an edge leaving its pair depends on accepted outputs, the
 one standing for each task it depends on, which `workflow apply … --accept SLUG=OUTPUT` names;
-`Store::accepted_outputs` reads the same.
+`Store::accepted_outputs` reads the same, and the board's claim names the ones it reads there
+(`just tasks claim`, a launch, the staffing pass). PULL and the staffing pass find such an edge
+open by the outputs standing too ([Operations](#operations)).
 
 ## External effects
 
@@ -270,14 +277,71 @@ action's target, which clears a block's resume pair, or stays, keeping it: eithe
 transition by the recovery service records the move or the stay with what it recovered (the
 trigger, the holder, its role) and the slot effect, and a manual action leaves the position marked
 until its next transition (`TaskPosition::manual`), its thread line saying it waits on a person.
-A move into work is counted under the project's cap as a start is.
+A move into a position whose slot policy holds a slot, from one that holds none, is counted under
+the project's cap as a start is ([Operations](#operations)).
 
 The write is fenced on the active workflow, the task's version, each role it relies on or drops
 and, for a lost holder, the holder's session as it was read: a holder that beats again, or takes
 an edge first, wins, and the recovery decides again from where it left the task. The orchestrator
-role is never a workflow's: a release or leave of it is the board's own. Nothing recovers a lost
-holder by itself yet, and attempt failure and cancellation acknowledgement wait on durable
-attempts (`tools/workflow-operations`, `tools/workflow-attempt-integration`).
+role is never a workflow's: a release or leave of it is the board's own. The board recovers a
+lost holder by itself as well, wherever it gives open work an orchestrator
+([Operations](#operations)); attempt
+failure and cancellation acknowledgement wait on durable attempts
+(`tools/workflow-attempt-integration`).
+
+## Operations
+
+The board's operational readers read a held task's declared position and the edges leaving it
+(`symphony_board::workflow::operate`), never a state's name or the status a position projects to;
+whether a principal may take an edge stays admission's question.
+
+- **Claims.** A claim is an edge leaving the task's pair that gives its taker a role
+  (`acquire_role`), whatever operation the definition names it; an automatic edge is the board's,
+  never a claim. `just tasks claim SLUG` takes the one claim edge that gives the executor's role,
+  at the revision it reads (`Store::claim_by_workflow`), naming, for an edge that depends on
+  `accepted_output`, the outputs it reads standing ([Accepted outputs](#accepted-outputs)), and is
+  refused as `explicit_action_required`, naming the edges, where none gives it or several open
+  ones do.
+- **PULL and `next`.** PULL lists a held task by its claims: an executor's claim nobody there holds,
+  its dependency predicate met (as admission judges it: `accepted_output` by the output standing for
+  each prerequisite at the revision the board read, which the workflow's read takes only where an
+  edge depends on one; `landed` never), is ready (red, once red work waited unstaffed) and a
+  reviewer's is unreviewed, a live reservation named beside it. A staffed role whose holders are all
+  lost or gone is orphaned, saying whether the board recovers it or a person does; a prerequisite
+  that ended without success (an outcome of cancellation or failure, or the board's cancelled)
+  blocks it, naming its position's `unsuccessful_dependency`; its staffed executor at work is
+  executing. `just tasks next` offers a held task whose executor's claim edge admission's preview
+  shows nothing stopping, unless another's live reservation stands on it, whatever status the
+  claim's position projects to: its read takes those statuses beside the pullable ones, and a task
+  no workflow holds only in a pullable one.
+- **Settling.** Wherever the board gives open work an orchestrator, it then settles what no
+  session asks for (`Store::settle_held`): before `tasks pull` lists anything, in an
+  orchestrator's monitor, in a look of `tasks wait`, in a write's detached dispatcher (`tasks
+  dispatch`) and on the server's clock, under its give's retry. Each staffed holder lost or gone
+  is recovered by its position's `lost_holder` action as the recovery service, once, a stay that
+  waits on a person recorded no second time; and a task with a prerequisite that ended without
+  success, at a position whose policy is `cancel`, takes the one cancel edge leaving its pair the
+  recovery service may take. `block` and `manual` move nothing. A move admission refuses is said
+  on stderr each time it is tried, and writes nothing. `agent-send` delivers what it sends through
+  the dispatcher's pass but neither gives nor settles, so it links none of admission's write.
+- **Launching and staffing.** A launch on a held task starts only a role an edge leaving its
+  position gives, refused before anything starts otherwise: its executor reserves the task and
+  claims the edge when it starts, and its reviewer takes the edge as the new session, through
+  admission, which judges it fresh; no reviewer joins beside another. The staffing pass starts
+  the role the open claim edges give, an executor's before a reviewer's, and a reused idle
+  reviewer takes its edge the same way.
+- **Slots.** A held task holds a task slot, the cap on an orchestrator's open work, while its
+  position's slot policy is `acquire` or `retain`, whatever status it projects to: a block that
+  retains keeps it, a reviewer's position that acquires counts as work, and a position that
+  releases frees it. A move into a position that holds one, from one that holds none, is a start
+  the cap refuses past it (`capacity`). The cap reads the active definition's positions in its own
+  transaction. A task slot is task WIP, never an execution attempt's capacity.
+- **Finished.** A held task is finished at a terminal position: the launcher, cleanup and the
+  worktree sweep read that, never a done-looking status, so approved work that projects to done
+  keeps its worktree until it is accepted, and an edge into a terminal position closes what was
+  launched on the task as `done` does.
+- **The pipeline alarm** counts a held task by its recorded transitions, each read by its id:
+  every one that changed the status its task projects to is a move from its predecessor's.
 
 ## Records on the board
 

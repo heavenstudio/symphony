@@ -22,6 +22,8 @@
 //! cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the periodic
 //! sweep of idle agents (`just tasks clean` runs one). [`close`] closes one agent's terminal on its
 //! orchestrator's word, whatever it holds, recorded the same way, under the rules its module gives.
+//! Each launch, restore and close is recorded as an execution attempt as well, hc its provider
+//! ([`attempts`]), beside the records above, which no attempt replaces.
 //! For a command an agent ran unasked (`just tasks`), a launch and a restore start an agent only in
 //! the project, and a launch's first message is its skill's alone ([`Bounds`]).
 //!
@@ -41,6 +43,7 @@
 //! Every hc call goes through [`hc::Hc`], whose binaries are `$HC_BIN` (default `hc`) and
 //! `$HERDR_APP_BIN` (default `herdr-app`); the tests (`tests/launch/`) point both at `fake-hc`.
 
+pub mod attempts;
 mod bounds;
 mod checkout;
 mod cleanup;
@@ -70,7 +73,7 @@ use place::{name_place, place, stream};
 pub use uuid::new_uuid;
 
 use crate::cli::{Env, probes};
-use crate::health::{FINISHED, RESERVE_SECONDS};
+use crate::health::RESERVE_SECONDS;
 use crate::rows::TaskSessionRow;
 use crate::sys;
 use crate::{Error, NewLaunch, NewSession, Store};
@@ -291,8 +294,14 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     }
     store.touch(&ask.actor)?;
     let task = store.get(slug)?;
-    if FINISHED.contains(&task.status.as_str()) {
+    // A task a custom workflow holds is finished by its position, and staffed by the edges
+    // leaving it: a launch starts only a role one of them gives.
+    let operating = store.operating_for(std::slice::from_ref(&task))?;
+    if crate::workflow::operate::finished(operating.as_ref(), &task) {
         return Err(Error::Refused(format!("{slug} is {}", task.status)));
+    }
+    if let Some(placed) = operating.as_ref().and_then(|o| o.placed(&task)) {
+        by_its_edges(&placed, slug, role, ask.beside.is_some())?;
     }
     if role == "reviewer" {
         if task.instruction {
@@ -407,8 +416,15 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
         ..NewSession::default()
     })?;
     let handle = session.row.handle;
+    let actor = if ask.actor.is_empty() {
+        crate::workflow::board_service("launch")
+    } else {
+        crate::workflow::agent_session(&ask.actor)
+    };
+    let local = attempts::Local::new(store, hc, actor);
     let mut terminal = String::new();
     let mut checkout_made = false;
+    let mut attempt = None;
     let started = (|| {
         take_up(store, ask, &handle)?;
         if made_worktree {
@@ -429,6 +445,10 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
                 ["--session-id", &conversation],
             )
         };
+        let text = prompt_text(slug, &handle, &ask.prompt, agent, role);
+        // Admitted, its start owed, before hc is started.
+        let admitted = local.admit(&task, role, &handle, &where_, &text)?.id;
+        attempt = Some(admitted.clone());
         start_confirmed(
             hc,
             m,
@@ -440,8 +460,13 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
                 agent,
                 resumed_codex: false,
                 args,
-                text: &prompt_text(slug, &handle, &ask.prompt, agent, role),
+                text: &text,
             },
+            (&local, &admitted),
+        )?;
+        local.running(
+            &admitted,
+            (agent != "codex").then_some(conversation.as_str()),
         )?;
         let claude_session = if agent == "codex" {
             // The thread is known once the agent registers its callback (`just tasks callback`).
@@ -466,15 +491,13 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
         })
     })();
     started.map_err(|problem| {
-        rollback::failed(
-            store,
-            hc,
-            m,
-            &handle,
-            &terminal,
-            checkout_made.then_some(path.as_path()),
-            problem,
-        )
+        let made = rollback::Made {
+            handle: &handle,
+            terminal: &terminal,
+            checkout: checkout_made.then_some(path.as_path()),
+            attempt: attempt.as_deref().map(|id| (&local, id)),
+        };
+        rollback::failed(store, hc, m, &made, problem)
     })
 }
 
@@ -483,11 +506,10 @@ fn live_executor_in(store: &Store, path: &Path) -> Result<Option<String>, Error>
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let board = store.board()?;
     let records = store.all_task_sessions()?;
-    for task in board
-        .tasks
-        .iter()
-        .filter(|t| !FINISHED.contains(&t.status.as_str()))
-    {
+    // Finished by its recorded facts: a held task by its position, never its projected status.
+    let operating = store.operating_for(&board.tasks)?;
+    let finished = |t| crate::workflow::operate::finished(operating.as_ref(), t);
+    for task in board.tasks.iter().filter(|t| !finished(t)) {
         for role in task
             .roles
             .iter()
@@ -563,24 +585,75 @@ fn agent_kind(ask: &Ask) -> &'static str {
 }
 
 /// The new session takes its part on the task: an executor reserves it, a reviewer takes the
-/// reviewer role, beside one still there only when the launch says why. A refusal naming how one
-/// joins beside it names the launch's own `--beside`, not `tasks role`'s.
+/// reviewer role ([`take_reviewer`]), beside one still there only when the launch says why. A
+/// refusal naming how one joins beside it names the launch's own `--beside`, not `tasks role`'s.
+/// An executor of a task a custom workflow holds reserves it as on any task, and claims its edge
+/// when it starts.
 fn take_up(store: &Store, ask: &Ask, handle: &str) -> Result<(), Error> {
     let slug = ask.slug.as_str();
-    let beside = ask.beside.as_deref();
     if ask.role == "executor" {
         store.reserve(slug, handle, RESERVE_SECONDS)?;
+        return Ok(());
+    }
+    let board = store.board_command();
+    take_reviewer(store, slug, handle, ask.beside.as_deref()).map_err(|problem| match problem {
+        Error::Refused(text) => Error::Refused(text.replace(
+            &format!("{board} role {slug} reviewer --beside WHY"),
+            &format!("{board} launch {slug} --role reviewer --beside WHY"),
+        )),
+        problem => problem,
+    })
+}
+
+/// `handle` takes the reviewer's role on `slug`: on a task a custom workflow holds, by the one edge
+/// leaving its position that gives it, as that session, through admission, which judges it fresh
+/// ([`Store::claim_by_workflow`]); on any other, as the board's role, beside one still there only
+/// when `beside` says why ([`Store::take_role_beside`]).
+pub(super) fn take_reviewer(
+    store: &Store,
+    slug: &str,
+    handle: &str,
+    beside: Option<&str>,
+) -> Result<(), Error> {
+    if crate::store::workflow::position_held(&store.get(slug)?.fields) {
+        let principal = crate::workflow::agent_session(handle);
+        let role = symphony_api::workflow::Role::Reviewer;
+        store.claim_by_workflow(slug, &principal, &crate::workflow::Host::local(), role)?;
     } else {
-        let board = store.board_command();
-        store
-            .take_role_beside(slug, handle, "reviewer", beside)
-            .map_err(|problem| match problem {
-                Error::Refused(text) => Error::Refused(text.replace(
-                    &format!("{board} role {slug} reviewer --beside WHY"),
-                    &format!("{board} launch {slug} --role reviewer --beside WHY"),
-                )),
-                problem => problem,
-            })?;
+        store.take_role_beside(slug, handle, "reviewer", beside)?;
+    }
+    Ok(())
+}
+
+/// Whether a launch of `role` on `slug`, standing at `placed`, starts a role the edges leaving its
+/// position give: refused before anything starts where none does, or where a reviewer would join
+/// beside another, as an edge gives the reviewer's role to one session.
+fn by_its_edges(
+    placed: &crate::workflow::operate::Placed<'_>,
+    slug: &str,
+    role: &str,
+    beside: bool,
+) -> Result<(), Error> {
+    let at = placed.at();
+    let explicit = |why: String| {
+        Error::Refused(format!(
+            "explicit_action_required: a custom workflow holds {slug}, at {}/{}: {why}; its \
+             edges: `just tasks workflow actions {slug}`",
+            at.phase, at.state
+        ))
+    };
+    if beside {
+        return Err(explicit(
+            "its edges give the reviewer's role to one session, so no reviewer joins beside \
+             another"
+                .into(),
+        ));
+    }
+    let claims = placed.claims();
+    if !(claims.iter()).any(|c| crate::workflow::admit::word(&c.role) == role) {
+        return Err(explicit(format!(
+            "no edge leaving it gives the {role} role"
+        )));
     }
     Ok(())
 }
@@ -596,14 +669,14 @@ struct Start<'launch> {
     text: &'launch str,
 }
 
-/// Start in the stream's tab and confirm the message (`startup`); leave the terminal for the caller.
-fn start_confirmed(
+/// Start `start`'s agent in its stream's tab, in a terminal of its own: its address, and where it
+/// shows.
+fn open(
     hc: &dyn Hc,
     m: &Machine,
-    terminal: &mut String,
     start: &Start<'_>,
-) -> Result<startup::Message, LaunchError> {
-    let mut place = place(hc, &m.project(), start.stream)?;
+) -> Result<(String, place::Place), LaunchError> {
+    let place = place(hc, &m.project(), start.stream)?;
     let mut argv = vec!["env".to_string(), format!("TASKS_SESSION={}", start.handle)];
     argv.extend(m.board_env.iter().map(|(k, v)| format!("{k}={v}")));
     argv.push(start.agent.into());
@@ -629,13 +702,36 @@ fn start_confirmed(
     ]);
     call.extend(argv.iter().map(String::as_str));
     let made = hc.json(&call)?;
-    *terminal = made
+    let address = made
         .get("address")
         .and_then(Value::as_str)
         .filter(|a| !a.is_empty())
         .ok_or_else(|| LaunchError("hc run answered no terminal address".into()))?
         .to_string();
-    startup::first_message(
+    Ok((address, place))
+}
+
+/// Start in the stream's tab, as the start of `attempt` (the local provider's, and the attempt's
+/// id), and confirm the message (`startup`); leave the terminal for the caller.
+fn start_confirmed(
+    hc: &dyn Hc,
+    m: &Machine,
+    terminal: &mut String,
+    start: &Start<'_>,
+    attempt: (&attempts::Local<'_>, &str),
+) -> Result<startup::Message, Error> {
+    let (local, id) = attempt;
+    let mut placed = None;
+    local.start(id, &mut || {
+        let (address, place) = open(hc, m, start)?;
+        terminal.clone_from(&address);
+        placed = Some(place);
+        Ok(address)
+    })?;
+    let Some(mut place) = placed else {
+        return Err(LaunchError("hc run answered no terminal address".into()).into());
+    };
+    let message = startup::first_message(
         hc,
         terminal,
         start.agent,
@@ -643,7 +739,8 @@ fn start_confirmed(
         start.resumed_codex,
         &mut || name_place(hc, &mut place),
         &*m.sleep,
-    )
+    )?;
+    Ok(message)
 }
 
 /// Whether a recorded pane is gone: a herdr pane id (`w1:p3`: herdr is no more), or a terminal of

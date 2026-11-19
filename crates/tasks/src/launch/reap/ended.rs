@@ -71,6 +71,9 @@ impl Round<'_> {
         let restore = closed
             .last()
             .map_or(String::new(), |s| restore_line(&s.slug, &s.handle));
+        if kept.is_none() && self.how.apply && !handle.is_empty() {
+            crate::launch::attempts::closed(self.store, self.hc, &handle, address, ENDED)?;
+        }
         match kept {
             None => self.result.closed.push(Closed {
                 pane: address.into(),

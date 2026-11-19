@@ -624,7 +624,9 @@ describe("a press on the page", () => {
     const hidden = h("img", { src: "/h.png", "aria-hidden": "true" });
     const waiting = h("img", { src: WAITING });
     const text = h("p");
-    page(h("main", {}, picture, hidden, waiting, text), h("img", { src: "/out.png" }));
+    // A picture outside the page's own regions has no set to open on.
+    const outside = h("img", { src: "/out.png", tabindex: "0" });
+    page(h("main", {}, picture, hidden, waiting, text), outside);
     const { asked, viewer } = opened();
     for (const fields of [
       { ctrlKey: true },
@@ -634,10 +636,13 @@ describe("a press on the page", () => {
     ]) {
       pressed(click(picture, fields), viewer);
     }
-    for (const target of [hidden, waiting, text, null, { closest: "no element" }]) {
-      pressed(click(target), viewer);
+    for (const target of [hidden, waiting, text, outside, null, { closest: "no element" }]) {
+      const press = click(target);
+      pressed(press, viewer);
+      expect(press.preventDefault).not.toHaveBeenCalled();
     }
     expect(asked).toEqual([]);
+    expect(outside.focused).toEqual([]);
   });
 
   it("on the open viewer's backdrop closes it", () => {

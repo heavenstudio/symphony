@@ -195,9 +195,7 @@ pub fn project_problems(root: &Path) -> Vec<String> {
 /// alone. A table or key the Symphony does not know, a value of the wrong type or a required value
 /// left out is named on `err`, exit 1; a file that loads is said on `out`, exit 0. It judges no
 /// name against a list (a model, an agent's or a recipe's name is any text) and, unlike the lint,
-/// reads no plugin this build holds and no document. A key the Symphony reads no more
-/// ([`crate::project::Project::retired`]) is said on `err` to do nothing without changing the exit
-/// code. Recognizable cross-agent model names warn
+/// reads no plugin this build holds and no document. Recognizable cross-agent model names warn
 /// without changing the exit code, judged on the settings in force, the local file's over the
 /// project file's. The local settings file beside the main checkout's project
 /// file is judged with it ([`crate::project::Project::local_problems`]): a setting it may not
@@ -225,9 +223,6 @@ pub fn settings(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i3
     } else {
         // The settings in force: the local file's over the project file's, unless it is refused,
         // when none of it is read.
-        for line in crate::project::Project::retired(root) {
-            let _ = writeln!(err, "{line}");
-        }
         let file = root.join(crate::project::FILE);
         let text = std::fs::read_to_string(&file).unwrap_or_default();
         let over = crate::project::Project::local(root).ok().flatten();
@@ -257,14 +252,10 @@ pub fn settings(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i3
     0
 }
 
-/// `symphony status --lint`: the project file (a key the Symphony reads no more said on `err` to
-/// do nothing, which is no finding), card slugs in prose, the plugins' prose rules and
+/// `symphony status --lint`: the project file, card slugs in prose, the plugins' prose rules and
 /// their document checks, each finding named on `err`; exit 1 on any, 2 when the docs cannot be
 /// read.
 pub fn main(root: &Path, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    for line in crate::project::Project::retired(root) {
-        let _ = writeln!(err, "{line}");
-    }
     let project = project_problems(root);
     if !project.is_empty() {
         for problem in &project {
