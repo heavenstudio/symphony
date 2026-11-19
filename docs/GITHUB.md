@@ -36,11 +36,13 @@ refusal as turned off.
 | `checks_token_file` | none | the absolute path of a file holding the token that writes a delivery's checks, never `token_file` |
 | `checks_app_id` | none | the number of the GitHub App that token is of: a check by any other is not read as the adapter's |
 | `landing_app_id` | none | the number of the GitHub App `token_file`'s token is of where a land is delivered: the one actor [the default branch's rules](#the-protection-a-delivery-needs) let update it, never `checks_app_id` |
+| `policy_token_file` | none | the absolute path of a file holding the token that reads who bypasses [the default branch's rules](#the-protection-a-delivery-needs), never `token_file` or `checks_token_file` |
+| `policy_app_id` | none | the number of the GitHub App that token is of, never `landing_app_id` or `checks_app_id` |
 | `close_issues` | `false` | whether a delivered task's mapped issue is closed once the board closed the task |
 
 `enabled = true` needs `repository` and `token_file`, an `issues` that imports needs
-`import_labels`, and `pull_requests = "publish"` needs `checks_token_file`, `checks_app_id` and
-`landing_app_id`. The settings are read again before every operation that writes GitHub or the
+`import_labels`, and `pull_requests = "publish"` needs `checks_token_file`, `checks_app_id`,
+`landing_app_id`, `policy_token_file` and `policy_app_id`. The settings are read again before every operation that writes GitHub or the
 board, so a landing that turns the adapter off stops a run at its next dispatch.
 
 The issues are listed from where the last listing ended, and that place holds only under the
@@ -65,13 +67,19 @@ A fine-grained token scoped to the one repository is enough: issues read for `im
 read and write for `export` and `exchange`. A token that GitHub refuses (401) pauses the
 exchange with everything kept; the next preview that succeeds lifts the pause.
 
-A delivery uses two tokens, each held by the same rules. `token_file`'s opens and merges the pull
-request and reads [the protection](#the-protection-a-delivery-needs): an installation token of
+A delivery uses three tokens, each held by the same rules. `token_file`'s opens and merges the pull
+request and reads the rules of [the protection](#the-protection-a-delivery-needs): an installation token of
 the GitHub App `landing_app_id` names, with pull requests read and write, contents read and
 write, and issues write where `close_issues` is set, and no administration. `checks_token_file`'s writes the checks: an installation token of the one
 GitHub App `checks_app_id` names, with checks read and write and nothing else. GitHub takes a
-check from an App alone, so what merges cannot say the evidence stands. The adapter mints no
-token: whoever installs the App keeps a current one in the file. The head itself is pushed by the
+check from an App alone, so what merges cannot say the evidence stands. `policy_token_file`'s
+reads who bypasses each ruleset: an installation token of a third GitHub App, `policy_app_id`,
+with administration read and write, the one App permission found to be shown those lists, and
+nothing else beside the metadata GitHub adds. That permission could change or remove the rules,
+so the adapter sends this token with one request, the read of a ruleset, and has no code that
+sends it with another (`preflight::Reader`); it is read from its file at each use and given to
+nothing else. The adapter mints no
+token: whoever installs the Apps keeps a current one in each file. The head itself is pushed by the
 checkout's own git, with the credentials a person's `git push` there uses.
 
 ## The commands
@@ -241,7 +249,7 @@ next run finds what was made. Evidence of another revision rewrites the checks o
 Every request is GitHub's REST API made by `curl`, as the exchange's are, and the one thing REST
 has no call for, marking a draft ready, is a single GraphQL mutation by the same `curl`. The `gh`
 CLI is not used or needed. The adapter is no GitHub App and holds no App's key: it cannot mint or
-renew an installation token, so `checks_token_file` holds one made outside it, which GitHub
+renew an installation token, so each of the three files holds one made outside it, which GitHub
 expires within the hour. A token that expired is answered 401, `unavailable`, and nothing merges
 until the file holds a current one. Keeping it current is the operator's, by whatever they run
 for it; nothing here does.
@@ -257,10 +265,13 @@ answer GitHub did not give is `unavailable`, never a pass. `preflight` says the 
 operator. The adapter edits no rule, ruleset, protection or visibility: putting them right is a
 repository administrator's act on GitHub, and nothing here turns delivery on.
 
-It makes three kinds of read, with `token_file`'s token: the repository, the rules in effect for
-the branch (`GET /repos/OWNER/NAME/rules/branches/BRANCH`, every page), which GitHub evaluates
-from every active ruleset that applies, an organization's among them, and each ruleset those
-rules come from (`GET /repos/OWNER/NAME/rulesets/ID`) for who may bypass it. A rule holds
+It makes three kinds of read. Two are with `token_file`'s token: the repository, and the rules
+in effect for the branch (`GET /repos/OWNER/NAME/rules/branches/BRANCH`, every page), which
+GitHub evaluates from every active ruleset that applies, an organization's among them. The
+third is with `policy_token_file`'s: each ruleset those rules come from
+(`GET /repos/OWNER/NAME/rulesets/ID`) for who may bypass it. A policy token that is not in its
+file is a policy that does not hold; evidence that blocks is still said then, by its checks, as
+it is whenever the policy does not hold. A rule holds
 everyone only when its ruleset's bypass list was read and is empty. What must hold:
 
 | What | How it is read |
@@ -288,9 +299,11 @@ away, and reading it asks for administration.
 effect and the rulesets are shown to anyone who may read the repository, the repository's merge
 settings with contents read and write, and a ruleset's `bypass_actors` only to who has write
 access to that ruleset. So a token that does not administer the repository, as the landing
-App's must not, is not shown the bypass lists, and the adapter reads a list it is not shown as
-unknown and refuses. Which credential may read them for a delivery is not decided, and until it
-is no repository passes with a landing token of the rights above: delivery stays off.
+App's must not, is not shown the bypass lists, and neither is an App with administration read:
+both were tried on a disposable repository, and administration read and write was the one App
+permission shown them. The lists are therefore read with a third App's token, the policy token,
+and a list it is not shown is unknown and refused. Whether GitHub shows that token the list of
+an organization's ruleset was not tried; where it does not, a rule from one holds nobody.
 
 **What these reads establish, and what they do not.**
 
@@ -303,9 +316,14 @@ is no repository passes with a landing token of the rights above: delivery stays
 - Configured, not verified: that what merges cannot change the rules it is held to. No read
   proves it. `permissions.admin` is what the repository says of the token and does not measure
   write access to a ruleset, which an App's administration permission or a custom role that
-  edits repository rules gives. And since a bypass list is shown only to who may write its
-  ruleset, a pass whose lists were read with `token_file` means that token may write those
-  rulesets: `token_file` is never given more rights to reach a pass.
+  edits repository rules gives. `token_file` is never given more rights to reach a pass: the
+  lists are read with the policy token, and the settings refuse one file or one App number for
+  both.
+- Held by this program and not by GitHub: that the policy token only reads. GitHub has no
+  narrower grant that shows the lists, so the token could edit or delete the repository's
+  rules, and whoever holds the App's key or the file can use it so outside this program. The
+  file and the key are kept as the other two are, and the App is installed on the one
+  repository.
 - Not established: how GitHub applies the two rulesets together to a merge by the landing App,
   which a disposable repository proves and no read does; and that the rules stay as read. A
   repository administrator can change a rule between the adapter's read and GitHub's own act on
