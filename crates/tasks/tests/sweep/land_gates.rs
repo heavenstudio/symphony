@@ -1,15 +1,15 @@
 //! The land by a task's gate decisions (docs/TASKS.md, "Gate decisions"), in scratch repositories
 //! on a board of their own: a waiver lifts its stamp at the tip it was given for and at no later
 //! one; a raise lands only carried at the number decided, its line saying so, and one the branch
-//! never made lands saying it changed nothing.
+//! never made, or a limit the branch lowered below main's, lands saying it raised nothing.
 
 use super::stamps::{assess, green, in_review, landed_by, told};
 use super::*;
 use symphony_board::gates::{Decision, Kind};
 use symphony_board::stamps::Catalogue;
 
-const BUDGET: &str = "tools/size-budget.toml";
-const GATE: &str = "tools/size-budget.toml:symphony";
+pub(super) const BUDGET: &str = "tools/size-budget.toml";
+pub(super) const GATE: &str = "tools/size-budget.toml:symphony";
 
 /// A commit on `slug`'s worktree (as `in_review` made it) writing `file` as `text`: the new tip.
 fn commit(r: &Repo, slug: &str, file: &str, text: &str) -> String {
@@ -20,7 +20,7 @@ fn commit(r: &Repo, slug: &str, file: &str, text: &str) -> String {
     head(&wt, "HEAD")
 }
 
-fn decide(r: &Repo, slug: &str, decision: Decision) {
+pub(super) fn decide(r: &Repo, slug: &str, decision: Decision) {
     (r.board.store)
         .decide_gate(slug, &Catalogue::symphony(), &decision)
         .unwrap();
@@ -39,7 +39,7 @@ fn waiver(by: &str, tip: &str) -> Decision {
     }
 }
 
-fn raise(by: &str, from: u64, to: u64) -> Decision {
+pub(super) fn raise(by: &str, from: u64, to: u64) -> Decision {
     Decision {
         gate: GATE.into(),
         kind: Kind::Raise,
@@ -175,4 +175,44 @@ fn a_raise_lands_carried_at_the_number_decided_and_a_raise_left_unmade_changes_n
         "{said}"
     );
     result.unwrap();
+}
+
+/// A raise decided, then a further cut: the tip lowers the limit below main's, which needs no
+/// decision, so it lands saying the raise was not carried; a number above main's that is not the
+/// one decided is still refused.
+#[test]
+fn a_tip_that_lowers_a_raised_limit_below_mains_lands_and_one_above_it_undecided_is_refused() {
+    let r = Repo::new();
+    manifest(&r, "");
+    write(&r.root, BUDGET, "[binaries]\nsymphony = 100_000\n");
+    git(&r.root, &["add", BUDGET]);
+    git(&r.root, &["commit", "-qm", "the budget"]);
+    let slug = "tools/cut";
+    let (staff, over) = in_review(&r, slug, &[(BUDGET, "[binaries]\nsymphony = 105_000\n")]);
+    decide(&r, slug, raise(&staff.orch, 100_000, 110_000));
+    assess(&r, slug, &staff.assessor, &["tests"], &over);
+    green(&r, slug, &over);
+    let (_, result) = landed_by(&r, slug, &staff.orch);
+    assert!(result.unwrap_err().ends_with(&format!(
+        "but the tip {} sets it to 105,000, which no decision gave: a raise lands at the \
+             number decided",
+        &over[..7]
+    )));
+    // Cut further, the tip lowers it below main's: it lands, saying so.
+    let cut = commit(&r, slug, BUDGET, "[binaries]\nsymphony = 90_000\n");
+    assess(&r, slug, &staff.assessor, &["tests"], &cut);
+    green(&r, slug, &cut);
+    let (said, result) = landed_by(&r, slug, &staff.orch);
+    assert!(
+        said.contains(&format!(
+            "land {slug}: its gate decisions: {GATE} raised 100,000 -> 110,000 by {}, not \
+             carried: the tip {} lowers it to 90,000, below the default branch's 100,000, which \
+             needs no decision\n",
+            staff.orch,
+            &cut[..7]
+        )),
+        "{said}"
+    );
+    result.unwrap();
+    assert_eq!(head(&r.root, "main^2"), cut);
 }

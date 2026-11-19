@@ -684,7 +684,8 @@ it is the task's orchestrator's decision, never its executor's: recorded with `j
 SLUG tools/size-budget.toml:NAME --raise NEW --why WHY --as HANDLE`
 ([gate decisions](TASKS.md#gate-decisions)), then made in a commit of its own that names the
 growth, with the task's thread saying why no reduction will do, landed only on a fresh reviewer's
-approve ([the default landing](TASKS.md#the-default-landing)) and only at the number decided.
+approve ([the default landing](TASKS.md#the-default-landing)) and only at the number decided, or
+below the default branch's should a further cut lower it.
 `NEW` is the caller's number, which the command does not check: for a size line the house form is
 [the rule above](#where-a-line-stands), the binary's size as `just size-check` measures it at the
 task's tip plus 4 %, rounded down to a multiple of 10,000 bytes, never higher. A first-visit cap

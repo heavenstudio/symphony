@@ -1,6 +1,10 @@
 //! A task's gate decisions ([`crate::gates`]): the board's own field `fields._board.gates`, every
 //! decision kept, each a line on the task's thread, in one write.
 //!
+//! A decision is for a land still to come: refused on a task cancelled, or done with nothing of it
+//! left to land. An approve leaves its task done until its land, as a verdict does by the board's
+//! own writers (its `unlanded` mark) and a custom workflow at a pair it does not mark terminal.
+//!
 //! A decision is its orchestrator's: the session holding that role on the task when it is given.
 //! It is refused to a session that executed the task or work under it, and to one that reviews it
 //! or gave it a verdict, whatever role it holds besides, so neither decides its own gate. The
@@ -8,6 +12,7 @@
 
 use crate::Held;
 use crate::gates::{Decision, Kind, Limit, of};
+use crate::orchestration::marked_unlanded;
 use crate::stamps::Catalogue;
 use crate::store::{Change, Error, Say, Store, Task, refused};
 
@@ -24,7 +29,8 @@ impl Store {
     /// decision before it kept, with a line on its thread saying it ([`Decision::line`]). Refused:
     /// an empty reason; a raise that names no limit ([`Limit::parse`]), or whose number is not
     /// above the one it raises; a waiver naming no whole commit, or of a stamp `catalogue` does
-    /// not let a decision waive ([`Catalogue::unwaivable`]); a task done or cancelled; and a
+    /// not let a decision waive ([`Catalogue::unwaivable`]); a task cancelled, or done with no land
+    /// still to come ([`crate::orchestration::unlanded`], a custom workflow's pair); and a
     /// decider that executed the task or work under it ([`Held`]), reviews it or gave it a verdict,
     /// or does not orchestrate it.
     pub fn decide_gate(
@@ -82,15 +88,23 @@ impl Store {
             }
         }
         let held: Held = self.ever_held(slug)?;
+        let held_open = self.held_short_of_terminal(slug)?;
         let reviewed =
             (self.thread(slug)?.iter()).any(|line| line.kind == "verdict" && line.sender == handle);
         self.rule(slug, handle, |view| {
             view.actor(handle)?;
             let task = view.task(slug)?;
-            if task.status == "done" || task.status == "cancelled" {
+            if task.status == "cancelled" {
                 return Err(refused(format!(
-                    "{slug} is {}: a gate decision is for an open task's land",
-                    task.status
+                    "{slug} is cancelled: a gate decision is for an open task's land"
+                )));
+            }
+            if task.status == "done"
+                && !(held_open || marked_unlanded(&task.status, &task.fields).is_some())
+            {
+                return Err(refused(format!(
+                    "{slug} is done, and no land of it is still to come: a gate decision is for \
+                     a task's land"
                 )));
             }
             if held.executed.contains(handle) {
@@ -116,5 +130,21 @@ impl Store {
                 ..Change::default()
             })
         })
+    }
+
+    /// Whether a custom workflow holds `slug` at a pair it does not mark terminal, its land still
+    /// to come however its board status reads: false on a board with no workflow active, in one
+    /// small read.
+    fn held_short_of_terminal(&self, slug: &str) -> Result<bool, Error> {
+        if self.workflow_active()?.is_none() {
+            return Ok(false);
+        }
+        let (Some(position), Some(workflow)) =
+            (self.workflow_position(slug)?, self.workflow_read()?)
+        else {
+            return Ok(false);
+        };
+        let at = position.at();
+        Ok((workflow.definition.positions.iter()).any(|pair| pair.at == at && !pair.terminal))
     }
 }

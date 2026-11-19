@@ -3105,15 +3105,19 @@ its assessor, its reviewer and its land read it, never by a word in a terminal o
   pictures waived at 1a2b3c4: WHY; by HANDLE`. `just tasks stamps SLUG` lists those that stand
   (`GATES`). It refuses an empty reason, a raise that names no limit set once in a check's file
   or no number above the default branch's, `--tip` on a raise, a waiver of a stamp the catalogue
-  does not let it waive, and a task done or cancelled. No schema moves: the field is the task's
-  own.
+  does not let it waive, a task cancelled, and a task done with no land of it still to come:
+  an approve leaves its task done until its land (the `unlanded` mark, or a custom workflow's
+  pair it does not mark terminal), which still takes a decision. No schema moves: the field is
+  the task's own.
 - **The land** ([below](#the-default-landing)) reads them at the tip. A waiver for the tip lifts
   its stamp there, and the land's line says so; one for another tip lifts nothing, and the
   refusal of the stamp names it. A raise lands only where the tip sets its limit to the number
-  decided, its line naming the decision; at another number it refuses to `@executor`; where the
-  tip holds the default branch's number still, the raise changed nothing, and it lands saying
-  so. A land delivered by a pull request reads them the same way ([its
-  evidence](#the-evidence-of-a-task-at-its-head)). The task page draws a stamp a decision waived
+  decided, its line naming the decision; at another number above the default branch's it
+  refuses to `@executor`; where the tip holds the default branch's number still, or lowers it
+  below that (a limit lowered needs no decision), the raise raised nothing, and it lands saying
+  so. The land of a task a custom workflow holds reads them before its prepare edge, and a
+  decision is part of the evidence its intent binds; a land delivered by a pull request reads
+  them the same way ([its evidence](#the-evidence-of-a-task-at-its-head)). The task page draws a stamp a decision waived
   at the tip as waived, with the decision's author, reason and tip.
 - **The assessor and the reviewer.** The assessor names no `owner` stamp for a limit a raise
   names, and keeps `review` for it; the reviewer still judges that the cut came first and the

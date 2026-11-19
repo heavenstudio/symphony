@@ -236,4 +236,29 @@ on_both! {
             "tools/size is cancelled: a gate decision is for an open task's land"
         );
     }
+
+    fn an_approved_task_takes_a_decision_until_it_lands(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default());
+        let (orch, exe, rev) = (f.session("orchestrator"), f.session("worker"), f.session("reviewer"));
+        worked(&f, "tools/size", &orch, &exe);
+        let own = Catalogue::symphony();
+        f.store.move_to("tools/size", "review", &exe).unwrap();
+        f.store.take_role("tools/size", &rev, "reviewer").unwrap();
+        f.store
+            .verdict("tools/size", &rev, "approve", &format!("{TIP}: reads well"))
+            .unwrap();
+        // Done by its approve, its land is still to come: a decision is its orchestrator's still.
+        assert_eq!(f.store.get("tools/size").unwrap().status, "done");
+        f.store.decide_gate("tools/size", &own, &waive(&orch, "pictures", TIP)).unwrap();
+        // Landed, nothing of it is left to land.
+        f.store
+            .landed("tools/size", &orch, "landed tools/size on main", false, &["done"])
+            .unwrap();
+        assert_eq!(
+            refused(f.store.decide_gate("tools/size", &own, &raise(&orch, 1, 2))),
+            "tools/size is done, and no land of it is still to come: a gate decision is for a \
+             task's land"
+        );
+        assert_eq!(f.store.get("tools/size").unwrap().gates().len(), 1);
+    }
 }

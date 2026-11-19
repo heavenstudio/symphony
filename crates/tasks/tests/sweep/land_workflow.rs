@@ -4,6 +4,8 @@
 //! leaves, binds the head its approve read, withdraws a reservation that went stale, and finishes
 //! a land interrupted between its merge and its finalize by the same intent.
 
+use super::gates::{BUDGET, GATE, decide, raise};
+use super::stamps::told;
 use super::*;
 use std::collections::BTreeMap;
 use symphony_api::workflow::{InputValue, OperationRequest, Pair};
@@ -549,4 +551,76 @@ fn a_withdrawn_intent_lands_nothing_until_an_edge_leaves_its_pair() {
     assert_eq!(said, "");
     assert_eq!(head(&r.root, "main"), before);
     assert_eq!(runs(&r), Vec::<String>::new());
+}
+
+/// A managed task lands a raise its gate decision gave only carried at the number decided, as the
+/// default land does: a tip setting it to another is refused to its executor before the prepare
+/// edge is taken, and a decision changes the evidence the land binds.
+#[test]
+fn a_raise_the_tip_does_not_carry_refuses_a_managed_task_before_its_prepare_edge() {
+    let r = Repo::new();
+    workflowed(&r);
+    write(&r.root, BUDGET, "symphony = 100_000\n");
+    git(&r.root, &["add", BUDGET]);
+    git(&r.root, &["commit", "-qm", "the budget"]);
+    let (people, wt, _) = submitted(&r, SLUG);
+    write(&wt, BUDGET, "symphony = 120_000\n");
+    git(&wt, &["commit", "-qam", "past the line"]);
+    let tip = head(&wt, "HEAD");
+    take(
+        &r.board.store,
+        SLUG,
+        &agent_session(&people.rev),
+        "approve",
+        Some(&tip),
+    );
+    let unbound = adapter(&r).bindings(SLUG, &tip).unwrap().evidence;
+    decide(&r, SLUG, raise(&people.orch, 100_000, 110_000));
+    assert_ne!(
+        adapter(&r).bindings(SLUG, &tip).unwrap().evidence,
+        unbound,
+        "a decision is evidence the land binds"
+    );
+    let before = head(&r.root, "main");
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    assert_eq!(
+        result.unwrap_err(),
+        format!(
+            "{GATE} raised 100,000 -> 110,000 by {}, but the tip {} sets it to 120,000, which no \
+             decision gave: a raise lands at the number decided",
+            people.orch,
+            &tip[..7]
+        )
+    );
+    assert_eq!(head(&r.root, "main"), before);
+    assert_eq!(at(&r, SLUG), (pair("deliver", "approved"), 4));
+    assert_eq!(r.board.store.effect_intent(SLUG, 5).unwrap(), None);
+    assert_eq!(told(&r, SLUG).1.as_deref(), Some("@executor"));
+    // Carried at the number decided, another lands by its edges, its line naming the decision.
+    let slug = "sim/run";
+    let (people, wt, _) = submitted(&r, slug);
+    write(&wt, BUDGET, "symphony = 110_000\n");
+    git(&wt, &["commit", "-qam", "at the line decided"]);
+    let tip = head(&wt, "HEAD");
+    take(
+        &r.board.store,
+        slug,
+        &agent_session(&people.rev),
+        "approve",
+        Some(&tip),
+    );
+    decide(&r, slug, raise(&people.orch, 100_000, 110_000));
+    let (said, result) = landed(&r, slug, &people.orch);
+    result.unwrap();
+    assert!(
+        said.contains(&format!(
+            "land {slug}: its gate decisions: {GATE} raised 100,000 -> 110,000 by {}, carried at \
+             {}\n",
+            people.orch,
+            &tip[..7]
+        )),
+        "{said}"
+    );
+    assert_eq!(head(&r.root, "main^2"), tip);
+    assert_eq!(at(&r, slug).0, pair("deliver", "landed"));
 }

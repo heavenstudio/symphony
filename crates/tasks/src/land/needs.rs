@@ -311,9 +311,10 @@ pub fn standing(
 
 /// Each raise among `decisions` read in the checkout `dir` at the tip `tip` and on the default
 /// branch at `base` ([`gates::at`]): carried, where the tip's file sets the limit to the number
-/// decided; not carried, where the tip holds the default branch's number still, which lands, the
-/// decision having changed nothing; else the refusal, a number no decision gave or a limit the tip
-/// no longer sets once. Said as the landing's line says each.
+/// decided; not carried, where the tip holds the default branch's number still or one below it,
+/// which lands, the decision having raised nothing and a limit lowered needing none; else the
+/// refusal, a number above the default branch's that no decision gave, or a limit the tip or the
+/// default branch no longer sets once. Said as the landing's line says each.
 pub fn raises(
     dir: &Path,
     base: &str,
@@ -331,13 +332,26 @@ pub fn raises(
             said.push(format!("{decided}, carried at {}", short(tip)));
             continue;
         }
-        if gates::at(dir, base, &limit).ok() == Some(held) {
-            said.push(format!(
-                "{decided}, not carried: the tip {} holds {} as the default branch does",
-                short(tip),
-                grouped(held)
-            ));
-            continue;
+        match gates::at(dir, base, &limit) {
+            Ok(main) if held == main => {
+                said.push(format!(
+                    "{decided}, not carried: the tip {} holds {} as the default branch does",
+                    short(tip),
+                    grouped(held)
+                ));
+                continue;
+            }
+            Ok(main) if held < main => {
+                said.push(format!(
+                    "{decided}, not carried: the tip {} lowers it to {}, below the default \
+                     branch's {}, which needs no decision",
+                    short(tip),
+                    grouped(held),
+                    grouped(main)
+                ));
+                continue;
+            }
+            _ => {}
         }
         return Err(format!(
             "{decided}, but the tip {} sets it to {}, which no decision gave: a raise lands at \
