@@ -99,7 +99,7 @@ pub use store::{
     SLOT_READS, STATUSES, SearchHit, SearchSource, Session, StageRecord, Store,
     THREAD_WINDOW_LIMIT, Task, TaskStamp, ThreadWindow, UNANSWERED_WAIT, UNANSWERED_WAIT_VAR,
     Unfresh, WRITERS_RECENT, WRITERS_SINCE, Writer, approved, can_transition, covered_by,
-    covered_line, landing, leases_ended, reviewer_verdict,
+    covered_line, landing, leases_ended, leases_past, reviewer_verdict,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

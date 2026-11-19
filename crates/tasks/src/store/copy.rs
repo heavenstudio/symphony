@@ -326,6 +326,54 @@ pub const CARRIED: [&str; 8] = [
     "counter",
 ];
 
+/// How far a restored lease's revision is moved on where the cluster it replaces could not be
+/// read: more takes than any holder of one lease ever made.
+const UNREAD: i64 = 1 << 32;
+
+/// The leases a snapshot put back over its board is given: `restored`, the snapshot's carried
+/// tables ([`Store::carried`]), read beside `replaced`, those of the cluster it replaces, or
+/// none where that one could not be read. Every lease of either, ended, its revision past the
+/// greater of the two and of what its recipient last committed (`callback_state`), which a
+/// recipient's next lease is taken past as well. A holder that took its lease after the
+/// snapshot holds a revision the snapshot never saw, and the next taker would be handed the same
+/// one: this is what makes it past both. Unread, each is moved on by [`UNREAD`] instead.
+pub fn leases_past(restored: &Value, replaced: Option<&Value>) -> Vec<Value> {
+    let rows = |of: &Value, table: &str| -> Vec<Value> {
+        of.get(table)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let revision = |of: &Value, table: &str, id: &Value| -> i64 {
+        (rows(of, table).iter())
+            .find(|row| &row["id"] == id)
+            .and_then(|row| row["revision"].as_i64())
+            .unwrap_or(0)
+    };
+    let known = |of: &Value, id: &Value| {
+        revision(of, "callback_lease", id).max(revision(of, "callback_state", id))
+    };
+    let mut leases = rows(restored, "callback_lease");
+    for lease in replaced
+        .map(|replaced| rows(replaced, "callback_lease"))
+        .unwrap_or_default()
+    {
+        if !leases.iter().any(|kept| kept["id"] == lease["id"]) {
+            leases.push(serde_json::json!({"id": lease["id"]}));
+        }
+    }
+    for lease in &mut leases {
+        let id = lease["id"].clone();
+        let past = match replaced {
+            Some(replaced) => known(restored, &id).max(known(replaced, &id)),
+            None => known(restored, &id).saturating_add(UNREAD),
+        };
+        lease["until"] = serde_json::json!(0);
+        lease["revision"] = serde_json::json!(past.saturating_add(1));
+    }
+    leases
+}
+
 /// The counters the copy sets from the rows it copies.
 const COPIED: [&str; 3] = ["message", "task", "ask"];
 
@@ -704,6 +752,60 @@ mod placed {
         ] {
             assert!(own(&kept), "{kept}");
         }
+    }
+
+    #[test]
+    fn a_restored_lease_is_ended_past_the_cluster_it_replaces() {
+        use serde_json::json;
+        let restored = json!({
+            "callback_lease": [
+                {"id": "amber-heron", "until": 9.5, "revision": 4, "pull": 3},
+                {"id": ["session", "amber-heron"], "until": 5, "revision": 1, "doing": "close"},
+                {"id": "only-in-the-snapshot", "revision": 2},
+                {"id": "state-ahead", "until": 1, "revision": 2},
+            ],
+            "callback_state": [
+                {"id": "amber-heron", "revision": 3},
+                {"id": "state-ahead", "revision": 6},
+            ],
+        });
+        let replaced = json!({
+            "callback_lease": [
+                {"id": "amber-heron", "until": 99, "revision": 7},
+                {"id": ["session", "amber-heron"], "until": 0, "revision": 1},
+                {"id": ["dispatch", "this-host"], "until": 99, "revision": 5},
+                {"id": "taken-since", "until": 99},
+            ],
+            "callback_state": [
+                {"id": "amber-heron", "revision": 9},
+                {"id": "taken-since", "revision": 11},
+            ],
+        });
+        assert_eq!(
+            leases_past(&restored, Some(&replaced)),
+            vec![
+                // Past the replaced cluster's committed revision, the greatest of the four.
+                json!({"id": "amber-heron", "until": 0, "revision": 10, "pull": 3}),
+                json!({"id": ["session", "amber-heron"], "until": 0, "revision": 2, "doing": "close"}),
+                json!({"id": "only-in-the-snapshot", "until": 0, "revision": 3}),
+                json!({"id": "state-ahead", "until": 0, "revision": 7}),
+                // A lease taken since the snapshot is made, ended, past its holder's.
+                json!({"id": ["dispatch", "this-host"], "until": 0, "revision": 6}),
+                json!({"id": "taken-since", "until": 0, "revision": 12}),
+            ]
+        );
+        assert_eq!(
+            leases_past(&restored, None)[..2],
+            [
+                json!({"id": "amber-heron", "until": 0, "revision": UNREAD + 5, "pull": 3}),
+                json!({"id": ["session", "amber-heron"], "until": 0, "revision": UNREAD + 2, "doing": "close"}),
+            ]
+        );
+        assert_eq!(
+            leases_past(&json!({}), Some(&json!({}))),
+            Vec::<Value>::new()
+        );
+        assert_eq!(leases_past(&json!({}), None), Vec::<Value>::new());
     }
 
     #[test]

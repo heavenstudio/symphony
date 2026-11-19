@@ -71,7 +71,15 @@ source.
 `tasks-move --restore SNAPSHOT --as HANDLE` (`Postgres::restore_over`) puts a snapshot
 back over the board it was taken from: one of that board's own snapshots, by its name or path.
 The board is held for it (its caller's hold, left standing, or one set now and released after)
-and its server stopped; the snapshot is copied beside the data, then switched in under the
+and its server stopped. The cluster in place is served once, by a server of the restore's own,
+and its leases and each recipient's committed revision read; the snapshot is copied into a work
+folder (`restoring/`), served there once, and every lease written ended, its revision past the
+greater of the snapshot's and the replaced cluster's. A holder that took its lease after the
+snapshot holds a revision the snapshot never saw, which the next taker would otherwise be handed
+too: as after a move, it finds a lease that is no longer its own. A cluster in place that cannot
+be served or read does not stop the restore, which is the way back from one that broke: each
+lease is then moved on by more takes than any holder made, and the command says so. The copy is
+then switched in under the
 journal a move runs under: the cluster in place is moved into `moved/STAMP-postgresql/`, the copy
 moved in, the journal marked committed, the home's recovery bindings revoked. Nothing is deleted,
 the snapshot included. A failure before the commit leaves the board on the cluster it had; one

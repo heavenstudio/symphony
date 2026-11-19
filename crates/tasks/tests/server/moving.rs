@@ -151,6 +151,48 @@ fn counted(value: &mut Value) {
     }
 }
 
+/// A lease of each kind held on `store`'s board, as a dispatcher, a host and a close hold them:
+/// the revision the close holds the session under.
+fn leased(store: &Store) -> u64 {
+    let raw = store.raw();
+    raw.row("callback_lease", HANDLE)
+        .put(json!({"until": NOW + 600.0, "revision": 7}))
+        .unwrap();
+    raw.row("callback_lease", json!(["dispatch", "this-host"]))
+        .put(json!({"until": NOW + 600.0, "revision": 3}))
+        .unwrap();
+    store.take_session(HANDLE, "closing").unwrap()
+}
+
+/// When each of [`leased`]'s leases ends and its revision: the recipient's, the host's, the
+/// session's.
+fn leases(store: &Store) -> [(f64, u64); 3] {
+    let raw = store.raw();
+    [
+        json!(HANDLE),
+        json!(["dispatch", "this-host"]),
+        json!(["session", HANDLE]),
+    ]
+    .map(|id| {
+        let lease = raw.row("callback_lease", id).get().unwrap();
+        (
+            lease["until"].as_f64().unwrap(),
+            lease["revision"].as_u64().unwrap(),
+        )
+    })
+}
+
+/// `carried`, a board's before a move ([`carried`], every number as what it counts), as the
+/// move writes it: each lease ended and its revision moved on by one.
+fn ended(carried: &Value) -> Value {
+    let mut ended = carried.clone();
+    for lease in ended["callback_lease"].as_array_mut().unwrap() {
+        lease["until"] = json!(0.0);
+        lease["revision"] = json!(lease["revision"].as_f64().unwrap() + 1.0);
+    }
+    ended
+}
+
 fn board(store: &Store) -> (Dump, Value) {
     (store.dump().unwrap(), carried(store))
 }
@@ -169,6 +211,9 @@ fn a_board_goes_to_postgresql_and_back_whole_and_a_reader_that_kept_it_reads_it_
     let bound = b.store().recovering(authority());
     bound.rebind().unwrap();
     let token = bound.bound("sim/jump").unwrap().bound;
+    // A lease of each kind is held when the board is moved: a recipient's, a session's close
+    // and a host's dispatch.
+    let closing = leased(&store);
     let (before, marker) = (board(&store), store.marker().unwrap());
     drop((store, bound));
 
@@ -189,6 +234,14 @@ fn a_board_goes_to_postgresql_and_back_whole_and_a_reader_that_kept_it_reads_it_
     counted(&mut export["carried"]);
     assert_eq!(export["board"], json!(before.0));
     assert_eq!(export["carried"]["counter"], before.1["counter"]);
+    // No lease stands in what the move wrote, and each revision is past its holder's.
+    let written = ended(&before.1);
+    assert_ne!(written, before.1);
+    assert_eq!(
+        export["carried"]["callback_lease"],
+        written["callback_lease"]
+    );
+    let before = (before.0, written);
     assert!(moved.snapshot.as_ref().is_some_and(|kept| kept.is_dir()));
     assert!(!b.dir().join("data").exists() && !b.dir().join("moving").exists());
 
@@ -201,6 +254,11 @@ fn a_board_goes_to_postgresql_and_back_whole_and_a_reader_that_kept_it_reads_it_
     );
     let past = there.marker().unwrap();
     assert!(past > marker, "{past} against {marker}");
+    assert_eq!(leases(&there), [(0.0, 8), (0.0, 4), (0.0, closing + 1)]);
+    assert!(
+        !there.renew_session(HANDLE, closing).unwrap(),
+        "the close that held the session before the move no longer holds it"
+    );
     // The home is bound to none, so the token is refused; and after a rebind it is another's.
     let rebound = b.store().recovering(authority());
     assert!(rebound.bound("sim/jump").is_err());
@@ -225,7 +283,10 @@ fn a_board_goes_to_postgresql_and_back_whole_and_a_reader_that_kept_it_reads_it_
     assert!(!b.dir().join("postgresql").exists());
     let again = b.store();
     assert!(!again.database().is_postgresql());
+    let before = (before.0, ended(&before.1));
     assert_eq!(board(&again), before, "and SurrealDB holds it again");
+    assert_eq!(leases(&again), [(0.0, 9), (0.0, 5), (0.0, closing + 2)]);
+    assert!(!again.renew_session(HANDLE, closing).unwrap());
     assert!(again.marker().unwrap() > past);
     again
         .create(&NewTask::new("sim/more", "Made on SurrealDB", "owner"))
@@ -583,6 +644,93 @@ fn a_snapshot_is_put_back_over_its_board_and_the_cluster_it_replaced_is_kept() {
     );
     assert_eq!(home.held(), None);
     assert_eq!(board(&b.store()).0.tasks.len(), 3);
+}
+
+/// A snapshot put back brings no lease revision back with it: a holder that took its lease
+/// after the snapshot is past the snapshot's, and the restored lease is past the holder's.
+#[test]
+fn a_restored_snapshots_leases_are_ended_past_the_ones_the_board_held_since() {
+    let b = Board::new("restore-leases");
+    let home = b.home();
+    drop(b.seeded());
+    b.move_to(&home, Engine::PostgreSql).unwrap();
+    let pg = home.postgresql(&programs());
+    let closing = leased(&b.store());
+    let held_then = leases(&b.store());
+    assert_eq!(held_then.map(|(_, revision)| revision), [7, 3, closing]);
+    pg.hold(HANDLE, "a snapshot").unwrap();
+    let snapshot = pg.snapshot(NOW).unwrap();
+    pg.release(HANDLE, None).unwrap();
+
+    // Since the snapshot: the recipient committed and its lease was taken again, the session
+    // was released and taken twice, and a lease the snapshot never held was taken.
+    let since = b.store();
+    let raw = since.raw();
+    raw.row("callback_state", HANDLE)
+        .set(json!({"revision": 11}))
+        .unwrap();
+    raw.row("callback_lease", HANDLE)
+        .put(json!({"until": NOW + 600.0, "revision": 12}))
+        .unwrap();
+    raw.row("callback_lease", json!(["dispatch", "another-host"]))
+        .put(json!({"until": NOW + 600.0, "revision": 2}))
+        .unwrap();
+    since.release_session(HANDLE, closing).unwrap();
+    let released = since.take_session(HANDLE, "restoring").unwrap();
+    since.release_session(HANDLE, released).unwrap();
+    let held = since.take_session(HANDLE, "closing").unwrap();
+    assert!(held > closing + 1);
+    drop(since);
+
+    pg.restore_over(&snapshot, HANDLE, NOW).unwrap();
+    assert!(
+        !b.dir().join("restoring").exists(),
+        "the work folder is gone"
+    );
+    let restored = b.store();
+    assert_eq!(leases(&restored), [(0.0, 13), (0.0, 4), (0.0, held + 1)]);
+    let other = (restored.raw())
+        .row("callback_lease", json!(["dispatch", "another-host"]))
+        .get()
+        .unwrap();
+    assert_eq!(
+        (other["until"].as_f64(), other["revision"].as_u64()),
+        (Some(0.0), Some(3)),
+        "a lease taken since the snapshot is there, ended, past its holder's"
+    );
+    // The holder from after the snapshot holds nothing, and the next taker is past it.
+    for old in [closing, released, held] {
+        assert!(!restored.renew_session(HANDLE, old).unwrap(), "{old}");
+    }
+    let taken = restored.take_session(HANDLE, "closing").unwrap();
+    assert!(taken > held + 1, "{taken} is past {held}");
+    drop(restored);
+
+    // A cluster in place that cannot be served does not stop the way back: the snapshot's
+    // leases are moved on by more than any holder took, and the home is told.
+    let told = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let telling = {
+        let told = told.clone();
+        (home.clone())
+            .telling(move |line| told.lock().unwrap().push(line.to_string()))
+            .postgresql(&programs())
+    };
+    pg.hold(HANDLE, "a restore").unwrap();
+    std::fs::remove_file(b.dir().join("postgresql/global/pg_control")).unwrap();
+    telling.restore_over(&snapshot, HANDLE, NOW).unwrap();
+    pg.release(HANDLE, None).unwrap();
+    let told = told.lock().unwrap().join("\n");
+    assert!(
+        told.contains("the cluster in place could not be read"),
+        "{told}"
+    );
+    let unread = leases(&b.store());
+    assert!(unread.iter().all(|(until, _)| *until == 0.0), "{unread:?}");
+    assert!(
+        unread.iter().all(|(_, revision)| *revision > 1 << 32),
+        "{unread:?}"
+    );
+    assert!(!b.store().renew_session(HANDLE, taken).unwrap());
 }
 
 #[test]

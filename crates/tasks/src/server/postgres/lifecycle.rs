@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 
 const SNAPSHOTS: &str = "postgresql-snapshots";
 const TAKING: &str = ".taking";
+/// The work folder of a restore over a board: the snapshot's copy, served there once to be
+/// given its leases ([`Postgres::fenced`]).
+const RESTORING: &str = "restoring";
 
 /// A PostgreSQL board held stopped, under the same holder/release protocol as any board.
 #[derive(Debug, Clone, PartialEq)]
@@ -152,7 +155,8 @@ impl Postgres {
     /// `snapshot`, one of this board's own ([`Postgres::snapshots`]), put back over the board it
     /// was taken from, as `by`, at `now`: the folder that keeps the cluster it replaced. The
     /// board is held for it (the caller's hold, left standing, or one set now and released
-    /// after), its server stopped, the snapshot copied beside the data, then switched in under
+    /// after), its server stopped, the snapshot copied into a work folder and given its leases
+    /// past the replaced cluster's ([`Postgres::fenced`]), then switched in under
     /// the journal a move's switch runs under ([`crate::server::moving`]): the cluster in place
     /// moved aside into `moved/`, the copy moved in, the commit, the home's recovery bindings
     /// revoked. Nothing is deleted. A failure before the commit leaves the board on the cluster
@@ -199,8 +203,10 @@ impl Postgres {
         }
         let took = home.held_for(by, "restoring a snapshot over the board")?;
         let staging = home.dir.join(format!("{DATA}.restoring"));
+        let work = home.dir.join(RESTORING);
         let left = |why: ServerError| {
             let _ = fs::remove_dir_all(&staging);
+            let _ = fs::remove_dir_all(&work);
             let released = if took {
                 home.release_as(by, None)
                     .map(|_| "and its hold is released")
@@ -218,7 +224,7 @@ impl Postgres {
         let staged = self
             .stop_held()
             .and_then(|_| self.stopped())
-            .and_then(|()| self.staged(snapshot));
+            .and_then(|()| self.fenced(snapshot, &work));
         let staged = match staged {
             Ok(staged) => staged,
             Err(why) => return Err(left(why)),
@@ -230,7 +236,7 @@ impl Postgres {
             (engine, engine),
             &aside,
             &staged,
-            &staged,
+            &work,
             (by, took),
         );
         match home.switch(journal) {
@@ -242,6 +248,72 @@ impl Postgres {
             home.release_as(by, None)?;
         }
         Ok(aside)
+    }
+
+    /// `snapshot` copied into `work` as a cluster ready to be moved in, its leases ended and
+    /// each revision past the one the cluster in place holds
+    /// ([`crate::store::leases_past`]): the copy's data. The cluster in place is served once,
+    /// by a server of the restore's own, to be read, and the copy once to be written; neither is
+    /// left running. A cluster in place that cannot be served or read does not stop the restore,
+    /// which is the way back from one that broke: the copy's leases are then moved on by more
+    /// than any holder took, and the home is told.
+    fn fenced(&self, snapshot: &Path, work: &Path) -> Result<PathBuf, ServerError> {
+        use crate::store::{Opening, Store};
+        let opened = |pg: &Postgres| {
+            Store::unchecked_on(
+                crate::pg::Client::new(&pg.socket(), crate::DATABASE).into(),
+                Box::new(crate::store::now),
+                Box::new(crate::sys::pid_alive),
+                &crate::sys::hostname(),
+                &Opening::write(),
+            )
+        };
+        let read = self
+            .serve()
+            .and_then(|_| (opened(self).carried()).map_err(|why| ServerError::Io(why.to_string())));
+        self.stop_held()?;
+        self.stopped()?;
+        let replaced = match read {
+            Ok(replaced) => Some(replaced),
+            Err(why) => {
+                (self.home.tell)(&format!(
+                    "· the cluster in place could not be read ({why}): the snapshot's leases \
+                     are each moved on past any a holder took, not past the ones it holds"
+                ));
+                None
+            }
+        };
+        let taking = self.staged(snapshot)?;
+        fs::create_dir_all(work).map_err(io("could not make", work))?;
+        let made = crate::server::Home {
+            dir: work.into(),
+            cut: None,
+            ..self.home.clone()
+        }
+        .supervised(true)
+        .snapshotting(false);
+        made.identify(crate::server::Engine::PostgreSql)?;
+        let copy = made.postgresql(&self.programs);
+        fs::rename(&taking, copy.data()).map_err(io("could not place", &copy.data()))?;
+        copy.serve()?;
+        let store = opened(&copy);
+        let wrote = store.carried().and_then(|restored| {
+            crate::store::leases_past(&restored, replaced.as_ref())
+                .into_iter()
+                .try_for_each(|mut lease| {
+                    let id = lease["id"].take();
+                    lease
+                        .as_object_mut()
+                        .expect("a lease is a row")
+                        .remove("id");
+                    store.raw().row("callback_lease", id).put(lease)
+                })
+        });
+        copy.stop_held()?;
+        wrote.map_err(|why| {
+            ServerError::Io(format!("the snapshot's leases could not be ended: {why}"))
+        })?;
+        Ok(copy.data())
     }
 
     /// Reclaim the named database's dead space using PostgreSQL's rewrite. It needs temporary

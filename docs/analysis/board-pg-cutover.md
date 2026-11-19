@@ -198,7 +198,9 @@ minutes; the rehearsal gives the real figure, for the whole of it, before any li
 - **A PostgreSQL board that breaks later.** Its snapshots are whole stopped clusters, and
   `tasks-move --restore SNAPSHOT` puts one back over the board it was taken from, keeping
   the cluster it replaces. What was written since the snapshot is in that kept cluster, not on
-  the board.
+  the board. No lease revision comes back with the snapshot: the restore ends every lease past
+  the ones the replaced cluster held, as a move does
+  ([POSTGRESQL](../POSTGRESQL.md#holds-snapshots-and-recovery)).
 
 ## The choice
 

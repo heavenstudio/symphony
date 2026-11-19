@@ -174,15 +174,10 @@ fn moved(from: &Fixture, to: Backend) -> Fixture {
     target.store.carry(&carried).unwrap();
     let there = target.store.carried().unwrap();
     for table in ["callback_lease", "callback_event", "counter"] {
-        assert_eq!(
-            serde_json::to_string(&there[table])
-                .unwrap()
-                .replace(".0", ""),
-            serde_json::to_string(&carried[table])
-                .unwrap()
-                .replace(".0", ""),
-            "{table}"
-        );
+        let (mut read, mut written) = (there[table].clone(), carried[table].clone());
+        counted(&mut read);
+        counted(&mut written);
+        assert_eq!(read, written, "{table}");
     }
     target
 }
@@ -287,4 +282,15 @@ fn a_send_after_a_move_to_postgresql_and_back_is_keyed_past_the_lines_carried() 
 #[test]
 fn a_send_after_a_move_to_surrealdb_and_back_is_keyed_past_the_lines_carried() {
     a_send_and_a_lease_meet_the_board_as_it_was(Backend::PostgreSql, Backend::SurrealDb);
+}
+
+/// Every number of `value` as what it counts: one engine writes a whole number of seconds
+/// `3.0` where the other writes `3`.
+fn counted(value: &mut Value) {
+    match value {
+        Value::Number(number) => *value = json!(number.as_f64()),
+        Value::Array(items) => items.iter_mut().for_each(counted),
+        Value::Object(fields) => fields.values_mut().for_each(counted),
+        _ => {}
+    }
 }
