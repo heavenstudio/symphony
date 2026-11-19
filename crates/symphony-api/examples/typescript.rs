@@ -1449,12 +1449,14 @@ fn task_board_samples() -> Vec<(String, Value)> {
     .collect()
 }
 
-/// A custom workflow's reads, as [`samples`] holds them: the board's definition (built, then
-/// reviewed twice, a review sending work back to be built again, and a phase off the board) and
-/// the read of a board with none, a task's next actions and an edge's result, and a listing that
-/// holds its tasks in their phases.
-fn workflow_samples() -> Vec<(String, Value)> {
-    let pair = |phase: &str, state: &str| json!({"phase": phase, "state": state});
+/// A place of a workflow: `phase`'s `state`.
+fn pair(phase: &str, state: &str) -> Value {
+    json!({"phase": phase, "state": state})
+}
+
+/// A board's custom definition: built, then reviewed twice, a review sending work back to be built
+/// again, and a phase off the board.
+fn workflow_definition() -> Value {
     let position = |phase: &str, state: &str, staffing: Value, legacy: &str| {
         json!({"at": pair(phase, state), "staffing": staffing, "slot": "release",
             "dependencies": "none", "unsuccessful_dependency": "block", "accepts_work": true,
@@ -1479,7 +1481,7 @@ fn workflow_samples() -> Vec<(String, Value)> {
         reviewer.clone(),
     );
     rework["inputs"] = json!(["reason"]);
-    let definition = json!({
+    json!({
         "format": 1,
         "initial": pair("build", "available"),
         "task_kinds": ["task"],
@@ -1514,7 +1516,14 @@ fn workflow_samples() -> Vec<(String, Value)> {
         "capabilities": ["owner"],
         "adapters": [],
         "guards": [],
-    });
+    })
+}
+
+/// A custom workflow's reads, as [`samples`] holds them: the board's definition
+/// ([`workflow_definition`]) and the read of a board with none, a task's next actions and an
+/// edge's result, and a listing that holds its tasks in their phases ([`held_listing`]).
+fn workflow_samples() -> Vec<(String, Value)> {
+    let definition = workflow_definition();
     let revision = json!({"format": 1, "digest": "d".repeat(64),
         "source": {"commit": "1".repeat(40), "project_blob": "2".repeat(40)}});
     let read: api::workflow::BoardWorkflow = serde_json::from_value(json!({
@@ -1553,6 +1562,22 @@ fn workflow_samples() -> Vec<(String, Value)> {
         next: moved,
         effects: vec![api::workflow::Effect::ClearBlock],
     };
+    let held = held_listing();
+    [
+        ("workflow", json!(read)),
+        ("noWorkflow", json!(none)),
+        ("nextActions", json!(next)),
+        ("applied", json!(applied)),
+        ("heldListing", json!(held)),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value))
+    .collect()
+}
+
+/// A listing that holds its tasks in their phases: one built, one awaiting review after its
+/// reviewer was lost, and one blocked, resuming where it was available.
+fn held_listing() -> api::TaskListing {
     let place = |phase: &str, state: &str, revision: u64| api::workflow::TaskPlace {
         phase: phase.into(),
         state: state.into(),
@@ -1585,7 +1610,7 @@ fn workflow_samples() -> Vec<(String, Value)> {
         blocked,
         oldest: Some(1.0),
     };
-    let held = api::TaskListing {
+    api::TaskListing {
         machine_work: api::MachineWork::default(),
         tasks: vec![building, reviewed, stopped],
         statuses: vec!["in_progress".into(), "review".into(), "blocked".into()],
@@ -1609,17 +1634,7 @@ fn workflow_samples() -> Vec<(String, Value)> {
             ],
             workflow: Some(2),
         }),
-    };
-    [
-        ("workflow", json!(read)),
-        ("noWorkflow", json!(none)),
-        ("nextActions", json!(next)),
-        ("applied", json!(applied)),
-        ("heldListing", json!(held)),
-    ]
-    .into_iter()
-    .map(|(name, value)| (name.to_owned(), value))
-    .collect()
+    }
 }
 
 /// The agents page's reads, as [`samples`] holds them: its page with every field and with none it

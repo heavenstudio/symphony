@@ -9,7 +9,7 @@ pub const FORMAT: u32 = 1;
 /// The immutable built-in definition version. Omission keeps the existing board implementation.
 pub const DEFAULT_VERSION: u32 = 1;
 
-/// A closed list of snake_case words; `as` names it in the web client's wire types, where each
+/// A closed list of `snake_case` words; `as` names it in the web client's wire types, where each
 /// workflow type is named `Workflow…` beside the board's own (`Role`, `Task`).
 macro_rules! vocabulary {
     ($name:ident as $ts:literal { $($variant:ident),+ $(,)? }) => {
