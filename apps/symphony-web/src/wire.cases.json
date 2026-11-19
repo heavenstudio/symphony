@@ -3066,6 +3066,398 @@
       }
     },
     "taskRemoved": { "key": "w/a", "removed": true },
+    "workflow": {
+      "project": "symphony",
+      "workflow": {
+        "definition": {
+          "format": 1,
+          "initial": { "phase": "build", "state": "available" },
+          "task_kinds": ["task"],
+          "phases": [
+            { "id": "build", "label": "Build", "order": 0, "phone_order": 2, "column": true },
+            { "id": "review", "label": "Review", "order": 1, "phone_order": 1, "column": true },
+            { "id": "verify", "label": "Verify", "order": 2, "phone_order": 0, "column": true },
+            { "id": "parked", "label": "Parked", "order": 3, "phone_order": 3, "column": false }
+          ],
+          "states": [
+            { "id": "available", "label": "Available" },
+            { "id": "working", "label": "Working" },
+            { "id": "blocked", "label": "Blocked" },
+            { "id": "awaiting", "label": "Awaiting review" },
+            { "id": "accepted", "label": "Accepted" }
+          ],
+          "positions": [
+            {
+              "at": { "phase": "build", "state": "available" },
+              "staffing": null,
+              "slot": "release",
+              "dependencies": "none",
+              "unsuccessful_dependency": "block",
+              "accepts_work": true,
+              "terminal": false,
+              "legacy": "ready",
+              "outcome": null,
+              "satisfies_dependencies": false,
+              "completion": "none",
+              "recovery": null
+            },
+            {
+              "at": { "phase": "build", "state": "working" },
+              "staffing": "executor",
+              "slot": "release",
+              "dependencies": "none",
+              "unsuccessful_dependency": "block",
+              "accepts_work": true,
+              "terminal": false,
+              "legacy": "in_progress",
+              "outcome": null,
+              "satisfies_dependencies": false,
+              "completion": "none",
+              "recovery": null
+            },
+            {
+              "at": { "phase": "build", "state": "blocked" },
+              "staffing": null,
+              "slot": "release",
+              "dependencies": "none",
+              "unsuccessful_dependency": "block",
+              "accepts_work": true,
+              "terminal": false,
+              "legacy": "blocked",
+              "outcome": null,
+              "satisfies_dependencies": false,
+              "completion": "none",
+              "recovery": null
+            },
+            {
+              "at": { "phase": "review", "state": "awaiting" },
+              "staffing": null,
+              "slot": "release",
+              "dependencies": "none",
+              "unsuccessful_dependency": "block",
+              "accepts_work": true,
+              "terminal": false,
+              "legacy": "review",
+              "outcome": null,
+              "satisfies_dependencies": false,
+              "completion": "none",
+              "recovery": null
+            },
+            {
+              "at": { "phase": "verify", "state": "awaiting" },
+              "staffing": null,
+              "slot": "release",
+              "dependencies": "none",
+              "unsuccessful_dependency": "block",
+              "accepts_work": true,
+              "terminal": false,
+              "legacy": "review",
+              "outcome": null,
+              "satisfies_dependencies": false,
+              "completion": "none",
+              "recovery": null
+            },
+            {
+              "at": { "phase": "verify", "state": "accepted" },
+              "staffing": null,
+              "slot": "release",
+              "dependencies": "none",
+              "unsuccessful_dependency": "block",
+              "accepts_work": true,
+              "terminal": false,
+              "legacy": "done",
+              "outcome": null,
+              "satisfies_dependencies": false,
+              "completion": "none",
+              "recovery": null
+            },
+            {
+              "at": { "phase": "parked", "state": "available" },
+              "staffing": null,
+              "slot": "release",
+              "dependencies": "none",
+              "unsuccessful_dependency": "block",
+              "accepts_work": true,
+              "terminal": false,
+              "legacy": "backlog",
+              "outcome": null,
+              "satisfies_dependencies": false,
+              "completion": "none",
+              "recovery": null
+            }
+          ],
+          "edges": [
+            {
+              "id": "claim",
+              "label": "Claim",
+              "from": { "phase": "build", "state": "available" },
+              "to": { "phase": "build", "state": "working" },
+              "operation": "claim",
+              "alias": null,
+              "authority": [{ "kind": "task_role", "role": "executor" }],
+              "inputs": [],
+              "dependencies": "none",
+              "guards": [],
+              "effects": [],
+              "automatic": false,
+              "retry": null,
+              "human_wait": false
+            },
+            {
+              "id": "submit",
+              "label": "Submit",
+              "from": { "phase": "build", "state": "working" },
+              "to": { "phase": "review", "state": "awaiting" },
+              "operation": "request_review",
+              "alias": null,
+              "authority": [{ "kind": "task_role", "role": "executor" }],
+              "inputs": [],
+              "dependencies": "none",
+              "guards": [],
+              "effects": [],
+              "automatic": false,
+              "retry": null,
+              "human_wait": false
+            },
+            {
+              "id": "rework",
+              "label": "Send back",
+              "from": { "phase": "review", "state": "awaiting" },
+              "to": { "phase": "build", "state": "working" },
+              "operation": "changes",
+              "alias": null,
+              "authority": [{ "kind": "task_role", "role": "reviewer" }],
+              "inputs": ["reason"],
+              "dependencies": "none",
+              "guards": [],
+              "effects": [],
+              "automatic": false,
+              "retry": null,
+              "human_wait": false
+            },
+            {
+              "id": "pass",
+              "label": "Pass review",
+              "from": { "phase": "review", "state": "awaiting" },
+              "to": { "phase": "verify", "state": "awaiting" },
+              "operation": "approve",
+              "alias": null,
+              "authority": [{ "kind": "task_role", "role": "reviewer" }],
+              "inputs": [],
+              "dependencies": "none",
+              "guards": [],
+              "effects": [],
+              "automatic": false,
+              "retry": null,
+              "human_wait": false
+            },
+            {
+              "id": "accept",
+              "label": "Accept",
+              "from": { "phase": "verify", "state": "awaiting" },
+              "to": { "phase": "verify", "state": "accepted" },
+              "operation": "close_covered",
+              "alias": null,
+              "authority": [{ "kind": "project_capability", "capability": "owner" }],
+              "inputs": [],
+              "dependencies": "none",
+              "guards": [],
+              "effects": [],
+              "automatic": false,
+              "retry": null,
+              "human_wait": false
+            },
+            {
+              "id": "block",
+              "label": "Block",
+              "from": { "phase": "build", "state": "available" },
+              "to": { "phase": "build", "state": "blocked" },
+              "operation": "block",
+              "alias": null,
+              "authority": [{ "kind": "project_capability", "capability": "owner" }],
+              "inputs": [],
+              "dependencies": "none",
+              "guards": [],
+              "effects": [],
+              "automatic": false,
+              "retry": null,
+              "human_wait": false
+            }
+          ],
+          "capabilities": ["owner"],
+          "adapters": [],
+          "guards": []
+        },
+        "revision": {
+          "format": 1,
+          "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "source": {
+            "commit": "1111111111111111111111111111111111111111",
+            "project_blob": "2222222222222222222222222222222222222222"
+          }
+        },
+        "activation_generation": 2
+      }
+    },
+    "noWorkflow": { "project": "symphony", "workflow": null },
+    "nextActions": {
+      "snapshot": {
+        "workflow": {
+          "format": 1,
+          "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "source": {
+            "commit": "1111111111111111111111111111111111111111",
+            "project_blob": "2222222222222222222222222222222222222222"
+          }
+        },
+        "activation_generation": 2,
+        "task_revision": 7,
+        "at": { "phase": "review", "state": "awaiting" }
+      },
+      "actions": [
+        {
+          "edge": "pass",
+          "operation": "approve",
+          "destination": { "phase": "verify", "state": "awaiting" },
+          "label": "Pass review",
+          "responsible": [{ "kind": "task_role", "role": "reviewer" }],
+          "required_inputs": [],
+          "unavailable": ["unauthorized"]
+        },
+        {
+          "edge": "rework",
+          "operation": "changes",
+          "destination": { "phase": "build", "state": "working" },
+          "label": "Send back",
+          "responsible": [{ "kind": "project_capability", "capability": "owner" }],
+          "required_inputs": ["reason"],
+          "unavailable": []
+        }
+      ]
+    },
+    "applied": {
+      "transition": "w/a@8",
+      "next": {
+        "snapshot": {
+          "workflow": {
+            "format": 1,
+            "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "source": {
+              "commit": "1111111111111111111111111111111111111111",
+              "project_blob": "2222222222222222222222222222222222222222"
+            }
+          },
+          "activation_generation": 2,
+          "task_revision": 8,
+          "at": { "phase": "build", "state": "working" }
+        },
+        "actions": []
+      },
+      "effects": [{ "kind": "clear_block" }]
+    },
+    "heldListing": {
+      "machine_work": { "freshness": "unknown", "machines": [], "unassigned": [], "guidance": {} },
+      "tasks": [
+        {
+          "slug": "w/a",
+          "title": "A task",
+          "body": "",
+          "status": "in_progress",
+          "priority": 2,
+          "parent": null,
+          "created_by": "owner",
+          "created": 1.0,
+          "updated": 2.0,
+          "links": ["docs/A.md"],
+          "depends": [],
+          "roles": [
+            {
+              "handle": "amber",
+              "role": "executor",
+              "since": 1.0,
+              "expires": null,
+              "health": "live"
+            }
+          ],
+          "instruction": false,
+          "workflow": { "phase": "build", "state": "working", "revision": 4 }
+        },
+        {
+          "slug": "w/b",
+          "title": "A task",
+          "body": "",
+          "status": "review",
+          "priority": 2,
+          "parent": null,
+          "created_by": "owner",
+          "created": 1.0,
+          "updated": 2.0,
+          "links": ["docs/A.md"],
+          "depends": [],
+          "roles": [
+            {
+              "handle": "amber",
+              "role": "executor",
+              "since": 1.0,
+              "expires": null,
+              "health": "live"
+            }
+          ],
+          "instruction": false,
+          "workflow": {
+            "phase": "review",
+            "state": "awaiting",
+            "revision": 9,
+            "manual": { "trigger": "lost_holder", "holder": "sable-finch", "role": "reviewer" }
+          }
+        },
+        {
+          "slug": "w/c",
+          "title": "A task",
+          "body": "",
+          "status": "blocked",
+          "priority": 2,
+          "parent": null,
+          "created_by": "owner",
+          "created": 1.0,
+          "updated": 2.0,
+          "links": ["docs/A.md"],
+          "depends": [],
+          "roles": [
+            {
+              "handle": "amber",
+              "role": "executor",
+              "since": 1.0,
+              "expires": null,
+              "health": "live"
+            }
+          ],
+          "instruction": false,
+          "workflow": {
+            "phase": "build",
+            "state": "blocked",
+            "resume": { "phase": "build", "state": "available" },
+            "revision": 2
+          }
+        }
+      ],
+      "statuses": ["in_progress", "review", "blocked"],
+      "signoff": [],
+      "counts": [["phase:build", 2], ["phase:review", 1]],
+      "lifecycle_counts": [["blocked", 1], ["in_progress", 1], ["review", 1]],
+      "next": null,
+      "orchestrators": [],
+      "unstarted": 0,
+      "waiting": {
+        "kinds": [["nobody", 1], ["working", 2]],
+        "columns": [
+          { "status": "phase:build", "ordinary": 1, "blocked": 1, "oldest": 1.0 },
+          { "status": "phase:review", "ordinary": 1, "blocked": 0, "oldest": 1.0 }
+        ],
+        "states": [["awaiting", 1], ["blocked", 1], ["working", 1]],
+        "workflow": 2
+      }
+    },
     "agentPage": {
       "view": {
         "machine_work": {

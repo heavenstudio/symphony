@@ -565,6 +565,7 @@ async fn route_query_and_body_aliases_cannot_choose_another_scope() {
         "/api/front",
         "/api/projects",
         "/api/machine-work",
+        "/api/schema-updates",
         "/api/agent-focus",
         "/api/agent-screen",
         "/api/task-offer",
@@ -917,6 +918,34 @@ async fn native_router_keeps_local_gate_and_hosted_requests_have_no_machine_priv
         )
         .is_err()
     );
+    shared.stop();
+}
+
+/// The next actions are the local owner's: a hosted visitor's read of them is refused before a
+/// hub starts, whatever task it names; the workflow's definition stays a native read.
+#[tokio::test]
+async fn next_actions_are_the_local_owners_never_a_hosted_visitors() {
+    let tree = crate::testing::Tree::new();
+    tree.write("symphony.toml", "[project]\nid = \"fixture\"\n");
+    let shared = Shared::new(
+        1,
+        1,
+        &tree.root,
+        None,
+        crate::gate::Gate::new(
+            Arc::new(|_| panic!("hosted admission must not ask tailnet")),
+            Arc::new(std::time::Instant::now),
+        ),
+    );
+    let fake = Fake::new();
+    let mut req = axum::http::Request::builder()
+        .uri("/api/workflow-actions?slug=tools/x")
+        .body(())
+        .unwrap();
+    req.extensions_mut().insert(lease(&fake).await);
+    let response = crate::api::answer(&shared, req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(shared.api.get().is_none(), "no hub was started");
     shared.stop();
 }
 

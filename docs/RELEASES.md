@@ -914,10 +914,15 @@ Once a release's tag is pushed, the run does this, in order:
   `current` is not pointed, and the run names the project that holds it (`the switch to RELEASE is
   held: …`), as `--status` does. The machine's server is then a project's build at that project's
   own pin, and a board moved past it would leave that server only reading it.
-- **The boards.** A release that keeps the board schema of the release `current` names moves no
-  board (`RELEASE serves board schema N, as the release current names serves N: no board moves`),
-  and nor does one behind it, as no board moves back (`RELEASE serves board schema N, behind the
-  release current names, which serves M: no board moves, as none moves back`).
+- **The boards.** A release that keeps the board schema of the release `current` names, or is
+  behind it, moves no board back and judges only a board read behind its schema, one an earlier
+  forward move left behind (*The forward move*, below), saying nothing of the rest (`RELEASE
+  serves board schema N, as the release current names serves N: only a board left behind it
+  moves`; `RELEASE serves board schema N, behind the release current names, which serves M: none
+  moves back, and only a board left behind N moves`). Each such board is judged and moved on its
+  own, as in the forward move: snapshotted just before its own move, and holding neither another
+  board nor `current`, which is pointed at the release as it would be with no board left behind;
+  one still held stays, its update's failure ([an update](#an-update), below).
   One that raises it, or the first, with no `current`, judges the live board of each project in the
   registry, this repository's aside (its board moves with its own main), one step `refresh-ID` for
   each. A project whose id is not a plain name, whose checkout is gone, or that is not a git
@@ -941,7 +946,18 @@ Once a release's tag is pushed, the run does this, in order:
     and is never moved here: its project's own `just tasks migrate`, in its main checkout, brings
     it up. It is the project's to finish, and holds nothing, as it is behind every release.
 
-  A board that lags, red or the project's to finish, holds the release: no board moves and
+  **The forward move.** While this repository's board is at the release's schema and the release
+  `current` names serves an older one (or none is named), nothing holds the release: `this
+  repository's board is at schema N, which the release current names does not serve (it serves M): no
+  project's board holds current, each moving as its own writers allow`. Each board that can move
+  is snapshotted just before its own move and moved; one that lags, red or the project's to
+  finish, stays where it is, its update failed ([an update](#an-update), below), and `current` is
+  pointed at the release all the same. A board left behind is moved by a later refresh once its
+  writers allow, as the release `current` names then serves past it, and until then it holds no
+  later release at that schema either (*The boards*, above). Projects left behind never hold this
+  repository's board back: their pages save nothing until their boards move.
+
+  Otherwise a board that lags, red or the project's to finish, holds the release: no board moves and
   `current` is not pointed, and each board that could move says it waits (`ID: its board can move
   from schema N to M, and stays at N while X holds the release`). Otherwise every board is
   snapshotted through its running database, all of them before the first move
@@ -992,8 +1008,9 @@ Each step ends in one of three:
 - **The project's to finish**: a writer seen on its board in the last week is behind the release's
   schema, each named with what to do (rebuild it at that schema and run it once, which records it,
   then an orchestrator's `just release --refresh` moves the board); or its board is below schema
-  18 (`cd ROOT && just tasks migrate`, its own, brings it up). Green here and filed nowhere: it
-  files no task and closes none, and the run's exit is not changed by it. The step says which, with
+  18 (`cd ROOT && just tasks migrate`, its own, brings it up). Green here, and its board's update
+  failed ([an update](#an-update), below): the update's one task says what finishes it, and the
+  run's exit is not changed by it. The step says which, with
   what finishes it and the command that says what taking the release asks of the project (`just
   symphony-cli release-notes`, [its notes](#its-notes)), in the run's output (`release: refresh:
   ID: the project's to finish: …`, then
@@ -1005,11 +1022,13 @@ Each step ends in one of three:
   was up or it was told to stop is red, as the run's own.
 
 A red step says what it found, the release stands (its tag is pushed), and the run exits 1.
-`current` stays where it was, a migrate that fails leaves the snapshot taken before it, and the
-boards moved before it stay moved (*A move that fails partway*, above). It is
-filed as `tests/release-red-refresh-ID` (`tests/release-red-refresh` when the registry cannot be
-read), saying what was left as it was and who fixes it, and filed as a check's red is. A refresh
-green for it closes the task.
+`current` stays where it was, but for the forward move, a migrate that fails leaves the snapshot
+taken before it, and the boards moved before it stay moved (*A move that fails partway*, above).
+A board's red is its update's failure, filed once on that update's task ([an update](#an-update),
+below) and never as a red of its step as well; the install's red and the registry's
+(`tests/release-red-refresh`) are filed as a check's red is, saying what was left as it was and who
+fixes it, and a refresh green for them closes the task. A red an earlier build filed for a board's
+step (`tests/release-red-refresh-ID`) is closed by that step's next green.
 
 What stays by hand, said in `--status` under a refresh with a step that is its project's to
 finish:
@@ -1026,6 +1045,66 @@ A refresh's install has an hour, its build within it, and the boards, `current` 
 the server have another hour after it. `[releases] refresh = false` turns it off, the install with
 it. Each project's step logs every command it ran (`logs/ID/refresh-ID.log`), and the install its
 build's output and what it said (`logs/ID/refresh-install.log`).
+
+### An update
+
+An update is one registered project's board reaching a schema the machine's server must come to
+write, named `ID@N` (`symphony@23`, `alpha@24`): this repository's board at the schema its own main
+moved it to, a project's at the release's schema, or its own past it. It is **complete** once the
+machine's server writes that board at `N`: its project list says so (`writes` in
+`/api/projects`), or, from a server that says nothing of writes, it is at `N` itself. A
+server at `N` that only reads or refuses the board is no completion, and one that writes it at
+another schema, compatible with the board, is. A server that cannot say yet (its list's `writes`
+is null: it has not read the board since it took over) is asked again every half second for up to
+30 seconds once it answers as the release, and then the update waits for the next refresh, neither
+complete nor failed. Each refresh, once the boards, `current`
+and the server are settled, reads every registered board again and brings the machine's ledger of
+updates up to it (`updates.json` in the machine folder,
+`crates/symphony-build/src/release/updates.rs`, its format `crates/symphony/src/machine/updates.rs`):
+
+- **Its times**, each with where it comes from, which `--status` says beside it: when the board
+  reached `N` (its `schema-seen.log`, the first store that saw it there, an observation, the move
+  then or just before; else the refresh's own move, by its clock when the move was done; else the
+  first refresh that found it there, which bounds it from above), when the first green release
+  serving `N` was installed here (its manifest, which the install writes last), and when the
+  machine's server first wrote it (its reload's hand-off line in `server.log` for the process that
+  answers, when after the board reached `N`; else the refresh that found it written, which bounds it
+  from above). The total is from the board reaching `N` to the server writing it; the part of it
+  after a release serving `N` was installed is what the machine's own switch took. A time no record
+  gives is left out, never guessed, and so is a latency that needs it.
+- **A failure** is a refresh that ends with the update not complete where the move of its board
+  failed (a red), its project holds it (writers behind, a board from before the writer record), or
+  a green release serving `N` was installed, a server answered and still does not write it. With no
+  release serving `N` yet, no server answering, or a board that waits on another's move, it waits,
+  and nothing is filed. An update complete the first time it is found files nothing.
+- **Its task.** The first failure files one task, `tests/release-red-update-ID-N` at p0 and marked
+  red (RULES.md `workflow/fast-bugfixes`), on the board that can act: the project's own, where its
+  project holds the board and a release installed here writes that board's schema, run in its main
+  checkout; else this repository's, for the refresh's own failure, this repository's update, a
+  board whose database is down (filing there would start it) and a board nothing here writes. It
+  says what failed, who acts and what completes it. Each failure, the first too, is a post on that
+  task (`Failure K of ID@N (run …): …`), never another task, and the ledger keeps which board and
+  slug hold it, so a later run finds it whatever restarted in between. The refresh that finds the
+  update complete closes the task, saying how long it took; one never stands on both boards.
+- **Its identity.** The same board at the same schema is one update, whichever release serves it
+  and however many refreshes find it. A board found below `N` after it reached it (it went back) ends
+  that update, served or not, its task closed, and its next arrival at `N` is a new generation,
+  `ID@N.2`, `tests/release-red-update-ID-N-g2`, an entry of its own beside the old, which keeps its
+  history; so is an arrival the board's `schema-seen.log` dates after a served one's (the record
+  starts again from an accepted rollback, [TASKS](TASKS.md#a-board-that-went-back)). An open
+  update a higher goal supersedes is served when the server writes the board at its schema, else
+  ended with its task; so is an open update of a project no longer registered. What the ledger
+  cannot tell apart: a board's database recreated at the same schema with no rollback in its
+  record is the same update, and a task closed by hand while its update is open is followed, at the
+  next failure, by its next generation (`-2`), as any red's is.
+
+Nothing here moves a board, points `current` or touches a server or a database: it reads, and
+writes the ledger and the tasks. `--status` says the open updates, each with its failures and
+task, and the newest served, each with its total, the part after a release serving it, and where
+each time comes from ([status](#status)). The owner reads the same in the Runs page's Schema
+updates section, which every server draws from the ledger ([RUNS](RUNS.md#the-runs-page)), and
+while a board is a schema ahead of the server, the read-only notice on every page names its open
+update's task, which the page links.
 
 ### The install
 
@@ -1153,8 +1232,8 @@ follows a landing that moves the board's schema (*The cadence*, above): the orch
 landed it runs `just release` without asking each time, the owner's standing word for those runs
 alone, and any other run by hand stays the owner's call. So has a green release's
 refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
-run without asking on a red refresh's task once it is fixed, or once a project finished what its
-step left to it (each writer named rebuilt and run once). The machine's server is not the
+run without asking on a red refresh's task or a failed update's once it is fixed, or once a
+project finished what its step left to it (each writer named rebuilt and run once). The machine's server is not the
 refresh's to switch: the first time the shared server becomes a release's own server, by a stop
 and a start while nothing holds the switch, is the owner's word, and so is pointing `current` back
 on that machine ([the way back](#the-way-back)); a release's server that already serves follows
@@ -1217,10 +1296,20 @@ machine: the switch to release-2026-11-12 is held: consumer names the linked plu
 ```
 
 It names each red step and its log, and each step that is its project's to finish (`refresh-ID
-the project's to finish, filed nowhere here; log …`), counted on its first line (`last refresh:
-green, 1 step left to its project, of …`), then, under one of those, what stays by hand (*The
-refresh*, above) and the command that says what taking the release asks of the project (`just
-symphony-cli release-notes`, [its notes](#its-notes)). The next run is `due` once the count is reached, or the release
+the project's to finish, its schema update's task filed (below); log …`), counted on its first
+line (`last refresh: green, 1 step left to its project, of …`), then, under one of those, what
+stays by hand (*The refresh*, above) and the command that says what taking the release asks of the
+project (`just symphony-cli release-notes`, [its notes](#its-notes)). Then the machine's schema
+updates ([an update](#an-update)): how many are open and served, each open one with its failures
+and its task, and the newest five served, each with how long it took and where each time comes
+from:
+
+```text
+schema updates: 1 open, 4 served (ledger /machine/updates.json)
+  open alpha@19: failed 2 times since 2026-11-20 10:00 (1 h ago); task tests/release-red-update-alpha-19 on alpha's board; not at its schema yet
+  served symphony@19 2026-11-20 10:12: 2 h 7 min from its board reaching it, 11 min 3 s of it after a release serving it; times from reached by schema-seen.log, served by the server's hand-off, release-2026-11-20 by release-2026-11-20's manifest, written by its install
+```
+ The next run is `due` once the count is reached, or the release
 candidate's rerun or drop makes it so, `held for the release candidate` while a red of it waits,
 `in progress` while a run holds the lock, or `off` when `every_landings` is 0. It reads the record
 and this checkout's tags and refs, fetches nothing and writes nothing, so a land the candidate has

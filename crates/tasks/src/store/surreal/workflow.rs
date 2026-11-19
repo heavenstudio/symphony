@@ -41,14 +41,15 @@ UPDATE type::record('task', $slug) SET status = $transition.status, fields._boar
 RETURN NONE;";
 
 /// What an activation plans from, in one read: the active generation, and each task a workflow
-/// holds or the board's writers keep open, with its row's version, status, position and blocked
-/// source.
+/// holds or the board's writers keep open, with its row's version, status, position, blocked
+/// source and the accepted output its last transition left (the event at its workflow revision).
 pub(in crate::store) const STANDINGS: &str = "
 RETURN {
     active: (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL,
     tasks: (SELECT slug, version, status, fields._board.workflow ?? NULL AS position,
-        fields._board.blocked.from ?? NULL AS blocked_from FROM task
-        WHERE status NOT IN ['done', 'cancelled'] OR fields._board.workflow != NONE ORDER BY slug),
+        fields._board.blocked.from ?? NULL AS blocked_from,
+        type::record('workflow', ['event', slug, fields._board.workflow.revision ?? 0]).body.accepted ?? NULL AS accepted
+        FROM task WHERE status NOT IN ['done', 'cancelled'] OR fields._board.workflow != NONE ORDER BY slug),
 };";
 
 /// An activation, whole: refused as stale unless the active generation is still `$expected` and
@@ -87,17 +88,20 @@ RETURN NONE;";
 
 /// What admission decides `$slug`'s operation on, in one read: the active generation, the task
 /// (NULL when there is none), its role rows, the tasks it depends on and those of them on the
-/// board, the receipt `$receipt` names (NULL when no request used its key), and whether `$actor`,
-/// when the principal is an agent, is a session the board knows that has not left.
+/// board, each task with the accepted output its last transition left (the event at its workflow
+/// revision), the receipt `$receipt` names (NULL when no request used its key), and whether
+/// `$actor`, when the principal is an agent, is a session the board knows that has not left.
 pub(in crate::store) const ADMISSION: &str = "
 LET $deps = (SELECT VALUE target FROM link WHERE slug = $slug AND kind = 'dep');
 RETURN {
     active: (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL,
-    task: (SELECT slug, version, status, created_by, fields._board.workflow ?? NULL AS position
+    task: (SELECT slug, version, status, created_by, fields._board.workflow ?? NULL AS position,
+        type::record('workflow', ['event', slug, fields._board.workflow.revision ?? 0]).body.accepted ?? NULL AS accepted
         FROM ONLY type::record('task', $slug)) ?? NULL,
     roles: (SELECT handle, role, expires FROM role WHERE slug = $slug),
     dependencies: $deps,
-    found: (SELECT slug, version, status, fields._board.workflow ?? NULL AS position
+    found: (SELECT slug, version, status, fields._board.workflow ?? NULL AS position,
+        type::record('workflow', ['event', slug, fields._board.workflow.revision ?? 0]).body.accepted ?? NULL AS accepted
         FROM $deps.map(|$d| type::record('task', $d))),
     receipt: (SELECT VALUE body FROM ONLY type::record('workflow', $receipt)) ?? NULL,
     present: IF $actor = NONE { false } ELSE {

@@ -8,7 +8,13 @@
 //! the caller saw, its key, its inputs), and a principal holds a capability only through the
 //! host's grants ([`super::Grants`]). A task role is held on this task alone, a reviewer is fresh
 //! (`Held::unfresh`), and every check this release cannot make refuses: a guard, an adapter, an
-//! input revision, a dependency on a landing or an accepted output.
+//! input revision that names no accepted output, a dependency on a landing.
+//!
+//! An accepted output (docs/WORKFLOW.md, "Accepted outputs") is the id of the transition whose
+//! edge moved a task to a position that satisfies its dependants from one that does not; it stands
+//! while the task stays at such positions ([`accepted_after`]), and an edge depending on
+//! `accepted_output` is taken only on the output standing for each task it depends on, which its
+//! request names ([`standing`]).
 
 use super::{Host, TaskPosition, Transition};
 use crate::Held;
@@ -67,13 +73,18 @@ pub struct Facts {
     pub dependencies: Vec<Prerequisite>,
     pub held: Held,
     pub present: bool,
+    /// The task's own accepted output, as its last transition left it: what a move between two
+    /// positions that satisfy dependants carries.
+    pub accepted: Option<String>,
 }
 
-/// A task another depends on: its status and position, none when it is not on the board.
+/// A task another depends on: its status and position, none when it is not on the board, and the
+/// accepted output its last transition left, none for one no workflow holds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prerequisite {
     pub slug: String,
     pub found: Option<(String, Option<TaskPosition>)>,
+    pub accepted: Option<String>,
 }
 
 /// What an admitted operation writes: its transition, the role rows it adds and drops, and
@@ -204,9 +215,16 @@ pub fn admit(
     let destination = position_of(context.definition, &edge.to)
         .expect("a validated definition declares every edge's destination");
     let revision = position.revision + 1;
+    let id = Transition::id_of(&facts.slug, revision);
+    let accepted = accepted_after(
+        position_of(context.definition, &position.at()),
+        destination,
+        facts.accepted.as_deref(),
+        Some(&id),
+    );
     Ok(Admitted {
         transition: Transition {
-            id: Transition::id_of(&facts.slug, revision),
+            id,
             slug: facts.slug.clone(),
             revision,
             generation: context.generation,
@@ -222,6 +240,7 @@ pub fn admit(
             effects: edge.effects.clone(),
             key: Some(request.idempotency_key.clone()),
             recovery: None,
+            accepted,
             at,
         },
         add,
@@ -291,17 +310,24 @@ pub fn blockers(
         ));
     }
     for effect in &edge.effects {
-        let adapter = match effect {
-            Effect::Prepare { adapter } | Effect::Finalize { adapter } => adapter.as_str(),
-            Effect::ParentIntegration => "parent integration",
+        let needs = match effect {
+            // An adapter the host registered takes its own edges (`super::effect`).
+            Effect::Prepare { adapter } | Effect::Finalize { adapter }
+                if host.adapters.contains(adapter) =>
+            {
+                continue;
+            }
+            Effect::Prepare { adapter } | Effect::Finalize { adapter } => {
+                format!("the adapter {adapter}, which this host does not register")
+            }
+            Effect::ParentIntegration => {
+                "parent integration, which no host-verified adapter runs here yet".to_string()
+            }
             _ => continue,
         };
         found.push(Refusal::new(
             RefusalCode::UnsupportedAdapter,
-            format!(
-                "edge {id} needs {adapter}, which no host-verified adapter runs here yet \
-                 (tools/workflow-landing-adapters)"
-            ),
+            format!("edge {id} needs {needs}"),
         ));
     }
     if let Some(guard) = edge.guards.first() {
@@ -334,9 +360,9 @@ pub fn blockers(
         ));
     }
     if let Some(request) = request {
-        found.extend(inputs(edge, request));
+        found.extend(inputs(edge, facts, request));
     }
-    if let Err(refusal) = dependencies(context, facts, edge) {
+    if let Err(refusal) = dependencies(context, facts, edge, request) {
         found.push(refusal);
     }
     let position = facts.position.as_ref();
@@ -458,8 +484,10 @@ fn fresh(facts: &Facts, handle: &str, role: Role) -> Result<(), String> {
 }
 
 /// The request's inputs against the edge's: each one it declares given, none it does not, and no
-/// input revision, which the board records none of yet, so none is checked as current.
-fn inputs(edge: &Edge, request: &OperationRequest) -> Vec<Refusal> {
+/// input revision but the accepted output of a task this one depends on, named for an edge that
+/// depends on accepted outputs ([`dependencies`] checks each is the one standing): the board
+/// records no revision of anything else, so none is current.
+fn inputs(edge: &Edge, facts: &Facts, request: &OperationRequest) -> Vec<Refusal> {
     let mut found = Vec::new();
     for given in request.inputs.keys() {
         if !edge.inputs.contains(given) {
@@ -477,12 +505,17 @@ fn inputs(edge: &Edge, request: &OperationRequest) -> Vec<Refusal> {
             ));
         }
     }
-    if let Some(name) = request.input_revisions.keys().next() {
+    let accepts = |name: &str| {
+        edge.dependencies == Dependency::AcceptedOutput
+            && (facts.dependencies.iter()).any(|p| p.slug == name)
+    };
+    if let Some(name) = (request.input_revisions.keys()).find(|name| !accepts(name)) {
         found.push(Refusal::new(
             RefusalCode::StaleInput,
             format!(
-                "the board records no revision of {name} yet, so none is current \
-                 (tools/workflow-accepted-output)"
+                "the board records no revision of {name}: an input revision names the accepted \
+                 output of a task {} depends on, for an edge depending on accepted_output",
+                facts.slug
             ),
         ));
     }
@@ -491,11 +524,60 @@ fn inputs(edge: &Edge, request: &OperationRequest) -> Vec<Refusal> {
 
 /// The edge's dependency predicate on the tasks this one depends on: `done` is met by a task the
 /// workflow holds at a position that satisfies its dependants, or one the board's writers keep in
-/// done; a task not on the board meets nothing.
-fn dependencies(context: Context, facts: &Facts, edge: &Edge) -> Result<(), Refusal> {
+/// done; `accepted_output` by an accepted output standing for each ([`standing`]), which
+/// `request` names under the task's slug (none for a preview, which names nothing): one it does
+/// not name is to be named, and one other than the output standing (superseded, or never
+/// accepted) is stale. A task not on the board meets nothing.
+fn dependencies(
+    context: Context,
+    facts: &Facts,
+    edge: &Edge,
+    request: Option<&OperationRequest>,
+) -> Result<(), Refusal> {
     match edge.dependencies {
         Dependency::None => Ok(()),
-        Dependency::Landed | Dependency::AcceptedOutput => Err(Refusal::new(
+        Dependency::AcceptedOutput => {
+            for prerequisite in &facts.dependencies {
+                let slug = &prerequisite.slug;
+                let Some(output) = standing(context, prerequisite) else {
+                    return Err(Refusal::new(
+                        RefusalCode::Dependency,
+                        format!(
+                            "{} depends on the accepted output of {slug}, which has none \
+                             standing: it is {}",
+                            facts.slug,
+                            stands(prerequisite)
+                        ),
+                    ));
+                };
+                let Some(request) = request else { continue };
+                match request.input_revisions.get(slug) {
+                    None => {
+                        return Err(Refusal::new(
+                            RefusalCode::ExplicitActionRequired,
+                            format!(
+                                "edge {} takes the accepted output of {slug}: name the one it \
+                                 takes, {slug} = {output}",
+                                edge.id
+                            ),
+                        ));
+                    }
+                    Some(named) if named != output => {
+                        return Err(Refusal::new(
+                            RefusalCode::StaleInput,
+                            format!(
+                                "{} takes {named} of {slug}, whose accepted output standing is \
+                                 {output}",
+                                facts.slug
+                            ),
+                        ));
+                    }
+                    Some(_) => {}
+                }
+            }
+            Ok(())
+        }
+        Dependency::Landed => Err(Refusal::new(
             RefusalCode::UnsupportedWriter,
             format!(
                 "edge {} depends on {}, which this release does not check",
@@ -518,11 +600,7 @@ fn dependencies(context: Context, facts: &Facts, edge: &Edge) -> Result<(), Refu
                             "{} depends on {}, which is {}",
                             facts.slug,
                             prerequisite.slug,
-                            match &prerequisite.found {
-                                None => "not on the board".to_string(),
-                                Some((_, Some(p))) => format!("at {}", named(&p.at())),
-                                Some((status, None)) => status.clone(),
-                            }
+                            stands(prerequisite)
                         ),
                     ));
                 }
@@ -530,6 +608,51 @@ fn dependencies(context: Context, facts: &Facts, edge: &Edge) -> Result<(), Refu
             Ok(())
         }
     }
+}
+
+/// Where a prerequisite stands, as a refusal names it.
+fn stands(prerequisite: &Prerequisite) -> String {
+    match &prerequisite.found {
+        None => "not on the board".to_string(),
+        Some((_, Some(p))) => format!("at {}", named(&p.at())),
+        Some((status, None)) => status.clone(),
+    }
+}
+
+/// The accepted output standing for `prerequisite`: the one its last transition left, while the
+/// workflow holds it at a position that satisfies its dependants. None for a task the board's own
+/// writers keep, done or not: no edge accepted its output, and none is made up for it.
+pub fn standing<'a>(context: Context, prerequisite: &'a Prerequisite) -> Option<&'a str> {
+    match &prerequisite.found {
+        Some((_, Some(position)))
+            if position_of(context.definition, &position.at())
+                .is_some_and(|p| p.satisfies_dependencies) =>
+        {
+            prerequisite.accepted.as_deref()
+        }
+        _ => None,
+    }
+}
+
+/// The accepted output standing once a task moves from `source` (none where the definition no
+/// longer declares it) to `destination`: none where `destination` does not satisfy dependants,
+/// which supersedes the one that stood; `standing` carried where both do; else `minted`, the id
+/// of the transition whose edge accepts the output (none for a move no edge makes: an activation's
+/// mapping or a recovery never accepts one).
+pub fn accepted_after(
+    source: Option<&Position>,
+    destination: &Position,
+    standing: Option<&str>,
+    minted: Option<&str>,
+) -> Option<String> {
+    if !destination.satisfies_dependencies {
+        return None;
+    }
+    (source.is_some_and(|s| s.satisfies_dependencies))
+        .then_some(standing)
+        .flatten()
+        .or(minted)
+        .map(str::to_string)
 }
 
 /// The task's position, refused for a task no workflow holds.
@@ -591,4 +714,4 @@ pub(crate) fn word<T: serde::Serialize>(value: &T) -> String {
 
 #[cfg(test)]
 #[path = "admit_tests.rs"]
-mod tests;
+pub(crate) mod tests;

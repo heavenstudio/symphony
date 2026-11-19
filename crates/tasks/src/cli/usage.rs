@@ -167,7 +167,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "handover",
                 "hand a task's orchestrator role to another session",
             ),
-            ("move", "move a task to another status, --reason saying why"),
+            (
+                "move",
+                "take the board's own edge to a status, --reason saying why",
+            ),
             (
                 "workflow",
                 "a custom workflow: show it, a task's actions, apply, recover",
@@ -178,7 +181,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "verdict",
-                "as its reviewer: approve (done) or changes (back to work)",
+                "as its reviewer: a review round's approve or changes edge",
             ),
             (
                 "needs",
@@ -501,17 +504,20 @@ options:
     ),
     (
         "workflow",
-        r#"usage: just tasks workflow [-h] [--as ACTOR] [--revision N] [--key KEY] [--input NAME=TEXT] [--json] ACTION [SLUG] [EDGE]
+        r#"usage: just tasks workflow [-h] [--as ACTOR] [--revision N] [--key KEY] [--input NAME=TEXT] [--accept SLUG=OUTPUT] [--json] ACTION [SLUG] [EDGE]
 "#,
-        r#"usage: just tasks workflow [-h] [--as ACTOR] [--revision N] [--key KEY] [--input NAME=TEXT] [--json] ACTION [SLUG] [EDGE]
+        r#"usage: just tasks workflow [-h] [--as ACTOR] [--revision N] [--key KEY] [--input NAME=TEXT] [--accept SLUG=OUTPUT] [--json] ACTION [SLUG] [EDGE]
 
 A custom workflow the board activated from the project's default branch
 (docs/WORKFLOW.md). `show` prints its revision, positions and edges, or says
 none is active. `actions SLUG` prints where the task stands, its workflow
 revision, and each edge that leaves it with what stops you taking it now: a
-preview, never a permit. `apply SLUG EDGE --revision N` takes the edge as
-you, through the board's one admission, from the revision you read: a task
-moved since is refused as stale_task, so read its actions again. `recover
+preview, never a permit, and the accepted outputs it gives and takes. `apply
+SLUG EDGE --revision N` takes the edge as you, through the board's one
+admission, from the revision you read: a task moved since is refused as
+stale_task, so read its actions again. An edge depending on accepted outputs
+takes the one you name of each task it depends on (--accept): one superseded
+since is refused as stale_input. `recover
 SLUG HOLDER` asks the board's recovery for a holder whose session is lost or
 left: its position's lost-holder action lets its roles go, or keeps them for
 a person, and stays or moves to the pair it names. A task a custom workflow
@@ -532,6 +538,8 @@ options:
                         first result, another request under it is refused
                         (default SLUG@REVISION:EDGE)
   --input NAME=TEXT     an input the edge declares, again for each
+  --accept SLUG=OUTPUT  the accepted output of a task it depends on that the
+                        edge takes (apply), again for each
   --json                the answer as JSON
 "#,
     ),
@@ -911,6 +919,11 @@ options:
                        slug
                        {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
 
+Take one of the board's own workflow's edges: the one from where the task
+stands to the status named, as your role on it allows. A task a custom workflow
+holds moves by its edges alone: a move refuses it as explicit_action_required,
+and `just tasks workflow actions SLUG` names the edges you can take.
+
 positional arguments:
   slug
   {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
@@ -933,6 +946,13 @@ options:
         r#"usage: just tasks verdict [-h] [--as ACTOR] slug {approve,changes} [text]
 "#,
         r#"usage: just tasks verdict [-h] [--as ACTOR] slug {approve,changes} [text]
+
+Record a round of a task's review as its reviewer, by one of the board's own
+review edges: approve, which completes the task and is the stamp its landing
+goes by, the text naming the whole tip read and why, or changes, which returns
+it to its executor's work, the text naming what and where. A task a custom
+workflow holds takes its review edges with `just tasks workflow apply`: a
+verdict refuses it as explicit_action_required.
 
 positional arguments:
   slug

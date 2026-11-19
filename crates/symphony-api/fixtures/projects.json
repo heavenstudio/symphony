@@ -24,7 +24,8 @@
             "at": 1763213045.25
           }
         }
-      }
+      },
+      "writes": true
     },
     {
       "id": "orbit",
@@ -37,7 +38,8 @@
       "asks": {
         "questions": {"owner": 0},
         "verdicts": {}
-      }
+      },
+      "writes": false
     },
     {
       "id": "notes",
@@ -47,7 +49,8 @@
       "version": null,
       "waiting": null,
       "next": null,
-      "asks": null
+      "asks": null,
+      "writes": null
     }
   ]
 }

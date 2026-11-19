@@ -15,10 +15,11 @@ use symphony_plugin::execution::{Principal, PrincipalKind};
 pub mod activate;
 pub mod admit;
 mod builtin;
+pub mod effect;
 pub mod operate;
 pub mod recover;
 mod validate;
-pub use crate::store::admission::{Receipt, Settled};
+pub use crate::store::admission::{Finalized, Receipt, Reviewed, Settled};
 pub use crate::store::workflow::{
     Active, Followed, Moved, Recorded, Recovered, TaskPosition, Transition, Trigger,
 };

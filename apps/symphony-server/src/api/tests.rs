@@ -88,12 +88,37 @@ async fn a_listing_status_no_listing_selects_is_refused_before_the_board_is_read
     .unwrap_err();
     assert!(
         said.starts_with("no status \"nope\": a listing selects one of ")
-            && said.ends_with(" or signoff, build, test"),
+            && said.ends_with(", signoff, build, test, or in view=waiting phase:PHASE"),
         "{said}"
     );
     assert!(
         status_argument_of(&Request::builder().uri("/api/task-board").body(()).unwrap()).is_ok()
     );
+}
+
+/// The local owner's next actions are on one task: a read that names none is refused before the
+/// board is read, so no hub starts for it.
+#[tokio::test]
+async fn next_actions_that_name_no_task_are_refused_before_the_board_is_read() {
+    let tree = crate::testing::Tree::new();
+    let root = crate::testing::repository(&tree);
+    let shared = crate::front::Shared::new(
+        1,
+        1234,
+        &root,
+        None,
+        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
+    );
+    for uri in ["/api/workflow-actions", "/api/workflow-actions?slug="] {
+        let request = Request::builder()
+            .uri(uri)
+            .header("Host", "localhost:1234")
+            .body(())
+            .unwrap();
+        let response = answer(&shared, request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+    }
+    assert!(shared.api.get().is_none(), "no hub was started");
 }
 
 fn status_argument_of(request: &Request) -> Result<(), String> {

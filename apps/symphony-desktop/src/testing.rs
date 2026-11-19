@@ -14,7 +14,7 @@ mod tree;
 pub use tree::Tree;
 
 /// A project `id`, named `id works`, with `cards` waiting, the first titled `next card of ID`, and
-/// a task board asking the owner nothing.
+/// a task board asking the owner nothing, which its server writes.
 pub fn project(id: &str, cards: u32) -> ListedProject {
     ListedProject {
         id: id.into(),
@@ -31,6 +31,7 @@ pub fn project(id: &str, cards: u32) -> ListedProject {
             questions: BTreeMap::from([("owner".to_owned(), 0)]),
             verdicts: BTreeMap::new(),
         }),
+        writes: Some(true),
     }
 }
 
