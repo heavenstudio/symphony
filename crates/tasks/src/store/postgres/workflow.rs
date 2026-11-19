@@ -54,10 +54,13 @@ pub(in crate::store) fn standings() -> Pg<'static> {
     Pg::read(
         "jsonb_build_object(
     'active', (SELECT body FROM workflow WHERE id = '[\"active\"]'::jsonb),
+    'last', coalesce((SELECT max((body ->> 'generation')::bigint) FROM workflow
+        WHERE id >= '[\"activation\", 0]'::jsonb AND id <= '[\"activation\", 9223372036854775807]'::jsonb), 0),
     'tasks', coalesce((SELECT jsonb_agg(jsonb_build_object(
         'slug', slug, 'version', version, 'status', status,
         'position', fields #> '{_board,workflow}',
-        'blocked_from', fields #> '{_board,blocked,from}') ORDER BY slug)
+        'blocked_from', fields #> '{_board,blocked,from}',
+        'retired', coalesce((fields #>> '{_board,workflow_retired,revision}')::bigint, 0)) ORDER BY slug)
         FROM task WHERE status NOT IN ('done', 'cancelled') OR fields #> '{_board,workflow}' IS NOT NULL),
         '[]'::jsonb))",
     )
@@ -75,6 +78,10 @@ BEGIN
     IF coalesce((active_ ->> 'generation')::bigint, 0) <> (v ->> 'expected')::bigint THEN
         RAISE EXCEPTION '%', 'refused: stale_workflow: the active generation is '
             || coalesce(active_ ->> 'generation', '0') || ', not ' || (v ->> 'expected');
+    END IF;
+    IF EXISTS (SELECT 1 FROM workflow WHERE id = jsonb_build_array('activation', v -> 'generation')) THEN
+        RAISE EXCEPTION '%', 'refused: stale_workflow: generation ' || (v ->> 'generation')
+            || ' is activated already';
     END IF;
     FOR t_ IN SELECT value FROM jsonb_array_elements(v -> 'kept') LOOP
         UPDATE task SET version = version + 1
@@ -106,6 +113,53 @@ BEGIN
     INSERT INTO workflow (id, kind, body, at) VALUES ('[\"active\"]', 'active',
         jsonb_build_object('generation', v -> 'generation', 'digest', v ->> 'digest'), at_)
         ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, at = EXCLUDED.at;
+END;
+",
+    )
+}
+
+/// Twin of `super::super::surreal::workflow::RETURN_DEFAULT`.
+pub(in crate::store) fn return_default() -> Pg<'static> {
+    Pg::script(
+        "
+DECLARE
+    active_ jsonb;
+    t_ jsonb;
+    at_ double precision := (v ->> 'at')::double precision;
+BEGIN
+    SELECT body INTO active_ FROM workflow WHERE id = '[\"active\"]'::jsonb FOR UPDATE;
+    IF coalesce((active_ ->> 'generation')::bigint, 0) <> (v ->> 'expected')::bigint THEN
+        RAISE EXCEPTION '%', 'refused: stale_workflow: the active generation is '
+            || coalesce(active_ ->> 'generation', '0') || ', not ' || (v ->> 'expected');
+    END IF;
+    INSERT INTO workflow (id, kind, body, at) VALUES (
+        jsonb_build_array('activation', v -> 'generation'), 'activation', v -> 'activation', at_);
+    FOR t_ IN SELECT value FROM jsonb_array_elements(v -> 'kept') LOOP
+        UPDATE task SET version = version + 1
+            WHERE slug = t_ ->> 'slug' AND version = (t_ ->> 'version')::bigint;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION '%', 'refused: stale_task: ' || (t_ ->> 'slug') || ' changed while its workflow returned';
+        END IF;
+    END LOOP;
+    FOR t_ IN SELECT value FROM jsonb_array_elements(v -> 'moved') LOOP
+        PERFORM 1 FROM task WHERE slug = t_ ->> 'slug' AND version = (t_ ->> 'version')::bigint
+            AND coalesce((fields #>> '{_board,workflow,revision}')::bigint, 0) = (t_ ->> 'expected')::bigint
+            FOR UPDATE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION '%', 'refused: stale_task: ' || (t_ ->> 'slug') || ' changed while its workflow returned';
+        END IF;
+        INSERT INTO workflow (id, kind, body, at) VALUES (
+            jsonb_build_array('event', t_ ->> 'slug', t_ -> 'transition' -> 'revision'), 'event',
+            t_ -> 'transition', at_);
+        UPDATE task SET status = t_ -> 'transition' ->> 'status',
+            fields = board_fields(id, board_fields(id, board_fields(id, fields,
+                '{_board,workflow}', NULL),
+                '{_board,workflow_retired}', t_ -> 'retired'),
+                '{_board,blocked}', nullif(t_ -> 'blocked', 'null'::jsonb)),
+            updated = at_, version = version + 1
+            WHERE slug = t_ ->> 'slug';
+    END LOOP;
+    DELETE FROM workflow WHERE id = '[\"active\"]'::jsonb;
 END;
 ",
     )
@@ -236,7 +290,8 @@ pub(in crate::store) const REOPEN_PLACED: &str = "IF coalesce((SELECT (body ->> 
         WHERE id = '[\"active\"]'::jsonb FOR SHARE), 0) <> (v -> 'placing' ->> 'generation')::bigint THEN
     RAISE EXCEPTION 'stale';
 END IF;
-INSERT INTO workflow (id, kind, body, at) VALUES (jsonb_build_array('event', v ->> 'slug', 1), 'event',
+INSERT INTO workflow (id, kind, body, at) VALUES (
+    jsonb_build_array('event', v ->> 'slug', v -> 'placing' -> 'revision'), 'event',
     v -> 'placing', (v -> 'placing' ->> 'at')::double precision);
 UPDATE task SET status = v -> 'placing' ->> 'status',
     fields = board_fields(id, fields, '{_board,workflow}', v -> 'placed')

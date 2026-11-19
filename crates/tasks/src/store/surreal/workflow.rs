@@ -35,25 +35,32 @@ UPDATE type::record('task', $slug) SET status = $transition.status, fields._boar
     updated = $transition.at, version += 1 RETURN NONE;
 RETURN NONE;";
 
-/// What an activation plans from, in one read: the active generation, and each task a workflow
-/// holds or the board's writers keep open, with its row's version, status, position and blocked
-/// source.
+/// What an activation plans from, in one read: the active generation, the generation of the last
+/// activation recorded (by the range of their ids; 0 with none), and each task a workflow holds
+/// or the board's writers keep open, with its row's version, status, position, blocked source and
+/// the workflow revision a return retired it at.
 pub(in crate::store) const STANDINGS: &str = "
 RETURN {
     active: (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL,
+    last: array::max(SELECT VALUE body.generation FROM workflow:['activation', NONE]..=['activation', 9223372036854775807]) ?? 0,
     tasks: (SELECT slug, version, status, fields._board.workflow ?? NULL AS position,
-        fields._board.blocked.from ?? NULL AS blocked_from FROM task
+        fields._board.blocked.from ?? NULL AS blocked_from,
+        fields._board.workflow_retired.revision ?? 0 AS retired FROM task
         WHERE status NOT IN ['done', 'cancelled'] OR fields._board.workflow != NONE ORDER BY slug),
 };";
 
-/// An activation, whole: refused as stale unless the active generation is still `$expected` and
-/// every task it read is still at its version (and workflow revision); then each kept task
+/// An activation, whole: refused as stale unless the active generation is still `$expected`, no
+/// activation is recorded as `$generation` (after a return none is active, and another activation
+/// may have taken it) and every task it read is still at its version (and workflow revision); then each kept task
 /// written at its version, each moved one recorded and moved, the definition recorded once under
 /// its digest, the activation recorded, and the active generation moved to it.
 pub(in crate::store) const ACTIVATE: &str = "
 LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
 IF ($active.generation ?? 0) != $expected {
     THROW string::concat('refused: stale_workflow: the active generation is ', <string>($active.generation ?? 0), ', not ', <string>$expected);
+};
+IF record::exists(type::record('workflow', ['activation', $generation])) {
+    THROW string::concat('refused: stale_workflow: generation ', <string>$generation, ' is activated already');
 };
 FOR $t IN $kept {
     IF (SELECT VALUE version FROM ONLY type::record('task', $t.slug)) != $t.version {
@@ -78,6 +85,39 @@ IF (SELECT VALUE kind FROM ONLY type::record('workflow', ['definition', $digest]
 CREATE type::record('workflow', ['activation', $generation])
     CONTENT { kind: 'activation', body: $activation, at: $at } RETURN NONE;
 UPSERT workflow:['active'] CONTENT { kind: 'active', body: { generation: $generation, digest: $digest }, at: $at } RETURN NONE;
+RETURN NONE;";
+
+/// A return to the board's own writers, whole: refused as stale unless the active generation is
+/// still `$expected` and every task it read is still at its version (and workflow revision); then
+/// the activation recorded as a return, which the schema's fence reads as each position goes,
+/// each kept task written at its version, each moved one's transition recorded and the task given
+/// its status and blocked record, its position retired with its last revision kept
+/// (`workflow_retired`), and the active generation deleted: none is active after it.
+pub(in crate::store) const RETURN_DEFAULT: &str = "
+LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
+IF ($active.generation ?? 0) != $expected {
+    THROW string::concat('refused: stale_workflow: the active generation is ', <string>($active.generation ?? 0), ', not ', <string>$expected);
+};
+CREATE type::record('workflow', ['activation', $generation])
+    CONTENT { kind: 'activation', body: $activation, at: $at } RETURN NONE;
+FOR $t IN $kept {
+    IF (SELECT VALUE version FROM ONLY type::record('task', $t.slug)) != $t.version {
+        THROW string::concat('refused: stale_task: ', $t.slug, ' changed while its workflow returned');
+    };
+    UPDATE type::record('task', $t.slug) SET version += 1 RETURN NONE;
+};
+FOR $m IN $moved {
+    LET $task = (SELECT version, fields._board.workflow.revision ?? 0 AS revision FROM ONLY type::record('task', $m.slug));
+    IF $task = NONE OR $task.version != $m.version OR $task.revision != $m.expected {
+        THROW string::concat('refused: stale_task: ', $m.slug, ' changed while its workflow returned');
+    };
+    CREATE type::record('workflow', ['event', $m.slug, $m.transition.revision])
+        CONTENT { kind: 'event', body: $m.transition, at: $at } RETURN NONE;
+    UPDATE type::record('task', $m.slug) SET status = $m.transition.status,
+        fields._board.workflow = NONE, fields._board.workflow_retired = $m.retired,
+        fields._board.blocked = $m.blocked ?? NONE, updated = $at, version += 1 RETURN NONE;
+};
+DELETE workflow:['active'] RETURN NONE;
 RETURN NONE;";
 
 /// What admission decides `$slug`'s operation on, in one read: the active generation, the task
@@ -153,13 +193,14 @@ CREATE type::record('workflow', ['event', $slug, 1])
     CONTENT { kind: 'event', body: $placing, at: $placing.at } RETURN NONE;
 UPDATE type::record('task', $slug) SET fields._board.workflow = $placed RETURN NONE;";
 
-/// A task with no position placed at `$placed` by `$placing`, its first transition, as a board
+/// A task with no position placed at `$placed` by `$placing`, its first transition (the next,
+/// where a return retired its position), as a board
 /// writer's move takes it out of done or cancelled: its status and its position in one write, so
 /// the move that follows meets a task the workflow holds already (`workflow_position`). Read
 /// again where an activation came between.
 pub(in crate::store) const REOPEN_PLACED: &str = "
 IF ((SELECT VALUE body.generation FROM ONLY workflow:['active']) ?? 0) != $placing.generation { THROW 'stale' };
-CREATE type::record('workflow', ['event', $slug, 1])
+CREATE type::record('workflow', ['event', $slug, $placing.revision])
     CONTENT { kind: 'event', body: $placing, at: $placing.at } RETURN NONE;
 UPDATE type::record('task', $slug) SET status = $placing.status, fields._board.workflow = $placed RETURN NONE;
 ";

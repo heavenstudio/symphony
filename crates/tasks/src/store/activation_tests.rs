@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::store_fixture::{Backend, Fixture, Seed, task};
-use crate::workflow::activate::tests::{MAPPED, TWO, custom};
+use crate::workflow::activate::tests::{BACK, MAPPED, TWO, custom};
 use crate::workflow::tests::Scratch;
 use crate::workflow::{Committed, Custom, Host, follow};
 use std::collections::BTreeMap;
@@ -73,6 +73,7 @@ fn committed(custom: Option<Custom>) -> Committed {
     Committed {
         commit: "3".repeat(40),
         custom,
+        returning: Vec::new(),
     }
 }
 
@@ -327,20 +328,350 @@ fn an_activation_refused_leaves_the_board_and_the_previous_workflow_as_they_were
         assert_eq!(unsupported, "workflow: unsupported capability: owner");
         assert_eq!(f.store.dump().unwrap(), before);
 
-        // Once a workflow is active, dropping it from the file is refused, and it stays.
-        f.store
-            .activate_workflow(&mapped(), &Host::local())
+    }
+}
+
+/// A commit with no `[workflow]`, its file keeping `mappings` onto built-in v1.
+fn dropped(mappings: &str) -> Committed {
+    Committed {
+        commit: "4".repeat(40),
+        custom: None,
+        returning: crate::workflow::written(mappings).unwrap().1,
+    }
+}
+
+fn events(f: &Fixture) -> u64 {
+    (f.store.raw().table("workflow"))
+        .matching(json!({"kind": "event"}))
+        .count()
+        .unwrap()
+}
+
+#[test]
+fn a_board_returns_to_its_own_writers_and_back_with_its_history_kept() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        let two = mapped();
+        f.store.activate_workflow(&two, &Host::local()).unwrap();
+        assert_eq!(events(&f), 7);
+        let closed = ["sim/done", "sim/cancelled"].map(|slug| f.store.get(slug).unwrap());
+
+        let back = dropped(BACK);
+        assert_eq!(
+            f.store.follow_committed(&back, &Host::local()),
+            Ok(Followed::Returned { generation: 2 }),
+            "{backend:?}"
+        );
+        // No workflow is active, and every task is the board's writers' again, at the status of
+        // its mapped built-in pair, its last workflow revision kept.
+        assert_eq!(f.store.workflow_active().unwrap(), None);
+        assert_eq!(f.store.workflow_read().unwrap(), None);
+        for (slug, status) in [
+            ("sim/backlog", "ready"),
+            ("sim/concept", "ready"),
+            ("sim/design", "ready"),
+            ("sim/ready", "ready"),
+            ("sim/in_progress", "in_progress"),
+            ("sim/review", "review"),
+            ("sim/blocked", "blocked"),
+        ] {
+            let task = f.store.get(slug).unwrap();
+            assert_eq!(task.status, status, "{backend:?} {slug}");
+            assert_eq!(f.store.workflow_position(slug).unwrap(), None, "{slug}");
+            assert_eq!(
+                task.fields["_board"]["workflow_retired"],
+                json!({"revision": 2, "generation": 2}),
+                "{backend:?} {slug}"
+            );
+            assert_eq!(
+                task.fields["_board"].contains_key("blocked"),
+                status == "blocked",
+                "{slug}"
+            );
+        }
+        let blocked = f.store.get("sim/blocked").unwrap();
+        let record = crate::waits_on::Blocked::of(&blocked).expect("a blocked record");
+        assert_eq!(
+            (record.on.as_str(), record.from.as_deref(), record.by.as_str()),
+            ("parked", Some("in_progress"), "board"),
+            "{backend:?}"
+        );
+        // Closed tasks no workflow held are as they were.
+        assert_eq!(
+            ["sim/done", "sim/cancelled"].map(|slug| f.store.get(slug).unwrap()),
+            closed
+        );
+        // The history: every earlier record, each return as a transition, and the activation.
+        assert_eq!(events(&f), 14);
+        let raw = f.store.raw();
+        let event = raw
+            .row("workflow", json!(["event", "sim/blocked", 2]))
+            .get()
             .unwrap();
-        let active = f.store.workflow_active().unwrap();
-        let back = refused(f.store.follow_committed(&committed(None), &Host::local()));
+        let transition: Transition = serde_json::from_value(event["body"].clone()).unwrap();
+        assert_eq!(transition.from, Some(pair("build", "blocked")));
+        assert_eq!(transition.to, pair("blocked", "waiting"));
+        assert_eq!(transition.resume, Some(pair("in_progress", "working")));
+        assert_eq!((transition.generation, transition.activation), (2, Some(2)));
+        assert_eq!(transition.digest, crate::workflow::DEFAULT);
+        let activation = raw.row("workflow", json!(["activation", 2])).get().unwrap();
+        let body = &activation["body"];
+        assert_eq!(body["returned"], json!(true));
+        assert_eq!(body["moved"], json!(7));
+        assert_eq!(body["commit"], json!("4".repeat(40)));
+        assert_eq!(body["previous"]["generation"], json!(1));
+        assert_eq!(body["previous"]["digest"], json!(two.revision.digest));
+        assert_eq!(
+            f.store.workflow_mappings(2).unwrap(),
+            Some(back.returning.clone())
+        );
+        assert!(raw.row("workflow", json!(["activation", 1])).exists().unwrap());
+        assert!(f.store.workflow_definition(&two.revision.digest).unwrap().is_some());
+        assert!(!raw.row("workflow", json!(["active"])).exists().unwrap());
+
+        // The same commit again finds none active, and writes nothing.
+        let returned = f.store.dump().unwrap();
+        assert_eq!(
+            f.store.follow_committed(&back, &Host::local()),
+            Ok(Followed::Legacy)
+        );
+        assert_eq!(f.store.return_to_default(&back), Ok(Followed::Legacy));
+        assert_eq!(f.store.dump().unwrap(), returned, "{backend:?}");
+        // A copy of the returned board is the board, on either database.
+        for other in BACKENDS {
+            let copied = Fixture::on(other, Seed { dump: returned.clone() });
+            assert_eq!(copied.store.dump().unwrap(), returned, "{backend:?} -> {other:?}");
+        }
+
+        // The board's own commands work again: a claim, a release, a move, a reopening.
+        let worker = f.session("worker");
+        assert_eq!(f.store.claim("sim/ready", &worker).unwrap().status, "in_progress");
+        f.store.release("sim/ready", &worker, None).unwrap();
+        assert_eq!(status(&f, "sim/ready"), "ready");
+        f.store.move_to("sim/backlog", "backlog", &worker).unwrap();
+        f.store.move_to("sim/design", "cancelled", "owner").unwrap();
+        assert_eq!(events(&f), 14, "{backend:?}: a board writer's move records no transition");
+
+        // The same workflow committed again is generation 3, and each task's revisions go on.
+        assert_eq!(
+            f.store.activate_workflow(&at_commit(&two, 'c'), &Host::local()),
+            Ok(Followed::Activated(Active {
+                generation: 3,
+                digest: at_commit(&two, 'c').revision.digest
+            })),
+            "{backend:?}"
+        );
+        let ready = f.store.workflow_position("sim/ready").unwrap().unwrap();
+        assert_eq!(
+            (ready.at(), ready.revision, ready.generation),
+            (pair("build", "available"), 3, 3)
+        );
+        assert_eq!(status(&f, "sim/backlog"), "ready");
+        let blocked = f.store.workflow_position("sim/blocked").unwrap().unwrap();
+        assert_eq!(blocked.resume, Some(pair("build", "working")), "{backend:?}");
+        // A task the board's writers closed since stays theirs.
+        assert_eq!(f.store.workflow_position("sim/design").unwrap(), None);
+        // And the board returns again, as generation 4.
+        assert_eq!(
+            f.store.follow_committed(&back, &Host::local()),
+            Ok(Followed::Returned { generation: 4 })
+        );
+        assert_eq!(f.store.workflow_active().unwrap(), None);
+    }
+}
+
+#[test]
+fn a_task_closed_after_a_return_is_reopened_under_the_next_workflow_past_its_retired_revision() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        let held = custom(&format!("{TWO}{MAPPED}{HELD}"));
+        f.store.activate_workflow(&held, &Host::local()).unwrap();
+        f.store
+            .follow_committed(&dropped(BACK), &Host::local())
+            .unwrap();
+        // Back with the board's writers, its reviewer approves it: done, with no position.
+        let birch = f.session("reviewer");
+        f.store.take_role("sim/review", &birch, "reviewer").unwrap();
+        f.store
+            .verdict("sim/review", &birch, "approve", "good")
+            .unwrap();
+        let task = f.store.get("sim/review").unwrap();
+        assert_eq!(task.status, "done", "{backend:?}");
+        assert_eq!(task.fields["_board"]["workflow_retired"]["revision"], json!(2));
+        // The next workflow leaves a closed task alone until a write reopens it, which places it
+        // at the revision after the one its return made.
+        f.store
+            .activate_workflow(&at_commit(&held, 'c'), &Host::local())
+            .unwrap();
+        assert_eq!(f.store.workflow_position("sim/review").unwrap(), None);
+        f.store.move_to("sim/review", "review", &birch).unwrap();
+        let position = f.store.workflow_position("sim/review").unwrap().unwrap();
+        assert_eq!(
+            (position.at(), position.revision, position.generation),
+            (pair("verify", "awaiting"), 3, 3),
+            "{backend:?}"
+        );
         assert!(
-            back.starts_with(&format!(
-                "workflow: commit {} sets no [workflow], and generation 1 is active",
-                "3".repeat(40)
-            )),
-            "{back}"
+            (f.store.raw())
+                .row("workflow", json!(["event", "sim/review", 3]))
+                .exists()
+                .unwrap()
+        );
+    }
+}
+
+#[test]
+fn a_return_refused_leaves_the_custom_generation_active_and_the_board_as_it_was() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        f.store.activate_workflow(&mapped(), &Host::local()).unwrap();
+        let active = f.store.workflow_active().unwrap();
+        let before = f.store.dump().unwrap();
+        // No mapping at all, as a file that only drops its [workflow] has.
+        assert_eq!(
+            refused(f.store.follow_committed(&committed(None), &Host::local())),
+            "workflow_mappings: sim/backlog is at build/available, which the workflow no longer \
+             declares; map it to a pair it declares",
+            "{backend:?}"
+        );
+        // One pair left out: the task there, or resuming there, refuses the whole return.
+        let partial = BACK.replacen(
+            "[[workflow_mappings]]\nfrom = { phase = \"verify\", state = \"awaiting\" }\nto = { phase = \"review\", state = \"awaiting_review\" }\n",
+            "",
+            1,
+        );
+        assert_ne!(partial, BACK);
+        assert_eq!(
+            refused(f.store.follow_committed(&dropped(&partial), &Host::local())),
+            "workflow_mappings: sim/review is at verify/awaiting, which the workflow no longer \
+             declares; map it to a pair it declares"
+        );
+        // A mapping that would complete unfinished work.
+        let completing = BACK.replacen(
+            "to = { phase = \"in_progress\", state = \"working\" }",
+            "to = { phase = \"done\", state = \"completed\" }",
+            1,
+        );
+        assert!(
+            refused(f.store.follow_committed(&dropped(&completing), &Host::local()))
+                .starts_with("workflow: sim/in_progress would stand at done/completed with the outcome"),
+            "{backend:?}"
         );
         assert_eq!(f.store.workflow_active().unwrap(), active);
+        assert_eq!(f.store.dump().unwrap(), before, "{backend:?}");
+        // The custom workflow still runs: its edges are there to take.
+        let actions = f
+            .store
+            .workflow_actions("sim/ready", &crate::workflow::local_owner(), &Host::local())
+            .unwrap();
+        assert!(!actions.actions.is_empty());
+    }
+}
+
+#[test]
+fn a_live_holder_returns_with_its_work_or_refuses_the_return() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        let worker = f.session("worker");
+        f.store.claim("sim/in_progress", &worker).unwrap();
+        f.store.activate_workflow(&mapped(), &Host::local()).unwrap_err();
+        f.store.release("sim/in_progress", &worker, None).unwrap();
+        f.store.activate_workflow(&mapped(), &Host::local()).unwrap();
+        let amber = crate::workflow::agent_session(&worker);
+        let next = f.store.workflow_actions("sim/ready", &amber, &Host::local()).unwrap();
+        let request = symphony_api::workflow::OperationRequest {
+            project: f.store.database().database().into(),
+            task: "sim/ready".into(),
+            edge: "claim".into(),
+            expected: next.snapshot,
+            input_revisions: BTreeMap::new(),
+            idempotency_key: "claim".into(),
+            inputs: BTreeMap::new(),
+        };
+        f.store.apply_operation(&amber, &Host::local(), &request).unwrap();
+        // Mapped to ready, where the board's writers keep no executor: refused, nothing written.
+        let before = f.store.dump().unwrap();
+        let idle = BACK.replacen(
+            "to = { phase = \"in_progress\", state = \"working\" }",
+            "to = { phase = \"ready\", state = \"available\" }",
+            1,
+        );
+        let why = refused(f.store.follow_committed(&dropped(&idle), &Host::local()));
+        assert!(
+            why.starts_with(&format!(
+                "workflow: sim/ready is held by {worker} as its executor, and it would return to ready"
+            )),
+            "{backend:?}: {why}"
+        );
+        assert_eq!(f.store.dump().unwrap(), before);
+        // Mapped to in_progress it returns with its executor, who works on by the board's commands.
+        assert_eq!(
+            f.store.follow_committed(&dropped(BACK), &Host::local()),
+            Ok(Followed::Returned { generation: 2 }),
+            "{backend:?}"
+        );
+        let task = f.store.get("sim/ready").unwrap();
+        assert_eq!(task.status, "in_progress");
+        assert!(task.roles.iter().any(|r| r.handle == worker && r.role == "executor"));
+        assert_eq!(f.store.move_to("sim/ready", "review", &worker).unwrap().status, "review");
+    }
+}
+
+#[test]
+fn of_an_admission_and_a_return_at_once_one_wins_and_the_board_is_whole() {
+    for backend in BACKENDS {
+        let f = board(backend);
+        f.store.activate_workflow(&mapped(), &Host::local()).unwrap();
+        let worker = f.session("worker");
+        let amber = crate::workflow::agent_session(&worker);
+        let next = f.store.workflow_actions("sim/ready", &amber, &Host::local()).unwrap();
+        let request = symphony_api::workflow::OperationRequest {
+            project: f.store.database().database().into(),
+            task: "sim/ready".into(),
+            edge: "claim".into(),
+            expected: next.snapshot,
+            input_revisions: BTreeMap::new(),
+            idempotency_key: "claim".into(),
+            inputs: BTreeMap::new(),
+        };
+        let other = f.other();
+        let barrier = Arc::new(Barrier::new(2));
+        let back = dropped(BACK);
+        let (claimed, returned) = std::thread::scope(|scope| {
+            let claim = scope.spawn(|| {
+                barrier.wait();
+                f.store.apply_operation(&amber, &Host::local(), &request)
+            });
+            let back = scope.spawn(|| {
+                barrier.wait();
+                other.follow_committed(&back, &Host::local())
+            });
+            (claim.join().unwrap(), back.join().unwrap())
+        });
+        // The return is written either way: before the claim, which is then refused as the
+        // workflow it was read under is gone, or after it, planned again from the claimed task.
+        assert_eq!(returned, Ok(Followed::Returned { generation: 2 }), "{backend:?}");
+        assert_eq!(f.store.workflow_active().unwrap(), None);
+        let task = f.store.get("sim/ready").unwrap();
+        assert_eq!(f.store.workflow_position("sim/ready").unwrap(), None);
+        let held = task.roles.iter().any(|r| r.handle == worker && r.role == "executor");
+        match claimed {
+            Ok(_) => {
+                assert_eq!((task.status.as_str(), held), ("in_progress", true), "{backend:?}");
+                assert_eq!(task.fields["_board"]["workflow_retired"]["revision"], json!(3));
+                assert_eq!(events(&f), 15);
+            }
+            Err(Error::Refused(why)) => {
+                assert!(
+                    why.starts_with("stale_") || why.starts_with("unknown_id"),
+                    "{backend:?}: {why}"
+                );
+                assert_eq!((task.status.as_str(), held), ("ready", false), "{backend:?}");
+                assert_eq!(task.fields["_board"]["workflow_retired"]["revision"], json!(2));
+                assert_eq!(events(&f), 14);
+            }
+            Err(other) => panic!("{backend:?}: {other:?}"),
+        }
     }
 }
 
@@ -486,6 +817,31 @@ fn the_board_follows_the_workflow_its_default_branch_commits_and_nothing_else() 
         assert_eq!(recorded.revision.source.commit, repo.head());
         assert_eq!(follow(&f.store, &repo.0), Ok(Followed::Unchanged(active)));
         assert_eq!(status(&f, "sim/backlog"), "ready");
+        // A commit that drops the workflow and maps nothing is refused, said, and changes
+        // nothing; one that keeps mappings onto the board's own pairs returns the board to them.
+        std::fs::write(repo.0.join("symphony.toml"), "[project]\nid = \"demo\"\n").unwrap();
+        repo.commit("no workflow, no mappings");
+        let why = follow(&f.store, &repo.0).unwrap_err();
+        assert!(
+            why.starts_with("workflow_mappings: sim/backlog is at build/available"),
+            "{backend:?}: {why}"
+        );
+        assert_eq!(f.store.workflow_active().unwrap().unwrap().generation, 1);
+        std::fs::write(repo.0.join("symphony.toml"), BACK).unwrap();
+        repo.commit("back to the board's writers");
+        assert_eq!(
+            follow(&f.store, &repo.0),
+            Ok(Followed::Returned { generation: 2 }),
+            "{backend:?}"
+        );
+        let activation = (f.store.raw())
+            .row("workflow", json!(["activation", 2]))
+            .get()
+            .unwrap();
+        assert_eq!(activation["body"]["commit"], json!(repo.head()));
+        assert_eq!(follow(&f.store, &repo.0), Ok(Followed::Legacy));
+        assert_eq!(status(&f, "sim/review"), "review");
+        assert_eq!(f.store.workflow_position("sim/review").unwrap(), None);
     }
 }
 

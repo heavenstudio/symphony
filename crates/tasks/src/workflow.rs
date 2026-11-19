@@ -22,7 +22,7 @@ pub use crate::store::workflow::{
     Active, Followed, Recorded, Recovered, TaskPosition, Transition, Trigger,
 };
 pub use activate::Host;
-pub use builtin::{builtin, legacy_pair};
+pub use builtin::{DEFAULT, builtin, legacy_pair};
 
 /// A project's file, at the top of the tree a commit holds.
 const FILE: &str = "symphony.toml";
@@ -126,16 +126,18 @@ pub fn candidate(text: &str) -> Result<Validated, String> {
 }
 
 /// The file's `[workflow]`, validated, or none when it has none; and its `[[workflow_mappings]]`,
-/// checked against that workflow. Mappings without a workflow are refused: they map onto nothing.
+/// checked against that workflow. Mappings without a workflow map onto built-in v1, the board's
+/// own writers: where each task goes when a board that activated a workflow returns to them
+/// ([`crate::Store::return_to_default`]).
 pub fn written(text: &str) -> Result<(Option<Validated>, Vec<Mapping>), String> {
     let mut file = table(text)?;
     let definition: Option<Definition> = taken(&mut file, "workflow")?;
     let mappings: Vec<Mapping> = taken(&mut file, "workflow_mappings")?.unwrap_or_default();
     let Some(definition) = definition else {
         if !mappings.is_empty() {
-            return Err("workflow_mappings: no [workflow] to map onto".into());
+            Validated::new(builtin())?.check_mappings(&mappings)?;
         }
-        return Ok((None, Vec::new()));
+        return Ok((None, mappings));
     };
     let validated = Validated::new(definition)?;
     validated.check_mappings(&mappings)?;
@@ -177,11 +179,15 @@ fn taken<T: serde::de::DeserializeOwned>(
 }
 
 /// The workflow a commit's project file sets: a custom definition with its revision and
-/// mappings, or none for a file with no `[workflow]` (the board's existing writers).
+/// mappings, or none for a file with no `[workflow]` (the board's existing writers), and then the
+/// mappings onto built-in v1 the file keeps for a return to them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Committed {
     pub commit: String,
     pub custom: Option<Custom>,
+    /// The file's mappings where it has no `[workflow]`; empty beside a custom definition, whose
+    /// own they are.
+    pub returning: Vec<Mapping>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -217,6 +223,7 @@ fn committed_at(main: &Path, branch: &str, commit: String) -> Result<Committed, 
         return Ok(Committed {
             commit,
             custom: None,
+            returning: Vec::new(),
         });
     };
     // `<mode> <type> <object>\t<path>`
@@ -234,23 +241,28 @@ fn committed_at(main: &Path, branch: &str, commit: String) -> Result<Committed, 
     }
     let text = git(main, &["cat-file", "blob", blob]).map_err(refuse)?;
     let (definition, mappings) = written(&text).map_err(refuse)?;
-    let custom = match definition {
-        None => None,
-        Some(definition) => {
-            let revision = definition
-                .revision(Source {
-                    commit: commit.clone(),
-                    project_blob: blob.to_string(),
-                })
-                .map_err(refuse)?;
-            Some(Custom {
-                definition,
-                revision,
-                mappings,
-            })
-        }
+    let Some(definition) = definition else {
+        return Ok(Committed {
+            commit,
+            custom: None,
+            returning: mappings,
+        });
     };
-    Ok(Committed { commit, custom })
+    let revision = definition
+        .revision(Source {
+            commit: commit.clone(),
+            project_blob: blob.to_string(),
+        })
+        .map_err(refuse)?;
+    Ok(Committed {
+        commit,
+        custom: Some(Custom {
+            definition,
+            revision,
+            mappings,
+        }),
+        returning: Vec::new(),
+    })
 }
 
 /// The workflow the project's default branch commits, followed on its board (automatic

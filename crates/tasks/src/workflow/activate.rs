@@ -8,6 +8,10 @@
 //! built-in v1's pair of its status (`held` while a role holds a concept, design or review task)
 //! and its blocked source. The whole activation is refused when one task cannot be placed, and
 //! the previous workflow stays active.
+//!
+//! A return to the board's own writers is an activation too ([`returning`]): every task a
+//! workflow holds goes to a pair of built-in v1, its own where v1 declares it, else its mapped
+//! one, and takes that pair's status as its position is retired.
 
 use super::{Custom, Grants, Mapping, TaskPosition, Transition, Validated, builtin};
 use std::collections::BTreeMap;
@@ -138,6 +142,9 @@ pub struct Standing {
     pub position: Option<TaskPosition>,
     pub blocked_from: Option<String>,
     pub roles: Vec<(String, String, bool)>,
+    /// The last workflow revision of a task whose position a return retired, which its next
+    /// transition continues from; 0 for a task no workflow ever held.
+    pub retired: u64,
 }
 
 /// What an activation writes: each task moved, by its transition, from the version and workflow
@@ -173,7 +180,7 @@ pub fn plan(
     let mut plan = Plan::default();
     for task in tasks {
         let slug = &task.slug;
-        let (from_definition, from, resume_from, revision) = match &task.position {
+        let (from_definition, from, resume_from, expected, revision) = match &task.position {
             Some(position) => {
                 let old = old.ok_or_else(|| {
                     format!("{slug} has a workflow position, and no workflow is active")
@@ -183,11 +190,13 @@ pub fn plan(
                     position.at(),
                     position.resume.clone(),
                     position.revision,
+                    position.revision,
                 )
             }
             None => {
                 let (from, resume) = legacy_standing(task)?;
-                (&legacy, from, resume, 0)
+                // No position to fence on, and its revisions go on from the one a return retired.
+                (&legacy, from, resume, 0, task.retired)
             }
         };
         let source = position_of(from_definition, &from).ok_or_else(|| {
@@ -225,7 +234,7 @@ pub fn plan(
         let next = revision + 1;
         plan.moved.push(Moved {
             version: task.version,
-            expected: revision,
+            expected,
             transition: Transition {
                 id: Transition::id_of(slug, next),
                 slug: slug.clone(),
@@ -250,6 +259,122 @@ pub fn plan(
     Ok(plan)
 }
 
+/// Where returning to the board's own writers as `generation` puts each of `tasks`, from `old`,
+/// the definition active now: a task a workflow holds goes to the pair of built-in v1 it stands
+/// at where v1 declares it, else where `mappings` send it, a blocked one's resume pair too, and
+/// takes that pair's status; its transition retires its position. A concept, design or review
+/// pair is recorded as v1's held one where the task's executor or reviewer holds it, as the board
+/// reads it from then on. An open task with no position is the board's writers' already, and is
+/// only fenced.
+///
+/// Refused whole, naming the first task: a pair nothing maps; a mapping that would give a task
+/// an outcome, satisfied dependants or a completion it lacks; and a live executor or reviewer on
+/// a task returning to a status where the board's writers keep no such holder
+/// ([`keeps`]), who stands in for a live attempt and drains first.
+pub fn returning(
+    old: &Definition,
+    mappings: &[Mapping],
+    tasks: &[Standing],
+    generation: u64,
+    by: &Principal,
+    at: f64,
+) -> Result<Plan, String> {
+    let legacy = builtin();
+    let mappings = super::mapped(mappings);
+    let mut plan = Plan::default();
+    for task in tasks {
+        let slug = &task.slug;
+        let Some(position) = &task.position else {
+            plan.kept.push((slug.clone(), task.version));
+            continue;
+        };
+        let from = position.at();
+        let source = position_of(old, &from).ok_or_else(|| {
+            format!(
+                "{slug} is at {}, which its workflow does not declare",
+                named(&from)
+            )
+        })?;
+        let mapped = placed(&legacy, &mappings, slug, &from, "is at")?;
+        let destination = position_of(&legacy, &mapped).expect("placed() names a declared pair");
+        fabricates_nothing(slug, source, destination)?;
+        let status = projection(destination.legacy);
+        let resume = match (&position.resume, status.as_str()) {
+            (Some(resume), "blocked") => {
+                Some(placed(&legacy, &mappings, slug, resume, "resumes to")?)
+            }
+            _ => None,
+        };
+        let resumes = resume.as_ref().map(|pair| pair.phase.as_str());
+        if let Some((handle, role, _)) = (task.roles.iter())
+            .find(|(_, role, holds)| *holds && !keeps(&status, resumes, role))
+        {
+            return Err(format!(
+                "{slug} is held by {handle} as its {role}, and it would return to {status}, where \
+                 the board's own writers keep no {role}; a live holder stands in for a live \
+                 attempt, which drains first (release it, or let its work finish)"
+            ));
+        }
+        // The pair as the board reads the task from now on: held where its holder holds it.
+        let returned = Standing {
+            status: status.clone(),
+            position: None,
+            blocked_from: None,
+            ..task.clone()
+        };
+        let plain = super::legacy_pair(&status);
+        let to = if plain.as_ref() == Some(&mapped) || mapped == held(&status) {
+            legacy_standing(&returned)?.0
+        } else {
+            mapped
+        };
+        let next = position.revision + 1;
+        plan.moved.push(Moved {
+            version: task.version,
+            expected: position.revision,
+            transition: Transition {
+                id: Transition::id_of(slug, next),
+                slug: slug.clone(),
+                revision: next,
+                generation,
+                digest: super::DEFAULT.into(),
+                edge: None,
+                operation: None,
+                activation: Some(generation),
+                from: Some(from),
+                to,
+                resume,
+                status,
+                principal: by.clone(),
+                effects: Vec::new(),
+                key: None,
+                recovery: None,
+                at,
+            },
+        });
+    }
+    Ok(plan)
+}
+
+/// Whether the board's own writers keep a holder of `role` on a task in `status`, a blocked one
+/// by the status it resumes to (`resumes`; unknown, it is kept, as a hold keeps its roles): an
+/// executor while its work is prepared, built or reviewed, a reviewer while it is reviewed. An
+/// orchestrator and a reservation are the board's coordination everywhere.
+pub fn keeps(status: &str, resumes: Option<&str>, role: &str) -> bool {
+    let status = match status {
+        "blocked" => match resumes {
+            Some(resumes) => resumes,
+            None => return true,
+        },
+        other => other,
+    };
+    match role {
+        "executor" => matches!(status, "concept" | "design" | "in_progress" | "review"),
+        "reviewer" => status == "review",
+        _ => true,
+    }
+}
+
 /// The active workflow as a write that reopens a task with no position reads it: its definition,
 /// the mappings its activation recorded, and its generation and digest.
 #[derive(Clone, Debug, PartialEq)]
@@ -268,13 +393,16 @@ pub struct Reopening<'a> {
     pub left: &'a str,
     pub status: &'a str,
     pub roles: &'a [(String, String, bool)],
+    /// The last workflow revision of a position a return retired, 0 for a task never held.
+    pub retired: u64,
 }
 
 impl Placing {
     /// Where `task` stands once its move leaves done or cancelled: built-in v1's pair for the
     /// status it moves to (held where its executor or reviewer holds it, as activation reads a
     /// kept task), itself where the active definition declares it, else where the activation's
-    /// mappings send it; recorded as its first transition, from v1's pair for the status it left,
+    /// mappings send it; recorded as its first transition (the next, for a task a return retired),
+    /// from v1's pair for the status it left,
     /// made by `by`. Refused, naming the pair, where nothing maps it, where the mapping would give
     /// it an outcome, a satisfaction or a completion it lacks, or where the pair projects another
     /// status than its move asks for.
@@ -292,6 +420,7 @@ impl Placing {
             position: None,
             blocked_from: None,
             roles: task.roles.to_vec(),
+            retired: task.retired,
         };
         let (from, _) = legacy_standing(&standing)?;
         let source = super::builtin::position_at(&from).ok_or_else(|| {
@@ -314,10 +443,11 @@ impl Placing {
                 task.status
             ));
         }
+        let revision = task.retired + 1;
         Ok(Transition {
-            id: Transition::id_of(slug, 1),
+            id: Transition::id_of(slug, revision),
             slug: slug.into(),
-            revision: 1,
+            revision,
             generation: self.generation,
             digest: self.digest.clone(),
             edge: None,
