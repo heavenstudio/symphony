@@ -613,7 +613,8 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   read, or of a newer version, stops the run as the red `run` and is left as it is.
 - **A red's fix** is the red's own task, whose text says so. Its branch, named for its slug,
   starts at `release-candidate`, never at main; it merges `release-candidate` again before review,
-  as that branch moves when another red's fix lands, and never merges main before its land
+  as that branch moves when another red's fix lands (but on a line a pull request delivers to,
+  once the candidate advanced to a delivered head: below), and never merges main before its land
   ([CHECKS](CHECKS.md#after-main-moves)). When the fix changes what the client is
   built from it commits the distribution its own sources make (`just client-update`), the one kind
   of branch that commits it, since no regenerator builds the candidate; the land keeps main's side
@@ -667,14 +668,16 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   forces, and neither is main or a release's tag. Its land then answers no advance, as it does
   not descend from the candidate's tip, and drops the candidate, so main's tip, which holds
   both squashes, is what is run. Fixing a candidate's reds one after the other, each started at
-  the candidate as the one before left it, keeps it. One limit is the receipts' own: a task has
-  one receipt, so a slug delivered a second time replaces it; the count then misses the first
-  squash, and a release tagged on the first head is held by nothing, which a person judges until
-  [[task:tools/github-delivery-receipt-history]] keeps each delivery's receipt: a repeated
-  delivery of one task is not supported here. The entries a delivered landing said
-  ([its notes](#its-notes)) are read from the head its receipt kept, as the squash carries none,
-  and a release tagged on a delivered head stays in the notes of every release after it by the
-  same reading. A fix that changes what
+  the candidate as the one before left it, keeps it. A slug has one receipt and one retained
+  head, and neither is ever replaced: a second delivery of a slug is refused by its land, by
+  name, before anything is published
+  ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)), so the count never loses a squash and
+  a release tagged on a delivered head stays held by the receipt that delivered it. The entries
+  a delivered landing said ([its notes](#its-notes)) are read from the head its receipt kept, as
+  the squash carries none, less the commits of each head delivered onto the line before it: a
+  fix started where an earlier fix left the candidate holds that fix's commits, which that
+  one's squash said, so a candidate dropped after two advances says each entry once. A release
+  tagged on a delivered head stays in the notes of every release after it by the same reading. A fix that changes what
   the client is built from is not delivered so yet: a delivery refuses a head that changes a
   generator's outputs, and the candidate's fix must commit them, so that fix waits for the
   delivery of generated outputs and its red stays open, or the candidate is dropped.

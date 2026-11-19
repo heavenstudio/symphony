@@ -1737,3 +1737,268 @@ fn the_delivery_command_is_run_with_its_verb_and_request_and_its_refusal_merges_
     assert!(line.starts_with("nothing merged: sh "), "{line}");
     assert!(line.ends_with(" publish: cannot reach it"), "{line}");
 }
+
+// -- a slug is delivered once ------------------------------------------------------------------------
+
+const RETAINED_SLUG: &str = "refs/symphony/delivered/sim/jump";
+
+#[test]
+fn a_slug_delivered_once_is_refused_a_second_delivery_before_anything_is_published() {
+    let (r, bare) = delivering();
+    // The slug was delivered before, as a task this board no longer holds (a board made again,
+    // the slug filed again): its squash on the default branch, its receipt and its head kept in
+    // the repository, which outlive the board. A landed task itself moves no further.
+    let parent = head(&r.root, "main");
+    let earlier = r.add("earlier", None, "main");
+    write(&earlier, "sim/earlier.gd", "extends Node\n");
+    git(&earlier, &["add", "-A"]);
+    git(&earlier, &["commit", "-qm", "work on the earlier sim/jump"]);
+    let first = head(&earlier, "HEAD");
+    git(&r.root, &["merge", "-q", "--squash", &first]);
+    git(&r.root, &["commit", "-qm", "sim/jump: A task"]);
+    git(&r.root, &["push", "-q", "origin", "main"]);
+    let receipt = Receipt {
+        slug: SLUG.into(),
+        task: 9000,
+        operation: "task".into(),
+        repository: 7,
+        name: "owner/name".into(),
+        pull: 2,
+        head: first.clone(),
+        base_observed: parent.clone(),
+        parent,
+        squash: head(&r.root, "main"),
+        tree: head(&r.root, "main^{tree}"),
+        revision: "r0".into(),
+        by: "an-earlier-lander".into(),
+        import: None,
+    };
+    let path = Receipt::path(&lands(&r), SLUG);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, serde_json::to_string_pretty(&receipt).unwrap()).unwrap();
+    git(&r.root, &["update-ref", RETAINED_SLUG, &first]);
+    let was = fs::read(&path).unwrap();
+
+    let (people, _, second) = ready(&r, SLUG);
+    assert_ne!(r.board.store.get(SLUG).unwrap().id, receipt.task);
+    // A host that would open a pull request for it, as nothing in the verbs forbids.
+    let host = Host::new(&r, &bare);
+    let (_, result) = landed(&r, SLUG, &people.orch, &host);
+    assert_eq!(
+        result.unwrap_err(),
+        format!(
+            "{SLUG} was delivered already as {} from {} by pull request #2 of owner/name, and \
+             its branch is now at {}: a slug is delivered once, its receipt and the head kept \
+             under {RETAINED_SLUG} never replaced",
+            &receipt.squash[..7],
+            &first[..7],
+            &second[..7]
+        )
+    );
+    assert!(host.verbs().is_empty(), "{:?}", host.verbs());
+    assert_eq!(fs::read(&path).unwrap(), was, "the receipt as it was");
+    assert_eq!(head(&r.root, RETAINED_SLUG), first, "the head kept");
+    assert_eq!(head(&bare, "main"), receipt.squash, "nothing merged");
+    assert!(landings(&r, SLUG).is_empty());
+    let said = r.board.said(SLUG).join("\n");
+    assert!(
+        said.contains("What it still needs goes in a new task"),
+        "{said}"
+    );
+    // Said to the orchestrator each time it is tried, and still nothing asked.
+    let (_, again) = landed(&r, SLUG, &people.orch, &host);
+    assert!(again.unwrap_err().contains("a slug is delivered once"));
+    assert!(host.verbs().is_empty());
+}
+
+#[test]
+fn a_file_that_does_not_read_as_the_slugs_receipt_refuses_its_delivery_by_name() {
+    let (r, bare) = delivering();
+    let before = head(&bare, "main");
+    let (people, ..) = ready(&r, SLUG);
+    let path = Receipt::path(&lands(&r), SLUG);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let other = serde_json::json!({
+        "slug": "sim/other", "task": 1, "operation": "task", "repository": 7, "name": "o/n",
+        "pull": 3, "head": "a", "base_observed": "b", "parent": "b", "squash": "c", "tree": "d",
+        "revision": "r", "by": "x",
+    });
+    for (text, why) in [
+        ("{\"slug\": ".to_string(), "EOF while parsing"),
+        (other.to_string(), "it names sim/other"),
+    ] {
+        fs::write(&path, &text).unwrap();
+        let host = Host::new(&r, &bare);
+        let (_, result) = landed(&r, SLUG, &people.orch, &host);
+        let line = result.unwrap_err();
+        assert!(
+            line.starts_with(&format!(
+                "the receipt kept for {SLUG}, {}, does not read as its own (",
+                path.display()
+            )) && line.contains(why)
+                && line.ends_with(
+                    "what a delivery proved is never written over, and a person judges the file"
+                ),
+            "{line}"
+        );
+        assert!(host.verbs().is_empty(), "{:?}", host.verbs());
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    }
+    // Nor one that cannot be read at all, which is not the same as none kept.
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    let host = Host::new(&r, &bare);
+    let line = landed(&r, SLUG, &people.orch, &host).1.unwrap_err();
+    assert!(line.contains("does not read as its own ("), "{line}");
+    assert!(host.verbs().is_empty(), "{:?}", host.verbs());
+    assert_eq!(head(&bare, "main"), before);
+    assert!(landings(&r, SLUG).is_empty());
+    // With the file judged and gone, it is delivered as any task.
+    fs::remove_dir(&path).unwrap();
+    landed(&r, SLUG, &people.orch, &Host::new(&r, &bare))
+        .1
+        .unwrap();
+    assert_eq!(landings(&r, SLUG).len(), 1);
+}
+
+#[test]
+fn a_merge_found_beside_another_deliverys_receipt_or_retained_head_is_held_and_replaces_neither() {
+    // Each appears after the land's own look and before the host's answer is proved: a receipt
+    // of another delivery of the slug, a file that reads as none, a retained head elsewhere.
+    for case in ["receipt", "unread", "retained"] {
+        let (r, bare) = delivering();
+        let local = head(&r.root, "main");
+        let (people, _, tip) = ready(&r, SLUG);
+        let path = Receipt::path(&lands(&r), SLUG);
+        let other = Receipt {
+            slug: SLUG.into(),
+            task: 99,
+            operation: "task".into(),
+            repository: 7,
+            name: "owner/name".into(),
+            pull: 2,
+            head: local.clone(),
+            base_observed: local.clone(),
+            parent: local.clone(),
+            squash: local.clone(),
+            tree: head(&r.root, "main^{tree}"),
+            revision: "r0".into(),
+            by: "someone".into(),
+            import: None,
+        };
+        let text = match case {
+            "receipt" => serde_json::to_string_pretty(&other).unwrap(),
+            _ => "not a receipt".to_string(),
+        };
+        let (root, at, write_text) = (r.root.clone(), path.clone(), text.clone());
+        let elsewhere = local.clone();
+        let host = Host::new(&r, &bare).before("merge", move || {
+            if case == "retained" {
+                git(&root, &["update-ref", RETAINED_SLUG, &elsewhere]);
+            } else {
+                fs::create_dir_all(at.parent().unwrap()).unwrap();
+                fs::write(&at, write_text).unwrap();
+            }
+        });
+        let (_, result) = landed(&r, SLUG, &people.orch, &host);
+        let line = result.unwrap_err();
+        let squash = head(&bare, "main");
+        let said = match case {
+            "receipt" => format!(
+                "{SLUG} was delivered already as {} from {}, and origin/main holds {} of {} as \
+                 well: its receipt and the head kept under {RETAINED_SLUG} are not replaced",
+                &local[..7],
+                &local[..7],
+                &squash[..7],
+                &tip[..7]
+            ),
+            "unread" => "does not read as its own".to_string(),
+            _ => format!(
+                "{RETAINED_SLUG} keeps {}, not the head {} that {} is of: it is not moved",
+                &local[..7],
+                &tip[..7],
+                &squash[..7]
+            ),
+        };
+        assert!(
+            line.starts_with(&format!(
+                "the delivery of {SLUG} is held for reconciliation: "
+            )) && line.contains(&said),
+            "{case}: {line}"
+        );
+        assert_ne!(squash, local, "the host merged it");
+        assert_eq!(head(&r.root, "main"), local, "the checkout follows nothing");
+        assert!(landings(&r, SLUG).is_empty());
+        if case == "retained" {
+            assert_eq!(head(&r.root, RETAINED_SLUG), local, "not moved");
+            assert!(!path.exists(), "no receipt beside a head it does not name");
+        } else {
+            assert_eq!(fs::read_to_string(&path).unwrap(), text, "as it was");
+            assert!(
+                !git(&r.root, &["for-each-ref", RETAINED_SLUG]).contains(&tip),
+                "no head retained beside another delivery's receipt"
+            );
+        }
+        // A run again finds it held as it was, asks for no second merge and says it once.
+        let (_, again) = landed(&r, SLUG, &people.orch, &host);
+        assert_eq!(again.unwrap_err(), line);
+        assert_eq!(
+            host.verbs().iter().filter(|verb| *verb == "merge").count(),
+            1
+        );
+        let posts = (r.board.said(SLUG).iter())
+            .filter(|line| line.contains("held for reconciliation"))
+            .count();
+        assert_eq!(posts, 1);
+    }
+}
+
+#[test]
+fn a_delivery_proved_again_after_a_run_cut_short_keeps_the_receipt_it_has_and_lands_once() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = ready(&r, SLUG);
+    let host = Host::new(&r, &bare);
+    // Landed, then a journal as a run cut short after the receipt was kept and before the
+    // journal said the merge was proved leaves it: the next run proves the merge again.
+    landed(&r, SLUG, &people.orch, &host).1.unwrap();
+    let kept = fs::read(Receipt::path(&lands(&r), SLUG)).unwrap();
+    let receipt = Receipt::read(&lands(&r), SLUG).unwrap();
+    let journal = Journal {
+        slug: SLUG.into(),
+        operation: "task".into(),
+        stage: Stage::MergeRequested,
+        head: tip.clone(),
+        base_observed: receipt.base_observed.clone(),
+        revision: "another".into(),
+        title: String::new(),
+        body: String::new(),
+        by: "another-lander".into(),
+        closes: vec!["done".into()],
+        stood: String::new(),
+        binding: Some(symphony_board::land::delivery::Binding {
+            repository: 7,
+            name: "owner/name".into(),
+            pull: 3,
+            url: String::new(),
+        }),
+        squash: None,
+        held: None,
+        import: None,
+    };
+    journal.write(&lands(&r)).unwrap();
+    let (said, result) = landed(&r, SLUG, &people.orch, &host);
+    result.unwrap();
+    assert!(said.contains("a delivery is under way"), "{said}");
+    assert_eq!(
+        fs::read(Receipt::path(&lands(&r), SLUG)).unwrap(),
+        kept,
+        "the receipt as the first proof wrote it, never by the second run's"
+    );
+    assert_eq!(head(&r.root, RETAINED_SLUG), tip);
+    assert_eq!(landings(&r, SLUG).len(), 1, "closed once");
+    assert_eq!(
+        host.verbs().iter().filter(|verb| *verb == "merge").count(),
+        1
+    );
+    assert!(!Journal::path(&lands(&r), SLUG).exists());
+}
