@@ -9,8 +9,9 @@ and stamps; builds and tests still run locally. This is a concept deliverable fo
 [[task:inbox/github-integration]]. No setting, permission, command behavior or repository rule
 described here is implemented by this document. What is built of it, the task operation, is
 [TASKS](../TASKS.md#a-land-delivered-by-a-pull-request) and
-[GITHUB](../GITHUB.md#delivering-a-land); the import operation, the generated-output and
-release-candidate deliveries and the repository's protection are not.
+[GITHUB](../GITHUB.md#delivering-a-land), and the generated-output delivery, a task the
+regenerator files ([TASKS](../TASKS.md#what-the-generators-make-delivered-by-a-pull-request));
+the import operation, the release-candidate delivery and the repository's protection are not.
 
 ## Scope and ownership
 

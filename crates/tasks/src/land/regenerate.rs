@@ -25,6 +25,15 @@
 //! lock it reads the default branch once: on another tip than the one it finished with, it makes
 //! that tip, the newest, whatever lands came in between, else it ends.
 //!
+//! Where the project delivers by pull request (`[land] delivery`, [`super::delivery`]) a round
+//! commits nothing to the default branch and pushes nothing. What it made is kept as [`Pending`],
+//! then pointed at by a branch and filed as a task in review ([`Regenerator::propose`]), which an
+//! assessor reads and a land delivers as any task, checked first as the regenerator's own
+//! ([`Landing::generated`]). While that record's inputs are the tip's, a round makes nothing
+//! ([`Regenerator::waiting`]); once they are not, its task is cancelled, a pull request it was
+//! bound to is told ([`Regenerator::retract`]), and the newest tip is made. Nothing else is kept
+//! of what is to make: a start that never happened is made up for by any later one.
+//!
 //! A red round (a generator failed, or wrote outside its outputs) files the task [`RED`] on the
 //! board, marked red (`tests/main-red-regenerate-2` and on once one was closed), or adds a line
 //! to the one open; a round that passes closes it. What the last round came to is kept in
@@ -42,12 +51,13 @@
 //! came to, or that it runs, is kept in [`CHECKED`] and said by [`status`], whose exit stays the
 //! outputs' alone.
 
+use super::delivery::{self, Journal, Receipt, Stage, Transport};
 use super::{
-    FOLDER, GIT_VARS, Generator, Landing, Move, RECIPE, Ran, Settings, TRIES, and, at, changed,
-    clear, hold, on_paths, owns, run_git, same, short, signal_name, started, worktree,
+    FOLDER, GIT_VARS, Generator, Landing, Move, RECIPE, Ran, Refusal, Settings, TRIES, and, at,
+    changed, clear, hold, on_paths, owns, run_git, same, short, signal_name, started, worktree,
 };
 use crate::cli::Env;
-use crate::sweep::git::{rev, worktrees};
+use crate::sweep::git::{ancestor, rev, worktrees};
 use crate::sweep::trigger;
 use crate::sys::{self, Stdio};
 use crate::{NewSession, NewTask};
@@ -70,6 +80,11 @@ pub const LOG: &str = "regenerate.log";
 /// The file naming the group a round runs while it runs, in the lands' folder: its own, so a land
 /// never takes a regenerator's build for a group an earlier land left.
 pub const RUNNING: &str = "regenerate.running";
+/// What a round made that waits for its pull request ([`Pending`]), in the lands' folder.
+pub const PENDING: &str = "regenerate-pending.json";
+/// The tasks the regenerator cancelled whose pull request is still to be told its evidence no
+/// longer stands ([`Regenerator::retract`]), in the lands' folder.
+pub const WITHDRAWN: &str = "regenerate-withdrawn.json";
 /// The red task a red round files.
 pub const RED: &str = "tests/main-red-regenerate";
 /// What a red round marks its task with ([`red::MARK`]).
@@ -138,6 +153,46 @@ impl Passed {
     /// Kept in `folder`, whole or not at all.
     pub fn write(&self, folder: &Path) -> Result<(), String> {
         write_whole(folder, PASSED, self)
+    }
+}
+
+/// A generator whose outputs a commit holds, with the key it printed on the tip they were made of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Made {
+    pub generator: String,
+    pub key: Option<String>,
+}
+
+/// What a round made where the project delivers by pull request, until the host lands it: the one
+/// record a restart, a later round and the land of its task go by, written before the branch and
+/// the task it names are made.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pending {
+    /// The task it is delivered as, and its branch.
+    pub slug: String,
+    /// The default branch's tip it was made of: the one parent of `head`.
+    pub tip: String,
+    /// The commit made: `tip` with the generators' outputs as they made them.
+    pub head: String,
+    pub made: Vec<Made>,
+}
+
+impl Pending {
+    /// As the lands' `folder` keeps it.
+    pub fn read(folder: &Path) -> Option<Pending> {
+        let text = fs::read_to_string(folder.join(PENDING)).ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
+    /// The generators of `settings` it names, each with its key: none when one is gone.
+    fn made_by(&self, settings: &Settings) -> Option<Vec<(Generator, Option<String>)>> {
+        (self.made.iter())
+            .map(|made| {
+                (settings.generators.iter())
+                    .find(|generator| generator.name == made.generator)
+                    .map(|generator| (generator.clone(), made.key.clone()))
+            })
+            .collect()
     }
 }
 
@@ -436,6 +491,9 @@ enum Round {
         commit: String,
         line: String,
     },
+    /// What was made of the default branch waits for its pull request, on `tip`: nothing landed
+    /// here, and nothing is made again while its inputs are the tip's.
+    Pending { tip: String, line: String },
     /// The default branch moved since `tip` and changed what the generators are made of: what was
     /// made of it is stale and discarded, and the next round makes the newest tip.
     Dropped { tip: String, line: String },
@@ -449,6 +507,17 @@ enum Round {
 /// each said on `out`; the line saying what the last came to, or why it stopped. One that finds
 /// another running ends at once, saying so. `store` takes the red task a red round files.
 pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, String> {
+    run_by(store, env, out, None)
+}
+
+/// [`run`] with `transport` answering a delivery's verbs in place of the command `[land]
+/// delivery` names: how a test stands a host in.
+pub fn run_by(
+    store: &Store,
+    env: &Env,
+    out: &mut dyn Write,
+    transport: Option<&dyn Transport>,
+) -> Result<String, String> {
     let common = crate::git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
     let main = trigger::main_checkout(&common)
         .ok_or_else(|| format!("{} has no main checkout to regenerate on", common.display()))?
@@ -462,16 +531,9 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
         if settings.generators.is_empty() {
             return Ok("no [land] generators: nothing to regenerate".into());
         }
-        if !super::delivery::command(&main)?.is_empty() {
-            // It commits to the default branch and pushes it, which a project delivering by pull
-            // request lets nothing but the host do.
-            return Err(format!(
-                "[land] delivery is set: {} lands by pull request alone, and the regenerator, \
-                 which commits what the generators make and pushes it, has no pull request of its \
-                 own in this build: nothing regenerated",
-                settings.default_branch
-            ));
-        }
+        // Where the project delivers by pull request a round lands nothing: what it makes is a
+        // task's branch, which the host lands ([`Regenerator::propose`]).
+        let delivery = delivery::command(&main)?;
         let Some(held) = try_hold(&folder)? else {
             return Ok(said.unwrap_or_else(|| {
                 "the regenerator runs already: it goes round once it ends, and makes the newest \
@@ -499,7 +561,7 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
             }));
         }
         let log = folder.join(LOG);
-        let landing = Landing {
+        let mut landing = Landing {
             store,
             env,
             slug: NAME,
@@ -515,12 +577,12 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
             now: &std::time::Instant::now,
             recorder: None,
             named: false,
-            transport: None,
-            delivery: Vec::new(),
+            transport,
+            delivery,
             out: &mut *out,
         };
         let mut regenerator = Regenerator {
-            landing,
+            landing: &mut landing,
             common: &common,
             worktree: None,
         };
@@ -528,7 +590,7 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
         regenerator.settle(store, &round);
         let halted = regenerator.check(store, &round);
         let branch = regenerator.landing.branch();
-        drop(regenerator);
+        drop(landing);
         // Read once, after it lets go: a land that moved the default branch while it held its lock
         // started nothing and left it that ref alone, which this one reads now and makes, the
         // newest tip only, however many lands came in between; a land after it lets go finds the
@@ -541,7 +603,9 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
         // What the round left the default branch at: the tip it took, or the commit it landed,
         // whose outputs are what the generators make of it as its inputs are the tip's.
         let (left, line, last) = match &round {
-            Round::Current { tip, line } | Round::Red { tip, line } => (tip.clone(), line, true),
+            Round::Current { tip, line }
+            | Round::Red { tip, line }
+            | Round::Pending { tip, line } => (tip.clone(), line, true),
             Round::Landed { commit, line, .. } => (commit.clone(), line, true),
             Round::Dropped { tip, line } => (tip.clone(), line, false),
             Round::Stopped { line, .. } => return Err(line.clone()),
@@ -557,7 +621,7 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
 /// A regenerator holding its lock: the land machinery it runs its generators and lands its commit
 /// with, for no task.
 struct Regenerator<'a, 'b> {
-    landing: Landing<'a>,
+    landing: &'b mut Landing<'a>,
     common: &'b Path,
     /// Its round's worktree, for the check ([`Self::check`]): none until the round has one.
     worktree: Option<PathBuf>,
@@ -614,6 +678,7 @@ impl Regenerator<'_, '_> {
                 Some(commit.as_str()),
                 line,
             ),
+            Round::Pending { tip, line } => ("pending", tip, None, None, line),
             Round::Dropped { line, .. } => ("dropped", &tip, None, None, line),
             Round::Red { line, .. } => ("red", &tip, None, None, line),
             Round::Stopped { line, .. } => ("stopped", &tip, None, None, line),
@@ -652,6 +717,18 @@ impl Regenerator<'_, '_> {
             Err(line) => return stopped(line),
         };
         self.worktree = Some(path.clone());
+        if !self.landing.delivery.is_empty() {
+            self.retract();
+        }
+        if !self.landing.delivery.is_empty()
+            && let Some(pending) = Pending::read(&self.landing.folder)
+        {
+            match self.waiting(&pending, tip, &path) {
+                Ok(Some(round)) => return round,
+                Ok(None) => {}
+                Err(line) => return stopped(line),
+            }
+        }
         let default = self.landing.settings.default_branch.clone();
         let generators = self.landing.settings.generators.clone();
         let mut passed = Passed::read(&self.landing.folder);
@@ -791,7 +868,334 @@ impl Regenerator<'_, '_> {
                 (generator.clone(), key)
             })
             .collect();
-        self.land(tip, &built, &made_by, &path, &message)
+        if self.landing.delivery.is_empty() {
+            self.land(tip, &built, &made_by, &path, &message)
+        } else {
+            (self.propose(tip, &built, &made_by, &message)).unwrap_or_else(stopped)
+        }
+    }
+
+    /// What `pending`, made by a round before, comes to on `tip`, in the worktree at `path`: none
+    /// once it is no longer in the way of making `tip` (delivered and held here, or stale and
+    /// withdrawn); else the round, which makes nothing.
+    ///
+    /// - Delivered, by its receipt, and `tip` holds the commit the host made: forgotten. The
+    ///   round goes on, and makes again only what the host's commit does not hold.
+    /// - Its inputs are the tip's ([`Self::stale`]): one generation for one input key. Its branch
+    ///   and task are made where a run cut short left them unmade, and it waits.
+    /// - Its inputs changed: its task is cancelled, saying why, a pull request it is bound to is
+    ///   told its evidence no longer stands, and the newest tip is made. Not once its merge was
+    ///   asked for: the host may hold its commit, which the land settles.
+    fn waiting(
+        &mut self,
+        pending: &Pending,
+        tip: &str,
+        path: &Path,
+    ) -> Result<Option<Round>, String> {
+        let slug = &pending.slug;
+        let default = self.landing.settings.default_branch.clone();
+        let folder = self.landing.folder.clone();
+        let waits = |line: String| {
+            Ok(Some(Round::Pending {
+                tip: tip.into(),
+                line,
+            }))
+        };
+        let made = format!(
+            "{}: made of {default} at {}",
+            names(&self.landing.settings.generators),
+            short(&pending.tip)
+        );
+        let receipt = Receipt::read(&folder, slug).filter(|receipt| receipt.head == pending.head);
+        if let Some(receipt) = receipt {
+            if ancestor(&self.landing.main, &receipt.squash, tip) {
+                // The host merged it onto the base it had then, which no check here pins: where
+                // that base held other inputs, what the default branch holds of them is stale.
+                let stale = match pending.made_by(&self.landing.settings) {
+                    Some(made_by) => self.stale(&pending.tip, &receipt.parent, &made_by, path)?,
+                    None => None,
+                };
+                self.checkout(path, tip)?;
+                let delivered = format!(
+                    "{slug} was delivered as {} by pull request #{}",
+                    short(&receipt.squash),
+                    receipt.pull
+                );
+                self.say(&match stale {
+                    None => delivered,
+                    Some(why) => format!(
+                        "{delivered}, onto {} where {why}: what {default} holds of them is \
+                         stale, and is made again of the newest tip",
+                        short(&receipt.parent)
+                    ),
+                });
+                let _ = fs::remove_file(folder.join(PENDING));
+                return Ok(None);
+            }
+            return waits(format!(
+                "{made}, delivered as {} by pull request #{} ({slug}), which {default} here does \
+                 not hold yet: the land of {slug} run again brings it",
+                short(&receipt.squash),
+                receipt.pull
+            ));
+        }
+        let status = self.status(slug)?;
+        let asked = Journal::read(&folder, slug)
+            .is_some_and(|journal| journal.stage >= Stage::MergeRequested);
+        let why = if asked {
+            None
+        } else {
+            match pending.made_by(&self.landing.settings) {
+                Some(made_by) => self.stale(&pending.tip, tip, &made_by, path)?,
+                None => Some("the project's generators are not the ones that made it".into()),
+            }
+        };
+        let Some(why) = why else {
+            if status.as_deref() == Some("cancelled") {
+                return waits(format!(
+                    "{made}, and {slug}, the task delivering it, was cancelled: nothing is made \
+                     again until what the generators are made of changes"
+                ));
+            }
+            self.file(pending)?;
+            return waits(format!(
+                "{made}, awaiting delivery by pull request as {slug} (`just land {slug}`, once \
+                 its stamps stand): nothing is made again of the same inputs"
+            ));
+        };
+        self.say(&format!(
+            "{slug}, made of {default} at {}, is stale: {default} is at {} and {why}",
+            short(&pending.tip),
+            short(tip)
+        ));
+        if status
+            .as_deref()
+            .is_some_and(|status| status != "cancelled")
+        {
+            let store = self.landing.store;
+            // Named before it is cancelled: a pull request it is bound to is told, by this round
+            // or a later one, however this one ends.
+            let mut withdrawn = withdrawn(&folder);
+            if !withdrawn.contains(slug) {
+                withdrawn.push(slug.clone());
+                write_whole(&folder, WITHDRAWN, &withdrawn)?;
+            }
+            let filer = filer(store)?;
+            let cancelled = {
+                let _ = store.take_role(slug, &filer, "reviewer");
+                store.move_with(
+                    slug,
+                    "cancelled",
+                    &filer,
+                    Some(&format!(
+                        "what it delivers is stale: {default} is at {} and {why}; the regenerator \
+                         makes the newest tip",
+                        short(tip)
+                    )),
+                )
+            };
+            let _ = store.leave(&filer);
+            cancelled.map_err(|error| format!("{slug} could not be cancelled: {error}"))?;
+        }
+        let _ = fs::remove_file(folder.join(PENDING));
+        self.retract();
+        Ok(None)
+    }
+
+    /// The status of the task `slug`, or none where the board has none.
+    fn status(&self, slug: &str) -> Result<Option<String>, String> {
+        match self.landing.store.get(slug) {
+            Ok(task) => Ok(Some(task.status)),
+            Err(crate::Error::Refused(why)) if why.starts_with("no task ") => Ok(None),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// Tell the pull request of each task named in [`WITHDRAWN`] that its evidence no longer
+    /// stands ([`Landing::retract`]): one told, held or bound to none is forgotten, and one that
+    /// could not be told is said and tried again by the next round. Until then its checks may
+    /// still pass, which a cancelled task alone never changes.
+    fn retract(&mut self) {
+        let folder = self.landing.folder.clone();
+        let named = withdrawn(&folder);
+        if named.is_empty() {
+            return;
+        }
+        let Ok(filer) = filer(self.landing.store) else {
+            return;
+        };
+        let mut left = Vec::new();
+        for slug in named {
+            let landing = &mut *self.landing;
+            let mut bound = Landing {
+                store: landing.store,
+                env: landing.env,
+                slug: &slug,
+                actor: &filer,
+                main: landing.main.clone(),
+                settings: landing.settings.clone(),
+                folder: landing.folder.clone(),
+                tree: landing.tree.clone(),
+                log: landing.log.clone(),
+                running: landing.running.clone(),
+                task: true,
+                interrupts: landing.interrupts,
+                now: landing.now,
+                recorder: None,
+                named: false,
+                transport: landing.transport,
+                delivery: landing.delivery.clone(),
+                out: &mut *landing.out,
+            };
+            if let Err(why) = bound.retract() {
+                self.say(&format!(
+                    "the pull request of {slug}, which was cancelled, was not told its evidence \
+                     no longer stands ({why}): its checks may still pass; the next round tells it"
+                ));
+                left.push(slug);
+            }
+        }
+        let _ = self.landing.store.leave(&filer);
+        let kept = if left.is_empty() {
+            fs::remove_file(folder.join(WITHDRAWN)).map_err(|e| e.to_string())
+        } else {
+            write_whole(&folder, WITHDRAWN, &left)
+        };
+        if let Err(why) = kept {
+            self.say(&format!("{WITHDRAWN} was not kept: {why}"));
+        }
+    }
+
+    /// The branch and the task `pending` names, each made only where it is not there: the branch
+    /// at the commit made, the task filed as the regenerator's reds are and moved to review, where
+    /// its assessor reads the head. It names no stamp and waives none.
+    fn file(&mut self, pending: &Pending) -> Result<(), String> {
+        let slug = &pending.slug;
+        let default = self.landing.settings.default_branch.clone();
+        let branch = format!("refs/heads/{slug}");
+        match rev(&self.landing.main, &branch) {
+            Some(at) if at == pending.head => {}
+            Some(at) => {
+                return Err(format!(
+                    "the branch {slug} is at {}, not the commit the regenerator made ({}): move \
+                     it away, and the next round files it",
+                    short(&at),
+                    short(&pending.head)
+                ));
+            }
+            None => {
+                run_git(&self.landing.main, &["update-ref", &branch, &pending.head])?;
+            }
+        }
+        let status = self.status(slug)?;
+        let store = self.landing.store;
+        if status.as_deref() == Some("in_progress") {
+            // Claimed by a run cut short before it said the work is ready: said for it, as the
+            // session that filed and claimed it, which then leaves. Anybody else's is theirs.
+            let task = store.get(slug).map_err(|error| error.to_string())?;
+            let by = (task.holders("executor").first().copied())
+                .filter(|executor| *executor == task.created_by);
+            if let Some(by) = by {
+                store
+                    .move_to(slug, "review", by)
+                    .map_err(|error| format!("the board did not take {slug}: {error}"))?;
+                let _ = store.leave(by);
+            }
+            return Ok(());
+        }
+        if !matches!(status.as_deref(), None | Some("ready")) {
+            return Ok(());
+        }
+        let filer = filer(store)?;
+        let filed = (|| {
+            if status.is_none() {
+                let generators = and(&(pending.made.iter())
+                    .map(|made| made.generator.as_str())
+                    .collect::<Vec<_>>());
+                store.create(&NewTask {
+                    slug: slug.clone(),
+                    title: format!(
+                        "Regenerate {generators} for {default} at {}",
+                        short(&pending.tip)
+                    ),
+                    by: filer.clone(),
+                    body: format!(
+                        "**What this is.** The regenerator (`just tasks regenerate`, started \
+                         after each land) made what the project's `[land] generators` \
+                         ({generators}) make of {default} at {}: the commit {} on this branch, \
+                         which changes their outputs alone. The project delivers by pull request, \
+                         so nothing was committed to {default}: it lands as any task does, by \
+                         `just land {slug}`, once an assessor has read that head and each stamp \
+                         it names stands there. The land refuses it once {default} holds other \
+                         inputs than the ones it was made of.\n\n**Done when.** It is landed; or \
+                         the regenerator cancels it, having made a newer tip.",
+                        pending.tip, pending.head
+                    ),
+                    priority: 1,
+                    ..NewTask::default()
+                })?;
+                // As a red filed here: an orchestrator not given now, the board's next read gives.
+                let _ = store.give_filed(slug, &filer, None);
+            }
+            // Its executor is the regenerator, which made it: claimed, then ready to be read.
+            store.claim(slug, &filer)?;
+            store.move_to(slug, "review", &filer)
+        })();
+        let _ = store.leave(&filer);
+        filed.map(drop).map_err(|error| {
+            format!("the board did not take {slug}: {error}; the next round files it")
+        })
+    }
+
+    /// Where the project delivers by pull request: `built`, made on `tip` by the generators
+    /// `made_by` as `message`, kept as [`Pending`] before anything else, then its branch and its
+    /// task ([`Self::file`]). Nothing is committed to the default branch and nothing pushed.
+    fn propose(
+        &mut self,
+        tip: &str,
+        built: &str,
+        made_by: &[(Generator, Option<String>)],
+        message: &str,
+    ) -> Result<Round, String> {
+        // Named by the tip, in a few letters where no other branch or task has that name already.
+        let free = |slug: &str| -> Result<bool, String> {
+            let branch = rev(&self.landing.main, &format!("refs/heads/{slug}"));
+            Ok(branch.is_none_or(|at| at == built) && self.status(slug)?.is_none())
+        };
+        let mut slug = format!("generated/outputs-at-{}", &tip[..tip.len().min(12)]);
+        if !free(&slug)? {
+            slug = format!("generated/outputs-at-{tip}");
+            if !free(&slug)? {
+                return Err(format!(
+                    "{slug} is another branch or task already: move it away, and the next round \
+                     files what it makes"
+                ));
+            }
+        }
+        let pending = Pending {
+            slug,
+            tip: tip.into(),
+            head: built.into(),
+            made: (made_by.iter())
+                .map(|(generator, key)| Made {
+                    generator: generator.name.clone(),
+                    key: key.clone(),
+                })
+                .collect(),
+        };
+        write_whole(&self.landing.folder, PENDING, &pending)?;
+        self.file(&pending)?;
+        Ok(Round::Pending {
+            tip: tip.into(),
+            line: format!(
+                "{message}: made as {}, awaiting delivery by pull request as {} (`just land {}`, \
+                 once its stamps stand); nothing committed to {}",
+                short(built),
+                pending.slug,
+                pending.slug,
+                self.landing.settings.default_branch
+            ),
+        })
     }
 
     /// The regenerator's worktree at `path`, made when missing, checked out at `tip` with nothing
@@ -1111,7 +1515,7 @@ impl Regenerator<'_, '_> {
                 &self.landing.log,
             )
             .map(|(_, said)| Some(said)),
-            Round::Current { tip, .. } | Round::Landed { tip, .. } => {
+            Round::Current { tip, .. } | Round::Landed { tip, .. } | Round::Pending { tip, .. } => {
                 clear_red(store, &GENERATORS, tip)
             }
             Round::Dropped { .. } | Round::Stopped { .. } => Ok(None),
@@ -1137,7 +1541,9 @@ impl Regenerator<'_, '_> {
         let path = self.worktree.take()?;
         let commit = match round {
             Round::Landed { commit, .. } => commit.clone(),
-            Round::Current { tip, .. } | Round::Red { tip, .. } => tip.clone(),
+            Round::Current { tip, .. } | Round::Red { tip, .. } | Round::Pending { tip, .. } => {
+                tip.clone()
+            }
             Round::Dropped { .. } | Round::Stopped { .. } => return None,
         };
         if command.is_empty() {
@@ -1210,6 +1616,156 @@ impl Regenerator<'_, '_> {
         if let Err(why) = write_whole(&self.landing.folder, CHECKED, checked) {
             self.say(&format!("what the check came to was not kept: {why}"));
         }
+    }
+}
+
+/// The tasks named in [`WITHDRAWN`] in the lands' `folder`.
+fn withdrawn(folder: &Path) -> Vec<String> {
+    fs::read_to_string(folder.join(WITHDRAWN))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// A session of the kind that files the regenerator's tasks ([`red::FILER`]): its handle.
+fn filer(store: &Store) -> Result<String, String> {
+    store
+        .register(&NewSession::new(red::FILER))
+        .map(|session| session.row.handle)
+        .map_err(|error| error.to_string())
+}
+
+impl Landing<'_> {
+    /// What the regenerator made that this task delivers, if it delivers that.
+    fn pending(&self) -> Option<Pending> {
+        Pending::read(&self.folder).filter(|pending| pending.slug == self.slug)
+    }
+
+    /// The regenerator started, as a land's end starts it, by a land of a task the host delivered
+    /// already (its receipt, of the head `tip` its branch is at) that is run again: the retry of
+    /// a start a run cut short never made, with no later land to make it. A start makes nothing
+    /// twice. What the land answers is as it was.
+    pub(super) fn delivered_before(&mut self) {
+        let slug = self.slug;
+        let tip = rev(&self.main, &format!("refs/heads/{slug}"));
+        let delivered =
+            Receipt::read(&self.folder, slug).filter(|receipt| Some(&receipt.head) == tip.as_ref());
+        if let Some(receipt) = delivered
+            && let Some(said) = start(self.env, &self.main, &self.settings)
+        {
+            self.say(&format!(
+                "land {slug}: delivered already, as {} by pull request #{}; {said}",
+                short(&receipt.squash),
+                receipt.pull
+            ));
+        }
+    }
+
+    /// Whether the land of this task, whose branch is at `tip`, delivers what the regenerator
+    /// made ([`Pending`]) to the fetched remote default branch at `base`: none when the task is
+    /// no such delivery. The operation is the regenerator's record and the graph's to say, never
+    /// a title's: the head is the commit it made, of one parent the remote default holds,
+    /// changing generators' outputs alone, and what the generators are made of at `base` is what
+    /// it was at that parent, each key read again there under the regenerator's lock
+    /// ([`Regenerator::stale`]). A stale one is refused before anything is published, and the
+    /// regenerator started, which cancels it and makes the newest tip.
+    pub(super) fn generated(&mut self, base: &str, tip: &str) -> Option<Result<(), Refusal>> {
+        let slug = self.slug;
+        let pending = self.pending()?;
+        let default = self.settings.default_branch.clone();
+        let refuse = |line: String| {
+            Refusal::to(
+                line,
+                "@orchestrator",
+                "A generated update is delivered as the regenerator made it, or not at all: \
+                 nothing was published"
+                    .into(),
+            )
+        };
+        Some((|| {
+            if pending.head != tip {
+                return Err(refuse(format!(
+                    "{slug}'s branch is at {}, not the commit the regenerator made ({})",
+                    short(tip),
+                    short(&pending.head)
+                )));
+            }
+            let here = |line: String| Refusal::here(line);
+            let parents =
+                run_git(&self.main, &["rev-list", "--parents", "-n", "1", tip]).map_err(here)?;
+            let parents: Vec<&str> = parents.split(' ').skip(1).collect();
+            if parents != [pending.tip.as_str()] || !ancestor(&self.main, &pending.tip, base) {
+                return Err(refuse(format!(
+                    "{slug}'s head {} is not one commit on {}, which {}/{default} holds",
+                    short(tip),
+                    short(&pending.tip),
+                    super::REMOTE
+                )));
+            }
+            let changed = run_git(
+                &self.main,
+                &["diff", "--name-only", "--no-renames", &pending.tip, tip],
+            )
+            .map_err(here)?;
+            if let Some(stray) = (changed.lines()).find(|name| {
+                !self
+                    .settings
+                    .generators
+                    .iter()
+                    .any(|g| owns(&g.outputs, name))
+            }) {
+                return Err(refuse(format!(
+                    "{slug}'s head {} changes {stray}, outside the generators' outputs",
+                    short(tip)
+                )));
+            }
+            let common = crate::git::common_dir(&self.main).map_err(|e| here(e.to_string()))?;
+            let Some(held) = try_hold(&self.folder).map_err(here)? else {
+                return Err(here(format!(
+                    "the regenerator runs, and judges what {slug} was made of: nothing published; \
+                     run the land again once it ends (`just tasks regenerate --status`)"
+                )));
+            };
+            let stale = match pending.made_by(&self.settings) {
+                None => Ok(Some(
+                    "the project's generators are not the ones that made it".to_string(),
+                )),
+                Some(made_by) => worktree(
+                    &self.main,
+                    &self.settings,
+                    &self.folder,
+                    NAME,
+                    "regenerate-worktree",
+                )
+                .and_then(|path| {
+                    let mut regenerator = Regenerator {
+                        landing: &mut *self,
+                        common: &common,
+                        worktree: None,
+                    };
+                    regenerator.stale(&pending.tip, base, &made_by, &path)
+                }),
+            };
+            drop(held);
+            let Some(why) = stale.map_err(here)? else {
+                return Ok(());
+            };
+            let started = super::regenerate::start(self.env, &self.main, &self.settings)
+                .map_or_else(String::new, |said| format!("; {said}"));
+            Err(Refusal::to(
+                format!(
+                    "{slug} is stale: it was made of {default} at {}, {}/{default} is at {} and \
+                     {why}; nothing published{started}",
+                    short(&pending.tip),
+                    super::REMOTE,
+                    short(base)
+                ),
+                "@orchestrator",
+                "The regenerator cancels it and makes the newest tip, which is delivered as a \
+                 task of its own"
+                    .into(),
+            ))
+        })())
     }
 }
 
@@ -1597,6 +2153,7 @@ pub fn status(env: &Env) -> Result<Standing, String> {
                 making,
             )
         }
+        "pending" => standing(format!("{}; {held}", state.line), false, false),
         "red" => standing(
             format!(
                 "{what}: red on {default} at {} since {when}: {} ({RED}); {held}",

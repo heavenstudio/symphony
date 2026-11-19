@@ -31,7 +31,8 @@
 //!
 //! 1. **Prepared**: the head, the snapshot's revision and the commit's title and body. The
 //!    remote default branch is fetched and its project file must be the one committed here; a
-//!    head that changes a generator's outputs, or merges a commit the remote default does not
+//!    head that changes a generator's outputs and is not what the regenerator made
+//!    ([`Landing::generated`]), or merges a commit the remote default does not
 //!    hold (an import of another history, which a squash would flatten), is refused.
 //! 2. **Eligible**: published, and the snapshot read again: one of another revision is published
 //!    again, never merged.
@@ -68,6 +69,9 @@ pub const RETAINED: &str = "refs/symphony/delivered/";
 pub const RECEIPTS: &str = "receipts";
 /// How a task's head is delivered: squashed into one commit on the default branch.
 pub const TASK: &str = "task";
+/// How what the regenerator made is delivered ([`super::regenerate::Pending`]): squashed as a
+/// task's head is, once it is the generators' outputs alone, made of what the default branch holds.
+pub const GENERATED: &str = "generated";
 
 /// `[land] delivery` as the main checkout `main` has it committed at its head: the command, or
 /// nothing where the land merges here. Its shape is [`super::Settings::parse`]'s to refuse.
@@ -497,15 +501,23 @@ impl Landing<'_> {
     /// Publish `snapshot`, which is not eligible, to the pull request `binding`: the head the
     /// branch is at now and checks that fail, the one the host requires first. What the land
     /// refuses with follows; a publication that fails is said and changes none of it.
-    fn withdraw(&mut self, journal: &Journal, binding: &Binding, tip: &str, snapshot: &Snapshot) {
+    fn withdraw(
+        &mut self,
+        journal: &Journal,
+        binding: &Binding,
+        tip: &str,
+        snapshot: &Snapshot,
+    ) -> bool {
         let slug = self.slug;
         let request = json!({
             "verb": "publish", "slug": slug, "by": self.actor, "head": tip,
             "branch": self.settings.default_branch, "title": journal.title,
             "body": journal.body, "snapshot": snapshot,
         });
-        let said = match self.ask("publish", &request) {
-            Ok(answer) if state(&answer).0 == "published" => format!(
+        let asked = self.ask("publish", &request);
+        let told = matches!(&asked, Ok(answer) if state(answer).0 == "published");
+        let said = match asked {
+            Ok(_) if told => format!(
                 "land {slug}: its evidence does not stand at {}, and pull request #{} of {} says \
                  so now",
                 short(tip),
@@ -527,6 +539,66 @@ impl Landing<'_> {
             ),
         };
         self.say(&said);
+        told
+    }
+
+    /// For a task that will not be delivered (cancelled as stale): the pull request a land bound
+    /// it to is told its evidence no longer stands, by the snapshot that blocks. Done where it is
+    /// bound to none, where the pull request is closed, and where it was merged all the same,
+    /// which is held for a person as any merge nobody read is.
+    ///
+    /// # Errors
+    ///
+    /// The pull request could not be read or told, or the task's evidence still reads as
+    /// standing: its checks may still pass.
+    pub(super) fn retract(&mut self) -> Result<(), String> {
+        let slug = self.slug;
+        let Some(journal) = Journal::read(&self.folder, slug) else {
+            return Ok(());
+        };
+        let Some(binding) = journal.binding.clone() else {
+            return Ok(());
+        };
+        let request = json!({
+            "verb": "result", "slug": slug,
+            "repository": binding.repository, "pull": binding.pull,
+        });
+        let result = self.ask("result", &request)?;
+        match state(&result).0 {
+            "closed" => Ok(()),
+            "merged" => {
+                let what = format!(
+                    "pull request #{} was merged though {slug} was cancelled as stale",
+                    binding.pull
+                );
+                let _ = self.hold(journal, what);
+                Ok(())
+            }
+            "open" => {
+                let tip = rev(&self.main, &format!("refs/heads/{slug}"))
+                    .unwrap_or_else(|| journal.head.clone());
+                let task = self.store.get(slug).map_err(|error| error.to_string())?;
+                let thread = self.store.thread(slug).map_err(|error| error.to_string())?;
+                let snapshot =
+                    evidence::snapshot(self.store, self.env, &self.main, &task, &thread, &tip)?;
+                if snapshot.eligible {
+                    return Err(format!("the evidence of {slug} still reads as standing"));
+                }
+                if self.withdraw(&journal, &binding, &tip, &snapshot) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "pull request #{} took no publication",
+                        binding.pull
+                    ))
+                }
+            }
+            _ => Err(format!(
+                "pull request #{} answered {}",
+                binding.pull,
+                state(&result).1
+            )),
+        }
     }
 
     /// Deliver the task's `tip`, found ready as `judged`, by its pull request.
@@ -539,8 +611,11 @@ impl Landing<'_> {
         let slug = self.slug;
         let default = self.settings.default_branch.clone();
         let base = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
-        self.admit(&base, tip)
-            .map_err(|refusal| self.refuse(refusal))?;
+        let operation = match self.generated(&base, tip) {
+            Some(generated) => generated.map(|()| GENERATED),
+            None => self.admit(&base, tip).map(|()| TASK),
+        }
+        .map_err(|refusal| self.refuse(refusal))?;
         self.owner_lines(&base, tip)
             .map_err(|refusal| self.refuse(refusal))?;
         let mut snapshot = self.eligible(task, tip)?;
@@ -551,7 +626,7 @@ impl Landing<'_> {
         let earlier = Journal::read(&self.folder, slug).filter(|journal| journal.head == tip);
         let mut journal = Journal {
             slug: slug.into(),
-            operation: TASK.into(),
+            operation: operation.into(),
             stage: Stage::Prepared,
             head: tip.into(),
             base_observed: base.clone(),
@@ -617,6 +692,14 @@ impl Landing<'_> {
             .binding
             .clone()
             .ok_or_else(|| here("unbound".into()))?;
+        // What the regenerator made is judged again on the remote default branch as it is now:
+        // the last reading before the request, which nothing here recalls.
+        if operation == GENERATED {
+            let now = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
+            if let Some(Err(refusal)) = self.generated(&now, tip) {
+                return Err(self.refuse(refusal));
+            }
+        }
         // Before the request: from here the pull request decides, never a merge made here.
         journal.stage = Stage::MergeRequested;
         journal.write(&self.folder).map_err(here)?;
@@ -1143,18 +1226,18 @@ impl Landing<'_> {
             // Named before anything is started, so nothing is started twice.
             journal.stage = Stage::Dispatching;
             journal.write(&self.folder).map_err(here)?;
-            if !self.settings.generators.is_empty() {
-                self.say(&format!(
-                    "land {slug}: the regenerator is not started: with [land] delivery it commits \
-                     nothing to {default}, and its own pull request is not built"
-                ));
-            }
-            self.after(&squash, false);
+            self.after(&squash, true);
         } else {
             self.say(&format!(
                 "land {slug}: what follows a land was started by a run before this one, and is \
                  not started twice"
             ));
+            // But the regenerator, which a run cut short before it started it never did: a start
+            // makes nothing twice, by its lock, the tip it finished with and what it has pending.
+            let started = super::regenerate::start(self.env, &self.main, &self.settings);
+            if let Some(said) = started {
+                self.say(&format!("land {slug}: {said}"));
+            }
         }
         Journal::drop_in(&self.folder, slug);
         Ok(line)

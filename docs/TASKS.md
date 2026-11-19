@@ -2461,10 +2461,11 @@ the pull request's required checks taking its place, or takes the key out.
 A land keeps a journal of the delivery in the lands' folder, written before each step:
 
 1. **Prepared.** The remote default branch is fetched, and the project file it commits must be
-   the one committed here. A head that changes a generator's outputs is refused, as is one that
-   merges a commit the remote default does not hold: an import of another history, which a squash
-   would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). A task that is not eligible at
-   its head is refused before anything is published.
+   the one committed here. A head that changes a generator's outputs is refused, unless it is
+   [what the regenerator made](#what-the-generators-make-delivered-by-a-pull-request), as is one
+   that merges a commit the remote default does not hold: an import of another history, which a
+   squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). A task that is not
+   eligible at its head is refused before anything is published.
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
    published again or refused, never merged as it was.
@@ -2503,13 +2504,63 @@ run, by `result`:
 One limit holds by design: evidence withdrawn after the last reading and before the host acts on
 a request already made does not recall it. The receipt names the revision that was read.
 
-What else writes the default branch lands nothing there while the key is set, each refused by
-name: the regenerator, and a save of a document from the app, refused where it begins, before a
+What else writes the default branch lands nothing there while the key is set. The regenerator
+commits and pushes nothing: what it makes is a task of its own
+([below](#what-the-generators-make-delivered-by-a-pull-request)). A save of a document from the
+app is refused by name where it begins, before a
 file is written, and again where an edit is handed to the committer and in the commit itself. The release cadence refuses to
 count the landings of a line whose tip sets the key, since a squash is no merge of the land's: no
 release run is due by landings there and no release candidate is advanced, each saying so
 ([RELEASES](RELEASES.md#the-cadence)). The sweep keeps the worktree and branch of a squashed
 head, which it finds in no history.
+
+### What the generators make, delivered by a pull request
+
+With `[land] delivery` set, [the regenerator](#the-regenerator) makes the outputs of the default
+branch's tip as it does anywhere, and then commits nothing there and pushes nothing. What it made
+is one commit on that tip, of the generators' outputs alone, and it becomes a task:
+
+- **A record first.** `symphony/tasks/land/regenerate-pending.json` names the task, the tip, the
+  commit and each generator's key, and is written before anything else. Then the branch
+  `generated/outputs-at-TIP` is pointed at the commit (the tip's first twelve letters, or the
+  whole tip where another branch or task has that name) and the task of that name is filed,
+  claimed by the session that files it and moved to review. Each step is made only where it is
+  not there, so a run cut short at any of them is gone on from by the next, which makes nothing
+  again.
+- **Assessed as any task.** The regenerator names no stamp and waives none. An assessor reads the
+  head, the catalogue decides what it needs, and `just land generated/outputs-at-TIP` delivers
+  it: the same journal, the same squash, the same proof and receipt, whose `operation` says
+  `generated`. The host is asked nothing a task's land does not ask.
+- **One generation for one set of inputs.** While the record stands, a round whose tip holds the
+  inputs it was made of makes nothing and says where the task stands: each keyed generator's
+  key is the one recorded, and for a generator with no key no path outside the generators'
+  outputs changed.
+- **Stale is cancelled, and never delivered.** A round that finds other inputs cancels the task,
+  saying why, and makes the newest tip, a task of its own. A pull request the cancelled task was
+  bound to is told by a snapshot that blocks, so the check the host requires fails there; while
+  that could not be told (`regenerate-withdrawn.json` names the task) its checks may still pass,
+  the round says so, and each later round tells it again. A task whose merge was asked for is
+  never cancelled: the host may hold its commit, and its land settles it.
+- **What the land checks.** A task the record names is delivered only as made: its branch at the
+  recorded commit, that commit one commit on the recorded tip, which the remote default branch
+  holds, changing the generators' outputs alone, and the inputs at the fetched remote default
+  branch those it was made of, each key read again there in the regenerator's worktree, under
+  its lock. It is judged twice, before anything is published and again right before the merge is
+  asked for. A stale one is refused to the orchestrator and the regenerator started. A task the
+  record does not name that changes a generator's outputs is refused as before.
+- **A base that moves under the request.** The host merges onto the default branch it has then,
+  which no check here pins. Where that base gained an input after the last reading, what the
+  default branch then holds of the outputs is stale: the record stays until the round the land
+  starts reads the receipt's parent, says so, and makes the newest tip. Until a round finds the
+  outputs current, `just tasks regenerate --status` does not say they are.
+- **A start that was lost.** The regenerator keeps no list of builds: a round reads the default
+  branch's tip, the keys it passed on and its record. So a land killed before it started the
+  regenerator loses nothing that the next start does not make: any later land's, the same land
+  run again where its journal still says it was dispatching, and `just land SLUG` of a task
+  already delivered, which starts the regenerator by its receipt and answers as it did before.
+
+Local reconciliation is the land's, as for any delivered task: a round takes the task as
+delivered only once the default branch here holds the commit the host made.
 
 ### A delivery whose host is gone
 
@@ -2530,8 +2581,9 @@ reads the pull request. With the host gone for good, a person does this by hand:
 
 What a project's `[land] generators` make (this repository's client distribution) is
 made after a land, never on its path. Where the project
-[delivers by pull request](#a-land-delivered-by-a-pull-request) it is not started and lands
-nothing: a commit of its own on the default branch is one the host never made. One build for main runs at a time, and once it is
+[delivers by pull request](#a-land-delivered-by-a-pull-request) it lands
+nothing itself, a commit of its own on the default branch being one the host never made: what
+it makes is [a task the host lands](#what-the-generators-make-delivered-by-a-pull-request). One build for main runs at a time, and once it is
 built the next is main's newest tip: a build in progress is never cancelled but let
 finish, and there is no queue, so some merges are never built on their own. A land that
 closed its task starts

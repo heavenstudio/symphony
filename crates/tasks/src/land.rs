@@ -1828,6 +1828,7 @@ impl Landing<'_> {
             if let Some(done) = self.bound_before() {
                 return done;
             }
+            self.delivered_before();
             self.unchecked().map_err(|refusal| self.refuse(refusal))?;
         } else if self.task {
             delivery::left(&self.folder, slug, &self.settings.default_branch)
