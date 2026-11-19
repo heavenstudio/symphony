@@ -371,8 +371,9 @@ pub trait Source {
 }
 
 /// The settings the project's default branch commits, read from git's objects by the main
-/// checkout: `git show refs/heads/BRANCH:symphony-github.toml`, BRANCH the main checkout's
-/// `[project] default_branch` (`main` unless it says another).
+/// checkout: `git show refs/heads/BRANCH:symphony-github.toml`, BRANCH the `[project]
+/// default_branch` the main checkout's HEAD commits ([`default_branch`], `main` unless it says
+/// another).
 pub struct Committed {
     /// The main checkout.
     pub main: PathBuf,
@@ -389,17 +390,35 @@ struct ProjectTable {
     default_branch: Option<String>,
 }
 
-/// The project's default branch, as the main checkout `main`'s `symphony.toml` names it.
+/// The project's default branch, as `[project] default_branch` names it in the `symphony.toml`
+/// the main checkout `main`'s HEAD commits (`main` where none is committed or it names none):
+/// read as the land reads it, so the two agree, and an edit of the working file names no
+/// branch until it is committed.
 ///
 /// # Errors
 ///
-/// The file does not read, or names no branch.
+/// git cannot read it, the file does not read, or it names no branch.
 pub fn default_branch(main: &Path) -> Result<String, String> {
-    let file = main.join("symphony.toml");
-    let text = match std::fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(format!("{}: {error}", file.display())),
+    let at = "HEAD:symphony.toml";
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(main)
+            .args(args)
+            .output()
+            .map_err(|error| format!("git: {error}"))
+    };
+    let text = if git(&["cat-file", "-e", at])?.status.success() {
+        let shown = git(&["cat-file", "blob", at])?;
+        if !shown.status.success() {
+            return Err(format!(
+                "git could not read symphony.toml at {}'s HEAD",
+                main.display()
+            ));
+        }
+        String::from_utf8(shown.stdout).map_err(|error| format!("symphony.toml: {error}"))?
+    } else {
+        String::new()
     };
     let read: ProjectFile =
         toml::from_str(&text).map_err(|error| format!("symphony.toml: {}", error.message()))?;

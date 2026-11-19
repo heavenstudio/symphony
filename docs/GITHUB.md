@@ -20,9 +20,11 @@ that design is not built, is [the proposal](analysis/github-integration.md).
 ## Turning it on
 
 The settings are `symphony-github.toml` at the root of the tree the project's default branch
-commits (`[project] default_branch` in the main checkout's `symphony.toml`, `main` unless it
-says another). The adapter reads that file from git's objects, never from a checkout: a file a
-branch commits, one in a linked worktree and one not committed turn nothing on. A file that is
+commits (`[project] default_branch` in the `symphony.toml` the main checkout's HEAD commits, as
+the land reads it, `main` unless it says another). The adapter reads that file from git's
+objects, never from a checkout: a file a branch commits, one in a linked worktree and one not
+committed turn nothing on, and an edit of the main checkout's `symphony.toml` names no branch
+until it is committed. A file that is
 absent is the adapter turned off. One that does not read (a key it does not know, a value of
 another type, settings that do not hold together) is refused by name, and every command reads a
 refusal as turned off.
@@ -96,16 +98,21 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
 - **`status`** says what the committed settings allow and what is kept. It reads no remote and
   writes nothing, not even its folder.
 - **`publish SLUG --title TITLE --body-file FILE`** opts a task in: TITLE and FILE's text are
-  kept as its curated public text and shown as they will be published. Nothing is sent.
+  kept as its curated public text and shown as they will be published. Nothing is sent. A text
+  an issue would not hold whole with its marker is refused, and so is a task imported from an
+  issue, whose text is its brief.
 - **`preview [--rebind]`** reads both sides and shows what a reconcile would do, with the exact text of
   every write, then keeps that preview under the digest it prints. It writes nothing to GitHub
   or the board. Turned off, it reads nothing from GitHub and shows only the curated texts that
-  wait. `--rebind` binds to [another repository found at the name](#what-pauses-or-suspends).
+  wait, and neither it nor `reconcile` makes the state folder where nothing is kept. `--rebind`
+  binds to [another repository found at the name](#what-pauses-or-suspends).
 - **`reconcile --preview DIGEST --as HANDLE`** applies the preview of that digest and no other:
   at most 50 operations a run, or `--limit N`. HANDLE is the board session the board's writes
   are made as.
 - **`resolve SLUG local|remote`** keeps one side of a conflict, or takes up a suspended mapping
   again. It writes only the adapter's own folder; the next preview shows what follows.
+- **`drop SLUG`** drops a mapping [found wrong](#dropping-a-mapping). It writes only the
+  adapter's own folder.
 - **`preflight [--branch BASE]`** reads [the protection](#the-protection-a-delivery-needs) of
   BASE, the default branch unless named, as a delivery reads it before it writes, and says that
   it holds or each thing missing on a line of its own. It writes nothing, here or on GitHub, and
@@ -123,7 +130,9 @@ title one line of 200 characters, a body of 60,000 with a line saying where it w
 
 **A published task** is one opted in with `publish`. Its issue carries the curated text and
 nothing of the brief or the thread, and ends in a marker, an HTML comment holding a digest of
-the repository's number and the task's slug, which shows the slug to nobody.
+the repository's number and the task's slug, which shows the slug to nobody. A curated text is
+read back with its marker within the 60,000 characters a read keeps, so `publish` refuses one
+longer than that less the marker's line.
 
 Anyone who can open an issue can write a marker, so a marker alone maps nothing. An issue
 carrying a task's marker is mapped to it only where `issues` exports and this side kept a curated
@@ -156,6 +165,17 @@ note is skipped.
 Not exchanged: thread messages, labels other than `export_label` on creation, assignees,
 workflow, roles, dependencies and stamps.
 
+## Dropping a mapping
+
+A mapping found wrong is answered by neither side of `resolve`: a planted issue that carries a
+waiting curated text's marker, adopted as a conflict, holds a stranger's words that are not the
+task's to take, and pushing the curated text into it would make the stranger's issue the
+publication. `drop SLUG` drops the mapping and keeps the issue as not the task's: no preview maps
+the two again, counts it as a duplicate of the task's publication, or takes it for a publication
+whose answer was lost. A curated text kept stays, so the next preview shows it published as a
+new issue. Nothing is written to the issue or the board, and the journal holds the drop as an act
+of its own, its intent carrying the mapping it drops.
+
 ## What is kept
 
 The state folder is `symphony/integrations/github` in the git common dir
@@ -166,12 +186,15 @@ no worktree and no commit, and backed up with the repository's common dir or not
   task's number with the board's recovery generation, the issue's number and ids, each side's
   digest), the curated texts, and what pauses the exchange.
 - `state.json` holds as well the pull request each delivered task is bound to, with the task's
-  number and, once it landed, the commit.
+  number and, once it landed, the commit, and the issues dropped from each task's mapping.
 - `preview.json`: the preview that waits.
 - `journal.jsonl`: a line before each operation is dispatched (its id, target, the digest of
   what it writes, what it expects to find, the settings' revision, who ran it) and a line with
   its result before the state moves on by it. An edit of a brief journals the brief's earlier
-  words, which the board does not keep.
+  words with its intent, which the board does not keep, so an edit cut short can be put back. A
+  last line a crash cut short is left out, and cut away before the next is written; any other
+  line that does not read stops every command that reads the journal, naming it, since a line
+  lost may be an intent.
 - `lock`: held by whichever command is writing. A second one is refused, never made to wait.
 
 ## Running it twice, and a run cut short
@@ -184,7 +207,10 @@ A reconcile is safe to run again and to interrupt.
 - An operation dispatched whose result never arrived is looked for before it is tried: a
   created issue by its marker among every issue of the repository, under whichever preview it
   was dispatched (one found is mapped, more than one stops with none mapped and none created), an issue's edit and a brief's edit by
-  reading the side they wrote, a proposal by its slug and the line naming its issue.
+  reading the side they wrote, a proposal by its slug and the line naming its issue. Such a
+  publication, or one skipped, is looked for at every later apply of it until an acknowledgment
+  maps an issue: each costs one request for each hundred issues of the repository. No bound is
+  set on it, since a public issue made twice cannot be recalled.
 - A brief is rewritten only by `edit_bound`, with the token the preview read. A token the board
   refuses ends the run and drops the preview: nothing is tried on what the board holds now, and
   the next preview reads the task again.
