@@ -578,8 +578,9 @@ process group, started and stopped by their PIDs).
 
 What Symphony ships is checked for size, so it never grows unseen and can be brought down. Each
 binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
-`agent-send`) has a budget, and so does the client distribution the server embeds (every file
-under `apps/symphony-server/client/public`): one line each in `tools/size-budget.toml`, in bytes.
+`agent-send`) has a budget, and so do the client builds the server embeds (those
+`symphony-build publish-client` keeps under `apps/symphony-server/client/public`): one line each in
+`tools/size-budget.toml`, in bytes.
 `just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s
 `[profile.release]`, and runs `symphony-build size-budget`, which prints each size beside its
 budget (`symphony-build`, the commands only this repository's build and release run use, is no
@@ -587,9 +588,22 @@ binary it delivers, and has no line).
 Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
 --crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
 the same at a commit within it (the last release, or before the first one, the commit that last
-set the budget file), or the largest files of the distribution. A binary's line is its file; the
-server's is its file less the client it embeds, which has its line of its own, so each line grows
-for one reason. The sizes are this machine's (aarch64-apple-darwin), where the release run runs.
+set the budget file), or for the client, the newest build's files beside the build before it. A
+binary's line is its file; the server's is its file less the client it embeds, which has its line
+of its own, so each line grows for one reason. The sizes are this machine's (aarch64-apple-darwin),
+where the release run runs.
+
+The client's line counts each build the distribution keeps whole (its `builds.json`, newest first):
+a file two builds share is counted for each, and `index.html` and `builds.json` once. That is the
+most the distribution weighs with those builds, which it does once they share no file: a change to
+the chunk every page imports renames every chunk that imports it, as each carries the shared one's
+name and export names in its own bytes, so the build after such a landing shares almost nothing
+with the two before it. What the server embeds, each file once, rises and falls with how many
+files the kept builds happen to share (from about one build's weight to three at three builds); the
+line moves only with what a build weighs and how many are kept. The check prints both, with each
+build's weight, so one build's growth shows though the line is the builds'. A file under `assets/`
+that no kept build names, or a build naming a file that is not there, is an error, not a pass: it
+would be embedded and not counted.
 
 The shipped binaries are the ones `symphony init` links for a project (`BUILDS`,
 `crates/symphony/src/init.rs`), and a test holds the recipe's build to them: a binary of them
@@ -649,8 +663,9 @@ one. Within its line, `symphony-build size-budget` prints where the rule brings 
 line that stands higher (`its line comes down to …`), so the commit of a reduction takes that
 number, not a choice of its own. A line is raised only as [a red at the size check](#a-red-at-the-size-check)
 allows, by the same rule: to the binary's size plus 4 %, never higher. The client's line is set by
-the same rule from the distribution main holds when it is set, and the check prints no such number
-for it: what the distribution holds rises and falls with the builds `publish-client` keeps.
+the same rule from what the check counts of the distribution main holds when it is set, and the
+check prints no such number for it: a reduction of the newest build reaches that count in full only
+once the builds before it are no longer kept.
 
 ### A red at the size check
 
