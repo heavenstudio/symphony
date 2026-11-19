@@ -236,9 +236,9 @@ fn copy(
         &host,
         &opening,
     )
-    .map_err(&refused)?;
+    .map_err(refused)?;
     if dumping {
-        let dump = store.dump().map_err(&refused)?;
+        let dump = store.dump().map_err(refused)?;
         let text = serde_json::to_string(&dump).map_err(|e| e.to_string())?;
         writeln!(out, "{text}").map_err(|e| format!("cannot write the dump: {e}"))?;
         return Ok(None);
@@ -248,7 +248,7 @@ fn copy(
         .read_to_string(&mut text)
         .map_err(|e| format!("cannot read the dump: {e}"))?;
     let dump = rows::Dump::from_json(&text)?;
-    store.copy(&dump).map_err(&refused)?;
+    store.copy(&dump).map_err(refused)?;
     // A PostgreSQL board has no namespace: its database is named alone.
     let place = if postgresql {
         db.clone()
