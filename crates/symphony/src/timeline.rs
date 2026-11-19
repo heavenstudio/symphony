@@ -14,6 +14,8 @@
 //!   list. The review gate's lane begins where the task first went to review.
 //! - Its role and address metadata is a separate bounded projection (`history`), with explicit
 //!   source completeness and thread cursors. It reads no current session or role holders.
+//! - Its places are the custom workflow's, one for each recorded transition of the task
+//!   ([`places`]), absent for a task no workflow held: time at a place, never the runs' time.
 //!
 //! [`build`] puts them together from what was read; [`answer`] reads the thread and the recorder's
 //! history once, for those lanes and the gates beside them, and reads capped thread windows for
@@ -30,6 +32,7 @@ use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
 use symphony_board::stages::{self, Facts, Hold, Line, Segment};
 
 mod history;
+mod places;
 
 /// The timeline of the task `slug`, which `facts` describe, from its `thread`, the `runs` kept for
 /// it, its `gates` and the time `now`. Its clock ([`TaskTimeline::zone`]) and how often it is read
@@ -422,6 +425,7 @@ pub fn answer(
         every: TIMELINE_EVERY,
         runs_from,
         history: Some(history::answer(store, record)),
+        places: places::read(store, &record.slug),
         ..build(&record.slug, facts, &thread, &runs, &gates, now)
     })
 }

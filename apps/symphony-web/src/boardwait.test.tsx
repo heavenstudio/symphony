@@ -4,6 +4,7 @@ import {
   blocked,
   Ends,
   ends,
+  NAMES,
   OrchestratorBanner,
   savedStage,
   WaitCard,
@@ -14,7 +15,7 @@ import {
   waitLabel,
   waitSince,
 } from "./boardwait";
-import { aRole, aTask } from "./testing";
+import { aMachine, anOperation, aRole, aTask, aWork } from "./testing";
 import { NO_WORK } from "./work";
 
 const now = 1800000000;
@@ -240,6 +241,39 @@ it("keeps only a known lifecycle phone stage", () => {
   expect(savedStage(null)).toBe("review");
   expect(savedStage("blocked")).toBe("review");
   expect(savedStage("ready")).toBe("ready");
+});
+it("keeps a phone stage only while a workflow's tabs have it, else its first", () => {
+  const tabs = ["phase:verify", "phase:review", "phase:build"];
+  expect(savedStage("phase:review", tabs)).toBe("phase:review");
+  expect(savedStage("review", tabs)).toBe("phase:verify");
+  expect(savedStage(null, tabs)).toBe("phase:verify");
+  expect(savedStage("phase:review")).toBe("review");
+});
+describe("a task a custom workflow holds", () => {
+  const place = { phase: "build", state: "blocked", revision: 2 };
+  const held = aTask("w/c", { status: "blocked", from: "review", workflow: place });
+  it("goes in its phase's column, blocked or not, unless a machine builds or tests it", () => {
+    expect(waitingStage(NO_WORK, held, true)).toBe("phase:build");
+    const review = { ...held, status: "review", workflow: { ...place, phase: "review" } };
+    expect(waitingStage(NO_WORK, review, true)).toBe("phase:review");
+    const working = { ...held, status: "in_progress", workflow: { ...place, state: "working" } };
+    const building = aWork([
+      aMachine("m", [anOperation("m", "b", "build", "running", { task: "w/c" })]),
+    ]);
+    expect(waitingStage(building, working, true)).toBe("build");
+    expect(waitingStage(building, working, false)).toBe("phase:build");
+  });
+  it("names its place on its card: its phase's and state's labels, else its state's ID", () => {
+    NAMES.set("build/blocked", "Build · Blocked");
+    expect(render(<WaitCard task={held} now={now} />)).toContain(
+      '<span class="state-mark">Build · Blocked</span>',
+    );
+    NAMES.clear();
+    expect(render(<WaitCard task={held} now={now} />)).toContain(
+      '<span class="state-mark">blocked</span>',
+    );
+    expect(render(<WaitCard task={aTask("w/a")} now={now} />)).not.toContain("state-mark");
+  });
 });
 it("shows one amber banner for stale orchestrators, red for none, and none for live or no queued work", () => {
   const banner = (health: string, unstarted = 2) =>

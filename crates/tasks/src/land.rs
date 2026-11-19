@@ -2,6 +2,9 @@
 //! recipe in every project (`symphony.just`), and a `land` recipe of the project's own replaces it
 //! there, everywhere. It lands one task's branch, named as its slug, on the default branch:
 //!
+//! A task a custom workflow holds lands by its graph instead, through the prepare and finalize
+//! edges of this landing's adapter, with the same merge, check, move and push ([`adapter`]).
+//!
 //! 0. **Asked for.** It runs only as `just land SLUG`, whose recipe sets [`RECIPE`], and never
 //!    where the project's justfile runs a `land` of its own ([`admit`]). The marker is a guard
 //!    against running it by accident; the stamps below are the gate.
@@ -108,6 +111,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
+pub mod adapter;
 pub mod carried;
 pub mod check_paths;
 pub mod delivery;
@@ -1870,6 +1874,10 @@ impl Landing<'_> {
         let slug = self.slug;
         self.leftover_group().map_err(Stop::Refused)?;
         self.recover().map_err(Stop::Refused)?;
+        // A task a custom workflow holds lands by its graph alone ([`adapter`]).
+        if let Some(position) = self.held()? {
+            return self.land_held(&position);
+        }
         if self.delivers() {
             // A merge asked of the host by a run before decides, before anything is read again.
             if let Some(done) = self.resumed() {

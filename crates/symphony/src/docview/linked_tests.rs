@@ -24,6 +24,7 @@ fn task(slug: &str, links: &[&str]) -> Task {
         waits_on: None,
         review_rounds: None,
         from: None,
+        workflow: None,
     }
 }
 

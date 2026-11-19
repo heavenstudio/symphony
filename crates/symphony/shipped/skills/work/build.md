@@ -32,7 +32,8 @@ focused checks, its stamp and that schedule.
 ## Milestones
 
 Post milestones only, with `just tasks say SLUG "text" --to @orchestrator --as HANDLE`: a tip
-ready for review, a move to review or blocked, a collision, a finding, a verdict or a question.
+ready for review, a request for review or a block, a collision, a finding, a verdict or a
+question.
 Address action to the role or handle that must act. No acknowledgements, and a milestone on one
 thread, never on both a subtask and its parent. Keep the board true. Messages, waiting and an
 owner's stop: [connected.md](connected.md).
