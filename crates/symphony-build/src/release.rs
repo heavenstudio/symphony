@@ -5,7 +5,8 @@
 //! judged by checks this repository owns, never by a consuming project's suite. Every red check,
 //! and a run that stopped short of deciding, is a task on the board ([`board`]); when every check
 //! is green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it
-//! holds ([`notes`]) and pushes that one tag, then installs it on the machine ([`install`]),
+//! holds ([`notes`]) and pushes that one tag, asks for its GitHub Release where the project names a
+//! command for one ([`github`]), then installs it on the machine ([`install`]),
 //! moves each registered project's board to its schema under the writer rule and points `current`
 //! at it ([`refresh`]), writing no project's checkout. `--commit COMMIT` does the same out of
 //! cycle for a commit already on the remote's main and past the newest release. A run of main's
@@ -39,6 +40,7 @@ pub(crate) mod consumer;
 pub(crate) mod crates;
 mod failures;
 mod git;
+mod github;
 mod gone;
 mod group;
 mod inputs;
@@ -90,7 +92,7 @@ fn refuse(err: &mut dyn Write, usage: &str, command: &str, problem: &str) -> i32
 const USAGE: &str = "usage: symphony-build release [-h] [--root ROOT] [--remote NAME] \
 [--branch NAME] [--worktree PATH] [--check NAME=COMMAND] [--commit COMMIT] [--no-push] \
 [--timeout SECONDS] [--status] [--schedule] [--at HH:MM] [--due [SLUG COMMIT]] [--refresh] \
-[--rerun] [--drop]";
+[--rerun] [--drop] [--github [NAME ...]]";
 const HELP: &str =
     "Symphony's releases: main's tip as fetched from the remote, verified in a clean \
 checkout outside the repository's folder, building and testing nothing of the projects this \
@@ -122,7 +124,8 @@ options:
                         86400)
   --status              print the newest release, the last run and its age, the release
                         candidate, the landings since the last release and what the next run
-                        waits for, the last publication on crates.io, the last refresh, and the
+                        waits for, the last publication on crates.io, the GitHub Releases
+                        asked for while [releases] github names a command, the last refresh, and the
                         release current names, the machine's server and what holds the switch;
                         run nothing
   --schedule            print the schedule entry that runs `just release` each day; install nothing
@@ -141,7 +144,10 @@ options:
                         check or step that was red, did not run or whose inputs changed; refused
                         while none is held or a red waits
   --drop                drop the release candidate, so the next run checks main's tip: an
-                        orchestrator's act";
+                        orchestrator's act
+  --github [NAME ...]   ask the command [releases] github names for the GitHub Release of each
+                        release named, or of every release tagged here, oldest first, checking
+                        and tagging nothing: one found there is not made again";
 
 /// The checks a run runs unless told others: the full verification.
 const VERIFY: (&str, &str) = ("verify", "just verify");
@@ -167,6 +173,11 @@ const REFRESH: Duration = Duration::from_secs(3600);
 /// The time a release's publication on crates.io has, past its push: cargo's build of each package
 /// it uploads, the upload and cargo's wait for crates.io's index to list it.
 const PUBLISH: Duration = Duration::from_secs(3600);
+/// The time a release's GitHub Release has, past its push, with each release an earlier run left
+/// pending: the adapter's few requests for each.
+const GITHUB: Duration = Duration::from_secs(15 * 60);
+/// The time `--github` has for every release it asks for.
+const GITHUB_BY_HAND: Duration = Duration::from_secs(3600);
 /// The tests' clock: the seconds since the epoch a run takes as now, in place of this machine's.
 /// No flag sets it, and a run on it pushes only to a remote that is a folder on this machine
 /// ([`far_push`]), so a release named for another day than the machine's never leaves it.
@@ -251,6 +262,7 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         flag("--refresh", false),
         flag("--rerun", false),
         flag("--drop", false),
+        flag("--github", false),
     ];
     if names_legacy_commit(args, &flags) {
         let _ = writeln!(err, "`{LEGACY_COMMIT} COMMIT` is now `--commit COMMIT`");
@@ -263,6 +275,8 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         }
         // The landing a `--due` comes after, as a landing's command names it.
         Ok(parsed) if parsed.flag("--due") && parsed.positionals.len() == 2 => parsed,
+        // The releases `--github` asks for.
+        Ok(parsed) if parsed.flag("--github") => parsed,
         Ok(parsed) if !parsed.positionals.is_empty() => {
             let extra = parsed.positionals.join(" ");
             return refuse(
@@ -312,6 +326,7 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         "--refresh",
         "--rerun",
         "--drop",
+        "--github",
     ]
     .into_iter()
     .filter(|mode| parsed.flag(mode))
@@ -321,7 +336,8 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             err,
             USAGE,
             "release",
-            "--status, --schedule, --commit, --due, --refresh, --rerun and --drop are one each",
+            "--status, --schedule, --commit, --due, --refresh, --rerun, --drop and --github are \
+             one each",
         );
     }
     let repo = match repo(Path::new(parsed.value("--root").unwrap_or("."))) {
@@ -367,6 +383,9 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     };
     if parsed.flag("--drop") {
         return drop_candidate(&repo, now, out, err);
+    }
+    if parsed.flag("--github") {
+        return github_by_hand(&repo, &parsed.positionals, now, out, err);
     }
     let mut cause = None;
     if parsed.flag("--due") {
@@ -749,6 +768,7 @@ fn status(
         }
     }
     let _ = write!(out, "{}", record::publish_status(&runs, now));
+    let _ = write!(out, "{}", github::status(&folder, now));
     let _ = write!(out, "{}", record::refresh_status(&runs, now));
     // Whether the machine's server is the release `current` names, or what holds it on a
     // project's build ([`symphony::machine::switch`]).
@@ -898,6 +918,58 @@ fn drop_candidate(repo: &Repo, now: f64, out: &mut dyn Write, err: &mut dyn Writ
         short(&held.commit)
     );
     0
+}
+
+/// `--github [NAME…]`: the GitHub Release of each release named, or of every release tagged here,
+/// asked of the command `[releases] github` names ([`github`]), checking and tagging nothing. 0
+/// when each is published or there already, 1 when one is left pending or nothing can be asked.
+fn github_by_hand(
+    repo: &Repo,
+    names: &[String],
+    now: f64,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let refused = |err: &mut dyn Write, why: &str| {
+        let _ = writeln!(err, "symphony-build release: {why}");
+        1
+    };
+    let command = &repo.project.releases.github;
+    if command.is_empty() {
+        return refused(
+            err,
+            "[releases] github names no command in symphony.toml, so nothing publishes a GitHub \
+             Release (docs/RELEASES.md)",
+        );
+    }
+    let ordered = match ordered_releases(&repo.root) {
+        Ok(ordered) => ordered,
+        Err(problem) => return refused(err, &problem),
+    };
+    let tagged: Vec<String> = ordered.iter().map(|(release, _)| release.name()).collect();
+    if let Some(unknown) = names.iter().find(|name| !tagged.contains(name)) {
+        return refused(err, &format!("no release {unknown} is tagged here"));
+    }
+    if tagged.is_empty() {
+        return refused(err, "no release is tagged here");
+    }
+    let wanted = if names.is_empty() { &tagged } else { names };
+    let asking = github::Asking {
+        root: &repo.root,
+        main: &repo.main,
+        folder: &record::folder(&repo.common),
+        command,
+        by: "by hand",
+        now,
+        until: Bound::until(Instant::now() + GITHUB_BY_HAND),
+    };
+    let lines = asking.publish(wanted, &ordered);
+    for line in &lines {
+        let _ = writeln!(out, "release: GitHub: {line}");
+    }
+    let done =
+        |line: &String| line.starts_with("published ") || line.contains(" is there already: ");
+    i32::from(!lines.iter().all(done))
 }
 
 /// This repository's release tags, each with the commit it tags.
@@ -1085,6 +1157,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     {
         let commit = record.commit.clone();
         record.published = Some(refreshing.publish(&record.id, &tag, &commit, out));
+        refreshing.github(&record.id, &tag, out);
     }
     if ran.is_ok()
         && !options.refresh
@@ -1361,6 +1434,46 @@ impl Refreshing<'_> {
         published
     }
 
+    /// The GitHub Release of the release `tag`, and of each release an earlier ask left pending,
+    /// asked by the run `id` of the command `[releases] github` names ([`github`]), each line of
+    /// it said: nothing at all while the project names none, and nothing asked under `--no-push`.
+    /// It changes neither the run's result nor its exit.
+    fn github(&self, id: &str, tag: &str, out: &mut dyn Write) {
+        let command = &self.repo.project.releases.github;
+        if command.is_empty() {
+            return;
+        }
+        if !self.options.push {
+            let _ = writeln!(
+                out,
+                "release: GitHub: not published: --no-push publishes nothing"
+            );
+            return;
+        }
+        let ordered = match ordered_releases(&self.repo.root) {
+            Ok(ordered) => ordered,
+            Err(problem) => {
+                let _ = writeln!(out, "release: GitHub: not asked: {problem}");
+                return;
+            }
+        };
+        self.hold_for(GITHUB);
+        let mut wanted = github::Ledger::read(self.folder).pending();
+        wanted.push(tag.to_string());
+        let asking = github::Asking {
+            root: &self.repo.root,
+            main: &self.repo.main,
+            folder: self.folder,
+            command,
+            by: id,
+            now: self.options.now,
+            until: Bound::hearing(Instant::now() + GITHUB, self.heard),
+        };
+        for line in asking.publish(&wanted, &ordered) {
+            let _ = writeln!(out, "release: GitHub: {line}");
+        }
+    }
+
     /// [`Refreshing::publish`]'s work: nothing while `[releases] publish` is off or under
     /// `--no-push`, and on the tests' clock nothing but to the tests' registry through their
     /// stand-in for cargo; else from
@@ -1538,6 +1651,7 @@ fn refresh_only(
     record.tip.clone_from(commit);
     let _ = writeln!(out, "release: refresh to {tag} ({})", short(commit));
     record.published = Some(refreshing.publish(&record.id, &tag, commit, out));
+    refreshing.github(&record.id, &tag, out);
     let refreshed = refreshing.to(&record.id, &tag, commit, out);
     record.result = if refreshed.green() { "green" } else { "red" }.into();
     record.refreshed = Some(refreshed);

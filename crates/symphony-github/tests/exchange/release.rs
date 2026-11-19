@@ -152,7 +152,10 @@ fn a_lost_answer_not_found_at_once_is_unknown_and_the_next_run_finds_it() {
     let answer = ask(&rig, &request(TAG, COMMIT));
     assert_eq!(answer["state"], "unknown", "{answer}");
     assert!(
-        answer["why"].as_str().unwrap().contains("its answer was lost"),
+        answer["why"]
+            .as_str()
+            .unwrap()
+            .contains("its answer was lost"),
         "{answer}"
     );
     assert!(rig.state().releases.is_empty());
@@ -170,16 +173,13 @@ fn turned_off_or_not_serving_releases_asks_github_nothing() {
     for (name, rig) in [
         ("none", Rig::off("release-off-none")),
         ("issues only", Rig::new("release-off-key", "")),
-        (
-            "not enabled",
-            {
-                let rig = Rig::off("release-off-disabled");
-                rig.settings.set(Some(
-                    "enabled = false\nrepository = \"o/n\"\nreleases = \"publish\"\n".into(),
-                ));
-                rig
-            },
-        ),
+        ("not enabled", {
+            let rig = Rig::off("release-off-disabled");
+            rig.settings.set(Some(
+                "enabled = false\nrepository = \"o/n\"\nreleases = \"publish\"\n".into(),
+            ));
+            rig
+        }),
     ] {
         rig.github.tag(TAG, COMMIT);
         let answer = ask(&rig, &request(TAG, COMMIT));
@@ -189,10 +189,7 @@ fn turned_off_or_not_serving_releases_asks_github_nothing() {
             "{name}: {answer}"
         );
         assert!(rig.github.asked().is_empty(), "{name}");
-        assert!(
-            !rig.dir.0.join("state").exists(),
-            "{name}: nothing is kept"
-        );
+        assert!(!rig.dir.0.join("state").exists(), "{name}: nothing is kept");
     }
     // Settings that do not read are turned off too.
     let rig = Rig::off("release-off-unread");
@@ -211,8 +208,7 @@ fn another_repository_than_the_one_bound_is_refused() {
     let answer = ask(&rig, &request("release-2026-11-20", OTHER));
     assert_eq!(answer["state"], "refused", "{answer}");
     assert!(
-        (answer["why"].as_str().unwrap())
-            .contains("nothing is published to another repository"),
+        (answer["why"].as_str().unwrap()).contains("nothing is published to another repository"),
         "{answer}"
     );
     assert_eq!(rig.github.releases().len(), 1);
@@ -232,7 +228,10 @@ fn a_tag_github_does_not_hold_at_the_commit_is_never_made_by_a_release() {
     let answer = ask(&rig, &request(TAG, COMMIT));
     assert_eq!(answer["state"], "refused", "{answer}");
     assert!(
-        answer["why"].as_str().unwrap().contains("o/n holds no tag release-2026-11-19"),
+        answer["why"]
+            .as_str()
+            .unwrap()
+            .contains("o/n holds no tag release-2026-11-19"),
         "{answer}"
     );
     // The tag names another commit, annotated or not.
@@ -278,10 +277,15 @@ fn a_request_that_names_no_release_or_commit_is_refused_before_anything_is_asked
     std::fs::write(&file, "[]").unwrap();
     let ran = rig.run(&["release", "--request", file.to_str().unwrap()]);
     assert_eq!(ran.code, 1);
-    assert!(ran.err.contains("a request is one JSON object"), "{}", ran.err);
+    assert!(
+        ran.err.contains("a request is one JSON object"),
+        "{}",
+        ran.err
+    );
     assert_eq!(rig.run(&["release"]).code, 1);
     assert_eq!(
-        rig.run(&["release", "--request", file.to_str().unwrap(), "more"]).code,
+        rig.run(&["release", "--request", file.to_str().unwrap(), "more"])
+            .code,
         1
     );
 }
@@ -289,8 +293,18 @@ fn a_request_that_names_no_release_or_commit_is_refused_before_anything_is_asked
 #[test]
 fn a_github_that_does_not_answer_makes_nothing_and_a_later_run_publishes() {
     for (method, path, fault, wanted) in [
-        ("GET", "/repos/o/n", Fault::Status(503, vec![]), "unavailable"),
-        ("GET", "/repos/o/n", Fault::Status(401, vec![]), "unavailable"),
+        (
+            "GET",
+            "/repos/o/n",
+            Fault::Status(503, vec![]),
+            "unavailable",
+        ),
+        (
+            "GET",
+            "/repos/o/n",
+            Fault::Status(401, vec![]),
+            "unavailable",
+        ),
         (
             "GET",
             "/repos/o/n/releases/tags/",
@@ -312,7 +326,10 @@ fn a_github_that_does_not_answer_makes_nothing_and_a_later_run_publishes() {
         let rig = rig("release-unanswered");
         rig.github.fault(method, path, fault.clone());
         let answer = ask(&rig, &request(TAG, COMMIT));
-        assert_eq!(answer["state"], wanted, "{method} {path} {fault:?}: {answer}");
+        assert_eq!(
+            answer["state"], wanted,
+            "{method} {path} {fault:?}: {answer}"
+        );
         assert!(rig.github.releases().is_empty());
         assert!(rig.state().releases.is_empty());
         if method == "POST" {
@@ -349,7 +366,10 @@ fn a_release_made_meanwhile_is_found_and_one_removed_there_is_not_made_again() {
     let answer = ask(&rig, &request(TAG, COMMIT));
     assert_eq!(answer["state"], "refused", "{answer}");
     assert!(
-        answer["why"].as_str().unwrap().contains("it is not made again"),
+        answer["why"]
+            .as_str()
+            .unwrap()
+            .contains("it is not made again"),
         "{answer}"
     );
     assert!(rig.github.releases().is_empty());

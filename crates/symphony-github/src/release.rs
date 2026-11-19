@@ -139,19 +139,17 @@ impl Run<'_> {
         let sha = object["sha"].as_str().unwrap_or_default();
         let names = match object["type"].as_str() {
             Some("commit") => sha.to_string(),
-            Some("tag") if deliver::commit(sha) => {
-                match host.get(&format!("/git/tags/{sha}"))? {
-                    (200, value) if value["object"]["type"] == json!("commit") => {
-                        value["object"]["sha"].as_str().unwrap_or_default().into()
-                    }
-                    (200, _) => String::new(),
-                    (status, _) => {
-                        return Err(unavailable(format!(
-                            "reading the tag {tag}: GitHub answered {status}"
-                        )));
-                    }
+            Some("tag") if deliver::commit(sha) => match host.get(&format!("/git/tags/{sha}"))? {
+                (200, value) if value["object"]["type"] == json!("commit") => {
+                    value["object"]["sha"].as_str().unwrap_or_default().into()
                 }
-            }
+                (200, _) => String::new(),
+                (status, _) => {
+                    return Err(unavailable(format!(
+                        "reading the tag {tag}: GitHub answered {status}"
+                    )));
+                }
+            },
             _ => String::new(),
         };
         if names == commit {
