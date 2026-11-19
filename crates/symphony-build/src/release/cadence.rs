@@ -499,6 +499,7 @@ mod tests {
                     timed_out: false,
                     interrupted: false,
                     load: None,
+                    alone: None,
                 }]
             } else {
                 Vec::new()

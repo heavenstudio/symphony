@@ -9,6 +9,7 @@ mod children;
 #[allow(dead_code)]
 mod common;
 
+mod attempts;
 mod cleanup;
 mod cleanup_kept;
 mod close;
@@ -139,6 +140,10 @@ impl Hc for Hooked<'_> {
 
     fn board(&self) -> String {
         self.inner.board()
+    }
+
+    fn project(&self) -> String {
+        self.inner.project()
     }
 
     fn ending(&self) -> std::time::Duration {

@@ -12,6 +12,7 @@ mod common;
 #[allow(dead_code)]
 mod board;
 
+mod alone;
 mod cadence;
 mod candidate;
 mod carried;

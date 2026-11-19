@@ -292,6 +292,99 @@ fn a_board_whose_folder_is_too_long_for_a_socket_path_starts() {
     let _ = std::fs::remove_dir_all(long.parent().unwrap());
 }
 
+/// `board`'s server, serving, asked to end once its clients have gone (PostgreSQL's smart
+/// shutdown, not waited for), and the one connection that keeps it stopping until it is dropped:
+/// the state a scratch board's server is in for a moment after the command that started it ended.
+fn stopping(board: &Board) -> (Serving, symphony_board::pg::Client) {
+    let serving = board.pg.ensure().unwrap();
+    let client = symphony_board::pg::Client::new(&serving.socket, "postgres");
+    client.simple("SELECT 1").unwrap();
+    let asked = sys::output(
+        command(board.pg.program("pg_ctl"))
+            .args(["stop", "-m", "smart", "-W", "-s", "-D"])
+            .arg(board.pg.data()),
+    )
+    .unwrap();
+    assert!(
+        asked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&asked.stderr)
+    );
+    let record = board.pg.data().join("postmaster.pid");
+    test_time::until_true("the server says it is stopping", GONE, || {
+        std::fs::read_to_string(&record)
+            .is_ok_and(|text| text.lines().nth(7).map(str::trim) == Some("stopping"))
+    })
+    .unwrap();
+    (serving, client)
+}
+
+/// A start that meets the server of its data on its way out waits for that server's end, however
+/// long its patience, and then serves from one of its own: it is told as it begins to wait, and
+/// only then does the test let the old server go.
+#[test]
+fn a_start_that_meets_a_stopping_server_waits_for_its_end_and_starts_its_own() {
+    let board = Board::new("stopping");
+    let (serving, client) = stopping(&board);
+    let (said, heard) = std::sync::mpsc::channel();
+    let pg = board
+        .home()
+        .telling(move |line| {
+            let _ = said.send(line.to_string());
+        })
+        .postgresql(&programs());
+    let starting = std::thread::spawn(move || pg.ensure());
+    let told = heard.recv_timeout(GONE).expect("the start says it waits");
+    assert_eq!(
+        told,
+        format!(
+            "· the board's PostgreSQL (pid {}) is stopping: this start waits for its end, then \
+             starts its own",
+            serving.pid
+        )
+    );
+    assert!(pid_alive(serving.pid), "its client still holds it");
+    drop(client);
+    let next = starting.join().unwrap().unwrap();
+    assert_ne!(next.pid, serving.pid);
+    assert!(!pid_alive(serving.pid), "the start waited for its end");
+    assert_eq!(board.psql(&next, "SELECT 1"), "1");
+}
+
+/// One still stopping when the start's patience is met is left to finish, never signalled, and
+/// the refusal says it was the wait that stalled, the load, and to run the command again; a
+/// start after it has ended answers.
+#[test]
+fn a_server_still_stopping_at_the_backstop_is_left_and_the_refusal_names_the_retry() {
+    let board = Board::new("stopping-stall");
+    let (serving, client) = stopping(&board);
+    let pg = board
+        .home()
+        .telling(|_| {})
+        .patience(Duration::from_millis(50))
+        .postgresql(&programs());
+    let refused = pg.ensure().unwrap_err().to_string();
+    assert!(
+        refused.contains(&format!(
+            "the board's PostgreSQL (pid {}) on {} is stopping, and has not ended in the 0 s \
+             this start waited for it (load average ",
+            serving.pid,
+            board.pg.data().display()
+        )),
+        "{refused}"
+    );
+    assert!(
+        refused.contains(
+            "it is left to finish, never signalled. Run the command again once it has ended"
+        ),
+        "{refused}"
+    );
+    assert!(pid_alive(serving.pid), "it was left as it was");
+    drop(client);
+    assert!(sys::gone(serving.pid, GONE).unwrap(), "it ends by itself");
+    assert_ne!(board.pg.ensure().unwrap().pid, serving.pid);
+}
+
 /// The variable naming the board [`helper_starts_and_ends`] starts.
 const HELPER_BOARD: &str = "SYMPHONY_PG_FIXTURE_BOARD";
 

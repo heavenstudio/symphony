@@ -500,7 +500,7 @@ fn listing_needs_no_install_or_build_and_bad_arguments_run_nothing() {
         assert_eq!(done.status.code(), Some(2), "{done:?}");
         assert_eq!(
             done.stderr,
-            b"usage: tools/test-lanes.sh [--list | --inputs | LANE...]\n"
+            b"usage: tools/test-lanes.sh [--list | --inputs | --alone LANES ARGS... | LANE...]\n"
         );
     }
     let done = lanes.run(&["doc", "unknown"], &[]);
@@ -694,7 +694,9 @@ fn native_failures_keep_their_narrow_target_and_missing_status_is_red() {
             "--workspace --test sweep"
         };
         assert!(
-            said.ends_with(&format!("error: 1 target failed:\n    `{target}`\n")),
+            said.ends_with(&format!(
+                "error: 1 target failed:\n    `{target}`\ntest-lanes: ended: every lane asked for ran\n"
+            )),
             "{var}: {said}"
         );
     }
@@ -711,7 +713,10 @@ fn a_serial_build_test_failure_does_not_hide_the_rest_of_the_workspace() {
     );
     let said = String::from_utf8(done.stdout).unwrap();
     assert!(
-        said.ends_with("error: 1 target failed:\n    `--workspace --test build`\n"),
+        said.ends_with(
+            "error: 1 target failed:\n    `--workspace --test build`\n\
+             test-lanes: ended: every lane asked for ran\n"
+        ),
         "{said}"
     );
 }
@@ -1157,6 +1162,330 @@ fn all_test_batches_get_an_isolated_hc_and_a_callers_override_wins() {
             );
         }
     }
+}
+
+/// A tests run of the stand-ins, its lanes' logs in `build/test-lanes`, then what it left there
+/// for a rerun alone cleared of the stand-ins' own marks: the folder a failure is rerun over.
+fn ran_for_alone(lanes: &Lanes) -> PathBuf {
+    let done = lanes.run(&[], &[]);
+    assert!(done.status.success(), "{done:?}");
+    for mark in [
+        "built",
+        "nextest-args",
+        "client-built",
+        "runner-fixture-args",
+    ] {
+        let _ = fs::remove_file(lanes.stand.join(mark));
+    }
+    fs::remove_dir_all(lanes.stand.join("started")).unwrap();
+    lanes.logs()
+}
+
+/// The lines `--alone` handed the stand-in nextest, one argument each, `<ARG>`.
+fn nextest_args(lanes: &Lanes) -> String {
+    fs::read_to_string(lanes.stand.join("nextest-args")).unwrap()
+}
+
+#[test]
+fn a_run_says_its_end_last_and_keeps_the_client_it_served_and_one_cut_short_says_no_end() {
+    let lanes = Lanes::new("alone-ended");
+    let done = lanes.run(&[], &[("FAIL", "sweep")]);
+    assert_eq!(done.status.code(), Some(101), "{done:?}");
+    let out = String::from_utf8(done.stdout).unwrap();
+    assert_eq!(
+        out.lines().last(),
+        Some("test-lanes: ended: every lane asked for ran"),
+        "{out}"
+    );
+    // The folder a failure is rerun over is said first, before any test runs.
+    assert_eq!(
+        out.lines().next(),
+        Some(format!("test-lanes: logs in {}", lanes.logs().display()).as_str()),
+        "{out}"
+    );
+    assert_eq!(
+        fs::read_to_string(lanes.logs().join("client")).unwrap(),
+        format!(
+            "{}\n",
+            lanes.root.join("build/symphony-ui/public").display()
+        )
+    );
+    // A client the caller gives is the one kept.
+    let done = lanes.run(&["sweep"], &[("SYMPHONY_UI_DIST", "/given/client")]);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        fs::read_to_string(lanes.logs().join("client")).unwrap(),
+        "/given/client\n"
+    );
+    // A build that failed ran no lane, and never says the end.
+    let done = lanes.run(&[], &[("FAIL_BUILD", "101")]);
+    assert_eq!(done.status.code(), Some(101), "{done:?}");
+    let out = String::from_utf8(done.stdout).unwrap();
+    assert!(!out.contains("test-lanes: ended"), "{out}");
+}
+
+#[test]
+fn a_test_rerun_alone_runs_by_nextest_from_the_runs_own_build_and_builds_nothing() {
+    let lanes = Lanes::new("alone-nextest");
+    let logs = ran_for_alone(&lanes);
+    let folder = logs.to_str().unwrap();
+    let done = lanes.run(
+        &[
+            "--alone",
+            folder,
+            "-p",
+            "symphony",
+            "--test",
+            "release",
+            "--",
+            "reds::one_fails",
+            "--exact",
+        ],
+        &[],
+    );
+    assert!(done.status.success(), "{done:?}");
+    assert!(
+        !lanes.stand.join("built").exists(),
+        "a rerun alone builds nothing"
+    );
+    let args = nextest_args(&lanes);
+    for flag in [
+        "<run>\n<--profile>\n<release>".to_string(),
+        format!("<--binaries-metadata>\n<{folder}/binaries.json>"),
+        "<--retries>\n<0>".into(),
+        "<--no-tests>\n<fail>".into(),
+        "<-E>\n<package(=symphony) & kind(test) & binary(=release) & test(=reds::one_fails)>"
+            .into(),
+    ] {
+        assert!(args.contains(&flag), "{flag}: {args}");
+    }
+    assert!(!args.contains("<--workspace>"), "{args}");
+    let out = String::from_utf8(done.stdout).unwrap();
+    for said in [
+        format!(
+            "client={}\n",
+            lanes.root.join("build/symphony-ui/public").display()
+        ),
+        "hc=/usr/bin/false\n".into(),
+        format!("binaries={}\n", lanes.root.join(".target/debug").display()),
+    ] {
+        assert!(out.contains(&said), "{said:?} in {out}");
+    }
+    assert!(!lanes.stand.join("client-built").exists(), "{out}");
+    assert!(
+        !logs.join("alone").exists(),
+        "a test alone writes nothing among the run's logs"
+    );
+
+    // Its status is the rerun's.
+    let done = lanes.run(
+        &[
+            "--alone",
+            folder,
+            "-p",
+            "p",
+            "--lib",
+            "--",
+            "case::fails",
+            "--exact",
+        ],
+        &[("FAIL", "nextest")],
+    );
+    assert_eq!(done.status.code(), Some(100), "{done:?}");
+    assert!(
+        nextest_args(&lanes).contains("<package(=p) & kind(lib) & test(=case::fails)>"),
+        "{}",
+        nextest_args(&lanes)
+    );
+
+    // A target that named no failed test is rerun whole: every test of that binary, no other.
+    for (args, expression) in [
+        (
+            &["-p", "symphony-board", "--lib"][..],
+            "package(=symphony-board) & kind(lib)",
+        ),
+        (
+            &["-p", "symphony", "--bin", "symphony"][..],
+            "package(=symphony) & kind(bin) & binary(=symphony)",
+        ),
+    ] {
+        let mut line = vec!["--alone", folder];
+        line.extend(args);
+        let done = lanes.run(&line, &[]);
+        assert!(done.status.success(), "{done:?}");
+        let said = nextest_args(&lanes);
+        assert!(said.contains(&format!("<-E>\n<{expression}>\n")), "{said}");
+    }
+}
+
+#[test]
+fn a_doctest_or_the_ignored_runner_fixture_rerun_alone_runs_as_its_lane_runs_it_by_cargo() {
+    let lanes = Lanes::new("alone-cargo");
+    let logs = ran_for_alone(&lanes);
+    let folder = logs.to_str().unwrap();
+    let done = lanes.run(
+        &[
+            "--alone",
+            folder,
+            "-p",
+            "symphony",
+            "--doc",
+            "--",
+            "src/lib.rs - f (line 1)",
+            "--exact",
+        ],
+        &[],
+    );
+    assert!(done.status.success(), "{done:?}");
+    let doc = fs::read_to_string(lanes.stand.join("started/doc")).unwrap();
+    assert_eq!(
+        doc,
+        "test --config profile.dev.build-override.debug=\"line-tables-only\" --workspace --locked \
+         --no-fail-fast --doc -- src/lib.rs - f (line 1) --exact\n"
+    );
+    let out = String::from_utf8(done.stdout).unwrap();
+    assert!(
+        out.contains(&format!(
+            "client={}\n",
+            lanes.root.join("build/symphony-ui/public").display()
+        )),
+        "{out}"
+    );
+    assert!(!lanes.stand.join("nextest-args").exists());
+    assert!(!lanes.stand.join("built").exists());
+
+    let done = lanes.run(
+        &[
+            "--alone",
+            folder,
+            "-p",
+            "symphony-build",
+            "--lib",
+            "--",
+            "--ignored",
+            "release::nextest::tests::the_live_fixture",
+            "--exact",
+        ],
+        &[],
+    );
+    assert!(done.status.success(), "{done:?}");
+    let live = fs::read_to_string(lanes.stand.join("started/libraries")).unwrap();
+    assert!(
+        live.ends_with(
+            "--workspace --locked --no-fail-fast --lib -- --ignored \
+             release::nextest::tests::the_live_fixture --exact\n"
+        ),
+        "{live}"
+    );
+    assert!(!lanes.stand.join("nextest-args").exists());
+}
+
+#[test]
+fn a_lanes_own_line_or_a_shared_target_whole_reruns_that_lane_alone_apart_from_the_runs_logs() {
+    let lanes = Lanes::new("alone-lane");
+    let logs = ran_for_alone(&lanes);
+    let folder = logs.to_str().unwrap();
+    let run_listed = fs::read_to_string(logs.join("lanes.tsv")).unwrap();
+    for (args, lane) in [
+        (&["--workspace", "--test", "perf"][..], "perf"),
+        (&["-p", "symphony-board", "--test", "store"][..], "store"),
+        (&["--workspace", "--lib"][..], "libraries"),
+        (&["--workspace", "--doc"][..], "doc"),
+    ] {
+        let mut line = vec!["--alone", folder];
+        line.extend(args);
+        let done = lanes.run(&line, &[("FAIL", lane)]);
+        assert_eq!(done.status.code(), Some(101), "{args:?}: {done:?}");
+        let mut started: Vec<String> = (fs::read_dir(lanes.stand.join("started")).unwrap())
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        started.sort();
+        assert_eq!(started, [lane], "{args:?}");
+        fs::remove_dir_all(lanes.stand.join("started")).unwrap();
+        let apart = logs.join("alone");
+        let listed = fs::read_to_string(apart.join("lanes.tsv")).unwrap();
+        assert!(
+            listed.starts_with(&format!("{lane}\t101\t")) && listed.lines().count() == 1,
+            "{args:?}: {listed}"
+        );
+        let log = fs::read_to_string(apart.join(format!("{lane}.log"))).unwrap();
+        assert!(
+            log.contains(&format!(
+                "client={}\n",
+                lanes.root.join("build/symphony-ui/public").display()
+            )),
+            "the client the run served: {log}"
+        );
+    }
+    assert!(
+        !lanes.stand.join("client-built").exists(),
+        "no client is built for a lane alone"
+    );
+    assert_eq!(
+        fs::read_to_string(logs.join("lanes.tsv")).unwrap(),
+        run_listed,
+        "the run's own list is left as it was"
+    );
+}
+
+#[test]
+fn a_rerun_alone_refuses_words_it_cannot_read_and_a_folder_with_no_run_and_runs_nothing() {
+    let lanes = Lanes::new("alone-refused");
+    let logs = ran_for_alone(&lanes);
+    let folder = logs.to_str().unwrap();
+    for args in [
+        &[][..],
+        &["-p", "p"],
+        &["-p"],
+        &["--lib"],
+        &["-p", "p", "-p", "q", "--lib"],
+        &["--workspace", "-p", "p", "--lib"],
+        &["-p", "p", "--lib", "--doc"],
+        &["-p", "p", "--test"],
+        &["-p", "p", "--test", ""],
+        &["-p", "p", "--lib", "--", "name"],
+        &["-p", "p", "--lib", "--", "a", "b", "--exact"],
+        &["-p", "p", "--lib", "--", "", "--exact"],
+        &["-p", "p", "--lib", "--", "--ignored", "--exact"],
+        &["--workspace", "--test", "perf", "--", "name", "--exact"],
+        &["--workspace", "--test", "no-such-lane"],
+        &["--workspace", "--bin", "perf"],
+        &["-p", "p", "--frobnicate"],
+        &["-p", "p", "--lib", "stray"],
+    ] {
+        let mut line = vec!["--alone", folder];
+        line.extend(args);
+        let done = lanes.run(&line, &[]);
+        assert_eq!(done.status.code(), Some(2), "{args:?}: {done:?}");
+        assert!(
+            String::from_utf8_lossy(&done.stderr).starts_with("usage: tools/test-lanes.sh "),
+            "{args:?}: {done:?}"
+        );
+    }
+    let done = lanes.run(&["--alone", ""], &[]);
+    assert_eq!(done.status.code(), Some(2), "{done:?}");
+    // A folder that holds no run's build and client.
+    for missing in ["client", "binaries.json"] {
+        let copy = lanes.stand.join(format!("without-{missing}"));
+        fs::create_dir_all(&copy).unwrap();
+        for kept in ["client", "binaries.json"] {
+            if kept != missing {
+                fs::copy(logs.join(kept), copy.join(kept)).unwrap();
+            }
+        }
+        let done = lanes.run(
+            &["--alone", copy.to_str().unwrap(), "-p", "p", "--lib"],
+            &[],
+        );
+        assert_eq!(done.status.code(), Some(2), "{missing}: {done:?}");
+        assert!(
+            String::from_utf8_lossy(&done.stderr).contains("no tests run to rerun alone over"),
+            "{done:?}"
+        );
+    }
+    assert!(!lanes.stand.join("started").exists());
+    assert!(!lanes.stand.join("nextest-args").exists());
+    assert!(!lanes.stand.join("built").exists());
 }
 
 /// The file `path` is, as the system names it: two names of one file have the same.
