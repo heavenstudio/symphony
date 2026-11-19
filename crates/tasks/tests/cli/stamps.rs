@@ -53,7 +53,12 @@ fn stamps_prints_the_symphonys_own_catalogue_unless_main_commits_its_own() {
         .collect();
     assert_eq!(
         named,
-        ["tests", "review (needed by default)", "pictures", "owner"]
+        [
+            "tests",
+            "review (needed by default)",
+            "pictures (waivable at one tip by a gate decision)",
+            "owner"
+        ]
     );
     assert_eq!(out.matches("\n  met: ").count(), 4, "{out}");
     assert_eq!(out.matches("\n  applies: ").count(), 4, "{out}");
@@ -116,6 +121,7 @@ fn stamps_of_a_task_says_its_needs_its_tip_and_the_check_paths_its_branch_change
         task(&c),
         [
             "NEEDS review: no assessment yet, so the catalogue's defaults",
+            "GATES none: no gate decision on the task",
             "TIP none: no branch tools/query, so an assessment reads the brief alone (no --tip)",
         ]
     );
@@ -128,6 +134,7 @@ fn stamps_of_a_task_says_its_needs_its_tip_and_the_check_paths_its_branch_change
         task(&c),
         [
             "NEEDS review: no assessment yet, so the catalogue's defaults".to_string(),
+            "GATES none: no gate decision on the task".into(),
             format!("TIP tools/query {tip}"),
             format!(
                 "CHECK PATHS {} changes what [land] check_paths names:",
