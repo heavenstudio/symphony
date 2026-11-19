@@ -221,6 +221,15 @@ server would replay and its clean stop remove), else among the newest three whos
 the room the old store takes comes back only once it is removed. The exports stay in
 `symphony/tasks/reclaim/exports/`. `--dir FOLDER` rehearses on a copy of `symphony/tasks/` (`cp -c`, a clone).
 
+The `tasks-move` binary, the owner's to run the same way, moves the board's store to the other
+engine (`tasks-move postgresql --as HANDLE`, `tasks-move surrealdb --as HANDLE`) and puts a
+snapshot of a PostgreSQL board back over it (`tasks-move --restore SNAPSHOT --as HANDLE`): held,
+exported, copied, every row compared, then switched under a journal with a commit point. A
+failure before it leaves the board on the engine it was on, nothing is deleted, and a move cut
+short is settled by its holder's next `tasks-move`
+([one board's move](analysis/board-pg-cutover.md#one-boards-move),
+[POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)).
+
 **Snapshots.** `just tasks snapshot` clones the board's store, `symphony/tasks/data`, into
 `symphony/tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N` after another taken
 in the same second); `--list` names those kept, the newest first
@@ -2483,10 +2492,11 @@ the pull request's required checks taking its place, or takes the key out.
 A land keeps a journal of the delivery in the lands' folder, written before each step:
 
 1. **Prepared.** The remote default branch is fetched, and the project file it commits must be
-   the one committed here. A head that changes a generator's outputs is refused, as is one that
-   merges a commit the remote default does not hold: an import of another history, which a squash
-   would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). A task that is not eligible at
-   its head is refused before anything is published.
+   the one committed here. A head that changes a generator's outputs is refused, unless it is
+   [what the regenerator made](#what-the-generators-make-delivered-by-a-pull-request), as is one
+   that merges a commit the remote default does not hold: an import of another history, which a
+   squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). A task that is not
+   eligible at its head is refused before anything is published.
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
    published again or refused, never merged as it was.
@@ -2526,15 +2536,111 @@ run, by `result`:
 One limit holds by design: evidence withdrawn after the last reading and before the host acts on
 a request already made does not recall it. The receipt names the revision that was read.
 
-What else writes the default branch lands nothing there while the key is set, each refused by
-name: the regenerator, and a save of a document from the app, refused where it begins, before a
-file is written, and again where an edit is handed to the committer and in the commit itself. The release cadence counts
+What else writes the default branch lands nothing there while the key is set. The regenerator
+commits and pushes nothing: what it makes is a task of its own
+([below](#what-the-generators-make-delivered-by-a-pull-request)). A save of a document from the
+app is kept pending and delivered as a task of
+its own ([below](#a-document-save-under-delivery)), the commit on the default branch itself
+refused whoever asks for it. The release cadence counts
 a squash by its receipt, and a release candidate advances to the head the receipt kept
 ([RELEASES](RELEASES.md#the-cadence)); a land run again after it was cut while dispatching starts
-nothing a second time, so a release run its landing made due is asked for by the next landing or
-the release run's `--due`, run by hand
+the regenerator, which makes nothing twice, and no release run a second time, so a release run
+its landing made due is asked for by the next landing or the release run's `--due`, run by hand
 ([RELEASES](RELEASES.md#the-cadence)). The sweep keeps the worktree and branch of a squashed
 head, which it finds in no history.
+
+### A document save under delivery
+
+While the key is set, a save of a document from the app (an answer on a card, a comment, a
+dismissal) writes neither the file nor the default branch. The save is answered
+`{"ok": true, "delivery": "pending"}`, never as committed, once its edit is in the committer's
+journal (`verdict-publications/` in the server's state folder), and it is kept there, with the
+owner's words, until its delivery is proved (`crates/symphony/src/commit/pending.rs`). Every
+refusal a save has without the key stands: text that changed under it, a card it does not find,
+words it would lose, and the same tap or answer again is the repeat it always was.
+
+| Step | What it is |
+| --- | --- |
+| Shown | The page, its source and the queue show the document as the default branch has it with each kept save of it merged in, in the order saved, under a note that names each one and where it stands. The file in the checkout is never written, so the checkout stays clean for the land's reconciliation. |
+| A branch | The committer commits the edit as one commit on `docs/owner-save-N`, N the journal entry's number, on the default branch here. A later save of the same document waits until the one before it is delivered, cancelled or refused, and is then committed on the default branch as it stands: no branch stands on another's undelivered commit, and a head is never rebuilt. It is shown meanwhile. |
+| A task | The branch is filed as the owner's task of that slug, once, under a receipt of the branch and its commit, and put in review. Its assessor says what it needs from its diff as for any task, and its orchestrator lands it, which delivers it by its pull request. The app runs no land and asks the host for nothing. A conflict with the default branch is settled on the branch by merging the default branch into it, never by rebasing it, as the delivery is proved by a head that holds the save's commit, and the new head is assessed again. |
+| Proved | The save is delivered once the land's receipt for its own task names a head that holds the save's commit and a squash that is on the fetched remote default branch, and its entry is dropped once the default branch here holds that squash. The proof is that identity, never the text, so a save whose conflict was settled on its branch is proved like any other. Until the checkout follows, it is still shown. |
+
+Text alone proves nothing. A save whose text another task's delivery brought is dropped once
+that task's receipt names the commit that introduced it, a commit newer than the default branch
+was when the save was kept, after its own task is told so, once, with that receipt's pull
+request and head; closing that task is its orchestrator's. Equal text an earlier delivery
+brought is another owner action's and covers nothing. A save whose text is on the remote default
+branch with no receipt that explains it is held for a person, who removes its journal entry by
+name once it is settled.
+
+| What stops a save | What is kept |
+| --- | --- |
+| The board does not answer, or the task cannot be filed | the entry and its branch; the next pass files it |
+| Its edit no longer applies to the default branch | the entry, with why, and no branch; later saves of the document do not wait for it |
+| Its task is cancelled, or closed by a landing or by hand with no receipt that proves the save | the entry and the owner's words, said as not delivered, with why; later saves of the document do not wait for it. A task its reviewer approved is done on the board before its land: while that approve stands with no landing after it, the save is still waiting for its pull request, and later saves still wait for it. Once its land has asked the host for the merge the note says so, and a delivery the land holds for reconciliation is said with its why, both read from the land's delivery journal |
+| The default branch moved under a save on its branch, so its words no longer apply here | the entry and its branch; the note says the save is in conflict and that the page cannot show its words until the conflict is settled on the branch, and opens saying the page keeps its saves rather than shows them |
+| A receipt that is not this save's delivery: of another head, or of a commit the fetched remote does not hold | the entry: it proves nothing |
+| The server stops between two steps | the entry: a branch made and not journaled is taken up if it holds the edit, a task filed under its receipt is found again, and nothing is made twice |
+
+Each pass of the committer takes every kept save up again: at a server's start, after each save,
+and after each refresh of the documents, which the land's fast-forward of the checkout causes.
+Those asked while a pass is pending or running ask for one more pass together, never one each.
+A save kept by a build that did not know the key is delivered the same way. A project's
+`[verdicts]` generators are not run for a kept save, on its branch or after its delivery: what
+they generate stays as it is.
+
+### What the generators make, delivered by a pull request
+
+With `[land] delivery` set, [the regenerator](#the-regenerator) makes the outputs of the default
+branch's tip as it does anywhere, and then commits nothing there and pushes nothing. What it made
+is one commit on that tip, of the generators' outputs alone, and it becomes a task:
+
+- **A record first.** `symphony/tasks/land/regenerate.pending` names the task, the tip, the
+  commit and each generator's key, and is written before anything else. Then the branch
+  `generated/outputs-at-TIP-COMMIT` is pointed at the commit (the tip's first twelve letters and
+  the commit's first seven, so no two generations share a name; a branch of that name at another
+  commit stops the round, which says so) and the task of that name is filed,
+  claimed by the session that files it and moved to review. Each step is made only where it is
+  not there, so a run cut short at any of them is gone on from by the next, which makes nothing
+  again.
+- **Assessed as any task.** The regenerator names no stamp and waives none. An assessor reads the
+  head, the catalogue decides what it needs, and `just land generated/outputs-at-TIP-COMMIT` delivers
+  it: the same journal, the same squash, the same proof and receipt, whose `operation` says
+  `generated`. The host is asked nothing a task's land does not ask.
+- **One generation for one set of inputs.** While the record stands, a round whose tip holds the
+  inputs it was made of makes nothing and says where the task stands: each keyed generator's
+  key is the one recorded, and for a generator with no key no path outside the generators'
+  outputs changed.
+- **Stale is cancelled, and never delivered.** A round that finds other inputs cancels the task,
+  saying why, and makes the newest tip, a task of its own. A pull request the cancelled task was
+  bound to is told by a snapshot that blocks, so the check the host requires fails there, unless it was closed or merged meanwhile; while
+  that could not be told (`regenerate.withdrawn` names the task) its checks may still pass,
+  the round says so, and each later round tells it again. A task whose merge was asked for is
+  never cancelled: the host may hold its commit, and its land settles it.
+- **What the land checks.** A task the record names is delivered only as made: its branch at the
+  recorded commit, that commit one commit on the recorded tip, which the remote default branch
+  holds, changing the generators' outputs alone, and the inputs at the fetched remote default
+  branch those it was made of, each key read again there in the regenerator's worktree, under
+  its lock. The project file here must be the one the remote default branch commits, as for any
+  task: the generators and keys it is judged by are read from it. It is judged twice, before
+  anything is published and again right before the merge is asked for, and a record that no
+  longer names the task by then (a round cancelled it meanwhile) asks for no merge. A stale one
+  is refused to the orchestrator and the regenerator started. A task the record does not name
+  that changes a generator's outputs is refused as before.
+- **A base that moves under the request.** The host merges onto the default branch it has then,
+  which no check here pins. Where that base gained an input after the last reading, what the
+  default branch then holds of the outputs is stale: the record stays until the round the land
+  starts reads the receipt's parent, says so, and makes the newest tip. Until a round finds the
+  outputs current, `just tasks regenerate --status` does not say they are.
+- **A start that was lost.** The regenerator keeps no list of builds: a round reads the default
+  branch's tip, the keys it passed on and its record. So a land killed before it started the
+  regenerator loses nothing that the next start does not make: any later land's, the same land
+  run again where its journal still says it was dispatching, and `just land SLUG` of a task
+  already delivered, which starts the regenerator by its receipt and answers as it did before.
+
+Local reconciliation is the land's, as for any delivered task: a round takes the task as
+delivered only once the default branch here holds the commit the host made.
 
 ### A delivery whose host is gone
 
@@ -2555,8 +2661,9 @@ reads the pull request. With the host gone for good, a person does this by hand:
 
 What a project's `[land] generators` make (this repository's client distribution) is
 made after a land, never on its path. Where the project
-[delivers by pull request](#a-land-delivered-by-a-pull-request) it is not started and lands
-nothing: a commit of its own on the default branch is one the host never made. One build for main runs at a time, and once it is
+[delivers by pull request](#a-land-delivered-by-a-pull-request) it lands
+nothing itself, a commit of its own on the default branch being one the host never made: what
+it makes is [a task the host lands](#what-the-generators-make-delivered-by-a-pull-request). One build for main runs at a time, and once it is
 built the next is main's newest tip: a build in progress is never cancelled but let
 finish, and there is no queue, so some merges are never built on their own. A land that
 closed its task starts

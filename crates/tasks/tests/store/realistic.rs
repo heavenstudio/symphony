@@ -523,7 +523,7 @@ pub fn generated() -> Dump {
         delivery_keys,
         asks,
         usages,
-        workflow: Vec::new(),
+        ..Dump::default()
     }
 }
 

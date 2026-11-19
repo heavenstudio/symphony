@@ -18,10 +18,12 @@
 //!   this host, which `current` takes on, or one built at the release's schema ([`lagging`]). A
 //!   board whose writers lag is named with each writer to rebuild, the project's to finish, and
 //!   holds the release; one whose database does not run, or whose move could put it on a newer
-//!   SurrealDB, holds it too, red. A board below schema [`symphony_board::WRITERS_SINCE`], from
+//!   SurrealDB, holds it too, red (a board on PostgreSQL runs the machine's own, which a release
+//!   neither pins nor replaces). A board below schema [`symphony_board::WRITERS_SINCE`], from
 //!   before the writer record, is behind every release and never moved here: its own `just tasks
 //!   migrate` brings it up. Only when no board holds the release is every board snapshotted
-//!   through its running database (`Home::export`), all of them before the first move, so a
+//!   through its running database (`Home::export`: SurrealDB's export, or `pg_dump`'s of a board
+//!   on PostgreSQL), all of them before the first move, so a
 //!   snapshot that fails moves nothing; then each is moved in turn by the release's own `tasks
 //!   migrate` in its project's main checkout, the one command that moves a project's board.
 //! - **`current`**, pointed at the release once nothing holds it ([`install::point`]), which every
@@ -47,7 +49,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use symphony_api::Front;
 use symphony_board::Writer;
-use symphony_board::server::{Home, ServerError};
+use symphony_board::server::{Engine, Home, ServerError};
 
 use super::board;
 use super::checks::{Ran, Step};
@@ -546,6 +548,17 @@ fn verdict(board: &Judged, against: &Against<'_>) -> Verdict {
             holds: true,
         };
     }
+    // A release pins no PostgreSQL: the board's is the machine's own, which no move replaces.
+    match board.home.backend() {
+        Ok(Engine::PostgreSql) => {
+            return Verdict::Move {
+                live,
+                leave: !own.is_empty(),
+            };
+        }
+        Ok(Engine::SurrealDb) => {}
+        Err(error) => return Verdict::Red(format!("{error}: nothing was moved")),
+    }
     // Fails closed: a version that cannot be read could be one the move replaces the server for.
     let Some(pinned) = surreal_at(against.root, against.commit) else {
         return Verdict::Red(format!(
@@ -631,12 +644,22 @@ fn seen_now() -> f64 {
 }
 
 /// `board`'s store exported through its running database before any board moves, into
-/// `snapshots/before-schema-TARGET-RELEASE.surql` in its folder, the newest [`KEPT_SNAPSHOTS`]
-/// kept: kept in `board`, or why it failed.
+/// `snapshots/before-schema-TARGET-RELEASE.surql` in its folder, or `.sql` for a board on
+/// PostgreSQL (`pg_dump`'s text), the newest [`KEPT_SNAPSHOTS`] kept: kept in `board`, or why it
+/// failed.
 fn snapshot(board: &mut Judged, against: &Against<'_>) -> Result<(), String> {
     let snapshots = board.folder.join("snapshots");
+    let kind = match board.home.backend() {
+        Ok(Engine::SurrealDb) => "surql",
+        Ok(Engine::PostgreSql) => "sql",
+        Err(e) => {
+            return Err(format!(
+                "the snapshot of its store failed, so no board was moved, this one or another: {e}"
+            ));
+        }
+    };
     let snapshot = snapshots.join(format!(
-        "before-schema-{}-{}.surql",
+        "before-schema-{}-{}.{kind}",
         board.target, against.tag
     ));
     board

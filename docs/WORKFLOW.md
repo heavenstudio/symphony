@@ -51,7 +51,8 @@ recovery service holds `recovery`, and no adapter is registered. A hosted board 
 request extends it.
 
 Every command that opens a project's live board to write follows the workflow its default
-branch commits (`workflow::follow`, `Store::follow_committed`): a project that commits no
+branch commits (`workflow::follow`, `Store::follow_committed`), but `agent-send`, whose message
+moves no task and whose program links none of the workflow: a project that commits no
 `[workflow]` on a board that never activated one reads the branch tip and writes nothing, and a
 repository without that branch commits nothing. A committed definition, or mappings, other than
 the active one's is activated, in one transaction fenced on the active generation and on the
@@ -176,7 +177,7 @@ attempts (`tools/workflow-operations`, `tools/workflow-attempt-integration`).
 
 ## Records on the board
 
-From board schema 23 a custom workflow's records are one `workflow` table in both stores, each a
+From board schema 24 a custom workflow's records are one `workflow` table in both stores, each a
 `kind` and a `body` under a compound id: the active generation (`['active']`), each definition by
 its digest, each activation by its generation, and each transition of a task by its slug and the
 workflow revision it made (`['event', SLUG, REVISION]`). A task the workflow holds keeps its

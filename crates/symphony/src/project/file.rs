@@ -45,9 +45,14 @@ pub(super) struct File {
     pub(super) releases: FileReleases,
     pub(super) limits: FileLimits,
     pub(super) stamps: FileStamps,
-    pub(super) workflow: Option<symphony_api::workflow::Definition>,
-    /// Where tasks at pairs a newly committed workflow removed go when it activates.
-    pub(super) workflow_mappings: Vec<symphony_board::workflow::Mapping>,
+    /// The delivery workflow, read by the board's reader of the file
+    /// ([`symphony_board::workflow::written`], `super::workflow::require_supported`), which reads
+    /// it as it reads its own rows: kept here as written, so the Symphony links one reader of the
+    /// workflow and none for TOML.
+    pub(super) workflow: Option<toml::Value>,
+    /// Where tasks at pairs a newly committed workflow removed go when it activates, read as
+    /// `workflow` is.
+    pub(super) workflow_mappings: Option<toml::Value>,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
     pub(super) unknown: Unknown,

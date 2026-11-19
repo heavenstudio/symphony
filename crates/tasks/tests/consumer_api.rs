@@ -440,3 +440,65 @@ fn the_shared_ordering_helpers_keep_stable_ties_for_consuming_readers() {
     symphony_board::order::sort_by(&mut rows, &|a, b| b.0.cmp(&a.0));
     assert_eq!(rows, [(2, "first"), (2, "last"), (1, "middle")]);
 }
+
+/// The execution attempts a host runs (`symphony_board::execution`), in the shapes its host code
+/// calls: no consumer calls them yet, and they are pinned from their first release, so a change
+/// to one waits for a consumer release plan as every name above does. `Refusal`, `Worked`,
+/// `Collected`, `Act`, `Admission`, `Attempt`, `Pacing` and `Eligibility` are `#[non_exhaustive]`:
+/// a variant or a field added is no break, so a host's match keeps a `_` arm.
+#[test]
+fn the_execution_coordinator_keeps_the_shapes_a_host_calls() {
+    use symphony_board::execution::{
+        Act, Adapter, Admission, Artifact, Attempt, Cleanup, Collected, Collection, Continuation,
+        Coordinator, Eligibility, ExternalLink, Grant, Input, Pacing, Principal, Profile, Recorded,
+        Refusal, Scope, StopMode, Worked,
+    };
+    type Answer<T> = std::result::Result<T, Refusal>;
+
+    /// Each method of a coordinator borrowing for `'a`.
+    fn of<'a>(_: std::marker::PhantomData<&'a ()>) {
+        type C<'a> = Coordinator<'a>;
+        let _: fn(&'a Store, Profile, &'a dyn Adapter, Grant) -> Answer<C<'a>> = C::<'a>::new;
+        let _: fn(C<'a>, Pacing) -> Answer<C<'a>> = C::<'a>::with_pacing;
+        let _: fn(C<'a>, &str, u32) -> C<'a> = C::<'a>::with_capacity;
+        let _: fn(&C<'a>, &Grant, Admission) -> Answer<Attempt> = C::<'a>::admit;
+        let _: fn(&C<'a>, &Grant, &str, Continuation, Option<&str>) -> Answer<Attempt> =
+            C::<'a>::resume;
+        let _: fn(&C<'a>, &Grant, &str, &str, Option<&str>) -> Answer<Attempt> = C::<'a>::retry;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Attempt> = C::<'a>::cancel;
+        let _: fn(&C<'a>, &Grant, &str, StopMode) -> Answer<Attempt> = C::<'a>::stop;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<ExternalLink> = C::<'a>::external_link;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Attempt> = C::<'a>::attempt;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Vec<Attempt>> = C::<'a>::history;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Vec<Recorded>> = C::<'a>::facts;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Vec<Artifact>> = C::<'a>::artifacts;
+        let _: fn(&C<'a>, &Grant, &str, &str) -> Answer<Eligibility> = C::<'a>::eligibility;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Attempt> = C::<'a>::begin_collection;
+        let _: fn(&C<'a>, &Grant, &str, Artifact) -> Answer<Collected> = C::<'a>::record_artifact;
+        let _: fn(&C<'a>, &Grant, &str, Collection, Option<&str>) -> Answer<Attempt> =
+            C::<'a>::end_collection;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<String> = C::<'a>::begin_cleanup;
+        let _: fn(&C<'a>, &Grant, &str, &str, Cleanup, Option<&str>) -> Answer<Attempt> =
+            C::<'a>::end_cleanup;
+        let _: fn(&C<'a>, &str) -> Answer<Worked> = C::<'a>::step;
+        let _: fn(&C<'a>, usize) -> Answer<Vec<(String, Answer<Worked>)>> = C::<'a>::run_due;
+    }
+    of(std::marker::PhantomData);
+    let _: fn(&Store, &str) -> Result<Vec<String>> = Store::live_attempts;
+
+    // Its policy revision is any text, as a host names it.
+    let _ = |principal: Principal, scope: Scope| -> Grant {
+        Grant::from_host(principal, scope, &[Act::Start, Act::Read], "policy-1")
+    };
+    let _: fn(Grant, &[&str]) -> Grant = Grant::on_tasks;
+    let _: fn(&str, &str, &str, Input) -> Admission = Admission::new;
+    let _: fn(Admission, &str) -> Admission = Admission::handle;
+    let _: fn(Admission, &str) -> Admission = Admission::request_key;
+    let _ = |pacing: &mut Pacing| {
+        pacing.lease = std::time::Duration::from_secs(60);
+        pacing.unknowns = 8;
+    };
+    asserted::<Attempt>();
+    asserted::<Refusal>();
+    asserted::<Worked>();
+}

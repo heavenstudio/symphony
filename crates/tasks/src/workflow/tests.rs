@@ -339,3 +339,199 @@ fn the_committed_reader_refuses_a_missing_branch_and_a_file_that_is_not_regular_
             .contains("names a destination the workflow does not declare")
     );
 }
+
+#[test]
+fn the_file_is_read_through_json_and_refuses_what_a_reading_from_toml_refuses() {
+    let custom = candidate(CUSTOM).unwrap();
+    let (written_one, mappings) = written(&format!("{CUSTOM}{MAPPED}")).unwrap();
+    assert_eq!(written_one.unwrap(), custom);
+    assert_eq!(mappings.len(), 2);
+    // A syntax error is named at its line, as TOML names it.
+    let syntax = written("[workflow\n").unwrap_err();
+    assert!(
+        syntax.starts_with("workflow: TOML parse error at line 1"),
+        "{syntax}"
+    );
+    // A datetime is a table to the reader, so no field takes it, a string field neither.
+    let dated = CUSTOM.replace("label = \"Build\"", "label = 1979-05-27T07:32:00Z");
+    let refused = candidate(&dated).unwrap_err();
+    assert!(
+        refused.contains("invalid type: map, expected a string"),
+        "{refused}"
+    );
+    // A float where an order is wanted, and one that is no number at all.
+    for order in ["0.5", "nan", "inf"] {
+        let float = CUSTOM.replace("order = 0,", &format!("order = {order},"));
+        assert!(candidate(&float).is_err(), "{order}");
+    }
+    // A table where one is wanted, and a value that is not one.
+    assert!(
+        candidate("workflow = \"v1\"\n")
+            .unwrap_err()
+            .starts_with("workflow: ")
+    );
+    let mapped_wrong = written(&format!("workflow_mappings = 1\n{CUSTOM}")).unwrap_err();
+    assert!(
+        mapped_wrong.starts_with("workflow_mappings: invalid type"),
+        "{mapped_wrong}"
+    );
+    // Unknown fields, at any depth, still refuse.
+    for unknown in [
+        CUSTOM.replace("format = 1", "format = 1\nextra = true"),
+        CUSTOM.replace("column = true }", "column = true, wide = 2 }"),
+        CUSTOM.replace("kind = \"slot\"", "kind = \"slot\", why = \"x\""),
+    ] {
+        let refused = candidate(&unknown).unwrap_err();
+        assert!(refused.contains("unknown field"), "{refused}");
+    }
+    // Other tables of the file are not the workflow's to read.
+    let other = format!("[project]\nname = \"x\"\nwhen = 2026-01-01\n{CUSTOM}");
+    assert_eq!(candidate(&other).unwrap(), custom);
+}
+
+#[test]
+fn ordered_sorts_by_key_and_keeps_the_order_of_equal_keys() {
+    let mut items = vec![("b", 1), ("a", 2), ("b", 3), ("", 4), ("a", 5)];
+    ordered(&mut items, |(key, _)| key.to_string());
+    assert_eq!(items, [("", 4), ("a", 2), ("a", 5), ("b", 1), ("b", 3)]);
+    let mut none: Vec<u8> = Vec::new();
+    ordered(&mut none, |_| String::new());
+    assert!(none.is_empty());
+}
+
+#[test]
+fn a_pair_key_orders_as_the_pair_does() {
+    let at = |phase: &str, state: &str| Pair {
+        phase: phase.into(),
+        state: state.into(),
+    };
+    // A phase that begins another sorts first, whatever the states; '-' and '/' sort below letters.
+    let pairs = [
+        at("a", "z"),
+        at("a-b", "a"),
+        at("a/b", "a"),
+        at("ab", "a"),
+        at("a", "a"),
+        at("b", ""),
+        at("", "b"),
+        at("a", "a-b"),
+        at("a", "ab"),
+    ];
+    for one in &pairs {
+        for other in &pairs {
+            assert_eq!(
+                pair_key(one).cmp(&pair_key(other)),
+                one.cmp(other),
+                "{one:?} {other:?}"
+            );
+        }
+    }
+    let mut positions = pairs.to_vec();
+    ordered(&mut positions, pair_key);
+    let mut sorted = pairs.to_vec();
+    sorted.sort();
+    assert_eq!(positions, sorted);
+}
+
+#[test]
+fn a_mapping_map_keeps_each_source_once_with_its_last_destination() {
+    let at = |phase: &str| Pair {
+        phase: phase.into(),
+        state: "s".into(),
+    };
+    let one = |from: &str, to: &str| Mapping {
+        from: at(from),
+        to: at(to),
+    };
+    let mappings = [one("b", "x"), one("a", "y"), one("b", "z")];
+    let map = mapped(&mappings);
+    assert_eq!(map.len(), 2);
+    assert_eq!(map[&at("b")], &at("z"));
+    assert_eq!(map[&at("a")], &at("y"));
+    assert!(mapped(&[]).is_empty());
+}
+
+#[test]
+fn a_digest_is_taken_of_the_same_bytes_as_its_value_written_straight() {
+    use symphony_api::workflow::{InputValue, OperationRequest, PositionSnapshot};
+    let source = Source {
+        commit: "1".repeat(40),
+        project_blob: "2".repeat(40),
+    };
+    for definition in [builtin(), candidate(CUSTOM).unwrap().definition().clone()] {
+        let value = (FORMAT, &definition, &source);
+        assert_eq!(
+            canonical(&value).unwrap(),
+            serde_json::to_vec(&value).unwrap()
+        );
+    }
+    let revision = Validated::new(builtin()).unwrap().revision(source).unwrap();
+    let request = OperationRequest {
+        project: "sim \"quoted\" \u{e9}\u{1f600}\n".into(),
+        task: "sim/jump".into(),
+        edge: "claim".into(),
+        expected: PositionSnapshot {
+            workflow: revision,
+            activation_generation: u64::MAX,
+            task_revision: 0,
+            at: Pair {
+                phase: "build".into(),
+                state: "available".into(),
+            },
+        },
+        input_revisions: [("b".into(), "2".into()), ("a".into(), "1".into())].into(),
+        idempotency_key: "key\u{0}\u{7f}".into(),
+        inputs: [
+            ("text".into(), InputValue::Text("\\ </script>".into())),
+            ("flag".into(), InputValue::Flag(true)),
+            (
+                "pair".into(),
+                InputValue::Pair(Pair {
+                    phase: "p".into(),
+                    state: "s".into(),
+                }),
+            ),
+        ]
+        .into(),
+    };
+    assert_eq!(
+        canonical(&request).unwrap(),
+        serde_json::to_vec(&request).unwrap()
+    );
+}
+
+#[test]
+fn an_authority_key_orders_as_the_authority_does() {
+    use symphony_api::workflow::{Authority, Role};
+    let capability = |kind: fn(String) -> Authority, name: &str| kind(name.into());
+    let project = |capability| Authority::ProjectCapability { capability };
+    let system = |capability| Authority::SystemCapability { capability };
+    let all = [
+        capability(system, "a"),
+        Authority::TaskRole {
+            role: Role::Orchestrator,
+        },
+        capability(project, "b"),
+        capability(project, ""),
+        Authority::TaskRole {
+            role: Role::Executor,
+        },
+        capability(system, ""),
+        Authority::TaskRole {
+            role: Role::Reviewer,
+        },
+        capability(project, "a-b"),
+        capability(project, "a"),
+    ];
+    for one in &all {
+        for other in &all {
+            let keys = authority_key(one).cmp(&authority_key(other));
+            assert_eq!(keys, one.cmp(other), "{one:?} {other:?}");
+        }
+    }
+    let mut keyed = all.to_vec();
+    ordered(&mut keyed, authority_key);
+    let mut sorted = all.to_vec();
+    sorted.sort();
+    assert_eq!(keyed, sorted);
+}

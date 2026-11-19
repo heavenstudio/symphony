@@ -24,6 +24,8 @@ mod warm;
 
 use failure::{task_failure, unavailable};
 use feed_socket::Said;
+#[cfg(test)]
+pub(crate) use warm::settling;
 pub(crate) use warm::{start, warm};
 
 /// Where a plugin's routes answer: `/x/<route>/<rest>`.
