@@ -44,6 +44,7 @@ use symphony_board::land::Generator;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::hc::Hc;
 use symphony_board::launch::reap::{self, REAP_SECONDS, Reap};
+use symphony_board::recovery;
 use symphony_board::rows::{Dump, LinkRow, RoleRow, SessionRow, TaskRow, TaskSessionRow};
 use symphony_board::rpc::{Client, DbError};
 use symphony_board::sweep::git::{DISPOSABLE, Listed};
@@ -103,6 +104,75 @@ fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&Store, &str, &Beat) -> Result<Option<String>> = Store::agent_beat;
     let _: fn(&Store, &Dump) -> Result<()> = Store::copy;
     let _: fn(&Store) -> Result<Dump> = Store::dump;
+    // The writes bound to a recovery generation, beside `Store::amend` and `Store::copy`, which
+    // keep their shapes: the token as a program keeps it, by its fields and as JSON, and the
+    // authority a deployer implements.
+    let _: fn(&Store, &str, &str, &[String], &str) -> Result<Task> = Store::amend;
+    let _: fn(Store, std::sync::Arc<dyn recovery::Authority>) -> Store = Store::recovering;
+    let _: fn(&Store, &str) -> Result<recovery::BoundTask> = Store::bound;
+    let _: fn(
+        &Store,
+        &str,
+        &recovery::Bound,
+        &str,
+        &[String],
+        &str,
+    ) -> Result<recovery::BoundTask> = Store::amend_bound;
+    // The bound edit, which rewrites a brief too, and where an integration keeps its state.
+    let _: fn(
+        &Store,
+        &str,
+        &recovery::Bound,
+        &recovery::Edit,
+        &str,
+    ) -> Result<recovery::BoundTask> = Store::edit_bound;
+    let _ = |title: Option<String>, body: Option<String>, links: Vec<String>| {
+        let edit = recovery::Edit { title, body, links };
+        (
+            edit.clone() == recovery::Edit::default(),
+            serde_json::to_string(&edit).unwrap(),
+        )
+    };
+    let _: &str = symphony_board::folders::INTEGRATIONS;
+    let _: fn(&Path, &str) -> std::result::Result<PathBuf, String> =
+        symphony_board::folders::integration;
+    let _: fn(&Store) -> Result<String> = Store::rebind;
+    let _: fn(&Store) -> Result<Option<String>> = Store::recovery_generation;
+    let _ = |read: recovery::BoundTask| {
+        let recovery::BoundTask { bound, title, body } = read;
+        let recovery::Bound {
+            compat,
+            generation,
+            id,
+            version,
+        } = bound.clone();
+        let kept = serde_json::to_string(&bound).unwrap();
+        let again: recovery::Bound = serde_json::from_str(&kept).unwrap();
+        (
+            compat == recovery::COMPAT,
+            generation,
+            id,
+            version,
+            title,
+            body,
+            again == bound,
+        )
+    };
+    struct Deployers;
+    impl recovery::Authority for Deployers {
+        fn bound(&self) -> std::result::Result<Option<String>, String> {
+            Ok(None)
+        }
+        fn revoke(&self) -> std::result::Result<(), String> {
+            Ok(())
+        }
+        fn publish(&self, _generation: &str) -> std::result::Result<(), String> {
+            Ok(())
+        }
+    }
+    let _: std::sync::Arc<dyn recovery::Authority> = std::sync::Arc::new(Deployers);
+    let _: fn(&server::Home, &str) -> server::FileAuthority = server::Home::recovery;
+    let _: fn(Store, &Env) -> Store = cli::recovery::recovering;
     let _: fn(Store, Option<usize>) -> Store = Store::capping;
     let _: fn(&Store, &str) -> Result<Vec<String>> = Store::ancestors;
     let _: fn(&Store, &str, Option<&str>, bool, bool) -> Result<()> = Store::callback;
@@ -361,3 +431,74 @@ fn the_names_consumers_call_keep_their_shapes() {
 
 /// A type a consumer compares in `assert_eq!`, which prints both sides when they differ.
 fn asserted<T: PartialEq + std::fmt::Debug>() {}
+
+#[test]
+fn the_shared_ordering_helpers_keep_stable_ties_for_consuming_readers() {
+    let mut rows = [(2, "first"), (1, "middle"), (2, "last")];
+    symphony_board::order::sort_by_key(&mut rows, &|row| row.0);
+    assert_eq!(rows, [(1, "middle"), (2, "first"), (2, "last")]);
+    symphony_board::order::sort_by(&mut rows, &|a, b| b.0.cmp(&a.0));
+    assert_eq!(rows, [(2, "first"), (2, "last"), (1, "middle")]);
+}
+
+/// The execution attempts a host runs (`symphony_board::execution`), in the shapes its host code
+/// calls: no consumer calls them yet, and they are pinned from their first release, so a change
+/// to one waits for a consumer release plan as every name above does. `Refusal`, `Worked`,
+/// `Collected`, `Act`, `Admission`, `Attempt`, `Pacing` and `Eligibility` are `#[non_exhaustive]`:
+/// a variant or a field added is no break, so a host's match keeps a `_` arm.
+#[test]
+fn the_execution_coordinator_keeps_the_shapes_a_host_calls() {
+    use symphony_board::execution::{
+        Act, Adapter, Admission, Artifact, Attempt, Cleanup, Collected, Collection, Continuation,
+        Coordinator, Eligibility, ExternalLink, Grant, Input, Pacing, Principal, Profile, Recorded,
+        Refusal, Scope, StopMode, Worked,
+    };
+    type Answer<T> = std::result::Result<T, Refusal>;
+
+    /// Each method of a coordinator borrowing for `'a`.
+    fn of<'a>(_: std::marker::PhantomData<&'a ()>) {
+        type C<'a> = Coordinator<'a>;
+        let _: fn(&'a Store, Profile, &'a dyn Adapter, Grant) -> Answer<C<'a>> = C::<'a>::new;
+        let _: fn(C<'a>, Pacing) -> Answer<C<'a>> = C::<'a>::with_pacing;
+        let _: fn(C<'a>, &str, u32) -> C<'a> = C::<'a>::with_capacity;
+        let _: fn(&C<'a>, &Grant, Admission) -> Answer<Attempt> = C::<'a>::admit;
+        let _: fn(&C<'a>, &Grant, &str, Continuation, Option<&str>) -> Answer<Attempt> =
+            C::<'a>::resume;
+        let _: fn(&C<'a>, &Grant, &str, &str, Option<&str>) -> Answer<Attempt> = C::<'a>::retry;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Attempt> = C::<'a>::cancel;
+        let _: fn(&C<'a>, &Grant, &str, StopMode) -> Answer<Attempt> = C::<'a>::stop;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<ExternalLink> = C::<'a>::external_link;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Attempt> = C::<'a>::attempt;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Vec<Attempt>> = C::<'a>::history;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Vec<Recorded>> = C::<'a>::facts;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Vec<Artifact>> = C::<'a>::artifacts;
+        let _: fn(&C<'a>, &Grant, &str, &str) -> Answer<Eligibility> = C::<'a>::eligibility;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<Attempt> = C::<'a>::begin_collection;
+        let _: fn(&C<'a>, &Grant, &str, Artifact) -> Answer<Collected> = C::<'a>::record_artifact;
+        let _: fn(&C<'a>, &Grant, &str, Collection, Option<&str>) -> Answer<Attempt> =
+            C::<'a>::end_collection;
+        let _: fn(&C<'a>, &Grant, &str) -> Answer<String> = C::<'a>::begin_cleanup;
+        let _: fn(&C<'a>, &Grant, &str, &str, Cleanup, Option<&str>) -> Answer<Attempt> =
+            C::<'a>::end_cleanup;
+        let _: fn(&C<'a>, &str) -> Answer<Worked> = C::<'a>::step;
+        let _: fn(&C<'a>, usize) -> Answer<Vec<(String, Answer<Worked>)>> = C::<'a>::run_due;
+    }
+    of(std::marker::PhantomData);
+    let _: fn(&Store, &str) -> Result<Vec<String>> = Store::live_attempts;
+
+    // Its policy revision is any text, as a host names it.
+    let _ = |principal: Principal, scope: Scope| -> Grant {
+        Grant::from_host(principal, scope, &[Act::Start, Act::Read], "policy-1")
+    };
+    let _: fn(Grant, &[&str]) -> Grant = Grant::on_tasks;
+    let _: fn(&str, &str, &str, Input) -> Admission = Admission::new;
+    let _: fn(Admission, &str) -> Admission = Admission::handle;
+    let _: fn(Admission, &str) -> Admission = Admission::request_key;
+    let _ = |pacing: &mut Pacing| {
+        pacing.lease = std::time::Duration::from_secs(60);
+        pacing.unknowns = 8;
+    };
+    asserted::<Attempt>();
+    asserted::<Refusal>();
+    asserted::<Worked>();
+}

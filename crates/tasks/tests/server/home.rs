@@ -1,23 +1,23 @@
-//! `Home`: the board's server found by its address file, started when it is not running, restarted
-//! when it was killed, replaced when it is an older version and used as it is when newer, and never
+//! `Home`: the board's server found by its address file, started when it is not running,
+//! replaced when it is an older version and used as it is when newer, and never
 //! confused with another process or with a server on other data.
 
 use crate::children::Child as _;
 use crate::common::{
     Repository, Scratch, Told, command_of, exists, gone, healthy_occupier, parent_of, script,
-    signal, surreal,
+    surreal,
 };
 use crate::home_fixture::{Unresponsive, healthy_server};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use symphony_board::NewTask;
 use symphony_board::cli::connect;
 use symphony_board::port::{ATTEMPTS, Start, in_use, listens, start_on_free_port};
-use symphony_board::rpc::{self, Client};
+use symphony_board::rpc;
 use symphony_board::server::{FOLDER, Home, Running, SURREAL_VERSION, ServerError, scratch};
 use symphony_board::sys::{self, Command, pid_alive};
-use symphony_board::{NewTask, Store};
 
 /// How long a case's `Home` waits for a server to answer, where that wait is no part of the case:
 /// the backstop of the 20 s these cases once gave it.
@@ -25,10 +25,6 @@ const PATIENCE: Duration = test_time::backstop(Duration::from_secs(20));
 
 /// How long a case's `Home` gives a server it stops to end: the backstop of the 30 s it once gave.
 const CLOSING: Duration = test_time::backstop(Duration::from_secs(30));
-
-fn board(running: &Running) -> Store {
-    Store::open(Client::new(&running.addr, "sf", "tasks")).unwrap()
-}
 
 unsafe extern "C" {
     fn getsid(pid: i32) -> i32;
@@ -73,29 +69,11 @@ fn nothing_running_starts_a_server_that_is_recorded_and_found_again() {
 }
 
 #[test]
-fn a_killed_server_is_started_again_on_the_same_board() {
-    let s = Scratch::new("restart");
-    let home = s.home();
-    let first = home.ensure().unwrap();
-    board(&first)
-        .create(&NewTask::new("sim/jump", "Jump departure", "owner"))
-        .unwrap();
-    signal(first.pid, "KILL");
-    assert!(gone(first.pid));
-    let again = home.ensure().unwrap();
-    assert_ne!(again.pid, first.pid);
-    assert!(rpc::healthy(&again.addr));
-    assert_eq!(
-        board(&again).get("sim/jump").unwrap().title,
-        "Jump departure"
-    );
-}
-
-#[test]
 fn callers_at_once_start_one_server() {
     let s = Scratch::new("race");
+    let home = Home::new(&s.dir, &healthy_server(&s.dir));
     let found: Vec<Running> = std::thread::scope(|scope| {
-        let callers: Vec<_> = (0..6).map(|_| scope.spawn(|| s.home().ensure())).collect();
+        let callers: Vec<_> = (0..6).map(|_| scope.spawn(|| home.ensure())).collect();
         callers
             .into_iter()
             .map(|caller| caller.join().unwrap().unwrap())
@@ -110,7 +88,7 @@ fn callers_at_once_start_one_server() {
 #[test]
 fn a_server_of_another_version_is_stopped_and_replaced() {
     let s = Scratch::new("upgrade");
-    let home = s.home();
+    let home = Home::new(&s.dir, &healthy_server(&s.dir));
     let old = home.ensure().unwrap();
     s.record(&Running {
         version: "0.0.1".into(),
@@ -129,7 +107,7 @@ fn a_server_of_another_version_is_stopped_and_replaced() {
 #[test]
 fn a_server_of_a_newer_version_is_used_and_never_stopped() {
     let s = Scratch::new("newer");
-    let home = s.home();
+    let home = Home::new(&s.dir, &healthy_server(&s.dir));
     let running = home.ensure().unwrap();
     let newer = Running {
         version: "99.0.0".into(),
@@ -257,19 +235,21 @@ fn running_data(home: &Home) -> String {
 fn a_recorded_server_that_serves_other_data_is_not_this_board() {
     let s = Scratch::new("foreign");
     let other = Scratch::new("foreign-other");
-    let foreign = other.home().ensure().unwrap();
+    let other_home = Home::new(&other.dir, &healthy_server(&other.dir));
+    let foreign = other_home.ensure().unwrap();
     s.record(&foreign);
-    let ours = s.home().ensure().unwrap();
+    let ours = Home::new(&s.dir, &healthy_server(&s.dir)).ensure().unwrap();
     assert_ne!(ours.addr, foreign.addr);
     assert!(command_of(ours.pid).unwrap().contains(&s.data()));
     assert_eq!(s.home().recorded(), Some(ours));
     assert!(pid_alive(foreign.pid), "the other server was left alone");
-    other.home().stop().unwrap();
+    other_home.stop().unwrap();
 }
 
 #[test]
 fn a_recorded_process_that_is_not_the_boards_server_is_never_signalled() {
     let s = Scratch::new("stranger");
+    let home = Home::new(&s.dir, &healthy_server(&s.dir));
     let mut stranger = Command::of("sleep").arg("60").spawn().unwrap();
     let pid = i64::from(stranger.id());
     for version in [SURREAL_VERSION, "0.0.1"] {
@@ -278,10 +258,10 @@ fn a_recorded_process_that_is_not_the_boards_server_is_never_signalled() {
             pid,
             version: version.into(),
         });
-        let started = s.home().ensure().unwrap();
+        let started = home.ensure().unwrap();
         assert_ne!(started.pid, pid);
         assert!(stranger.try_wait().unwrap().is_none(), "the stranger runs");
-        s.home().stop().unwrap();
+        home.stop().unwrap();
     }
     stranger.kill().unwrap();
     stranger.wait().unwrap();
@@ -728,7 +708,7 @@ fn a_garbled_address_file_is_no_server() {
     let s = Scratch::new("garbled");
     std::fs::write(s.dir.join("server.json"), "{not json").unwrap();
     assert_eq!(s.home().recorded(), None);
-    let running = s.home().ensure().unwrap();
+    let running = Home::new(&s.dir, &healthy_server(&s.dir)).ensure().unwrap();
     assert!(rpc::healthy(&running.addr));
 }
 

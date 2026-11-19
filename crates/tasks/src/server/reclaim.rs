@@ -36,8 +36,8 @@ pub struct Reclaimed {
 /// A store's databases, and the users and accesses of its root and of each namespace, which a
 /// database's export does not hold.
 #[derive(Debug, PartialEq)]
-struct Layout {
-    databases: Vec<(String, String)>,
+pub(super) struct Layout {
+    pub(super) databases: Vec<(String, String)>,
     definitions: BTreeMap<String, Value>,
 }
 
@@ -58,10 +58,12 @@ impl Home {
     /// which is left serving, and with none running, on the reclaim's own server on the store,
     /// once the store is kept.
     pub fn reclaim(&self) -> Result<Reclaimed, ServerError> {
+        self.require_surreal()?;
         if !self.surreal.is_file() {
             return Err(self.no_surreal());
         }
         let held = self.lock(Doing::Reclaiming)?;
+        self.require_surreal()?;
         self.unheld()?;
         let work = self.dir.join(RECLAIM);
         let data = self.dir.join(DATA);
@@ -157,7 +159,7 @@ impl Home {
     /// Refused, in the rollback's words, when the board `running` serves reads below the record of
     /// the schema it was seen at beside its store ([`seen::FILE`] in this folder: the live board's,
     /// or a copy's beside the copied store); nothing is read with no record.
-    fn refuse_went_back(&self, running: &Running) -> Result<(), ServerError> {
+    pub(super) fn refuse_went_back(&self, running: &Running) -> Result<(), ServerError> {
         let record = self.dir.join(seen::FILE);
         if seen::read_at(&record).is_none() {
             return Ok(());
@@ -196,7 +198,7 @@ impl Home {
     /// Stop the board's server cleanly, recorded or found on its data, and forget its address
     /// ([`Home::stop_serving`]): the ports the record named and each stopped server had, which a
     /// client may still hold as the board's. Under the lock.
-    fn halt(&self) -> Result<Vec<u16>, ServerError> {
+    pub(super) fn halt(&self) -> Result<Vec<u16>, ServerError> {
         let recorded = self.recorded();
         let stopped = self.stop_serving()?;
         Ok(recorded
@@ -405,10 +407,25 @@ pub fn bytes(path: &Path) -> u64 {
     })
 }
 
+/// What the database `ns`/`db` at `running` defines, SurrealDB's own account of it: its tables,
+/// functions, users and the rest, each by name.
+pub(super) fn defined(running: &Running, ns: &str, db: &str) -> Result<Value, ServerError> {
+    let sql = "INFO FOR DB;";
+    rpc::Client::new(&running.addr, ns, db)
+        .query(sql, json!({}))
+        .map(|mut answers| answers.pop().unwrap_or(Value::Null))
+        .map_err(|problem| {
+            ServerError::Io(format!(
+                "could not read {sql:?} of {ns}/{db} at {}: {problem}",
+                running.addr
+            ))
+        })
+}
+
 /// The databases the server `running` holds, sorted, with the users and accesses of its root (the
 /// empty scope) and of each namespace, refused as [`names`] refuses an answer. Each statement runs
 /// in no namespace or database: one about the server itself, or one that enters its own with `USE`.
-fn layout(running: &Running) -> Result<Layout, ServerError> {
+pub(super) fn layout(running: &Running) -> Result<Layout, ServerError> {
     let client = rpc::Client::new(&running.addr, crate::NAMESPACE, crate::DATABASE);
     let scoped = false;
     let ask = |sql: &str| {

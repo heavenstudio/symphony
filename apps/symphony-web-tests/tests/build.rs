@@ -886,9 +886,122 @@ fn executable(path: &Path, script: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// npm.sh in a tree of the case's own, over a Node launcher that says what it was asked: its
+/// install speaks on both streams, and fails with 7 while the tree holds `fail`.
+fn installer(scratch: &Scratch) -> PathBuf {
+    let tree = scratch.0.join("tree with spaces");
+    let package = tree.join("apps/symphony-web");
+    fs::create_dir_all(&package).unwrap();
+    fs::copy(web().join("npm.sh"), package.join("npm.sh")).unwrap();
+    fs::write(package.join("package-lock.json"), "{\"lock\": 1}\n").unwrap();
+    fs::create_dir_all(tree.join("tools")).unwrap();
+    fs::copy(
+        workspace().join("tools/check_lock.sh"),
+        tree.join("tools/check_lock.sh"),
+    )
+    .unwrap();
+    executable(
+        &tree.join("tools/node.sh"),
+        concat!(
+            "#!/bin/bash\n",
+            "if [ \"$2\" != ci ]; then printf 'ran %s\\n' \"$*\"; printf 'warned\\n' >&2; exit 3; fi\n",
+            "printf '%s\\n' \"$*\" >>../../installs\n",
+            "printf '\\nadded 58 packages in 4s\\n'\n",
+            "printf 'npm error from the install\\n' >&2\n",
+            "if [ -e ../../fail ]; then exit 7; fi\n",
+            "mkdir -p node_modules\n",
+        ),
+    );
+    tree
+}
+
+fn npm(tree: &Path) -> Output {
+    Command::new("bash")
+        .arg(tree.join("apps/symphony-web/npm.sh"))
+        .args(["run", "a script"])
+        .output()
+        .expect("run npm.sh")
+}
+
+/// A first run installs the lockfile's packages and says nothing of it: both streams and the exit
+/// status are the command's own, on the run that installs as on the next, which installs nothing.
+/// A changed lockfile installs once more, as quietly.
+#[test]
+fn an_install_that_succeeds_says_nothing_so_a_first_run_reads_as_every_other() {
+    let scratch = Scratch::new("install");
+    let tree = installer(&scratch);
+    let package = tree.join("apps/symphony-web");
+    let installs = || {
+        fs::read_to_string(tree.join("installs"))
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+    for (run, installed) in [("the first", 1), ("the second", 1)] {
+        let done = npm(&tree);
+        assert_eq!(done.status.code(), Some(3), "{run}: {done:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&done.stdout),
+            "ran npm run a script\n",
+            "{run}"
+        );
+        assert_eq!(String::from_utf8_lossy(&done.stderr), "warned\n", "{run}");
+        assert_eq!(installs(), installed, "{run}");
+    }
+    assert_eq!(
+        fs::read_to_string(tree.join("installs")).unwrap(),
+        "npm ci --prefer-offline --no-audit --no-fund --loglevel=error\n"
+    );
+    assert_eq!(
+        fs::read(package.join("node_modules/.symphony-lock")).unwrap(),
+        fs::read(package.join("package-lock.json")).unwrap()
+    );
+    fs::write(package.join("package-lock.json"), "{\"lock\": 2}\n").unwrap();
+    let done = npm(&tree);
+    assert_eq!(String::from_utf8_lossy(&done.stderr), "warned\n");
+    assert_eq!(installs(), 2);
+    assert_eq!(
+        fs::read_to_string(package.join("node_modules/.symphony-lock")).unwrap(),
+        "{\"lock\": 2}\n"
+    );
+}
+
+/// An install that fails says all it said, on stderr, and exits as it did: npm is not run, and
+/// the packages are not taken as the lockfile's, so the next run installs again.
+#[test]
+fn an_install_that_fails_says_all_it_said_and_runs_nothing() {
+    let scratch = Scratch::new("install-fails");
+    let tree = installer(&scratch);
+    fs::write(tree.join("fail"), "").unwrap();
+    let done = npm(&tree);
+    assert_eq!(done.status.code(), Some(7), "{done:?}");
+    assert!(done.stdout.is_empty(), "{done:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&done.stderr),
+        "\nadded 58 packages in 4s\nnpm error from the install\n"
+    );
+    assert!(
+        !tree
+            .join("apps/symphony-web/node_modules/.symphony-lock")
+            .exists()
+    );
+    fs::remove_file(tree.join("fail")).unwrap();
+    let done = npm(&tree);
+    assert_eq!(done.status.code(), Some(3), "{done:?}");
+    assert_eq!(String::from_utf8_lossy(&done.stderr), "warned\n");
+    assert_eq!(
+        fs::read_to_string(tree.join("installs"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+}
+
 /// The justfile's own recipes: `symphony-ui-dist` runs the client's build script with OUT as
-/// given, from the workspace, and `lint-rs` runs Cargo's checks and then the client's, with no
-/// wasm32 pass.
+/// given, from the workspace, and `lint-rs` runs Cargo's checks (the wire types' TypeScript feature
+/// and the hosted board's feature among them), the build's two readings of the branch (its consumer
+/// notes, its published packages) and then the client's, with no wasm32 pass.
 #[test]
 fn the_justfile_builds_the_client_with_its_script_and_lints_it_with_its_checks() {
     let scratch = Scratch::new("recipes");
@@ -901,6 +1014,11 @@ fn the_justfile_builds_the_client_with_its_script_and_lints_it_with_its_checks()
     executable(
         &tree.join("tools/cargo.sh"),
         "#!/bin/bash\nprintf 'cwd=%s\\n' \"$PWD\"\nprintf 'arg=%s\\n' \"$@\"\n",
+    );
+    // The launcher of the workspace's binaries, which the lint asks for the build's own.
+    executable(
+        &tree.join("tools/rs-bin.sh"),
+        "#!/bin/bash\nprintf 'bin cwd=%s\\n' \"$PWD\"\nprintf 'arg=%s\\n' \"$@\"\n",
     );
     // The client's build and its checks, which bash reads as data.
     executable(
@@ -942,6 +1060,9 @@ fn the_justfile_builds_the_client_with_its_script_and_lints_it_with_its_checks()
                 "cwd={0}\narg=fmt\narg=--all\narg=--check\n",
                 "cwd={0}\narg=clippy\narg=--workspace\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
                 "cwd={0}\narg=clippy\narg=-p\narg=symphony-api\narg=--features\narg=typescript\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
+                "cwd={0}\narg=clippy\narg=-p\narg=symphony-board\narg=--features\narg=hosted-postgresql\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
+                "bin cwd={0}\narg=symphony-build\narg=consumer-notes\narg=--check\n",
+                "bin cwd={0}\narg=symphony-build\narg=crates-check\narg=--branch\narg=.\n",
                 "client-lint cwd={0}\n"
             ),
             tree.display()

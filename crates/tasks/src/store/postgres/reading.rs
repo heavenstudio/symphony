@@ -1,8 +1,11 @@
-//! The snapshot a read of tasks gives on PostgreSQL (`super::super::surreal::reading`): one
-//! expression over `v`, the tasks picked, then what the view reads beside them.
+//! The snapshot a read of tasks gives on PostgreSQL (`super::super::surreal::reading`): the
+//! tasks picked, then what the view reads beside them, over `v`. A read lists its tasks, links,
+//! roles and sessions an item a row ([`reading`], [`super::Pg::Listed`]), so a whole board costs
+//! its backend a sort's memory and not the board's; a write's read of its one task is one value
+//! ([`written`]).
 
 use super::branches::of_tasks;
-use super::{cap, row};
+use super::{List, Listed, Pg, cap, row};
 use crate::store::{Sessions, Which};
 
 /// Each part of a `Snapshot` a read does not take from what it picked: `callback_sequence` (the
@@ -26,8 +29,8 @@ const HAS_CALLBACKS: &str = "EXISTS (SELECT 1 FROM callback_state c \
 /// Whether the task `v ->> 'slug'` is there.
 const KNOWN: &str = "EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug')";
 
-/// The read of `which` with the sessions `sessions` asks for, as an expression.
-pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> String {
+/// The read of `which` with the sessions `sessions` asks for.
+pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> Pg<'static> {
     reading_with(which, sessions, NOTHING_BESIDE)
 }
 
@@ -60,7 +63,16 @@ fn picking(which: &Which) -> (&'static str, &'static str, &'static str) {
 }
 
 /// [`reading`], with what `beside` gives.
-pub(in crate::store) fn reading_with(which: &Which, sessions: Sessions, beside: Beside) -> String {
+pub(in crate::store) fn reading_with(
+    which: &Which,
+    sessions: Sessions,
+    beside: Beside,
+) -> Pg<'static> {
+    Pg::Listed(listed(which, sessions, beside))
+}
+
+/// The read of `which` as its lists and its other fields, with what `beside` gives.
+fn listed(which: &Which, sessions: Sessions, beside: Beside) -> Listed {
     let (picked, order, known) = picking(which);
     let whole = matches!(which, Which::All | Which::SlotHoldings);
     let scoped = |alias: &str| match whole {
@@ -110,22 +122,43 @@ pub(in crate::store) fn reading_with(which: &Which, sessions: Sessions, beside: 
         callback_sequence,
         has_callbacks,
     } = beside;
-    format!(
-        "(WITH picked AS (SELECT t.* FROM task t {picked}), \
+    let with = format!(
+        "picked AS (SELECT t.* FROM task t {picked}), \
     view_roles AS (SELECT r.slug, r.handle, r.role, r.since, r.expires FROM role r WHERE {}), \
     open_slugs AS (SELECT slug FROM task WHERE status IN (SELECT jsonb_array_elements_text(v -> 'executing'))), \
     held AS (SELECT DISTINCT r.handle FROM role r \
         WHERE (r.role = 'executor' AND r.slug IN (SELECT slug FROM open_slugs)) \
-            OR (r.role = 'reviewer' AND r.slug IN (SELECT slug FROM task WHERE status = 'review'))){slot_lets} \
-SELECT jsonb_build_object( \
-    'tasks', coalesce((SELECT jsonb_agg({} ORDER BY {order}) FROM picked p), '[]'), \
-    'branches', {branches}, \
-    'links', coalesce((SELECT jsonb_agg(to_jsonb(l) - 'id' \
-            ORDER BY l.target, l.slug, l.kind) \
-        FROM link l WHERE {}), '[]'), \
-    'roles', coalesce((SELECT jsonb_agg(jsonb_strip_nulls(to_jsonb(r)) ORDER BY r.since, r.handle, r.slug, r.role) \
-        FROM view_roles r), '[]'), \
-    'sessions', coalesce((SELECT jsonb_agg({} ORDER BY s.connected, s.handle) FROM {sessions}), '[]'), \
+            OR (r.role = 'reviewer' AND r.slug IN (SELECT slug FROM task WHERE status = 'review'))){slot_lets}",
+        scoped("r"),
+    );
+    let lists = vec![
+        List {
+            key: "tasks",
+            item: row("p"),
+            from: "picked p".into(),
+            order: order.into(),
+        },
+        List {
+            key: "links",
+            item: "to_jsonb(l) - 'id'".into(),
+            from: format!("link l WHERE {}", scoped("l")),
+            order: "l.target, l.slug, l.kind".into(),
+        },
+        List {
+            key: "roles",
+            item: "jsonb_strip_nulls(to_jsonb(r))".into(),
+            from: "view_roles r".into(),
+            order: "r.since, r.handle, r.slug, r.role".into(),
+        },
+        List {
+            key: "sessions",
+            item: row("s"),
+            from: sessions,
+            order: "s.connected, s.handle".into(),
+        },
+    ];
+    let rest = format!(
+        "'branches', {branches}, \
     'held', coalesce((SELECT jsonb_agg(handle) FROM held), '[]'), \
     'latest', coalesce((SELECT to_jsonb(last) FROM counter WHERE id = '\"message\"'), '0'::jsonb), \
     'callback_sequence', {callback_sequence}, \
@@ -136,30 +169,34 @@ SELECT jsonb_build_object( \
     'open_deps', {open_deps}, \
     {slots} \
     'known', {known}, \
-    'mine', {mine}))",
-        scoped("r"),
-        row("p"),
-        scoped("l"),
-        row("s"),
-    )
+    'mine', {mine}"
+    );
+    Listed {
+        with,
+        lists,
+        rest: Some(rest),
+    }
 }
 
 /// `slug` read as `get` reads it after a write, with whether any session keeps a callback address
-/// (`Store::written`).
+/// (`Store::written`), as one expression: one task's read is short, and follows its block.
 pub(in crate::store) fn written(which: &Which) -> String {
-    reading_with(
-        which,
-        Sessions::Shown,
-        Beside {
-            callback_sequence: "0",
-            has_callbacks: HAS_CALLBACKS,
-        },
-    )
+    let beside = Beside {
+        callback_sequence: "0",
+        has_callbacks: HAS_CALLBACKS,
+    };
+    listed(which, Sessions::Shown, beside).whole()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The list `key` of `read`.
+    fn list<'a>(read: &'a Listed, key: &str) -> &'a List {
+        let found = read.lists.iter().find(|list| list.key == key);
+        found.unwrap_or_else(|| panic!("no list {key}"))
+    }
 
     #[test]
     fn each_read_picks_its_tasks_and_only_a_start_and_the_holdings_read_the_cap() {
@@ -176,45 +213,62 @@ mod tests {
             Which::Pullable("kite"),
         ];
         for (at, which) in reads.iter().enumerate() {
-            let read = reading(which, Sessions::Shown);
+            let read = listed(which, Sessions::Shown, NOTHING_BESIDE);
+            let rest = read.rest.as_deref().expect("a read has other fields");
             let (picked, order, known) = picking(which);
             assert!(
-                read.contains(&format!("FROM task t {picked})")),
-                "{at}: {read}"
+                read.with
+                    .starts_with(&format!("picked AS (SELECT t.* FROM task t {picked}),")),
+                "{at}: {}",
+                read.with
             );
-            assert!(read.contains(&format!("ORDER BY {order})")), "{at}");
-            assert!(read.contains(&format!("'known', {known},")), "{at}");
-            let capped = matches!(which, Which::Starting(_) | Which::SlotHoldings);
-            assert_eq!(read.contains("slot_wanted AS ("), capped, "{at}");
+            let keys: Vec<&str> = read.lists.iter().map(|list| list.key).collect();
+            assert_eq!(keys, ["tasks", "links", "roles", "sessions"], "{at}");
+            let tasks = list(&read, "tasks");
             assert_eq!(
-                read.contains("'slots', jsonb_build_object("),
+                (tasks.from.as_str(), tasks.order.as_str()),
+                ("picked p", order)
+            );
+            assert!(rest.contains(&format!("'known', {known},")), "{at}");
+            let capped = matches!(which, Which::Starting(_) | Which::SlotHoldings);
+            assert_eq!(read.with.contains("slot_wanted AS ("), capped, "{at}");
+            assert_eq!(
+                rest.contains("'slots', jsonb_build_object("),
                 capped,
                 "{at}"
             );
             let branches_of = if capped { "slot_wanted" } else { "picked" };
             assert!(
-                read.contains(&format!("b.slug IN (SELECT slug FROM {branches_of})")),
+                rest.contains(&format!("b.slug IN (SELECT slug FROM {branches_of})")),
                 "{at}"
             );
             let whole = matches!(which, Which::All | Which::SlotHoldings);
-            assert_eq!(read.contains("FROM role r WHERE true)"), whole, "{at}");
+            assert_eq!(read.with.contains("FROM role r WHERE true)"), whole, "{at}");
+            let scope = if whole {
+                "link l WHERE true"
+            } else {
+                "link l WHERE l.slug IN (SELECT slug FROM picked)"
+            };
+            assert_eq!(list(&read, "links").from, scope, "{at}");
             let one = matches!(
                 which,
                 Which::Slug(_) | Which::Starting(_) | Which::Pullable(_)
             );
             assert_eq!(
-                read.contains("l.kind = 'dep' AND t.status <> 'done'"),
+                rest.contains("l.kind = 'dep' AND t.status <> 'done'"),
                 one,
                 "{at}"
             );
             let pulling = matches!(which, Which::Pullable(_));
             assert_eq!(
-                read.contains(" OR s.handle = v ->> 'handle'"),
+                list(&read, "sessions")
+                    .from
+                    .ends_with(" OR s.handle = v ->> 'handle'"),
                 pulling,
                 "{at}"
             );
             assert_eq!(
-                read.contains("FROM role WHERE handle = v ->> 'handle'"),
+                rest.contains("FROM role WHERE handle = v ->> 'handle'"),
                 pulling,
                 "{at}"
             );
@@ -223,11 +277,28 @@ mod tests {
 
     #[test]
     fn a_whole_read_takes_every_session_and_a_written_one_whether_any_listens() {
-        let whole = reading(&Which::All, Sessions::Whole);
-        assert!(whole.contains("FROM session s)"), "{whole}");
-        assert!(whole.contains("'has_callbacks', false,"));
+        let whole = listed(&Which::All, Sessions::Whole, NOTHING_BESIDE);
+        assert_eq!(list(&whole, "sessions").from, "session s");
+        let rest = whole.rest.as_deref().unwrap();
+        assert!(rest.contains("'has_callbacks', false,"), "{rest}");
         let written = written(&Which::Slug("work/a"));
         assert!(written.contains("s.handle IN (SELECT handle FROM view_roles)"));
         assert!(written.contains(&format!("'has_callbacks', {HAS_CALLBACKS},")));
+    }
+
+    #[test]
+    fn a_read_lists_an_item_a_row_and_a_written_one_is_one_value_of_the_same_lists() {
+        let Pg::Listed(read) = reading(&Which::All, Sessions::Whole) else {
+            panic!("a read lists its rows");
+        };
+        assert_eq!(read, listed(&Which::All, Sessions::Whole, NOTHING_BESIDE));
+        let written = written(&Which::Slug("work/a"));
+        assert!(written.starts_with("(WITH picked AS (SELECT t.* FROM task t WHERE"));
+        for key in ["tasks", "links", "roles", "sessions"] {
+            let whole = format!("'{key}', coalesce((SELECT jsonb_agg(");
+            assert!(written.contains(&whole), "{key}: {written}");
+        }
+        assert!(written.contains("ORDER BY p.sid) FROM picked p), '[]')"));
+        assert!(written.ends_with("'mine', '[]'::jsonb))"), "{written}");
     }
 }

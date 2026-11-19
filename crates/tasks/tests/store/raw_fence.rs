@@ -28,12 +28,18 @@ const SCRATCH: &str = "a scratch table of its own";
 const AS_WRITTEN: &str = "a row written as the fixture cannot";
 
 /// Every test file that still sends a statement, by its path under the package.
-const STILL_SENDS: [(&str, &str); 40] = [
+const STILL_SENDS: [(&str, &str); 49] = [
     ("tests/cli/attach.rs", ENGINE),
     ("tests/cli/launch_rollback.rs", ENGINE),
     ("tests/cli/main_only/writers.rs", AS_WRITTEN),
     ("tests/cli/monitor_panes.rs", ONE_REQUEST),
+    ("tests/cli/pg_lifecycle.rs", ENGINE),
     ("tests/cli/pull_unanswered.rs", ENGINE),
+    ("tests/hosted/board.rs", ENGINE),
+    ("tests/hosted/capacity.rs", ENGINE),
+    ("tests/hosted/cluster.rs", ENGINE),
+    ("tests/hosted/refusals.rs", ENGINE),
+    ("tests/hosted/transactions.rs", ENGINE),
     ("tests/launch/reap.rs", AS_WRITTEN),
     ("tests/launch/reap_unread.rs", ENGINE),
     ("tests/perf/board.rs", LIBRARY),
@@ -45,6 +51,7 @@ const STILL_SENDS: [(&str, &str); 40] = [
     ("tests/server/copy.rs", ENGINE),
     ("tests/server/hold.rs", SCRATCH),
     ("tests/server/left_replay.rs", SCRATCH),
+    ("tests/server/moving.rs", ENGINE),
     ("tests/server/reclaim.rs", ENGINE),
     ("tests/store/asks.rs", ENGINE),
     ("tests/store/bindings.rs", ENGINE),
@@ -61,8 +68,10 @@ const STILL_SENDS: [(&str, &str); 40] = [
     ("tests/store/open_read.rs", ENGINE),
     ("tests/store/pg_client.rs", ENGINE),
     ("tests/store/quiet_pull.rs", ENGINE),
+    ("tests/store/round_trip.rs", ENGINE),
     ("tests/store/schema.rs", ENGINE),
     ("tests/store/schema_copy.rs", ENGINE),
+    ("tests/store/search.rs", ENGINE),
     ("tests/store/session_marker.rs", ENGINE),
     ("tests/store/slots/cost.rs", ENGINE),
     ("tests/store/slots/migration.rs", ENGINE),

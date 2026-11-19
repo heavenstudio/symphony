@@ -32,6 +32,7 @@ macro_rules! on_both {
 }
 
 mod amend;
+mod artifacts;
 mod asks;
 mod bindings;
 mod blocked_panes;
@@ -39,6 +40,7 @@ mod blocks;
 mod board;
 mod callbacks;
 mod cancel;
+mod carried;
 mod claim;
 mod closing;
 mod common;
@@ -51,9 +53,12 @@ mod dispatch_commit;
 mod dispatch_holder;
 mod dispatch_later;
 mod done;
+mod edit;
+mod execution;
 mod fast_fix;
 mod fields;
-#[path = "../../../../tools/test-support/script_process_cwd.rs"]
+// The adapter contract tests run once in `server`; this adapter uses the same spawn lock.
+#[path = "../../../../tools/test-support/script_board.rs"]
 #[expect(
     clippy::disallowed_methods,
     reason = "the fixture scripts every crate's tests share start their children as a test likes, and wait by no timer"
@@ -65,6 +70,7 @@ mod health;
 mod held_stream;
 mod keyed;
 mod launches;
+mod lost_observers;
 mod low_volume;
 mod marker;
 mod marker_retirement;
@@ -77,23 +83,29 @@ mod open_read;
 mod orchestrator_given;
 mod orchestrator_limit;
 mod orchestrators;
+mod ordered_maps;
 mod owner_word;
 mod pending_pull;
 mod pg_client;
+mod pg_reading;
 mod priority;
 mod pull_acknowledgements;
 mod pushes;
 mod quiet_callbacks;
 mod raw;
 mod raw_fence;
+mod realistic;
+mod recovery;
 mod red;
 mod relay;
 mod reports;
 mod reserve;
 mod resume;
 mod roles;
+mod round_trip;
 mod schema;
 mod schema_copy;
+mod search;
 mod session_marker;
 mod session_urls;
 mod sessions;
@@ -106,6 +118,7 @@ mod subtask_roles;
 mod thread_window;
 mod tree;
 mod two_writers;
+mod unlanded;
 mod usage;
 mod verdict;
 mod waits;

@@ -184,7 +184,16 @@ fn look(
         } else {
             store.open_task_sessions()?
         };
-        memory.panes = pane_watch(&board, &overseen, &open, &probes.panes, &memory.panes, emit);
+        let at = store.now();
+        memory.panes = pane_watch(
+            &board,
+            &overseen,
+            &open,
+            &probes.panes,
+            at,
+            &memory.panes,
+            emit,
+        );
     }
     Ok(())
 }

@@ -632,6 +632,7 @@ mod closing {
             kind: "rejected".into(),
             text: "the turrets face inward.".into(),
             branch: None,
+            ask: None,
         }
     }
 
@@ -783,6 +784,7 @@ mod closing {
             kind: "dislike".into(),
             text: title.into(),
             branch: None,
+            ask: None,
         }
     }
 

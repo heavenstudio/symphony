@@ -44,6 +44,9 @@ the board, so none of it ever starts the database.
                                Only its holder releases it, or another
                                handle naming the holder with --of HOLDER
 
+The board's store is moved to the other engine, and a PostgreSQL snapshot put
+back over its board, by `tasks-move`, a program of its own (its --help).
+
 Each hold and release is a line of symphony/tasks/hold.log. It acts on the
 board of the repository it runs in, never on a server TASKS_SERVER names or
 for a scratch database, which shares the board's server. Only builds that
@@ -115,6 +118,70 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
         }
     };
     let actor = actor.filter(|actor| !actor.trim().is_empty());
+    let pg = (|| -> Result<Option<crate::server::Postgres>, String> {
+        if home.backend().map_err(|why| why.to_string())? != crate::server::Engine::PostgreSql {
+            return Ok(None);
+        }
+        let project = crate::project::find(&env.cwd, machine(env).as_deref())?;
+        home.project_postgresql(&project.place.root)
+            .map(Some)
+            .map_err(|why| why.to_string())
+    })();
+    let pg = match pg {
+        Ok(pg) => pg,
+        Err(why) => {
+            let _ = writeln!(err, "✖ {why}");
+            return 2;
+        }
+    };
+    if let Some(pg) = pg {
+        match (&asked, actor.as_deref()) {
+            (Asked::Say, _) => {
+                return match pg.current() {
+                    Ok(serving) => {
+                        let _ = writeln!(
+                            out,
+                            "the board's PostgreSQL at {} is {}; {}",
+                            pg.data().display(),
+                            pg.held()
+                                .map_or_else(|| "not held".into(), |hold| hold.to_string()),
+                            serving.map_or_else(
+                                || "no server runs on its data".into(),
+                                |server| format!(
+                                    "pid {} on {}",
+                                    server.pid,
+                                    server.socket.display()
+                                )
+                            )
+                        );
+                        0
+                    }
+                    Err(why) => {
+                        let _ = writeln!(err, "✖ {why}");
+                        2
+                    }
+                };
+            }
+            (Asked::Hold(why), Some(by)) => {
+                return match pg.hold(by, why) {
+                    Ok(holding) => {
+                        let _ = writeln!(
+                            out,
+                            "✔ the board's PostgreSQL is {}. Nothing serves {} now",
+                            holding.hold,
+                            holding.data.display()
+                        );
+                        0
+                    }
+                    Err(why) => {
+                        let _ = writeln!(err, "✖ {why}");
+                        2
+                    }
+                };
+            }
+            _ => {}
+        }
+    }
     match (asked, actor) {
         (Asked::Say, _) => {
             let _ = writeln!(out, "{}", said(&home));
@@ -141,7 +208,7 @@ fn usage(err: &mut dyn Write, said: &str) -> i32 {
 /// The board of the project `env`'s working directory is in, as [`super::reach_board`] finds it,
 /// refused for a server `TASKS_SERVER` names, a scratch database and a process Cargo runs from that
 /// board's repository ([`crate::live::cargo_refusal`]).
-fn home(env: &Env) -> Result<Home, String> {
+pub(crate) fn home(env: &Env) -> Result<Home, String> {
     if env.var("TASKS_SERVER").is_some() {
         return Err(
             "TASKS_SERVER names a server by its address, which `tasks database` does not hold: \

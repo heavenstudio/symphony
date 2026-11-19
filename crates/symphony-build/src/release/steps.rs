@@ -1,6 +1,6 @@
 //! The steps a check lists: a check of the run is given a folder of its own among the run's logs
 //! ([`VAR`] names it), and one that lists the steps it ran there ([`FILE`]), as `verify` does its
-//! lint, client check, size budgets, docs audit, crates check and tests (tools/verify.sh), is told
+//! lint, client check, size budgets, docs audit, crates and semver checks and tests (tools/verify.sh), is told
 //! by its steps.
 //! Each listed step is a check of its own in the run's record, under the check (`verify/tests`),
 //! with its own status and log, and so on the board ([`super::board`]): a red step is a task of its
@@ -18,11 +18,26 @@ use std::path::{Path, PathBuf};
 use super::board;
 use super::checks::{self, Load, Ran, Step, Within};
 
+/// What a list says in place of an exit status for a step the check did not run because a step
+/// it needs was red (verify's tests after a red runner setup): the step is listed, so the run
+/// knows it is there and not run, it is no red of its own, and a rerun always runs it.
+pub(crate) const NOT_RUN: &str = "-";
+/// Why such a step did not run, as its record says it.
+const NEEDED: &str = "a step it needs was red";
+
+/// Whether the step `ran` is one its check listed as not run ([`NOT_RUN`]).
+pub(crate) fn not_run(ran: &Ran) -> bool {
+    ran.exit_code.is_none() && ran.signal.is_none() && ran.error.as_deref() == Some(NEEDED)
+}
+
 /// What names the folder a check lists its steps in, set for each check the run starts.
 pub(crate) const VAR: &str = "SYMPHONY_CHECK_STEPS";
 /// The list in that folder: a line for each step as it ended, its name, exit status, seconds, log
 /// and command, and the machine's load when it ended ([`said_load`]), tab-separated; a list with no
-/// load field reads, its steps' load none. A log named by a relative path is in the folder.
+/// load field reads, its steps' load none. A log named by a relative path is in the folder. A
+/// step named `STEP/PART` is a part of the step STEP listed before it (a lane of the tests): it is
+/// kept in that step, whose red stays one red, and a release candidate's rerun can run it alone.
+/// A step the check did not run for a red step before it is listed too, [`NOT_RUN`] its status.
 pub(crate) const FILE: &str = "steps.tsv";
 
 /// The folder the check `name` lists its steps in, among the run's `logs`: `KEY.steps`, beside its
@@ -91,13 +106,41 @@ pub(crate) fn read(folder: &Path, check: &str) -> Result<Vec<Ran>, String> {
                 n + 1
             ));
         };
-        if steps
+        // A name with a `/` is a part of the step named before it (`tests/browser`, a lane of
+        // the tests), listed after that step and kept in it.
+        let listed = step
+            .name
+            .strip_prefix(check)
+            .and_then(|n| n.strip_prefix('/'));
+        let part = listed.and_then(|listed| listed.split_once('/'));
+        if part.is_some_and(|(_, part)| part.is_empty() || part.contains('/')) {
+            return Err(format!(
+                "{} lists `{}`, which is no step and no part of one",
+                path.display(),
+                step.name
+            ));
+        }
+        let parent = part.map(|(parent, _)| format!("{check}/{parent}"));
+        let among = match &parent {
+            Some(parent) => match steps.iter_mut().find(|known| known.name == *parent) {
+                Some(known) => &mut known.steps,
+                None => {
+                    return Err(format!(
+                        "{} lists `{}` before the step it is a part of",
+                        path.display(),
+                        step.name
+                    ));
+                }
+            },
+            None => &mut steps,
+        };
+        if among
             .iter()
             .any(|known| board::key(&known.name) == board::key(&step.name))
         {
             return Err(format!("{} lists `{}` twice", path.display(), step.name));
         }
-        steps.push(step);
+        among.push(step);
     }
     Ok(steps)
 }
@@ -116,15 +159,20 @@ fn parse(line: &str, folder: &Path, check: &str) -> Option<Ran> {
     if name.trim().is_empty() || log.is_empty() || !seconds.is_finite() || seconds < 0.0 {
         return None;
     }
+    let skipped = exit == NOT_RUN;
     Some(Ran {
         name: format!("{check}/{name}"),
         command: command.to_string(),
-        exit_code: Some(exit.parse().ok()?),
+        exit_code: if skipped {
+            None
+        } else {
+            Some(exit.parse().ok()?)
+        },
         signal: None,
         seconds,
         log: folder.join(log),
         steps: Vec::new(),
-        error: None,
+        error: skipped.then(|| NEEDED.to_string()),
         timed_out: false,
         interrupted: false,
         load,
@@ -166,7 +214,7 @@ pub(crate) fn beyond(ran: &Ran) -> bool {
         && !ran.interrupted
         && ran.signal.is_none()
         && ran.exit_code.is_some();
-    !(ended && ran.steps.iter().any(|step| !step.green()))
+    !(ended && ran.steps.iter().any(|step| !step.green() && !not_run(step)))
 }
 
 /// The reds of the check `ran` as the run tells them: the check itself when its red is
@@ -176,7 +224,7 @@ pub(crate) fn reds(ran: &Ran) -> Vec<&Ran> {
     if beyond(ran) {
         reds.push(ran);
     }
-    reds.extend(ran.steps.iter().filter(|step| !step.green()));
+    reds.extend((ran.steps.iter()).filter(|step| !step.green() && !not_run(step)));
     reds
 }
 
@@ -335,6 +383,99 @@ mod tests {
         let unreadable = tree.path("folder-as-list");
         fs::create_dir_all(unreadable.join(FILE)).unwrap();
         assert!(read(&unreadable, "verify").is_err());
+    }
+
+    #[test]
+    fn a_step_listed_as_not_run_is_known_and_red_in_nothing_of_its_own() {
+        let tree = Tree::new();
+        tree.write(
+            FILE,
+            "lint\t0\t1\tlint.log\tjust lint-rs\n\
+             nextest-setup\t2\t1\tsetup.log\tjust nextest-setup\n\
+             tests\t-\t0\tsetup.log\ttools/test-lanes.sh\n",
+        );
+        let steps = read(&tree.root, "verify").unwrap();
+        assert_eq!(steps.len(), 3);
+        let tests = &steps[2];
+        assert_eq!(
+            (tests.name.as_str(), tests.exit_code),
+            ("verify/tests", None)
+        );
+        assert!(not_run(tests) && !tests.green());
+        assert_eq!(tests.ended(), "did not run: a step it needs was red");
+        assert!(!not_run(&steps[0]) && !not_run(&steps[1]));
+        // The check's red is its setup's alone: one red, and not beyond its steps.
+        let verify = check("verify", 1, steps);
+        assert!(!beyond(&verify));
+        let reds: Vec<&str> = reds(&verify).iter().map(|red| red.name.as_str()).collect();
+        assert_eq!(reds, ["verify/nextest-setup"]);
+        // Red with nothing but a step not run to show for it: the check's own red.
+        let mut alone = verify.clone();
+        alone.steps.remove(1);
+        assert!(beyond(&alone));
+        // A check that never ran for another reason is not this.
+        let mut never = verify.steps[2].clone();
+        never.error = Some("cannot start sh".into());
+        assert!(!not_run(&never));
+    }
+
+    #[test]
+    fn a_step_named_under_another_is_a_part_of_it_and_no_step_or_red_of_the_check() {
+        let tree = Tree::new();
+        tree.write(
+            FILE,
+            "lint\t0\t1\tlint.log\tjust lint-rs\n\
+             tests\t101\t9\ttests.log\ttools/test-lanes.sh\n\
+             tests/browser\t101\t7\ttests-lanes/browser.log\ttools/test-lanes.sh browser\n\
+             tests/perf\t0\t2\ttests-lanes/perf.log\ttools/test-lanes.sh perf\t1.00 2.00 3.00 8\n",
+        );
+        let steps = read(&tree.root, "verify").unwrap();
+        let names: Vec<&str> = steps.iter().map(|step| step.name.as_str()).collect();
+        assert_eq!(names, ["verify/lint", "verify/tests"]);
+        assert!(steps[0].steps.is_empty());
+        let parts: Vec<(&str, Option<i32>)> = (steps[1].steps.iter())
+            .map(|part| (part.name.as_str(), part.exit_code))
+            .collect();
+        assert_eq!(
+            parts,
+            [
+                ("verify/tests/browser", Some(101)),
+                ("verify/tests/perf", Some(0))
+            ]
+        );
+        assert_eq!(
+            steps[1].steps[0].log,
+            tree.root.join("tests-lanes/browser.log")
+        );
+        assert!(steps[1].steps[1].load.is_some());
+        // The step's red is one red, whatever its parts: a part is filed nowhere.
+        let verify = check("verify", 1, steps);
+        let reds: Vec<&str> = reds(&verify).iter().map(|red| red.name.as_str()).collect();
+        assert_eq!(reds, ["verify/tests"]);
+
+        // A part listed before its step, twice, or under a part reads as no list.
+        for (bad, why) in [
+            (
+                "tests/browser\t0\t1\tb.log\tcmd\n",
+                "lists `verify/tests/browser` before the step it is a part of",
+            ),
+            (
+                "tests\t0\t1\tt.log\tcmd\ntests/a\t0\t1\ta.log\tcmd\ntests/a\t0\t1\ta.log\tcmd\n",
+                "lists `verify/tests/a` twice",
+            ),
+            (
+                "tests\t0\t1\tt.log\tcmd\ntests/a\t0\t1\ta.log\tcmd\ntests/a/deep\t0\t1\ta.log\tcmd\n",
+                "lists `verify/tests/a/deep`, which is no step and no part of one",
+            ),
+            (
+                "tests\t0\t1\tt.log\tcmd\ntests/\t0\t1\ta.log\tcmd\n",
+                "lists `verify/tests/`, which is no step and no part of one",
+            ),
+        ] {
+            tree.write(FILE, bad);
+            let refused = read(&tree.root, "verify").unwrap_err();
+            assert!(refused.contains(why), "{bad:?}: {refused}");
+        }
     }
 
     #[test]

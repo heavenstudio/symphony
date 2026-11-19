@@ -62,6 +62,7 @@ pub(crate) struct Run {
     /// The remote's main as fetched.
     pub(crate) tip: String,
     pub(crate) started_at: f64,
+    /// When it ended, by the wall clock: a sleep of the machine under it is counted.
     pub(crate) ended_at: f64,
     /// `green`, `red`, `unchanged` (the candidate was released already), `error` (it stopped
     /// short) or [`INTERRUPTED`] (it ended without recording itself, and a later run recorded it).
@@ -100,6 +101,18 @@ pub(crate) struct Run {
     /// The release candidate it reran, when it was a rerun of one ([`super::candidate`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) rerun: Option<Rerun>,
+    /// How long the machine slept under it, in seconds: what the wall clock counted of it past
+    /// the clock that stops in sleep ([`super::span`]). Left out of a run that did not sleep.
+    #[serde(default, skip_serializing_if = "super::span::none")]
+    pub(crate) slept: f64,
+    /// What the tree it checked told of its checks' inputs, asked before the checks
+    /// ([`super::inputs`]); none for a tree that tells none, or a run that reached no check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) inputs: Option<super::inputs::Inputs>,
+    /// The system, Chrome and PostgreSQL its checks ran on, which no tree pins; none for a run
+    /// that reached no check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) environment: Option<super::inputs::Environment>,
 }
 
 /// A rerun of the release candidate: the commit first judged, the round it is (2 for the first
@@ -112,18 +125,25 @@ pub(crate) struct Rerun {
     pub(crate) carried: Vec<Carried>,
 }
 
-/// A check or step a rerun kept green: its name and the commit and run it was green on, whose
-/// tree is the rerun's.
+/// A check, step or part of a step a rerun kept green: its name and the commit and run it was
+/// green on. With no digest that commit's tree is the rerun's; with one, the digest of its inputs
+/// there is the one the rerun's tree tells ([`super::inputs`]), and it was not run on this commit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Carried {
     pub(crate) name: String,
     pub(crate) commit: String,
     pub(crate) run: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) digest: Option<String>,
 }
 
 /// What a refresh step ends as when its project finishes it (writers of its board to rebuild, a
 /// board from before the writer record): green here, filed nowhere (docs/RELEASES.md).
 pub(crate) const THEIRS: &str = "the project's to finish";
+/// What a step that is its project's to finish is said with: the command that says what taking the
+/// release asks of the project.
+pub(crate) const TAKES: &str =
+    "`just symphony-cli release-notes` in the project says what taking the release asks of it";
 
 /// A release's refresh: the release, its install's step and one for each project whose board it
 /// judged, what it said, the machine's server's line last, and the steps among them that are their
@@ -407,6 +427,9 @@ fn interrupted(folder: &Path, id: &str, holder: Option<&Running>, by: &str, now:
         refreshed: None,
         published: None,
         rerun: None,
+        slept: 0.0,
+        inputs: None,
+        environment: None,
     });
     run.ended_at = heard.map_or(run.started_at, |(_, last)| last.max(run.started_at));
     let doing = match holder.and_then(|holder| holder.check.as_ref()) {
@@ -538,7 +561,8 @@ pub(crate) fn local(seconds: f64) -> String {
     stamp_at(seconds as libc::time_t)
 }
 
-/// One line on `run`: its result, when, how long ago, its commit and what was red or tagged.
+/// One line on `run`: its result, when, how long ago, its commit, how long the machine slept under
+/// it when it did, and what was red or tagged.
 fn line(run: &Run, now: f64) -> String {
     let mut said = format!(
         "{}, {} ({}), on {}",
@@ -547,6 +571,9 @@ fn line(run: &Run, now: f64) -> String {
         age(now, run.started_at),
         short(&run.commit)
     );
+    if let Some(slept) = super::span::said(run.slept) {
+        said.push_str(&format!("; the machine slept {slept} under it"));
+    }
     if let Some(rerun) = &run.rerun {
         said.push_str(&format!(
             " (round {} of the release candidate first judged at {}{})",
@@ -645,7 +672,8 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
 /// What `--status` says of the newest refresh among `runs` at `now`: its release, which run made
 /// it and when, and how many of its steps are left to their projects, then each line it said (the
 /// install, the switch, each board, `current` and the machine's server), each red step with how it
-/// ended and each step that is its project's to finish, then what finishes those ([`BY_HAND`]).
+/// ended and each step that is its project's to finish, then what finishes those ([`BY_HAND`],
+/// [`takes`]).
 pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
     let Some((run, refresh)) =
         (runs.iter().rev()).find_map(|run| Some((run, run.refreshed.as_ref()?)))
@@ -686,6 +714,7 @@ pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
     }
     if !refresh.theirs.is_empty() {
         text.push_str(BY_HAND);
+        text.push_str(&takes());
     }
     text
 }
@@ -718,6 +747,12 @@ const BY_HAND: &str = "  by hand: each writer named behind the release is rebuil
                        run once, which records it; a board from before the writer record is \
                        brought up by its own `just tasks migrate` in its main checkout; then an \
                        orchestrator's `just release --refresh` finishes the rest\n";
+
+/// Where a project left a step reads what taking the release asks of it, which `--status` says
+/// under [`BY_HAND`].
+fn takes() -> String {
+    format!("  {TAKES}\n")
+}
 
 /// The push that delivers the release `tag` to `remote`, and nothing else.
 pub(crate) fn push_line(remote: &str, tag: &str) -> String {
@@ -753,6 +788,9 @@ mod tests {
             refreshed: None,
             published: None,
             rerun: None,
+            slept: 0.0,
+            inputs: None,
+            environment: None,
         }
     }
 
@@ -919,6 +957,31 @@ mod tests {
         assert!(lines[2].starts_with("last green: "), "{said}");
         assert!(lines[2].ends_with("(27 h ago), on green0000000"), "{said}");
         assert_eq!(lines.len(), 3, "{said}");
+    }
+
+    #[test]
+    fn a_run_the_machine_slept_under_says_for_how_long_in_its_record_and_the_status() {
+        let mut slept = run("slept", "release", "red", NOW - 3600.0);
+        slept.checks = vec![red_check("verify")];
+        slept.slept = 1589.0;
+        let said = status(std::slice::from_ref(&slept), &[], NOW);
+        let last = said.lines().nth(1).unwrap();
+        assert!(
+            last.contains(
+                "(1 h ago), on slept0000000; the machine slept 26 min under it; red: verify (exit 101)"
+            ),
+            "{said}"
+        );
+        let text = serde_json::to_string(&slept).unwrap();
+        assert!(text.contains("\"slept\":1589.0"), "{text}");
+        assert_eq!(serde_json::from_str::<Run>(&text).unwrap(), slept);
+
+        // One that did not sleep says nothing new, and a record written before reads as awake.
+        let awake = run("awake", "release", "red", NOW - 3600.0);
+        assert!(!status(std::slice::from_ref(&awake), &[], NOW).contains("slept"));
+        let text = serde_json::to_string(&awake).unwrap();
+        assert!(!text.contains("slept"), "{text}");
+        assert_eq!(serde_json::from_str::<Run>(&text).unwrap().slept, 0.0);
     }
 
     #[test]
@@ -1223,7 +1286,9 @@ mod tests {
         let by_hand = "  by hand: each writer named behind the release is rebuilt at its schema \
                        and run once, which records it; a board from before the writer record is \
                        brought up by its own `just tasks migrate` in its main checkout; then an \
-                       orchestrator's `just release --refresh` finishes the rest\n";
+                       orchestrator's `just release --refresh` finishes the rest\n  `just \
+                       symphony-cli release-notes` in the project says what taking the release \
+                       asks of it\n";
         assert_eq!(
             refresh_status(&[older, newer.clone(), after], NOW),
             format!(

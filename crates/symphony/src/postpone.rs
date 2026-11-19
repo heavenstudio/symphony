@@ -126,7 +126,9 @@ impl View {
         let positions = apply_cards(root, owner, &self.cards, &mut waiting, now)?;
         // Group-local slots are useful to callers of apply, but the mixed queue combines
         // groups. Restore the owner's global Later order before interleaving categories.
-        waiting.sort_by_key(|card| positions.get(&key(&card.doc, &card.slug)).copied());
+        symphony_board::order::sort_by_key(&mut waiting, &|card| {
+            positions.get(&key(&card.doc, &card.slug)).copied()
+        });
         Ok(mixed(waiting))
     }
 }
@@ -134,7 +136,7 @@ impl View {
 /// Round-robin the document folders, oldest first within each. Postponed cards keep their
 /// preference order after ordinary cards in their category; timestamp ties retain triage order.
 pub(crate) fn mixed(mut waiting: Vec<Card>) -> Vec<Card> {
-    waiting.sort_by(|a, b| {
+    symphony_board::order::sort_by(&mut waiting, &|a, b| {
         a.postponed.cmp(&b.postponed).then_with(|| {
             if a.postponed {
                 std::cmp::Ordering::Equal
@@ -163,31 +165,34 @@ pub(crate) fn mixed(mut waiting: Vec<Card>) -> Vec<Card> {
 }
 
 fn eligible(docs: &[Doc], plugins: &Plugins) -> BTreeMap<String, Entry> {
-    docs.iter()
-        .flat_map(|doc| {
-            doc.decisions.iter().filter_map(|card| {
-                let group = card.group(plugins);
-                matches!(group, Group::Decide | Group::Confirm).then(|| {
-                    (
-                        key(&doc.path, &card.slug),
-                        Entry {
-                            path: doc.path.clone(),
-                            group: group.key().into(),
-                            owner_lines: card
-                                .entries()
-                                .into_iter()
-                                .filter(|e| e.who == Who::Owner)
-                                .map(|e| format!("{:?}", e))
-                                .collect(),
-                            until: 0,
-                            position: 0,
-                            remaining: BTreeSet::new(),
-                        },
-                    )
-                })
+    let entries = docs.iter().flat_map(|doc| {
+        doc.decisions.iter().filter_map(|card| {
+            let group = card.group(plugins);
+            matches!(group, Group::Decide | Group::Confirm).then(|| {
+                (
+                    key(&doc.path, &card.slug),
+                    Entry {
+                        path: doc.path.clone(),
+                        group: group.key().into(),
+                        owner_lines: card
+                            .entries()
+                            .into_iter()
+                            .filter(|e| e.who == Who::Owner)
+                            .map(|e| format!("{:?}", e))
+                            .collect(),
+                        until: 0,
+                        position: 0,
+                        remaining: BTreeSet::new(),
+                    },
+                )
             })
         })
-        .collect()
+    });
+    let mut eligible = BTreeMap::new();
+    for (key, entry) in entries {
+        eligible.insert(key, entry);
+    }
+    eligible
 }
 
 fn prune(order: &mut Order, cards: &BTreeMap<String, Entry>, now: u64) {
@@ -255,7 +260,7 @@ fn apply_cards(
                 card.postponed = entries
                     .is_some_and(|entries| entries.contains_key(&key(&card.doc, &card.slug)));
             }
-            values.sort_by_key(|card| {
+            symphony_board::order::sort_by_key(&mut values, &|card| {
                 entries
                     .and_then(|entries| entries.get(&key(&card.doc, &card.slug)))
                     .map_or((false, 0), |entry| (true, entry.position))
@@ -423,4 +428,101 @@ pub fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use super::*;
+
+    fn card(slug: &str, category: &str, postponed: bool) -> Card {
+        serde_json::from_value(serde_json::json!({
+            "slug":slug, "doc":format!("docs/{category}/A.md"), "doc_title":"A",
+            "title":slug, "why":"", "postponed":postponed
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn mixed_preserves_triage_and_later_ties_while_interleaving_categories() {
+        let cards = vec![
+            card("later-first", "one", true),
+            card("ordinary-first", "one", false),
+            card("other-first", "two", false),
+            card("ordinary-second", "one", false),
+            card("later-second", "one", true),
+            card("other-later", "two", true),
+        ];
+        assert_eq!(
+            mixed(cards)
+                .iter()
+                .map(|card| card.slug.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "ordinary-first",
+                "other-first",
+                "ordinary-second",
+                "other-later",
+                "later-first",
+                "later-second"
+            ]
+        );
+        assert!(mixed(Vec::new()).is_empty());
+        assert_eq!(mixed(vec![card("only", "one", false)])[0].slug, "only");
+    }
+
+    #[test]
+    fn shared_card_order_has_bounded_comparisons_and_reports_cpu_cost() {
+        let count = 1024;
+        let mut rows: Vec<_> = (0..count)
+            .rev()
+            .map(|index| {
+                let mut row = card(&index.to_string(), "one", false);
+                row.posted = Some((index % 31).to_string());
+                row
+            })
+            .collect();
+        let mut expected = rows.clone();
+        let (_, standard_cpu) = test_time::cpu::spent(|| {
+            expected.sort_by(|a, b| a.posted.cmp(&b.posted));
+        });
+        let comparisons = std::cell::Cell::new(0);
+        let (_, shared_cpu) = test_time::cpu::spent(|| {
+            symphony_board::order::sort_by(&mut rows, &|a, b| {
+                comparisons.set(comparisons.get() + 1);
+                a.posted.cmp(&b.posted)
+            });
+        });
+        assert_eq!(rows, expected);
+        assert!(comparisons.get() < count * 64);
+        eprintln!(
+            "card sort: n={count}, payload_bytes={}, position_bytes={}, comparisons={}, standard_thread_cpu={standard_cpu:?}, shared_thread_cpu={shared_cpu:?}; positions also use the standard usize sort scratch",
+            std::mem::size_of::<Card>(),
+            count * std::mem::size_of::<usize>(),
+            comparisons.get()
+        );
+    }
+
+    #[test]
+    fn eligibility_keeps_lexical_keys_and_the_last_copy_of_a_card() {
+        let doc = |text: &str| Doc {
+            path: "docs/A.md".into(),
+            comments: Vec::new(),
+            decisions: crate::register::parse_decisions(&text.lines().collect::<Vec<_>>()),
+        };
+        let cards = eligible(
+            &[
+                doc("- [ ] **z** — Last key.\n- [ ] **a** — First copy.\n"),
+                doc(
+                    "- [?] **a** — Last copy.\n  [2026-10-20 11:00] owner · question — Newer.\n  [2026-10-20 12:00] agent — Answer.\n- [x] **done** — Settled.\n",
+                ),
+            ],
+            &Plugins::default(),
+        );
+        let keys: Vec<_> = cards.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["a", "z"]);
+        assert_eq!(cards["a"].owner_lines.len(), 1);
+        assert!(cards["a"].owner_lines[0].contains("Newer."));
+        assert!(!cards["a"].owner_lines[0].contains("Older."));
+        assert!(eligible(&[], &Plugins::default()).is_empty());
+    }
 }

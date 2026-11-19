@@ -222,7 +222,8 @@ fn a_board_ahead_of_this_build_is_read_with_nothing_written_and_said_on_every_pa
         super::health::read_only(schema),
         format!(
             "The task board is at schema {schema}, ahead of this Symphony's {}: it is read, and \
-             nothing is written to it from here, until a Symphony at schema {schema} serves it.",
+             nothing is written to it from here, until a Symphony at schema {schema} serves it. A \
+             verdict or a message saved now is kept, and reaches no agent until then.",
             symphony_board::SCHEMA
         )
     );
@@ -1246,5 +1247,34 @@ fn a_hub_whose_project_was_removed_appends_no_hour_as_it_stops() {
                 (HOUR_START + 30.5, true, 2)
             );
         }
+    }
+}
+
+#[test]
+fn low_disk_environment_map_keeps_filter_empty_and_last_duplicate_values() {
+    let name = symphony_env::LOW_DISK_GB.name;
+    for pairs in [
+        vec![],
+        vec![(name.to_string(), "0".to_string())],
+        vec![
+            (name.to_string(), "10".to_string()),
+            ("OTHER".to_string(), "999".to_string()),
+            (name.to_string(), "malformed".to_string()),
+        ],
+    ] {
+        let expected: std::collections::BTreeMap<_, _> = pairs
+            .clone()
+            .into_iter()
+            .filter(|(key, _)| key == name)
+            .collect();
+        let mut actual = std::collections::BTreeMap::new();
+        for (key, value) in pairs.into_iter().filter(|(key, _)| key == name) {
+            actual.insert(key, value);
+        }
+        assert_eq!(actual, expected);
+        assert_eq!(
+            symphony_board::board_health::disk::threshold(&actual),
+            symphony_board::board_health::disk::threshold(&expected)
+        );
     }
 }

@@ -7,8 +7,10 @@ use std::io::Write;
 use std::path::Path;
 
 mod crates_check;
+mod exec_test;
 mod size_budget;
 mod synced;
+pub(crate) mod test_stalls;
 
 /// Its name, as its usage and its refusals say it.
 const NAME: &str = "symphony-build";
@@ -24,7 +26,7 @@ const HEAD: &str = "usage: symphony-build COMMAND [ARGS]...\n\n\
 const LISTED: &str = "`symphony-build help`";
 
 /// Its commands, in the order its usage names them, each with what it does.
-const COMMANDS: [(&str, &str); 5] = [
+const COMMANDS: [(&str, &str); 8] = [
     (
         "publish-client",
         "publish a built client into the server's embedded copy",
@@ -39,7 +41,19 @@ const COMMANDS: [(&str, &str); 5] = [
     ),
     (
         "synced",
-        "time each page from its open to synced on a returning browser",
+        "time each page from open to synced on a returning browser",
+    ),
+    (
+        "exec-test-binary",
+        "run a shared library test image with Cargo's environment",
+    ),
+    (
+        "test-stalls",
+        "annotate nextest stalls with their backstop and load",
+    ),
+    (
+        "consumer-notes",
+        "show release notes for projects, or check a branch",
     ),
     (
         "release",
@@ -49,7 +63,7 @@ const COMMANDS: [(&str, &str); 5] = [
 
 /// The usage of its commands that read no options of their own, and what their help says after
 /// their line: what `--help` or `-h` anywhere on their command line prints ([`plain_help`]).
-const PLAIN: [(&str, &str, &str); 3] = [
+const PLAIN: [(&str, &str, &str); 4] = [
     (
         "publish-client",
         "usage: symphony-build publish-client STAGE PUBLIC",
@@ -62,12 +76,27 @@ const PLAIN: [(&str, &str, &str); 3] = [
     ),
     (
         "crates-check",
-        "usage: symphony-build crates-check [ROOT]",
+        "usage: symphony-build crates-check [--branch] [ROOT]",
         "ROOT is the workspace (default: the current folder). A version crates.io\n\
          lacks has nothing to compare with; one it holds is packaged here, in the\n\
          build folder, and compared file by file with that version there: one whose\n\
          sources moved while its version did not is red (exit 1). A registry it cannot\n\
-         read is exit 2.\n",
+         read is exit 2. With --branch it checks only the published packages the\n\
+         checkout changes since it left the default branch, and reads nothing for a\n\
+         branch that changes none; a crates.io that gives it no answer is said on\n\
+         stderr, the packages named as not checked, and is exit 0.\n",
+    ),
+    (
+        "consumer-notes",
+        crate::release::consumer::USAGE,
+        "ROOT is the repository (default: the current folder). It prints the notes of\n\
+         every release tagged there, oldest first, as a release's install writes\n\
+         them, and under `unreleased` what the commits since the newest would say.\n\
+         With --check it reads the branch checked out there against the default\n\
+         branch: one that moves the board schema, takes a call out of a consumer-API\n\
+         guard or a key out of the settings reference with no Consumer-Note trailer\n\
+         saying what a project does, or with a trailer that reads as no entry, is\n\
+         red (exit 1).\n",
     ),
 ];
 
@@ -86,6 +115,9 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         Some("size-budget") => size_budget::main(rest, out, err),
         Some("crates-check") => crates_check::main(rest, out, err),
         Some("synced") => synced::main(rest, out, err),
+        Some("exec-test-binary") => exec_test::main(rest, out, err),
+        Some("test-stalls") => test_stalls::main(rest, &mut std::io::stdin().lock(), out, err),
+        Some("consumer-notes") => crate::release::consumer::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => {
             let _ = writeln!(err, "{}", unknown(name));
@@ -264,6 +296,9 @@ mod tests {
                 "size-budget",
                 "crates-check",
                 "synced",
+                "exec-test-binary",
+                "test-stalls",
+                "consumer-notes",
                 "release",
             ]
         );
@@ -337,7 +372,7 @@ mod tests {
         );
         let (code, out, err) = built(&["help", "crates-check"]);
         assert_eq!((code, err.as_str()), (0, ""));
-        assert!(out.ends_with("read is exit 2.\n"), "{out}");
+        assert!(out.ends_with("as not checked, and is exit 0.\n"), "{out}");
         for args in [&["help", "release"][..], &["release", "--help"]] {
             let (code, out, err) = built(args);
             assert_eq!((code, err.as_str()), (0, ""), "{args:?}");

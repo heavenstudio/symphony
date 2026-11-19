@@ -9,7 +9,7 @@ mod args;
 pub mod attach;
 mod beat;
 mod commands;
-mod database;
+pub(crate) mod database;
 mod detached;
 mod field;
 pub mod machine_work;
@@ -17,6 +17,7 @@ mod migrate;
 pub mod probes;
 pub mod pull;
 pub(crate) mod recorder;
+pub mod recovery;
 mod schema;
 mod search;
 mod shape;
@@ -209,12 +210,20 @@ fn run(
     if args.first().is_some_and(|arg| arg == database::COMMAND) {
         return database::run(&args[1..], env, out, err);
     }
+    // Before the board's argument table too: its revoke opens no board, as it comes before
+    // restored data is served.
+    if args.first().is_some_and(|arg| arg == recovery::COMMAND) {
+        return recovery::run(&args[1..], env, out, err);
+    }
     let board = || connect(env).map(|store| detaching(store, env, program));
+    // The api's store answers to the board home's recovery authority, so its bound calls are
+    // taken; every other command makes none.
+    let bound = || board().map(|store| recovery::recovering(store, env));
     if args.len() == 1 && args[0] == "api" {
-        return api::run_in(input, out, board, Some(env));
+        return api::run_in(input, out, bound, Some(env));
     }
     if args.len() == 2 && args[0] == "api" && args[1] == "--lines" {
-        return api::serve_in(&mut std::io::BufReader::new(input), out, board, Some(env));
+        return api::serve_in(&mut std::io::BufReader::new(input), out, bound, Some(env));
     }
     // Every line the parse suggests begins with the command that reaches this board, however its
     // server and database were chosen, so typed again in any shell it reaches the same board.
@@ -487,6 +496,19 @@ pub struct Reached {
 }
 
 impl Reached {
+    /// A client of this board's selected engine. The existing `client` remains available for
+    /// consumers that name SurrealDB alone; new readers use this database-neutral entry.
+    pub fn database(&self) -> crate::Database {
+        named_database(
+            Client::new(
+                self.client.addr(),
+                self.client.namespace(),
+                self.client.database(),
+            )
+            .waiting(self.client.wait_limit()),
+        )
+    }
+
     /// `how`, naming this board's project and opening it as the live board it is, if it is one: a
     /// store opened by it refuses a live board that went back ([`crate::live::seen`]).
     pub fn opening(&self, how: crate::Opening) -> crate::Opening {
@@ -556,7 +578,7 @@ enum Reaching {
 const READ_WAIT: Duration = Duration::from_secs(5);
 
 /// The machine folder `env` names ([`crate::project::machine_folder`]), if it names one.
-fn machine(env: &Env) -> Option<PathBuf> {
+pub(crate) fn machine(env: &Env) -> Option<PathBuf> {
     crate::project::machine_folder(
         |name| env.var(name).map(std::ffi::OsString::from),
         cfg!(target_os = "macos"),
@@ -633,19 +655,19 @@ fn reach_board(
     if let Some(hold) = home.held() {
         return Err(crate::server::ServerError::Held(hold).to_string());
     }
-    let running = if !matches!(how, Reaching::Running | Reaching::Peek) {
-        home.ensure().map_err(|error| match error {
+    let running = home
+        .board_server(
+            &project.place.root,
+            !matches!(how, Reaching::Running | Reaching::Peek),
+        )
+        .map_err(|error| match error {
             // Where the board's server comes from is the project's board guide's to say.
             crate::server::ServerError::NoSurreal(_)
             | crate::server::ServerError::Unserved { .. } => {
                 format!("{error} ({}#where-it-lives)", project.guide())
             }
             error => error.to_string(),
-        })?
-    } else {
-        home.recorded()
-            .ok_or_else(|| format!("no server of the board in {}", home.dir().display()))?
-    };
+        })?;
     Ok(Reached {
         client: Client::new(&running.addr, NAMESPACE, db),
         project: Some(project.id),
@@ -657,7 +679,9 @@ fn reach_board(
 /// reaches the existing server; no configured or live board is switched by this adapter.
 fn named_database(client: Client) -> crate::Database {
     match client.addr().strip_prefix("postgresql:") {
-        Some(socket) => crate::pg::Client::new(Path::new(socket), client.database()).into(),
+        Some(socket) => crate::pg::Client::new(Path::new(socket), client.database())
+            .waiting(client.wait_limit())
+            .into(),
         None => client.into(),
     }
 }
@@ -672,13 +696,23 @@ fn open(reached: Reached, clock: &Clock) -> Result<Store, String> {
 /// As [`open`], by `how` (`tasks migrate`'s, which may move a live board). Its refusals name a
 /// scratch board as `tasks` and `agent-send` take it, `--database NAME`.
 fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store, String> {
+    let database = reached.database();
+    open_as_database(reached, database, clock, how)
+}
+
+fn open_as_database(
+    reached: Reached,
+    database: crate::Database,
+    clock: &Clock,
+    how: crate::Opening,
+) -> Result<Store, String> {
     let (clock, probe, host) = parts(clock);
     let how = how
         .of(reached.project.as_deref())
         .live(reached.live)
         .scratch(crate::live::SCRATCH_FLAG);
     let named = reached.project.is_none();
-    Store::opening_on(named_database(reached.client), clock, probe, &host, &how)
+    Store::opening_on(database, clock, probe, &host, &how)
         .map(|store| naming(store, named))
         .map_err(|e| e.to_string())
 }
@@ -688,8 +722,16 @@ fn open_as(reached: Reached, clock: &Clock, how: crate::Opening) -> Result<Store
 /// A live board that went back below its record is refused in the rollback's words, its schema read
 /// once when there is a record ([`crate::live::seen::checked`]).
 fn open_unchecked(reached: Reached, clock: &Clock) -> Result<Store, String> {
-    not_gone_back(&reached)?;
-    Ok(unchecked(reached, clock))
+    let live = reached.live.clone();
+    let store = unchecked(reached, clock);
+    if let Some(live) = live
+        && let Some(back) = crate::live::seen::checked(&live, || {
+            store.board_version().map_err(|why| why.to_string())
+        })?
+    {
+        return Err(back.refusal());
+    }
+    Ok(store)
 }
 
 /// Refused in the rollback's words when `reached` is a live board that went back below its record,
@@ -707,15 +749,17 @@ fn not_gone_back(reached: &Reached) -> Result<(), String> {
 /// record is above this build's ([`crate::live::seen::past_guard`]), since below it the schema guard
 /// refuses the beat's write to a board that went back.
 fn open_beating(reached: Reached, clock: &Clock) -> Result<Store, String> {
-    if let Some(live) = &reached.live
+    let live = reached.live.clone();
+    let store = unchecked(reached, clock);
+    if let Some(live) = &live
         && let Some(back) =
             crate::live::seen::past_guard(live, crate::Schema::this_build().version(), || {
-                migrate::version(&reached.client)
+                store.board_version().map_err(|why| why.to_string())
             })?
     {
         return Err(back.refusal());
     }
-    Ok(unchecked(reached, clock))
+    Ok(store)
 }
 
 /// The board `reached`, its tables taken as they are, by no check of its own.

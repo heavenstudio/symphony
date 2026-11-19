@@ -48,9 +48,13 @@ INSERT INTO link (id, slug, kind, target) \
 /// `v ->> 'slug'`'s task with `path` of its fields set to `value`, a `jsonb` expression.
 pub(in crate::store) fn field_set(path: &str, value: &str) -> String {
     format!(
-        "UPDATE task SET fields = board_set(fields, '{{{path}}}', {value}) WHERE slug = v ->> 'slug';"
+        "UPDATE task SET fields = board_fields(id, fields, '{{{path}}}', {value}) WHERE slug = v ->> 'slug';"
     )
 }
+
+/// What a rule's write sets the mark of a task approved and not landed to: when its approve was
+/// given, or nothing, which lifts it, where the change's `unlanded` is null.
+pub(in crate::store) const UNLANDED: &str = "nullif(v -> 'unlanded', 'null'::jsonb)";
 
 /// The write's refusal unless its actor is a red's filer: `filer` and `unfiled`.
 pub(in crate::store) const FILED: &str = "IF (SELECT kind FROM session WHERE handle = v ->> 'actor') IS DISTINCT FROM v ->> 'filer' THEN \
@@ -157,7 +161,7 @@ pub(in crate::store) fn reason_written() -> String {
 }
 
 /// What a block waited on removed from `v ->> 'slug'` once a write took it out of blocked.
-pub(in crate::store) const UNBLOCKED: &str = "UPDATE task SET fields = board_set(fields, '{_board,blocked}', NULL) \
+pub(in crate::store) const UNBLOCKED: &str = "UPDATE task SET fields = board_fields(id, fields, '{_board,blocked}', NULL) \
     WHERE slug = v ->> 'slug' AND status <> 'blocked' AND fields #> '{_board,blocked}' IS NOT NULL;";
 
 /// Every task's slug and parent: the tree, read whole.
@@ -257,9 +261,9 @@ BEGIN \
     END LOOP; \
 END; \
 UPDATE task SET version = version + 1, \
-    fields = board_set(fields, '{{{FIELDS},{WAITING}}}', v -> 'now') \
+    fields = board_fields(id, fields, '{{{FIELDS},{WAITING}}}', v -> 'now') \
     WHERE slug IN (SELECT jsonb_array_elements_text(v -> 'marks')); \
-UPDATE task SET version = version + 1, fields = board_set(fields, '{{{FIELDS},{WAITING}}}', NULL) \
+UPDATE task SET version = version + 1, fields = board_fields(id, fields, '{{{FIELDS},{WAITING}}}', NULL) \
     WHERE slug IN (SELECT jsonb_array_elements_text(v -> 'unmarks'));",
         fenced("SELECT jsonb_array_elements_text(v -> 'receivers')"),
         logged(
@@ -430,7 +434,7 @@ BEGIN \
     END IF; \
     {FILED} \
     IF task_.red IS NULL OR task_.priority > 0 THEN \
-        UPDATE task SET fields = board_set(fields, '{{_board,red}}', v -> 'red'), priority = 0, \
+        UPDATE task SET fields = board_fields(id, fields, '{{_board,red}}', v -> 'red'), priority = 0, \
             version = version + 1 WHERE slug = v ->> 'slug'; \
         {} \
     END IF; \
@@ -453,7 +457,7 @@ BEGIN \
     {RED_READ} \
     {FILED} \
     IF task_.red IS NOT NULL AND task_.status NOT IN ('done', 'cancelled') THEN \
-        UPDATE task SET fields = board_set(fields, '{{_board,red}}', NULL), version = version + 1 \
+        UPDATE task SET fields = board_fields(id, fields, '{{_board,red}}', NULL), version = version + 1 \
             WHERE slug = v ->> 'slug'; \
         {} \
     END IF; \

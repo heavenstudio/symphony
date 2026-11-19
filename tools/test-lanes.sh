@@ -1,146 +1,131 @@
 #!/usr/bin/env bash
-# [--list]: every test of the workspace, as the tests step of `just verify` runs them (tools/verify.sh;
-# docs/CHECKS.md, "The tests side by side"): built once, then run in lanes side by side.
-#
-# The build is `cargo test --workspace --locked --no-fail-fast --no-run`, what `cargo test
-# --workspace` builds, through tools/cargo.sh as every cargo here. Each lane is then one `cargo test
-# --workspace --locked --no-fail-fast` over the targets it names (LANES below), never a package of
-# its own, so its targets keep the build's features. The build and every lane give build scripts,
-# proc macros and their dependencies the debug info of the rest of the build (`--config
-# profile.dev.build-override.debug="line-tables-only"`): without it a dependency that a lane's
-# targets use only through those is another unit than the build's, which shares it with a normal
-# dependency, and the lane would build its crates again and link its binaries anew while other
-# lanes run them. With it every lane's units are the build's, and no lane builds anything.
-#
-# At most half the processors online run lanes at once (`getconf _NPROCESSORS_ONLN`, at least one;
-# one when the system says no number): each of that many slots takes the next lane no slot has
-# taken, in LANES' order, until none is left.
-#
-# Each lane writes its output as it runs to a log of its own, NAME.log in the folder
-# SYMPHONY_TEST_LANE_LOGS names (verify names one beside the step's log; a relative one is the
-# workspace's), else build/test-lanes, where a run first removes the logs of an earlier one. Before
-# any lane starts it says where each lane's log is, so a run stopped before its end (the release
-# run's stop ends with SIGKILL) leaves every lane's output named; the red's reader takes the lanes
-# and how many run at once from those lines, to say files of the build found gone went while those
-# lanes ran, not while the target before in the log's order did. Once every lane has ended their
-# logs follow each other whole on stdout in LANES' order, each target's output in one piece as a
-# red's reader reads it, a target at a time (crates/symphony-build/src/release/rerun.rs), then
-# every red lane's targets that failed as one list in cargo's words, `error: N targets failed:`:
-# the last list that reader keeps (crates/symphony-build/src/release/failures.rs).
-#
-# A lane is green only when it said the exit status 0. A red lane's targets that failed are cargo's
-# list ending its log when cargo ended as it does on failed targets (101); any other red lane
-# (killed by a signal, cargo failing before any target, a lane that said no status or one that is
-# no number) is named by a line after its output in cargo's words, `error: the lane NAME is red
-# (…), to rerun pass `--workspace TARGETS``, and its targets are one entry of that list. It exits as
-# the build did when that failed, running no lane; else as the first red lane did, in LANES' order
-# (1 for a status it cannot read); else 0. An interrupt (Ctrl-C), SIGTERM or SIGHUP reaches the lanes
-# too: it waits for them to end, prints what they wrote and exits 128 and the signal's number.
-#
-# The lanes share no port or store: every server, store and browser a test starts takes a port the
-# system picks and a folder of its own. The one target writing the build folder, the client's `build`
-# (apps/symphony-web-tests), whose `tools/rs-bin.sh --build symphony-build` links that binary there
-# again, is in `rest` with
-# standalone, which copies the build folder whole, and with every target of symphony-build and
-# symphony-app, whose tests run that binary and whose binaries a lane's cargo links again as it
-# starts: no other lane starts one. The browser's lane writes the build folder too when
-# SYMPHONY_UI_DIST names no client: its own client build (apps/symphony-web/build.sh)
-# runs `tools/rs-bin.sh --build symphony-build`, which can link that
-# binary there again while `rest` runs it. Verify names the client its client check built, so only
-# a verify whose client check built none leaves it to the browser's lane. The binaries the tests would otherwise build for themselves, each under
-# its case's clock, are the build's own: SYMPHONY_TEST_TASKS_BINARY names its `tasks`,
-# SYMPHONY_TEST_BINARIES the folder of its binaries, unless the caller names them.
-#
-# `--list` prints each lane that would run, its name and then its targets as cargo takes them, and
-# runs nothing but `cargo metadata`. Bash 3.2 (macOS's /bin/bash) runs it.
+# [--list | --inputs | LANE...]: the release tests step. One nextest build and scheduler over the
+# workspace, with Cargo only for doctests and the suites whose process-wide fixture must stay shared.
+# Named LANEs run alone (`build`, `fixture`, `nextest`, a shared target, `libraries`, `doc`), as a
+# release candidate's rerun asks for the lanes whose inputs a fix changed (docs/RELEASES.md, "The
+# rerun"); the one build and the client are made whatever the lanes. Each lane that ran is listed
+# in lanes.tsv beside the logs as it is told: its name, exit status and seconds, tab-separated.
+# `--inputs` says what each lane reads ([`reads`]) and runs nothing.
+# The client's build test runs before scheduling because it writes the build folder. Browser
+# tests receive one published client, and tests receive the build's tasks and other binaries.
+# Every concurrent batch keeps a live log in SYMPHONY_TEST_LANE_LOGS (else build/test-lanes).
+# Native batches keep Cargo's feature graph and build-script debug info, so none relinks while
+# another runs. A failed nextest case is a libtest-json-plus 0.1 event; a native failure keeps
+# Cargo's output. The release readers understand both in the same recorded tests step.
+# No retries. Signals reach every batch through the foreground pipeline, whose processes are
+# reaped before this script exits. Bash 3.2 (macOS's /bin/bash) runs it.
 set -uo pipefail
 
 root="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$root" || exit 2
 list=''
+inputs=''
+only=()
+usage() {
+    printf 'usage: tools/test-lanes.sh [--list | --inputs | LANE...]\n' >&2
+    exit 2
+}
 case "$#:${1:-}" in
     0:) ;;
     1:--list) list=1 ;;
+    1:--inputs) inputs=1 ;;
     *)
-        printf 'usage: tools/test-lanes.sh [--list]\n' >&2
-        exit 2
+        for arg in "$@"; do
+            case "$arg" in -*) usage ;; esac
+        done
+        only=("$@")
         ;;
 esac
 
-# LANES: each lane's name, then the test targets it runs, by the names cargo's `--test` takes. A name
-# no package has is left out, so a target renamed runs in `rest`, which runs every test target no
-# other lane names; `units` runs the libraries' and binaries' own tests and each example and bench
-# cargo tests, `doc` the doc tests. A lane left with nothing to run is not started.
-lanes=(
-    'perf perf'
-    'sweep sweep'
-    'browser browser'
-    'board cli server store launch launcher child_guard'
-    'server after_access after_host_origin after_http after_lifecycle after_reload'
-    'units'
-    'rest'
-    'doc'
-)
-run=(test --config 'profile.dev.build-override.debug="line-tables-only"' --workspace --locked
-    --no-fail-fast)
+# The process-scoped servers/templates (including transitive imports of store/common.rs),
+# perf's generated board, and the browser's build gzip cache. Only these integration targets
+# stay in Cargo; every other target, new targets included, belongs to nextest.
+shared_tests=(perf sweep cli server store launch release after_commit after_publication
+    after_worktrees hooks picks project after_http browser)
+shared_libraries=(symphony-board symphony-app symphony-server)
+live_fixture=release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test
+filter='not (kind(test) & binary(=build))'
+filter="$filter & not (kind(lib) & package(=symphony-build) & test(=$live_fixture))"
+for target in "${shared_tests[@]}"; do
+    filter="$filter & not (kind(test) & binary(=$target))"
+done
+for package in "${shared_libraries[@]}"; do
+    filter="$filter & not (kind(lib) & package(=$package))"
+done
 
-# The workspace's targets that `cargo test` runs besides its libraries and binaries: KIND NAME a
-# line, KIND test, example or bench, each with `test = true` (an integration test's default).
-if ! targets="$(tools/cargo.sh metadata --no-deps --format-version 1 --locked | jq -r '
-        .packages[].targets[]
-        | select(.test and (.kind == ["test"] or .kind == ["example"] or .kind == ["bench"]))
-        | "\(.kind[0]) \(.name)"' | sort -u)"; then
-    printf "test-lanes: cannot list the workspace's test targets (cargo metadata, jq)\n" >&2
-    exit 2
-fi
-
-# Each lane's name and its targets as cargo takes them, in LANES' order; `rest`'s filled last.
-names=()
-picks=()
-claimed=' '
-rest=-1
-for lane in "${lanes[@]}"; do
-    # shellcheck disable=SC2086 # a lane's words
-    set -- $lane
-    name="$1"
-    shift
-    pick=''
-    case "$name" in
-        units)
-            pick='--lib --bins'
-            while read -r kind target; do
-                case "$kind" in example | bench) pick="$pick --$kind $target" ;; esac
-            done <<<"$targets"
-            ;;
-        doc) pick='--doc' ;;
-        rest) rest="${#names[@]}" ;;
+# Every lane by name, in the order it runs.
+every=(build fixture nextest "${shared_tests[@]}" libraries doc)
+for lane in "${only[@]-}"; do
+    [ -n "$lane" ] || continue
+    case " ${every[*]} " in
+        *" $lane "*) ;;
         *)
-            for target in "$@"; do
-                if printf '%s\n' "$targets" | grep -qxF "test $target"; then
-                    pick="$pick --test $target"
-                    claimed="$claimed$target "
-                fi
-            done
+            printf 'test-lanes: no lane %s; the lanes are %s\n' "$lane" "${every[*]}" >&2
+            exit 2
             ;;
     esac
-    names+=("$name")
-    picks+=("${pick# }")
 done
-if [ "$rest" -ge 0 ]; then
-    pick=''
-    while read -r kind target; do
-        case "$claimed" in *" $target "*) continue ;; esac
-        if [ "$kind" = test ]; then pick="$pick --test $target"; fi
-    done <<<"$targets"
-    picks[rest]="${pick# }"
-fi
+# NAME: whether the lane NAME runs: every lane, or the ones named.
+wanted() {
+    [ "${#only[@]}" -eq 0 ] && return 0
+    case " ${only[*]} " in *" $1 "*) return 0 ;; esac
+    return 1
+}
 
-if [ -n "$list" ]; then
-    for i in "${!names[@]}"; do
-        if [ -n "${picks[i]}" ]; then printf '%s %s\n' "${names[i]}" "${picks[i]}"; fi
+# NAME: what the lane NAME reads, a line each, for the digest a release candidate's rerun carries
+# its green by (tools/check-inputs.sh): `test TARGET` and `package NAME` are derived, the folders
+# of the packages that target or package builds with, from `cargo metadata`; `path PATH` is a path
+# its tests read outside those; `tree` is the whole tree, which is never narrower than the commit.
+# Every lane reads the tree outside apps/ and crates/ besides, which that script adds. A lane
+# whose tests run another package's binary names that package; one that cannot be bounded says
+# `tree`.
+reads() {
+    case "$1" in
+        build) printf 'test build\npackage symphony-server\npath apps/symphony-web\n' ;;
+        fixture) printf 'package symphony-build\n' ;;
+        # Every other target of the workspace, and every doctest: the workspace.
+        nextest | doc) printf 'tree\n' ;;
+        # It reads every tracked file.
+        hooks) printf 'tree\n' ;;
+        # The server's binary over the client built from its sources.
+        browser) printf 'test browser\npackage symphony-server\npath apps/symphony-web\n' ;;
+        after_http) printf 'test after_http\npath apps/symphony-web\n' ;;
+        # Its tests of this script read a log the release readers keep as a fixture.
+        cli) printf 'test cli\npath crates/symphony-build/src/release/fixtures\n' ;;
+        libraries)
+            printf 'package %s\n' "${shared_libraries[@]}"
+            printf 'path apps/symphony-web\n'
+            ;;
+        *) printf 'test %s\n' "$1" ;;
+    esac
+}
+if [ -n "$inputs" ]; then
+    for lane in "${every[@]}"; do
+        reads "$lane" | while IFS= read -r line; do
+            printf '%s\t%s\t%s\n' "$lane" "${line%% *}" "$([ "$line" = tree ] || printf '%s' "${line#* }")"
+        done
     done
     exit 0
 fi
+names=()
+picks=()
+if wanted nextest; then
+    names+=(nextest)
+    picks+=("$filter")
+fi
+run=(test --config 'profile.dev.build-override.debug="line-tables-only"' --workspace --locked
+    --no-fail-fast)
+if [ -n "$list" ]; then
+    printf 'nextest %s\n' "$filter"
+    printf 'cargo --test build (before scheduling)\n'
+    printf 'cargo --lib -- --ignored --exact %s (before scheduling)\n' "$live_fixture"
+    for target in "${shared_tests[@]}"; do printf 'cargo --test %s\n' "$target"; done
+    printf 'cargo --lib (exec adapter selects %s)\n' "${shared_libraries[*]}"
+    printf 'doc --doc\n'
+    exit 0
+fi
+# No setup, network access or alternate runner from PATH during a test run.
+tools/nextest.sh --check || exit "$?"
 
 logs="${SYMPHONY_TEST_LANE_LOGS:-build/test-lanes}"
 # No CDPATH: a cd it leads elsewhere prints the folder, which would make two lines of $logs.
@@ -155,10 +140,23 @@ trap 'interrupted=130' INT
 trap 'interrupted=143' TERM
 trap 'interrupted=129' HUP
 
-tools/cargo.sh "${run[@]}" --no-run
+# NAME CODE SECONDS: the lane NAME, as it ended, listed.
+listed() {
+    printf '%s\t%s\t%s\n' "$1" "$2" "$3" >>"$logs/lanes.tsv"
+}
+if ! : >"$logs/lanes.tsv"; then
+    printf 'test-lanes: cannot write %s\n' "$logs/lanes.tsv" >&2
+    exit 2
+fi
+
+tools/nextest.sh list --config 'profile.dev.build-override.debug="line-tables-only"' \
+    --workspace --locked --list-type binaries-only --message-format json >"$logs/binaries.json"
 built=$?
 if [ -n "$interrupted" ]; then exit "$interrupted"; fi
 if [ "$built" -ne 0 ]; then exit "$built"; fi
+
+# A test names its own terminal stand-in, or sees no terminals of this machine.
+export HC_BIN="${HC_BIN:-/usr/bin/false}"
 
 # The build's binaries, for the tests that would build their own.
 debug="${CARGO_TARGET_DIR:-$root/.target}"
@@ -169,11 +167,77 @@ if [ -z "${SYMPHONY_TEST_TASKS_BINARY:-}" ] && [ -f "$debug/tasks" ]; then
     export SYMPHONY_TEST_TASKS_BINARY="$debug/tasks"
 fi
 
-started=()
-for i in "${!names[@]}"; do
-    rm -f "$logs/${names[i]}.log" "$logs/${names[i]}.status"
-    if [ -n "${picks[i]}" ]; then started+=("$i"); fi
+# Run this before any test that executes symphony-build or copies the build folder. It keeps
+# Cargo's feature graph and build-override exactly the same as nextest's one build.
+first=0
+failed=()
+if wanted build && jq -e '."rust-binaries"[] | select(."binary-name" == "build" and .kind == "test")' \
+    "$logs/binaries.json" >/dev/null; then
+    began="$SECONDS"
+    tools/cargo.sh "${run[@]}" --test build
+    first=$?
+    if [ -n "$interrupted" ]; then exit "$interrupted"; fi
+    listed build "$first" "$((SECONDS - began))"
+    if [ "$first" -ne 0 ]; then failed+=('    `--workspace --test build`'); fi
+fi
+# This live tool regression is explicitly ignored in ordinary focused Cargo tests. The release
+# owns it here, by its exact name, after provisioning; absence is a real failure, never a skip.
+# Keep the workspace feature graph, profile and environment of the one build, before any readers.
+if wanted fixture && jq -e '."rust-binaries" | to_entries[] | select(.key == "symphony-build" and .value.kind == "lib")' \
+    "$logs/binaries.json" >/dev/null; then
+    began="$SECONDS"
+    tools/cargo.sh "${run[@]}" --lib -- --ignored --exact "$live_fixture"
+    fixture_code=$?
+    if [ -n "$interrupted" ]; then exit "$interrupted"; fi
+    listed fixture "$fixture_code" "$((SECONDS - began))"
+    if [ "$fixture_code" -ne 0 ]; then
+        if [ "$first" -eq 0 ]; then first="$fixture_code"; fi
+        printf 'error: the explicit runner fixture is red (exit %s), to rerun pass `-p symphony-build --lib -- --ignored %s --exact`\n' \
+            "$fixture_code" "$live_fixture"
+        failed+=('    `-p symphony-build --lib`')
+    fi
+fi
+# Without a verified client, publish one once before any browser or build-folder reader starts.
+if [ -z "${SYMPHONY_UI_DIST:-}" ]; then
+    bash apps/symphony-web/build.sh build/symphony-ui || exit "$?"
+    if [ -n "$interrupted" ]; then exit "$interrupted"; fi
+    export SYMPHONY_UI_DIST="$root/build/symphony-ui/public"
+fi
+
+# Cargo prepares the environment and cwd for library tests. Its Rust exec adapter selects only
+# the three shared-fixture libraries from authoritative artifact paths; nextest runs the rest.
+shared_json="$(printf '%s\n' "${shared_libraries[@]}" | jq -Rsc 'split("\n")[:-1]')"
+if ! jq --argjson shared "$shared_json" '."rust-binaries" | to_entries
+    | map(select(.value.kind == "lib") | {binary: .value["binary-path"],
+        shared: (.key as $id | $shared | index($id) != null)})' \
+    "$logs/binaries.json" >"$logs/shared-libraries.json"; then exit 2; fi
+for target in "${shared_tests[@]}"; do
+    if wanted "$target" && jq -e --arg name "$target" '."rust-binaries"[]
+        | select(."binary-name" == $name and .kind == "test")' "$logs/binaries.json" >/dev/null; then
+        names+=("$target")
+        picks+=("--test $target")
+    fi
 done
+library_runner=''
+if wanted libraries && jq -e 'any(.[]; .shared)' "$logs/shared-libraries.json" >/dev/null; then
+    host="$(jq -er '."rust-build-meta".platforms.host.platform.triple' "$logs/binaries.json")" || exit 2
+    runner="$(jq -cn --arg helper "$debug/symphony-build" --arg map "$logs/shared-libraries.json" \
+        '[$helper, "exec-test-binary", $map]')" || exit 2
+    library_runner="target.$host.runner=$runner"
+    names+=(libraries)
+    picks+=(--lib)
+fi
+if wanted doc; then
+    names+=(doc)
+    picks+=(--doc)
+fi
+started=()
+if [ "${#names[@]}" -gt 0 ]; then
+    for i in "${!names[@]}"; do
+        rm -f "$logs/${names[i]}.log" "$logs/${names[i]}.status" "$logs/${names[i]}.seconds"
+        started+=("$i")
+    done
+fi
 
 processors="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
 case "$processors" in
@@ -188,15 +252,30 @@ case "$processors" in
 esac
 if [ "$at_once" -lt 1 ]; then at_once=1; fi
 
-# I: the lane I, its output in its log and its exit status in NAME.status, which a signal that ends
-# it leaves unwritten.
+# I: the lane I, its output in its log, its exit status in NAME.status, which a signal that ends
+# it leaves unwritten, and the seconds it took in NAME.seconds.
 lane() {
+    local began="$SECONDS" code
     # shellcheck disable=SC2086 # the lane's targets, each a word
-    tools/cargo.sh "${run[@]}" ${picks[$1]} </dev/null >>"$logs/${names[$1]}.log" 2>&1
-    printf '%s\n' "$?" >|"$logs/${names[$1]}.status"
+    if [ "${names[$1]}" = nextest ]; then
+        NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 tools/nextest.sh run --profile release \
+            --binaries-metadata "$logs/binaries.json" --no-fail-fast --retries 0 \
+            --test-threads "${RUST_TEST_THREADS:-6}" --color never \
+            --message-format libtest-json-plus --message-format-version 0.1 \
+            --failure-output never --success-output never -E "$filter" \
+            </dev/null 2>&1 | "$debug/symphony-build" test-stalls "$root/.config/nextest.toml" \
+            >>"$logs/${names[$1]}.log" 2>>"$logs/${names[$1]}.log"
+    elif [ "${names[$1]}" = libraries ]; then
+        tools/cargo.sh "${run[@]}" --config "$library_runner" --lib </dev/null >>"$logs/${names[$1]}.log" 2>&1
+    else
+        tools/cargo.sh "${run[@]}" ${picks[$1]} </dev/null >>"$logs/${names[$1]}.log" 2>&1
+    fi
+    code=$?
+    printf '%s\n' "$((SECONDS - began))" >|"$logs/${names[$1]}.seconds"
+    printf '%s\n' "$code" >|"$logs/${names[$1]}.status"
 }
 
-# A slot: each lane no slot has taken, one after another in LANES' order, each in a shell of its
+# A slot: each batch no slot has taken, in the exceptions' listed order, each in a shell of its
 # own, so a lane that ends its shell ends no other. A slot takes a lane by making its log, which no
 # other slot then can (noclobber).
 slot() (
@@ -229,8 +308,6 @@ if [ "${#started[@]}" -gt 0 ]; then
     slots "$at_once"
 fi
 
-first=0
-failed=()
 for i in "${started[@]-}"; do
     if [ -z "$i" ]; then continue; fi
     name="${names[i]}"
@@ -244,8 +321,14 @@ for i in "${started[@]-}"; do
         code="$(cat "$logs/$name.status")"
         told=1
     fi
-    rm -f "$logs/$name.status"
-    if [ "$code" = 0 ]; then continue; fi
+    took=0
+    if [ -f "$logs/$name.seconds" ]; then took="$(cat "$logs/$name.seconds")"; fi
+    case "$took" in '' | *[!0-9]*) took=0 ;; esac
+    rm -f "$logs/$name.status" "$logs/$name.seconds"
+    if [ "$code" = 0 ]; then
+        listed "$name" 0 "$took"
+        continue
+    fi
     # A lane the interrupt cut short, or never let start, failed in nothing of its own.
     if [ -z "$told" ] && [ -n "$interrupted" ]; then continue; fi
     case "$code" in
@@ -263,7 +346,12 @@ for i in "${started[@]-}"; do
             code=1
             ;;
     esac
+    listed "$name" "$code" "$took"
     if [ "$first" -eq 0 ]; then first="$code"; fi
+    if [ "$name" = nextest ]; then
+        printf 'test-lanes: nextest ended red (exit %s); case events name test failures, other errors remain in its log\n' "$code"
+        continue
+    fi
     # The lane's own list: the lines of the `error: N target(s) failed:` that ends its log, which
     # cargo prints last when it ends on failed targets (101), never a list a test printed.
     own=()

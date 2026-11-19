@@ -21,7 +21,15 @@ const SOURCES: [&str; 3] = [
 
 /// Each struct a table is read into: the source holding it, from the workspace's root, its name,
 /// and the table as the reference's heading names it.
-const TABLES: [(&str, &str, &str); 16] = [
+/// The hosted board's settings, which the board reads and judges itself.
+const EXTERNAL: &str = "crates/tasks/src/pg/external.rs";
+
+const TABLES: [(&str, &str, &str); 20] = [
+    (
+        "crates/symphony-api/src/workflow.rs",
+        "Definition",
+        "[workflow]",
+    ),
     (FILE, "FileProject", "[project]"),
     (FILE, "FileEntrypoint", "[[entrypoints]]"),
     (FILE, "FilePlugins", "[plugins]"),
@@ -37,6 +45,13 @@ const TABLES: [(&str, &str, &str); 16] = [
         "[[land.generators]]",
     ),
     (SOURCES[1], "FileBoard", "[board]"),
+    (EXTERNAL, "Settings", "[board.external_postgresql]"),
+    (EXTERNAL, "Budget", "[board.external_postgresql.budget]"),
+    (
+        EXTERNAL,
+        "Class",
+        "[board.external_postgresql.budget.classes.CLASS]",
+    ),
     (SOURCES[1], "WipGuidance", "[board.machine_wip.MACHINE]"),
     (FILE, "FileReleases", "[releases]"),
     (FILE, "FileLimits", "[limits]"),

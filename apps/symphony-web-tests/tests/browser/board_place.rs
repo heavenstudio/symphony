@@ -858,8 +858,6 @@ fn back_from_a_task_draws_the_board_where_the_reader_left_it() {
     }
 }
 
-/// The slug of Ready's first row whose top is on the board's scroller: the row the board's place
-/// is kept by when Ready is the reader's column.
 const KEPT_ROW: &str = "(() => { const box = ({top:0,left:0,bottom:innerHeight,right:innerWidth});
     const row = [...document.querySelectorAll('.waiting-columns .column[data-status=ready] [id^=\"row-\"]')].find(row => {
         const top = row.getBoundingClientRect().top; return top >= box.top && top < box.bottom; });
@@ -871,14 +869,35 @@ const KEPT_ROW: &str = "(() => { const box = ({top:0,left:0,bottom:innerHeight,r
 /// took the board hundreds of px away, to where it went.
 const REDRAWN_ABOVE: f64 = 12.0;
 
+/// Hold every read of the device's cache from now on, until `window.letCache()` lets them go: a
+/// board opened meanwhile stands as its ghost, as on a device slow to answer, for as long as the
+/// test says and no time of its own.
+const HOLD_CACHE: &str = "(() => { const read = symphonyCache.read;
+    const held = new Promise(go => { window.letCache = go; });
+    symphonyCache.read = async (...asked) => { await held; return read(...asked); }; })()";
+
 /// Back from a task to a board whose card its place was kept by left Ready meanwhile, claimed into
 /// In progress beside it or cancelled into the column under the board's scroller, draws the board
 /// where the reader left its scroller, sideways and down (`REDRAWN_ABOVE`), and the window: never
-/// where that card went, once the board has drawn it there and stands still.
+/// where that card went, once the board has drawn it there and stands still. So too when the
+/// device answers what it kept only after the shell's navigation is ready (`late`): the board
+/// stands as its ghost until then, at its top left, which is no place of the board's to read
+/// (the ghost is `.waiting-columns` too, with no row, nothing pending and no card to move: a wait
+/// it passes read [0,0,0] on a loaded machine, release run 2026-11-18T1053-68975). The wait is
+/// the board's own (`section.kanban`), live, Ready read and drawn without the card.
 #[test]
 fn back_to_a_board_whose_kept_card_left_its_column_returns_to_the_windows_place() {
     let place = PLACE.replace("FIRST", "Math.round(scrollY)");
-    for status in ["in_progress", "cancelled"] {
+    for (status, late) in [
+        ("in_progress", false),
+        ("cancelled", false),
+        ("in_progress", true),
+    ] {
+        let case = if late {
+            format!("{status}, the device late")
+        } else {
+            status.to_owned()
+        };
         let mut board = tasks();
         let site = site(&board);
         let Some(mut page) = chrome() else { return };
@@ -888,7 +907,7 @@ fn back_to_a_board_whose_kept_card_left_its_column_returns_to_the_windows_place(
         let kept = page.eval(KEPT_ROW);
         let Some(slug) = kept.as_str().map(str::to_owned) else {
             panic!(
-                "{status}: no row of Ready on the screen: {}",
+                "{case}: no row of Ready on the screen: {}",
                 page.eval(WAITING)
             );
         };
@@ -904,21 +923,39 @@ fn back_to_a_board_whose_kept_card_left_its_column_returns_to_the_windows_place(
             &board,
             json!([{"region":"task-fields","data":{"key":slug,"fields":{"status":status}}}]),
         );
+        if late {
+            page.eval(HOLD_CACHE);
+        }
         page.eval("history.back()");
+        if late {
+            assert!(
+                page.wait_for(
+                    "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready'
+                        && document.querySelector('.ghost-kanban') !== null",
+                    SHOWN
+                ),
+                "{case}: Back never drew the board's ghost while the device's reads were held"
+            );
+            page.eval("window.letCache()");
+        }
         let there = format!(
             "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready'
-                && document.querySelector('.column[data-status=ready] [id=\"row-{slug}\"]') === null
+                && document.querySelector('main[data-feed=live]') !== null
+                && (() => {{ const ready = document.querySelector('.kanban.waiting-columns .column[data-status=ready]');
+                    return ready !== null && ready.getAttribute('aria-busy') !== 'true'
+                        && ready.querySelector('[id^=\"row-\"]') !== null
+                        && ready.querySelector('[id=\"row-{slug}\"]') === null; }})()
                 && {WAITING}.near.length === 0",
         );
         assert!(
             page.wait_for(&there, SHOWN),
-            "{status}: Back never drew the board with {slug} moved there: {}",
+            "{case}: Back never drew the board with {slug} moved there: {}",
             page.eval(WAITING)
         );
         page.eval(STILL);
         assert!(
             page.wait_for("window.boardStill >= 10", SHOWN),
-            "{status}: the cards on the screen never stood still"
+            "{case}: the cards on the screen never stood still"
         );
         let now = page.eval(&place);
         let down = |at: &Value| at[2].as_f64().unwrap();
@@ -926,7 +963,7 @@ fn back_to_a_board_whose_kept_card_left_its_column_returns_to_the_windows_place(
             now[0] == before[0]
                 && now[1] == before[1]
                 && (down(&now) - down(&before)).abs() <= REDRAWN_ABOVE,
-            "{status}: Back with {slug} moved drew the board at {now}, where the reader left it at {before}"
+            "{case}: Back with {slug} moved drew the board at {now}, where the reader left it at {before}"
         );
     }
 }

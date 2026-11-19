@@ -19,6 +19,7 @@
 //! Text rules retain Python's exact meanings ([`text`]): line breaks, whitespace and quoted values
 //! preserve byte-for-byte file compatibility.
 
+pub mod artifacts;
 pub mod asks;
 pub mod assets;
 pub mod board;

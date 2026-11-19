@@ -224,10 +224,18 @@ fn the_activity_says_answered_of_exactly_the_owners_questions_no_longer_waiting(
         .map(|question| question.id)
         .collect();
     assert_eq!(waiting, BTreeSet::from([4, 8]));
+    let before = f.store.database().requests();
     assert_eq!(
         questions(&f.store, &open).unwrap(),
         BTreeMap::from([(owner.to_string(), 2)])
     );
+    assert_eq!(f.store.database().requests() - before, PEOPLE.len());
+    let before = f.store.database().requests();
+    assert_eq!(
+        questions(&f.store, &[]).unwrap(),
+        BTreeMap::from([(owner.to_string(), 0)])
+    );
+    assert_eq!(f.store.database().requests(), before);
     let listed: BTreeMap<i64, bool> = (activity(&f.store).unwrap().iter())
         .map(|item| {
             let id = item.id.strip_prefix("task#").and_then(|id| id.parse().ok());
@@ -271,4 +279,35 @@ fn a_brief_within_the_limit_is_its_whole_reply() {
             (reply_blocks(&render, body), body.len())
         );
     }
+}
+
+#[test]
+fn stored_fields_keep_plugin_and_field_order_while_filtering_invalid_values() {
+    use symphony_api::FieldValue;
+    let stored = BTreeMap::from([
+        ("z".into(), BTreeMap::new()),
+        (
+            "a".into(),
+            BTreeMap::from([
+                ("z".into(), serde_json::json!(2.5)),
+                ("a".into(), serde_json::json!("text")),
+                ("bad-object".into(), serde_json::json!({"nested": 1})),
+                ("bad-null".into(), serde_json::Value::Null),
+                ("bad-bool".into(), serde_json::json!(true)),
+            ]),
+        ),
+    ]);
+    let got = fields(&stored);
+    assert_eq!(
+        got.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["a", "z"]
+    );
+    assert_eq!(
+        got["a"].keys().map(String::as_str).collect::<Vec<_>>(),
+        ["a", "z"]
+    );
+    assert_eq!(got["a"]["a"], FieldValue::Text("text".into()));
+    assert_eq!(got["a"]["z"], FieldValue::Number(2.5));
+    assert!(got["z"].is_empty());
+    assert!(fields(&BTreeMap::new()).is_empty());
 }

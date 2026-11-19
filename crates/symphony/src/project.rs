@@ -3,8 +3,8 @@
 //! game's: no plugins and none of their calls measured, no generators, no check, the folder's name
 //! as the project's name and its slug as the id (`project` when the folder's has no letter or
 //! digit), one entrypoint serving `docs/` at `/docs/` with `docs/history` skipped, the register
-//! `DECISIONS.md` in the first entrypoint's folder, `artifacts/`, `main`, the Symphony's own theme,
-//! every built-in transport and no panes. An empty file, or none, is a plain project. An unknown
+//! `DECISIONS.md` in the first entrypoint's folder, `artifacts/`, `main`, the Symphony's own theme
+//! and no panes. An empty file, or none, is a plain project. An unknown
 //! table or key is refused by name where the project is loaded or linted ([`Project::load`]) and,
 //! where the Symphony runs with the file as it is ([`Project::of`]), left out by name with the rest
 //! read, so a misspelt setting never passes for its default unsaid, and a file a newer Symphony
@@ -13,6 +13,11 @@
 //! misspelt one would change what is served or built. An unknown renderer, a path outside the
 //! project (an entrypoint's folder leading out of it through a link too), and an entrypoint or a
 //! file of one on a route another answers are refused by name, so no file is hidden.
+//!
+//! Beside the main checkout's file, `symphony.local.toml` holds one machine's preferences, which
+//! git does not version: the launch's agent, its model and effort, each role's model and the
+//! limits, read after the project file by the board's one reader of it (`symphony_board::local`),
+//! which this load takes too.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -21,16 +26,22 @@ use std::time::{Duration, Instant, SystemTime};
 
 mod board;
 mod file;
+mod model_warnings;
 mod theme;
+pub mod workflow;
 
 pub use crate::entrypoint::Entrypoint;
 use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
 pub use board::{Board, WipGuidance};
 use file::{File, FileEntrypoint};
+pub(crate) use model_warnings::warn as warn_models;
 pub use theme::Theme;
 
 /// The project file at a project's root.
 pub const FILE: &str = "symphony.toml";
+/// The local settings file beside the main checkout's project file, which git does not version
+/// and whose preferences hold over the committed ones (`symphony_board::local`).
+pub use symphony_board::local::FILE as LOCAL_FILE;
 
 /// How long after a load a plugin's process refused ([`Project::of`]) it is read again: the pause
 /// after which that process is started again, so each read again may start it.
@@ -59,9 +70,6 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The agent transports the Symphony knows: Claude's inbox socket, Codex's queue, and the inbox a
-/// session without a channel reads.
-pub const TRANSPORTS: [&str; 3] = ["claude-uds", "codex-queue", "inbox"];
 /// What agents' terminals run in (`hc`, herdr-core, shown in the Herdr app); `none` for a project
 /// without one.
 pub const PANES: [&str; 2] = ["hc", "none"];
@@ -190,7 +198,6 @@ impl PluginCalls {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Agents {
-    pub transports: Vec<String>,
     pub panes: String,
     /// Where agents' worktrees go, relative to the root (it may lie outside it).
     pub worktrees: Option<String>,
@@ -338,6 +345,10 @@ fn checked_generators(table: &str, generators: &mut [Generator]) -> Result<(), S
     Ok(())
 }
 
+/// A project file read for [`Project::of`]: the project of the settings this build knows, the names
+/// of the tables and keys it does not, and a line for each retired key it writes.
+type Known = (Project, Vec<String>, Vec<String>);
+
 impl Project {
     /// The plain project at `root`: every default, its name and id from the folder's name.
     pub fn plain(root: &Path) -> Project {
@@ -345,18 +356,89 @@ impl Project {
     }
 
     /// The project at `root`: its `symphony.toml` over the defaults, or the plain project without
-    /// one. A file that does not parse, names a key or value the Symphony does not know, or leaves
+    /// one, with what its local settings file writes over that (`symphony_board::local`: the
+    /// launch's agent, model and effort and each role's model). A key the Symphony reads no more
+    /// is accepted and ignored ([`Project::retired`] says each). A file that does not parse, names a key or value the Symphony does not know, or leaves
     /// an entrypoint a file on a route another answers is an error naming the file and what is
     /// wrong.
     pub fn load(root: &Path) -> Result<Project, String> {
-        let project = match Self::read(root)? {
+        let mut project = match Self::read(root)? {
             Some(text) => Self::parse(root, &text)?,
             None => Self::plain(root),
         };
         project
             .check_files(root, &mut Vec::new())
             .map_err(|e| format!("{FILE}: {e}"))?;
+        // A local file that is refused leaves the committed settings, as the board reads them:
+        // what is wrong with it is [`Project::local_problems`]' to say.
+        if let Ok(Some(local)) = Self::local(root) {
+            project.over(&local);
+        }
         Ok(project)
+    }
+
+    /// The local settings file of the project at `root` ([`LOCAL_FILE`]): beside the project file
+    /// of its main checkout, which a linked worktree reads too, having none of its own.
+    pub fn local_file(root: &Path) -> PathBuf {
+        symphony_board::local::path_beside(&symphony_board::builds::main_of(root).join(FILE))
+    }
+
+    /// What the local settings file of the project at `root` writes, as the board reads it.
+    pub(crate) fn local(root: &Path) -> Result<Option<symphony_board::local::Local>, Vec<String>> {
+        symphony_board::local::beside(&symphony_board::builds::main_of(root).join(FILE))
+    }
+
+    /// The launch's agent, model and effort and the roles' models `local` writes, over the
+    /// committed ones: the one merge the board's readers make too
+    /// (`symphony_board::local::Local::over`).
+    fn over(&mut self, local: &symphony_board::local::Local) {
+        let (launch, models) = (&mut self.agents.launch, &mut self.agents.models);
+        local.over(
+            [&mut launch.default, &mut launch.model, &mut launch.effort],
+            [
+                &mut models.orchestrator,
+                &mut models.executor,
+                &mut models.reviewer,
+                &mut models.assessor,
+            ],
+        );
+    }
+
+    /// What is wrong with the local settings file of the project at `root`: each setting it may
+    /// not hold or the Symphony cannot read, by name and line, as the board says it and then reads
+    /// none of the file; and the file being tracked by git, which is to version none of it. None
+    /// with no such file. What the settings check and the lint refuse.
+    pub fn local_problems(root: &Path) -> Vec<String> {
+        let mut problems = Self::local(root).err().unwrap_or_default();
+        let file = Self::local_file(root);
+        let tracked = file.parent().is_some_and(|folder| {
+            symphony_board::sys::output(crate::children::git().arg("-C").arg(folder).args([
+                "ls-files",
+                "--error-unmatch",
+                "--",
+                LOCAL_FILE,
+            ]))
+            .is_ok_and(|done| done.status.success())
+        });
+        if tracked {
+            problems.push(format!(
+                "{}: git tracks it, and a local settings file is one machine's alone: remove it \
+                 from the index (git rm --cached {LOCAL_FILE}) and ignore it",
+                file.display()
+            ));
+        }
+        problems
+    }
+
+    /// One line for each key the project file at `root` still writes that the Symphony reads no
+    /// more ([`file::RETIRED`]: `[agents] transports`, `[board] export`, `[board] disposable`),
+    /// by name and line, saying it does nothing. Such a key refuses no load and fails no check;
+    /// none for a file that writes none, that is not there or that does not parse.
+    pub fn retired(root: &Path) -> Vec<String> {
+        let Ok(Some(text)) = Self::read(root) else {
+            return Vec::new();
+        };
+        Self::written(&text).map_or_else(|_| Vec::new(), |file| file.retired(&text))
     }
 
     /// The file at `root` as written, `None` when there is none.
@@ -381,6 +463,7 @@ impl Project {
     /// [`Project::load`]'s to look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
         let file = Self::written(text)?;
+        workflow::require_supported(file.workflow.as_ref())?;
         if let Some(refusal) = File::refusal(&file.unknown(text)) {
             return Err(refusal);
         }
@@ -397,22 +480,25 @@ impl Project {
     }
 
     /// The file at `root` as [`Project::of`] reads it, before its entrypoints' files are looked
-    /// at: the project of the settings this build knows, and the names of the tables and keys it
-    /// does not, left out ([`File::unknown`]).
-    fn read_known(root: &Path) -> Result<(Project, Vec<String>), String> {
+    /// at: the project of the settings this build knows, the names of the tables and keys it
+    /// does not, left out ([`File::unknown`]), and what it says of each retired key
+    /// ([`File::retired`]).
+    fn read_known(root: &Path) -> Result<Known, String> {
         let Some(text) = Self::read(root)? else {
-            return Ok((Self::plain(root), Vec::new()));
+            return Ok((Self::plain(root), Vec::new(), Vec::new()));
         };
         let file = Self::written(&text)?;
-        let unknown = file.unknown(&text);
+        workflow::require_supported(file.workflow.as_ref())?;
+        let (unknown, retired) = (file.unknown(&text), file.retired(&text));
         let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
-        Ok((project, unknown))
+        Ok((project, unknown, retired))
     }
 
-    /// The project at `root` as [`Project::load`] reads it, cached until its file changes, or an
-    /// entry appears, goes or is replaced in a folder whose entries the load looked at: an
+    /// The project at `root` as [`Project::load`] reads it, cached until its file or its local
+    /// settings file ([`Project::local_file`]) changes, or an entry appears, goes or is replaced in a folder whose entries the load looked at: an
     /// entrypoint's folder, or one where a file of an entrypoint would meet another route, or any
-    /// folder under that. A table or key this build does not know is left out and reported once
+    /// folder under that. A key the Symphony reads no more ([`Project::retired`]) is said to do
+    /// nothing, and a table or key this build does not know is left out and reported, each once
     /// per version on stderr, the rest read as written, so a file a newer Symphony wrote keeps its
     /// settings; a project that does not load leaves the plain project in its place, reported the
     /// same way, and says why while it does ([`Project::problem`]). A load refused while a plugin of
@@ -491,21 +577,33 @@ impl Project {
             let stamp = Stamp::of(&path);
             (path, stamp)
         };
-        let mut stamps = vec![stamped(root.join(FILE))];
-        let loaded = Self::read_known(root).and_then(|(project, unknown)| {
+        let mut stamps = vec![stamped(root.join(FILE)), stamped(Self::local_file(root))];
+        let loaded = Self::read_known(root).and_then(|(project, unknown, retired)| {
             let mut read = Vec::new();
             let checked = project.check_files(root, &mut read);
             read.sort();
             read.dedup();
             stamps.extend(read.into_iter().map(|path| stamped(root.join(path))));
             checked
-                .map(|()| (project, unknown))
+                .map(|()| (project, unknown, retired))
                 .map_err(|e| format!("{FILE}: {e}"))
         });
         let (project, problem, again) = match loaded {
-            Ok((project, unknown)) => {
+            Ok((mut project, unknown, retired)) => {
+                for line in &retired {
+                    eprintln!("{}: {line}", root.display());
+                }
                 if let Some(refusal) = File::refusal(&unknown) {
                     eprintln!("{}: {refusal}; left out, the rest read", root.display());
+                }
+                match Self::local(root) {
+                    Ok(Some(local)) => project.over(&local),
+                    Ok(None) => {}
+                    Err(problems) => {
+                        for problem in &problems {
+                            eprintln!("{}", symphony_board::local::left_out(problem));
+                        }
+                    }
                 }
                 (project, None, None)
             }
@@ -637,9 +735,6 @@ impl Project {
         }
         let theme = Theme::from_file(file.theme)?;
         let a = file.agents;
-        let transports = a
-            .transports
-            .unwrap_or_else(|| TRANSPORTS.map(String::from).to_vec());
         let panes = a.panes.unwrap_or_else(|| "none".into());
         if !PANES.contains(&panes.as_str()) {
             return Err(format!(
@@ -648,7 +743,6 @@ impl Project {
             ));
         }
         let agents = Agents {
-            transports,
             panes,
             worktrees: a.worktrees,
             launch: Launch {
@@ -673,6 +767,13 @@ impl Project {
         }
         if let Some(written) = &land.check_paths {
             symphony_board::land::check_paths::parse(written)?;
+        }
+        if land
+            .delivery
+            .first()
+            .is_some_and(|program| program.trim().is_empty())
+        {
+            return Err("[land] delivery names no command: leave it out to land here".into());
         }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
@@ -1264,44 +1365,47 @@ fn plugin_processes(
     plugins: &[String],
     written: BTreeMap<String, Vec<String>>,
 ) -> Result<BTreeMap<String, PluginProcess>, String> {
-    written
-        .into_iter()
-        .map(|(name, mut command)| {
-            if !plugins.contains(&name) {
+    let processes = written.into_iter().map(|(name, mut command)| {
+        if !plugins.contains(&name) {
+            return Err(format!(
+                "[plugins.process] names {name}, which [plugins] crates does not list"
+            ));
+        }
+        let Some(program) = command.first_mut().filter(|p| !p.trim().is_empty()) else {
+            return Err(format!("[plugins.process] {name} names no program"));
+        };
+        if program.contains('/') && Path::new(program.as_str()).is_relative() {
+            let parts = Path::new(program.as_str()).components();
+            if parts
+                .into_iter()
+                .any(|part| part == std::path::Component::ParentDir)
+            {
                 return Err(format!(
-                    "[plugins.process] names {name}, which [plugins] crates does not list"
+                    "[plugins.process] {name} names {program:?}: a relative program is a \
+                         path inside the checkout, with no `..`"
                 ));
             }
-            let Some(program) = command.first_mut().filter(|p| !p.trim().is_empty()) else {
-                return Err(format!("[plugins.process] {name} names no program"));
-            };
-            if program.contains('/') && Path::new(program.as_str()).is_relative() {
-                let parts = Path::new(program.as_str()).components();
-                if parts
-                    .into_iter()
-                    .any(|part| part == std::path::Component::ParentDir)
-                {
-                    return Err(format!(
-                        "[plugins.process] {name} names {program:?}: a relative program is a \
-                         path inside the checkout, with no `..`"
-                    ));
-                }
-                // Its `.` parts folded: `./bin/plugin` is the checkout's `bin/plugin`.
-                let under: PathBuf = root.join(program.as_str()).components().collect();
-                *program = under.to_string_lossy().into_owned();
-            }
-            let log = root
-                .join(artifacts)
-                .join("plugins")
-                .join(format!("{name}.log"));
-            let process = PluginProcess {
-                command,
-                root: root.to_path_buf(),
-                log,
-            };
-            Ok((name, process))
-        })
-        .collect()
+            // Its `.` parts folded: `./bin/plugin` is the checkout's `bin/plugin`.
+            let under: PathBuf = root.join(program.as_str()).components().collect();
+            *program = under.to_string_lossy().into_owned();
+        }
+        let log = root
+            .join(artifacts)
+            .join("plugins")
+            .join(format!("{name}.log"));
+        let process = PluginProcess {
+            command,
+            root: root.to_path_buf(),
+            log,
+        };
+        Ok((name, process))
+    });
+    let mut found = BTreeMap::new();
+    for process in processes {
+        let (name, process) = process?;
+        found.insert(name, process);
+    }
+    Ok(found)
 }
 
 /// The `[[entrypoints]]` tables checked, their types against the renderers of the Symphony and of

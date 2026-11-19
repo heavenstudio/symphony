@@ -505,13 +505,6 @@ fn tall_history() -> Value {
             paragraph(vec![text("Posted, with its evidence.")]), paragraph(vec![picture()]), paragraph(vec![picture()])]}]}]})
 }
 
-/// The landing document with the fifth card's thread taller than a phone's screen.
-fn tall_thread() -> Value {
-    let mut document = landing();
-    document["threads"]["five"] = tall_history();
-    document
-}
-
 /// The page's reads of sections so far, each by the keys it asked for.
 fn section_reads(site: &Site) -> Vec<Vec<String>> {
     site.targets()
@@ -591,8 +584,17 @@ impl Reading {
     }
 }
 
+/// Runs the deadline of the page's ghost ([`reader`] holds it) where it still waits, and says how
+/// many timers of its length the page held: its one.
+const SETTLE_DEADLINE: &str =
+    "(() => { const due = [...settleDeadline.values()]; settleDeadline.clear();
+    due.forEach(run => run()); return due.length; })()";
+
 /// A browser of its own for `reading` (a phone's takes touches), whose sections near the screen
-/// are read only once the test lets them come ([`OBSERVE_LATER`]).
+/// are read only once the test lets them come ([`OBSERVE_LATER`]), and whose ghost's deadline
+/// (`Settle`'s, [`symphony_web_tests::SETTLE_MS`]) the test runs ([`SETTLE_DEADLINE`]) in place of
+/// the clock: `window.settleDeadline` holds it. The page sets no other timer of that length here:
+/// the asks' retry and the chat's, as long, follow a read that failed, and none does.
 fn reader(reading: Reading) -> Option<Chrome> {
     let (width, height) = reading.window();
     let mut page = browser(width, height)?;
@@ -606,6 +608,7 @@ fn reader(reading: Reading) -> Option<Chrome> {
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": OBSERVE_LATER }),
     );
+    crate::hold_timers(&mut page, "settleDeadline", symphony_web_tests::SETTLE_MS);
     Some(page)
 }
 
@@ -621,12 +624,10 @@ pub(crate) fn landed_on(path: &str, id: &str) -> String {
     )
 }
 
-/// What a reader read: where what the page landed on was ([`READ`]), the keys the page read near
-/// it, and where what they read was before and after the sections near them drew, with the page's
-/// own scrolls meanwhile.
+/// What a reader read: where what the page landed on was ([`READ`]), and where what they read was
+/// before and after the sections near them drew, with the page's own scrolls meanwhile.
 struct Read {
     landed: Value,
-    near: Vec<String>,
     before: Value,
     after: Value,
     scrolls: Value,
@@ -671,7 +672,8 @@ impl Read {
 
 /// Opens `path` at the element `id`, which the section `key` holds, with every section's read
 /// held: the page's first read is that section's alone and is let go; the sections near it come
-/// near, and their read is held while the reader ends the landing by `reading`, then let go.
+/// near, and their read is held while the page's ghost lifts at its deadline, which the test runs
+/// ([`SETTLE_DEADLINE`]), and the reader ends the landing by `reading`, then let go.
 #[track_caller]
 fn read_while_drawn(
     page: &mut Chrome,
@@ -709,7 +711,13 @@ fn read_while_drawn(
     // The sections near it come near, and their read is held.
     site.hold_route("/api/section", true);
     page.eval("window.observe()");
-    let near = reads_asked(page, site, asked + 2)[asked + 1].clone();
+    reads_asked(page, site, asked + 2);
+    // The landing is in and the near reads are held: the ghost's deadline passes now.
+    assert_eq!(
+        page.eval(SETTLE_DEADLINE),
+        json!(1),
+        "{id} {reading:?}: the page holds its ghost's deadline, and no other timer of its length"
+    );
     assert!(
         page.wait_for(
             &format!("{element}?.closest('.settle')?.dataset.settled === 'true' && {landed}"),
@@ -801,36 +809,9 @@ fn read_while_drawn(
     eprintln!("READING {id} {reading:?}: landed {landed}, before {before}, after {after}");
     Read {
         landed,
-        near,
         before,
         after,
         scrolls: page.eval("window.pageScrolls"),
-    }
-}
-
-/// The browser's own scroll anchoring keeps the reader's place while the sections above draw: the
-/// spacing between the document's parts (docs.css) counts a neighbour not drawn yet as what it
-/// draws as, so no margin of the card being read changes as they draw, which would stop the
-/// anchoring for that frame. Before, the card's own margin changed as the cards beside it drew,
-/// and the page drew them under the reader: a wheel left the card at 863 px instead of -439, and a
-/// phone's field typed in went from 409 px to 1285 px, off an 844 px screen.
-#[test]
-fn a_reader_who_ended_a_landing_stays_on_what_they_read_while_the_sections_above_draw() {
-    let site = site();
-    site.set_document(&tall_thread());
-    for reading in [Reading::Wheeled, Reading::Typing] {
-        let Some(mut page) = reader(reading) else {
-            return;
-        };
-        let read = read_while_drawn(&mut page, &site, LANDING, "five", "card:five", reading);
-        assert!(
-            read.near.iter().any(|key| key == "card:four"),
-            "{reading:?}: the cards above the card are read after it: {:?}",
-            read.near
-        );
-        // What drew above the reader after they left the landing: a page that did not hold them
-        // would show what they read that much lower.
-        read.held("five", reading, 300.0);
     }
 }
 

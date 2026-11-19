@@ -73,12 +73,41 @@ wire types, docs, schema and args), `apps/symphony-server`, `crates/process-cwd`
 `crates/repository-read` ([what they hold](RELEASES.md#the-release-run), step 4). Run the affected
 compile guards and `just lint-rs`; a reviewer checks every public-item removal or signature
 change in a crate a consumer links against these lists and the release and migration evidence.
-The guards' headers say what they leave to a consumer's own gate.
+The guards' headers say what they leave to a consumer's own gate. `just semver-check` holds
+the kit/helpers' public names, constructors' arity, exhaustive variants and derived traits
+against crates.io. Their guards keep arbitrary argument, return and field types, cross-crate
+type identity and known-consumer migration requirements: the tool does not compare arbitrary
+types, and a major bump alone does not satisfy the two-release rule. Known consumer names stay
+for that rule; vocabulary variant inventories wider than those calls are left to the semver check.
 
 This overlap does not replace the kit's and helpers' major-version requirements
 ([packages on crates.io](RELEASES.md#packages-on-cratesio)), or the separate versioned
 [`tasks api` contract](TASKS.md#the-tasks-api). Symphony's release checks build no consumer:
 consumer-owned landing gates meet the new pin, and releases run this repository's checks alone.
+
+## What a landing tells a consumer
+
+A release's notes say what a project does to take it ([RELEASES](RELEASES.md#its-notes)), and
+what git cannot derive is said by the landing that causes it. A branch owes an entry, a trailer
+of one of its commits (`Consumer-Note: SECTION: TEXT`), when a project that takes the release
+must change or run something because of it:
+
+- `manifest`: a project's `Cargo.toml` changes more than the line that names the release (a
+  package renamed, a feature a project must name).
+- `board`: it moves the board schema: what the move changes for a project beyond the migrate.
+- `api`: it ships a replacement beside a public item a consumer calls (`OLD => NEW`), or removes
+  or changes one (`removed OLD => NEW`), the two steps of the rule above.
+- `settings`: a `symphony.toml` key is read anew, ignored or refused, a file beside it is read, or
+  a command a project runs for its settings takes other arguments.
+- `init`: a project must do more than run `symphony init` again for the installed recipes, skills,
+  hooks and rules.
+- `tools`: it needs a tool, or a version of one, that the derived pins do not name.
+- `once`: something a project runs once.
+
+A change a consumer cannot see owes none. `just lint-rs` is red at the branch's own tip for a
+schema move, a call a consumer-API guard stopped holding, or a key the settings reference lists
+no more, each without its entry, and for a trailer that reads as no entry; a reviewer reads the
+rest, and that an entry says what a project does, not what the change was.
 
 ## Evidence by kind of change
 
@@ -130,8 +159,14 @@ consumer-owned landing gates meet the new pin, and releases run this repository'
   or a published package's dependency on a sibling): `just test-rs -p symphony-app --test packages`
   and `cargo publish --dry-run` naming every published package together, from the committed tip
   (no `--allow-dirty`), its output on the thread ([RELEASES](RELEASES.md#packages-on-cratesio));
-  never a publication. A change to a published package's sources adds `just crates-check`, red
-  for a package whose version crates.io holds with other sources, which only reads crates.io. The
+  never a publication. A change to a published package's sources, a doc comment's too, moves its
+  version where crates.io holds that version with other sources: `just lint-rs` is red at the
+  branch's own tip until it does, by the crates check of the published packages the branch
+  changes ([a version moves with its sources](RELEASES.md#packages-on-cratesio)). Its green lint
+  is that evidence where the step's lines name the package as read; where crates.io gave no
+  answer the step says `not checked` on stderr, naming the packages, and is no red and no
+  evidence: run `just crates-check`, which reads every published package and fails on a crates.io
+  it cannot read, and post it. The
   packages test is also the closest one for a change to a file a package carries a copy of (the
   client's `board.css` and `frame.css`, `tools/fixture_process.sh`): it fails until the copy is
   made again, naming the `cp`.
@@ -143,16 +178,17 @@ consumer-owned landing gates meet the new pin, and releases run this repository'
   (`crates/symphony/tests/packages.rs`), which fails a kit package that builds with a member
   outside the kit and a helper that builds with one outside the helpers. The reviewer reads what no
   test holds: that no public item shows a type of a member outside the package's line (rustc's lint
-  for a private dependency's type is unstable), that a struct added to `symphony_plugin::protocol`
+  for a private dependency's type is unstable), and that a struct added to `symphony_plugin::protocol`
   comes with a constructor (its `#[non_exhaustive]` the protocol's tests hold, as they hold
-  `Request`'s and name each enum there left exhaustive), that a field added to a call is a new major
-  unless `new` leaves it out ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#versions)), and that a name
-  removed or changed, or a field added to a seam type or the vocabulary, is a new major of the
-  package's line. A variant added to a list of the vocabulary is a minor: the kit's tests hold
-  each list `#[non_exhaustive]` and name the two left exhaustive, to which a variant added is a
-  new major (`crates/symphony-plugin/tests/vocabulary.rs`), and
+  `Request`'s and name each enum there left exhaustive). `just semver-check` compares all eight
+  kit/helper packages with crates.io, requiring the version move their public API needs, including
+  a new argument to a request's `new`. The kit's tests hold vocabulary lists `#[non_exhaustive]`
+  and name the two left exhaustive (`crates/symphony-plugin/tests/vocabulary.rs`), and
   `crates/symphony-api/tests/vocabulary_drawn.rs` holds every kind to an arm in each match of
-  this workspace, in the compiler's place.
+  this workspace, in the compiler's place. Serialization compatibility and arbitrary type changes
+  still need the package tests, typed consumer guards and review. Review also checks that a new
+  vocabulary variant moves the kit's minor: the tool allows an addition to a non-exhaustive enum
+  even in a patch, while this project's contract requires a minor.
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
@@ -344,7 +380,8 @@ never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it 
 records and how it is scheduled: [RELEASES](RELEASES.md#the-release-run).
 
 **Every step runs.** `just verify` runs its steps in order, lint, the client check, the size
-budgets, the docs audit, the crates check and the tests (`tools/verify.sh`), each whatever the
+budgets, the docs audit, the crates and semver checks, the hosted board's check
+(`just hosted-check`, [POSTGRESQL](POSTGRESQL.md#a-hosted-board)) and the tests (`tools/verify.sh`), each whatever the
 ones before it did, and is red when any is, so a red step never hides the ones after it. Each step
 is recorded as a step
 of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
@@ -352,48 +389,129 @@ of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
 beside it lists with each step's exit status, seconds and command and the load average it ended
 under (over 1, 5 and 15 minutes, with the processor count). Its own output says each step as it
 starts and ends, with the last lines of a red one, and at its end each step with its log, then the
-red ones. `just verify STEP...` runs those steps alone, in that order. An interrupt (Ctrl-C) stops
+red ones. `just verify STEP...` runs those steps alone, in that order; `tests/LANE` in place of
+`tests` runs that lane of the tests alone, which is how a release candidate's rerun runs what a
+fix changed and carries the green of the rest ([RELEASES](RELEASES.md#a-steps-inputs)). What each
+step reads is said beside it in `tools/verify.sh` (`reads`), and a step that reads a path outside
+the packages it names, or outside the root's other entries, says so there. The tests a red
+`nextest-setup` keeps from starting are listed all the same, their status `-`: not run, no red of
+their own, and run by the next rerun. An interrupt (Ctrl-C) stops
 it once the step running ends: it runs none after it, says where it stopped and exits 130. The tests serve the client
 the client check built in the same verify (`SYMPHONY_UI_DIST`), and the check's folder
 (`build/verified-client`) is cleared before it runs, so a client an earlier check left there is
 never served. When the client check is red on a client it built, the tests run against that one;
-when it built none, or did not run, the browser tests build the client themselves, red if that
-build fails too. The tests' log and the summary say which.
+when it built none, or did not run, the tests runner publishes one client before scheduling,
+red if that build fails too. The tests' log and the summary say which.
 
-**The tests side by side.** The tests step (`tools/test-lanes.sh`) builds every test of the
-workspace once, then runs them in lanes side by side, each lane one `cargo test --workspace` over
-the targets it names: `perf`, `sweep`, `browser`, the board's heavy targets, the server's `after_*`
-targets, the libraries' and binaries' own tests, the rest, and the doc tests
-(`tools/test-lanes.sh --list` prints them); cargo running the targets one after another made the
-step 35 to 42 minutes. A test target no lane names runs in the rest, so a new heavy target gets a
-lane by its name. At most half the processors online run lanes at once (`getconf
-_NPROCESSORS_ONLN`; one when the system says no number), each taking the next lane none has taken.
-The build and every lane give build scripts and proc macros the rest of the build's debug info, so
-every lane's units are the build's and no lane builds or links anything while the others run.
+**The tests side by side.** The tests step (`tools/test-lanes.sh`) builds the workspace's test
+binaries once with cargo-nextest 0.9.152, then reuses that binary metadata for one nextest scheduler.
+The release owns an explicit `nextest-setup` step before tests, including a tests-only rerun. It
+runs `just nextest-setup`: this target's `tools/nextest/` is checked first (`CARGO_TARGET_DIR`, else
+`.target/`), then a linked worktree's main checkout `.target/tools/nextest/`. With neither copy
+valid, setup provisions the main cache once for its worktrees, or this target in a main checkout.
+It downloads the [upstream pinned release](https://github.com/nextest-rs/nextest/releases/tag/cargo-nextest-0.9.152),
+verifies the archive and extracted executable against SHA-256 values in `tools/nextest.sh`, and
+publishes it by one rename. Every use verifies the executable's hash and version before executing
+it. No Cargo install, build folder or unverified PATH copy is used. Ordinary release cleans keep
+the cache; if it was cleared, the next setup step provisions it again. A provisioning failure is
+red at `nextest-setup`, and tests does not start. Tests never download or install a runner.
 
-Each lane writes its log as it runs, `tests-lanes/NAME.log` beside the step's log
-(`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), and the step's log names each
-before any lane starts: a run the release run stops, with SIGTERM and then SIGKILL, leaves every
-lane's output where the step's log said. SIGTERM, SIGHUP and an interrupt end the lanes, and the
-step prints what they wrote. Once every lane has ended, each lane's output follows the one before it
-whole in the step's log, then every red lane's targets that failed as one list in cargo's words,
-the last the release run's reader keeps. A lane is green only when it said the exit status 0. A red
-lane's targets are the list cargo ended its log with on failed targets (exit 101); any other red
-lane (killed by a signal, its cargo failing before any target, its status unsaid or none) is listed
-whole, `--workspace` and its targets, and named after its output by a line in cargo's words
-(`error: the lane NAME is red …, to rerun pass` and those arguments), which the reader reruns as a
-target that failed.
+Focused `just test-rs` uses Cargo and needs no nextest. The live success/failure/stall fixture is
+explicitly ignored in that default run; the tests step selects it once by its exact name through
+workspace Cargo before concurrent batches. Its missing runner is a failure, never a skip. The
+nextest filter excludes that case, so it is neither omitted nor run twice. Cargo keeps the same
+workspace features, profile and environment as the one build for this invocation too. A failure's
+narrow rerun retains `--ignored` for this case, so it executes the fixture again.
 
-The lanes share no port or store: every server, store and browser a test starts takes a port the
-system picks and a folder of its own. The one target writing the build folder (the
-client's `build`, which links `symphony-build` there again) runs in the rest with every `symphony-build` and
-`symphony-app` target and `standalone`, which copies that folder. The browser lane writes it too
-when `SYMPHONY_UI_DIST` names no client: its own client build
-(`apps/symphony-web/build.sh`, which runs `tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again
-while the rest runs it. Verify names the client its client check built, so only a verify whose
-client check built none leaves it to the browser lane. The binaries a test would build for itself under its case's clock
-are the build's own, named by `SYMPHONY_TEST_TASKS_BINARY` and `SYMPHONY_TEST_BINARIES` (a target
-run alone builds them as before).
+To run that live fixture after setup, select it explicitly. The recipe supplies `--locked`:
+
+```sh
+just test-rs --config 'profile.dev.build-override.debug="line-tables-only"' \
+  --workspace --no-fail-fast --lib -- --ignored --exact \
+  release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test --nocapture
+```
+
+Nextest runs six cases at once (the caller's `RUST_TEST_THREADS` wins), with groups capping Chrome
+and database cases at two each (`.config/nextest.toml`). Retries are explicitly zero. Every nextest case
+has its duration in the log, and a per-case timeout ends a stalled case and its children. A timeout
+is a failure, never a pass, and replaces none of the tests' own assertions. The runner emits both
+its status lines and libtest-json-plus 0.1 events: the release readers use the events to name each
+failed or timed-out case and the exact Cargo command that reruns it alone. Captured output stays
+inside an event, so a command a fixture prints is no failure of the release run.
+
+The standalone target compiles a copied workspace: its cases run after the other nextest cases
+and reserve the entire nextest pool. The shared Cargo batches below still run independently;
+this reservation controls nextest's own child servers and work.
+
+Every terminating timeout in the release profile is a stall backstop, not a cost budget. Its
+deadline is three times the ceiling, in seconds, of the slowest completed loaded measurement
+available for its scope. A complete Cargo binary's time is a conservative upper bound for any
+one of its cases. These are the measurements that derive `.config/nextest.toml`:
+
+| Scope | Loaded measurement | Associated load, 1/5/15 minutes | Source | Backstop |
+| --- | --- | --- | --- | --- |
+| Ordinary nextest cases | 131.95 s, whole `after_lifecycle` binary | 124.30 / 142.61 / 111.32 | Release `2026-11-18T0825-74490`, commit `7f1842c6051b` | 3 × ceil(131.95) = **396 s** |
+| Standalone target | 869.16 s, whole binary, completed | 124.30 / 142.61 / 111.32 | Same release's tests log | 3 × ceil(869.16) = **2,610 s** |
+| Ordinary-case cross-check | 118.725 s, semver's real checker case | Step sampled up to 151.29 / 108.97 / 97.70 | Task run `82f06742130c0cff7b6ff249c74444db`, commit `3f534895` | Covered by the 396 s default |
+| Standalone cross-check | 304.09 s, case alone | Run sample 159.54 / 118.83 / 117.52 | Focused Cargo rerun of `3f534895` | Covered by the 2,610 s override |
+| Superseded standalone limit | Killed at 600.025 s; completion time unknown | Loaded task run above | Task run `82f06742130c0cff7b6ff249c74444db` | Censored evidence, not a completed timing or a valid backstop |
+
+Release load samples are those the tests step recorded when it ended; task samples are from
+the running checks, not a claim of constant load. The loaded release's completed 869.16 s
+measurement also exceeds the censored 600.025 s observation, so no completion time is inferred
+from the killed run. The original task baseline was an earlier, dirty source over `284fafb7`:
+1,615 s at sampled load roughly 45–84, 7,940 passed and 16 ignored including four doctests.
+It remains historical evidence, not a same-source or quiet-machine performance comparison.
+
+The periods in the config are those measured ceilings, with termination after three periods.
+The ten-second termination grace begins after the case is already failed as a stall; it is
+cleanup time, not a passing allowance or test budget. The repository-only `test-stalls` stream
+annotator reads the actual release profile and adds the reached limit and the load at the event
+to each nextest timeout. The red reader says `taken as a stall`, its limit and that load, and
+keeps the same exact rerun command. All other output passes unchanged. A reporter failure makes
+the step red, and no retry changes a timeout into a pass. Raw historical nextest logs remain
+readable, with no invented limit or load where none was recorded.
+
+The suites with shared fixtures retain one libtest process: the board's `perf`, `sweep`, `cli`,
+`server`, `store` and `launch`; the app's `after_commit`, `after_publication`, `after_worktrees`,
+`hooks`, `picks` and `project`; the server's `after_http`; the build package's `release`; and the
+browser suite. They share the store fixture's database server (including its transitive imports),
+perf's generated board, sweep's repository template or the browser's build gzip cache. Each
+integration target is one Cargo batch. The `symphony-app`, `symphony-board` and `symphony-server`
+library tests share that store fixture too: a Cargo library batch uses the build command's Rust
+exec adapter to run exactly those three metadata-listed images, leaving the stateless libraries
+to nextest. Cargo supplies the package working directory, environment and dynamic-library paths;
+the adapter changes none and replaces itself with the selected image, preserving arguments,
+process identity, signals and status. An artifact absent from the metadata is refused.
+
+Cargo also runs the doc tests, which nextest does not run. These exceptions, rather than a table
+partitioning every target, are the runner's list (`tools/test-lanes.sh --list`); other binaries,
+new targets included, belong to nextest. The shared-process exceptions keep their libtest suite
+measurements and test assertions; they acquire no nextest per-case timing or timeout. A path or
+metadata cache and an executable's warmup do not require a shared process: each nextest case can
+prepare its own from the supplied build outputs.
+
+The client's `build` test runs before scheduling: it may relink `symphony-build`, which other
+targets execute or copy (`standalone`). When the client check supplied no build, the runner
+publishes one client before scheduling, so no browser case builds or relinks while other tests
+run. Every test receives the build's binaries through `SYMPHONY_TEST_TASKS_BINARY` and
+`SYMPHONY_TEST_BINARIES`; a caller's values win. Each Cargo call keeps the workspace build's
+feature graph and its build-script/proc-macro debug info, so no concurrent batch relinks anything.
+Every server, store and browser still takes its own folder and a port the system picks.
+
+Nextest and the Cargo batches keep live logs in `tests-lanes/` beside the step's log
+(`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), with the binary metadata beside
+them, and `lanes.tsv` there lists each lane that ran with its exit status and seconds, which the
+verify lists after the tests step as its parts (`tests/LANE`): the step's red stays one red and
+one task. `tools/test-lanes.sh LANE...` runs those lanes alone, over the one build. What each lane
+reads is said beside the lanes (`reads`: its test target's packages, derived, another package
+whose binary its tests run, a path outside them, or the whole tree), and a new lane, or a test
+that starts reading a file outside its packages, says so there
+([RELEASES](RELEASES.md#a-steps-inputs)). The step names each log before scheduling. At most half the processors online run batches
+at once (at least one); each batch's output follows whole in the step's log once they all end.
+Signals reach the foreground batches, which are waited for before the runner exits, and a forced
+stop leaves their live output at the named paths. Native failures retain Cargo's target lists;
+nextest failures retain their own events. A batch is green only on an explicit exit status of zero.
 
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
@@ -454,17 +572,15 @@ rewritten under this rule is the test run alone five times on the loaded machine
 stated with each result, and once more under a load of the agent's own (a few busy loops in its own
 process group, started and stopped by their PIDs).
 
-**Out of the release run for a quiet machine:** none. Proposed and waiting for the owner's word:
-`phone::the_board_is_interactive_within_two_seconds_on_a_mid_phone` (the board interactive within
-2 s on a mid phone, which a loaded machine's wall cannot stand in for); it runs in the release run
-until then.
+**Out of the release run for a quiet machine:** none.
 
 ## Size budgets
 
 What Symphony ships is checked for size, so it never grows unseen and can be brought down. Each
 binary this workspace delivers (`symphony-server`, `symphony`, `tasks` and
-`agent-send`) has a budget, and so does the client distribution the server embeds (every file
-under `apps/symphony-server/client/public`): one line each in `tools/size-budget.toml`, in bytes.
+`agent-send`) has a budget, and so do the client builds the server embeds (those
+`symphony-build publish-client` keeps under `apps/symphony-server/client/public`): one line each in
+`tools/size-budget.toml`, in bytes.
 `just size-check` builds the four as `cargo install` builds them, with `Cargo.toml`'s
 `[profile.release]`, and runs `symphony-build size-budget`, which prints each size beside its
 budget (`symphony-build`, the commands only this repository's build and release run use, is no
@@ -472,9 +588,22 @@ binary it delivers, and has no line).
 Past a line it fails, naming the size, the budget and how to see what grew: `cargo bloat --release
 --crates --bin NAME` (`cargo install cargo-bloat --root DIR`, never a workspace dependency) beside
 the same at a commit within it (the last release, or before the first one, the commit that last
-set the budget file), or the largest files of the distribution. A binary's line is its file; the
-server's is its file less the client it embeds, which has its line of its own, so each line grows
-for one reason. The sizes are this machine's (aarch64-apple-darwin), where the release run runs.
+set the budget file), or for the client, the newest build's files beside the build before it. A
+binary's line is its file; the server's is its file less the client it embeds, which has its line
+of its own, so each line grows for one reason. The sizes are this machine's (aarch64-apple-darwin),
+where the release run runs.
+
+The client's line counts each build the distribution keeps whole (its `builds.json`, newest first):
+a file two builds share is counted for each, and `index.html` and `builds.json` once. That is the
+most the distribution weighs with those builds, which it does once they share no file: a change to
+the chunk every page imports renames every chunk that imports it, as each carries the shared one's
+name and export names in its own bytes, so the build after such a landing shares almost nothing
+with the two before it. What the server embeds, each file once, rises and falls with how many
+files the kept builds happen to share (from about one build's weight to three at three builds); the
+line moves only with what a build weighs and how many are kept. The check prints both, with each
+build's weight, so one build's growth shows though the line is the builds'. A file under `assets/`
+that no kept build names, or a build naming a file that is not there, is an error, not a pass: it
+would be embedded and not counted.
 
 The shipped binaries are the ones `symphony init` links for a project (`BUILDS`,
 `crates/symphony/src/init.rs`), and a test holds the recipe's build to them: a binary of them
@@ -489,7 +618,10 @@ plugin's calls through the protocol's JSON (installed with the plugins,
 from its process needs only the host's side of the protocol). The same test of `symphony` holds
 the JSON Schema validator out of it, which would add a fifth to its size: a schema check is a
 library call a consumer's code makes (`symphony::schema::validate`), and `symphony serve` answers
-`validate` as a function it lacks.
+`validate` as a function it lacks. And it holds the board's migration out of it, with both
+databases' schema texts: `symphony` opens a board only to read, by the reader's entry
+(`Store::read_as`, `Store::reading`), which names no migration, where an opening by the rule
+(`Store::opening`) links it for the writer it may be handed.
 
 On macOS every binary of the three packages links with `-no_exported_symbols` (each package's
 `build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it. A
@@ -531,8 +663,9 @@ one. Within its line, `symphony-build size-budget` prints where the rule brings 
 line that stands higher (`its line comes down to …`), so the commit of a reduction takes that
 number, not a choice of its own. A line is raised only as [a red at the size check](#a-red-at-the-size-check)
 allows, by the same rule: to the binary's size plus 4 %, never higher. The client's line is set by
-the same rule from the distribution main holds when it is set, and the check prints no such number
-for it: what the distribution holds rises and falls with the builds `publish-client` keeps.
+the same rule from what the check counts of the distribution main holds when it is set, and the
+check prints no such number for it: a reduction of the newest build reaches that count in full only
+once the builds before it are no longer kept.
 
 ### A red at the size check
 
@@ -604,17 +737,20 @@ stands on evidence of work already done, so nothing is built twice to land once.
 **One command reads the record.** `just tasks runs SLUG` prints what the recorder kept of the
 task at its branch's tip, `--tip SHA` at another commit ([TASKS](TASKS.md#needed-stamps)): each
 build and test command the task ran there with its newest result, when and by whom, and the runs
-of it before there; the `tests` stamp as its reader reads it; the project's `[verdicts] check`
+of it before there; each command a runner refused there, with the refusal's line; the `tests`
+stamp as its reader reads it; the project's `[verdicts] check`
 (the docs audit here) with its run there, or `no run`; and how many of its runs are at other
 commits, none of them the tip's. The executor reads it before it moves the task to review, and
 the reviewer reads it beside the thread's evidence.
 
 **The executor runs at the tip it asks review for.** A run made before the last commit is of
 another commit: the executor runs it again at the tip, and no reviewer does it in its place. A
-command that cannot pass as typed is recorded red like any other, and no green run of another
-command answers it: only a new commit clears it, so a filter goes after `--`
-(`just test-rs -p PACKAGE --test TARGET -- FILTER FILTER`), as [step 3](#picking-the-focused-set)
-writes it.
+filter goes after `--` (`just test-rs -p PACKAGE --test TARGET -- FILTER FILTER`), as
+[step 3](#picking-the-focused-set) writes it: typed without it, Cargo refuses the command line,
+and the run is recorded as refused, no red and no green at the tip, so the command typed right
+is still to run. A command that ran and cannot pass at the commit is a red no green run of
+another command answers: only a new commit clears it
+([TASKS](TASKS.md#what-clears-a-red-run)).
 
 **The reviewer takes a green recorded run at the tip as run.** It reads the diff against the
 record (`just tasks runs SLUG`) and judges whether those runs cover the change. It builds or

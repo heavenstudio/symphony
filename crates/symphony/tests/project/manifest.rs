@@ -4,11 +4,12 @@
 use std::path::Path;
 
 use symphony::lint::project_problems;
-use symphony::project::{Entrypoint, FILE, PANES, Project, TRANSPORTS, slug};
+use symphony::project::{Entrypoint, FILE, PANES, Project, slug};
 
 use super::Tree;
 mod limits;
 mod machine_work;
+mod retired;
 mod settings_check;
 mod stamps;
 
@@ -49,7 +50,6 @@ fn no_file_and_an_empty_file_are_the_plain_project_of_every_default() {
     assert_eq!(plain.default_branch, "main");
     assert!(plain.plugins.is_empty());
     assert_eq!(plain.theme, symphony::project::Theme::default());
-    assert_eq!(plain.agents.transports, TRANSPORTS);
     assert_eq!(plain.agents.panes, "none");
     assert_eq!(plain.agents.worktrees, None);
     assert_eq!(plain.agents.launch, symphony::project::Launch::default());
@@ -134,9 +134,6 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
     );
     let project = parsed("[agents]\npanes = \"hc\"\n").unwrap();
     assert_eq!(project.agents.panes, "hc");
-    assert_eq!(project.agents.transports, TRANSPORTS);
-    let project = parsed("[agents]\ntransports = []\n").unwrap();
-    assert!(project.agents.transports.is_empty());
     let project = parsed("[agents.launch]\nmodel = \"m\"\n").unwrap();
     assert_eq!(project.agents.launch.model.as_deref(), Some("m"));
     assert_eq!(project.agents.launch.default, None);
@@ -230,7 +227,7 @@ fn a_path_must_stay_inside_the_project() {
             "[verdicts] record",
             "[verdicts]\nrecord = \".git/../../x\"\n".into(),
         ),
-        ("[board] export", "[board]\nexport = \"../tasks.md\"\n".into()),
+        ("[board] guide", "[board]\nguide = \"../TASKS.md\"\n".into()),
         (
             "[verdicts] generators outputs",
             "[verdicts]\nland = [\"l\"]\ngenerators = [{ name = \"g\", outputs = \"/o\", command = [\"x\"] }]\n".into(),
@@ -475,6 +472,14 @@ fn the_land_table_names_what_the_regenerator_makes_and_whether_a_land_pushes_and
         refused("[land]\ncheck_paths = [\"../x\"]\n")
             .contains("[land] check_paths names \"../x\", which is no path inside the project")
     );
+    // The command that delivers a task by a hosted pull request: a key the project file knows, a
+    // list of words, and never one naming no command.
+    assert!(parsed("[land]\ndelivery = [\"symphony-github\", \"deliver\"]\n").is_ok());
+    assert!(refused("[land]\ndelivery = \"gh\"\n").contains("delivery"));
+    assert!(
+        refused("[land]\ndelivery = [\"\"]\n")
+            .contains("[land] delivery names no command: leave it out to land here")
+    );
     // A generator's key, which the regenerator runs before it, named in `[land] keys`: a key
     // inside the generator's own table would make an older Symphony refuse the whole file.
     let generator =
@@ -676,8 +681,8 @@ fn a_table_or_key_this_build_does_not_know_is_left_out_of_the_running_project_an
     let root = folder(&tree, "Night Shift");
     std::fs::write(
         root.join(FILE),
-        "[project]\nname = \"Lamp Works\"\n\n[board]\nexport = \"docs/tasks.md\"\n\
-         disposable = [\"artifacts/*\"]\non_review = [\"x\"]\nguide = \"docs/TASKS.md\"\n\
+        "[project]\nname = \"Lamp Works\"\n\n[board]\nslot_locks = \"locks\"\n\
+         on_land = [\"z\"]\non_review = [\"x\"]\nguide = \"docs/TASKS.md\"\n\
          starts = [\"y\"]\n\n[theme]\ncolour = \"red\"\n\n[hooks]\nbeat = 1\n",
     )
     .unwrap();
@@ -688,8 +693,8 @@ fn a_table_or_key_this_build_does_not_know_is_left_out_of_the_running_project_an
     // the running project leaves them out and keeps every setting it knows
     let project = Project::of(&root);
     assert_eq!(project.name, "Lamp Works");
-    assert_eq!(project.board.export.as_deref(), Some("docs/tasks.md"));
-    assert_eq!(project.board.disposable, ["artifacts/*"]);
+    assert_eq!(project.board.slot_locks.as_deref(), Some("locks"));
+    assert_eq!(project.board.on_land, ["z"]);
     assert_eq!(project.board.on_review, ["x"]);
     assert_eq!(project.board.guide(), "docs/TASKS.md");
     assert_ne!(*project, Project::plain(&root));

@@ -7,6 +7,7 @@
 
 use crate::children::Child as _;
 use crate::common::{Scratch, gone, script, signal};
+use crate::hold::REPLAY_ROWS as ROWS;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -22,9 +23,6 @@ const SMALL: Storage = Storage {
     memtable: 4 << 20,
     ..Storage::BOARD
 };
-
-/// How many rows the store's log holds: 4 MB of writes, more than half [`SMALL`]'s memtable.
-const ROWS: u64 = 2000;
 
 /// A `surreal` that writes down each start, its pid and its memtable (a line of `starts`), and,
 /// under a replay's memtable, waits for the file `go` (for at most a minute) before it runs the
@@ -88,23 +86,7 @@ fn board(s: &Scratch, surreal: &Path) -> Home {
 /// A store whose log of [`ROWS`] rows, written under the board's memtable by a server then killed,
 /// a start under [`SMALL`] replays in a private server first: the bytes that log holds.
 fn written(s: &Scratch) -> u64 {
-    let first = s.home().storage(Storage::BOARD).ensure().unwrap();
-    let client = Client::new(&first.addr, "sf", "replay");
-    for batch in 0..ROWS / 100 {
-        client
-            .define_then(
-                &format!(
-                    "FOR $n IN 0..100 {{ CREATE row CONTENT {{ batch: {batch}, n: $n, text: \
-                     string::repeat('x', 2000) }} }};"
-                ),
-                json!({}),
-            )
-            .unwrap();
-    }
-    assert_eq!(rows(&first.addr), ROWS);
-    signal(first.pid, "KILL");
-    assert!(gone(first.pid));
-    std::fs::remove_file(s.dir.join("server.json")).unwrap();
+    crate::hold::replay_into(s);
     let log = logged(&s.dir);
     assert!(log * 2 > SMALL.memtable, "the log holds {log} bytes");
     log

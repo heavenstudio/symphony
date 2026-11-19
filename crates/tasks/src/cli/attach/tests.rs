@@ -70,6 +70,9 @@ fn pane(id: &str, status: &str, conversation: &str) -> Pane {
     Pane::from_hc(terminal.as_object().unwrap()).unwrap()
 }
 
+/// The clock of a look that names none.
+const NOW: f64 = 1_000.0;
+
 /// One look, and the lines it said.
 fn look(
     board: &Board,
@@ -78,12 +81,25 @@ fn look(
     panes: Answer<Vec<Pane>>,
     before: &PaneWatch,
 ) -> (PaneWatch, Vec<String>) {
+    look_at(board, who, open, panes, NOW, before)
+}
+
+/// One look at `now`, and the lines it said.
+fn look_at(
+    board: &Board,
+    who: &str,
+    open: &[TaskSessionRow],
+    panes: Answer<Vec<Pane>>,
+    now: f64,
+    before: &PaneWatch,
+) -> (PaneWatch, Vec<String>) {
     let mut said = Vec::new();
     let after = pane_watch(
         board,
         &overseen(board, who),
         open,
         &|| panes.clone(),
+        now,
         before,
         &mut |line| said.push(line.to_string()),
     );
@@ -274,6 +290,10 @@ fn watermarks_reject_older_unknown_and_resolved_equal_turn_observations() {
     .unwrap();
     assert!(legacy.known.is_empty());
     assert_eq!(legacy.blocked["w"].turn, None);
+    assert_eq!(
+        (legacy.unanswered_since, legacy.unanswered_at),
+        (None, None)
+    );
     let mut before = PaneWatch::default();
     for (status, turn, alerts, blocked, known) in [
         ("blocked", Some(3), 1, true, 3),
@@ -306,7 +326,7 @@ fn watermarks_reject_older_unknown_and_resolved_equal_turn_observations() {
         before = after;
     }
     let (unknown, said) = look(&board, "orch", &open, Err("down".into()), &before);
-    assert_eq!(said.len(), 1);
+    assert_eq!(said, Vec::<String>::new(), "one failed sample says nothing");
     assert_eq!(unknown.blocked, before.blocked);
     assert_eq!(unknown.known, before.known);
     let (retired, _) = look(&board, "orch", &[], Err("down".into()), &unknown);
@@ -372,7 +392,17 @@ fn a_session_no_longer_launched_is_forgotten_while_hc_cannot_be_asked() {
     };
     // v's pane closed: only w is still launched.
     let open = [launched("w", "t/a", "t1", "")];
-    let (after, said) = look(&board, "orch", &open, Err("down".into()), &before);
+    let (first, said) = look(&board, "orch", &open, Err("down".into()), &before);
+    assert_eq!(said, Vec::<String>::new());
+    let failing = PaneWatch {
+        blocked: BTreeMap::from([("w".into(), blocked("t1"))]),
+        unanswered_since: Some(NOW),
+        unanswered_at: Some(NOW),
+        ..PaneWatch::default()
+    };
+    assert_eq!(first, failing);
+    let later = NOW + OUTAGE_SECONDS;
+    let (after, said) = look_at(&board, "orch", &open, Err("down".into()), later, &first);
     assert_eq!(
         said,
         [
@@ -380,13 +410,195 @@ fn a_session_no_longer_launched_is_forgotten_while_hc_cannot_be_asked() {
         ]
     );
     let expected = PaneWatch {
-        blocked: BTreeMap::from([("w".into(), blocked("t1"))]),
         unanswered: true,
-        ..PaneWatch::default()
+        unanswered_at: Some(later),
+        ..failing
     };
     assert_eq!(after, expected);
-    let (again, said) = look(&board, "orch", &open, Err("down".into()), &after);
+    let (again, said) = look_at(
+        &board,
+        "orch",
+        &open,
+        Err("down".into()),
+        later + 1.0,
+        &after,
+    );
     assert_eq!((again, said), (expected, Vec::new()));
+}
+
+/// The times a run of samples, each `(at, answered)`, said WATCH at, from the watch `before`, of
+/// `w` launched into t1 for t/a, which `orch` orchestrates; and what the watch keeps after them.
+fn watched_at(samples: &[(f64, bool)], before: PaneWatch) -> (Vec<f64>, PaneWatch) {
+    let board = Board {
+        tasks: vec![task(
+            "t/a",
+            None,
+            &[("orch", "orchestrator"), ("w", "executor")],
+        )],
+        sessions: vec![session("orch", None), session("w", None)],
+        latest_message: 0,
+    };
+    let open = [launched("w", "t/a", "t1", "")];
+    let mut watch = before;
+    let mut said_at = Vec::new();
+    for &(at, answered) in samples {
+        let panes = match answered {
+            true => Ok(vec![pane("t1", "working", "")]),
+            false => Err("down".into()),
+        };
+        let (after, said) = look_at(&board, "orch", &open, panes, at, &watch);
+        assert!(
+            said.iter()
+                .all(|line| line.starts_with("WATCH hc unanswered")),
+            "{said:?}"
+        );
+        said_at.extend(said.iter().map(|_| at));
+        watch = after;
+    }
+    (said_at, watch)
+}
+
+/// The server clock's samples, one a second from `from` to `to`, each answered or failed.
+fn every_second(from: u32, to: u32, answered: bool) -> Vec<(f64, bool)> {
+    (from..=to).map(|at| (f64::from(at), answered)).collect()
+}
+
+/// A run of samples, in order.
+fn runs(parts: &[Vec<(f64, bool)>]) -> Vec<(f64, bool)> {
+    parts.concat()
+}
+
+#[test]
+fn one_failed_sample_between_answers_says_nothing() {
+    // The incident: hc failing at one sample in four under load, for two minutes.
+    let flapping: Vec<_> = (0..=120).map(|at| (f64::from(at), at % 4 != 3)).collect();
+    let (said, after) = watched_at(&flapping, PaneWatch::default());
+    assert_eq!(said, Vec::<f64>::new());
+    assert_eq!(
+        (
+            after.unanswered,
+            after.unanswered_since,
+            after.unanswered_at
+        ),
+        (false, None, None),
+        "an answer forgets the failed sample"
+    );
+    // A stretch short of its last second, then an answer, says nothing either.
+    let short = runs(&[every_second(0, 29, false), every_second(30, 30, true)]);
+    assert_eq!(
+        watched_at(&short, PaneWatch::default()).0,
+        Vec::<f64>::new()
+    );
+}
+
+#[test]
+fn hc_failing_at_every_sample_for_the_stretch_says_watch_once() {
+    let (said, after) = watched_at(&every_second(0, 600, false), PaneWatch::default());
+    assert_eq!(
+        said,
+        [OUTAGE_SECONDS],
+        "once, at the sample that ends the stretch"
+    );
+    assert!(after.unanswered);
+    // A wait's looks, 15 s apart: two gaps make the stretch.
+    let looks = [(0.0, false), (15.0, false), (30.0, false), (45.0, false)];
+    assert_eq!(watched_at(&looks, PaneWatch::default()).0, [30.0]);
+}
+
+#[test]
+fn once_said_a_failing_sample_leaves_the_record_as_it_was() {
+    // So a tick of an outage already said takes no lease and writes nothing.
+    let (_, said) = watched_at(&every_second(0, 30, false), PaneWatch::default());
+    for at in [31.0, 300.0, 3_600.0, 10.0] {
+        assert_eq!(
+            watched_at(&[(at, false)], said.clone()),
+            (vec![], said.clone()),
+            "{at}"
+        );
+    }
+}
+
+#[test]
+fn an_answer_ends_the_outage_and_rearms_the_watch() {
+    let twice = runs(&[
+        every_second(0, 30, false),
+        every_second(31, 31, true),
+        every_second(32, 70, false),
+    ]);
+    assert_eq!(watched_at(&twice, PaneWatch::default()).0, [30.0, 62.0]);
+    // An answer inside the stretch starts it again from the next failed sample.
+    let broken = runs(&[
+        every_second(0, 20, false),
+        every_second(21, 21, true),
+        every_second(22, 60, false),
+    ]);
+    assert_eq!(watched_at(&broken, PaneWatch::default()).0, [52.0]);
+}
+
+#[test]
+fn a_sleep_spanning_the_stretch_is_not_an_outage() {
+    // The clock's last sample before the sleep failed, and so does its first after the wake.
+    let night = runs(&[
+        every_second(0, 1, false),
+        every_second(1_800, 1_801, false),
+        every_second(1_802, 1_802, true),
+    ]);
+    assert_eq!(
+        watched_at(&night, PaneWatch::default()).0,
+        Vec::<f64>::new()
+    );
+    // Awake time before the sleep does not count either: the stretch starts again at the wake.
+    let nap = runs(&[every_second(0, 20, false), every_second(51, 90, false)]);
+    assert_eq!(watched_at(&nap, PaneWatch::default()).0, [81.0]);
+    // A gap of the stretch itself is still a sample's: a wait's looks, a stretch apart.
+    let apart = [(0.0, false), (30.0, false)];
+    assert_eq!(watched_at(&apart, PaneWatch::default()).0, [30.0]);
+    let further = [(0.0, false), (30.5, false), (60.5, false)];
+    assert_eq!(watched_at(&further, PaneWatch::default()).0, [60.5]);
+}
+
+#[test]
+fn a_sleep_inside_an_outage_already_said_says_it_no_more() {
+    let night = runs(&[
+        every_second(0, 30, false),
+        every_second(1_830, 1_900, false),
+        every_second(1_901, 1_901, true),
+        every_second(1_902, 1_932, false),
+    ]);
+    assert_eq!(watched_at(&night, PaneWatch::default()).0, [30.0, 1_932.0]);
+}
+
+#[test]
+fn a_clock_set_back_starts_the_stretch_again() {
+    let set_back = runs(&[every_second(100, 120, false), every_second(50, 90, false)]);
+    assert_eq!(watched_at(&set_back, PaneWatch::default()).0, [80.0]);
+}
+
+#[test]
+fn an_older_dispatchers_record_is_read_as_it_meant() {
+    // One that said WATCH keeps no start: no second WATCH, and an answer re-arms it.
+    let said: PaneWatch =
+        serde_json::from_value(json!({"blocked": {}, "unanswered": true})).unwrap();
+    assert_eq!(
+        watched_at(&every_second(0, 60, false), said.clone()).0,
+        Vec::<f64>::new()
+    );
+    let rearmed = runs(&[every_second(0, 0, true), every_second(1, 31, false)]);
+    assert_eq!(watched_at(&rearmed, said).0, [31.0]);
+    // One that said nothing: the stretch starts at the first failed sample this one takes.
+    let quiet: PaneWatch = serde_json::from_value(json!({"unanswered": false})).unwrap();
+    assert_eq!(watched_at(&every_second(0, 30, false), quiet).0, [30.0]);
+    // What this one keeps, an older one reads: the fields it knows, as they were.
+    let (_, failing) = watched_at(&every_second(0, 10, false), PaneWatch::default());
+    let saved = serde_json::to_value(&failing).unwrap();
+    assert_eq!(saved["unanswered"], false);
+    assert_eq!(
+        (
+            saved["unanswered_since"].as_f64(),
+            saved["unanswered_at"].as_f64()
+        ),
+        (Some(0.0), Some(10.0))
+    );
 }
 
 #[test]
@@ -403,6 +615,8 @@ fn with_nothing_launched_hc_is_not_asked_and_the_watch_forgets() {
     let before = PaneWatch {
         blocked: BTreeMap::new(),
         unanswered: true,
+        unanswered_since: Some(NOW),
+        unanswered_at: Some(NOW),
         ..PaneWatch::default()
     };
     let after = pane_watch(
@@ -410,6 +624,7 @@ fn with_nothing_launched_hc_is_not_asked_and_the_watch_forgets() {
         &overseen(&board, "orch"),
         &[],
         &|| panic!("hc asked with nothing to watch"),
+        NOW,
         &before,
         &mut |line| panic!("said {line}"),
     );

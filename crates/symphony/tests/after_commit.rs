@@ -2,6 +2,8 @@
 include!("common/commit_fixture.rs");
 use symphony_board::{rpc, sys};
 
+#[path = "after_commit/delivery.rs"]
+mod delivery;
 #[path = "after_commit/publication_reports.rs"]
 mod publication_reports;
 #[path = "after_commit/uploads.rs"]
@@ -239,6 +241,46 @@ fn commits_only_immutable_edits_and_preserves_the_real_index() {
             assert_eq!(git(&root, &["rev-parse", "main"]), tip);
             f.clean_workers();
         },
+    );
+}
+
+#[test]
+fn a_save_under_delivery_is_kept_pending_on_a_branch_and_filed_as_the_owners_task() {
+    isolated(
+        "a_save_under_delivery_is_kept_pending_on_a_branch_and_filed_as_the_owners_task",
+        delivery::kept_pending_on_a_branch_and_filed_as_the_owners_task,
+    );
+}
+
+#[test]
+fn pending_saves_a_then_b_go_through_delivery_cancellation_cover_and_restart() {
+    isolated(
+        "pending_saves_a_then_b_go_through_delivery_cancellation_cover_and_restart",
+        delivery::a_then_b_through_delivery_cancellation_and_restart,
+    );
+}
+
+#[test]
+fn a_save_journaled_before_delivery_was_set_and_one_that_no_longer_applies_are_kept() {
+    isolated(
+        "a_save_journaled_before_delivery_was_set_and_one_that_no_longer_applies_are_kept",
+        delivery::journaled_before_the_key_and_no_longer_applying,
+    );
+}
+
+#[test]
+fn a_pending_save_settled_on_its_branch_is_proved_by_its_receipt_alone() {
+    isolated(
+        "a_pending_save_settled_on_its_branch_is_proved_by_its_receipt_alone",
+        delivery::a_settled_conflict_is_proved_by_its_receipt_alone,
+    );
+}
+
+#[test]
+fn the_land_of_a_pending_saves_task_is_said_from_its_journal() {
+    isolated(
+        "the_land_of_a_pending_saves_task_is_said_from_its_journal",
+        delivery::the_land_of_a_pending_saves_task_is_said_from_its_journal,
     );
 }
 
@@ -1976,6 +2018,61 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
             );
             assert!(store.tasks(None).unwrap().is_empty(), "no task was filed");
             assert!(git(&root, &["status", "--porcelain"]).is_empty());
+            f.clean_workers();
+        },
+    );
+}
+
+#[test]
+fn quick_chat_acknowledges_durable_intents_before_delivery_and_replays_once() {
+    isolated(
+        "quick_chat_acknowledges_durable_intents_before_delivery_and_replays_once",
+        |f| {
+            let root = f.repo();
+            let saves = ClosingSaves::start(&root);
+            for words in ["First quick question", "Second quick question"] {
+                let value = saves.post(
+                    "",
+                    "/api/quick-chat",
+                    json!({"text":words,"page":"/docs/a.md#one"}),
+                );
+                assert!(value["id"].is_i64(), "{value}");
+            }
+            drop(saves);
+            let store = f.store();
+            assert!(store.asks(None).unwrap().is_empty(), "delivery has not run");
+            let journal = f.home.join("asks.db");
+            let sqlite = |sql: &str| {
+                let done =
+                    sys::output(sys::Command::new("sqlite3").arg(&journal).arg(sql)).unwrap();
+                assert!(done.status.success(), "{done:?}");
+                String::from_utf8_lossy(&done.stdout).trim().to_owned()
+            };
+            assert_eq!(sqlite("SELECT count(*) FROM callbacks;"), "2");
+            assert_eq!(
+                sqlite("SELECT count(*) FROM messages WHERE by = 'owner';"),
+                "2"
+            );
+            // A crash after the board commits but before the local outbox deletes its record has
+            // the same replay as this refused delete. The event key prevents a second delivery.
+            sqlite(
+                "CREATE TRIGGER hold_delivery BEFORE DELETE ON callbacks BEGIN SELECT RAISE(ABORT, 'held after board commit'); END;",
+            );
+            let error = symphony::callbacks::Flusher::new(&root)
+                .flush(&root)
+                .unwrap_err();
+            assert!(error.contains("held after board commit"), "{error}");
+            assert_eq!(sqlite("SELECT count(*) FROM callbacks;"), "2");
+            sqlite("DROP TRIGGER hold_delivery;");
+            let mut restarted = symphony::callbacks::Flusher::new(&root);
+            restarted.flush(&root).unwrap();
+            restarted.flush(&root).unwrap();
+            assert_eq!(sqlite("SELECT count(*) FROM callbacks;"), "0");
+            let asks = store.asks(None).unwrap();
+            assert_eq!(asks.len(), 2);
+            assert!(asks.iter().all(|ask| ask.lines == 1));
+            let events = store.raw().table("chat_event").fields(&["text"]).unwrap();
+            assert_eq!(events.as_array().unwrap().len(), 2);
             f.clean_workers();
         },
     );

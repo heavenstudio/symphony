@@ -33,6 +33,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+pub mod external;
+#[cfg(feature = "hosted-postgresql")]
+pub mod hosted;
 mod wire;
 
 #[cfg(test)]
@@ -48,7 +51,7 @@ const TIMEOUT: Duration = Duration::from_secs(300);
 /// SQLSTATEs a write is tried again on: `serialization_failure` and `deadlock_detected`.
 const AGAIN: [&str; 2] = ["40001", "40P01"];
 /// SQLSTATE of `raise_exception`, the code of a statement's own `RAISE EXCEPTION`.
-const RAISED: &str = "P0001";
+pub(crate) const RAISED: &str = "P0001";
 /// SQLSTATE of `invalid_catalog_name`: the database a connection names is not there.
 const NO_DATABASE: &str = "3D000";
 /// SQLSTATE of `duplicate_database`.
@@ -87,6 +90,13 @@ impl Answer {
     /// The first column of the first row: a statement that answers one value.
     pub fn value(&self) -> Option<&str> {
         self.rows.first()?.first()?.as_deref()
+    }
+
+    /// The first column of every row that gives one, in order: a statement that answers a list,
+    /// an item a row.
+    pub fn column(&self) -> Vec<&str> {
+        let firsts = self.rows.iter().filter_map(|row| row.first()?.as_deref());
+        firsts.collect()
     }
 }
 
@@ -136,6 +146,11 @@ impl Client {
     pub fn waiting(mut self, timeout: Duration) -> Client {
         self.timeout = timeout;
         self
+    }
+
+    /// How long this client waits on the server ([`Client::waiting`]).
+    pub fn wait(&self) -> Duration {
+        self.timeout
     }
 
     /// A client of its own, with no connection yet, of the same database.
@@ -209,7 +224,7 @@ impl Client {
         let maker = self.of(MAINTENANCE);
         match maker.simple(&format!("CREATE DATABASE {}", self.database)) {
             Ok(_) => Ok(()),
-            Err(DbError::Failed(said)) if coded(&said, DATABASE_THERE) => Ok(()),
+            Err(DbError::Failed(said)) if database_there(&said) => Ok(()),
             Err(other) => Err(other),
         }
     }
@@ -519,6 +534,13 @@ pub(crate) fn error_of(body: &[u8]) -> DbError {
 /// Whether `said`, a [`DbError::Failed`]'s words, is the server's error of SQLSTATE `state`.
 fn coded(said: &str, state: &str) -> bool {
     said.ends_with(&format!("(SQLSTATE {state})"))
+}
+
+/// Concurrent CREATE DATABASE can meet either on the database's name or on the catalogue's
+/// unique index for that name. No other unique constraint means this database was made.
+fn database_there(said: &str) -> bool {
+    coded(said, DATABASE_THERE)
+        || (coded(said, "23505") && said.contains("\"pg_database_datname_index\""))
 }
 
 /// Whether `said` is the server's refusal of a connection to a database it does not hold: a board

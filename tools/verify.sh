@@ -10,22 +10,32 @@
 #     docs-audit    the docs audit, `symphony docs-audit --check`
 #     crates-check  the crates-check recipe: each published package whose version crates.io holds
 #                   packaged from the same sources (docs/RELEASES.md, "Packages on crates.io")
+#     semver-check  the kit/helper APIs against crates.io, with their actual version moves
+#     hosted        the hosted-check recipe: the board built with its hosted feature, its tests and
+#                   its matrix on PostgreSQL 16 and 18, which no other step builds
+#     nextest-setup provision the checksum-pinned runner, outside the tests step
 #     tests         every test target of the workspace, the browser tests among them, built once and
-#                   run in lanes side by side (tools/test-lanes.sh), each lane's log in tests-lanes/
+#                   scheduled by nextest with shared-fixture Cargo batches (tools/test-lanes.sh), logs in tests-lanes/
 #                   beside the step's log (SYMPHONY_TEST_LANE_LOGS), named in it as the lanes start
 #
 # Each is recorded as a step of the verify run (docs/MACHINE_WORK.md) and writes its output to a
 # log of its own, STEP.log in the folder SYMPHONY_CHECK_STEPS names (the release run names one for
 # each check it runs), else build/verify, which steps.tsv there lists as each step ends: its name, exit
-# status, seconds, log and command, and the machine's load as it ended (its load averages over 1, 5
+# status (`-` for the tests when a red nextest-setup kept them from starting), seconds, log and command, and the machine's load as it ended (its load averages over 1, 5
 # and 15 minutes and its processors, space-separated; empty where the system does not say),
 # tab-separated (crates/symphony-build/src/release/steps.rs reads it). Named STEPs run alone, in the
 # order above. An interrupt (Ctrl-C) stops it once the step it reached ends, exiting 130.
 #
+# The tests step lists each lane that ran after its own line, as `tests/LANE`, a part of the step,
+# and `tests/LANE...` in place of `tests` runs those lanes alone (tools/test-lanes.sh), which is
+# how a release candidate's rerun runs the lanes whose inputs a fix changed and carries the green
+# of the rest (docs/RELEASES.md, "The rerun"). `--inputs` in place of the steps says what each
+# step and lane reads ([`reads`]) and runs nothing.
+#
 # The tests serve the client the client check built in this same verify (SYMPHONY_UI_DIST). The
 # check's folder is cleared before it runs, so a client an earlier check left there is never served.
 # With none (the client check built nothing, or did not run), SYMPHONY_UI_DIST is unset and the
-# browser tests build the client themselves, red if that build fails; the tests' log and the
+# tests runner publishes one client before scheduling, red if that build fails; its log and the
 # summary say what the tests ran against.
 #
 # Bash 3.2 (macOS's /bin/bash) runs it.
@@ -40,10 +50,52 @@ CDPATH='' cd "$(dirname "$justfile")" || exit 2
 interrupted=''
 trap 'interrupted=1' INT
 
-steps=(lint client-check size-check docs-audit crates-check tests)
+steps=(lint client-check size-check docs-audit crates-check semver-check hosted nextest-setup tests)
+
+# STEP: what the step STEP reads, a line each, in the words of tools/test-lanes.sh's `reads`:
+# `package NAME` (the folders of the packages it builds with), `path PATH`, or `tree`, the whole
+# tree. Every step reads the tree outside apps/ and crates/ besides, the check itself among it
+# (this script, the justfile, tools/, the lock file and the toolchain pin), which
+# tools/check-inputs.sh adds. The tests step has no inputs of its own: its lanes have.
+reads() {
+    case "$1" in
+        # Lint reads the branch's commits for what they tell a consumer, the docs audit every
+        # document, guide and recipe, and the crates check every published package.
+        lint | docs-audit | crates-check) printf 'tree\n' ;;
+        client-check) printf 'path apps/symphony-web\npath apps/symphony-server\n' ;;
+        size-check) printf 'package symphony-server\npackage symphony-app\npackage symphony-board\n' ;;
+        semver-check) printf 'path crates\n' ;;
+        # The board with its hosted feature, and the settings table it judges.
+        hosted) printf 'package symphony-board\n' ;;
+        nextest-setup) ;;
+    esac
+}
+if [ "$#:${1:-}" = 1:--inputs ]; then
+    for step in "${steps[@]}"; do
+        if [ "$step" = tests ]; then
+            bash tools/test-lanes.sh --inputs | sed 's|^|tests/|' || exit 2
+            continue
+        fi
+        # A step that reads nothing of its own is named still, by a line with no word.
+        printf '%s\t\t\n' "$step"
+        reads "$step" | while IFS= read -r line; do
+            printf '%s\t%s\t%s\n' "$step" "${line%% *}" "$([ "$line" = tree ] || printf '%s' "${line#* }")"
+        done
+    done
+    exit 0
+fi
+
 chosen=()
+# The lanes of the tests step asked for alone, as `tests/LANE`.
+only_lanes=()
 for arg in "$@"; do
     known=''
+    case "$arg" in
+    tests/?*)
+        only_lanes+=("${arg#tests/}")
+        continue
+        ;;
+    esac
     for step in "${steps[@]}"; do
         if [ "$step" = "$arg" ]; then known=1; fi
     done
@@ -58,7 +110,10 @@ for step in "${steps[@]}"; do
         continue
     fi
     for arg in "$@"; do
-        if [ "$step" = "$arg" ]; then
+        case "$arg" in tests/?*) arg=tests ;; esac
+        # Even a tests-only release rerun has its explicit setup prerequisite. A setup failure
+        # is red at that step; tests never starts and cannot file a misleading missing-tool red.
+        if [ "$step" = "$arg" ] || { [ "$step" = nextest-setup ] && [ "$arg" = tests ]; }; then
             chosen+=("$step")
             break
         fi
@@ -150,9 +205,40 @@ for step in "${chosen[@]}"; do
             tools/record.sh --step crates-check test "crates check" \
             just --justfile "$justfile" crates-check
         ;;
+    semver-check)
+        run semver-check "just semver-check" \
+            tools/record.sh --step semver-check test "semver check" \
+            just --justfile "$justfile" semver-check
+        ;;
+    hosted)
+        run hosted "just hosted-check" \
+            tools/record.sh --step hosted test "hosted check" \
+            just --justfile "$justfile" hosted-check
+        ;;
+    nextest-setup)
+        run nextest-setup "just nextest-setup" \
+            tools/record.sh --step nextest-setup build "nextest setup" \
+            just --justfile "$justfile" nextest-setup
+        ;;
     tests)
+        case " ${red[*]-} " in
+        *" nextest-setup "*)
+            printf 'verify: tests not started: nextest-setup is red; see %s/nextest-setup.log\n' "$logs"
+            # Listed as not run (`-`), never as a red of its own: whoever reads the list knows
+            # the step is there and did not run, so no rerun of the setup alone passes for it.
+            printf 'tests\t-\t0\t%s\t%s\t%s\n' "$logs/nextest-setup.log" tools/test-lanes.sh "$(load)" >>"$summary"
+            continue
+            ;;
+        esac
         tests=(tools/test-lanes.sh)
+        # The whole step when it was asked for by its name, whatever lanes were named beside it.
+        whole=''
+        for arg in "$@"; do
+            if [ "$arg" = tests ]; then whole=1; fi
+        done
+        if [ -z "$whole" ] && [ "${#only_lanes[@]}" -gt 0 ]; then tests+=("${only_lanes[@]}"); fi
         lanes="$logs/tests-lanes"
+        rm -f "$lanes/lanes.tsv"
         if [ -n "$fresh" ]; then
             how="the tests ran against the client the client check built in this verify: $fresh"
             case " ${red[*]-} " in
@@ -169,10 +255,19 @@ for step in "${chosen[@]}"; do
             else
                 why='the client check did not run in this verify'
             fi
-            how="$why, so SYMPHONY_UI_DIST was unset: the browser tests built the client themselves (build/symphony-ui), red if that build failed"
+            how="$why, so SYMPHONY_UI_DIST was unset: the tests runner published one client before scheduling (build/symphony-ui), red if that build failed"
             run tests "${tests[*]}" \
                 env -u SYMPHONY_UI_DIST SYMPHONY_TEST_LANE_LOGS="$lanes" \
                 tools/record.sh --step tests test tests "${tests[@]}"
+        fi
+        # Each lane that ran, a part of the step: its log the lane's own, else the step's.
+        if [ -f "$lanes/lanes.tsv" ]; then
+            while IFS="$(printf '\t')" read -r lane code seconds; do
+                log="$logs/tests.log"
+                if [ -f "$lanes/$lane.log" ]; then log="$lanes/$lane.log"; fi
+                printf 'tests/%s\t%s\t%s\t%s\t%s\t%s\n' "$lane" "$code" "$seconds" "$log" \
+                    "tools/test-lanes.sh $lane" "$(load)" >>"$summary"
+            done <"$lanes/lanes.tsv"
         fi
         printf 'verify: tests: %s\n' "$how"
         printf '\nverify: %s\n' "$how" >>"$logs/tests.log"

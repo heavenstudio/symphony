@@ -155,6 +155,11 @@ fn the_release_run_makes_its_checkout_marks_it_and_takes_it_back_later() {
     fs::write(first.checkout.join("stray.txt"), "left\n").unwrap();
     fs::create_dir_all(first.checkout.join(".target")).unwrap();
     fs::write(first.checkout.join(".target/kept"), "build\n").unwrap();
+    let runner = first
+        .checkout
+        .join(".target/tools/nextest/0.9.152/bin/cargo-nextest");
+    fs::create_dir_all(runner.parent().unwrap()).unwrap();
+    fs::write(&runner, "prepared pinned runner\n").unwrap();
     let mut again = place(&main, &main, &common, &asked).unwrap();
     assert_eq!(again.admin.as_ref(), Some(&admin));
     again
@@ -166,6 +171,10 @@ fn the_release_run_makes_its_checkout_marks_it_and_takes_it_back_later() {
     );
     assert!(!again.checkout.join("stray.txt").exists());
     assert!(again.checkout.join(".target/kept").exists());
+    assert_eq!(
+        fs::read_to_string(&runner).unwrap(),
+        "prepared pinned runner\n"
+    );
 
     // Its folder gone, its registration is still the release run's: made again in its place.
     fs::remove_dir_all(&again.checkout).unwrap();

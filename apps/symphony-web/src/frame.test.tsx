@@ -51,8 +51,19 @@ describe("the frame", () => {
     page();
     expect(draw("queue")).toContain(
       `<header class="app-header" id="top"><span class="app-brand">${MARK}` +
-        '<span class="app-wordmark">Symphony</span></span><nav class="app-pages"',
+        '<span class="app-wordmark">Symphony</span></span><nav class="app-pages scroll-row"',
     );
+  });
+
+  // The pages are a row that scrolls across on a phone (scrollrow.ts), which finds the page shown
+  // by its `aria-current`; the bell's name is an element of its own, which a narrow phone hides
+  // from the eye alone, so the button keeps its name.
+  it("draws the pages as a scrolling row and the bell's name as text a sheet can hide", () => {
+    page();
+    const markup = draw("queue");
+    expect(markup).toContain('<nav class="app-pages scroll-row" aria-label="Pages">');
+    expect(markup.match(/aria-current="page"/g)).toHaveLength(1);
+    expect(markup).toContain('</svg><span class="bell-label"> Activity</span></button>');
   });
 
   // The server's own pages draw its file inline (apps/symphony-server/src/mark.rs), so the two

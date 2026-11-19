@@ -2,7 +2,7 @@
 # serde only: the server builds them, and the client reads them generated as TypeScript.
 [package]
 name = "symphony-api"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = true
@@ -25,7 +25,7 @@ typescript = ["dep:ts-rs", "symphony-blocks/typescript"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 # The plugin kit's block vocabulary, which these types carry: re-exported under the names it has here.
-symphony-blocks = { path = "../symphony-blocks", version = "1.0.0" }
+symphony-blocks = { path = "../symphony-blocks", version = "1.0.1" }
 ts-rs = { workspace = true, optional = true }
 
 [dev-dependencies]

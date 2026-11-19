@@ -31,6 +31,7 @@ mod left_replay;
     reason = "the perf target waits on what a socket hears; these tests read it in a wait of their own"
 )]
 mod listeners;
+mod moving;
 mod no_lsof;
 mod own_board;
 mod port;
@@ -42,4 +43,5 @@ mod snapshot;
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
 mod store;
+mod stores;
 mod surreal_lock;

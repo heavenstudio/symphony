@@ -103,24 +103,26 @@ const OUTPUT: [&str; 9] = [
 
 #[test]
 fn a_finished_worktrees_output_goes_with_it() {
-    for status in ["done", "cancelled"] {
-        let r = Repo::with(Seed::default().task("sim/landed", status));
-        let wt = r.merged("landed", "sim/landed");
+    // A done task's, a cancelled task's and a worktree with no task: one sweep lets each go.
+    let r = Repo::with(
+        Seed::default()
+            .task("sim/landed", "done")
+            .task("sim/dropped", "cancelled"),
+    );
+    let trees = [
+        r.merged("landed", "sim/landed"),
+        r.merged("dropped", "sim/dropped"),
+        r.detached("reviewer"),
+    ];
+    for wt in &trees {
         for path in OUTPUT {
-            write(&wt, path, "x\n");
+            write(wt, path, "x\n");
         }
-        r.assert_removed(&wt, &r.sweep());
     }
-}
-
-#[test]
-fn a_worktree_with_no_task_lets_its_output_go() {
-    let r = Repo::new();
-    let wt = r.detached("reviewer");
-    for path in OUTPUT {
-        write(&wt, path, "x\n");
+    let said = r.sweep();
+    for wt in &trees {
+        r.assert_removed(wt, &said);
     }
-    r.assert_removed(&wt, &r.sweep());
 }
 
 #[test]
@@ -142,23 +144,32 @@ fn output_is_not_cleaned_when_the_final_process_scan_keeps_the_tree() {
 
 #[test]
 fn artifacts_of_finished_and_unassigned_worktrees_are_set_aside_and_the_worktree_goes() {
-    for status in [Some("done"), Some("cancelled"), None] {
-        let seed = status.map_or_else(Seed::default, |status| {
-            Seed::default().task("sim/landed", status)
-        });
-        let r = Repo::with(seed);
-        let wt = r.merged("landed", "sim/landed");
-        write(&wt, "artifacts/solar-swift/x.log", "keep this evidence\n");
-        let said = r.sweep();
-        r.assert_removed(&wt, &said);
-        let kept_in = swept(&r.root, "artifacts").join("landed");
+    let r = Repo::with(
+        Seed::default()
+            .task("sim/landed", "done")
+            .task("sim/dropped", "cancelled"),
+    );
+    // A done task's, a cancelled task's and the branch of no task, each with evidence of its own.
+    let trees = ["landed", "dropped", "unassigned"].map(|name| {
+        let wt = r.merged(name, &format!("sim/{name}"));
+        write(
+            &wt,
+            "artifacts/solar-swift/x.log",
+            &format!("keep the evidence of {name}\n"),
+        );
+        (name, wt)
+    });
+    let said = r.sweep();
+    for (name, wt) in &trees {
+        r.assert_removed(wt, &said);
+        let kept_in = swept(&r.root, "artifacts").join(name);
         assert!(
             said.contains(&format!("its artifacts/ moved to {}", kept_in.display())),
-            "{status:?}: {said}"
+            "{name}: {said}"
         );
         assert_eq!(
             std::fs::read_to_string(kept_in.join("solar-swift/x.log")).unwrap(),
-            "keep this evidence\n"
+            format!("keep the evidence of {name}\n")
         );
     }
 }
@@ -231,18 +242,29 @@ fn a_worktree_whose_task_is_not_finished_keeps_its_output_and_names_it() {
 
 #[test]
 fn a_finished_worktree_still_keeps_a_change_or_an_untracked_file() {
-    for (path, tracked) in [("notes.txt", false), ("sim/world.gd", true)] {
-        let r = Repo::with(Seed::default().task("sim/landed", "done"));
-        let wt = r.merged("landed", "sim/landed");
+    let r = Repo::with(
+        Seed::default()
+            .task("sim/untracked", "done")
+            .task("sim/changed", "done"),
+    );
+    let trees = [("untracked", "notes.txt"), ("changed", "sim/world.gd")].map(|(name, path)| {
+        let wt = r.merged(name, &format!("sim/{name}"));
         write(&wt, path, "not committed\n");
         write(&wt, "artifacts/solar-swift/probe.json", "x\n");
-        let said = r.sweep();
-        r.assert_kept(&wt, &said);
-        assert!(said.contains(path), "{tracked}: {said}");
+        (wt, path)
+    });
+    let said = r.sweep();
+    for (wt, path) in &trees {
+        r.assert_kept(wt, &said);
+        let kept = said
+            .lines()
+            .find(|l| l.starts_with(&format!("kept {}: ", wt.display())))
+            .unwrap_or_else(|| panic!("{said}"));
+        assert!(kept.contains(path), "{said}");
         // Its artifacts stay where they are: they are set aside only for a removal.
         assert!(wt.join("artifacts/solar-swift/probe.json").is_file());
-        assert!(!swept(&r.root, "artifacts").exists(), "{said}");
     }
+    assert!(!swept(&r.root, "artifacts").exists(), "{said}");
 }
 
 // -- a task just done or cancelled: its closed sessions' worktrees go at once (`--task`) -------
@@ -259,12 +281,23 @@ fn finished_jump(closed: bool) -> (Repo, std::path::PathBuf, String) {
 #[test]
 fn the_closed_sessions_worktree_of_a_finished_task_goes_without_the_window() {
     let (r, wt, handle) = finished_jump(true);
+    // Another task's worktree, its session closed too: the finish of sim/jump does not reach it.
+    r.board
+        .store
+        .create(&NewTask::new("sim/dock", "Dock", "owner"))
+        .unwrap();
+    let dock = r.merged("sim-dock", "sim/dock");
+    launched(&r, "sim/dock", &unbound(&r), "executor", &dock, true);
     let finished = Finished::of(&r.board.store, "sim/jump").unwrap();
     assert!(finished.handles.contains(&handle));
     // Touched just now and bound to a live session: only the finish lets it go.
-    r.assert_kept(&wt, &text(&r.sweep_now(|_| {})));
-    let result = r.sweep_now(|o| o.finished = finished);
-    r.assert_removed(&wt, &text(&result));
+    let said = text(&r.sweep_now(|_| {}));
+    r.assert_kept(&wt, &said);
+    r.assert_kept(&dock, &said);
+    let said = text(&r.sweep_now(|o| o.finished = finished));
+    r.assert_removed(&wt, &said);
+    // A worktree of another task keeps its window.
+    r.assert_kept(&dock, &said);
 }
 
 #[test]
@@ -285,31 +318,24 @@ fn an_open_session_keeps_its_worktree_when_its_task_finishes() {
 
 #[test]
 fn an_unmerged_or_dirty_worktree_of_a_finished_task_stays() {
-    for dirty in [false, true] {
-        let r = Repo::with(Seed::default().task("sim/jump", "done"));
-        let wt = r.add("sim-jump", Some("sim/jump"), "main");
-        r.commit(&wt, "extends RefCounted\n# work\n");
-        if dirty {
-            git(&r.root, &["merge", "-q", "--ff-only", "sim/jump"]);
+    let r = Repo::with(
+        Seed::default()
+            .task("sim/unmerged", "done")
+            .task("sim/dirty", "done"),
+    );
+    for slug in ["sim/unmerged", "sim/dirty"] {
+        let wt = r.add(&slug.replace('/', "-"), Some(slug), "main");
+        r.commit(&wt, &format!("extends RefCounted\n# {slug}\n"));
+        if slug == "sim/dirty" {
+            git(&r.root, &["merge", "-q", "--ff-only", slug]);
             write(&wt, "left.txt", "not committed");
         }
-        launched(&r, "sim/jump", &r.bind(&wt), "executor", &wt, true);
-        let finished = Finished::of(&r.board.store, "sim/jump").unwrap();
+        let handle = r.bind(&wt);
+        launched(&r, slug, &handle, "executor", &wt, true);
+        let finished = Finished::of(&r.board.store, slug).unwrap();
+        assert!(finished.handles.contains(&handle), "{slug}");
         r.assert_kept(&wt, &text(&r.sweep_now(|o| o.finished = finished)));
     }
-}
-
-#[test]
-fn a_worktree_of_another_task_keeps_its_window() {
-    let (r, _, _) = finished_jump(true);
-    r.board
-        .store
-        .create(&NewTask::new("sim/dock", "Dock", "owner"))
-        .unwrap();
-    let dock = r.merged("sim-dock", "sim/dock");
-    launched(&r, "sim/dock", &unbound(&r), "executor", &dock, true);
-    let finished = Finished::of(&r.board.store, "sim/jump").unwrap();
-    r.assert_kept(&dock, &text(&r.sweep_now(|o| o.finished = finished)));
 }
 
 #[test]

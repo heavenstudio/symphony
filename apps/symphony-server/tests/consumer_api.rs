@@ -15,16 +15,28 @@
 
 use std::path::Path;
 
-use symphony_server::{binary, development, home, repo, sys};
+use symphony_server::{binary, home, repo, sys};
 
 #[test]
 fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&'static [&'static dyn symphony_plugin::Plugin], &[String]) -> i32 = binary::run;
-    // The retired client's dev server: a stub that refuses, until the consumer's binary goes.
-    let _: fn(&[String]) -> Result<(), String> = development::main;
     let _: fn(&Path) -> Result<repo::Checkout, String> = repo::checkout;
     let _: fn(i64) -> bool = sys::pid_alive;
     let _: fn(i64, libc::c_int) = sys::signal;
     // Built by its fields: one added here breaks the consumer's fixture.
     let _ = |port: u16, pid: i64, root: String| home::Running { port, pid, root };
+}
+
+#[test]
+fn hosted_admission_is_additive_and_explicit() {
+    use std::sync::Arc;
+    use symphony_server::{front, hosted};
+    let _: fn(&str, &str, &str, &str) -> Result<hosted::Config, hosted::Refusal> =
+        hosted::Config::new;
+    type HostedRouter = fn(
+        Arc<front::Shared>,
+        hosted::Config,
+        Arc<dyn hosted::Host>,
+    ) -> Result<axum::Router, hosted::Refusal>;
+    let _: HostedRouter = hosted::router;
 }

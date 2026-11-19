@@ -2,19 +2,24 @@
 //! `[releases] every_landings` tasks (20 unless the project says) have landed on the default
 //! branch since the last release, or since a later run that checked something, so a red run is
 //! counted from as a release is and never asked for again on every landing after it. A landing is
-//! the merge `just land` makes on the default branch's first-parent line, "Merge branch 'SLUG'".
+//! a commit on the default branch's first-parent line that is the merge `just land` makes,
+//! "Merge branch 'SLUG'", or the squash a pull request delivered, which its land's receipt names
+//! and git bears out ([`super::receipts`]): never a commit taken for one by its subject or its
+//! patch. The count is read from the line and the receipts each time, so a landing whose
+//! `on_land` never ran is counted by the next count all the same, and one counted twice is one.
 //! With no release and no run on record, the first count takes every landing on the line. A run
 //! in progress is never doubled: while one holds the lock, the count waits for it. It reads the
 //! remote's main as this checkout last fetched or pushed it (its own default branch when it has no
-//! such ref), the release tags here and the run records, with git and the files alone: it fetches,
-//! builds and writes nothing.
+//! such ref), the release tags here, the receipts and the run records, with git and the files
+//! alone: it fetches, builds and writes nothing.
 
 use std::path::Path;
 
 use symphony::reports::git::landing_slug;
 use symphony_board::sys::pid_alive;
 
-use super::git::{commit, git, is_ancestor, short};
+use super::git::{commit, git, short};
+use super::receipts::{self, Receipts};
 use super::record::{self, Run, Running, local};
 use super::tags::Release;
 
@@ -27,9 +32,25 @@ pub(crate) struct Landing {
 }
 
 /// The landings on `tip`'s first-parent line of the default branch `branch` after `base` (the
-/// whole line with none), newest first.
+/// whole line with none), newest first, in the repository at `root`, by its receipts.
+///
+/// # Errors
+///
+/// Git does not list the line, or a receipt names a commit on it that is not the one it recorded
+/// ([`receipts::unborne`]): the count is refused by name, never made without it.
 pub(crate) fn landings(
     root: &Path,
+    base: Option<&str>,
+    tip: &str,
+    branch: &str,
+) -> Result<Vec<Landing>, String> {
+    landings_by(root, &Receipts::read(root), base, tip, branch)
+}
+
+/// [`landings`], by `receipts`.
+pub(crate) fn landings_by(
+    root: &Path,
+    receipts: &Receipts,
     base: Option<&str>,
     tip: &str,
     branch: &str,
@@ -43,21 +64,36 @@ pub(crate) fn landings(
         &[
             "log",
             "--first-parent",
-            "--merges",
-            "--format=%H %s",
+            "--format=%H%x09%P%x09%T%x09%s",
             &range,
         ],
     )?;
-    Ok(listed
-        .lines()
-        .filter_map(|line| {
-            let (commit, subject) = line.split_once(' ')?;
-            Some(Landing {
+    let mut landings = Vec::new();
+    for line in listed.lines() {
+        let mut parts = line.splitn(4, '\t');
+        let (Some(commit), Some(parents), Some(tree), Some(subject)) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        let slug = if parents.contains(' ') {
+            landing_slug(subject, branch)
+        } else if let Some(receipt) = receipts.squashed(commit) {
+            if !receipts::borne_out(receipt, parents, tree) {
+                return Err(receipts::unborne(receipt, branch));
+            }
+            Some(receipt.slug.as_str())
+        } else {
+            None
+        };
+        if let Some(slug) = slug {
+            landings.push(Landing {
                 commit: commit.to_string(),
-                slug: landing_slug(subject, branch)?.to_string(),
-            })
-        })
-        .collect())
+                slug: slug.to_string(),
+            });
+        }
+    }
+    Ok(landings)
 }
 
 /// What the count starts after.
@@ -108,9 +144,12 @@ pub(crate) fn attempted(run: &Run) -> bool {
 
 /// The newest of `releases` (each with its commit) and of the `runs` that were attempts, on
 /// `tip`'s line, in `root`: the one whose commit has the most ancestors, so a later commit wins
-/// whatever order the runs ran in. A release wins a run on its own commit.
+/// whatever order the runs ran in. A release wins a run on its own commit. A commit is on the line
+/// when the line holds it ([`Receipts::holds`]): a release candidate advanced to a head a pull
+/// request delivered is released on that head, which a squash leaves in no history of the line.
 pub(crate) fn since(root: &Path, releases: &[(Release, String)], runs: &[Run], tip: &str) -> Since {
-    let on_line = |commit: &str| is_ancestor(root, commit, tip).unwrap_or(false);
+    let receipts = Receipts::read(root);
+    let on_line = |commit: &str| receipts.holds(root, commit, tip).unwrap_or(false);
     let depth = |commit: &str| {
         git(root, &["rev-list", "--count", commit])
             .ok()
@@ -348,6 +387,7 @@ mod tests {
     use crate::release::record::Board;
     use crate::test_tree::Tree;
     use std::path::PathBuf;
+    use symphony_board::land::delivery::Receipt;
 
     /// A repository on `main` with a commit, then a landing of each of `slugs` (a branch merged
     /// with the land's own message), a plain commit and a merge of a remote-tracking branch between
@@ -472,7 +512,148 @@ mod tests {
             refreshed: None,
             published: None,
             rerun: None,
+            slept: 0.0,
+            inputs: None,
+            environment: None,
         }
+    }
+
+    #[test]
+    fn a_squash_a_receipt_names_is_a_landing_and_no_other_commit_of_one_parent_is() {
+        let tree = Tree::new();
+        let (root, merges) = repository(&tree, &["a/one"]);
+        let before = commit(&root, "main").unwrap();
+        // A line with no receipt counts as it always did, whatever its project file says.
+        std::fs::write(
+            root.join("symphony.toml"),
+            "[land]\ndelivery = [\"host\", \"deliver\"]\n",
+        )
+        .unwrap();
+        receipts::tests::run(&root, &["add", "symphony.toml"]);
+        receipts::tests::run(
+            &root,
+            &["commit", "-q", "-m", "a/one: deliver by pull request"],
+        );
+        let keyed = commit(&root, "main").unwrap();
+        let slugs = |tip: &str, base: Option<&str>| -> Vec<String> {
+            (landings(&root, base, tip, "main").unwrap().into_iter())
+                .map(|landing| landing.slug)
+                .collect()
+        };
+        assert_eq!(slugs(&keyed, None), ["a/one"], "no subject makes a landing");
+        let two = receipts::tests::deliver(&root, "b/two", "main");
+        let three = receipts::tests::deliver(&root, "c/three", &before);
+        let tip = commit(&root, "main").unwrap();
+        let all = landings(&root, None, &tip, "main").unwrap();
+        assert_eq!(
+            all,
+            [
+                Landing {
+                    commit: three.squash.clone(),
+                    slug: "c/three".into()
+                },
+                Landing {
+                    commit: two.squash.clone(),
+                    slug: "b/two".into()
+                },
+                Landing {
+                    commit: merges[0].clone(),
+                    slug: "a/one".into()
+                },
+            ],
+            "merges and squashes on one line, newest first"
+        );
+        assert_eq!(slugs(&tip, Some(&two.squash)), ["c/three"]);
+        assert_eq!(slugs(&tip, Some(&tip)), [] as [&str; 0]);
+        // Counted from a delivered head, which no history of the line holds: what the line
+        // gained since that head left it.
+        assert_eq!(slugs(&tip, Some(&two.head)), ["c/three", "b/two"]);
+        // Counted twice, one count: reading again changes nothing.
+        assert_eq!(landings(&root, None, &tip, "main").unwrap(), all);
+        // A squash made by hand with a landing's subject and no receipt is none.
+        let none = Receipts::default();
+        assert_eq!(
+            landings_by(&root, &none, Some(&keyed), &tip, "main").unwrap(),
+            []
+        );
+        // A receipt of a commit off the line counts nothing there.
+        let off = Receipt {
+            squash: two.head.clone(),
+            ..two.clone()
+        };
+        let only = Receipts::of(vec![off]);
+        assert_eq!(
+            landings_by(&root, &only, Some(&keyed), &tip, "main").unwrap(),
+            []
+        );
+    }
+
+    #[test]
+    fn a_receipt_git_does_not_bear_out_refuses_the_count_by_name() {
+        let tree = Tree::new();
+        let (root, _) = repository(&tree, &["a/one"]);
+        let two = receipts::tests::deliver(&root, "b/two", "main");
+        let tip = commit(&root, "main").unwrap();
+        for wrong in [
+            Receipt {
+                tree: two.parent.clone(),
+                ..two.clone()
+            },
+            Receipt {
+                parent: two.head.clone(),
+                ..two.clone()
+            },
+        ] {
+            let refused = landings_by(
+                &root,
+                &Receipts::of(vec![wrong.clone()]),
+                None,
+                &tip,
+                "main",
+            )
+            .unwrap_err();
+            assert_eq!(refused, receipts::unborne(&wrong, "main"));
+        }
+        // Before the commit it names, the line is counted as ever.
+        let wrong = Receipts::of(vec![Receipt {
+            tree: two.parent.clone(),
+            ..two.clone()
+        }]);
+        assert_eq!(
+            landings_by(&root, &wrong, None, &two.parent, "main")
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_release_on_a_delivered_head_is_counted_from_once_the_line_holds_its_squash() {
+        let tree = Tree::new();
+        let (root, merges) = repository(&tree, &["a/one"]);
+        let two = receipts::tests::deliver(&root, "b/two", "main");
+        let tip = commit(&root, "main").unwrap();
+        let release =
+            |name: &str, commit: &str| (Release::parse(name).unwrap(), commit.to_string());
+        let releases = [
+            release("release-2026-11-13", &two.head),
+            release("release-2026-11-12", &merges[0]),
+        ];
+        assert!(matches!(
+            since(&root, &releases, &[], &tip),
+            Since::Release { name, commit } if name == "release-2026-11-13" && commit == two.head
+        ));
+        // Before its squash is on the line it is on no line, and the older release counts.
+        assert!(matches!(
+            since(&root, &releases, &[], &two.parent),
+            Since::Release { name, .. } if name == "release-2026-11-12"
+        ));
+        // A red rerun of that head is counted from as a red run on the line is.
+        let runs = [run_on("rerun", &two.head, "red", true)];
+        assert_eq!(
+            since(&root, &releases[1..], &runs, &tip).commit(),
+            Some(two.head.as_str())
+        );
     }
 
     #[test]

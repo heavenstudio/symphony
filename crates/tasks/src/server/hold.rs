@@ -86,7 +86,20 @@ impl Home {
     /// again finishes that stop. Refused while another holds it. The hold is a line of the
     /// history before it is written.
     pub fn hold(&self, by: &str, why: &str) -> Result<Holding, ServerError> {
+        self.require_surreal()?;
         let _locked = self.lock(Doing::Holding)?;
+        self.require_surreal()?;
+        let hold = self.hold_as(by, why)?;
+        let stopped = self.stop_serving()?;
+        Ok(Holding {
+            hold,
+            stopped,
+            data: self.dir.join(DATA),
+        })
+    }
+
+    /// Record a hold under the caller's starters' lock, before its backend stops its server.
+    pub(super) fn hold_as(&self, by: &str, why: &str) -> Result<Hold, ServerError> {
         let hold = match self.held() {
             Some(hold) if hold.by == by => hold,
             Some(hold) => return Err(ServerError::Held(hold)),
@@ -104,12 +117,7 @@ impl Home {
                 hold
             }
         };
-        let stopped = self.stop_serving()?;
-        Ok(Holding {
-            hold,
-            stopped,
-            data: self.dir.join(DATA),
-        })
+        Ok(hold)
     }
 
     /// Release the hold, if there is one, as `by`: what it was. Only its holder releases it, or
@@ -118,6 +126,20 @@ impl Home {
     /// the board's next command starts the database.
     pub fn release(&self, by: &str, of: Option<&str>) -> Result<Option<Hold>, ServerError> {
         let _locked = self.lock(Doing::Releasing)?;
+        self.release_as(by, of)
+    }
+
+    /// [`Home::release`] under the caller's starters' lock.
+    pub(super) fn release_as(
+        &self,
+        by: &str,
+        of: Option<&str>,
+    ) -> Result<Option<Hold>, ServerError> {
+        // A switch that stopped part way keeps its hold until its holder settles it.
+        let journal = self.dir.join(super::moving::JOURNAL);
+        if journal.exists() {
+            return Err(ServerError::Io(super::moving::unsettled(&journal)));
+        }
         let Some(hold) = self.held() else {
             return Ok(None);
         };

@@ -477,7 +477,7 @@ impl Store {
                     sids.into_iter().max()?,
                 ))
             })
-            .collect();
+            .collect_map();
         Ok(pending
             .into_iter()
             .filter(|p| {

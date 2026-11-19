@@ -9,7 +9,9 @@
 //! They read and decide nothing themselves: the task page's gates (`symphony::gates`) draw them, and
 //! the land goes by them ([`crate::land::needs`]), the same readers; [`reds`] names a red run for
 //! the land's refusal, and [`at_tip`] and [`newest_of`] what `just tasks runs` prints of the runs
-//! [`tests`] reads.
+//! [`tests`] reads. A run its runner refused ([`refused`]) is no run of its command to any of them:
+//! it built and ran nothing, so it is neither a red nor a green at its commit, and what the command
+//! showed there before it still stands.
 
 use super::{Catalogue, Needs, short};
 use crate::Message;
@@ -90,6 +92,14 @@ pub fn red(run: &Record) -> Option<String> {
     }
 }
 
+/// The line the finished `run`'s runner refused its command line with, as its recorder read it in
+/// its log ([`crate::runs::refused`]); `None` for a run that built or ran something, or whose
+/// recorder could not tell.
+pub fn refused(run: &Record) -> Option<&str> {
+    let run = run.run.as_ref().filter(|_| run.state == Step::Finished)?;
+    run.refused.as_deref()
+}
+
 /// `labels` as a line names them, the first `n` and how many more.
 fn listed(labels: &[&str]) -> String {
     const SHOWN: usize = 3;
@@ -104,8 +114,9 @@ fn listed(labels: &[&str]) -> String {
 }
 
 /// The task's runs among `runs` (those whose task `ours` names) that name a commit, oldest first,
-/// and of them the newest at `tip` of each command, in the order each was first run there. `ours`
-/// is a `dyn`, so this sort is compiled once and not again for each caller's closure.
+/// and of them the newest at `tip` of each command, in the order each was first run there, a run
+/// its runner refused ([`refused`]) never one of them. `ours` is a `dyn`, so this sort is compiled
+/// once and not again for each caller's closure.
 fn newest_at<'a>(
     runs: &'a [Record],
     tip: &str,
@@ -116,7 +127,8 @@ fn newest_at<'a>(
         .collect();
     crate::order::sort_by(&mut mine, &|a, b| began(a).total_cmp(&began(b)));
     let mut newest: Vec<&Record> = Vec::new();
-    for run in mine.iter().filter(|run| run.commit.as_deref() == Some(tip)) {
+    let ran = |run: &&&Record| run.commit.as_deref() == Some(tip) && refused(run).is_none();
+    for run in mine.iter().filter(ran) {
         match newest.iter_mut().find(|kept| kept.label == run.label) {
             Some(kept) => *kept = run,
             None => newest.push(run),
@@ -137,7 +149,7 @@ pub fn reds(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Vec<(Str
 }
 
 /// One command the task ran at a tip ([`at_tip`]): its newest run there, the one [`tests`] reads,
-/// and its runs there before that one, oldest first.
+/// and its runs there before that one, oldest first, none of them refused.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Command<'a> {
     pub newest: &'a Record,
@@ -150,6 +162,9 @@ pub struct Command<'a> {
 pub struct AtTip<'a> {
     /// Each command run at the tip, in the order each was first run there.
     pub commands: Vec<Command<'a>>,
+    /// The task's runs at the tip their runner refused ([`refused`]), oldest first: no command's
+    /// run there.
+    pub refused: Vec<&'a Record>,
     /// The task's runs at other commits, oldest first: none of them is the tip's.
     pub elsewhere: Vec<&'a Record>,
 }
@@ -163,23 +178,28 @@ pub fn at_tip<'a>(runs: &'a [Record], tip: &str, ours: impl Fn(&str) -> bool) ->
         .map(|newest| Command {
             newest,
             before: (mine.iter().copied())
-                .filter(here)
+                .filter(|run| here(run) && refused(run).is_none())
                 .filter(|run| run.label == newest.label && !std::ptr::eq(*run, newest))
                 .collect(),
         })
         .collect();
-    let elsewhere = mine.into_iter().filter(|run| !here(run)).collect();
+    let (at_tip, elsewhere): (Vec<&Record>, Vec<&Record>) = mine.into_iter().partition(here);
     AtTip {
         commands,
+        refused: (at_tip.into_iter())
+            .filter(|run| refused(run).is_some())
+            .collect(),
         elsewhere,
     }
 }
 
-/// The newest run of the command `label` at `tip` among `runs`, whoever ran it: how the task page's
-/// check gate reads the project's `[verdicts] check` there (`symphony::gates::check`).
+/// The newest run of the command `label` at `tip` among `runs`, whoever ran it, but one its runner
+/// refused ([`refused`]): how the task page's check gate reads the project's `[verdicts] check`
+/// there (`symphony::gates::check`).
 pub fn newest_of<'a>(runs: &'a [Record], tip: &str, label: &str) -> Option<&'a Record> {
     (runs.iter())
         .filter(|run| run.label == label && run.commit.as_deref() == Some(tip))
+        .filter(|run| refused(run).is_none())
         .max_by(|a, b| began(a).total_cmp(&began(b)))
 }
 
@@ -187,12 +207,27 @@ pub fn newest_of<'a>(runs: &'a [Record], tip: &str, label: &str) -> Option<&'a R
 /// are the task's (its own, or work under it): met when the newest run at the tip of each build
 /// and test command the task ran there is green, and one test run at least is among them; not met
 /// while one is red ([`reds`]), still going or queued, or none ran at the tip, the last run
-/// elsewhere named.
+/// elsewhere named, or the command a runner refused there ([`refused`]), which is no run of it.
 pub fn tests(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Reading {
     let (mine, newest) = newest_at(runs, tip, &ours);
     let at_tip = short(tip);
     let Some(last) = newest.iter().max_by(|a, b| began(a).total_cmp(&began(b))) else {
-        return match mine.last() {
+        let here = |run: &&&Record| run.commit.as_deref() == Some(tip);
+        if let Some(run) = mine.iter().rfind(here) {
+            return Reading {
+                by: run.handle.clone(),
+                at: run.ended_at.or(Some(began(run))),
+                commit: Some(tip.to_string()),
+                detail: format!(
+                    "No build or test ran at {at_tip}: `{}` was refused by its runner and never \
+                     ran ({})",
+                    run.label,
+                    refused(run).unwrap_or_default()
+                ),
+                ..Reading::default()
+            };
+        }
+        return match mine.iter().rfind(|run| refused(run).is_none()) {
             Some(last) => {
                 let commit = last.commit.clone().unwrap_or_default();
                 Reading {

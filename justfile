@@ -17,6 +17,13 @@ record := if path_exists(justfile_directory() / "tools/record.sh") == "true" { "
 fmt:
     @tools/cargo.sh fmt --all
 
+# Its last Rust step reads the branch against the default branch: red when it changes what a
+# consumer must do (the board schema, a consumer-API guard's call, a settings key) and no commit of
+# it says so in a `Consumer-Note` trailer (docs/RELEASES.md, "Its notes"). The step after it reads
+# the branch the same way for the published packages it changes, and runs the crates check on
+# those alone: red when one's sources moved while crates.io holds its version (docs/RELEASES.md,
+# "Packages on crates.io"). A branch that changes none reads nothing, and a crates.io that gives no
+# answer is said, the packages named as not checked, and no red.
 lint-rs:
     @{{record}} --pipeline lint --step lint build "just lint-rs" just --justfile {{quote(justfile())}} _lint-rs
 
@@ -25,6 +32,9 @@ _lint-rs:
     @tools/cargo.sh fmt --all --check
     @tools/cargo.sh clippy --workspace --all-targets --locked -- -D warnings
     @tools/cargo.sh clippy -p symphony-api --features typescript --all-targets --locked -- -D warnings
+    @tools/cargo.sh clippy -p symphony-board --features hosted-postgresql --all-targets --locked -- -D warnings
+    @tools/rs-bin.sh symphony-build consumer-notes --check
+    @tools/rs-bin.sh symphony-build crates-check --branch .
     @just --justfile {{quote(justfile())}} client-lint
 
 # The web client's checks (apps/symphony-web/check.sh): its wire types against crates/symphony-api's
@@ -38,8 +48,15 @@ client-lint:
 client-wire:
     @bash apps/symphony-web/wire.sh
 
+# No test reads this machine's terminals: a test that names no hc of its own (HC_BIN) is given one
+# that answers nothing, as on a machine with none, so a terminal here named as a fixture's session
+# is never taken for its pane. The recorder keeps the caller's.
 test-rs *ARGS:
-    @{{record}} --pipeline test test "just test-rs $*" tools/cargo.sh test --locked "$@"
+    @{{record}} --pipeline test test "just test-rs $*" env HC_BIN="${HC_BIN:-/usr/bin/false}" tools/cargo.sh test --locked "$@"
+
+# Install the release test runner once. Test runs only use this pinned local copy and never fetch it.
+nextest-setup:
+    @bash tools/nextest.sh --setup
 
 # The settings check (`symphony settings-check`, docs/PROJECT_FILE.md): symphony.toml read as the
 # Symphony reads it and judged on its shape alone, recorded as a test run, which is what a change
@@ -141,8 +158,19 @@ _size-check:
 crates-check:
     @{{record}} --pipeline crates test "just crates-check" tools/rs-bin.sh symphony-build crates-check .
 
+# Each kit/helper API against its last published version, with its actual version bump and all
+# features. The launcher fetches the checksum-pinned tool into this checkout's build folder.
+semver-check:
+    @{{record}} --pipeline semver test "just semver-check" bash tools/semver.sh --all-features -p symphony-plugin -p symphony-blocks -p symphony-docs -p symphony-env -p symphony-args -p symphony-schema -p process-cwd -p repository-read
+
+# The hosted board's build (docs/POSTGRESQL.md, "A hosted board"), which no default build has: the
+# board's own tests with the `hosted-postgresql` feature and its matrix against PostgreSQL 16 and
+# 18 servers of its own (crates/tasks/tests/hosted), red where either is not installed.
+hosted-check:
+    @{{record}} --pipeline hosted test "just hosted-check" tools/cargo.sh test --locked -p symphony-board --features hosted-postgresql --lib --test hosted
+
 # The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit,
-# the crates check and every test target, each a step of this run with a log of its own, run
+# the crates and semver checks, the hosted board's check and every test target, each a step with a log of its own, run
 # whatever the ones before it did; red when any step is, naming each. `just verify STEP...` runs
 # those steps alone. The native browser harness runs headless Chrome; no game engine or display is
 # needed.

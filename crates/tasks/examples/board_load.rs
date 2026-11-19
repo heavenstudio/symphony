@@ -8,11 +8,16 @@
 //!     cargo run -p symphony-board --example board_load -- --home DIR --postgresql PROGRAMS \
 //!         [--sessions 30] [--calls 40]
 //!
-//! `--postgresql` measures the board's PostgreSQL bare, from the folder of the machine's programs
-//! (`[board] postgresql`), as `Home` starts it for a scratch board: no board runs on it yet, so a
-//! session's call is one connection of `psql`'s running `select 1`, each served by a backend
-//! process of its own, and the report is the server's opening and what those connections cost (a
-//! command's CPU there is `psql`'s).
+//! `--postgresql` names the folder of the machine's programs (`[board] postgresql`). With
+//! `--tasks`, it runs the same board work and accepts the same export as SurrealDB. Without
+//! `--tasks`, a session's call is one connection of `psql`'s running `select 1`, each served by a
+//! backend of its own: a separate measurement of bare connection cost, whose command CPU is
+//! `psql`'s. Both modes start and stop a scratch server through `Home`.
+//!
+//! `--seed-memtable-mib N` gives only SurrealDB's initial `--dump` copy a larger memtable when
+//! that atomic transaction cannot fit the board's. It is stopped cleanly before measurement;
+//! the measured restart always uses `Storage::BOARD`. The report names both settings, and the
+//! copy's CPU and memory are outside the workload measurement.
 //!
 //! The server is metered with every process under it ([`tree`]), as PostgreSQL answers from
 //! several: its CPU is each one's own and what the children it reaped took, so a backend that
@@ -49,9 +54,9 @@ use std::time::{Duration, Instant};
 use symphony_board::rows::Dump;
 use symphony_board::rpc::{self, Client};
 use symphony_board::server::postgres::USER;
-use symphony_board::server::{Home, Running, scratch};
+use symphony_board::server::{Home, Running, Storage, scratch};
 use symphony_board::sys;
-use symphony_board::{DATABASE, NAMESPACE, NewSession, NewTask, Store};
+use symphony_board::{DATABASE, NAMESPACE, NewSession, NewTask, Opening, Store};
 
 type Failed = Box<dyn std::error::Error>;
 
@@ -362,8 +367,14 @@ fn number(args: &[String], name: &str, default: usize) -> Result<usize, String> 
 /// programs.
 #[derive(Debug, PartialEq)]
 enum Server {
-    Surreal { surreal: PathBuf, tasks: PathBuf },
-    Postgresql(PathBuf),
+    Surreal {
+        surreal: PathBuf,
+        tasks: PathBuf,
+    },
+    Postgresql {
+        programs: PathBuf,
+        tasks: Option<PathBuf>,
+    },
 }
 
 /// What the command line asks for.
@@ -376,6 +387,8 @@ struct Options {
     sessions: usize,
     calls: usize,
     seed: u64,
+    /// SurrealDB's copy transaction alone; the measured restart always uses Storage::BOARD.
+    seed_memtable: Option<u64>,
 }
 
 impl Options {
@@ -408,15 +421,29 @@ impl Options {
                 surreal: surreal.into(),
                 tasks: needed("--tasks")?.into(),
             },
-            (None, Some(_)) if arg(args, "--dump").is_some() => {
-                return Err(
-                    "--dump with --postgresql: no board runs on PostgreSQL yet, so it runs bare"
-                        .into(),
-                );
+            (None, Some(_)) if arg(args, "--dump").is_some() && arg(args, "--tasks").is_none() => {
+                return Err("--dump with --postgresql needs --tasks to run the board".into());
             }
-            (None, Some(programs)) => Server::Postgresql(programs.into()),
+            (None, Some(programs)) => Server::Postgresql {
+                programs: programs.into(),
+                tasks: arg(args, "--tasks").map(PathBuf::from),
+            },
             _ => return Err("one of --surreal and --postgresql is required".into()),
         };
+        let seed_memtable = arg(args, "--seed-memtable-mib")
+            .map(|text| {
+                let bytes = text
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|mib| mib.checked_mul(1 << 20))
+                    .filter(|bytes| (Storage::BOARD.memtable..=u64::from(u32::MAX)).contains(bytes))
+                    .ok_or("--seed-memtable-mib must fit SurrealKV's memtable, 256..4095 MiB")?;
+                if !matches!(server, Server::Surreal { .. }) || arg(args, "--dump").is_none() {
+                    return Err("--seed-memtable-mib needs --surreal and --dump");
+                }
+                Ok(bytes)
+            })
+            .transpose()?;
         Ok(Options {
             home,
             server,
@@ -425,7 +452,15 @@ impl Options {
             sessions,
             calls: number(args, "--calls", 40)?,
             seed: number(args, "--seed", 1)? as u64,
+            seed_memtable,
         })
+    }
+
+    fn seed_storage(&self) -> Storage {
+        Storage {
+            memtable: self.seed_memtable.unwrap_or(Storage::BOARD.memtable),
+            ..Storage::BOARD
+        }
     }
 }
 
@@ -494,12 +529,14 @@ impl Runner {
         [
             ("PATH", path.to_string()),
             ("HOME", folder.clone()),
+            ("SYMPHONY_MACHINE_DIR", format!("{folder}/machine")),
             ("TASKS_SERVER", server.to_string()),
             ("TASKS_DATABASE", database.to_string()),
             ("TASKS_DISPATCH", "inline".to_string()),
             ("TASKS_SWEEP", "off".to_string()),
             ("TASKS_PS_TABLE", format!("{folder}/ps")),
-            ("HERDR_BIN", "/usr/bin/false".to_string()),
+            ("HC_BIN", "/usr/bin/false".to_string()),
+            ("HERDR_APP_BIN", "/usr/bin/false".to_string()),
         ]
         .into_iter()
         .map(|(name, value)| (name.to_string(), value))
@@ -812,7 +849,14 @@ fn main() -> Result<(), Failed> {
     let options = Options::parse(&args)?;
     match &options.server {
         Server::Surreal { surreal, tasks } => surreal_run(&options, surreal, tasks),
-        Server::Postgresql(programs) => postgresql_run(&options, programs),
+        Server::Postgresql {
+            programs,
+            tasks: None,
+        } => postgresql_run(&options, programs),
+        Server::Postgresql {
+            programs,
+            tasks: Some(tasks),
+        } => postgresql_board_run(&options, programs, tasks),
     }
 }
 
@@ -882,19 +926,105 @@ fn surreal_run(options: &Options, surreal: &Path, tasks: &Path) -> Result<(), Fa
     };
     // The board is made on one start of the server and measured on the next, as a board's server
     // is found after a restart: what the copy left in its memory is not the run's.
-    let making = home.ensure().map_err(|why| why.to_string())?;
+    let making_home = home.clone().storage(options.seed_storage());
+    let making = making_home.ensure().map_err(|why| why.to_string())?;
+    let mut board = json!({"tasks": 0, "messages": 0, "sessions": 0});
+    let seeded = (|| -> Result<_, Failed> {
+        if let Some(file) = &options.dump {
+            let dump = Dump::from_json(&std::fs::read_to_string(file)?)?;
+            board = json!({"tasks": dump.tasks.len(), "messages": dump.messages.len(),
+                "sessions": dump.sessions.len()});
+            let began = Instant::now();
+            open(&making)?.copy(&dump)?;
+            eprintln!(
+                "board_load: copied {board} in {:.1} s",
+                began.elapsed().as_secs_f64()
+            );
+        }
+        set_up(options, open(&making)?)
+    })();
+    let stopped = making_home.stop().map_err(|why| why.to_string());
+    let sessions = seeded?;
+    stopped?;
+    // This is a new Home with the production storage settings, not the seed override.
+    let running = home.ensure().map_err(|why| why.to_string())?;
+    let measured = board_run(
+        options,
+        tasks,
+        &running,
+        open(&running)?,
+        board,
+        sessions,
+        "SurrealDB",
+    );
+    let stopped = home.stop().map_err(|why| why.to_string());
+    measured?;
+    stopped?;
+    Ok(())
+}
+
+/// The same board work over PostgreSQL, using the same `tasks` binary and export as SurrealDB.
+fn postgresql_board_run(options: &Options, programs: &Path, tasks: &Path) -> Result<(), Failed> {
+    let pg = Home::new(&options.home.join("board"), Path::new("/no/surreal")).postgresql(programs);
+    let open = || -> Result<Store, Failed> {
+        Ok(Store::opening_on(
+            symphony_board::pg::Client::new(&pg.socket(), &options.database).into(),
+            Box::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64()
+            }),
+            Box::new(sys::pid_alive),
+            &sys::hostname(),
+            &Opening::write(),
+        )?)
+    };
+    pg.ensure().map_err(|why| why.to_string())?;
+    let store = open()?;
     let mut board = json!({"tasks": 0, "messages": 0, "sessions": 0});
     if let Some(file) = &options.dump {
         let dump = Dump::from_json(&std::fs::read_to_string(file)?)?;
-        board = json!({"tasks": dump.tasks.len(), "messages": dump.messages.len(),
-            "sessions": dump.sessions.len()});
-        open(&making)?.copy(&dump)?;
-        eprintln!("board_load: copied {board}");
+        board = json!({"tasks": dump.tasks.len(), "messages": dump.messages.len(), "sessions": dump.sessions.len()});
+        let began = Instant::now();
+        store.copy(&dump)?;
+        eprintln!(
+            "board_load: copied {board} in {:.1} s",
+            began.elapsed().as_secs_f64()
+        );
     }
-    let sessions = set_up(options, open(&making)?)?;
-    home.stop().map_err(|why| why.to_string())?;
-    let running = home.ensure().map_err(|why| why.to_string())?;
-    let store = || open(&running);
+    let sessions = set_up(options, store)?;
+    pg.stop().map_err(|why| why.to_string())?;
+    let serving = pg.ensure().map_err(|why| why.to_string())?;
+    let running = Running {
+        pid: serving.pid,
+        addr: format!("postgresql:{}", serving.socket.display()),
+        version: serving.version,
+    };
+    let measured = board_run(
+        options,
+        tasks,
+        &running,
+        open()?,
+        board,
+        sessions,
+        "PostgreSQL",
+    );
+    let stopped = pg.stop().map_err(|why| why.to_string());
+    measured?;
+    stopped?;
+    Ok(())
+}
+
+fn board_run(
+    options: &Options,
+    tasks: &Path,
+    running: &Running,
+    store: Store,
+    board: Value,
+    sessions: Vec<Session>,
+    backend: &str,
+) -> Result<(), Failed> {
     let folder = options.home.join("run");
     std::fs::create_dir_all(&folder)?;
     std::fs::write(folder.join("ps"), "")?;
@@ -911,12 +1041,17 @@ fn surreal_run(options: &Options, surreal: &Path, tasks: &Path) -> Result<(), Fa
     let handles: Vec<&str> = (sessions.iter())
         .map(|session| session.handle.as_str())
         .collect();
-    let seen_before = last_seen(&store()?)?;
-    let (ran, wall, mut report) = measure(running.pid, home.dir(), sessions.len(), |n, ended| {
-        let plan = schedule(options.seed, n, options.calls);
-        work(&runner, &sessions[n], &plan, ended)
-    })?;
-    let beaten = beaten(&seen_before, &last_seen(&store()?)?, &handles);
+    let seen_before = last_seen(&store)?;
+    let (ran, wall, mut report) = measure(
+        running.pid,
+        &options.home.join("board"),
+        sessions.len(),
+        |n, ended| {
+            let plan = schedule(options.seed, n, options.calls);
+            work(&runner, &sessions[n], &plan, ended)
+        },
+    )?;
+    let beaten = beaten(&seen_before, &last_seen(&store)?, &handles);
     let writes = (ran.iter())
         .filter(|one| one.failed.is_none() && one.kind.writes())
         .count();
@@ -924,12 +1059,20 @@ fn surreal_run(options: &Options, surreal: &Path, tasks: &Path) -> Result<(), Fa
     for (field, value) in [
         (
             "server",
-            json!({"store": "SurrealDB", "version": running.version}),
+            json!({"store": backend, "version": running.version}),
         ),
         ("board", board),
         ("sessions", json!(options.sessions)),
         ("calls", json!(options.calls)),
         ("seed", json!(options.seed)),
+        (
+            "surreal_storage",
+            json!((backend == "SurrealDB").then(|| json!({
+                "seed_memtable_bytes": options.seed_storage().memtable,
+                "measured_memtable_bytes": Storage::BOARD.memtable,
+                "value_log_threshold_bytes": Storage::BOARD.value_log_threshold,
+            }))),
+        ),
         ("sessions_beaten", json!(beaten)),
         ("writes", json!(writes)),
         ("writes_per_second", json!(rounded(writes as f64 / wall))),
@@ -938,7 +1081,6 @@ fn surreal_run(options: &Options, surreal: &Path, tasks: &Path) -> Result<(), Fa
         report[field] = value;
     }
     println!("{}", serde_json::to_string_pretty(&report)?);
-    home.stop().map_err(|why| why.to_string())?;
     if options.calls > 0 && beaten < options.sessions {
         let missed = options.sessions - beaten;
         return Err(format!(
@@ -957,6 +1099,53 @@ mod tests {
 
     fn strings(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| word.to_string()).collect()
+    }
+
+    #[test]
+    fn a_larger_seed_memtable_is_explicit_bounded_and_only_for_a_surreal_dump() {
+        let dir = std::env::temp_dir().join(format!("board-load-seed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.to_str().unwrap();
+        let parse = |extra: &[&str]| {
+            let mut args = strings(&["--home", home, "--surreal", "/surreal", "--tasks", "/tasks"]);
+            args.extend(strings(extra));
+            Options::parse(&args)
+        };
+        assert_eq!(parse(&[]).unwrap().seed_storage(), Storage::BOARD);
+        for (mib, bytes) in [
+            ("256", 256 << 20),
+            ("1024", 1024 << 20),
+            ("4095", 4095 << 20),
+        ] {
+            let options = parse(&["--dump", "/dump", "--seed-memtable-mib", mib]).unwrap();
+            assert_eq!(options.seed_storage().memtable, bytes);
+            assert_eq!(
+                options.seed_storage().value_log_threshold,
+                Storage::BOARD.value_log_threshold
+            );
+        }
+        for invalid in ["0", "255", "4096", "18446744073709551615", "-1", "text"] {
+            assert!(parse(&["--dump", "/dump", "--seed-memtable-mib", invalid]).is_err());
+        }
+        assert!(
+            parse(&["--seed-memtable-mib", "1024"])
+                .unwrap_err()
+                .contains("--dump")
+        );
+        let pg = strings(&[
+            "--home",
+            home,
+            "--postgresql",
+            "/pg",
+            "--tasks",
+            "/tasks",
+            "--dump",
+            "/dump",
+            "--seed-memtable-mib",
+            "1024",
+        ]);
+        assert!(Options::parse(&pg).unwrap_err().contains("--surreal"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1030,7 +1219,7 @@ mod tests {
     }
 
     #[test]
-    fn the_postgresql_options_need_its_programs_and_no_board() {
+    fn the_postgresql_options_select_bare_connections_or_the_board_work() {
         let made = std::env::temp_dir().join(format!("board-load-pg-{}", std::process::id()));
         std::fs::create_dir_all(&made).unwrap();
         let home = made.to_str().unwrap();
@@ -1040,13 +1229,36 @@ mod tests {
             Options::parse(&args)
         };
         let bare = parsed(&["--postgresql", "/pg/bin", "--calls", "3"]).unwrap();
-        assert_eq!(bare.server, Server::Postgresql("/pg/bin".into()));
+        assert_eq!(
+            bare.server,
+            Server::Postgresql {
+                programs: "/pg/bin".into(),
+                tasks: None
+            }
+        );
         assert_eq!((bare.sessions, bare.calls), (30, 3));
         assert!(
             parsed(&["--postgresql", "/pg/bin", "--dump", "/d.json"])
                 .unwrap_err()
-                .contains("no board runs on PostgreSQL yet")
+                .contains("needs --tasks")
         );
+        let board = parsed(&[
+            "--postgresql",
+            "/pg/bin",
+            "--tasks",
+            "/tasks",
+            "--dump",
+            "/d.json",
+        ])
+        .unwrap();
+        assert_eq!(
+            board.server,
+            Server::Postgresql {
+                programs: "/pg/bin".into(),
+                tasks: Some("/tasks".into())
+            }
+        );
+        assert_eq!(board.dump, Some("/d.json".into()));
         assert_eq!(
             parsed(&[
                 "--postgresql",
@@ -1370,9 +1582,11 @@ Shared_Clean:      12000 kB
         assert_eq!(
             names,
             [
-                "HERDR_BIN",
+                "HC_BIN",
+                "HERDR_APP_BIN",
                 "HOME",
                 "PATH",
+                "SYMPHONY_MACHINE_DIR",
                 "TASKS_DATABASE",
                 "TASKS_DISPATCH",
                 "TASKS_PS_TABLE",
@@ -1385,7 +1599,10 @@ Shared_Clean:      12000 kB
         assert_eq!(vars["TASKS_DISPATCH"], "inline");
         assert_eq!(vars["TASKS_SWEEP"], "off");
         assert_eq!(vars["TASKS_PS_TABLE"], "/tmp/run/ps");
+        assert_eq!(vars["HC_BIN"], "/usr/bin/false");
+        assert_eq!(vars["HERDR_APP_BIN"], "/usr/bin/false");
         assert_eq!(vars["HOME"], "/tmp/run");
+        assert_eq!(vars["SYMPHONY_MACHINE_DIR"], "/tmp/run/machine");
         assert_eq!(vars["PATH"], "/bin");
     }
 

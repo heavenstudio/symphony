@@ -2,7 +2,8 @@
 
 use std::fmt::Write as _;
 
-/// Every row of the board, in the shape the copy reads, each table in the order of its key.
+/// Every row of the board, in the shape the copy reads, each table in the order of its key; the
+/// execution tables' in any, which `Store::dump` puts in theirs.
 pub(in crate::store) const DUMP: &str = "RETURN {
     tasks: (SELECT * OMIT id, version FROM task ORDER BY sid),
     task_links: (SELECT * OMIT id FROM link ORDER BY slug, kind, target),
@@ -15,6 +16,10 @@ pub(in crate::store) const DUMP: &str = "RETURN {
     delivery_keys: (SELECT * OMIT id FROM delivery_key ORDER BY slug, key),
     asks: (SELECT * OMIT id FROM ask ORDER BY sid),
     usages: (SELECT * OMIT id FROM usage ORDER BY handle, slug, role, model, speed, round),
+    execution_attempts: (SELECT * OMIT id FROM execution_attempt),
+    execution_facts: (SELECT * OMIT id FROM execution_fact),
+    execution_fences: (SELECT * OMIT id FROM execution_fence),
+    execution_artifacts: (SELECT * OMIT id FROM execution_artifact),
 };";
 
 /// What the copy in one transaction says in SurrealQL: nothing, as a board on SurrealDB is copied
@@ -51,22 +56,34 @@ pub(in crate::store) fn insert_staged(staging: &str, table: &str) -> String {
     staging_request(&format!("INSERT INTO {staging}_{table} $rows RETURN NONE;"))
 }
 
-/// Every staging table of `tables` removed, each if it is there.
-pub(in crate::store) fn remove_staged(staging: &str, tables: &[&str]) -> String {
-    let remove: String = tables
-        .iter()
-        .map(|table| format!("REMOVE TABLE IF EXISTS {staging}_{table};"))
-        .collect();
-    staging_request(&remove)
+/// The names of `tables`' staging tables.
+pub(in crate::store) fn staged(staging: &str, tables: &[&str]) -> Vec<String> {
+    (tables.iter())
+        .map(|table| format!("{staging}_{table}"))
+        .collect()
 }
 
-/// The copy's one transaction: each of `tables` emptied and filled from its staging table, which
-/// is removed, the caches of the board it replaces dropped, and the counters set to `$last` and
-/// `$last_ts` (messages), `$last_task` and `$last_ask`.
+/// The copy's one transaction: each of `tables`' staging tables found holding the rows the copy
+/// sent it (`$sent`, a count a table), else refused before anything is written, as the database
+/// makes a staging table again for rows sent after another copy removed it and the swap would
+/// otherwise put in a part of the board; then each table emptied and filled from its staging
+/// table, which is removed, the caches of the board it replaces dropped, the counters set to `$last` and
+/// `$last_ts` (messages), `$last_task` and `$last_ask`, and the board's recovery generation
+/// replaced ([`super::recovery::REBIND`]), which is its answer: the numbers and versions the copy
+/// gives name other tasks than the ones a token was read on, in the same transaction or not at
+/// all.
 pub(in crate::store) fn swap(staging: &str, tables: &[&str]) -> String {
     let mut swap = String::new();
     // Each sender's last word goes with the messages, before them, so their deletion
     // finds no word to look past; the copied messages' events name them again.
+    swap.push_str("LET $there = object::keys((INFO FOR DB).tables);\n");
+    for table in tables {
+        let _ = writeln!(
+            swap,
+            "LET $held = IF '{staging}_{table}' IN $there {{ (SELECT count() FROM {staging}_{table} GROUP ALL)[0].count ?? 0 }} ELSE {{ 'no table' }};
+IF $held != $sent.{table} {{ THROW string::concat(\"refused: the copy's staging was taken while it staged, as a copy of the board started meanwhile takes it, and the board is as it was: its {table} holds \", <string>$held, ' of the ', <string>$sent.{table}, ' rows it sent'); }};"
+        );
+    }
     swap.push_str("DELETE said RETURN NONE;\n");
     for table in tables {
         let _ = writeln!(
@@ -78,6 +95,6 @@ pub(in crate::store) fn swap(staging: &str, tables: &[&str]) -> String {
     // swap transaction, so a refused copy leaves those rows as they were.
     swap.push_str("DELETE task_chunk RETURN NONE; DELETE task_embedding_source RETURN NONE; DELETE task_embedding_checkpoint RETURN NONE;\n");
     swap.push_str("UPSERT counter:message SET last = $last, ts = $last_ts RETURN NONE;\nUPSERT counter:task SET last = $last_task RETURN NONE;\nUPSERT counter:ask SET last = $last_ask RETURN NONE;\n");
-    swap.push_str("RETURN NONE;");
+    swap.push_str(super::recovery::REBIND);
     swap
 }

@@ -2,7 +2,7 @@
 //! version, then the board taken as it is, migrated forward once, or refused before any write. A
 //! writer keeps its line in the board's writers as it opens ([`super::writers`]).
 
-use super::database::Database;
+use super::database::{Board, Database};
 use super::postgres::{self, Pg};
 use super::statement::both;
 use super::surreal as sql;
@@ -108,6 +108,15 @@ impl Opening {
     }
 }
 
+/// What moves a board the rule says to migrate ([`Store::moved`]): the store, how it was opened,
+/// the version found, whether its database is defined, and the opener's line in its writers.
+type Mover = fn(&Store, &Opening, Option<i64>, bool, &Line) -> Result<(), Failure>;
+
+/// What a store opened with no mover says, after the board's name, of a board the rule would
+/// migrate: no reader meets it, as the rule refuses a reader first.
+const NO_MOVER: &str = " would be moved forward or made, and this opening only reads: nothing was \
+                        read or written";
+
 impl Store {
     /// The board in `client`'s database, to read and write, its tables made or brought to this
     /// build's version if they are older; read with this machine's clock, host name and process
@@ -176,14 +185,87 @@ impl Store {
         host: &str,
         how: &Opening,
     ) -> Result<Store, Error> {
+        Store::opening_by(db.into(), clock, pid_alive, host, how, Some(Store::moved))
+    }
+
+    /// As [`Store::open_as`], for a program that only reads boards: `how` is taken to read
+    /// ([`Access::Read`]) whatever it says, so the board is never made or moved forward, and the
+    /// program links none of the migration, the schemas' text among it (the Symphony's own
+    /// binary, whose size that text would count against: docs/CHECKS.md, "Size budgets").
+    pub fn read_as(client: Client, how: &Opening) -> Result<Store, Error> {
+        let host = crate::sys::hostname();
+        Store::reading(
+            client,
+            Box::new(now),
+            Box::new(crate::sys::pid_alive),
+            &host,
+            how,
+        )
+    }
+
+    /// As [`Store::read_as`], with the clock, the process probe and the host name given.
+    pub fn reading(
+        client: Client,
+        clock: Clock,
+        pid_alive: Probe,
+        host: &str,
+        how: &Opening,
+    ) -> Result<Store, Error> {
+        Store::reading_on(client.into(), clock, pid_alive, host, how)
+    }
+
+    /// As [`Store::reading`], the board in `db`, on SurrealDB or PostgreSQL.
+    pub fn reading_on(
+        db: Database,
+        clock: Clock,
+        pid_alive: Probe,
+        host: &str,
+        how: &Opening,
+    ) -> Result<Store, Error> {
+        let how = Opening {
+            access: Access::Read,
+            ..how.clone()
+        };
+        Store::opening_by(db.into(), clock, pid_alive, host, &how, None)
+    }
+
+    /// The hosted board `client` reaches ([`crate::pg::hosted`]), to read and write by `how`.
+    /// Its database is the platform's: one that is not there is an error, and nothing here makes
+    /// it. A board that is empty or behind `how`'s schema is moved only by an opening that says
+    /// it is the deployment's migration ([`Opening::migrating`]); any other is refused before
+    /// anything is written, and an empty database that holds anything of another's is never
+    /// taken for a board to make.
+    #[cfg(feature = "hosted-postgresql")]
+    pub fn opening_hosted(
+        client: crate::pg::hosted::Client,
+        clock: Clock,
+        pid_alive: Probe,
+        host: &str,
+        how: &Opening,
+    ) -> Result<Store, Error> {
+        let mover: Option<Mover> = match how.access {
+            Access::Write => Some(Store::moved_hosted),
+            Access::Read => None,
+        };
+        Store::opening_by(Board::Hosted(client), clock, pid_alive, host, how, mover)
+    }
+
+    /// [`Store::opening_on`], moving a board the rule says to migrate by `mover`. A reader's entry
+    /// hands none, so nothing it links names the migration: the rule never asks a reader for one
+    /// ([`schema::decide`]), and one asked for anyway is refused before anything is written.
+    fn opening_by(
+        db: Board,
+        clock: Clock,
+        pid_alive: Probe,
+        host: &str,
+        how: &Opening,
+        mover: Option<Mover>,
+    ) -> Result<Store, Error> {
         if let Some(why) = live::cargo_refusal_here(how.live.as_ref(), &db.addr(), db.database()) {
             return Err(Error::Refused(why));
         }
-        let store = Store::unchecked_on(db, clock, pid_alive, host, how);
+        let store = Store::unchecked_board(db, clock, pid_alive, host, how);
         let own = how.schema.version();
-        let record = |line: &Line| {
-            store.record_writer(&how.program, &how.schema, how.access, line);
-        };
         store.retrying(|| {
             let (found, defined, line) = store.board_opening(&how.program)?;
             if let Some(live) = &how.live {
@@ -194,40 +276,104 @@ impl Store {
             if let (Some(live), Some(found)) = (&how.live, found) {
                 live::seen::record(live, found, store.now());
             }
-            match decided {
-                Opened::Current => {
-                    record(&line);
+            match (decided, mover) {
+                (Opened::Current, _) => {
+                    store.record_writer(&how.program, &how.schema, how.access, &line);
                     Ok(())
                 }
-                Opened::Ahead => Ok(()),
-                Opened::Refused(why) => Err(Failure::Stop(Error::Refused(why))),
-                Opened::Migrate => {
-                    let board = how
-                        .live
-                        .clone()
-                        .or_else(|| live::find_here(&store.db.addr(), store.db.database()));
-                    if let Some(board) = &board {
-                        if how.live.is_none() {
-                            went_back(board, found)?;
-                        }
-                        if let Err(refused) = store.may_move(how, board, found) {
-                            record(&line);
-                            return Err(refused);
-                        }
-                    }
-                    if how.migrating && !how.leave_behind {
-                        store.none_left_behind(how, found)?;
-                    }
-                    store.migrate(&how.schema, found, defined)?;
-                    if let Some(board) = &board {
-                        live::seen::record(board, own, store.now());
-                    }
-                    record(&Line::Held(None));
-                    Ok(())
+                (Opened::Ahead, _) => Ok(()),
+                (Opened::Refused(why), _) => {
+                    Err(Failure::Stop(Error::Refused(store.db.refusal(why))))
                 }
+                (Opened::Migrate, Some(mover)) => mover(&store, how, found, defined, &line),
+                (Opened::Migrate, None) => Err(Failure::Stop(Error::Refused(format!(
+                    "{}{NO_MOVER}",
+                    schema::Named::of(how.project.as_deref()).board
+                )))),
             }
         })?;
         Ok(store)
+    }
+
+    /// Move this board, found at `found` and opened by `how`, forward to its schema: what the rule's
+    /// [`Opened::Migrate`] takes of a writer, `line` its line in the board's writers as read.
+    fn moved(
+        &self,
+        how: &Opening,
+        found: Option<i64>,
+        defined: bool,
+        line: &Line,
+    ) -> Result<(), Failure> {
+        let record = |line: &Line| {
+            self.record_writer(&how.program, &how.schema, how.access, line);
+        };
+        let board = how
+            .live
+            .clone()
+            .or_else(|| live::find_here(&self.db.addr(), self.db.database()));
+        if let Some(board) = &board {
+            if how.live.is_none() {
+                went_back(board, found)?;
+            }
+            if let Err(refused) = self.may_move(how, board, found) {
+                record(line);
+                return Err(refused);
+            }
+        }
+        if how.migrating && !how.leave_behind {
+            self.none_left_behind(how, found)?;
+        }
+        self.migrate(&how.schema, found, defined, None)?;
+        if let Some(board) = &board {
+            live::seen::record(board, how.schema.version(), self.now());
+        }
+        record(&Line::Held(None));
+        Ok(())
+    }
+
+    /// A hosted board made or moved forward, by the deployment's migration alone: an opening
+    /// that does not say it migrates is refused, its line kept so the migration can see who is
+    /// behind; an empty database is made a board only when nothing of another's is in it; the
+    /// writers still behind are held to as on any board.
+    #[cfg(feature = "hosted-postgresql")]
+    fn moved_hosted(
+        &self,
+        how: &Opening,
+        found: Option<i64>,
+        _defined: bool,
+        line: &Line,
+    ) -> Result<(), Failure> {
+        let board = schema::Named::of(how.project.as_deref()).board;
+        if !how.migrating {
+            self.record_writer(&how.program, &how.schema, how.access, line);
+            return Err(Failure::Stop(Error::Refused(format!(
+                "{board} is hosted and would be moved forward or made, which its deployment's \
+                 migration alone does: its tables and rows are as they were, and this \
+                 program's line among its writers says it is behind"
+            ))));
+        }
+        if let Board::Hosted(client) = &self.db
+            && client.class() != crate::pg::external::MAINTENANCE
+        {
+            return Err(Failure::Stop(Error::Refused(format!(
+                "{board} is hosted, and its migration runs as the class {} of its budget, \
+                 not {}: nothing was written",
+                crate::pg::external::MAINTENANCE,
+                client.class()
+            ))));
+        }
+        if !how.leave_behind {
+            self.none_left_behind(how, found)?;
+        }
+        // Made only where nothing of another's is, which the migration judges itself, under
+        // its lock: a board another migration made a moment ago is a board, read again.
+        let empty = format!(
+            "{board} is hosted in a database that holds tables or functions and no board's \
+             record of its schema: it is not taken for an empty one, and nothing was written"
+        );
+        self.migrate(&how.schema, found, true, Some(&empty))?;
+        self.record_writer(&how.program, &how.schema, how.access, &Line::Held(None));
+        Ok(())
     }
 
     /// Refused, naming each, when a writer seen in the last week is behind the schema `how` moves
@@ -253,7 +399,12 @@ impl Store {
     /// Whether this store, opened by `how`, may move `board`, a project's live board found at
     /// `found` (none: not made yet), forward ([`live::may_move`]). A scratch board it always may.
     fn may_move(&self, how: &Opening, board: &Live, found: Option<i64>) -> Result<(), Failure> {
-        live::may_move(
+        let may_move = if self.db.is_postgresql() {
+            live::may_move_postgresql
+        } else {
+            live::may_move
+        };
+        may_move(
             board,
             how.schema == Schema::this_build(),
             how.migrating,
@@ -296,6 +447,16 @@ impl Store {
         host: &str,
         how: &Opening,
     ) -> Store {
+        Store::unchecked_board(db.into(), clock, pid_alive, host, how)
+    }
+
+    fn unchecked_board(
+        db: Board,
+        clock: Clock,
+        pid_alive: Probe,
+        host: &str,
+        how: &Opening,
+    ) -> Store {
         Store {
             lookup: None,
             db,
@@ -318,6 +479,7 @@ impl Store {
             inbox_pool: Mutex::new(None),
             limits: crate::limits::Held::default(),
             named_server: false,
+            authority: None,
         }
     }
 
@@ -356,20 +518,23 @@ impl Store {
     /// the version's steps and its record in one transaction that first checks the board is still
     /// at `found`, so a migration that fails or loses to another's leaves the board as it was, and
     /// one another open finished first is read again rather than run twice.
-    fn migrate(&self, schema: &Schema, found: Option<i64>, defined: bool) -> Result<(), Failure> {
+    fn migrate(
+        &self,
+        schema: &Schema,
+        found: Option<i64>,
+        defined: bool,
+        empty: Option<&str>,
+    ) -> Result<(), Failure> {
         if !defined {
             self.define()?;
         }
         self.request(both(schema::ANALYZERS, Pg::Nothing), json!({}))?;
-        let steps = sql::opening::migration(schema.steps());
+        let steps = sql::opening::migration(&schema.steps());
         let postgres_steps = postgres::opening::migration(
-            &format!(
-                "{}\n{}",
-                postgres::schema::define(),
-                schema.postgres_steps()
-            ),
+            &format!("{}\n{}", self.defined()?, schema.postgres_steps()),
             found,
             schema.version(),
+            empty,
         );
         self.run_transaction::<Value>(
             both(steps, Pg::Simple(postgres_steps.into())),
@@ -381,6 +546,33 @@ impl Store {
 }
 
 /// The refusal of `live`'s board, found at `found`, when it went back ([`live::seen::went_back`]).
+impl Store {
+    /// This build's PostgreSQL definitions as the board's server takes them: PostgreSQL 16,
+    /// which a hosted build alone takes, has its own analyzer
+    /// ([`postgres::schema::define_on_16`]).
+    fn defined(&self) -> Result<String, Failure> {
+        #[cfg(feature = "hosted-postgresql")]
+        if self.db.is_postgresql() {
+            let version = self.request(
+                both(
+                    sql::opening::POSTGRESQL_ALONE,
+                    postgres::opening::SERVER_VERSION,
+                ),
+                json!({}),
+            )?;
+            if version
+                .last()
+                .and_then(Value::as_i64)
+                .map(|number| number / 10_000)
+                == Some(16)
+            {
+                return Ok(postgres::schema::define_on_16());
+            }
+        }
+        Ok(postgres::schema::define())
+    }
+}
+
 fn went_back(live: &Live, found: Option<i64>) -> Result<(), Failure> {
     match live::seen::went_back(live, found) {
         Some(rollback) => Err(Failure::Stop(Error::Refused(rollback.refusal()))),

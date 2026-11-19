@@ -345,3 +345,18 @@ fn search_help_names_query_limits_and_every_status_without_a_board() {
         assert!(ran.out.contains(text), "missing {text:?}: {}", ran.out);
     }
 }
+
+#[test]
+fn equally_scored_message_excerpts_choose_text_order_before_insertion_order() {
+    let c = Case::new();
+    filler(&c);
+    create(&c, "topic/ties", "Engines", "", 2);
+    for text in ["Nebula omega", "Nebula alpha", "Nebula alpha"] {
+        c.store().say("topic/ties", "owner", text, None).unwrap();
+    }
+    let result = json(&c, &["search", "nebula"]);
+    let rows = result["tasks"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["snippet_source"], "message");
+    assert_eq!(rows[0]["snippet"], "Nebula alpha");
+}

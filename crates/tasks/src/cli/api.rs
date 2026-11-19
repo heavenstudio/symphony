@@ -35,8 +35,9 @@ pub use context::{run, serve};
 /// The api's major: version 2 refuses the retired `create.fast_fix` argument.
 pub const MAJOR: i64 = 2;
 
-/// The api's minor within [`MAJOR`].
-pub const MINOR: i64 = 0;
+/// The api's minor within [`MAJOR`]: 1 added a task's `id`, `bound`, `edit_bound` and
+/// `integration_state`; 2 added `evidence`.
+pub const MINOR: i64 = 2;
 
 /// Why a call has no result.
 enum Fail {
@@ -434,6 +435,44 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let (slug, title, by): (String, String, String) = (slug, title, by);
             let links: Vec<String> = links;
             shape::task(&board.get()?.amend(&slug, &title, &links, &by)?)
+        }
+        // What a program outside the board keeps of a task, and writes it again by.
+        "bound" => {
+            args!(slug: need);
+            let slug: String = slug;
+            json!(board.get()?.bound(&slug)?)
+        }
+        "edit_bound" => {
+            let slug: String = a.need("slug")?;
+            let bound: crate::recovery::Bound = a.need("bound")?;
+            let by = a.actor("by")?;
+            let edit: crate::recovery::Edit = a.rest()?;
+            json!(board.get()?.edit_bound(&slug, &bound, &edit, &by)?)
+        }
+        // This project's, so the board is not reached.
+        "integration_state" => {
+            args!(name: need);
+            let name: String = name;
+            let Some(env) = &board.context else {
+                return Err(Fail::Error(format!(
+                    "{method}: this entry was given no folder to find the project from"
+                )));
+            };
+            let place = crate::project::locate(&env.cwd).map_err(Fail::Error)?;
+            let path = crate::folders::integration(&place.common, &name).map_err(Fail::Refused)?;
+            json!({"path": path})
+        }
+        // Read-only: the task's evidence at its branch's head, as the land reads it.
+        "evidence" => {
+            args!(slug: need, head: take);
+            let (slug, head): (String, Option<String>) = (slug, head);
+            let context = board.context.clone().ok_or_else(|| {
+                Fail::Error("evidence: it is read from a checkout of the task's repository".into())
+            })?;
+            let snapshot =
+                crate::land::evidence::of(board.get()?, &context, &slug, head.as_deref())
+                    .map_err(Fail::Refused)?;
+            json!(&snapshot)
         }
         "mark_red" => {
             args!(slug: need, red: need, by: actor);

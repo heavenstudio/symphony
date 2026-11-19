@@ -219,10 +219,15 @@ fn held(docs: &[Doc], pages: &Pages) -> Held {
             .map(|card| ((path.clone(), card.slug.clone()), owner_said(card)))
             .collect::<Vec<_>>()
     };
-    docs.iter()
+    let mut held = BTreeMap::new();
+    for (key, at) in docs
+        .iter()
         .flat_map(|doc| cards(&doc.path, &doc.decisions))
         .chain(pages.iter().flat_map(|(path, shown)| cards(path, shown)))
-        .collect()
+    {
+        held.insert(key, at);
+    }
+    held
 }
 
 /// When the owner last wrote under `card`, by its dated lines.
@@ -345,7 +350,7 @@ pub fn snapshot(
     build: &str,
 ) -> Result<Snapshot, ReviewError> {
     // A checkout with no documents yet still has its board, branch cards and agents.
-    let mut docs = board::documents(root)?;
+    let mut docs = board::documents_shown(root)?;
     let mut progress = progress(root);
     // Distinct proposals remain separate decisions; only main's older copy is suppressed.
     // Branch discovery already removes identical copies carried by stacked branches.
@@ -450,6 +455,7 @@ pub fn snapshot(
                 kind: comment.kind.clone(),
                 text: doc_title.clone(),
                 branch: None,
+                ask: None,
             });
         }
         for card in &doc.decisions {
@@ -466,6 +472,7 @@ pub fn snapshot(
                         .map_or_else(|| card.note.join(" "), |e| e.text.clone()),
                 ),
                 branch: None,
+                ask: None,
             };
             if card.group(&plugins) == Group::Auto {
                 queue.spot_check.push(item.clone());

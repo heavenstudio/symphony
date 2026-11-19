@@ -33,7 +33,8 @@
 //! ends when the process that started it ends, however it ends.
 //!
 //! Beside SurrealDB, the board's PostgreSQL ([`postgres`]) starts and stops for a board in a
-//! scratch place alone, under the same starters' lock; no live board reads from it yet.
+//! scratch place alone, under the same starters' lock. The home's durable engine identity selects
+//! what repository discovery and the machine server read ([`Home::board_server`]).
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
@@ -53,9 +54,13 @@ mod fetch_tests;
 mod hold;
 mod left;
 pub use left::{LEFT_STOPS, LeftReplay};
+mod moving;
+pub use moving::{EXPORT, Journal, Kind, Moved, STEPS};
 pub mod postgres;
 pub use postgres::{Postgres, Serving};
 mod reclaim;
+mod recovery;
+pub use recovery::FileAuthority;
 mod scratch;
 pub mod snapshot;
 mod starters;
@@ -71,6 +76,8 @@ use snapshot::Before;
 pub use snapshot::{Kept, Snapshot, Taken};
 use starters::{Doing, Starters};
 pub use storage::Storage;
+mod backend;
+pub use backend::Engine;
 use storage::store;
 
 /// The SurrealDB the board runs on: `tools/surreal.sh`'s `VERSION`, which fetches it.
@@ -338,6 +345,7 @@ fn pinned(common: &Path) -> PathBuf {
         .join("surreal")
 }
 
+#[inline(never)]
 fn io(what: &str, path: &Path) -> impl Fn(std::io::Error) -> ServerError {
     let said = format!("{what} {}", path.display());
     move |problem| ServerError::Io(format!("{said}: {problem}"))
@@ -376,6 +384,8 @@ pub struct Home {
     /// Whether a start that replays the store's log runs apart from its caller
     /// ([`Home::starting_apart`]).
     apart: bool,
+    /// Where a test cuts a move's or a restore's switch ([`Home::stopping_after`]).
+    cut: Option<moving::Cut>,
 }
 
 impl Home {
@@ -393,6 +403,7 @@ impl Home {
             tell: std::sync::Arc::new(|line| eprintln!("{line}")),
             lock_wait: None,
             apart: false,
+            cut: None,
         }
     }
 
@@ -544,6 +555,7 @@ impl Home {
     /// is. The record goes only once nothing it may name runs; while that cannot be told (a `ps`
     /// that fails), the caller is refused and nothing is adopted or started.
     pub fn ensure(&self) -> Result<Running, ServerError> {
+        self.require_surreal()?;
         self.unheld()?;
         if let Some(running) = self.recorded()
             && !older(&running.version)
@@ -559,6 +571,7 @@ impl Home {
             self.apart_under_way()?;
         }
         let starters = self.lock(Doing::Starting)?;
+        self.require_surreal()?;
         self.unheld()?;
         if let Some(left) = self.left_replay_through()? {
             if self.apart {
@@ -705,7 +718,9 @@ impl Home {
     /// anything. One still starting is waited for first, never signalled before it answers
     /// ([`Home::stop_one`]). Refused while the board is held, which stopped it already.
     pub fn stop(&self) -> Result<Option<Running>, ServerError> {
+        self.require_surreal()?;
         let _held = self.lock(Doing::Stopping)?;
+        self.require_surreal()?;
         self.unheld()?;
         let Some(running) = self.recorded() else {
             return Ok(None);
@@ -1029,6 +1044,20 @@ impl Home {
         on_start: &dyn Fn(&Running) -> Result<(), ServerError>,
     ) -> Result<Running, ServerError> {
         self.unheld()?;
+        self.spawn_held(data, except, storage, patience, what, on_start)
+    }
+
+    /// [`Home::spawn_as`] also while the board is held: a move's own server on the store its
+    /// caller holds stopped ([`moving`]).
+    fn spawn_held(
+        &self,
+        data: &str,
+        except: &[u16],
+        storage: Storage,
+        patience: Duration,
+        what: &str,
+        on_start: &dyn Fn(&Running) -> Result<(), ServerError>,
+    ) -> Result<Running, ServerError> {
         if !self.surreal.is_file() {
             return Err(self.no_surreal());
         }
@@ -1256,6 +1285,18 @@ fn server_on(command: &str, surreal: &Path, data: &str) -> Option<String> {
 /// `HEAD`). None for any other command line: a server on other data or in memory,
 /// any other program, and a scratch board's supervisor shell, whose last argument is its log.
 pub fn board_served(command: &str) -> Option<PathBuf> {
+    if let Some((program, data)) = command.rsplit_once(" -D ")
+        && Path::new(program)
+            .file_name()
+            .is_some_and(|name| name == "postgres")
+    {
+        let data = Path::new(data);
+        if data.file_name()? != postgres::DATA {
+            return None;
+        }
+        let common = common_of(data.parent()?)?;
+        return common.join("HEAD").is_file().then(|| common.to_path_buf());
+    }
     let at = command.rfind(" surrealkv://")?;
     let data = &command[at + 1..];
     let path = Path::new(data.strip_prefix("surrealkv://")?);

@@ -17,11 +17,11 @@ pub(in crate::store) fn naming() -> Pg<'static> {
 }
 
 pub(in crate::store) fn reviewer_launches() -> Pg<'static> {
-    Pg::read(super::rows(
+    super::listed(
         "l",
         "task_session l WHERE handle IN (SELECT jsonb_array_elements_text(v -> 'handles')) AND role = 'reviewer'",
         "l.started, l.slug, l.handle",
-    ))
+    )
 }
 
 pub(in crate::store) fn threads() -> Pg<'static> {

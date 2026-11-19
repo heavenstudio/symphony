@@ -628,10 +628,11 @@ fn mark_unseen_replies(
     use std::collections::BTreeSet;
 
     let cards = |text: &str| {
-        parse_decisions(&text.lines().collect::<Vec<_>>())
-            .into_iter()
-            .map(|card| (card.slug.clone(), card))
-            .collect::<BTreeMap<_, _>>()
+        let mut cards = BTreeMap::new();
+        for card in parse_decisions(&text.lines().collect::<Vec<_>>()) {
+            cards.insert(card.slug.clone(), card);
+        }
+        cards
     };
     let current = cards(current);
     let new = cards(new);
@@ -903,7 +904,7 @@ fn canonical_register(
     }) {
         return None;
     }
-    cards.sort_by(|a, b| {
+    symphony_board::order::sort_by(&mut cards, &|a, b| {
         order
             .get(&a.slug)
             .cmp(&order.get(&b.slug))
@@ -1017,22 +1018,25 @@ impl<'a> Histories<'a> {
 fn merge_history(current: &str, base: &str, new: &str, plugins: &Plugins) -> Option<String> {
     // Preserve main's stable order among cards that end up in the same generated group.
     let current_lines: Vec<_> = current.lines().collect();
-    let order = crate::register::parse_decisions(&current_lines)
+    let mut order = BTreeMap::new();
+    for (index, card) in crate::register::parse_decisions(&current_lines)
         .into_iter()
         .enumerate()
-        .map(|(index, card)| (card.slug, index))
-        .collect();
+    {
+        order.insert(card.slug, index);
+    }
     let current_text = canonical_register(current, &order, plugins)?;
     let base_text = canonical_register(base, &order, plugins)?;
     let new_text = canonical_register(new, &order, plugins)?;
     let current = Histories::read(&current_text)?;
     let base = Histories::read(&base_text)?;
     let new = Histories::read(&new_text)?;
-    let added = crate::register::parse_decisions(&current_text.lines().collect::<Vec<_>>())
-        .into_iter()
-        .filter(|card| !base.cards.contains_key(&card.slug))
-        .map(|card| (card.slug, card.topic))
-        .collect();
+    let mut added = BTreeMap::new();
+    for card in crate::register::parse_decisions(&current_text.lines().collect::<Vec<_>>()) {
+        if !base.cards.contains_key(&card.slug) {
+            added.insert(card.slug, card.topic);
+        }
+    }
     if !same_skeleton(&current.skeleton, &base.skeleton, &added) || new.skeleton != base.skeleton {
         return None;
     }
@@ -1331,14 +1335,14 @@ fn upload_bytes(stored: &Path, name: &str) -> Result<Vec<u8>, String> {
 
 /// Of `uploads` ([`saved_uploads`]), those a text of `texts` still names: what the commit shows.
 fn shown_uploads<T: Clone>(uploads: &BTreeMap<String, T>, texts: &[&str]) -> BTreeMap<String, T> {
-    uploads
-        .iter()
-        .filter(|(path, _)| {
-            let link = format!("/{path}");
-            texts.iter().any(|text| text.contains(&link))
-        })
-        .map(|(path, bytes)| (path.clone(), bytes.clone()))
-        .collect()
+    let mut shown = BTreeMap::new();
+    for (path, bytes) in uploads {
+        let link = format!("/{path}");
+        if texts.iter().any(|text| text.contains(&link)) {
+            shown.insert(path.clone(), bytes.clone());
+        }
+    }
+    shown
 }
 
 /// After main gained the upload `path`, the main checkout `root` takes it: its index entry from
@@ -1365,60 +1369,94 @@ fn record(root: &Path, commit: &str) -> Result<(), String> {
     std::fs::write(folder.join(commit), "Symphony verdict\n").map_err(|e| e.to_string())
 }
 
+/// What `edits` make of the commit `parent`, written to the object store over a private index:
+/// the tree, each edited page's text there and before, and the uploads the new lines name.
+struct Made {
+    tree: String,
+    blobs: Blobs,
+    before: Blobs,
+    uploads: BTreeMap<String, Vec<u8>>,
+    /// Whether the tree is `parent`'s own: the edits change nothing there.
+    same: bool,
+}
+
+fn made(
+    root: &Path,
+    parent: &str,
+    edits: &[Edit],
+    saved: &BTreeMap<String, Vec<u8>>,
+) -> Result<Made, CommitError> {
+    let (blobs, before) = apply(root, parent, edits)?;
+    let texts: Vec<&str> = blobs.values().map(String::as_str).collect();
+    let uploads = shown_uploads(saved, &texts);
+    let scratch = Scratch::new()?;
+    let index = scratch.0.join("index");
+    checked(run(root, &["read-tree", parent], None, Some(&index))?)?;
+    let mut entries = Vec::new();
+    for (rel, text) in &blobs {
+        let blob = checked(run(
+            root,
+            &["hash-object", "-w", "--stdin"],
+            Some(text.as_bytes()),
+            None,
+        )?)?;
+        entries.push((rel, blob));
+    }
+    for (path, bytes) in &uploads {
+        // The bytes checked against the name, hashed as `git add` would store them at that
+        // path, past the ignore.
+        let blob = checked(run(
+            root,
+            &["hash-object", "-w", "--stdin", &format!("--path={path}")],
+            Some(bytes),
+            None,
+        )?)?;
+        entries.push((path, blob));
+    }
+    for (path, blob) in entries {
+        checked(run(
+            root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("100644,{},{}", blob.trim(), path),
+            ],
+            None,
+            Some(&index),
+        )?)?;
+    }
+    let tree = checked(run(root, &["write-tree"], None, Some(&index))?)?
+        .trim()
+        .to_string();
+    let same = tree == git(root, &["rev-parse", &format!("{parent}^{{tree}}")])?;
+    Ok(Made {
+        tree,
+        blobs,
+        before,
+        uploads,
+        same,
+    })
+}
+
 fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, CommitError> {
+    delivered_by_the_host(root)?;
     let source = root.canonicalize().map_err(|e| e.to_string())?;
     let (saved, refused) = saved_uploads(root, edits);
     let mut last = String::new();
     for _ in 0..5 {
         let parent = git(root, &["rev-parse", "--verify", "-q", &main_ref(root)])?;
-        let (blobs, before) = apply(root, &parent, edits)?;
-        let texts: Vec<&str> = blobs.values().map(String::as_str).collect();
-        let uploads = shown_uploads(&saved, &texts);
-        let scratch = Scratch::new()?;
-        let index = scratch.0.join("index");
-        checked(run(root, &["read-tree", &parent], None, Some(&index))?)?;
-        let mut entries = Vec::new();
-        for (rel, text) in &blobs {
-            let blob = checked(run(
-                root,
-                &["hash-object", "-w", "--stdin"],
-                Some(text.as_bytes()),
-                None,
-            )?)?;
-            entries.push((rel, blob));
-        }
-        for (path, bytes) in &uploads {
-            // The bytes checked against the name, hashed as `git add` would store them at that
-            // path, past the ignore.
-            let blob = checked(run(
-                root,
-                &["hash-object", "-w", "--stdin", &format!("--path={path}")],
-                Some(bytes),
-                None,
-            )?)?;
-            entries.push((path, blob));
-        }
-        for (path, blob) in entries {
-            checked(run(
-                root,
-                &[
-                    "update-index",
-                    "--add",
-                    "--cacheinfo",
-                    &format!("100644,{},{}", blob.trim(), path),
-                ],
-                None,
-                Some(&index),
-            )?)?;
-        }
-        let tree = checked(run(root, &["write-tree"], None, Some(&index))?)?;
-        if tree.trim() == git(root, &["rev-parse", &format!("{parent}^{{tree}}")])? {
+        let Made {
+            tree,
+            blobs,
+            before,
+            uploads,
+            same,
+        } = made(root, &parent, edits, &saved)?;
+        if same {
             return Ok(Outcome::default());
         }
-        let commit = git(
-            root,
-            &["commit-tree", tree.trim(), "-p", &parent, "-m", message],
-        )?;
+        let commit = git(root, &["commit-tree", &tree, "-p", &parent, "-m", message])?;
         record(root, &commit)?;
         let trees = main_worktrees(root)?;
         let moved = run(
@@ -1479,6 +1517,39 @@ fn commit_inner(root: &Path, edits: &[Edit], message: &str) -> Result<Outcome, C
     Err(CommitError::Retry(format!(
         "main kept moving under the commit (5 tries): {last}"
     )))
+}
+
+/// Refuse a commit made here on the default branch of a project that delivers by pull request
+/// (`[land] delivery`, `symphony_board::land::delivery`): there the host alone writes that
+/// branch, and a commit made here would be one the remote never holds.
+///
+/// A save there is kept and delivered by a pull request of its own ([`pending`]); this is asked
+/// by the commit every other path ends in, so nothing commits on the default branch by a path
+/// that did not ask [`delivers`] first.
+///
+/// # Errors
+///
+/// The project delivers by pull request: the line the commit is refused with.
+pub fn delivered_by_the_host(root: &Path) -> Result<(), String> {
+    if !delivers(root) {
+        return Ok(());
+    }
+    Err(format!(
+        "not committed: this project delivers by pull request ([land] delivery), so nothing is \
+         committed to {} here: a save waits for the pull request that delivers it",
+        Project::of(root).default_branch
+    ))
+}
+
+/// Whether the project at `root` delivers by pull request: its default branch commits a
+/// `[land] delivery` command, so the host alone writes that branch and a save waits for a pull
+/// request of its own ([`pending`]).
+pub fn delivers(root: &Path) -> bool {
+    let at = format!("{}:symphony.toml", main_ref(root));
+    git(root, &["show", &at])
+        .ok()
+        .and_then(|text| symphony_board::land::delivery::of(&text).ok())
+        .is_some_and(|command| !command.is_empty())
 }
 
 /// Commit edits already written into `root`, then sync main checkouts without losing local edits.
@@ -1927,6 +1998,10 @@ struct QueuedPublication {
     dirty_retry: bool,
     #[serde(default)]
     dirty_reported: bool,
+    /// A save of a project that delivers by pull request, and how far its delivery went
+    /// ([`pending`]): its entry is kept until a receipt proves its delivery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delivery: Option<pending::Delivery>,
 }
 
 /// The locked journal retains immutable edits and the verified checkout across a bounded land
@@ -1937,6 +2012,8 @@ struct OutputJob {
     held: JournalLease,
     saved: QueuedPublication,
     checkout: Option<PrivateWorktree>,
+    /// Its journal entry outlives this job: a save still waiting for its pull request.
+    kept: bool,
 }
 
 struct JournalLease(File);
@@ -1962,6 +2039,7 @@ impl OutputJob {
             publication: None,
             dirty_retry: false,
             dirty_reported: false,
+            delivery: delivers(root).then(|| pending::Delivery::saved(root)),
         };
         let held = Self::write_journal(&path, &saved)?;
         Ok(Self {
@@ -1970,6 +2048,7 @@ impl OutputJob {
             path,
             held,
             checkout: None,
+            kept: false,
         })
     }
 
@@ -2105,6 +2184,7 @@ impl OutputJob {
             held,
             saved,
             checkout,
+            kept: false,
         }))
     }
 
@@ -2115,6 +2195,12 @@ impl OutputJob {
         ahead: &Ahead,
         writes: &Mutex<()>,
     ) -> Result<bool, String> {
+        // A save the host delivers: committed on a branch of its own and kept until the remote
+        // holds it. One journaled before the key was set goes the same way, never to main.
+        if self.saved.publication.is_none() && (self.saved.delivery.is_some() || delivers(root)) {
+            self.kept = self.deliver(root)?;
+            return Ok(true);
+        }
         if self.saved.publication.is_none() {
             let branch = retry_conflicts(root, self.job.2.sequence, || {
                 output_branch(root, &self.job.1, self.job.0)
@@ -2219,6 +2305,9 @@ impl OutputJob {
     }
 
     fn finished(&mut self) -> Result<(), String> {
+        if self.kept {
+            return Ok(());
+        }
         std::fs::remove_file(&self.path).map_err(|e| e.to_string())?;
         clear_journal_error(&self.path);
         if let Some(checkout) = self.checkout.take() {
@@ -2309,9 +2398,9 @@ fn recover_outputs(
                     .or_default() += 1;
                 queued.push_back(Arc::new(Mutex::new(job)));
             }
-            queued
-                .make_contiguous()
-                .sort_by_key(|job| job.lock().unwrap_or_else(|e| e.into_inner()).path.clone());
+            symphony_board::order::sort_by_key(queued.make_contiguous(), &|job| {
+                job.lock().unwrap_or_else(|e| e.into_inner()).path.clone()
+            });
         }
         Err(error) => {
             let path = home(root)
@@ -2389,6 +2478,21 @@ fn publication_pass(
     }
 }
 
+/// The output worker's loop: a `pass` for each message that wakes it, handed the jobs of that
+/// message and of every one sent before the pass began, until every sender is gone. A message is
+/// a job, or a wake with none (`None`); a burst of wakes sent while a pass is pending or running
+/// asks for one more pass, never one each.
+fn passes<T>(messages: &mpsc::Receiver<Option<T>>, mut pass: impl FnMut(Vec<T>)) {
+    while let Ok(first) = messages.recv() {
+        pass(
+            first
+                .into_iter()
+                .chain(messages.try_iter().flatten())
+                .collect(),
+        );
+    }
+}
+
 /// A fast commit worker and an output worker; saves only enqueue their immutable before/after edit.
 /// Same-file edits wait behind any generated branch they were written against.
 pub struct Committer {
@@ -2396,12 +2500,15 @@ pub struct Committer {
     waiting: Waiting,
     workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
     root: PathBuf,
+    /// What wakes the output worker for a pass with no new save ([`Committer::wake`]).
+    wake: Mutex<Option<mpsc::Sender<Option<QueuedJob>>>>,
 }
 impl Committer {
     pub fn start(root: &Path, writes: Arc<Mutex<()>>) -> Self {
         let source = root.to_path_buf();
         let (send, recv) = mpsc::channel::<QueuedJob>();
         let (jobs, output_jobs) = mpsc::channel::<Option<QueuedJob>>();
+        let wake = jobs.clone();
         let waiting: Waiting = Arc::default();
         let ahead = Arc::new(Mutex::new(BTreeMap::<String, usize>::new()));
         let mut recovered = std::collections::VecDeque::new();
@@ -2419,13 +2526,11 @@ impl Committer {
                 &output_ahead,
                 &output_writes,
             );
-            for job in output_jobs {
+            passes(&output_jobs, |jobs| {
                 // A different serving generation may have released a queued publication
                 // since startup. Every subsequent save can adopt it once that lease ends.
                 recover_outputs(&output_root, &mut queued, &output_waiting, &output_ahead);
-                if let Some(job) = job {
-                    queued.push_back(job);
-                }
+                queued.extend(jobs);
                 publication_pass(
                     &output_root,
                     &mut queued,
@@ -2433,7 +2538,7 @@ impl Committer {
                     &output_ahead,
                     &output_writes,
                 );
-            }
+            });
         });
         let root = root.to_path_buf();
         let worker_waiting = waiting.clone();
@@ -2448,7 +2553,8 @@ impl Committer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .contains_key(&edit.rel);
-                let prepared = if deferred {
+                // Delivered by the host: the output worker commits it on a branch of its own.
+                let prepared = if deferred || delivers(&root) {
                     Ok(true)
                 } else {
                     retry_conflicts(&root, backlog.sequence, || {
@@ -2506,6 +2612,17 @@ impl Committer {
             waiting,
             workers: Mutex::new(vec![commit_worker, output_worker]),
             root: source,
+            wake: Mutex::new(Some(wake)),
+        }
+    }
+
+    /// Ask the output worker for one more pass over the journal, with no new save: what takes
+    /// up the saves kept for delivery by pull request again ([`pending`]) once something they
+    /// wait on may have moved. Wakes asked while a pass is pending or running ask for that one
+    /// more pass together ([`passes`]). Nothing once the committer is closing.
+    pub fn wake(&self) {
+        if let Some(wake) = &*self.wake.lock().unwrap_or_else(|e| e.into_inner()) {
+            let _ = wake.send(None);
         }
     }
 
@@ -2534,6 +2651,7 @@ impl Committer {
     /// Drain both paths before the server exits. A successful save must survive a graceful stop.
     pub fn close(&self) {
         self.send.lock().unwrap_or_else(|e| e.into_inner()).take();
+        self.wake.lock().unwrap_or_else(|e| e.into_inner()).take();
         for worker in self
             .workers
             .lock()
@@ -2549,6 +2667,11 @@ impl Committer {
         }
     }
 }
+
+pub mod pending;
+
+#[cfg(test)]
+mod passes_tests;
 
 #[cfg(test)]
 mod publication_tests;

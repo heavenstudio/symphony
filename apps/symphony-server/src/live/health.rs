@@ -41,9 +41,10 @@ pub(crate) struct Notices {
     /// The board's schema while it is ahead of this build's, and what the pages say of it
     /// ([`Hub::read_ahead`]).
     ahead: (Option<i64>, String),
-    /// The project file as the hub last found it ([`stamp`]): an edit to it renders main's
-    /// documents again, whether the settings still load or not ([`Hub::tell_project`]).
-    project_file: Stamp,
+    /// The project file and its local settings file as the hub last found them ([`stamps`]): an
+    /// edit to either renders main's documents again, whether the settings still load or not
+    /// ([`Hub::tell_project`]).
+    project_file: [Stamp; 2],
 }
 
 /// A file's inode, size, modification and change times, or none while there is no file: a write,
@@ -65,11 +66,19 @@ fn stamp(path: &Path) -> Stamp {
     })
 }
 
+/// The project file at `root` and its local settings file, each as [`stamp`] finds it now.
+fn stamps(root: &Path) -> [Stamp; 2] {
+    [
+        stamp(&root.join(symphony::project::FILE)),
+        stamp(&symphony::project::Project::local_file(root)),
+    ]
+}
+
 impl Notices {
     /// Nothing said yet, the project file at `root` as the hub finds it at its start.
     pub(crate) fn of(root: &Path) -> Self {
         Self {
-            project_file: stamp(&root.join(symphony::project::FILE)),
+            project_file: stamps(root),
             ..Self::default()
         }
     }
@@ -100,12 +109,11 @@ pub(crate) fn low_disk(root: &Path) -> Box<dyn Fn() -> Option<Low> + Send + Sync
         return Box::new(|| None);
     }
     let var = symphony_env::LOW_DISK_GB;
-    reading(
-        root,
-        &std::env::vars()
-            .filter(|(name, _)| name == var.name)
-            .collect(),
-    )
+    let mut vars = BTreeMap::new();
+    for (name, value) in std::env::vars().filter(|(name, _)| name == var.name) {
+        vars.insert(name, value);
+    }
+    reading(root, &vars)
 }
 
 /// The disk holding `root`, read at each call against the threshold `vars` names.
@@ -153,7 +161,7 @@ impl Hub {
     /// would a project's first, with no file they watch changed. An edit to the project file that
     /// still loads (an entrypoint added, a plugin chosen) asks for that read too.
     pub(crate) fn tell_project(&self) {
-        let file = stamp(&self.root.join(symphony::project::FILE));
+        let file = stamps(&self.root);
         let said = symphony::project::Project::problem(&self.root)
             .map(|why| project(&why))
             .unwrap_or_default();
@@ -356,11 +364,14 @@ pub(crate) fn unstaffed(tasks: &symphony_api::Tasks) -> Option<&'static str> {
     })
 }
 
-/// What a page says of a board at `schema`, ahead of this build's, which it reads and never writes.
+/// What a page says of a board at `schema`, ahead of this build's, which it reads and never writes:
+/// and what that does to the owner's words, which are saved in the documents while the asks and the
+/// chat they open wait in the journal ([`symphony::callbacks`]).
 pub(crate) fn read_only(schema: i64) -> String {
     format!(
         "The task board is at schema {schema}, ahead of this Symphony's {}: it is read, and nothing \
-         is written to it from here, until a Symphony at schema {schema} serves it.",
+         is written to it from here, until a Symphony at schema {schema} serves it. A verdict or a \
+         message saved now is kept, and reaches no agent until then.",
         symphony_board::SCHEMA
     )
 }

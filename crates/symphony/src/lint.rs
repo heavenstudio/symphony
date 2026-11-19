@@ -179,12 +179,15 @@ pub fn check_findings(root: &Path) -> (Vec<String>, Vec<String>) {
 }
 
 /// What is wrong with the project file at `root`: why it does not load, or each plugin it names
-/// that this build does not hold.
+/// that this build does not hold; and with its local settings file
+/// ([`crate::project::Project::local_problems`]).
 pub fn project_problems(root: &Path) -> Vec<String> {
-    match crate::project::Project::load(root) {
+    let mut problems = match crate::project::Project::load(root) {
         Ok(project) => crate::plugins::problems(&project),
         Err(problem) => vec![problem],
-    }
+    };
+    problems.extend(crate::project::Project::local_problems(root));
+    problems
 }
 
 /// `symphony settings-check [DIR]`, the settings check: the project file at DIR (the current
@@ -192,7 +195,14 @@ pub fn project_problems(root: &Path) -> Vec<String> {
 /// alone. A table or key the Symphony does not know, a value of the wrong type or a required value
 /// left out is named on `err`, exit 1; a file that loads is said on `out`, exit 0. It judges no
 /// name against a list (a model, an agent's or a recipe's name is any text) and, unlike the lint,
-/// reads no plugin this build holds and no document. More than one folder is exit 2.
+/// reads no plugin this build holds and no document. A key the Symphony reads no more
+/// ([`crate::project::Project::retired`]) is said on `err` to do nothing without changing the exit
+/// code. Recognizable cross-agent model names warn
+/// without changing the exit code, judged on the settings in force, the local file's over the
+/// project file's. The local settings file beside the main checkout's project
+/// file is judged with it ([`crate::project::Project::local_problems`]): a setting it may not
+/// hold, a value the board cannot read, or the file tracked by git, is exit 1. More than one
+/// folder is exit 2.
 pub fn settings(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     const USAGE: &str = "usage: symphony settings-check [DIR]";
     let root = match args {
@@ -207,27 +217,54 @@ pub fn settings(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i3
             );
         }
     };
-    match crate::project::Project::load(root) {
-        Ok(_) => {
-            let _ = writeln!(
-                out,
-                "✔ {}: every table and key is a setting the Symphony knows, each value of its type",
-                crate::project::FILE
-            );
-            0
+    let loaded = crate::project::Project::load(root);
+    let local = crate::project::Project::local_problems(root);
+    if let Err(problem) = &loaded {
+        let _ = writeln!(err, "{problem}");
+        let _ = writeln!(err, "✖ the project file is refused.");
+    } else {
+        // The settings in force: the local file's over the project file's, unless it is refused,
+        // when none of it is read.
+        for line in crate::project::Project::retired(root) {
+            let _ = writeln!(err, "{line}");
         }
-        Err(problem) => {
-            let _ = writeln!(err, "{problem}");
-            let _ = writeln!(err, "✖ the project file is refused.");
-            1
-        }
+        let file = root.join(crate::project::FILE);
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        let over = crate::project::Project::local(root).ok().flatten();
+        crate::project::warn_models(&text, &file, over.as_ref(), err);
     }
+    for problem in &local {
+        let _ = writeln!(err, "{problem}");
+    }
+    if !local.is_empty() {
+        let _ = writeln!(err, "✖ the local settings file is refused.");
+    }
+    if loaded.is_err() || !local.is_empty() {
+        return 1;
+    }
+    let _ = writeln!(
+        out,
+        "✔ {}: every table and key is a setting the Symphony knows, each value of its type",
+        crate::project::FILE
+    );
+    if crate::project::Project::local_file(root).is_file() {
+        let _ = writeln!(
+            out,
+            "✔ {}: every key is a preference a local file may override, each value of its type",
+            crate::project::LOCAL_FILE
+        );
+    }
+    0
 }
 
-/// `symphony status --lint`: the project file, card slugs in prose, the plugins' prose rules and
+/// `symphony status --lint`: the project file (a key the Symphony reads no more said on `err` to
+/// do nothing, which is no finding), card slugs in prose, the plugins' prose rules and
 /// their document checks, each finding named on `err`; exit 1 on any, 2 when the docs cannot be
 /// read.
 pub fn main(root: &Path, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    for line in crate::project::Project::retired(root) {
+        let _ = writeln!(err, "{line}");
+    }
     let project = project_problems(root);
     if !project.is_empty() {
         for problem in &project {

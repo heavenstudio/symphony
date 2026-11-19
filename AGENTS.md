@@ -5,7 +5,9 @@ The app's workspace owns its server, its web client and its Mac app under `apps/
 `apps/symphony-web-tests`; the Mac app, `apps/symphony-desktop`, a thin shell over each
 server's own pages, `publish = false`, whose window crates no other package links), and the review
 library, its own build and release commands (`crates/symphony-build`), wire types, task board,
-working-directory scanner, headless Chrome driver and the tests' CPU meters and waits
+working-directory scanner, headless Chrome driver, the optional GitHub issue exchange
+(`crates/symphony-github`, a program of its own no other package builds with,
+[GITHUB](docs/GITHUB.md)) and the tests' CPU meters and waits
 (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`) under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.
@@ -30,10 +32,18 @@ old item without `#[deprecated]`, then remove the old item in a separate later t
 consumer migrations are proved. Keep the compile guards in step with those calls; kit and helper
 major-version requirements still apply.
 
+A landing that changes what a project must do to take the next release (the board schema, such an
+item, a `symphony.toml` key, something to run once) says so in a `Consumer-Note: SECTION: TEXT`
+trailer of one of its own commits, which the release's notes carry to the agent that moves a
+project's pin ([when a landing owes one](docs/CHECKS.md#what-a-landing-tells-a-consumer),
+[RELEASES](docs/RELEASES.md#its-notes)); `just lint-rs` is red on the ones git can see left unsaid.
+
 ### Where each part is said
 
 - **A project's settings** are its `symphony.toml`, every table and key in
   [PROJECT_FILE](docs/PROJECT_FILE.md), the generic defaults in `crates/symphony/src/project.rs`.
+  One machine's preferences over them are `symphony.local.toml` beside it, never versioned, whose
+  one reader is `crates/tasks/src/local.rs`.
 - **A project's own code is a plugin**: the traits and block vocabulary in
   `crates/symphony-plugin`, linked by its host or answering from a process of its own
   ([PLUGIN_PROTOCOL](docs/PLUGIN_PROTOCOL.md)). A plugin renders to generic blocks, never HTML,
@@ -126,12 +136,22 @@ so a missing browser cannot pass as acceptance not run) and the client's pinned 
 PATH, or fnm to fetch it once: `tools/node.sh`); the consuming project's binaries are not
 prerequisites. The client build needs Git, Bash and jq, and native
 board fixtures need lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`).
+The release verification owns an explicit `nextest-setup` step before tests, provisioning
+cargo-nextest 0.9.152 from checksum-pinned upstream binaries (Bash, curl, tar and `sha256sum` or
+`shasum`, HTTPS to GitHub). The launcher checks this target's `tools/nextest/` first, then a linked
+worktree's main checkout `.target/tools/nextest/`; setup provisions that main cache once for its
+worktrees. Tests never install it. Focused `just test-rs` uses Cargo and needs no nextest: the live
+runner fixture is explicitly ignored there and selected by name by the release tests step.
 The board's server tests (`just test-rs -p symphony-board --test server`, and so the release run)
 need the machine's PostgreSQL 18 or later: the absolute folder `symphony.toml`'s `[board]
 postgresql` names, otherwise the first executable `postgres` on `PATH`, with `initdb`, `pg_ctl`
 and `psql` in that same folder. [The setup](docs/PROJECT_FILE.md#board) gives the portable
-Homebrew line; absent or incompatible tools fail with setup guidance. This repository has no
-hosted GitHub CI requirement.
+Homebrew line; absent or incompatible tools fail with setup guidance. The hosted board's check
+(`just hosted-check`, and so the release run) needs PostgreSQL 16's programs as well, in
+Homebrew's keg (`brew install postgresql@16`, which starts nothing and changes no `postgres` on
+`PATH`) or the folder `SYMPHONY_POSTGRESQL_16` names, and `openssl`
+([POSTGRESQL](docs/POSTGRESQL.md#a-hosted-board)). This repository has no hosted GitHub CI
+requirement.
 
 ## This repository as its own project
 
@@ -160,8 +180,14 @@ can read (below), and `.claude/settings.json` denies Edit there as well.
 `reviewer`, `assessor`), which a board launch takes and `just tasks limits` prints with where
 each came from ([TASKS](docs/TASKS.md#limits-and-models)). Each runs on the model `just tasks limits`
 names for the role. `just symphony-cli model ROLE MODEL` sets a role's model in the main checkout,
-or `all` for all four roles, preserving comments and order; the change follows the settings-only
-landing below. An Agent launch passes the
+or `all` for all four roles, preserving comments and order. `just symphony-cli model all fable
+--agent claude --assessor haiku` also sets the launch agent and its fallback model, with a separate
+assessor model. Recognizable cross-agent model names warn without refusing arbitrary text; the
+change follows the settings-only landing below. A machine's own choice needs no landing:
+`symphony.local.toml` beside the main checkout's `symphony.toml`, which git does not version,
+overrides the launch agent, the models and `[limits]` there and nothing else (`--local` on the
+model command writes it there instead), and `just tasks limits` names it for each setting it
+overrides ([PROJECT_FILE](docs/PROJECT_FILE.md#the-local-settings-file)). An Agent launch passes the
 model `just tasks limits` names for the role (a subagent otherwise inherits its orchestrator's
 model). A resumed agent keeps the model it started on. The work-in-progress limits are settings
 the same way, in `[limits]`.
@@ -196,6 +222,9 @@ project names a linked plugin, the release is installed and nothing more. Runnin
 or `--commit` by hand, installing its schedule and turning `[releases] publish` on are the
 owner's call; an orchestrator reruns `just release --refresh` without asking once what a refresh
 left red, or left to a project, is put right ([who runs it](docs/RELEASES.md#who-runs-it)).
+The one exception is the run that follows a landing that moves the board's schema, which the
+orchestrator who landed it starts at once without asking
+([the cadence](docs/RELEASES.md#the-cadence)).
 Restarting the shared server, its first switch to a release's own server among it, is a separate
 act that needs its own word, and so is pointing `current` back by hand ([the way
 back](docs/RELEASES.md#the-way-back)). A pin moved by hand to a commit of main waits until
@@ -252,8 +281,8 @@ list), recorded as a test run, which is the `tests` stamp. Its assessor names `t
 no reviewer reads it. A setting the Symphony does not read yet is code, and `[project]`'s
 `cargo` and `default_branch`, `[plugins]`'s `crates` and `process`, `[verdicts]`, `[land]`,
 `[releases]`, `[stamps]` and `[board]`'s `on_review`, `on_land`, `machine_work_reader`,
-`postgresql` and `assessments` hold commands or programs the Symphony runs, or decide what
-lands: those keep `review`
+`postgresql`, `external_postgresql` and `assessments` hold commands or programs the Symphony
+runs, or decide what lands or where the board is kept: those keep `review`
 ([TASKS](docs/TASKS.md#needed-stamps), [PROJECT_FILE](docs/PROJECT_FILE.md#the-settings-check)).
 
 ## Agent integration

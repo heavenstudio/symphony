@@ -161,6 +161,8 @@ pub(crate) struct Hub {
     /// What the hub wakes as it finds or loses its board ([`Hub::has_board`]): its server's
     /// maintenance, given as the hub starts ([`Hub::wake_at_board`]).
     board_wakers: OnceLock<Arc<Wakers>>,
+    /// What the documents' loop calls after each refresh ([`Hub::after_refresh`]).
+    refreshed: OnceLock<Box<dyn Fn() + Send + Sync>>,
     /// Whether `trees` is what git last listed: unset before the first listing and after one that
     /// failed, when the owner's asks on a branch wait ([`symphony::owner_asks::Reading::listed`]).
     listed: std::sync::atomic::AtomicBool,
@@ -178,6 +180,9 @@ pub(crate) struct Hub {
     callbacks: Mutex<Option<symphony::callbacks::Flusher>>,
     /// The shared server's part in the owner's asks; none on a private server, which leaves them alone.
     owner_asks: Mutex<Option<owner_asks::Kept>>,
+    /// The owner's open asks as the board last gave them, which the agent queue's cards are told
+    /// ([`Hub::note_asks`]); none until the board is read.
+    queue_asks: Mutex<Arc<Vec<symphony_board::Ask>>>,
     /// The shared server's hourly roll-up of the project into its day files ([`reports::Rollup`]);
     /// none on a private server, which writes none.
     pub(crate) reports: Mutex<Option<reports::Rollup>>,
@@ -250,6 +255,9 @@ pub(crate) struct Hub {
     chat_retry: Mutex<retry::Retry>,
     dispatch_retry: Mutex<retry::Retry>,
     give_retry: Mutex<retry::Retry>,
+    /// The idle sweep's rounds as the tick needs them: after a sleep, its dispatch and its give wait
+    /// for a round begun after the wake ([`presence`]).
+    presence: Mutex<presence::Presence>,
     retry_clock: Box<dyn Fn() -> Instant + Send + Sync>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect`], held to `repository` as every
     /// reach from `root` here is ([`taskview::serve`]), or a test's board.
@@ -355,12 +363,13 @@ impl Hub {
             initial_board: watch::Sender::new(true),
             initial_start: Mutex::new(None),
             invalid: RwLock::new(BTreeMap::new()),
-            trees: RwLock::new(
-                measured("hub branch trees", || branches::trees(root))
-                    .into_iter()
-                    .map(|t| (t.id(), t.path))
-                    .collect(),
-            ),
+            trees: RwLock::new({
+                let mut trees = BTreeMap::new();
+                for tree in measured("hub branch trees", || branches::trees(root)) {
+                    trees.insert(tree.id(), tree.path);
+                }
+                trees
+            }),
             tasks: Mutex::new(TaskState {
                 last: None,
                 raw: None,
@@ -381,6 +390,7 @@ impl Hub {
             rescan: std::sync::atomic::AtomicBool::new(false),
             documents_waker: OnceLock::new(),
             board_wakers: OnceLock::new(),
+            refreshed: OnceLock::new(),
             listed: std::sync::atomic::AtomicBool::new(false),
             one_cards: RwLock::new(Arc::default()),
             marks: RwLock::new(Arc::default()),
@@ -389,6 +399,7 @@ impl Hub {
             warmed_watches: Mutex::new(BTreeMap::new()),
             callbacks: Mutex::new(None),
             owner_asks: Mutex::new(None),
+            queue_asks: Mutex::default(),
             reports: Mutex::new(None),
             dirty: Mutex::new(BTreeSet::new()),
             swept: Mutex::new(Sweep::default()),
@@ -420,6 +431,7 @@ impl Hub {
             chat_retry: Mutex::default(),
             dispatch_retry: Mutex::default(),
             give_retry: Mutex::default(),
+            presence: Mutex::default(),
             retry_clock: Box::new(Instant::now),
             connect_reader: Box::new(taskview::connect),
             panes: Box::new(|root| {
@@ -546,6 +558,13 @@ impl Hub {
     /// Given once, as the hub starts; a second giving is ignored.
     pub(crate) fn wake_at_board(&self, wakers: Arc<Wakers>) {
         let _ = self.board_wakers.set(wakers);
+    }
+
+    /// Call `then` after each refresh of the documents: the server's saves take up again what
+    /// they keep for delivery by pull request, which a checkout that moved may have settled.
+    /// Given once, as the hub starts; a second giving is ignored.
+    pub(crate) fn after_refresh(&self, then: Box<dyn Fn() + Send + Sync>) {
+        let _ = self.refreshed.set(then);
     }
 
     /// Ask the documents' loop to scan the branches again, though no file moved, and wake it.
@@ -875,7 +894,7 @@ impl Hub {
                 // A GET can observe an edit before the watcher. Publish it before handing out its
                 // cursor, so existing subscribers also receive that edit.
                 if let Some(delta) = document_change(page, rel, &doc) {
-                    self.publish(page, vec![json!({"region":"document","data":delta})]);
+                    self.publish(page, vec![region_event("document", json!(delta))]);
                 }
                 page.documents.insert(rel.into(), doc.clone());
                 page.copied.insert(rel.into(), read);
@@ -945,7 +964,10 @@ impl Hub {
         self.listed
             .store(listing.is_some(), std::sync::atomic::Ordering::SeqCst);
         let listing = listing.unwrap_or_default();
-        let trees = listing.iter().map(|t| (t.id(), t.path.clone())).collect();
+        let mut trees = BTreeMap::new();
+        for tree in &listing {
+            trees.insert(tree.id(), tree.path.clone());
+        }
         let previous = std::mem::replace(
             &mut *self.trees.write().unwrap_or_else(|e| e.into_inner()),
             trees,
@@ -1063,7 +1085,7 @@ impl Hub {
         // A branch's new tip changes its task's gates: an open task page reads them again.
         let moved = moved_branches(self.common.as_deref(), dirty);
         if !moved.is_empty() {
-            let change = json!({"region":"branches", "data":moved});
+            let change = region_event("branches", json!(moved));
             let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
             for page in pages.values_mut() {
                 self.publish(page, vec![change.clone()]);
@@ -1323,6 +1345,9 @@ impl Hub {
         let activity = Activity {
             items: snapshot.activity,
         };
+        // Each card waiting on an agent says the ask the board last gave for it.
+        let asks = Arc::clone(&self.queue_asks.lock().unwrap_or_else(|e| e.into_inner()));
+        symphony::owner_asks::note(&mut snapshot.queue.agent, &asks, &snapshot.held);
         if let Some(page) = pages.get_mut(scope) {
             // Keep board activity until the next board read combines it with document activity.
             let mut combined = activity;
@@ -1367,7 +1392,7 @@ impl Hub {
                 |c| c.href.clone(),
             );
             if page.pending.docs != snapshot.pending.docs {
-                changes.push(json!({"region":"docs", "data":snapshot.pending.docs}));
+                changes.push(region_event("docs", json!(snapshot.pending.docs)));
             }
             diff_items(
                 &mut changes,
@@ -1451,25 +1476,26 @@ impl Hub {
                 (scope.clone(), followed)
             })
             .collect();
-        listed
-            .into_iter()
-            .filter_map(|(scope, followed)| {
-                let root = if scope.is_empty() {
-                    self.root.clone()
-                } else {
-                    self.tree(&scope)?
-                };
-                let moved: Vec<String> = followed
-                    .into_iter()
-                    .filter(|(rel, held)| *held != symphony::docview::linked(&root, rel, tasks))
-                    .map(|(rel, _)| rel)
-                    .collect();
-                (!moved.is_empty()).then(|| {
-                    let rendered = self.render_again(&root, &scope, moved);
-                    (scope, rendered)
-                })
+        let mut rendered = BTreeMap::new();
+        for (scope, documents) in listed.into_iter().filter_map(|(scope, followed)| {
+            let root = if scope.is_empty() {
+                self.root.clone()
+            } else {
+                self.tree(&scope)?
+            };
+            let moved: Vec<String> = followed
+                .into_iter()
+                .filter(|(rel, held)| *held != symphony::docview::linked(&root, rel, tasks))
+                .map(|(rel, _)| rel)
+                .collect();
+            (!moved.is_empty()).then(|| {
+                let rendered = self.render_again(&root, &scope, moved);
+                (scope, rendered)
             })
-            .collect()
+        }) {
+            rendered.insert(scope, documents);
+        }
+        rendered
     }
 
     fn publish(&self, page: &mut Page, changes: Vec<Value>) {
@@ -1478,9 +1504,12 @@ impl Hub {
         }
         page.board.version += 1;
         let version = page.board.version;
+        let mut data = serde_json::Map::new();
+        data.insert("version".into(), Value::from(version));
+        data.insert("changes".into(), Value::Array(changes));
         page.history.push_back(Event {
             version,
-            json: json!({"version":version, "changes":changes}).to_string(),
+            json: Value::Object(data).to_string(),
         });
         while page.history.len() > HISTORY {
             page.history.pop_front();
@@ -1574,12 +1603,18 @@ impl Hub {
                 let signoff: Vec<String> = lane.iter().map(|(slug, _)| slug.clone()).collect();
                 let mut old = self.task_signoff.lock().unwrap_or_else(|e| e.into_inner());
                 if *old != signoff {
-                    changed.push(json!({"region":"task-signoff", "data":signoff}));
+                    changed.push(region_event("task-signoff", json!(signoff)));
                     *old = signoff;
                 }
                 // A lane that moved moves what its tasks wait on: the board's snapshot again, over
                 // what was read of it already.
-                let lane: BTreeMap<String, Vec<String>> = lane.into_iter().collect();
+                let lane = {
+                    let mut mapped = BTreeMap::new();
+                    for (slug, cards) in lane {
+                        mapped.insert(slug, cards);
+                    }
+                    mapped
+                };
                 let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
                 if waiting.lane != lane {
                     waiting.lane = lane;
@@ -1615,7 +1650,7 @@ impl Hub {
                 let entry = taskview::entry(&record, &render);
                 data["blocks"] = json!(entry.blocks);
                 data["stamp"] = entry.stamp.into();
-                changed.push(json!({"region":"message", "data":data}));
+                changed.push(region_event("message", data));
             }
         }
         *cursor = Some(latest);
@@ -1630,7 +1665,7 @@ impl Hub {
             changed.push(change);
         }
         if held.error.is_some() {
-            changed.push(json!({"region":"tasks-status", "data":{"available":true}}));
+            changed.push(region_event("tasks-status", json!({"available":true})));
         }
         // A document rendered while the board was not read yet, or could not be read, lists none of
         // its tasks, however little the board moved since.
@@ -1650,9 +1685,10 @@ impl Hub {
                 for task in symphony_api::tasks(&next.tasks) {
                     *counts.entry(&task.status).or_default() += 1;
                 }
-                changed.push(
-                    json!({"region":"task-counts", "data":counts.into_iter().collect::<Vec<_>>()}),
-                );
+                changed.push(region_event(
+                    "task-counts",
+                    json!(counts.into_iter().collect::<Vec<_>>()),
+                ));
                 let recent = |days: f64| {
                     let mut counts = BTreeMap::<&str, usize>::new();
                     for task in symphony_api::tasks(&next.tasks) {
@@ -1665,7 +1701,10 @@ impl Hub {
                     }
                     counts.into_iter().collect::<Vec<_>>()
                 };
-                changed.push(json!({"region":"task-recent-counts","data":{"day":recent(1.0),"week":recent(7.0)}}));
+                changed.push(region_event(
+                    "task-recent-counts",
+                    json!({"day":recent(1.0),"week":recent(7.0)}),
+                ));
                 // A task closed or gone holds no page's room for its gates any more.
                 let open: BTreeSet<&str> = next
                     .tasks
@@ -1708,10 +1747,10 @@ impl Hub {
                 |a| a.last_tool_call = None,
             );
             if old.probes != agents.probes {
-                changed.push(json!({"region":"agent-probes","data":agents.probes}));
+                changed.push(region_event("agent-probes", json!(agents.probes)));
             }
             if old.machine_work != agents.machine_work {
-                changed.push(json!({"region":"machine-work","data":agents.machine_work}));
+                changed.push(region_event("machine-work", json!(agents.machine_work)));
             }
         }
         *old_agents = Some(agents);
@@ -1730,7 +1769,7 @@ impl Hub {
             let counts = Some(taskview::counts(&next));
             if page.board.counts.tasks != counts {
                 page.board.counts.tasks = counts;
-                changes.push(json!({"region":"counts", "data":page.board.counts}));
+                changes.push(region_event("counts", json!(page.board.counts)));
             }
             let mut combined = Activity {
                 items: page
@@ -1964,7 +2003,7 @@ fn tree_inputs(root: &Path) -> Vec<(String, RecursiveMode)> {
     let project = symphony::project::Project::of(root);
     let mut folders: Vec<String> = Vec::new();
     let mut by_depth: Vec<&String> = project.entrypoints.iter().map(|e| &e.folder).collect();
-    by_depth.sort_by_key(|folder| folder.len());
+    symphony_board::order::sort_by_key(&mut by_depth, &|folder| folder.len());
     for folder in by_depth {
         // A folder inside one already watched recursively is watched with it.
         if !folders
@@ -2009,7 +2048,7 @@ fn place(page: &mut Page, rendered: Vec<Rendered>, changes: &mut Vec<Value>) {
         match rendered {
             Ok(doc) => {
                 if let Some(delta) = document_change(page, &rel, &doc) {
-                    changes.push(json!({"region":"document", "data":delta}));
+                    changes.push(region_event("document", json!(delta)));
                 }
                 page.documents.insert(rel, doc);
             }
@@ -2018,11 +2057,14 @@ fn place(page: &mut Page, rendered: Vec<Rendered>, changes: &mut Vec<Value>) {
                 if let Some(doc) = page.documents.get(&rel)
                     && page.missing.insert(rel.clone())
                 {
-                    changes.push(
-                        json!({"region":"document", "data":symphony_api::DocumentChange {
-                            path:doc.path.clone(), removed:true, ..Default::default()
-                        }}),
-                    );
+                    changes.push(region_event(
+                        "document",
+                        json!(symphony_api::DocumentChange {
+                            path: doc.path.clone(),
+                            removed: true,
+                            ..Default::default()
+                        }),
+                    ));
                 }
             }
         }
@@ -2055,11 +2097,13 @@ fn document_change(
                     .map(|section| section.key.clone())
                     .collect(),
             ),
-            threads: doc
-                .threads
-                .iter()
-                .map(|(slug, fragment)| (slug.clone(), Some(fragment.clone())))
-                .collect(),
+            threads: {
+                let mut threads = BTreeMap::new();
+                for (slug, fragment) in &doc.threads {
+                    threads.insert(slug.clone(), Some(fragment.clone()));
+                }
+                threads
+            },
             title: Some(doc.title.clone()),
             waiting: Some(doc.waiting.clone()),
             crumbs: Some(doc.crumbs.clone()),
@@ -2221,15 +2265,18 @@ fn documents(
             if let Err(e) = measured("document event", || hub.refresh_docs(Some(&dirty))) {
                 eprintln!("· Symphony data refresh failed: {e}");
             }
+            if let Some(then) = hub.refreshed.get() {
+                then();
+            }
         }
         hub.watch(&mut watcher, &mut watched);
     }
 }
 
 fn sort_activity(activity: &mut Activity) {
-    activity
-        .items
-        .sort_by(|a, b| (&b.ts, &b.id).cmp(&(&a.ts, &a.id)));
+    symphony_board::order::sort_by(&mut activity.items, &|a, b| {
+        (&b.ts, &b.id).cmp(&(&a.ts, &a.id))
+    });
     activity.items.truncate(40);
 }
 
@@ -2242,35 +2289,55 @@ fn board_changes(old: &Board, new: &Board) -> Vec<Value> {
             .collect::<Vec<_>>()
     };
     if keys(old) != keys(new) {
-        changes.push(json!({"region":"queue", "data":new.next}));
+        changes.push(region_event("queue", json!(new.next)));
     } else {
         for (before, after) in old.next.iter().zip(&new.next) {
             if before != after {
-                changes.push(json!({"region":"card", "data":after}));
+                changes.push(region_event("card", json!(after)));
             }
         }
     }
     if old.counts != new.counts {
-        changes.push(json!({"region":"counts", "data":new.counts}));
+        changes.push(region_event("counts", json!(new.counts)));
     }
     if old.progress != new.progress {
-        changes.push(json!({"region":"progress", "data":new.progress}));
+        changes.push(region_event("progress", json!(new.progress)));
     }
     if old.build != new.build {
-        changes.push(json!({"region":"client", "data":{"build":new.build}}));
+        changes.push(region_event("client", json!({"build":new.build})));
     }
     changes
 }
 
-/// Items in lexical key order, retaining the last item with a duplicate key.
-fn keyed<T>(items: &[T], key: impl Fn(&T) -> String) -> BTreeMap<String, &T> {
+/// Item positions in lexical key order, retaining the last position with a duplicate key.
+fn keyed<T>(items: &[T], key: impl Fn(&T) -> String) -> BTreeMap<String, usize> {
     let mut mapped = BTreeMap::new();
     // Direct insertion keeps the last duplicate and sorts by key, without collecting a
     // temporary vector and linking a separate stable sorter for each wire item type.
-    for item in items {
-        mapped.insert(key(item), item);
+    // Positions also share one map implementation across item types; callers still borrow items.
+    for (index, item) in items.iter().enumerate() {
+        mapped.insert(key(item), index);
     }
     mapped
+}
+
+/// Feed regions all use the same ordered envelope, regardless of their payload's wire type.
+#[inline(never)]
+fn region_event(region: &str, data: Value) -> Value {
+    let mut event = serde_json::Map::new();
+    event.insert("region".into(), Value::from(region));
+    event.insert("data".into(), data);
+    Value::Object(event)
+}
+
+/// The keyed feed envelope is independent of the serialized item's type. Keep its ordered
+/// object insertion in one place instead of linking it for every compared list type.
+#[inline(never)]
+fn keyed_event(region: &str, key: &str, field: &str, value: Value) -> Value {
+    let mut data = serde_json::Map::new();
+    data.insert("key".into(), Value::from(key));
+    data.insert(field.into(), value);
+    region_event(region, Value::Object(data))
 }
 
 /// List regions carry keyed upserts/removals, never a copy of the task board or the entire queue.
@@ -2287,13 +2354,14 @@ fn diff_items<T: serde::Serialize + PartialEq>(
     }
     let before = keyed(old, &key);
     let after = keyed(new, &key);
-    for (id, item) in &after {
-        if before.get(id).copied() != Some(*item) {
-            changes.push(json!({"region":region, "data":{"key":id, "value":item}}));
+    for (id, index) in &after {
+        let item = &new[*index];
+        if before.get(id).map(|index| &old[*index]) != Some(item) {
+            changes.push(keyed_event(region, id, "value", json!(item)));
         }
     }
     for id in before.keys().filter(|id| !after.contains_key(*id)) {
-        changes.push(json!({"region":region, "data":{"key":id, "removed":true}}));
+        changes.push(keyed_event(region, id, "removed", Value::Bool(true)));
     }
     let old_keys: Vec<_> = old.iter().map(&key).collect();
     let new_keys: Vec<_> = new.iter().map(&key).collect();
@@ -2305,8 +2373,12 @@ fn diff_items<T: serde::Serialize + PartialEq>(
             .and_then(|i| i.checked_sub(1))
             .map(|i| &old_keys[i]);
         if !before.contains_key(id) || after != old_after {
-            changes
-                .push(json!({"region":format!("{region}-order"), "data":{"key":id,"after":after}}));
+            changes.push(keyed_event(
+                &format!("{region}-order"),
+                id,
+                "after",
+                Value::from(after.map(String::as_str)),
+            ));
         }
     }
 }
@@ -2337,7 +2409,10 @@ fn diff_shown<T: serde::Serialize + PartialEq + Clone>(
     for event in &mut changes[at..] {
         if event["region"] == region
             && event["data"].get("value").is_some()
-            && let Some(item) = event["data"]["key"].as_str().and_then(|key| now.get(key))
+            && let Some(item) = event["data"]["key"]
+                .as_str()
+                .and_then(|key| now.get(key))
+                .map(|index| &new[*index])
         {
             event["data"]["value"] = json!(item);
         }
@@ -2483,7 +2558,13 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
             // A change of what no field carries (a plugin's board fields, which no page draws)
             // sends nothing.
             if fields != symphony_api::TaskFields::default() {
-                changes.push(json!({"region":"task-fields", "data":symphony_api::TaskChange { key:key.into(), fields }}));
+                changes.push(region_event(
+                    "task-fields",
+                    json!(symphony_api::TaskChange {
+                        key: key.into(),
+                        fields
+                    }),
+                ));
             }
         } else {
             changes.push(event);
@@ -2499,6 +2580,9 @@ mod machine_work;
 
 pub(crate) use health::{Signal, Standing};
 mod owner_asks;
+mod presence;
+#[cfg(test)]
+mod presence_tests;
 #[cfg(test)]
 mod readiness_tests;
 mod reports;
@@ -3184,6 +3268,35 @@ mod tests {
         );
         if let Err(stall) = out {
             panic!("{stall}; still pending: {:?}", pending(&hub, ""));
+        }
+        stopped(&hub);
+    }
+
+    /// Each refresh of the documents calls what the hub was given for after it
+    /// ([`Hub::after_refresh`]): the server's saves take up again what they keep for delivery by
+    /// pull request there, which is what drops a delivered save once a land moved the checkout.
+    #[test]
+    fn a_refresh_of_the_documents_calls_what_was_given_for_after_it() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let tree = Tree::new();
+        let root = proposing(&tree, "- [ ] **branch-card** — A branch proposal.\n");
+        let hub = waking(&root);
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        hub.after_refresh(Box::new(move || {
+            counted.fetch_add(1, SeqCst);
+        }));
+        // A second giving is ignored: the first stays the one called.
+        hub.after_refresh(Box::new(|| panic!("given second, never called")));
+        assert_eq!(calls.load(SeqCst), 0, "nothing refreshed yet");
+        hub.ask_rescan();
+        let called = test_time::until_true(
+            "the refresh to call what was given for after it",
+            test_time::backstop(Duration::from_secs(20)),
+            || calls.load(SeqCst) > 0,
+        );
+        if let Err(stall) = called {
+            panic!("{stall}");
         }
         stopped(&hub);
     }

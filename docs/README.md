@@ -15,10 +15,18 @@ the evidence behind decisions are under [Design and history](#design-and-history
 
 ## Operation and setup
 
+- [PostgreSQL board lifecycle](POSTGRESQL.md) — scratch engine identity, server selection,
+  holds, snapshots, recovery and space reclamation.
 - [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
   with its default.
 - [Releases](RELEASES.md) — how a release is cut by the release run or out of cycle, named and
   read, and the release run's schedule.
+- [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
+  public repository into a private copy with its ancestry kept, the export of selected reusable
+  changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.
+- [GitHub issue exchange](GITHUB.md) — the optional `symphony-github` adapter, turned off
+  unless the default branch commits its settings: its settings and token file, its commands, what
+  a reconcile writes, what it keeps, and what pauses it.
 - [Machine build and test work](MACHINE_WORK.md) — observed build/test phases, the board's build
   and test recorder (`tasks run`), and advisory machine targets.
 - [Runs](RUNS.md) — the day files of a project's runs and their steps: the line each writes,
@@ -30,6 +38,10 @@ the evidence behind decisions are under [Design and history](#design-and-history
 
 ## Development and contracts
 
+- [Working artifact contracts](ARTIFACTS.md) — optional verified publication and scoped private
+  storage; the local/fake-provider core and the integrations still required for hosted use.
+- [Workflow definitions](WORKFLOW.md) — the additive candidate format, validation and wire
+  records; custom workflow activation remains unavailable.
 - [Checks](CHECKS.md) — what a task in this repository proves before review, and the release run's
   full verification.
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
@@ -37,6 +49,11 @@ the evidence behind decisions are under [Design and history](#design-and-history
   line, each call's minor, the versions and the wire's shape.
 - [Commands for a project's tools](TOOL_COMMANDS.md) — draw one card, check a branch for a
   landing, read status and triage, and share the document write lock.
+- [Execution adapter](EXECUTION_ADAPTER.md) — bounded provider operations, scoped identities,
+  trusted actor context, capabilities and the independent execution wire contract.
+- [Execution attempts](EXECUTION_ATTEMPTS.md) — the board's durable record of each provider
+  attempt: admission, fenced recovery, controls, evidence eligibility and host grants; no route
+  or client reaches it yet.
 
 Agents working in this repository follow the standing [Rules](../RULES.md).
 
@@ -50,16 +67,25 @@ still await implementation; its approval alone does not make it current app beha
   boundary for working evidence, Git revisions and recovery on a fresh application disk.
 - [A project's task workflow](analysis/project-workflow.md) — the proposed project-defined
   steps, the existing gate boundary, and migration that preserves the default flow.
+- [The board's cutover to PostgreSQL](analysis/board-pg-cutover.md) — the order for moving
+  live boards, one board's move, the way back, what is not built yet and what the move waits for.
 - [Managed PostgreSQL](analysis/hosted-postgresql.md) — the proposed hosted connection,
   connection budget, database boundary and PostgreSQL 16/18 validation contract.
 - [Configurable delivery workflows](analysis/configurable-delivery-workflow.md) — the proposed
   C contract: separate phase/state, authoritative operations, migration and implementation briefs.
+- [Artifact approvals at workflow transitions](analysis/revision-bound-transition-guards.md) —
+  proposed input-bound human decisions, invalidation and atomic project-guard admission.
 - [Execution providers and durable attempts](analysis/remote-execution-attempts.md) — a proposal
   for project-owned execution adapters, durable recovery and authorized attempt history.
 - [Hosted ingress and board readiness](analysis/hosted-ingress.md) — proposed trusted proxy and
   visitor admission, project permissions, foreground lifecycle and readiness; the local gate stays.
 - [Desktop client analysis](analysis/desktop-client.md) — the design and evidence behind the
   Mac app.
+- [The slow tests, reviewed](analysis/slow-tests.md) — a time per test for the release run's six
+  slowest binaries, what each slow test proves, and what is kept, made faster, merged or removed.
+- [The release pipeline, redesigned](analysis/release-pipeline.md) — a night of red release runs
+  read by run, a pre-certified CI proposal checked against the stamps, and the options with
+  what was chosen of them, a hosted run on GitHub among them.
 - [Naming inventory and superseded plan](analysis/own-names.md) — historical naming evidence,
   with pointers to the current naming rules and state paths.
 - [History](history/README.md) — retained records and superseded measurements.

@@ -150,10 +150,25 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged(backend: Bac
             "an idle tick takes no lease and writes no rows"
         );
     }
+    // Past the lost line the run still holds it: its parent is told no LOST, so no takeover.
+    f.advance(600.0);
+    f.store.dispatch_callbacks().unwrap();
+    assert_eq!(
+        callback_state(&f, "parent")["seen"]["children"]["child"],
+        "Live"
+    );
     slot.unlock().unwrap();
     f.store.dispatch_callbacks().unwrap();
-    assert!(
-        o.text().contains("STALE child"),
+    // Ending the test restores raw health: lost, said once the run no longer holds it, and its
+    // task orphaned.
+    let sender = f.session("worker");
+    assert_eq!(
+        o.drain(&f, &sender, "parent"),
+        [
+            "LOST child — its work is claimable: tools/child",
+            "PULL executing=0 (was 1) in_progress_orphaned=1 (was 0)",
+            "in_progress_orphaned p2 tools/child — Task tools/child",
+        ],
         "ending the test restores raw health"
     );
 }
@@ -182,8 +197,8 @@ fn an_armed_idle_gate_delivers_a_reservation_lapse_without_a_marker_change(backe
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
         f.store.database().requests() - requests,
-        4,
-        "the idle gate is armed; one canonical holdings read still detects hold-only changes"
+        5,
+        "the idle gate is armed after task-block reconciliation; one canonical holdings read still detects hold-only changes"
     );
     let marker = || {
         f.store.marker().unwrap()

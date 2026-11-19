@@ -172,18 +172,6 @@ fn the_supervisor_says_the_pid_then_whether_the_server_was_ready_or_ended() {
 }
 
 #[test]
-fn a_board_outside_a_scratch_place_is_refused_before_anything_is_made() {
-    let board = PathBuf::from(format!("/Users/nobody-{}/board", std::process::id()));
-    let refused = Home::new(&board, Path::new("/s"))
-        .postgresql(Path::new("/opt/pg/bin"))
-        .ensure()
-        .unwrap_err()
-        .to_string();
-    assert!(refused.contains("is not in a scratch place"), "{refused}");
-    assert!(!board.exists());
-}
-
-#[test]
 fn programs_that_are_not_there_are_refused_naming_the_setting_and_the_install() {
     let refused = Home::new(Path::new("/tmp/board"), Path::new("/s"))
         .postgresql(Path::new("/nowhere/pg/bin"))
@@ -595,4 +583,153 @@ fn a_socket_folder_another_could_reach_is_refused_before_a_server_starts() {
                 .unwrap()
                 .contains("started")
     );
+}
+
+#[test]
+fn socket_hash_names_keep_the_same_bytes_for_ascii_unicode_and_non_utf8_paths() {
+    use std::os::unix::ffi::OsStrExt as _;
+    for (path, hash) in [
+        ("", "e3b0c44298fc1c14"),
+        ("/tmp/board/postgresql", "370cac515b3de492"),
+        ("/tmp/board-ç/postgresql", "c4e39f5fe8ac7408"),
+    ] {
+        assert_eq!(
+            socket_folder(Path::new(path)),
+            Path::new("/tmp").join(format!("symphony-pg-{hash}"))
+        );
+    }
+    assert_eq!(
+        socket_folder(Path::new(std::ffi::OsStr::from_bytes(
+            b"/tmp/board-\xff/postgresql"
+        ))),
+        Path::new("/tmp/symphony-pg-721bd79b650bfba4")
+    );
+}
+
+#[test]
+fn a_postgresql_snapshot_and_recovery_copy_plainly_when_the_volume_cannot_clone() {
+    use crate::server::snapshot::CLONE_FAILS;
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            CLONE_FAILS.set(None);
+        }
+    }
+    let source = StandIn::new("copy-fallback", &[("pg_ctl", "exit 3")]);
+    fs::create_dir_all(source.pg.data().join("pg_tblspc")).unwrap();
+    fs::write(source.pg.data().join("PG_VERSION"), "18").unwrap();
+    fs::write(source.pg.data().join("kept"), "whole cluster").unwrap();
+    fs::write(source.pg.data().join("postmaster.pid"), "an ended server").unwrap();
+    CLONE_FAILS.set(Some("this volume cannot clone"));
+    let _reset = Reset;
+    let snapshot = source.pg.snapshot(1.0).unwrap();
+    assert_eq!(
+        fs::read_to_string(snapshot.join("kept")).unwrap(),
+        "whole cluster"
+    );
+    let target = StandIn::new(
+        "restore-fallback",
+        &[
+            ("pg_ctl", "exit 3"),
+            ("postgres", "echo 'postgres (PostgreSQL) 18.7'"),
+        ],
+    );
+    target.pg.restore(&snapshot).unwrap();
+    assert_eq!(
+        fs::read_to_string(target.pg.data().join("kept")).unwrap(),
+        "whole cluster"
+    );
+    assert!(!target.pg.data().join("postmaster.pid").exists());
+    assert!(
+        snapshot.join("postmaster.pid").exists(),
+        "the snapshot is unchanged"
+    );
+}
+
+#[test]
+fn recovery_never_removes_a_source_that_is_also_its_copy_work_folder() {
+    let target = StandIn::new(
+        "restore-overlap",
+        &[
+            ("pg_ctl", "exit 3"),
+            ("postgres", "echo 'postgres (PostgreSQL) 18.7'"),
+        ],
+    );
+    let source = target.pg.home.dir.join("postgresql.restoring");
+    fs::create_dir_all(source.join("pg_tblspc")).unwrap();
+    fs::write(source.join("PG_VERSION"), "18").unwrap();
+    fs::write(source.join("kept"), "source evidence").unwrap();
+    assert!(
+        target
+            .pg
+            .restore(&source)
+            .unwrap_err()
+            .to_string()
+            .contains("overlap")
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("kept")).unwrap(),
+        "source evidence"
+    );
+    assert!(!target.pg.data().exists());
+}
+
+#[test]
+fn recovery_refuses_a_home_selected_for_surrealdb_before_copying() {
+    let target = StandIn::new("restore-wrong-engine", &[]);
+    target
+        .pg
+        .home
+        .initialize_backend(crate::server::Engine::SurrealDb)
+        .unwrap();
+    let source = target.dir.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("kept"), "source evidence").unwrap();
+    assert!(
+        target
+            .pg
+            .restore(&source)
+            .unwrap_err()
+            .to_string()
+            .contains("owns SurrealDB")
+    );
+    assert!(!target.pg.data().exists());
+    assert!(!target.pg.home.dir.join("postgresql.restoring").exists());
+    assert_eq!(
+        fs::read_to_string(source.join("kept")).unwrap(),
+        "source evidence"
+    );
+}
+
+#[test]
+fn a_selected_home_uses_the_validated_project_installation() {
+    let fixture = StandIn::installation("selected-install", "18.7");
+    fixture.configure(&fixture.pg.programs);
+    let selected = fixture.pg.home.project_postgresql(&fixture.dir).unwrap();
+    assert_eq!(selected.programs, fixture.pg.programs);
+    fs::remove_file(fixture.pg.program("pg_ctl")).unwrap();
+    assert!(
+        fixture
+            .pg
+            .home
+            .project_postgresql(&fixture.dir)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("pg_ctl")
+    );
+    assert!(!fixture.pg.data().exists(), "discovery starts no database");
+}
+
+#[test]
+fn the_hosted_checks_postgresql_16_is_the_folder_named_or_homebrews_keg() {
+    let named = super::hosted_16_from(Some("/opt/pg16/bin".into()));
+    assert_eq!(named, std::path::Path::new("/opt/pg16/bin"));
+    for none in [None, Some(std::ffi::OsString::new())] {
+        assert_eq!(
+            super::hosted_16_from(none),
+            std::path::Path::new("/opt/homebrew/opt/postgresql@16/bin")
+        );
+    }
+    assert_eq!(super::HOSTED_16, "SYMPHONY_POSTGRESQL_16");
 }

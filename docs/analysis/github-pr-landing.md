@@ -1,16 +1,27 @@
 # Landing through GitHub pull requests
 
 Proposed contract for the optional GitHub integration: when PR delivery is enabled, `just land`
-asks GitHub to squash the task's PR. GitHub requires checks representing the task's assessment
+asks GitHub to merge the task's PR, by squash for a task and by a merge commit for an
+[upstream import](#delivery-operations), and the local checkout reconciles to GitHub's result.
+GitHub requires checks representing the task's assessment
 and stamps; builds and tests still run locally. This is a concept deliverable for
 [[task:inbox/change-just-land-and-review-commands-to]], dependent on
 [[task:inbox/github-integration]]. No setting, permission, command behavior or repository rule
-described here is implemented by this document.
+described here is implemented by this document. What is built of it, the task operation, is
+[TASKS](../TASKS.md#a-land-delivered-by-a-pull-request) and
+[GITHUB](../GITHUB.md#delivering-a-land), with the reading of the repository's protection
+before each step ([GITHUB](../GITHUB.md#the-protection-a-delivery-needs)), the
+generated-output delivery, a task the regenerator files
+([TASKS](../TASKS.md#what-the-generators-make-delivered-by-a-pull-request)), and the release
+cadence and candidate reading its receipts ([RELEASES](../RELEASES.md#the-cadence)); the import
+operation and the protecting itself are not.
 
 ## Scope and ownership
 
-Optional integration, squash delivery in enabled PR mode, remote enforcement of assessed
-stamps, and local execution without per-PR hosted CI are requirements. An assessment may waive
+Optional integration, squash delivery of tasks in enabled PR mode, ancestry-preserving delivery
+of upstream imports, remote enforcement of assessed
+stamps, and local execution without per-PR hosted CI are requirements. In enabled mode GitHub
+performs every merge of the default branch: no local merge pushed in its place remains. An assessment may waive
 stamps with a recorded reason. These requirements need no new product-choice card. The earlier
 integration task owns issue exchange, installation, repository identity, credential handling and
 explicit activation of outbound publication. This proposal supplies its PR landing contract;
@@ -36,7 +47,56 @@ Generic blocks and the existing gates vocabulary display the result. The prerequ
 provide an authenticated evidence-export and landing interface through separately specified
 versioned API additions; this document claims no such methods exist yet. The generic rendering
 protocol alone is not a privileged execution interface. Provider success or workflow traversal
-cannot substitute for the head-bound evidence decision or the remote squash receipt.
+cannot substitute for the head-bound evidence decision or the remote merge receipt.
+
+## Delivery operations
+
+Enabled mode has two operations. Both are a PR that GitHub merges under the same required
+checks; they differ in the merge method requested and the result the receipt verifies.
+
+| Operation | Head H | Requested method | Verified result S |
+| --- | --- | --- | --- |
+| **Task** | A task's branch. | Squash. | One parent, the actual base; its tree proved against that parent and H. |
+| **Upstream import** | A branch whose first-parent history from the base is a merge of one commit **U** of the configured upstream, then any review fixes. | Merge commit. | Two parents, the actual base then H; its tree equal to the merge of those two; U an ancestor of S. |
+
+Squashing an import would deliver its files and discard U from the default branch's ancestry, so
+the next import would merge the same upstream commits again. A repository that imports from an
+upstream therefore never squashes an import, and one that does not import has the task operation
+alone. An export toward the upstream is not a third operation: it reaches the upstream as an
+ordinary task there ([the workflow](../UPSTREAM_DOWNSTREAM.md#a-selected-export)).
+
+**What authorizes an import.** The operation is derived, never taken from a PR's title, body,
+label or branch name, nor from a flag on the land command alone. All three of these must agree,
+and the prepared binding and the evidence snapshot record the operation and U with H:
+
+1. *Committed policy.* The default branch's policy names one upstream: host, immutable
+   repository ID and default branch. With none named, the import operation does not exist in
+   that repository.
+2. *The assessment.* The independent assessment at H names the operation and U in full. An
+   executor, an orchestrator or the PR's author cannot write it, as for a waiver.
+3. *The graph.* From refs fetched afresh by the pinned identities, the landing tool checks that
+   U is reachable from the upstream's default branch, that the last import (the merge base of
+   the base and the upstream) is an ancestor of U, and that every commit of `B..H` off H's
+   first-parent chain is an ancestor of U. A commit that is neither the branch's own nor the
+   upstream's refuses.
+
+**What refuses.** A head whose `B..H` holds upstream commits is never delivered as a task: with
+an upstream named, the task operation checks for them and refuses, naming the assessor. A head
+assessed as an import that fails the graph check refuses too. An import in a repository whose
+policy names no upstream, or whose rules permit no merge commit, refuses and names the
+administrative repair. Neither operation falls back to the other, nor to a local merge.
+
+**Evidence is unchanged.** An import needs an assessment at H and every stamp it names, met or
+explicitly waived, exactly as a task does; the operation waives nothing. Its reviewer reads the
+merge against the automatic one and the commits after it, and its tests ran at H. A fix on the
+branch is a new H with a new assessment. `symphony/eligible` succeeds only for a snapshot whose
+operation, U and graph check are part of what was validated.
+
+**What GitHub cannot bind.** GitHub's rules permit merge methods for a branch, not for one PR
+according to a check. Where both methods are permitted, the method is the landing identity's
+choice, bounded by the rule that lets only that identity update the default branch, and the
+receipt's topology check finds a wrong one after the fact. This is a detection, not a
+prevention, and its proof on a disposable repository is an activation prerequisite.
 
 ## Mode and publication
 
@@ -209,7 +269,9 @@ command environments. Splitting identities limits the ability of a compromised m
 evidence; a compromised publisher/board remains part of the trust boundary.
 
 Administrative setup requires PRs, the source-pinned checks above, squash as the permitted merge
-method, no routine direct default-branch pushes, and protection against force push/deletion.
+method (and the merge commit as well only in a repository whose policy names an upstream; never
+rebase, and no rule requiring linear history there), no routine direct default-branch pushes,
+and protection against force push/deletion.
 Require these for ordinary maintainers and administrators, and inventory every bypass rule,
 token and overlapping ruleset. Repository administrators can change repository policy itself;
 no check can constrain an administrator who removes its protection. Record and surface policy
@@ -228,10 +290,10 @@ explicit repository and PR IDs. The durable state progression is:
 
 | State | Action and recorded boundary |
 | --- | --- |
-| Prepared | Bind H, task/PR, policy, snapshot and intended squash title/body; keep task ready for delivery, not landed. |
+| Prepared | Bind H, task/PR, operation (and U for an import), policy, snapshot and intended commit title/body; keep task ready for delivery, not landed. |
 | Eligible | Revalidate the authoritative snapshot and its evidence revision, read back every check from the expected App at H, and record the matching intent. Recheck remote rules, owner-answer preservation and the local/remote head binding. |
-| Merge requested | Persist the request intent before invoking `gh pr merge NUMBER --repo HOST/OWNER/REPO --squash --match-head-commit H --subject TITLE --body-file FILE`. Do not use admin, auto-merge or branch deletion. |
-| Remote merged | Read the PR's merged state and returned squash commit S, fetch it, verify repository/base/head provenance and the resulting tree, then persist a receipt. A command exit alone is not proof. |
+| Merge requested | Persist the request intent before invoking `gh pr merge NUMBER --repo HOST/OWNER/REPO --squash --match-head-commit H --subject TITLE --body-file FILE`, with `--merge` in place of `--squash` for an import. Do not use admin, auto-merge or branch deletion. |
+| Remote merged | Read the PR's merged state and returned commit S, fetch it, verify repository/base/head provenance, the resulting tree and the operation's topology, then persist a receipt. A command exit alone is not proof. |
 | Reconciled | Fast-forward a clean local default checkout to the fetched remote default, close the task with H → S and the snapshot reference, then dispatch post-land work exactly once. |
 
 The [CLI's head match and squash options](https://cli.github.com/manual/gh_pr_merge) pin the
@@ -243,13 +305,23 @@ If GitHub refuses a conflict, changed head, missing check or permission, keep th
 and name its responsible role. A new head restarts assessment/evidence. A rate limit or transient
 failure uses bounded backoff respecting the response and retains the same intent. Lost responses
 and crashes first query the bound PR: merged at the expected H means adopt S; open means retry
-only after revalidation; closed-unmerged or merged with an unexpected head means hold for
+only after revalidation; closed-unmerged, merged with an unexpected head, or merged in another
+shape than its operation's means hold for
 reconciliation. Never create another PR or retry by merging locally to resolve uncertainty.
 
+A merge in the wrong shape is repaired forward, never by rewriting the default branch. An
+import that was squashed has delivered its files without U: its task stays unlanded, the
+receipt records the wrong-method commit, and a new import of the same U, whose merge changes no
+file, restores the ancestry under its own assessment. A task merged as a merge commit has put
+its branch's commits on the default branch; its receipt records that, and the hold names the
+landing identity's fault for a person to judge.
+
 The receipt includes repository/PR IDs, task, H, actual base parent, S and tree ID, assessment and
-snapshot IDs, check IDs/generation, actor and reconciliation state. Squash removes H from S's
+snapshot IDs, check IDs/generation, actor and reconciliation state, with the operation and, for
+an import, the upstream's repository ID, U, every parent of S and the merge base with the
+upstream before and after. Squash removes H from S's
 ancestry, so the board's gates and sweep must read this receipt rather than expect a merge's
-second parent. Retain the source commit and evidence before deleting a branch, and never infer
+second parent; an import keeps H as that parent, and the receipt is still what they read. Retain the source commit and evidence before deleting a branch, and never infer
 landing from subject text or patch similarity. A manually merged PR lacking the expected receipt
 requires provenance reconciliation; it must not fabricate stamps after delivery.
 
@@ -286,8 +358,9 @@ preserve history and use compare-and-swap on the remote base. Refusal routes the
 a PR. Native bypass permissions do not inspect that diff, so granting ordinary agents or the
 landing identity a general direct-push exemption is not an implementation of this exception.
 
-Inventory every writer before activation: document saves/commits, task filing that writes Git,
-the regenerator, release fixes and manual tools. A local edit may remain local until its PR is
+Inventory every writer before activation: task lands, upstream imports, document saves/commits,
+task filing that writes Git, the regenerator, release fixes and manual tools
+([each, in either mode](../UPSTREAM_DOWNSTREAM.md#every-writer-of-a-default-branch)). A local edit may remain local until its PR is
 delivered; the app must show pending delivery and preserve it through retries, never report a
 local save as remotely landed. Generated-client changes use their own assessed PR and do not
 recursively trigger another generation when inputs are unchanged. Since GitHub cannot apply
@@ -320,7 +393,8 @@ The focused acceptance matrix for that implementation is:
 | Assessment/stamps | No assessment, stale assessment, forged author, missing/default stamp, needed red, owner hold, explicit empty needs and individually reasoned waivers. Same-named foreign-App checks cannot satisfy protection. |
 | Identity/freshness | Wrong repository/base/PR, duplicate binding, local/remote disagreement, head race at merge, conflict resolution, rebase/force push and policy change. Base movement alone keeps valid H evidence. |
 | Publication | Partial writes never publish eligibility success; duplicate/out-of-order events, reconnect, App outage, changed evidence before dispatch and a withdrawal during an uncertain request. Demonstrate the stated same-head propagation window; do not claim instantaneous revocation. No arbitrary commands from remote content. |
-| Delivery | Squash provenance and actual tree, successful merge with lost response, closed-unmerged PR, dirty/diverged local main, board write failure, repeat retry, manual merge and retained H after branch deletion. Exactly one closure and post-land dispatch. |
+| Operation | Import with no upstream in policy, no assessment naming it, a foreign commit off the first-parent chain, or a U the upstream does not hold; a head holding upstream commits asked as a task; an import squashed and a task merged by commit, each held and repaired forward; repeated imports advance the merge base; an export arrives as a task with no private ancestry. |
+| Delivery | Squash provenance and actual tree, an import's two parents and merged tree with the base moved, successful merge with lost response, closed-unmerged PR, dirty/diverged local main, board write failure, repeat retry, manual merge and retained H after branch deletion. Exactly one closure and post-land dispatch. |
 | Other writers | Pending owner answer preserved, mixed/generated diff refused or corrected before evidence, regenerator PR without a loop, candidate/main partial delivery and no force move. Optional direct-doc writer stays disabled. |
 | Protection | Disposable-repository API and UI attempts with missing/waived/present checks, untrusted status source, ordinary direct push, bypass-capable maintainer and landing App. Prove the App bypasses only update restriction, never PR/stamp requirements. |
 

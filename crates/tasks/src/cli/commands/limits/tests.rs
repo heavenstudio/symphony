@@ -15,6 +15,7 @@ fn shown(text: &str, running: Option<Result<usize, Error>>) -> Vec<String> {
         &read,
         Some(&models),
         running,
+        None,
     )
 }
 
@@ -119,7 +120,7 @@ fn a_bad_value_shows_the_default_in_force() {
 fn outside_a_repository_and_with_no_models_read_it_says_so() {
     let read = Read::default();
     assert_eq!(
-        lines(None, "", &read, None, None),
+        lines(None, "", &read, None, None, None),
         [
             "LIMITS: no project file outside a repository, so every default",
             "orchestrator_slots       none    default",
@@ -131,5 +132,93 @@ fn outside_a_repository_and_with_no_models_read_it_says_so() {
             "review_alarm_clear_hours 1       default",
             "MODELS: the project file cannot be read for them",
         ]
+    );
+}
+
+#[test]
+fn a_setting_the_local_file_overrides_names_that_file_and_its_line() {
+    let text = "\
+[agents]
+launch = { default = \"codex\", model = \"gpt\" }
+
+[agents.models]
+executor = \"opus\"
+reviewer = \"sonnet\"
+
+[limits]
+machine_agents = 9
+low_volume = 2
+";
+    let local = crate::local::parse(
+        &PathBuf::from("/repo/symphony.local.toml"),
+        "# mine\n[agents.launch]\ndefault = \"claude\"\nmodel = \"fable\"\n\n[agents.models]\n\
+         executor = \"fable\"\nassessor = \"\"\n\n[limits]\nmachine_agents = 4\n",
+    )
+    .unwrap();
+    let read = limits::over(limits::parse(PATH, text), Ok(Some(local.clone())));
+    let models = Defaults::parse(PATH, text).unwrap().over(&local);
+    assert_eq!(
+        lines(
+            Some(&PathBuf::from(PATH)),
+            text,
+            &read,
+            Some(&models),
+            None,
+            Some(&local),
+        ),
+        [
+            "LIMITS from /repo/symphony.toml",
+            "LOCAL  over it /repo/symphony.local.toml, which git does not version",
+            "orchestrator_slots       none    default",
+            "orchestrator_tasks       16      default",
+            "low_volume               2       [limits] low_volume, line 10",
+            "machine_agents           4       symphony.local.toml [limits] machine_agents, line 11",
+            "review_alarm_ratio       2       default",
+            "review_alarm_hours       4       default",
+            "review_alarm_clear_hours 1       default",
+            "MODELS of claude, from symphony.local.toml [agents] launch default, line 3",
+            "orchestrator             -       whoever starts one chooses",
+            "executor                 fable   symphony.local.toml [agents.models] executor, line 7",
+            "reviewer                 sonnet  [agents.models] reviewer, line 6",
+            // Written empty locally, so none is written: the smallest its agent offers.
+            "assessor                 haiku   the smallest claude offers",
+        ]
+    );
+    // A local file that writes none of what is printed names itself and no row.
+    let quiet = crate::local::parse(&PathBuf::from("/repo/symphony.local.toml"), "").unwrap();
+    let shown = lines(
+        Some(&PathBuf::from(PATH)),
+        text,
+        &limits::parse(PATH, text),
+        Some(&Defaults::parse(PATH, text).unwrap()),
+        None,
+        Some(&quiet),
+    );
+    assert_eq!(shown[9], "MODELS of codex");
+    assert_eq!(
+        shown[11],
+        "executor                 opus    [agents.models] executor, line 5"
+    );
+    assert_eq!(
+        shown[13],
+        "assessor                 gpt     [agents] launch model, line 2"
+    );
+    // The launch's model, written locally, is where a role without one takes it from.
+    let launch = crate::local::parse(
+        &PathBuf::from("/repo/symphony.local.toml"),
+        "[agents]\nlaunch = { model = \"gpt-next\" }\n",
+    )
+    .unwrap();
+    let shown = lines(
+        Some(&PathBuf::from(PATH)),
+        "",
+        &Read::default(),
+        Some(&Defaults::default().over(&launch)),
+        None,
+        Some(&launch),
+    );
+    assert_eq!(
+        shown[11],
+        "executor                 gpt-next symphony.local.toml [agents] launch model, line 2"
     );
 }

@@ -272,7 +272,10 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
         ),
         ("blocks", "usage: symphony blocks [--root ROOT]"),
         ("settings-check", "usage: symphony settings-check [DIR]"),
-        ("model", "usage: symphony model ROLE MODEL"),
+        (
+            "model",
+            "usage: symphony model ROLE MODEL [--agent AGENT] [--assessor MODEL] [--local]",
+        ),
         (
             "triage",
             "usage: symphony triage [-h] [--root ROOT] {stats,queue} [n]",
@@ -325,11 +328,13 @@ fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_a
 }
 
 /// The commands the binary lists: the Symphony's own, which a test build holds with no plugin.
-const COMMANDS: [&str; 15] = [
+const COMMANDS: [&str; 18] = [
     "status",
     "reply",
     "ask",
     "triage",
+    "render-card",
+    "landing-checks",
     "verdict-asks",
     "docs-audit",
     "settings-check",
@@ -338,6 +343,7 @@ const COMMANDS: [&str; 15] = [
     "shot",
     "attach",
     "init",
+    "release-notes",
     "project",
     "hook",
     "serve",
@@ -345,20 +351,23 @@ const COMMANDS: [&str; 15] = [
 
 /// The commands only this repository's own build and release run use, `symphony-build`'s, with
 /// `nightly`, the release run's old name: the shipped binary has none of them, whatever it is
-/// asked, and lists none.
+/// asked, and lists none. `release` is refused with the nearest command it does have, what a
+/// project reads of a release (`release-notes`), which the listing names and is no build command.
 #[test]
 fn the_build_only_commands_are_unknown_to_the_shipped_binary() {
     let (_, listing, _) = cli(&["help"]);
-    for name in [
-        "publish-client",
-        "size-budget",
-        "crates-check",
-        "synced",
-        "release",
-        "nightly",
+    for (name, near) in [
+        ("publish-client", ""),
+        ("size-budget", ""),
+        ("crates-check", ""),
+        ("consumer-notes", ""),
+        ("synced", ""),
+        ("release", "; did you mean \"release-notes\"?"),
+        ("nightly", ""),
     ] {
-        let refused =
-            format!("symphony: unknown command {name:?} (`just symphony-cli help` lists them)\n");
+        let refused = format!(
+            "symphony: unknown command {name:?}{near} (`just symphony-cli help` lists them)\n"
+        );
         for args in [
             vec![name],
             vec![name, "--due"],
@@ -370,7 +379,7 @@ fn the_build_only_commands_are_unknown_to_the_shipped_binary() {
         assert!(
             !listing
                 .lines()
-                .any(|line| line.trim_start().starts_with(name)),
+                .any(|line| line.split_whitespace().next() == Some(name)),
             "{name}: {listing}"
         );
     }

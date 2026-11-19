@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use symphony_api::{End, RUN_SCHEMA, RunLine, run_day};
 
+pub mod refused;
 pub mod rollup;
 pub mod suites;
 
@@ -815,6 +816,7 @@ mod tests {
                 runs: Some("/repo/.git/symphony/runs".into()),
                 log: Some(format!("logs/2026-11-11/{}.log", "a".repeat(32))),
                 log_bytes: Some(12),
+                refused: None,
             }),
             reading: None,
         }

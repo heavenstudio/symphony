@@ -1,6 +1,8 @@
 //! Headless Chrome, driven over the DevTools protocol: one browser per launch, on a profile of
 //! its own, leashed so it dies with the process that launched it however that ends. The client's
-//! browser tests (apps/symphony-web-tests/tests/browser) and `symphony shot` both drive it.
+//! browser tests (apps/symphony-web-tests/tests/browser) and `symphony shot` both drive it. One
+//! page is under test at a time: the launch's own, in the profile, or one in a browser context of
+//! its own that holds nothing of the pages before ([`Chrome::fresh_context`]).
 //!
 //! A native leash owns and waits for Chrome: the launching program run again ([`Leash`]), which
 //! hands itself to [`leash_main`] first. EOF on its launcher's pipe terminates the browser even
@@ -1121,6 +1123,9 @@ pub struct Chrome {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
     next_id: u64,
     session: Option<String>,
+    /// The browser context [`Chrome::fresh_context`] made for the page under test, and that
+    /// page's target; `None` while the page is the launch's own, in the profile's context.
+    context: Option<(String, String)>,
     /// The launcher's blank target survives navigation in the page under test.
     observer: Option<String>,
     /// Every event since the last `open`, in order.
@@ -1211,6 +1216,7 @@ impl Chrome {
             socket,
             next_id: 0,
             session: None,
+            context: None,
             observer: None,
             events: Vec::new(),
             arrivals: Vec::new(),
@@ -1238,20 +1244,78 @@ impl Chrome {
             json!({"targetId": blank, "flatten": true}),
         )?;
         chrome.observer = Some(session_id(&observer)?);
-        let target = chrome.browser_call("Target.createTarget", json!({"url": "about:blank"}))?;
+        chrome.own_pages = vec![blank];
+        chrome.page_in(None)?;
+        Ok(chrome)
+    }
+
+    /// A blank page in `context` (the profile's own with none) made the page under test, its page
+    /// and network events on, as a launch leaves it; its target. The page before is only let go
+    /// of, never closed.
+    fn page_in(&mut self, context: Option<&str>) -> Result<String> {
+        let mut params = json!({"url": "about:blank"});
+        if let Some(context) = context {
+            params["browserContextId"] = json!(context);
+        }
+        let target = self.browser_call("Target.createTarget", params)?;
         let target_id = target["targetId"]
             .as_str()
             .ok_or_else(|| Error::new(format!("Target.createTarget: no target in {target}")))?
             .to_string();
-        let attached = chrome.browser_call(
+        let attached = self.browser_call(
             "Target.attachToTarget",
             json!({"targetId": target_id, "flatten": true}),
         )?;
-        chrome.session = Some(session_id(&attached)?);
-        chrome.own_pages = vec![blank, target_id];
-        chrome.call("Page.enable", json!({}))?;
-        chrome.call("Network.enable", json!({}))?;
-        Ok(chrome)
+        self.session = Some(session_id(&attached)?);
+        self.frame = None;
+        self.gone = None;
+        self.own_pages.truncate(1);
+        self.own_pages.push(target_id.clone());
+        self.call("Page.enable", json!({}))?;
+        self.call("Network.enable", json!({}))?;
+        Ok(target_id)
+    }
+
+    /// Leave the page under test for a blank one in a new browser context, as an incognito window
+    /// is: no cookie, storage, cache entry or connection of any page before, in this browser, and
+    /// kept in memory alone. The page is as a launch leaves it, so what was set on the page before
+    /// is set again by its caller (an emulated screen, a script for each new document,
+    /// [`Chrome::follow_frames`], [`Chrome::keep_in_front`], [`Chrome::dismiss_dialogs`],
+    /// [`Chrome::enable_in_frames`]); a deadline stays ([`Chrome::set_deadline`]). The page
+    /// before is closed, its context disposed of with every page in it where this made it, and
+    /// its events are forgotten. One browser's cold visits each take one, where a launch each
+    /// would only start Chrome again: every wait's allowance is still this browser's own work.
+    pub fn fresh_context(&mut self) -> Result<()> {
+        let left = self.own_pages.get(1).cloned();
+        let before = self.context.take();
+        if self.following || self.fronting {
+            (self.following, self.fronting) = (false, false);
+            self.discover()?;
+        }
+        self.dismissing = false;
+        self.frame_domains.clear();
+        let created = self.browser_call("Target.createBrowserContext", json!({}))?;
+        let context = created["browserContextId"]
+            .as_str()
+            .ok_or_else(|| Error::new(format!("Target.createBrowserContext: none in {created}")))?
+            .to_owned();
+        let target = self.page_in(Some(&context))?;
+        self.context = Some((context, target));
+        // The page before is let go of first, so its end is not taken for this page's.
+        match (before, left) {
+            (Some((context, _)), _) => {
+                self.browser_call(
+                    "Target.disposeBrowserContext",
+                    json!({"browserContextId": context}),
+                )?;
+            }
+            (None, Some(page)) => {
+                self.browser_call("Target.closeTarget", json!({"targetId": page}))?;
+            }
+            (None, None) => {}
+        }
+        self.forget_events();
+        Ok(())
     }
 
     /// From now on, every call and wait here ends by `deadline` at the latest, whatever its own
@@ -1351,15 +1415,16 @@ impl Chrome {
 
     /// Have the browser tell of the targets that are only told of, never attached to or held:
     /// shared workers once frames are followed ([`Chrome::follow_frames`]), which the browser
-    /// runs, and pages once the page is kept in front ([`Chrome::keep_in_front`]). A Chrome that
-    /// refuses tells of none, and nothing else is lost.
+    /// runs, and pages once the page is kept in front ([`Chrome::keep_in_front`]), and of none
+    /// once neither is ([`Chrome::fresh_context`]). A Chrome that refuses tells of none, and
+    /// nothing else is lost.
     fn discover(&mut self) -> Result<()> {
         let filter: Vec<Value> = [(self.following, SHARED_WORKER), (self.fronting, PAGE)]
             .into_iter()
             .filter(|(on, _)| *on)
             .map(|(_, kind)| json!({ "type": kind }))
             .collect();
-        let discover = json!({"discover": true, "filter": filter});
+        let discover = json!({"discover": !filter.is_empty(), "filter": filter});
         match self.browser_call("Target.setDiscoverTargets", discover) {
             Err(error) if error.past_deadline() => Err(error),
             _ => Ok(()),

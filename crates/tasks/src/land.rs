@@ -110,6 +110,8 @@ use std::time::{Duration, Instant};
 
 pub mod carried;
 pub mod check_paths;
+pub mod delivery;
+pub mod evidence;
 mod moving;
 use moving::Move;
 pub use moving::Moving;
@@ -320,6 +322,8 @@ impl Settings {
             timeout_seconds: u64,
             check: bool,
             check_paths: Option<Vec<String>>,
+            /// Read by [`delivery::command`], and held to its shape here.
+            delivery: Vec<String>,
         }
         impl Default for Land {
             fn default() -> Land {
@@ -330,6 +334,7 @@ impl Settings {
                     timeout_seconds: TIMEOUT.as_secs(),
                     check: true,
                     check_paths: None,
+                    delivery: Vec::new(),
                 }
             }
         }
@@ -359,6 +364,16 @@ impl Settings {
         if file.land.timeout_seconds == 0 {
             return Err(format!(
                 "{MANIFEST}: [land] timeout_seconds is 0, which no generator or check runs in"
+            ));
+        }
+        if file
+            .land
+            .delivery
+            .first()
+            .is_some_and(|program| program.trim().is_empty())
+        {
+            return Err(format!(
+                "{MANIFEST}: [land] delivery names no command: leave it out to land here"
             ));
         }
         let (check, main_check) = if file.land.check {
@@ -906,6 +921,46 @@ pub fn land_with_clock(
     out: &mut dyn Write,
     now: &(dyn Fn() -> Instant + Sync),
 ) -> Result<String, Stop> {
+    landing(store, env, slug, actor, recorder, out, now, None)
+}
+
+/// [`land`] with `transport` answering a delivery's verbs in place of the command `[land]
+/// delivery` names: how a test stands a host in. It changes nothing of a land that delivers
+/// nothing.
+pub fn land_by(
+    store: &Store,
+    env: &Env,
+    slug: &str,
+    actor: &str,
+    out: &mut dyn Write,
+    transport: &dyn delivery::Transport,
+) -> Result<String, Stop> {
+    landing(
+        store,
+        env,
+        slug,
+        actor,
+        None,
+        out,
+        &Instant::now,
+        Some(transport),
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the land's two entries, said once"
+)]
+fn landing(
+    store: &Store,
+    env: &Env,
+    slug: &str,
+    actor: &str,
+    recorder: Option<&Path>,
+    out: &mut dyn Write,
+    now: &(dyn Fn() -> Instant + Sync),
+    transport: Option<&dyn delivery::Transport>,
+) -> Result<String, Stop> {
     let common = crate::git::common_dir(&env.cwd).map_err(|e| Stop::Refused(e.to_string()))?;
     let main = trigger::main_checkout(&common)
         .ok_or_else(|| {
@@ -916,6 +971,7 @@ pub fn land_with_clock(
         })?
         .to_path_buf();
     let settings = Settings::of(&main).map_err(Stop::Refused)?;
+    let delivery = delivery::command(&main).map_err(Stop::Refused)?;
     // A hang-up, an interrupt or a terminate signal from here on ends what the land runs, and the
     // land by it once it has cleaned up. Another land of this process holds the one scope there
     // is (a test's, at once): this one then takes none, and a signal is that land's.
@@ -949,6 +1005,8 @@ pub fn land_with_clock(
         now,
         recorder,
         named: false,
+        transport,
+        delivery,
         out,
     }
     .land();
@@ -1009,6 +1067,17 @@ pub fn reopenable(store: &Store, env: Option<&Env>, slug: &str) -> Result<(), Er
             "{slug}'s tip {} is on {default} already, landed or merged by hand: it does not go \
              back to review, and what it still needs goes in a new task",
             short(&tip)
+        )));
+    }
+    // A head a pull request squashed is in no history: its receipt says it landed.
+    let lands = trigger::folder(&common).join(FOLDER);
+    if let Some(receipt) = delivery::Receipt::read(&lands, slug).filter(|r| r.head == tip) {
+        return Err(Error::Refused(format!(
+            "{slug}'s tip {} is on {default} already, squashed as {} by pull request #{}: it does \
+             not go back to review, and what it still needs goes in a new task",
+            short(&tip),
+            short(&receipt.squash),
+            receipt.pull
         )));
     }
     Ok(())
@@ -1582,6 +1651,11 @@ struct Landing<'a> {
     /// Whether the task's approve names the tip it lands, so a conflict in documents alone is
     /// its executor's to settle by one merge the approve stands over ([`carried`]).
     named: bool,
+    /// What answers a delivery's verbs in place of the command `[land] delivery` names
+    /// ([`delivery::Transport`]): a test's.
+    transport: Option<&'a dyn delivery::Transport>,
+    /// `[land] delivery` ([`delivery::command`]): empty where the land merges here and pushes.
+    delivery: Vec<String>,
     out: &'a mut dyn Write,
 }
 
@@ -1744,6 +1818,22 @@ impl Landing<'_> {
         let slug = self.slug;
         self.leftover_group().map_err(Stop::Refused)?;
         self.recover().map_err(Stop::Refused)?;
+        if self.delivers() {
+            // A merge asked of the host by a run before decides, before anything is read again.
+            if let Some(done) = self.resumed() {
+                return done;
+            }
+            // A pull request a run before bound, read before anything is judged: one merged or
+            // closed since is settled, and one whose evidence no longer stands is told so.
+            if let Some(done) = self.bound_before() {
+                return done;
+            }
+            self.delivered_before();
+            self.unchecked().map_err(|refusal| self.refuse(refusal))?;
+        } else if self.task {
+            delivery::left(&self.folder, slug, &self.settings.default_branch)
+                .map_err(Stop::Refused)?;
+        }
         let task = self.store.get(slug)?;
         let thread = self.store.thread(slug)?;
         let branch_tip = rev(&self.main, &format!("refs/heads/{slug}"));
@@ -1856,6 +1946,9 @@ impl Landing<'_> {
         }
         if needed.told() {
             self.say(&needed.line(slug, &tip, &met));
+        }
+        if self.delivers() {
+            return self.deliver(&task, &tip, &judged);
         }
         let mut landed = None;
         for attempt in 0..TRIES {
@@ -2089,6 +2182,15 @@ impl Landing<'_> {
         }
         // Closed: nothing is left to finish.
         Record::drop_in(&self.folder, slug);
+        self.after(merge, true);
+        Ok(line)
+    }
+
+    /// What follows a land of the task at `merge`, each started detached and waited for by
+    /// nothing: the sweep of its finished worktrees, the regenerator where `regenerates`, and the
+    /// project's `[board] on_land`.
+    fn after(&mut self, merge: &str, regenerates: bool) {
+        let slug = self.slug;
         // The task's finished worktrees go by a sweep started detached, as work finishing starts
         // one ([`trigger`]): it may walk and remove whole trees, which neither the land nor its
         // lock waits for.
@@ -2107,7 +2209,7 @@ impl Landing<'_> {
         }
         // What the generators make of the default branch is the regenerator's, which nothing here
         // waits for.
-        if let Some(said) = regenerate::start(self.env, &self.main, &self.settings) {
+        if regenerates && let Some(said) = regenerate::start(self.env, &self.main, &self.settings) {
             self.say(&format!("land {slug}: {said}"));
         }
         // The project's `[board] on_land`, detached, and what it said at once: the release
@@ -2135,7 +2237,6 @@ impl Landing<'_> {
                 (Started::None, _) => {}
             }
         }
-        Ok(line)
     }
 
     /// The first merge on the default branch at `base` that brought `tip` (its second parent), if

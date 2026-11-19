@@ -24,6 +24,9 @@ pub fn shown(command: Option<&str>, env: &Env) -> String {
     if name == super::database::COMMAND {
         return super::database::HELP.to_string();
     }
+    if name == super::recovery::COMMAND {
+        return super::recovery::HELP.to_string();
+    }
     let help = COMMANDS
         .iter()
         .find(|(n, _, _)| *n == name)
@@ -235,6 +238,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "hold the board's database stopped for maintenance, or release it",
             ),
             (
+                "recovery",
+                "the board's recovery binding; revoke it, or bind the board anew",
+            ),
+            (
                 "schema",
                 "the board's schema and the highest it was seen at; --accept",
             ),
@@ -255,10 +262,11 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
 /// own parser and help, which [`shown`] answers `help COMMAND` with: the tests hold the dispatch
 /// and the help to them.
 #[cfg(test)]
-pub const BEFORE_TABLE: [&str; 3] = [
+pub const BEFORE_TABLE: [&str; 4] = [
     super::recorder::COMMAND,
     super::migrate::COMMAND,
     super::database::COMMAND,
+    super::recovery::COMMAND,
 ];
 
 /// What `command` does, in one line.
@@ -504,7 +512,9 @@ thresholds; [agents.models] names the model of the orchestrator, executor,
 reviewer and assessor (the smallest its agent offers unwritten: Claude's
 haiku). A key of [limits] this build does not know is listed, left out. An
 edit to the file holds from the next command, and on a running server from
-its next read.
+its next read. symphony.local.toml beside it, which git does not version,
+is read after it: a key of [agents] launch, [agents.models] or [limits] it
+writes holds in the committed one's place, named with that file and its line.
 
 options:
   -h, --help  show this help message and exit

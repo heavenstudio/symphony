@@ -140,3 +140,97 @@ fn an_export_past_its_time_is_stopped_and_writes_nothing_while_the_database_serv
     assert!(s.home().schema("tasks").is_ok(), "it answers as it did");
     assert!(symphony_board::server::EXPORT_LIMIT >= Duration::from_secs(60));
 }
+
+/// A board on PostgreSQL is read and exported on that engine, by its project's programs, as it
+/// runs: its schema, its writers, and `pg_dump`'s text; stopped, it is refused, nothing is
+/// started and no folder is made.
+#[test]
+fn a_board_on_postgresql_is_read_and_exported_through_its_running_server() {
+    use std::path::Path;
+    use symphony_board::server::{Engine, Home, postgres};
+    let root = std::env::temp_dir().join(format!("export-pg-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let common = root.join(".git");
+    fs::create_dir_all(&common).unwrap();
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let programs = postgres::discover_programs(&workspace).unwrap();
+    fs::write(
+        root.join("symphony.toml"),
+        format!(
+            "[project]\nid = \"pg\"\n[board]\npostgresql = {:?}\n",
+            programs.display().to_string()
+        ),
+    )
+    .unwrap();
+    let home = Home::in_common(&common, Some(Path::new("/no/surreal"))).telling(|_| {});
+    home.initialize_backend(Engine::PostgreSql).unwrap();
+    let pg = home.postgresql(&programs);
+    let file = home.dir().join("snapshots/before.sql");
+
+    let stopped = home.schema("tasks").unwrap_err();
+    assert!(
+        matches!(&stopped, ServerError::NotUp(why) if why.contains("PostgreSQL") && why.contains("is not running")),
+        "{stopped}"
+    );
+    assert!(matches!(home.writers("tasks"), Err(ServerError::NotUp(_))));
+    assert!(matches!(
+        home.export("tasks", &file),
+        Err(ServerError::NotUp(_))
+    ));
+    assert!(pg.current().unwrap().is_none(), "nothing was started");
+    assert!(!home.dir().join("snapshots").exists());
+
+    let serving = pg.ensure().unwrap();
+    let store = Store::opening_on(
+        symphony_board::pg::Client::new(&serving.socket, "tasks").into(),
+        Box::new(|| 1_800_000_000.0),
+        Box::new(|_| true),
+        "this-host",
+        &symphony_board::Opening::write(),
+    )
+    .unwrap();
+    store
+        .create(&NewTask::new(
+            "sim/exported",
+            "A task the snapshot holds",
+            "owner",
+        ))
+        .unwrap();
+    assert_eq!(home.schema("tasks").unwrap(), Some(symphony_board::SCHEMA));
+    let writers = home.writers("tasks").unwrap();
+    assert_eq!(writers.len(), 1, "{writers:?}");
+    assert_eq!(writers[0].schema, symphony_board::SCHEMA);
+    let read = home.export("tasks", &file).unwrap();
+    assert_eq!(read.pid, serving.pid);
+    assert_eq!(
+        read.addr,
+        format!("postgresql:{}", serving.socket.display())
+    );
+    let text = fs::read_to_string(&file).unwrap();
+    assert!(
+        text.contains("CREATE TABLE") && text.contains("sim/exported"),
+        "{text}"
+    );
+    let left: Vec<String> = fs::read_dir(home.dir().join("snapshots"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, ["before.sql"], "no partial export is left");
+    // A database that is not there fails, and leaves no part of a file.
+    let missing = home.export("never_made", &home.dir().join("snapshots/none.sql"));
+    assert!(
+        matches!(&missing, Err(ServerError::Io(why)) if why.contains("failed")),
+        "{missing:?}"
+    );
+    assert_eq!(
+        fs::read_dir(home.dir().join("snapshots")).unwrap().count(),
+        1
+    );
+    assert_eq!(
+        pg.current().unwrap().map(|s| s.pid),
+        Some(serving.pid),
+        "still serving"
+    );
+    pg.stop().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}

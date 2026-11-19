@@ -825,16 +825,35 @@ details.settled > .decision {
   border: 1px solid var(--border);
   vertical-align: 1px;
 }
-/* a picture card's choice, side by side: the base it was drawn from, then A, B, C */
+/* a picture card's choice, side by side: the base it was drawn from, then A, B, C. Up to four
+ * share one row, as wide as each other; more are a gallery, four to a row, so each stays large
+ * enough to tell from the next and a before stands beside its after. On a phone three or more wrap
+ * two to a row, and one to a row where two would be too narrow to read. */
 .compare {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 12px;
   margin: 12px 0;
-  align-items: flex-start;
+  align-items: start;
+}
+.compare:has(> :nth-child(5)) {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 640px) {
+  .compare:has(> :nth-child(3)) {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 359px) {
+  .compare:has(> :nth-child(3)) {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .compare figure {
   margin: 0;
-  flex: 1 1 0;
   min-width: 0;
   text-align: center;
 }
@@ -851,6 +870,8 @@ details.settled > .decision {
 }
 .compare figcaption {
   display: inline-block;
+  max-width: 100%;
+  box-sizing: border-box;
   font-weight: 700;
   font-size: var(--fs-sm);
   margin-top: 6px;
@@ -858,6 +879,19 @@ details.settled > .decision {
   border-radius: var(--r-pill);
   background: var(--muted);
   border: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+/* A gallery's pictures, of any shape, keep one row's height; a press opens each whole. */
+.compare:has(> :nth-child(5)) img {
+  max-height: 20rem;
+}
+.compare img[role="button"] {
+  cursor: zoom-in;
+}
+/* A long reference with no place to break (a commit's hash) wraps inside its card rather than
+ * running under the card's edge, every character of it read and selected. */
+.decision-text :not(pre) > code {
+  overflow-wrap: break-word;
 }
 .compare figure:first-child:has(img[alt="Base"]) {
   outline: 2px dashed var(--border);

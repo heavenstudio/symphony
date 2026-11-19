@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::Command;
 
+mod messages;
+
 const TASK: &str = "/task/visual/in-progress";
 const SLUG: &str = "visual/in-progress";
 
@@ -1256,7 +1258,7 @@ fn an_answer_for_a_task_the_page_left_never_draws_one_tasks_timeline_in_anothers
     wait_reads(&mut chrome, &site, "a%2Fone", 2);
     follow(&mut chrome, "/tasks");
     assert!(chrome.wait_for(
-        "document.querySelector(\"[data-slug='tools/example']\") !== null && document.getElementById('timeline-root') === null",
+        "document.querySelector('.waiting-board:not(.waiting-ghost)') !== null && document.getElementById('timeline-root') === null",
         SHOWN
     ));
     if let Err(stall) = test_time::until_true("A's second read given up", super::STALL, || {

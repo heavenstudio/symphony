@@ -49,7 +49,9 @@ BLOCKED amber-heron tools/example t2a — observed waiting on an approval or a q
                                             (a launched session, to its responsible overseers;
                                             once per observed episode)
 WATCH hc unanswered at observation: … — blocked terminals may have gone unreported; inspect hc before acting
-                                            (once until hc answers)
+                                            (once hc has failed at every sample for 30 s,
+                                            never for one slow answer; again only after
+                                            it answers)
 PULL ready_unstaffed=3 (was 2)             (orchestrators: only for a new actionable entry, and only
                                             what changed since the last PULL: counts that moved,
                                             rows added, `resolved LIST a, b`)
@@ -58,8 +60,8 @@ CALLBACK …                                  (delivery failure; retained in inb
 
 An orchestrator's callback includes the `PULL` digest, the board's
 own answer to what nobody is doing (ready tasks with no live executor, in-progress
-ones with none, reviews with no reviewer, branches landed under an open task, idle
-agents). Act on it. Who is doing what, with each agent's task, worktree, session id,
+ones with none, reviews with no reviewer, branches landed under an open task, tasks
+approved and never landed, idle agents). Act on it. Who is doing what, with each agent's task, worktree, session id,
 terminal and state, is `just tasks agents [--json]` (the app's `/api/agents`): ask that, not hc.
 
 `BLOCKED` is a server-clock observation of an open launch you oversee under task

@@ -404,3 +404,64 @@ fn changed_review_counts_are_sent_and_an_unavailable_summary_replaces_the_task()
         assert!(unchanged.is_empty());
     }
 }
+
+#[test]
+fn owned_json_publication_keeps_exact_tokens_key_order_versions_history_and_notifications() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let hub = Hub::new(&root, &root.join("build/client"));
+    hub.refresh_page("", &root).unwrap();
+    let payload: Value = serde_json::from_str(r#"{"z":"quote \" slash \\ newline\n null\u0000 猫","a":[null,true,false,-0.0,1.50,18446744073709551616,1.234567890123456789123456789,{"last":0,"first":1}]}"#).unwrap();
+    assert_eq!(payload.as_object().unwrap().keys().next().unwrap(), "z");
+    let old_message = super::region_event("message", json!(payload));
+    let new_message = super::region_event("message", payload.clone());
+    assert_eq!(old_message.to_string(), new_message.to_string());
+    let mut notice = hub.changed.subscribe();
+    let mut pages = hub.pages.write().unwrap();
+    let page = pages.get_mut("").unwrap();
+    let initial = page.board.version;
+    let before_history: Vec<_> = page
+        .history
+        .iter()
+        .map(|event| event.json.clone())
+        .collect();
+    let mut before_notice = *notice.borrow_and_update();
+    hub.publish(page, vec![]);
+    assert_eq!(page.board.version, initial);
+    assert_eq!(
+        page.history
+            .iter()
+            .map(|event| event.json.clone())
+            .collect::<Vec<_>>(),
+        before_history
+    );
+    assert!(!notice.has_changed().unwrap());
+    for i in 1..=(super::HISTORY + 3) {
+        let changes = vec![
+            super::region_event("message", payload.clone()),
+            json!({"region":"counts","data":{"n":i}}),
+        ];
+        let version = initial + u64::try_from(i).unwrap();
+        let expected = json!({"version":version,"changes":changes}).to_string();
+        hub.publish(page, changes);
+        assert_eq!(page.board.version, version);
+        let event = page.history.back().unwrap();
+        assert_eq!(
+            (event.version, event.json.as_bytes()),
+            (version, expected.as_bytes())
+        );
+        assert!(notice.has_changed().unwrap());
+        before_notice += 1;
+        assert_eq!(*notice.borrow_and_update(), before_notice);
+    }
+    assert_eq!(page.history.len(), super::HISTORY);
+    assert_eq!(page.history.front().unwrap().version, initial + 4);
+    page.board.version = u64::MAX - 1;
+    let changes = vec![new_message];
+    let expected = json!({"version":u64::MAX,"changes":changes}).to_string();
+    hub.publish(page, changes);
+    assert_eq!(page.history.back().unwrap().json, expected);
+    assert_eq!(page.board.version, u64::MAX);
+    hub.publish(page, vec![]);
+    assert_eq!(page.board.version, u64::MAX);
+}

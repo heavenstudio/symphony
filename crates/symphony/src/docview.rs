@@ -162,10 +162,12 @@ pub const MERGING: &str = "> **Merging.** This worktree is in the middle of a me
 fn source(render: &Render, rel: &str, scope: &str) -> Result<(PathBuf, String, bool), String> {
     let path = target(render.root(), rel, true)?;
     let text = crate::text::read_text(&path).map_err(|e| e.to_string())?;
+    let file = crate::project::Project::of(render.root()).file(rel);
     if scope.is_empty() {
+        // The owner's saves a project that delivers by pull request still keeps are shown.
+        let text = crate::commit::pending::shown(render.root(), &file, text);
         return Ok((path, text, false));
     }
-    let file = crate::project::Project::of(render.root()).file(rel);
     Ok(
         match crate::merging::committed(render.root(), &file, &text) {
             Some(committed) => (path, committed, true),
@@ -358,6 +360,20 @@ pub fn document_marked(
         }
         doc.sections.splice(0..0, notice);
     }
+    if scope.is_empty()
+        && let Some(note) = crate::commit::pending::note(
+            render.root(),
+            &crate::project::Project::of(render.root()).file(rel),
+        )
+    {
+        let mut notice: Vec<symphony_api::Section> = wire(render.typed_sections(&note, rel));
+        for section in &mut notice {
+            section.key = crate::commit::pending::NOTE.into();
+            (section.start, section.end, section.part) = (0, 0, None);
+            finish(section, render.root(), rel, scope);
+        }
+        doc.sections.splice(0..0, notice);
+    }
     for section in &mut doc.sections {
         section.ends = symphony_api::Section::ends_of(&section.blocks);
     }
@@ -389,20 +405,17 @@ pub fn card_line(text: &str) -> String {
 }
 
 pub fn outline(mut document: Document) -> symphony_api::DocumentOutline {
-    let anchors = document
-        .sections
-        .iter()
-        .map(|section| {
-            (
-                section.key.clone(),
-                if section.start == 0 {
-                    Vec::new()
-                } else {
-                    anchors(&section.html)
-                },
-            )
-        })
-        .collect();
+    let mut section_anchors = BTreeMap::new();
+    for section in &document.sections {
+        section_anchors.insert(
+            section.key.clone(),
+            if section.start == 0 {
+                Vec::new()
+            } else {
+                anchors(&section.html)
+            },
+        );
+    }
     for section in &mut document.sections {
         section.html.clear();
         section.media.clear();
@@ -414,13 +427,13 @@ pub fn outline(mut document: Document) -> symphony_api::DocumentOutline {
     for card in &mut document.cards {
         card.text = card_line(&card.text);
     }
-    let thread_hashes = std::mem::take(&mut document.threads)
-        .iter()
-        .map(|(slug, thread)| (slug.clone(), thread_hash(thread)))
-        .collect();
+    let mut thread_hashes = BTreeMap::new();
+    for (slug, thread) in std::mem::take(&mut document.threads) {
+        thread_hashes.insert(slug, thread_hash(&thread));
+    }
     symphony_api::DocumentOutline {
         document,
-        anchors,
+        anchors: section_anchors,
         thread_hashes,
     }
 }

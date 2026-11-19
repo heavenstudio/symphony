@@ -148,24 +148,90 @@ fn binary_launcher_refuses_missing_own_sources_and_never_executes_a_parent() {
     );
 }
 
-fn copy_source(source: &Path, destination: &Path) {
+fn copy_source(source: &Path, destination: &Path, artifacts: &Path) {
     fs::create_dir_all(destination).unwrap();
     for entry in fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        if [".target", "build", ".git"]
-            .iter()
-            .any(|skip| name == *skip)
+        if entry.path() == artifacts
+            || [".target", "build", ".git", "node_modules"]
+                .iter()
+                .any(|skip| name == *skip)
         {
             continue;
         }
         let to = destination.join(name);
         if entry.file_type().unwrap().is_dir() {
-            copy_source(&entry.path(), &to);
+            copy_source(&entry.path(), &to, artifacts);
         } else if entry.file_type().unwrap().is_symlink() {
             std::os::unix::fs::symlink(fs::read_link(entry.path()).unwrap(), to).unwrap();
         } else {
             fs::copy(entry.path(), to).unwrap();
+        }
+    }
+}
+
+#[test]
+fn source_copy_omits_dependencies_and_only_the_configured_artifacts() {
+    for artifacts in ["artifacts", "scratch/proofs"] {
+        let tree = Tree::new();
+        let source = tree.path("source");
+        let destination = tree.path("copy");
+        let excluded = [
+            ".git/HEAD",
+            ".target/debug/server",
+            "build/output",
+            "node_modules/root-package/index.js",
+            "apps/symphony-web/node_modules/nested-package/index.js",
+            &format!("{artifacts}/standalone-proof/server"),
+        ];
+        for name in excluded {
+            tree.write(&format!("source/{name}"), "excluded");
+        }
+        let kept = [
+            "Cargo.toml",
+            "tools/cargo.sh",
+            "apps/symphony-server/src/main.rs",
+            "apps/symphony-server/client/public/index.html",
+            "apps/symphony-server/client/public/assets/module.js",
+            &format!("{artifacts}-source/input"),
+            &format!("crates/example/{artifacts}/input"),
+        ];
+        for name in kept {
+            tree.write(&format!("source/{name}"), name);
+        }
+        if artifacts != "artifacts" {
+            tree.write("source/artifacts/input", "ordinary source");
+        }
+        executable(&source.join("tools/rs-bin.sh"), "#!/bin/sh\nexit 0\n");
+        for (name, target) in [
+            ("linked-file", "Cargo.toml"),
+            ("linked-directory", "apps/symphony-server/src"),
+            ("dangling-link", "absent"),
+            ("tools/node_modules", "../node_modules"),
+        ] {
+            std::os::unix::fs::symlink(target, source.join(name)).unwrap();
+        }
+
+        copy_source(&source, &destination, &source.join(artifacts));
+
+        for name in excluded {
+            assert!(!destination.join(name).exists(), "copied {name}");
+        }
+        assert!(!destination.join(artifacts).exists());
+        assert!(fs::symlink_metadata(destination.join("tools/node_modules")).is_err());
+        for name in kept {
+            assert_eq!(fs::read_to_string(destination.join(name)).unwrap(), name);
+        }
+        if artifacts != "artifacts" {
+            assert_eq!(tree.read("copy/artifacts/input"), "ordinary source");
+        }
+        assert_eq!(tree.mode("copy/tools/rs-bin.sh"), 0o755);
+        for name in ["linked-file", "linked-directory", "dangling-link"] {
+            assert_eq!(
+                fs::read_link(destination.join(name)).unwrap(),
+                fs::read_link(source.join(name)).unwrap()
+            );
         }
     }
 }
@@ -293,7 +359,8 @@ fn actual_standalone_workspace_compiles_its_server_without_a_containing_project(
     let setup = Instant::now();
     let path = independent_path(&tree);
     let forbidden_log = tree.path("project-executable-ran");
-    copy_source(&source, &root);
+    let project = symphony::project::Project::load(&source).unwrap();
+    copy_source(&source, &root, &source.join(project.artifacts));
     tree.write("Cargo.toml", "[workspace]\nmembers=[]\n");
     executable(
         &tree.path("tools/rs-bin.sh"),
@@ -337,15 +404,7 @@ fn actual_standalone_workspace_compiles_its_server_without_a_containing_project(
         );
     };
     run(&["clean", "--workspace", "--locked"]);
-    run(&[
-        "check",
-        "--locked",
-        "--offline",
-        "-p",
-        "symphony-server",
-        "--bin",
-        "symphony-server",
-    ]);
+    // Building both checks and links the server: this one compile proves both.
     run(&[
         "build",
         "--locked",

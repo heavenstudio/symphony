@@ -64,7 +64,7 @@ fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
         ("/", ".hero-title", "Home", &[][..]),
         ("/queue", "[data-ready=queue]", "Queue", &[]),
         ("/docs/", "[data-ready=folder]", "Docs", &[]),
-        ("/tasks", "[data-slug='tools/example']", "Board", &[]),
+        ("/tasks", ".waiting-board:not(.waiting-ghost)", "Board", &[]),
         ("/reports", "[data-ready=reports]", "Reports", &[]),
         ("/runs", "[data-ready=runs]", "Runs", &[]),
         ("/agents", ".agents", "Agents", &[]),
@@ -98,7 +98,12 @@ fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
     }
     open(&mut page, &site, "/task/visual/in-progress", "article.task");
     assert_eq!(texts(&mut page, ".app-pages a.active"), ["Board"]);
-    open(&mut page, &site, "/tasks", "[data-slug='tools/example']");
+    open(
+        &mut page,
+        &site,
+        "/tasks",
+        ".waiting-board:not(.waiting-ghost)",
+    );
     assert_eq!(texts(&mut page, ".page-head h1"), ["Board"]);
 }
 
@@ -112,7 +117,7 @@ fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_
     screen(&mut page, 390, 844, true);
     for (path, ready) in [
         ("/", ".hero-title"),
-        ("/tasks", "[data-slug='tools/example']"),
+        ("/tasks", ".waiting-board:not(.waiting-ghost)"),
         ("/reports", "[data-ready=reports]"),
         ("/runs", "[data-ready=runs]"),
         ("/docs/look-parity.md", ".doc-card"),
@@ -128,6 +133,8 @@ fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_
                     const links = [...pages.querySelectorAll('a')];
                     const inView = l => box(l).width > 0 && box(l).left >= box(pages).left - 0.5 && box(l).right <= box(pages).right + 0.5;
                     const style = getComputedStyle(pages);
+                    // The row fades, itself, at the one edge it continues past (phone_labels.rs).
+                    const shaded = pages.dataset.overflow === 'end' && style.maskImage !== 'none' && style.backgroundImage === 'none';
                     pages.scrollLeft = 0;
                     const firstAtTheStart = inView(links[0]);
                     pages.scrollLeft = pages.scrollWidth;
@@ -143,7 +150,7 @@ fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_
                         pagesBelowThem: box(pages).top >= box(bell).bottom,
                         pagesOnOneRow: new Set(links.map(l => Math.round(box(l).top))).size === 1,
                         scrolls,
-                        shaded: style.backgroundImage.includes('linear-gradient'),
+                        shaded,
                         firstAtTheStart,
                         lastAtTheEnd,
                         symphonysFit,
@@ -170,7 +177,7 @@ fn a_compact_header_on_a_phone_scrolls_one_row_and_never_draws_a_page_over_a_but
         screen(&mut page, width, 700, true);
         for (path, ready) in [
             ("/", ".hero-title"),
-            ("/tasks", "[data-slug='tools/example']"),
+            ("/tasks", ".waiting-board:not(.waiting-ghost)"),
         ] {
             open(&mut page, &site, path, ready);
             page.eval("document.documentElement.dataset.layoutHeader = 'compact'");
@@ -207,7 +214,12 @@ fn appearance_opens_from_the_header_and_the_chat_sheet_no_longer_holds_it() {
     let site = content_site();
     let Some(mut page) = chrome() else { return };
     screen(&mut page, 1440, 900, false);
-    open(&mut page, &site, "/tasks", "[data-slug='tools/example']");
+    open(
+        &mut page,
+        &site,
+        "/tasks",
+        ".waiting-board:not(.waiting-ghost)",
+    );
     assert_eq!(
         page.eval(
             "({label: document.getElementById('appearance').getAttribute('aria-label'), expanded: document.getElementById('appearance').getAttribute('aria-expanded'), panel: window.reviewPanelReady === true})"

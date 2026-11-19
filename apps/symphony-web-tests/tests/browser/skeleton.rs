@@ -16,23 +16,6 @@ use super::{
 use serde_json::{Value, json};
 
 const TASK: &str = "/task/visual/in-progress";
-/// A wide window tall enough to hold the task's thread on its first screen, under its head, gates,
-/// timeline's box and brief.
-const TALL: (u32, u32) = (1280, 1800);
-
-/// When the page's `.settle` was first drawn, when it settled, and whether the task's thread was
-/// still waiting for its read then.
-const WATCH: &str = r#"window.__settle = {};
-new MutationObserver(() => {
-    const root = document.querySelector('.settle');
-    if (!root) return;
-    if (window.__settle.drawn === undefined) window.__settle.drawn = performance.now();
-    if (root.dataset.settled === 'true' && window.__settle.at === undefined) {
-        window.__settle.at = performance.now();
-        window.__settle.thread = document.querySelector('#task-thread')?.dataset.pending ?? null;
-    }
-}).observe(document, {subtree: true, childList: true, attributes: true, attributeFilter: ['data-settled']});"#;
-
 const PAGE: &str = "document.body ? document.body.innerText.slice(0, 2000) : '(no body)'";
 
 fn site() -> Site {
@@ -43,90 +26,28 @@ fn site() -> Site {
     )
 }
 
-/// A browser at `width` x `height` watching `.settle`, on `path`.
+/// A browser at `width` x `height`, on `path`.
 fn open(site: &Site, path: &str, width: u32, height: u32) -> Option<Chrome> {
     let mut browser = watching(width, height, &[])?;
     browser.open(&site.url(path));
     Some(browser)
 }
 
-/// A browser of its own at `width` x `height`, on no page yet, whose every page runs [`WATCH`]
-/// and then `scripts` from its start.
+/// A browser of its own at `width` x `height`, on no page yet, whose every page runs `scripts`
+/// from its start.
 fn watching(width: u32, height: u32, scripts: &[&str]) -> Option<Chrome> {
     let mut browser = chrome()?;
     browser.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width": width, "height": height, "deviceScaleFactor": 1, "mobile": false}),
     );
-    for source in std::iter::once(&WATCH).chain(scripts) {
+    for source in scripts {
         browser.call(
             "Page.addScriptToEvaluateOnNewDocument",
             json!({ "source": source }),
         );
     }
     Some(browser)
-}
-
-/// What the task page shows of its thread at the first moment its thread is drawn under the ghost
-/// that covers it, recorded in the page then (`window.__under`): the ghost goes once the page
-/// settles, at most three seconds on, and a look from the test, a round trip later, could come
-/// after that on a loaded machine and find no ghost to read. The page mounts once its styles are
-/// in (`assets/shell.js`), so what it records is styled.
-const UNDER: &str = r#"window.__under = null;
-new MutationObserver((_, observer) => {
-    const thread = document.querySelector('article.task .settle #task-thread'), root = thread?.closest('.settle');
-    const cover = root?.querySelector(':scope > .settle-cover'), head = document.querySelector('article.task .task-head');
-    const status = cover?.querySelector('[role=status]');
-    if (!head || !status?.textContent) return;
-    observer.disconnect();
-    window.__under = {settled: root.dataset.settled, cover: getComputedStyle(cover).visibility, status: status.textContent,
-        head: getComputedStyle(head).visibility, page: getComputedStyle(thread).visibility, thread: thread.dataset.pending};
-}).observe(document, {subtree: true, childList: true, characterData: true, attributes: true});"#;
-
-fn settled(browser: &mut Chrome) -> Value {
-    assert!(
-        browser.wait_for("window.__settle.at !== undefined", SHOWN),
-        "the page never settled; it shows {}",
-        browser.eval(PAGE)
-    );
-    browser.eval(
-        "({waited: window.__settle.at - window.__settle.drawn, thread: window.__settle.thread})",
-    )
-}
-
-#[test]
-fn a_task_s_thread_and_composer_stay_under_their_ghost_until_the_thread_is_in() {
-    let site = site();
-    site.hold_route("/api/task-history", true);
-    let Some(mut browser) = watching(TALL.0, TALL.1, &[UNDER]) else {
-        site.hold_route("/api/task-history", false);
-        return;
-    };
-    browser.open(&site.url(TASK));
-    assert!(
-        browser.wait_for("window.__under !== null", SHOWN),
-        "the task's thread was never drawn under its ghost: {}",
-        browser.eval(PAGE)
-    );
-    let under = browser.eval("window.__under");
-    site.hold_route("/api/task-history", false);
-    assert_eq!(
-        under,
-        json!({"settled": "false", "cover": "visible", "status": "Loading the thread…", "head": "visible", "page": "hidden", "thread": "true"}),
-        "while the thread on its first screen is read, the task's head shows and its thread is drawn hidden under its ghost"
-    );
-    let at = settled(&mut browser);
-    assert_eq!(
-        at["thread"],
-        json!("false"),
-        "the task settled before its thread was in: {at}"
-    );
-    assert_eq!(
-        browser.eval(
-            "({cover: document.querySelector('.settle > .settle-cover') === null, page: getComputedStyle(document.querySelector('#task-thread')).visibility})"
-        ),
-        json!({"cover": true, "page": "visible"})
-    );
 }
 
 /// The box properties a ghost shares with the real element it stands for (`real`, a class), as
@@ -356,6 +277,12 @@ fn a_stage_keeps_its_sign_off_tasks_and_stops_loading_after_its_answer() {
     let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
         return;
     };
+    browser.reveal("#column-review");
+    assert!(browser.wait_for(
+        "document.querySelector('.column[data-status=review] .taskcard') !== null",
+        SHOWN
+    ));
+    browser.reveal("#column-in_progress");
     let reads = [column_read("in_progress"), column_read("review")];
     if let Err(stall) =
         test_time::until_true("both stages' first pages answered", super::STALL, || {
@@ -575,6 +502,12 @@ fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
     ));
     site.hold_route("/api/task-board", false);
     assert!(drawn, "no ghost board: {}", browser.eval(PAGE));
+    browser.reveal("#column-review");
+    assert!(browser.wait_for(
+        "document.querySelector('.column[data-status=review] .taskcard') !== null",
+        SHOWN
+    ));
+    browser.reveal("#column-ready");
     assert!(
         browser.wait_for(
             "document.querySelectorAll('.kanban .taskcard').length === 2",

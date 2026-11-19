@@ -6,6 +6,8 @@ files) stays in the documents the [index](../README.md) lists; a spec links them
 of it.
 
 - [The review queue](QUEUE.md) — every card waiting on the owner, in the order to answer them.
+- [Reading a document](DOCUMENT.md) — contents, comments, evidence, versions and branch comparisons.
+- [Cards and verdicts](CARDS.md) — deciding, notes, Later, branch drafts and saved history.
 
 ## The form of a spec
 

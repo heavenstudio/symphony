@@ -403,10 +403,10 @@ pub fn queue(plugins: &Plugins, docs: &[Doc], n: usize, app: &str) -> Vec<Item> 
             ));
         }
     }
-    design.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
-    answered.sort_by(|a, b| a.0.cmp(&b.0));
-    sign_offs.sort_by(|a, b| a.0.cmp(&b.0));
-    picture_cards.sort_by(|a, b| a.0.cmp(&b.0));
+    symphony_board::order::sort_by(&mut design, &|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    symphony_board::order::sort_by(&mut answered, &|a, b| a.0.cmp(&b.0));
+    symphony_board::order::sort_by(&mut sign_offs, &|a, b| a.0.cmp(&b.0));
+    symphony_board::order::sort_by(&mut picture_cards, &|a, b| a.0.cmp(&b.0));
     let mut ranked: Vec<Item> = design.into_iter().map(|(_, _, i)| i).collect();
     ranked.extend(answered.into_iter().map(|(_, i)| i));
     ranked.extend(sign_offs.into_iter().map(|(_, i)| i));

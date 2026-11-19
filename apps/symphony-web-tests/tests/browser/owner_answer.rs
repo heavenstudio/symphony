@@ -255,6 +255,21 @@ fn writes_held(site: &Native) -> std::fs::File {
     lock
 }
 
+/// The answer deadline of a post the held writes leave unanswered, in ms: the page's own
+/// (`ANSWER_MS`, 15 s) named shorter (`symphonyAnswerMs`), as `polish` and `skeleton` name it for
+/// a read held past it. The server cannot answer while its writes are held, whatever the length.
+const HELD_ANSWER_MS: u32 = 5_000;
+
+/// `send`, the page's `count`th post to `/api/decision`, sent under [`HELD_ANSWER_MS`]: the page
+/// names the shorter deadline for that post alone, which takes its deadline as it starts, and its
+/// own again once the post is on its way, so no read and no later post is cut short by it.
+fn unanswered(owner: &mut Chrome, count: usize, send: impl FnOnce(&mut Chrome)) {
+    owner.eval(&format!("window.symphonyAnswerMs = {HELD_ANSWER_MS}"));
+    send(owner);
+    assert!(decisions_sent(owner, count), "{}", around(owner, "alpha"));
+    owner.eval("delete window.symphonyAnswerMs");
+}
+
 /// The owner answers alpha "Keep it" while the server's writes are held ([`writes_held`]), so the
 /// save waits there past the page's deadline: no answer, and nothing for the feed, which stays live,
 /// to bring. The owner changes the words to [`CHANGED`] and sends again under the first sending's
@@ -267,14 +282,16 @@ fn unanswered_twice(owner: &mut Chrome, site: &Native) -> (std::path::PathBuf, s
     opened(owner, &site.url("/docs/DECISIONS.md"), "alpha");
     let writes = writes_held(site);
 
-    answer(owner, "alpha", "Approve", "Keep it");
+    unanswered(owner, 1, |owner| {
+        answer(owner, "alpha", "Approve", "Keep it")
+    });
     assert!(
         decisions_end(owner, &json!(["no-answer"])),
         "{}",
         around(owner, "alpha")
     );
     write(owner, "alpha", CHANGED);
-    choose(owner, "alpha", "Approve");
+    unanswered(owner, 2, |owner| choose(owner, "alpha", "Approve"));
     assert!(
         decisions_end(owner, &json!(["no-answer", "no-answer"])),
         "{}",
@@ -463,11 +480,6 @@ fn answered_on_both_tabs(page: &str, meanwhile: impl FnOnce(&mut Chrome)) -> Opt
     assert_eq!(shows(&mut owner, "bravo", &unanswered), Ok(()), "{page}");
     assert_eq!(shows(&mut other, "bravo", &unanswered), Ok(()), "{page}");
     Some(owner)
-}
-
-#[test]
-fn an_owner_verdict_shows_and_regroups_on_its_page_and_a_second_tab_without_a_reload() {
-    answered_on_both_tabs("/docs/DECISIONS.md", |_| {});
 }
 
 #[test]

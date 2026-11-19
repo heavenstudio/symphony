@@ -1300,6 +1300,7 @@ fn a_task_card_opens_its_task_from_its_title() {
     let Some(mut page) = chrome() else { return };
     viewport(&mut page, 1280, 900);
     page.open(&site.url("/tasks"));
+    page.reveal("#column-review");
     let title = "[data-slug='tools/example'] .taskcard-title";
     assert!(
         page.wait_for(

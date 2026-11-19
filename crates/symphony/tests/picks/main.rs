@@ -10,6 +10,7 @@ mod fixture_script;
 #[allow(dead_code)]
 mod board;
 
+mod artifacts;
 mod verdicts;
 
 use symphony::register::{Decision, parse_decisions};

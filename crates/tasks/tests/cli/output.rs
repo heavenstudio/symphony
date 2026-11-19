@@ -323,6 +323,7 @@ mod py {
                 ("depends", texts(&t.depends, depth + 1)),
                 ("roles", list(roles, depth + 1)),
                 ("instruction", t.instruction.to_string()),
+                ("id", t.id.to_string()),
             ],
             depth,
         )

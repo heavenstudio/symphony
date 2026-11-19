@@ -34,11 +34,13 @@ impl Plan {
     }
 }
 
+/// One look at `now`, the moment of the tick's sample.
 fn look(
     board: &Board,
     handle: &str,
     open: &[TaskSessionRow],
     panes: &dyn Fn() -> Answer<Vec<Pane>>,
+    now: f64,
     before: &PaneWatch,
     queued: &[Queued],
 ) -> Plan {
@@ -46,7 +48,7 @@ fn look(
     let sample = OnceCell::new();
     let panes = || sample.get_or_init(panes).clone();
     let mut lines = Vec::new();
-    let after = attach::pane_watch(board, &overseen, open, &panes, before, &mut |line| {
+    let after = attach::pane_watch(board, &overseen, open, &panes, now, before, &mut |line| {
         lines.push(event_line(line))
     });
     let retired = queued
@@ -121,9 +123,19 @@ impl Store {
         send: &dyn Fn(&str) -> Result<(), DeliveryError>,
     ) -> Result<(), Error> {
         let handle = callback.handle.as_str();
+        // Both looks judge the one sample at the moment of the first.
+        let now = self.now();
         let queued: Vec<Queued> =
             self.retrying(|| self.read(both(sql::QUEUED, pg::queued()), json!({"handle":handle})))?;
-        let plan = look(board, handle, open, panes, &callback.pane_watch, &queued);
+        let plan = look(
+            board,
+            handle,
+            open,
+            panes,
+            now,
+            &callback.pane_watch,
+            &queued,
+        );
         if plan.unchanged(&callback.pane_watch) {
             return Ok(());
         }
@@ -135,7 +147,7 @@ impl Store {
             // A role or launch can move while the first look waits for its lease.
             let (board, _) = self.callback_board()?;
             let open = self.open_task_sessions()?;
-            let plan = look(&board, handle, &open, panes, &saved.watch, &saved.queued);
+            let plan = look(&board, handle, &open, panes, now, &saved.watch, &saved.queued);
             if plan.unchanged(&saved.watch) { return Ok(true); }
             let events: Vec<Event> = plan.lines.iter().enumerate().map(|(i, text)| Event {
                 key: format!("pane-{revision}-{i}"), handle: handle.into(), text: text.clone(),

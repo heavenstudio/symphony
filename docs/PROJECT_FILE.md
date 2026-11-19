@@ -6,7 +6,11 @@ a plain project of every default. A table or key the Symphony does not know is r
 line where the project is loaded or linted (`just symphony-status --lint`), and left out, the rest
 read, where the Symphony runs with the file as it is. A file that does not load is run as the plain
 project: the server serves the project with the defaults, and every page of it says so and why,
-until it loads. The board reads its own keys (`[board]`'s
+until it loads. Three keys nothing acted on are gone (`[agents] transports`, `[board] export` and
+`[board] disposable`): a file that still writes one loads, the key ignored whatever it holds, and
+the load a server runs with, the lint and the settings check each say on stderr that it does
+nothing, by its line, failing nothing; the release after refuses it as any unknown key
+(`RETIRED` in `crates/symphony/src/project/file.rs`). The board reads its own keys (`[board]`'s
 commands and thresholds, `[limits]`, `[agents] launch`, `[agents.models]` and `[stamps]`) from the
 main checkout's copy, so a branch cannot change its own. A path is relative to the project's root
 and stays inside it, unless its key says otherwise.
@@ -33,13 +37,91 @@ key the Symphony does not know, a value of the wrong type (a number where a text
 required value left out (an entrypoint's `url` or `folder`) are each named on stderr, exit 1; a
 file that loads is exit 0. It judges no name against a list: a model, an agent or a recipe is any
 text, so a model nobody has heard of passes. Unlike the lint it reads no document and asks no
-build which plugins it holds.
+build which plugins it holds. A role or launch fallback model recognizable as the other agent's warns on
+stderr with its key and line, without changing the check's exit code.
+
+[The local settings file](#the-local-settings-file) is judged with it: a setting it may not hold,
+a value the board cannot read there, or the file tracked by git, is named on stderr, exit 1.
 
 A change of the values a project file gives settings the Symphony already reads lands on this
 check green at its tip, recorded as a test run, with no reviewer
 ([TASKS](TASKS.md#needed-stamps)). This repository records it with `just settings-check`; a
 project records it through its own build wrapper
 ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)).
+
+## The local settings file
+
+`symphony.local.toml`, beside the main checkout's `symphony.toml`, holds one machine's or one
+person's preferences. Git does not version it: `symphony init` adds it to the project's
+`.gitignore`, and the settings check and the lint refuse one git tracks. It is read after the
+project file: a key it writes holds in the committed one's place, a key it leaves out keeps the
+committed one, and with no such file the project file is read alone. A linked worktree has none of
+its own and reads the main checkout's, as it reads the main checkout's project file for these
+settings.
+
+```toml
+# symphony.local.toml
+[agents.models]
+executor = "fable"
+
+[limits]
+machine_agents = 4
+```
+
+It holds preferences alone, in the same tables, keys and types as the project file:
+
+- `[agents.launch]`: the agent a launch starts, its model and its effort;
+- `[agents.models]`: the model each role runs on;
+- `[limits]`: every key of it.
+
+A setting that holds a command or a program the Symphony runs, or that decides what lands, is never
+read from it and is refused there by name: `[project]`'s `cargo` and `default_branch`, and all of
+`[plugins]`, `[verdicts]`, `[land]`, `[releases]` and `[stamps]`, and `[board]`'s `on_review`,
+`on_land`, `machine_work_reader`, `postgresql`, `external_postgresql` and `assessments`. A file no commit records must
+not change the landing gate or run a command: that would be a way around review that leaves no
+trace. Every other table or key (the rest of `[project]`, `[board]` and `[agents]`, `[theme]`,
+`[[entrypoints]]`, `[workflow]`, or a name misspelt) is refused by name too, as no setting a local
+file overrides.
+
+Whatever is wrong with it is said with the file and the line: a refused setting, a key of one of
+its three tables the Symphony does not know, a value of the wrong type or below its least, an agent
+a launch does not start, or text that is no TOML. None of the file is then read and the committed
+settings hold, so a broken local file stops neither the board nor a launch: every board command
+says it on stderr, as it says a limit it cannot read, and the settings check exits 1 on it.
+
+One reader reads it (`crates/tasks/src/local.rs`), which the board's limits and launches, the
+Symphony's load of the project and the settings check all take, so each takes the same override;
+a board or a server kept open reads both files again when the length or time of either changes,
+with no restart. `just tasks limits` names the file under the project file and, for each setting it
+overrides, the file and the line (`symphony.local.toml [limits] machine_agents, line 6`).
+`just symphony-cli model ROLE MODEL --local` writes a role's model there instead of in the project
+file, and with `all` and `--agent` the launch agent and its model too, making the file when it is
+not there; nothing is landed for it.
+
+## `[workflow]`
+
+This table is a strict **candidate format**, available through
+`symphony::project::workflow::candidate`. Runtime project loading refuses any supplied workflow
+with `unsupported_activation`: the authoritative storage/admission engine is not available.
+Omission retains the current board behavior and selects built-in definition v1 in the candidate
+reader. Candidate parsing never changes a board. The [workflow reference](WORKFLOW.md) documents
+every nested field, validation and the remaining activation work.
+
+All fields below are required when the candidate table is present; lists may be empty only
+where validation allows it. Unknown fields and variants refuse the candidate.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `format` | required | definition format version, currently `1` |
+| `initial` | required | initial `{ phase, state }` pair |
+| `task_kinds` | required | nonempty list of supported stable task-kind IDs |
+| `phases` | required | phase IDs, labels, display/phone order and column membership |
+| `states` | required | coordination-state IDs and labels |
+| `positions` | required | valid pairs and their staffing, slot, dependency, outcome and recovery declarations |
+| `edges` | required | typed routes, authority requirements, inputs, guards and effects |
+| `capabilities` | required | declared host capability IDs; declarations grant no authority |
+| `adapters` | required | declared host adapter IDs; declarations supply no adapter |
+| `guards` | required | opaque policy requirements by stable ID and adapter |
 
 ## `[project]`
 
@@ -114,7 +196,6 @@ neither serves no `.html` file, as its patterns serve none they leave out.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
-| `transports` | `["claude-uds", "codex-queue", "inbox"]` | the agent transports the project names; read and checked, acted on by nothing of the Symphony's own |
 | `panes` | `"none"` | what agents' terminals run in: `"hc"` (Herdr), whose panes the pages can show, or `"none"` |
 | `worktrees` | none: `symphony/tasks/land/` in the git common dir | the folder of a land's and the regenerator's worktrees; it may lie outside the project |
 | `launch` | below | the table `[agents.launch]` |
@@ -134,10 +215,24 @@ limits` prints what holds and where it came from.
 ## `[agents.models]`
 
 `just symphony-cli model ROLE MODEL` sets one role's model in the main checkout's file;
-`all` sets all four. It preserves comments and order, adds missing keys, accepts any string
-as the model and refuses unknown roles. It reports the edit; checking and landing follow the
-project's settings-only policy. `just tasks limits` prints the resulting models and their sources.
-A resumed agent keeps the model it started on.
+`all` sets all four. With `all`, `--agent codex|claude` also sets `[agents.launch] default` and its
+fallback `model`; `--assessor MODEL` sets a separate assessor model. For example,
+`just symphony-cli model all fable --agent claude --assessor haiku` switches to Claude on Fable
+for the orchestrator, executor and reviewer, and Haiku for the assessor, in one edit.
+
+The command preserves comments and order, adds missing keys, accepts any string as the model
+and refuses unknown roles and agents. The model command and settings check warn on stderr for a
+role or launch fallback model recognizable as the other agent's: `gpt-` names Codex; `claude-`, `fable`, `opus`,
+`sonnet` and `haiku` name Claude. The warning names the key and line and never refuses the file;
+unrecognized model text is accepted without warning. Checking and landing follow the project's
+settings-only policy. `just tasks limits` prints the launch agent, resulting models and their
+sources. A resumed agent keeps the model it started on.
+
+With `--local`, alone or with the other two, the same edit goes to
+[the local settings file](#the-local-settings-file) instead, which overrides these on one machine
+and lands nothing. The warning is judged on the settings in force, the local file's over the
+project file's, by the model command and the settings check alike: it names the file, key and line
+that supply the model, and the file that names the agent when it is the other one.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
@@ -170,6 +265,7 @@ What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASK
 | `generators` | `[]` | what the regenerator a land starts makes of the default branch's newest tip, each a table as below ([TASKS](TASKS.md#the-regenerator)) |
 | `keys` | none | a generator's name, then the command printing its key: a tip whose key passed before runs nothing |
 | `check_paths` | the list in [TASKS](TASKS.md#the-default-landing) | what holds the project's tests and checks, which a red's fix its orchestrator approves may not change |
+| `delivery` | none: the land merges and pushes here | the command that delivers a task by a hosted pull request in place of that merge and push, a list of words run as `COMMAND VERB --request FILE` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); it decides what lands, so a change of it is reviewed |
 
 ## `[[land.generators]]`
 
@@ -195,13 +291,12 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `review_alarm_hours` | `4` | the hours review must stay over the ratio to raise it |
 | `review_alarm_clear_hours` | `1` | the hours review must stay at or under it to clear it |
 | `swept_cap_gb` | `5` | the gigabytes the evidence kept of removed worktrees may hold before the sweep asks for a check by hand |
-| `postgresql` | discover `postgres` on `PATH` | an explicit absolute folder of the machine's PostgreSQL programs takes precedence over discovery; only a scratch board's server starts it so far ([DECISIONS](DECISIONS.md#postgresql-binary-source)) |
+| `postgresql` | discover `postgres` on `PATH` | an explicit absolute folder of the machine's PostgreSQL programs takes precedence over discovery; the server of a board whose home names PostgreSQL starts it ([DECISIONS](DECISIONS.md#postgresql-binary-source)) |
+| `external_postgresql` | none: the board is the machine's own | `[board.external_postgresql]`, where a hosted board's PostgreSQL is and the budget of its connections, as below |
 | `machine_wip` | none | `[board.machine_wip.MACHINE]`, advice per machine, as below |
 | `machine_work_reader` | none | the project's own machine-work reader, an executable the server runs ([MACHINE_WORK](MACHINE_WORK.md)) |
 | `slot_locks` | none | the folder of the project's test-slot locks, which the agents view probes; under `.git/`, the git common dir |
 | `assessments` | none: an assessment is refused | the folder of the project's landing assessments; under `.git/`, the git common dir |
-| `export` | none | read and checked, acted on by nothing of the Symphony's own (`just tasks export` takes `--out`) |
-| `disposable` | `[]` | read and checked, acted on by nothing of the Symphony's own (the sweep keeps its own list) |
 
 PostgreSQL setup requires version 18 or later, installed by the machine's package manager.
 Without an explicit `postgresql`, discovery takes the first executable `postgres` on `PATH`;
@@ -215,8 +310,59 @@ export PATH="$(brew --prefix postgresql@18)/bin:$PATH"
 For another installation, put its `bin` folder on `PATH` or set `[board] postgresql` to its
 absolute path. An explicit value always wins, including when it is invalid. A missing tool,
 failed version probe or server older than 18 fails with setup guidance; discovery never skips
-an incompatible installation to select another. It inspects programs only, starting no database;
-only scratch boards use PostgreSQL so far.
+an incompatible installation to select another. It inspects programs only, starting no database:
+a board uses PostgreSQL once its home names it ([POSTGRESQL](POSTGRESQL.md)).
+
+## `[board.external_postgresql]`
+
+Where a hosted board's PostgreSQL is, for a build with the `hosted-postgresql` feature
+([POSTGRESQL](POSTGRESQL.md#a-hosted-board)); every build reads and judges the table, so the
+settings check says the same anywhere. It holds no credential: each `_env` key is the name of a
+variable of the process's environment, never a value, and a URL, a password or a key written
+here is a key the table does not have and is refused. No command reaches a hosted board yet:
+the table is read by the library's hosted opening alone.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `url_env` | one of the two | the variable holding the PostgreSQL URI: one host, the project's own database and login, a password; TLS is always verified, whatever it asks |
+| `url_file_env` | one of the two | the variable holding the path of a mounted file of that URI |
+| `ca_file_env` | required | the variable holding the path of the certificate authority's PEM file: the only authority trusted |
+| `client_cert_file_env` | none | the variable holding the path of a client certificate, where the endpoint asks for one; with `client_key_file_env` or not at all |
+| `client_key_file_env` | none | the variable holding the path of that certificate's key |
+| `class_env` | required | the variable holding this process's class, one of the budget's |
+| `connect_timeout_seconds` | `10` | how long a connection may take to be made |
+| `acquire_timeout_seconds` | `10` | how long a request waits for a connection of the pool |
+| `request_timeout_seconds` | `300` | how long a request may take once it has its connection |
+| `queue_max` | `16` | the requests that may wait for a connection at once; one more is refused at once |
+| `budget` | required | `[board.external_postgresql.budget]`, the deployment's connections, as below |
+
+## `[board.external_postgresql.budget]`
+
+The deployment's whole use of the login role, counted for every process that can be alive at
+once. A hosted board's table without it is refused.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `role_connection_cap` | required | the connections the platform holds the role to |
+| `other_users` | `0` | the role's connections that are not the board's |
+| `maintenance` | required, at least 1 | the connections of a migration or an export, the class `maintenance` |
+| `headroom` | required | the connections left free |
+| `classes` | required, at least one | `[board.external_postgresql.budget.classes.CLASS]`, a class of process by its name, as below |
+
+Every class's `processes` times its `pool_max`, with `other_users`, `maintenance` and
+`headroom`, is at most `role_connection_cap`, or the table is refused. Each connection takes
+one of its class's slots in the database, so a class never passes its total whatever each
+process counts.
+
+## `[board.external_postgresql.budget.classes.CLASS]`
+
+One class of process, named in lower-case letters, digits, `-` and `_`; `maintenance` is the
+budget's own and no class's name.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `processes` | required, at least 1 | the processes of the class that can be alive at once: old and new revisions during a rollout, draining instances, each process of an instance |
+| `pool_max` | required, at least 1 | the connections one process of the class holds at most: its pool |
 
 ## `[board.machine_wip.MACHINE]`
 
@@ -231,7 +377,8 @@ enforces it, and zero is advice too.
 ## `[limits]`
 
 Read by the board itself ([TASKS](TASKS.md#limits-and-models)); a value it cannot read takes its
-default and is said on stderr.
+default and is said on stderr. [The local settings file](#the-local-settings-file) overrides each
+key on one machine.
 
 | Key | Default | What it sets |
 | --- | --- | --- |

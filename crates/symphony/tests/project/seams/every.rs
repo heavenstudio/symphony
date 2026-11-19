@@ -87,6 +87,16 @@ impl Plugin for Every {
         Some(Theme {
             package: "every".into(),
             name: "Every".into(),
+            tokens: std::collections::BTreeMap::from([
+                ("primary".into(), "red".into()),
+                ("background".into(), "white".into()),
+                ("unsafe".into(), "url(remote)".into()),
+            ]),
+            layouts: std::collections::BTreeMap::from([
+                ("header".into(), "compact".into()),
+                ("home".into(), "default".into()),
+                ("unknown".into(), "wide".into()),
+            ]),
             ..Theme::default()
         })
     }

@@ -64,6 +64,16 @@
 //!
 //! `meta:schema` names the version defined, so opening a board already in this shape writes nothing.
 //!
+//! `recovery:board` names the board's recovery generation, from schema 22: a text the database
+//! makes, replaced in the transaction of every copy of the whole board and by a rebind
+//! (`store/recovery.rs`), never by an ordinary write and never part of a dump. A build of an
+//! older schema copies a board without replacing it, which is why it came with a schema step:
+//! the [`guard`] refuses that build's copy.
+//!
+//! `execution_attempt:⟨uuid⟩`, `execution_fact:[uuid, seq]`, `execution_fence:[kind, …]` and
+//! `execution_artifact:[uuid, name]` are execution attempts, from schema 23 (`crate::execution`):
+//! schemaless and with no event, as no reader caches them.
+//!
 //! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
 //! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
 //! builds of other schemas write it and a line written moves no marker.
@@ -86,7 +96,7 @@ use crate::store::Program;
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. Protocol changes can require a wider version step and retirement of old read tokens:
 /// an already-open store does not repeat its opening check.
-pub const VERSION: i64 = 20;
+pub const VERSION: i64 = 23;
 
 /// Structural mutations plus all committed session changes, including deletions and re-creations.
 /// The separate structural record keeps the retired legacy scalar outside this identity.
@@ -96,7 +106,10 @@ pub const BOARD_MARKER: &str = "((SELECT VALUE last FROM ONLY counter:board_stru
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Schema {
     version: i64,
-    steps: String,
+    /// What its steps run after [`DEFINE`]: nothing for this build's own schema. Held apart from
+    /// it, so a program that opens a board without ever migrating one (a reader) links and
+    /// copies none of `DEFINE`'s text.
+    after: String,
     /// On PostgreSQL, what the steps add to this build's tables, which every migration there
     /// makes first: nothing for this build's own schema.
     postgres: String,
@@ -107,7 +120,7 @@ impl Schema {
     pub fn this_build() -> Schema {
         Schema {
             version: VERSION,
-            steps: DEFINE.into(),
+            after: String::new(),
             postgres: String::new(),
         }
     }
@@ -121,7 +134,7 @@ impl Schema {
     pub fn then_each(&self, surreal: &str, postgres: &str) -> Schema {
         Schema {
             version: self.version + 1,
-            steps: format!("{}\n{surreal}", self.steps),
+            after: format!("{}\n{surreal}", self.after),
             postgres: format!("{}\n{postgres}", self.postgres),
         }
     }
@@ -140,8 +153,9 @@ impl Schema {
         }
     }
 
-    pub(crate) fn steps(&self) -> &str {
-        &self.steps
+    /// The steps: [`DEFINE`], then what this schema runs after it. Only a migration reads them.
+    pub(crate) fn steps(&self) -> String {
+        format!("{DEFINE}{}", self.after)
     }
 
     /// What the steps add on PostgreSQL to this build's tables.
@@ -446,6 +460,15 @@ DEFINE FIELD IF NOT EXISTS version ON meta TYPE int;
 
 DEFINE TABLE IF NOT EXISTS writer SCHEMALESS;
 
+DEFINE TABLE IF NOT EXISTS artifact_ledger SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS revision ON artifact_ledger TYPE int;
+DEFINE FIELD IF NOT EXISTS body ON artifact_ledger TYPE object FLEXIBLE;
+
+-- Schema 22: the board's recovery generation, which a copy replaces and a guarded write reads.
+DEFINE TABLE IF NOT EXISTS recovery SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS generation ON recovery TYPE string;
+IF !record::exists(recovery:board) { CREATE recovery:board SET generation = <string> rand::uuid::v4() RETURN NONE; };
+
 DEFINE TABLE IF NOT EXISTS callback_state SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_state_address ON callback_state FIELDS address;
 DEFINE TABLE IF NOT EXISTS callback_lease SCHEMALESS;
@@ -506,6 +529,18 @@ DEFINE FIELD IF NOT EXISTS first ON usage TYPE float;
 DEFINE FIELD IF NOT EXISTS last ON usage TYPE float;
 DEFINE INDEX IF NOT EXISTS usage_slug ON usage FIELDS slug;
 DEFINE INDEX IF NOT EXISTS usage_handle ON usage FIELDS handle;
+
+-- Schema 23: execution attempts (`crate::execution`): an attempt's immutable identity beside its
+-- revisioned state, its append-only facts, the fences its admission writes and its collected
+-- artifacts. Schemaless and with no event: no reader caches them, and a write moves no marker.
+DEFINE TABLE IF NOT EXISTS execution_attempt SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS execution_attempt_task ON execution_attempt FIELDS task, created;
+DEFINE INDEX IF NOT EXISTS execution_attempt_due ON execution_attempt FIELDS open, due;
+DEFINE TABLE IF NOT EXISTS execution_fact SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS execution_fact_attempt ON execution_fact FIELDS attempt, seq;
+DEFINE TABLE IF NOT EXISTS execution_fence SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS execution_artifact SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS execution_artifact_attempt ON execution_artifact FIELDS attempt, name;
 
 DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN {

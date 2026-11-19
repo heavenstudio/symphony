@@ -11,6 +11,53 @@ The public Rust items a consumer calls follow the
 replacement for a release, then remove it in a separate later task with consumer migration
 evidence and the guard list updated.
 
+## Hosted admission
+
+`symphony_server::hosted::router(shared, config, host)` is an explicit, additive admission
+boundary for one configured project at `/`. The ordinary router and CLI keep the local gate.
+The hosted router validates the selected project against its configuration and consults no
+machine registry. It requires an exact configured HTTPS authority/origin, independent verified
+proxy transport, a signed visitor and a current grant bound to that actor, project and action.
+The consuming `hosted::Host` implements transport, signature/key verification, membership and
+session/project-bound CSRF; it pins issuer, immutable app audience and its key endpoint in
+protected deployment configuration. A visitor token or forwarded header cannot substitute for
+transport evidence. Host calls must have bounded deadlines and fail closed on outages.
+`Transport::RequestBound` also supplies the attested body SHA-256; admission compares actual
+bytes before dispatch, after authorization. The host verifies method, full target, signature,
+expiry and replay policy. `ProtectedConnection` instead requires proved exclusive transport.
+
+Native read-only routes, assets, documents and uploads use that admission. Media and feeds
+need distinct grants from ordinary reads, including HEAD, conditional and range requests.
+Every response is `private, no-store`; a conditional hit is authorized before returning 304.
+Streams recheck policy before each chunk/event and end on identity/grant expiry or the host's
+policy-change event, including while idle. A changed revision needs a new request; a refresh
+cannot extend an existing request. The host subscribes policy loss and external revocation to
+`Host::changes`, with any external revocation delay separately accepted before deployment.
+Server diagnostic notices and detailed native errors are withheld from hosted responses.
+The machine-work endpoint is excluded. Native agent/task responses keep the existing wire
+shape with empty, unknown machine-work evidence and unavailable probe values; task stages and
+counts use that empty projection. Machine-work and agent-probe feed payloads are omitted.
+Diagnostics-only events retain their version with an empty changes array, so document section
+reads can catch up to the feed cursor. Ordinary project tasks, agents and document deltas remain
+available.
+
+Hosted browser writes require exact Origin, same-origin fetch metadata when supplied,
+`application/json` and a verified CSRF binding. JSON is capped at 2 MiB; duplicate keys/query
+parameters, conflicting project selectors, traversal and encoded scope aliases are refused.
+The first profile refuses worktree selectors, machine diagnostics/controls, pane screens/focus,
+and actorless plugin dispatch. Saves and `/x/` routes go only to `Host::dispatch`, whose default
+is deny, with verified `Context` and canonical input, without credential headers. An adapter
+resolves any domain-specific references and rechecks authority before state or provider I/O.
+It must not forward hosted mutations into the local owner's save/plugin APIs. Binary upload
+and storage integration need their own actor-aware adapter; a local upload URL is no grant.
+Redirects stay relative or on the configured origin, with no login redirects for refusals.
+
+This seam and its fake-host tests do not constitute hosted deployment acceptance. The
+[hosted ingress contract](../../docs/analysis/hosted-ingress.md) requires real consumer
+transport and membership proof; provider credentials, token/key/session implementations,
+foreground lifecycle/readiness, managed database and artifact durability remain separate work.
+No production host adapter or CLI switch is supplied here.
+
 ## Projects
 
 The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the
@@ -85,10 +132,27 @@ A release's server builds nothing and watches no source: it watches the machine 
 `current` link moving, reads where the link points as it starts, at each move and once a period
 (`backstop.rs`, for an event lost), and when it names another release, hands its sockets to that
 release's server, by its own folder's path, as a reload below hands them. A release not installed
-whole, or whose server does not become ready, leaves the running one serving, said on the notice
-and tried again on the waits below; `current` pointed back at the running release clears the
-notice. A starter's request to hand over is refused, said in the log. The release a server is, and
-the client it serves, are read once, as it starts.
+whole, or whose server does not become ready, leaves the running one serving, said in the log and
+on the notice and tried again on the waits below; `current` pointed back at the running release
+clears the notice. A starter's request to hand over is refused, said in the log. The release a
+server is, and the client it serves, are read once, as it starts.
+
+A server that is not following says so in its log (`server.log` in the machine folder), each line
+starting `· Symphony reload:`: one for each hand-off it begins, one for each release that did not
+take over, with why and when it is tried again, and one for each reason it begins none (`current`
+naming the release it is, or none), said when that reason changes. The follow ends only with the
+server: one that ends before, a bug, is said in the log and on the notice and started again once
+its supervisor has waited for the next wake or period, so no release waits on a restart by hand
+and a follow that dies at every start costs one line a wait. The refresh of a release quotes the
+last of those lines when the server did not follow `current` within its wait
+([RELEASES](../../docs/RELEASES.md#the-refresh)). The reload writes its lines without
+`eprintln!`, which panics its thread once stderr cannot be written.
+
+The log dates each line of the server's two streams, and of the children that inherit them,
+through a socket for each (`src/log.rs`). A socket that ends under its forwarder, as when a child
+shuts down the one it inherited, is replaced by a new one in the stream's place, said in the log
+(`server log capture: … captured again`); were it left, every later write to that stream would
+fail, and each thread that writes one by `eprintln!` would die of it.
 
 A project's build as the shared server watches main's server sources and transitive local crate
 sources. It builds through the command main's `[project] cargo` names (when unset,
@@ -435,8 +499,12 @@ the board; generated branches that fail to land remain available.
 Branch-checkout saves remain for that
 branch's executor to commit. Verdict filing runs off the save path, and the
 shared server calls the board's locked `reap` every five minutes for each project it
-serves that has a board, each on its own schedule (`front::maintenance`). Private foreground
-servers do no session maintenance, including when they use a copied scratch board.
+serves that has a board, each on its own schedule (`front::maintenance`). After a sleep, that
+project's clock tick holds its callback dispatch and its give until a round begun after the wake
+has ended, or a round's timeout and the slack it may start late within (240 + 30 s) of awake
+time have passed (`live::presence`). Private foreground
+servers do no session maintenance, including when they use a copied scratch board, and so never
+hold their tick.
 
 Branch questions retain a docs-relative storage path and put the full branch
 page URL in the question. Quick chat from a branch uses the chat home and the

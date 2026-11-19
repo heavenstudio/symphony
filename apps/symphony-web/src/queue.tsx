@@ -14,10 +14,10 @@ import { field, list } from "./shared";
 import { Backoff, NEVER_ANSWERED } from "./state";
 import { load, save } from "./storage";
 import { TaskTag } from "./task-tag";
-import { retryWait } from "./timing";
+import { retryWait, tick } from "./timing";
 import { failed as failedRead, ready } from "./trouble";
 import { drawnHeight, drawnStyle, NearViewport, rememberDrawn } from "./viewport";
-import type { Card, Queue, QueueItem } from "./wire";
+import { ASK_LATE_SECONDS, type Card, type Queue, type QueueAsk, type QueueItem } from "./wire";
 
 /** The feed's regions that move the queue: its items and their order, in each of its groups. */
 const REGIONS = [
@@ -47,10 +47,60 @@ function isCard(value: unknown): value is Card {
   );
 }
 
+const isOptionalNumber = (value: unknown) =>
+  value === undefined || value === null || typeof value === "number";
+
+/** An item's ask: none, or its number, when it was said and, when held, by whom and since when. */
+function isOptionalAsk(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  return (
+    ["id", "asked"].every((key) => typeof field(value, key) === "number") &&
+    isOptionalText(field(value, "holder")) &&
+    isOptionalNumber(field(value, "held"))
+  );
+}
+
 function isItem(value: unknown): value is QueueItem {
   return (
     ["href", "path", "slug", "title", "kind", "text"].every((key) => isText(field(value, key))) &&
-    isOptionalText(field(value, "branch"))
+    isOptionalText(field(value, "branch")) &&
+    isOptionalAsk(field(value, "ask"))
+  );
+}
+
+/** `seconds` as `just tasks asks` says them: whole minutes, and hours past the hour. */
+export function minutes(seconds: number): string {
+  const whole = Math.floor(Math.max(0, seconds) / 60);
+  const [hours, rest] = [Math.floor(whole / 60), whole % 60];
+  if (hours === 0) return `${rest} min`;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+}
+
+/** Whether an ask said at `asked` is late at `now`, both in seconds since the epoch. */
+export function askLate(asked: number, now: number): boolean {
+  return now - asked >= ASK_LATE_SECONDS;
+}
+
+/**
+ * An open ask at `now` (seconds since the epoch), as `just tasks asks` says one: how long it has
+ * waited, late past the board's bound, and who holds it and for how long, nobody said as that.
+ */
+export function askLine(ask: QueueAsk, now: number): string {
+  const age = `${minutes(now - ask.asked)}${askLate(ask.asked, now) ? ", late" : ""}`;
+  const holder = ask.holder ?? null;
+  const held = ask.held ?? null;
+  if (holder === null) return `${age} · held by nobody`;
+  return held === null
+    ? `${age} · held by ${holder}`
+    : `${age} · held by ${holder} for ${minutes(now - held)}`;
+}
+
+/** The line of a row whose card has an open ask on the board; `data-late` once it is late. */
+export function AskLine({ ask, now }: { ask: QueueAsk; now: number }) {
+  return (
+    <p className="queue-ask muted" data-ask={ask.id} data-late={askLate(ask.asked, now)}>
+      {askLine(ask, now)}
+    </p>
   );
 }
 
@@ -289,17 +339,23 @@ export function WaitingQueue({
   );
 }
 
-/** A group of the queue below what waits on the owner: to spot-check, or waiting on an agent. */
-function QueueGroup({
+/**
+ * A group of the queue below what waits on the owner: to spot-check, or waiting on an agent, where
+ * a card with an open ask on the board says how long it has waited and who holds it.
+ */
+export function QueueGroup({
   id,
   title,
   items,
   empty,
+  now,
 }: {
   id: string;
   title: string;
   items: QueueItem[];
   empty: string;
+  /** Now, in seconds since the epoch: the moment each row's ask is aged at. */
+  now: number;
 }) {
   return (
     <section id={id} className="card queue-group">
@@ -322,6 +378,9 @@ function QueueGroup({
                       {item.kind !== "" && <span className="chip">{item.kind}</span>}
                       {item.text !== "" && <p className="muted">{item.text}</p>}
                     </>
+                  )}
+                  {item.ask !== undefined && item.ask !== null && (
+                    <AskLine ask={item.ask} now={now} />
                   )}
                 </div>
               </div>
@@ -386,6 +445,18 @@ export function QueuePage({ scope, refreshed }: { scope: string; refreshed: numb
   const etag = useRef("");
   const shownQueue = useRef<Queue | null>(null);
   const freshen = useFreshen();
+  // The asks' ages are read again each minute.
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      while (!controller.signal.aborted) {
+        await tick(controller.signal);
+        if (!controller.signal.aborted) setNow(Date.now() / 1000);
+      }
+    })();
+    return () => controller.abort();
+  }, []);
   useEffect(() => {
     let live = true;
     void readKept(boardItem(scope), QUEUE, readQueue).then((kept) => {
@@ -479,12 +550,14 @@ export function QueuePage({ scope, refreshed }: { scope: string; refreshed: numb
               title="Auto-approved: spot-check"
               items={queue.spot_check}
               empty="none"
+              now={now}
             />
             <QueueGroup
               id="agent"
               title="Waiting on the agent"
               items={queue.agent}
               empty="every comment is answered"
+              now={now}
             />
           </>
         ) : (

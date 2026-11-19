@@ -1188,57 +1188,151 @@ fn labels() -> Vec<u8> {
     .into_bytes()
 }
 
+/// The checkboxes of [`labels`] a click reaches through its label, in the order [`label_clicks`]
+/// clicks them: three its own label covers and one under a closed root's decoration on a span;
+/// three under a custom element no control takes; one under a track deep in plain spans.
+const CLICKED: [&str; 8] = [
+    "hidden",
+    "under",
+    "named",
+    "plain",
+    "undefined",
+    "light",
+    "adorned",
+    "deep",
+];
+
+/// The checkboxes of [`labels`] no click of [`label_clicks`] is on, each read after them all.
+const LEFT: [&str; 4] = ["unnamed", "linked", "closed", "slot-closed"];
+
+/// What one run of `symphony shot` on [`labels`] did, clicking each of [`CLICKED`] in turn: what
+/// it said, the presses and clicks the page took in order (`landed`, three a checkbox: the press
+/// and the click where the pointer was, and the click the label gave its control), whether each
+/// checkbox of [`CLICKED`] and [`LEFT`] is checked after them all, by its id, and its picture's
+/// width; of a run that failed, what it said alone.
+struct LabelClicks {
+    said: String,
+    succeeded: bool,
+    evaluations: usize,
+    landed: Vec<Value>,
+    checked: serde_json::Map<String, Value>,
+    width: Option<usize>,
+}
+
+impl LabelClicks {
+    /// The run succeeded and printed its one evaluation.
+    #[track_caller]
+    fn ran(&self) {
+        assert!(self.succeeded, "{}", self.said);
+        assert_eq!(self.evaluations, 1, "one evaluation: {}", self.said);
+    }
+
+    /// What the page took for the click on `id`: its three of `landed`.
+    #[track_caller]
+    fn of(&self, id: &str) -> Value {
+        self.ran();
+        assert_eq!(
+            self.landed.len(),
+            3 * CLICKED.len(),
+            "a press, a click and the control's click for each of {CLICKED:?} and nothing more: {:?}",
+            self.landed
+        );
+        let at = CLICKED
+            .iter()
+            .position(|clicked| *clicked == id)
+            .expect("a checkbox the run clicks");
+        json!(self.landed[3 * at..3 * at + 3])
+    }
+
+    /// Whether each of `ids` is checked once every click of the run is done.
+    #[track_caller]
+    fn checked(&self, ids: &[&str]) -> Vec<Value> {
+        self.ran();
+        ids.iter().map(|id| self.checked[*id].clone()).collect()
+    }
+}
+
+/// The one run of `symphony shot` the label tests read ([`LabelClicks`]), made by the first of
+/// them to ask: each click is on a checkbox of its own row of [`labels`], which no other click
+/// reaches, so the tests' clicks meet on one page as they did on a page each. `None` when this
+/// machine has no Chrome.
+fn label_clicks() -> Option<&'static LabelClicks> {
+    static RUN: std::sync::OnceLock<Option<LabelClicks>> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| {
+        let selectors: Vec<String> = CLICKED.iter().map(|id| format!("#{id}")).collect();
+        let mut steps: Vec<&str> = selectors
+            .iter()
+            .flat_map(|selector| ["--click", selector.as_str()])
+            .collect();
+        let read = format!(
+            "[landed, Object.fromEntries({}.map(id => [id, document.getElementById(id).checked]))]",
+            json!([&CLICKED[..], &LEFT[..]].concat())
+        );
+        steps.extend(["--eval", read.as_str()]);
+        let (output, out, _requests, _scratch) = on_page("labels", &labels(), &steps)?;
+        let succeeded = output.status.success();
+        let lines = if succeeded {
+            printed(&output)
+        } else {
+            Vec::new()
+        };
+        let after = lines.first().cloned().unwrap_or_default();
+        Some(LabelClicks {
+            said: said(&output),
+            succeeded,
+            evaluations: lines.len(),
+            landed: after[0].as_array().cloned().unwrap_or_default(),
+            checked: after[1].as_object().cloned().unwrap_or_default(),
+            width: succeeded.then(|| Picture::read(&out).width),
+        })
+    })
+    .as_ref()
+}
+
 #[test]
 fn a_click_on_a_checkbox_its_own_label_covers_lands_on_the_label_and_checks_it() {
-    let Some((output, out, _requests, _scratch)) = on_page(
-        "labels",
-        &labels(),
-        &[
-            "--click",
-            "#hidden",
-            "--click",
-            "#under",
-            "--click",
-            "#named",
-            "--click",
-            "#plain",
-            "--eval",
-            "[landed, ['hidden', 'under', 'named', 'unnamed', 'linked', 'plain'].map(id => document.getElementById(id).checked)]",
-        ],
-    ) else {
-        return;
-    };
-    assert!(output.status.success(), "{}", said(&output));
-    let lines = printed(&output);
-    let [after] = lines.as_slice() else {
-        panic!("one evaluation: {}", said(&output));
-    };
+    let Some(clicks) = label_clicks() else { return };
     // Each press landed on the label, or on its track, and the label clicked its control. The
     // last, on a closed root's decoration, the browser's own hit confirmed: no control there.
     assert_eq!(
-        after[0],
         json!([
-            ["pointerdown", "hidden-track"],
-            ["click", "hidden-track"],
-            ["click", "hidden"],
-            ["pointerdown", "under-track"],
-            ["click", "under-track"],
-            ["click", "under"],
-            ["pointerdown", "named-label"],
-            ["click", "named-label"],
-            ["click", "named"],
-            ["pointerdown", "plain-host"],
-            ["click", "plain-host"],
-            ["click", "plain"]
+            clicks.of("hidden"),
+            clicks.of("under"),
+            clicks.of("named"),
+            clicks.of("plain")
         ]),
-        "{after}"
+        json!([
+            [
+                ["pointerdown", "hidden-track"],
+                ["click", "hidden-track"],
+                ["click", "hidden"]
+            ],
+            [
+                ["pointerdown", "under-track"],
+                ["click", "under-track"],
+                ["click", "under"]
+            ],
+            [
+                ["pointerdown", "named-label"],
+                ["click", "named-label"],
+                ["click", "named"]
+            ],
+            [
+                ["pointerdown", "plain-host"],
+                ["click", "plain-host"],
+                ["click", "plain"]
+            ]
+        ]),
+        "{}",
+        clicks.said
     );
     assert_eq!(
-        after[1],
-        json!([true, true, true, false, false, true]),
-        "{after}"
+        clicks.checked(&["hidden", "under", "named", "unnamed", "linked", "plain"]),
+        [true, true, true, false, false, true],
+        "{}",
+        clicks.said
     );
-    assert_eq!(Picture::read(&out).width, 1440);
+    assert_eq!(clicks.width, Some(1440));
 }
 
 #[test]
@@ -1343,43 +1437,39 @@ fn a_click_on_a_checkbox_under_a_custom_element_no_control_takes_lands_on_the_la
     // A custom element never defined, one with no shadow root, and one whose closed root holds only
     // decoration: the page cannot see inside the last, the browser's own hit confirms nothing there
     // takes the press, and the label clicks its control.
-    let Some((output, _out, _requests, _scratch)) = on_page(
-        "labels-custom",
-        &labels(),
-        &[
-            "--click",
-            "#undefined",
-            "--click",
-            "#light",
-            "--click",
-            "#adorned",
-            "--eval",
-            "[landed, ['undefined', 'light', 'adorned', 'closed', 'slot-closed'].map(id => document.getElementById(id).checked)]",
-        ],
-    ) else {
-        return;
-    };
-    assert!(output.status.success(), "{}", said(&output));
-    let lines = printed(&output);
-    let [after] = lines.as_slice() else {
-        panic!("one evaluation: {}", said(&output));
-    };
+    let Some(clicks) = label_clicks() else { return };
     assert_eq!(
-        after[0],
         json!([
-            ["pointerdown", "undefined-host"],
-            ["click", "undefined-host"],
-            ["click", "undefined"],
-            ["pointerdown", "light-host"],
-            ["click", "light-host"],
-            ["click", "light"],
-            ["pointerdown", "deco-host"],
-            ["click", "deco-host"],
-            ["click", "adorned"]
+            clicks.of("undefined"),
+            clicks.of("light"),
+            clicks.of("adorned")
         ]),
-        "{after}"
+        json!([
+            [
+                ["pointerdown", "undefined-host"],
+                ["click", "undefined-host"],
+                ["click", "undefined"]
+            ],
+            [
+                ["pointerdown", "light-host"],
+                ["click", "light-host"],
+                ["click", "light"]
+            ],
+            [
+                ["pointerdown", "deco-host"],
+                ["click", "deco-host"],
+                ["click", "adorned"]
+            ]
+        ]),
+        "{}",
+        clicks.said
     );
-    assert_eq!(after[1], json!([true, true, true, false, false]), "{after}");
+    assert_eq!(
+        clicks.checked(&["undefined", "light", "adorned", "closed", "slot-closed"]),
+        [true, true, true, false, false],
+        "{}",
+        clicks.said
+    );
 }
 
 #[test]
@@ -1387,30 +1477,18 @@ fn a_click_on_a_checkbox_under_a_track_deep_in_plain_spans_lands_on_the_label_an
     // Each span may hold a closed shadow root the page cannot see, so the browser is asked about
     // every one on the press's way, once, however many: none holds one, and the label clicks its
     // control.
-    let Some((output, _out, _requests, _scratch)) = on_page(
-        "labels-deep",
-        &labels(),
-        &[
-            "--click",
-            "#deep",
-            "--eval",
-            "[landed, document.getElementById('deep').checked]",
-        ],
-    ) else {
-        return;
-    };
-    assert!(output.status.success(), "{}", said(&output));
+    let Some(clicks) = label_clicks() else { return };
     assert_eq!(
-        printed(&output),
-        [json!([
-            [
-                ["pointerdown", "deep-track"],
-                ["click", "deep-track"],
-                ["click", "deep"]
-            ],
-            true
-        ])]
+        clicks.of("deep"),
+        json!([
+            ["pointerdown", "deep-track"],
+            ["click", "deep-track"],
+            ["click", "deep"]
+        ]),
+        "{}",
+        clicks.said
     );
+    assert_eq!(clicks.checked(&["deep"]), [true], "{}", clicks.said);
 }
 
 /// An icon with `pointer-events: none` in its button; a disabled button with `pointer-events:
@@ -3599,7 +3677,9 @@ fn two_shots_at_once_each_have_a_profile_and_a_port_of_their_own() {
             let _ = self.0.wait();
         }
     }
-    // Each holds its browser open for a while once its page has drawn, so both are seen at once.
+    // Each waits on its page's read of the board's columns, held until both browsers are seen:
+    // a shot waits for every request of its page but the feed's, so neither ends before then.
+    site.hold_route("/api/task-board", true);
     let mut runs: Vec<Running> = outs
         .iter()
         .map(|out| {
@@ -3608,7 +3688,7 @@ fn two_shots_at_once_each_have_a_profile_and_a_port_of_their_own() {
                     &wrapper,
                     &records,
                     &chrome,
-                    &[&url, "--out", out.to_str().unwrap(), "--pause", "4000"],
+                    &[&url, "--out", out.to_str().unwrap()],
                 )
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::piped())
@@ -3652,6 +3732,7 @@ fn two_shots_at_once_each_have_a_profile_and_a_port_of_their_own() {
         "the two shots shared a profile"
     );
     assert_ne!(ports[0], ports[1], "the two shots shared a DevTools port");
+    site.hold_route("/api/task-board", false);
     for run in &mut runs {
         let mut stderr = String::new();
         run.0

@@ -46,6 +46,11 @@ impl Board {
         }
     }
 
+    /// The board's home, as its PostgreSQL was made on it.
+    fn home(&self) -> Home {
+        Home::new(&self.dir.join("board"), Path::new("/no/surreal"))
+    }
+
     /// What `sql` answers over the server's socket, through one connection of `psql`'s.
     fn psql(&self, serving: &Serving, sql: &str) -> String {
         let said = sys::output(
@@ -86,9 +91,121 @@ impl Board {
 
 impl Drop for Board {
     fn drop(&mut self) {
+        if let Some(hold) = self.pg.held() {
+            let _ = self.pg.release(&hold.by, None);
+        }
         let _ = self.pg.stop();
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+#[test]
+fn holds_snapshots_and_recovery_keep_the_stopped_cluster_and_the_holder_contract() {
+    let board = Board::new("lifecycle");
+    let serving = board.pg.ensure().unwrap();
+    board.psql(
+        &serving,
+        "CREATE TABLE kept (n int); INSERT INTO kept VALUES (1)",
+    );
+    assert!(
+        board.pg.snapshot(1.0).is_err(),
+        "never copy a running cluster"
+    );
+    let held = board.pg.hold("amber-heron", "snapshot").unwrap();
+    assert_eq!(held.stopped.unwrap().pid, serving.pid);
+    board.none_left();
+    assert!(board.pg.ensure().is_err());
+    assert!(board.pg.stop().is_err());
+    assert!(board.pg.reclaim("postgres").is_err());
+    assert!(board.pg.hold("other", "take over").is_err());
+    assert!(board.pg.release("other", None).is_err());
+    assert_eq!(board.pg.hold("amber-heron", "retry").unwrap().stopped, None);
+
+    let snapshot = board.pg.snapshot(1.0).unwrap();
+    let partial = snapshot.parent().unwrap().join(".taking");
+    std::fs::create_dir(&partial).unwrap();
+    std::fs::write(partial.join("PG_VERSION"), "partial").unwrap();
+    assert_eq!(
+        board.pg.snapshots().unwrap().as_slice(),
+        std::slice::from_ref(&snapshot)
+    );
+    let second = board.pg.snapshot(1.0).unwrap();
+    assert_ne!(snapshot, second, "two in one second keep both");
+    assert!(!partial.exists());
+    assert_eq!(board.pg.snapshots().unwrap().len(), 2);
+    board.pg.release("other", Some("amber-heron")).unwrap();
+    assert_eq!(board.pg.held(), None);
+    let resumed = board.pg.ensure().unwrap();
+    board.psql(&resumed, "INSERT INTO kept VALUES (2)");
+
+    let recovered = Board::new("recovered");
+    recovered.pg.restore(&snapshot).unwrap();
+    assert!(
+        recovered.pg.restore(&snapshot).is_err(),
+        "never replace existing data"
+    );
+    let restored = recovered.pg.ensure().unwrap();
+    assert_eq!(recovered.psql(&restored, "SELECT sum(n) FROM kept"), "1");
+    assert_eq!(board.psql(&resumed, "SELECT sum(n) FROM kept"), "3");
+    assert_eq!(
+        std::fs::read_to_string(snapshot.join("PG_VERSION"))
+            .unwrap()
+            .trim(),
+        serving.version.split('.').next().unwrap()
+    );
+}
+
+#[test]
+fn reclaim_returns_dead_space_without_changing_the_database_rows() {
+    let board = Board::new("vacuum");
+    assert!(board.pg.reclaim("postgres").is_err());
+    let serving = board.pg.ensure().unwrap();
+    board.psql(&serving, "CREATE TABLE bloat AS SELECT g, md5(g::text) AS value FROM generate_series(1, 10000) g; DELETE FROM bloat WHERE g > 10");
+    let size = || {
+        board
+            .psql(&serving, "SELECT pg_relation_size('bloat')")
+            .parse::<u64>()
+            .unwrap()
+    };
+    let before = size();
+    board.pg.reclaim("postgres").unwrap();
+    assert!(size() < before, "VACUUM FULL returned the dead pages");
+    assert_eq!(
+        board.psql(&serving, "SELECT count(*), sum(g) FROM bloat"),
+        "10|55"
+    );
+}
+
+#[test]
+fn snapshots_refuse_unmade_clusters_and_external_tablespaces_and_recovery_checks_the_major() {
+    let board = Board::new("snapshot-refusals");
+    assert!(board.pg.snapshots().unwrap().is_empty());
+    assert!(board.pg.snapshot(1.0).is_err());
+    board.pg.ensure().unwrap();
+    board.pg.stop().unwrap();
+    let external = board.pg.data().join("pg_tblspc").join("outside");
+    std::fs::write(&external, "not part of this cluster").unwrap();
+    assert!(
+        board
+            .pg
+            .snapshot(1.0)
+            .unwrap_err()
+            .to_string()
+            .contains("tablespaces")
+    );
+    std::fs::remove_file(external).unwrap();
+    let snapshot = board.pg.snapshot(1.0).unwrap();
+    std::fs::write(snapshot.join("PG_VERSION"), "17").unwrap();
+    let target = Board::new("wrong-major");
+    assert!(
+        target
+            .pg
+            .restore(&snapshot)
+            .unwrap_err()
+            .to_string()
+            .contains("same major")
+    );
+    assert!(!target.pg.data().exists());
 }
 
 #[test]
@@ -221,4 +338,132 @@ fn helper_starts_and_ends() {
         .ensure()
         .unwrap();
     println!("serving {}", serving.pid);
+}
+
+/// A store on `board`'s database `board`, answering to the board home's own recovery authority.
+fn bound_store(board: &Board, serving: &Serving) -> symphony_board::Store {
+    let client = symphony_board::pg::Client::new(&serving.socket, "board");
+    symphony_board::Store::opening_on(
+        client.into(),
+        Box::new(|| 1_800_000_000.0),
+        Box::new(|_| false),
+        "this-host",
+        &symphony_board::Opening::write(),
+    )
+    .unwrap()
+    .recovering(std::sync::Arc::new(board.home().recovery("board")))
+}
+
+#[test]
+fn a_restored_board_is_bound_to_no_generation_and_takes_no_token_of_its_source_once_rebound() {
+    use symphony_board::recovery::Authority as _;
+    use symphony_board::{Error, NewTask};
+    let refused = |result: Result<symphony_board::recovery::BoundTask, Error>| match result {
+        Err(Error::Refused(why)) => why,
+        other => panic!("not refused: {other:?}"),
+    };
+    let board = Board::new("bound-source");
+    let serving = board.pg.ensure().unwrap();
+    let store = bound_store(&board, &serving);
+    store.rebind().unwrap();
+    let new = |slug: &str| NewTask::new(slug, "Original", "owner");
+    store.create(&new("probe/original")).unwrap();
+    let kept = store.bound("probe/original").unwrap().bound;
+    drop(store);
+    board.pg.hold("amber-heron", "snapshot").unwrap();
+    let snapshot = board.pg.snapshot(1.0).unwrap();
+    board.pg.release("amber-heron", None).unwrap();
+    let resumed = board.pg.ensure().unwrap();
+    let store = bound_store(&board, &resumed);
+    let lost = store.create(&new("probe/lost")).unwrap();
+    let lost_at = store.bound("probe/lost").unwrap().bound;
+    let later = store
+        .amend_bound("probe/original", &kept, "After the snapshot", &[], "owner")
+        .unwrap()
+        .bound;
+
+    // A restore that cannot revoke the target's bindings publishes no data.
+    let blocked = Board::new("bound-blocked");
+    std::fs::create_dir_all(blocked.dir.join("board")).unwrap();
+    std::fs::write(blocked.dir.join("board/recovery"), "not a folder").unwrap();
+    let why = blocked.pg.restore(&snapshot).unwrap_err().to_string();
+    assert!(why.contains("recovery"), "{why}");
+    assert!(!blocked.pg.data().exists(), "nothing was published");
+    std::fs::remove_file(blocked.dir.join("board/recovery")).unwrap();
+    blocked.pg.restore(&snapshot).unwrap();
+    assert!(
+        blocked.pg.data().join("PG_VERSION").is_file(),
+        "retried whole"
+    );
+
+    // A binding the target home held, the very generation the snapshot carries, is revoked
+    // before the data is in place: the restored board is bound to none.
+    let recovered = Board::new("bound-target");
+    std::fs::create_dir_all(recovered.dir.join("board")).unwrap();
+    let authority = recovered.home().recovery("board");
+    authority.publish(&kept.generation).unwrap();
+    recovered
+        .home()
+        .recovery("other")
+        .publish("another")
+        .unwrap();
+    recovered.pg.restore(&snapshot).unwrap();
+    assert_eq!(authority.bound(), Ok(None));
+    assert_eq!(recovered.home().recovery("other").bound(), Ok(None));
+    assert_eq!(
+        board.home().recovery("board").bound(),
+        Ok(Some(kept.generation.clone())),
+        "the source's own binding is not touched"
+    );
+    let restored = recovered.pg.ensure().unwrap();
+    let again = bound_store(&recovered, &restored);
+    assert_eq!(
+        again.recovery_generation().unwrap(),
+        Some(kept.generation.clone()),
+        "the copied cluster holds the generation its source had"
+    );
+    for why in [
+        refused(again.bound("probe/original")),
+        refused(again.amend_bound("probe/original", &kept, "Before the rebind", &[], "owner")),
+    ] {
+        assert!(why.contains("bound to no recovery generation"), "{why}");
+    }
+
+    // Rebound, it holds a generation of its own: the snapshot's token, which names the same task
+    // at the same version here, and the tokens made after it are all refused.
+    let rebound = again.rebind().unwrap();
+    assert_ne!(rebound, kept.generation);
+    assert_eq!(authority.bound(), Ok(Some(rebound.clone())));
+    let replacement = again.create(&new("probe/replacement")).unwrap();
+    assert_eq!(
+        replacement.id, lost.id,
+        "the number given after the snapshot, given again"
+    );
+    let now = again.bound("probe/original").unwrap().bound;
+    assert_eq!((now.id, now.version), (kept.id, kept.version));
+    for (slug, at) in [
+        ("probe/original", &kept),
+        ("probe/original", &later),
+        ("probe/replacement", &lost_at),
+    ] {
+        let why = refused(again.amend_bound(slug, at, "From the source", &[], "owner"));
+        assert!(
+            why.contains("copied or restored since this was read"),
+            "{slug}: {why}"
+        );
+    }
+    assert_eq!(again.get("probe/original").unwrap().title, "Original");
+    again
+        .amend_bound(
+            "probe/original",
+            &now,
+            "On the restored board",
+            &[],
+            "owner",
+        )
+        .unwrap();
+    // The source goes on as it was, its own tokens its own.
+    store
+        .amend_bound("probe/original", &later, "Still the source", &[], "owner")
+        .unwrap();
 }

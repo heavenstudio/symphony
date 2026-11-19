@@ -2,7 +2,7 @@
 
 The `symphony-board` crate (this folder) is the task board: its store over SurrealDB, the database
 server it starts in `symphony/tasks/` in the git common dir, and the binaries `tasks`
-(`just tasks`), `agent-send` (`just agent-send`), `tasks-copy` and `tasks-reclaim`. The workspace,
+(`just tasks`), `agent-send` (`just agent-send`), `tasks-copy`, `tasks-reclaim` and `tasks-move`. The workspace,
 the Cargo wrapper and the toolchain pin are [the root guide's](../../AGENTS.md#rust).
 
 This guide is what to know before changing the crate: where each job lives, the invariants a change
@@ -26,7 +26,7 @@ board's first, Python, command line did). Every build of `tasks`, this crate's a
 project's board-only one, is `cli::process_main` and nothing else: a `main` of its own that calls
 `cli::main` delivers in every write and starts no dispatcher (`tests/server/dispatch.rs`).
 `bin/agent-send.rs` is `cli/agent_send.rs`; `bin/tasks-copy.rs` and `bin/tasks-reclaim.rs` say their
-own. `cli/api.rs` is `tasks api` ([TASKS](../../docs/TASKS.md#the-tasks-api)), `cli/agents.rs` the
+own, and `bin/tasks-move.rs` is `move_cli.rs`: a program apart, so `tasks` links no move. `cli/api.rs` is `tasks api` ([TASKS](../../docs/TASKS.md#the-tasks-api)), `cli/agents.rs` the
 agents API ([TASKS](../../docs/TASKS.md#the-agents-api)), `cli/beat.rs` the heartbeat hook,
 `usage.rs` and `usage/transcript.rs` what its beats read of the session's own transcript, kept
 beside the bound keys and never in the database
@@ -58,7 +58,10 @@ status lines the alarm replays, `stamp.rs` what tells a task and its thread from
 read before, in one small read, `copy.rs` the whole-board copy, `opening.rs` how a store opens by
 the schema rule, `transaction.rs` the schema guard every write starts with, `writers.rs` the line
 each program that opens a board to write keeps, which `tasks migrate` reads before it moves one
-([TASKS](../../docs/TASKS.md#who-writes-a-board)). `lib.rs`'s doc states
+([TASKS](../../docs/TASKS.md#who-writes-a-board)), `recovery.rs` the recovery generation, the
+token and the writes bound to it and the authority a store is handed, with `server/recovery.rs`
+the board home's file of it and `cli/recovery.rs` `tasks recovery`
+([TASKS](../../docs/TASKS.md#a-board-that-was-copied-or-restored)). `lib.rs`'s doc states
 the rule of every write. `store/surreal/` is every statement the store sends, a module beside each
 store module, `store/postgres/` its PostgreSQL twin of each one written so far and the board's
 tables there, `store/statement.rs` the pair a call names, `store/database.rs` the database a board
@@ -114,9 +117,20 @@ leaf `crates/process-cwd/`. `on_review.rs` and `on_land.rs` start `[board] on_re
 `tasks land`, the default landing ([TASKS](../../docs/TASKS.md#the-default-landing)): `needs.rs`
 what it requires, `check_paths.rs` which tests and checks a branch changes, `moving.rs` how it moves
 the main checkout, `regenerate.rs` the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)).
+`delivery.rs` is a land delivered by a hosted pull request and `evidence.rs` the one reading of a
+task's evidence it and `tasks api` go by
+([TASKS](../../docs/TASKS.md#a-land-delivered-by-a-pull-request)).
 `covering.rs` with `store/work/covered.rs` is a close covered by another landing
 ([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
 the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `red.rs` the red mark.
+
+### Execution attempts
+
+`execution.rs` and `execution/` are the attempts a project's execution provider runs
+([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md)): `coordinator.rs` admission, controls and
+the worker's step, `rules.rs` the transitions it decides on what a write read, `evidence.rs`
+collection, cleanup and eligibility, `record.rs` the row and its facts, `keys.rs` the ids and
+operation keys; `store/execution.rs` with its statements is their store.
 
 ### The rules of work
 
@@ -124,7 +138,9 @@ the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), 
 ([TASKS](../../docs/TASKS.md#slots)); `orchestration.rs` with `store/work/given.rs` one orchestrator
 per task, and the limit on the open tasks one holds
 ([TASKS](../../docs/TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)); `limits.rs` the project's `[limits]` and the alarm's thresholds, read again when the file
-changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `alarm.rs` and `alarm/` the pipeline
+changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `local.rs` the one reader of the local settings
+file over them and over a launch's agent and models
+([PROJECT_FILE](../../docs/PROJECT_FILE.md#the-local-settings-file)); `alarm.rs` and `alarm/` the pipeline
 alarm, `cli/pull/pipeline.rs` as PULL says it ([TASKS](../../docs/TASKS.md#the-pipeline-alarm));
 `store/work/moves.rs` a move that names where it goes from; `health.rs` a session's health, derived
 and never stored; `stages.rs` where a task's time went
@@ -137,11 +153,33 @@ and never stored; `stages.rs` where a task's time went
 `server/` holds its parts, each a module doc: `starters.rs` the lock every start, stop, hold,
 release and reclaim takes, `ending.rs` the asks to end, `apart.rs` a start off a reader's thread,
 `left.rs` the private replay's record, `snapshot.rs` the snapshots, `hold.rs`, `reclaim.rs`,
-`storage.rs` the SurrealKV settings, `export.rs` what a refresh reads of a running board, and
+`storage.rs` the SurrealKV settings, `backend.rs` the board home's durable engine identity and
+server selection, `export.rs` what a refresh reads of a running board, and
 `scratch.rs` a fixture's supervised server. `postgres.rs` is the board's PostgreSQL beside it,
-the machine's own from `[board] postgresql` or discovered on `PATH`, which `Home` starts and stops for a scratch board
-alone, on a socket under `/tmp` and no TCP; no board reads from it yet. `port.rs` is a child
+the machine's own from `[board] postgresql` or discovered on `PATH`, which `Home` starts and stops
+for the board whose identity names it, on a socket under `/tmp` and no TCP;
+`postgres/lifecycle.rs` its hold, stopped-cluster snapshot, recovery into a scratch home or over
+its own board, and vacuum ([POSTGRESQL](../../docs/POSTGRESQL.md)). `moving.rs` moves a board's
+store between the engines and holds the journalled switch a restore over a board shares; a
+table added to the board is placed as copied, carried or left in `store/copy.rs`, whose test
+fails on one that is none, since a move would drop it. `port.rs` is a child
 server's loopback port.
+
+`pg.rs` is the socket client of that PostgreSQL. `pg/external.rs` is the hosted board's settings,
+`[board.external_postgresql]`, which every build reads and judges, and `pg/hosted.rs` the hosted
+client, compiled only with the `hosted-postgresql` feature
+([a hosted board](../../docs/POSTGRESQL.md#a-hosted-board)): `hosted/secret.rs` reads the
+references and judges the URL, `hosted/session.rs` is one verified connection and the one place
+a driver's or a server's error becomes a refusal, `hosted/pool.rs` the process's bounded pool.
+A change there keeps four things: no refusal carries a driver's or a server's own words (they
+can hold the URL, a name or a statement), only a kind, a fixed reason, a SQLSTATE and where the
+server's log has the rest; nothing is sent a second time, whatever was lost; a connection goes
+back to the pool only when its request left it clean; and the store reaches a hosted board by
+its private dispatch (`store/database.rs`'s `Board`), the public `Database` and `pg::Client`
+as they are. PostgreSQL 16 has an analyzer of its own (`store/postgres/schema/sixteen.rs`, from
+`unicode16.tsv`, PostgreSQL 18's answers as data): a change to the analyzer's definition is
+proved on both by `tests/hosted/analyzer.rs`. The feature's tests are `just hosted-check`, which
+no `just test-rs` of the default build runs.
 `board_health.rs` is the query log and the hour the Symphony serves
 ([TASKS](../../docs/TASKS.md#board-health)). The owner's side is TASKS's [stuck
 servers](../../docs/TASKS.md#stuck-servers) and [a board that went
@@ -151,6 +189,12 @@ back](../../docs/TASKS.md#a-board-that-went-back).
 
 `store/search.rs` and `cli/search.rs` are `tasks search`: by words alone, ranked by SurrealDB's
 full-text indexes over titles, briefs, slugs and threads, with no inference and no network request.
+On PostgreSQL the same analyzer's terms are counted by triggers into `words`
+(`store/postgres/schema.rs`) and scored by SurrealDB's own BM25 (`store/postgres/search.rs`), so a
+search finds and ranks alike on either, each score to the bit (`tests/store/search.rs`). Latin
+letters use deunicode's exceptions before decomposition, including letters outside Extended-A.
+Words in another script (including Arabic) differ: SurrealDB spells them in Latin letters and
+PostgreSQL keeps them. Letters newer than PostgreSQL's Unicode version are not letters there.
 The board had a search by meaning, deleted
 ([its card](../../docs/DECISIONS.md#board-search-by-meaning)): the tables it wrote (`task_chunk`,
 `task_embedding_source`, `task_embedding_checkpoint`) keep their definitions in `schema.rs`, since
@@ -250,6 +294,18 @@ what a reader derived (`Store::record_fixed`) moves no task version, so it never
 move as stale. A plain `Store::create` gives no orchestrator: a new way to file goes through
 `Store::give_filed`, as the command line's and the API's `create` do.
 
+### A copy replaces the recovery generation
+
+Whatever replaces a board's rows whole replaces `recovery:board` in the same transaction, and
+whatever puts a database's files in place revokes the home's bindings first
+(`Home::revoke_recoveries`): a copy that kept the generation would hand the numbers and versions
+it gives again to tokens read before it. A write bound to a token starts with the fence
+(`surreal/recovery.rs`'s `FENCED` and its twin, their variables from `Store::bound_vars`), before
+anything it writes, writes the task's own row, and refuses a mismatch rather than read again. A
+store finds no authority by itself: it is handed one (`Store::recovering`), and a rebind never
+adopts the generation it found (`store/recovery.rs`; `tests/store/recovery.rs`, and the restore
+in `tests/server/postgres.rs`).
+
 ### The store's statements live in one place
 
 The store's modules hold the rules: what is read, what is decided, the variables a statement is
@@ -346,7 +402,13 @@ of message, delivery, role, session or callback_state (`schema.rs`'s doc lists t
 reads in proportion to what it is asked (`store/unanswered.rs`). The `perf` target plans every such
 statement and every event's; a new statement or a changed condition on those paths runs it (below).
 A transaction over many rows avoids what costs more than linearly on the engine: an index a copy
-inserts into, an event that UPSERTs (`schema.rs`).
+inserts into, an event that UPSERTs (`schema.rs`). On PostgreSQL the whole-board read and the
+reads that are one plain list of rows (`listed`, `list_of`) answer an item a row (`Pg::Listed`,
+`store/postgres/mod.rs`), not one `jsonb_agg` value, which the backend builds whole, in several
+times its size, and keeps until its command ends. A thread, several threads, the task tree, an
+inbox's lines since its last look, the open asks and the list of every session
+(`sessions::sessions`) are still one value; a new read of a list that grows with the board is
+written as `Pg::Listed` ([the measurement](../../docs/analysis/board-store-baseline.md#postgresqls-memory-peak-measured-2026-11-18)).
 
 ### Time in tests
 
@@ -383,6 +445,9 @@ run the machine's PostgreSQL 18 or later, from this repository's `symphony.toml`
 postgresql`) or the first executable `postgres` on `PATH`, with `initdb`, `pg_ctl` and `psql` in
 that same folder ([setup](../../docs/PROJECT_FILE.md#board)). An invalid override or incompatible
 installation fails; each server runs on a scratch board of its own, started and stopped by the test.
+The hosted board's tests (`tests/hosted/`, `just hosted-check`) start PostgreSQL 16 and 18 servers
+of their own with TLS on a loopback port (`tests/hosted/cluster.rs`): 18 found the same way, 16 in
+Homebrew's keg or the folder `SYMPHONY_POSTGRESQL_16` names, and `openssl` for their certificates.
 
 ### The command line's tests
 
@@ -397,7 +462,9 @@ steer the rest with:
 - `TASKS_REAP_STATE`, where the idle sweep keeps what it saw;
 - `HC_BIN` and `HERDR_APP_BIN`, a fake hc and window: the crate's `fake-hc`, its terminals, the
   window's layout and what it shows in the JSON file `FAKE_HC_STATE` names, each call a line of
-  `FAKE_HC_LOG`, the calls `FAKE_HC_FAIL` names refused;
+  `FAKE_HC_LOG`, the calls `FAKE_HC_FAIL` names refused; a test that names none is given
+  `/usr/bin/false` by the test runs (`just test-rs`, `tools/test-lanes.sh`), so no case reads this
+  machine's terminals, where one named as a fixture's session would be taken for its pane;
 - `TASKS_PS_TABLE`, a file of `ps -axo pid=,ppid=,command=` lines read in place of `ps`, so no case
   reads this machine's process table; read only with a `TASKS_DATABASE` other than the live one;
 - `TASKS_SWEEP=on`, `TASKS_ON_REVIEW=on`, `TASKS_ON_LAND=on` and `TASKS_REGENERATE=on`, without

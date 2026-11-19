@@ -26,7 +26,7 @@ pub(in crate::store) fn record(acting: bool) -> Pg<'static> {
     let act = if acting { act() } else { String::new() };
     let kept = |id: &str, record: &str, at: &str, sid: &str| {
         format!(
-            "UPDATE task SET fields = board_set(fields, ARRAY['{FIELDS}', 'assessments', {id}, {record}], \
+            "UPDATE task SET fields = board_fields(id, fields, ARRAY['{FIELDS}', 'assessments', {id}, {record}], \
             jsonb_build_object('at', {at}, 'sid', {sid})) WHERE slug = v ->> 'slug';"
         )
     };
@@ -56,10 +56,10 @@ BEGIN \
         IF board_ -> '{ASSESSED}' -> 'id' IS NOT NULL AND board_ -> '{WAITS}' IS NOT NULL THEN \
             {} \
         END IF; \
-        UPDATE task SET fields = board_set(fields, '{{{FIELDS},{WAITS}}}', v -> 'record'), \
+        UPDATE task SET fields = board_fields(id, fields, '{{{FIELDS},{WAITS}}}', v -> 'record'), \
             version = version + 1 WHERE slug = v ->> 'slug'; \
         {} \
-        UPDATE task SET fields = board_set(fields, '{{{FIELDS},{ASSESSED}}}', \
+        UPDATE task SET fields = board_fields(id, fields, '{{{FIELDS},{ASSESSED}}}', \
             jsonb_build_object('id', v -> 'assessment', 'at', {WRITTEN_AT}, 'sid', sid_)) \
             WHERE slug = v ->> 'slug'; \
         {} \
@@ -82,7 +82,7 @@ pub(in crate::store) fn fixed() -> Pg<'static> {
     let kept = format!("ARRAY['{FIELDS}', '{FIXED}', v ->> 'judged', v ->> 'written']");
     Pg::script_then(
         format!(
-            "UPDATE task SET fields = board_set(fields, {kept}, v -> 'patch' #> {kept}) \
+            "UPDATE task SET fields = board_fields(id, fields, {kept}, v -> 'patch' #> {kept}) \
     WHERE slug = v ->> 'slug' AND fields #> {kept} IS NULL;"
         ),
         format!("(SELECT fields #> {kept} FROM task WHERE slug = v ->> 'slug')"),
