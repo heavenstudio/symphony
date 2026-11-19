@@ -111,7 +111,7 @@ app in tests.
 
 `sweep.rs` and `sweep/` are the worktree sweep: what a finished worktree sets aside (`aside.rs`),
 the build output it clears (`build_output.rs`), what the main checkout keeps (`kept.rs`), a lock's
-holder (`holder.rs`), the detached sweeps work finishing starts (`trigger.rs`). The lsof scan is the
+holder (`holder.rs`), the proof of a head a pull request squashed (`delivered.rs`), the detached sweeps work finishing starts (`trigger.rs`). The lsof scan is the
 leaf `crates/process-cwd/`. `on_review.rs` and `on_land.rs` start `[board] on_review` and
 `[board] on_land`; `cli/commands/finish.rs` is what follows a move. `land.rs` and `land/` are
 `tasks land`, the default landing ([TASKS](../../docs/TASKS.md#the-default-landing)): `needs.rs`
