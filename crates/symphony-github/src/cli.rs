@@ -321,6 +321,9 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
     let Some(mapping) = state.mappings.get_mut(slug) else {
         return Err(format!("{slug} is mapped to no issue"));
     };
+    // A preview read before the side was kept is never applied after it, so it goes before
+    // anything is written: a stop between the two leaves no preview, never an old one.
+    store.drop_preview()?;
     if matches!(mapping.flag, Some(Flag::Suspended(_))) {
         // Taken up again for the task the slug names now, under the board's generation now,
         // with digests neither side has: the side kept decides what the next preview writes.
@@ -333,7 +336,6 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
     }
     state.resolutions.insert(slug.clone(), side);
     store.save(&state)?;
-    store.drop_preview()?;
     let _ = writeln!(
         out,
         "{slug}: the {} side is kept. Nothing was written yet: preview, then reconcile.",
@@ -348,9 +350,9 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
 
 /// `drop SLUG`: the task's mapping is dropped and its issue kept as not the task's, so no
 /// preview maps the two again or takes that issue for the task's publication; a curated text
-/// stays, and the next preview publishes it anew. It writes only the adapter's own folder, as an
-/// act of its own in the journal: its intent holding the mapping it drops, then its
-/// acknowledgment.
+/// stays, and the next preview publishes it anew. It writes only the adapter's own folder: the
+/// preview waiting is dropped first, then the drop is an act of its own in the journal, its
+/// intent holding the mapping it drops, then its acknowledgment.
 fn drop_mapping(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
     let [slug] = args else {
         return Err("drop takes one SLUG".into());
@@ -377,13 +379,16 @@ fn drop_mapping(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outc
         by: String::new(),
         result,
     };
+    // A preview read before the drop would adopt the mapping again, or push the curated text
+    // into the issue dropped, so it goes before anything is written: a stop between the writes
+    // leaves no preview, never an old one.
+    store.drop_preview()?;
     store.journal(&entry(Event::Intent, Value::Null))?;
     state.mappings.remove(slug);
     state.resolutions.remove(slug);
     (state.dropped.entry(slug.clone()).or_default()).insert(mapping.issue_id);
     store.save(&state)?;
     store.journal(&entry(Event::Ack, json!({"dropped": mapping.issue_id})))?;
-    store.drop_preview()?;
     let _ = writeln!(
         out,
         "{slug} is no longer mapped to issue #{} ({}), which is kept as not this task's. Nothing \
