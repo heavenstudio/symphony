@@ -207,7 +207,8 @@ fn closed_cards_alike_but_for_their_last_word_keep_that_word_in_view() {
 }
 
 /// A reason as a blocked task may hold it: the board trims only its ends.
-const WRITTEN: &str = "Saved owner answer recovery waits\nfor the register   regroup of candidate alpha";
+const WRITTEN: &str =
+    "Saved owner answer recovery waits\nfor the register   regroup of candidate alpha";
 
 #[test]
 fn a_reason_on_several_lines_is_folded_onto_the_closed_cards_line_and_opened_as_written() {
