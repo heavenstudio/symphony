@@ -39,6 +39,7 @@ fn board(tasks: Vec<symphony_board::Task>) -> symphony_board::Board {
         tasks,
         sessions: Vec::new(),
         latest_message: 0,
+        workflow_generation: None,
     }
 }
 

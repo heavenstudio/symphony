@@ -83,9 +83,7 @@ describe("the next actions a read offers", () => {
     expect(readOffer({ ...sample, takes: [{ task: 1, output: null }] })).toBeNull();
     expect(readOffer({ ...sample, takes: [{ task: "w/a", output: 3 }] })).toBeNull();
     expect(readOffer({ ...sample, takes: "w/a" })).toBeNull();
-    expect(takenWords({ task: "w/a", output: "w/a@3" })).toBe(
-      "Takes w/a's accepted output w/a@3",
-    );
+    expect(takenWords({ task: "w/a", output: "w/a@3" })).toBe("Takes w/a's accepted output w/a@3");
     expect(takenWords({ task: "w/c", output: null })).toBe(
       "Takes w/c's accepted output: none stands",
     );
@@ -161,9 +159,9 @@ describe("an unavailable action", () => {
       const land = { ...explicit, operation };
       expect(takerWords(land, "w/b")).toBe("the land takes it: just land w/b");
       expect(unavailableWords(land, "w/b")).toBe("the land takes it: just land w/b");
-      expect(unavailableWords({ ...land, unavailable: ["capacity", ...land.unavailable] }, "w/b")).toBe(
-        "the land takes it: just land w/b; no slot is free: needs the reviewer",
-      );
+      expect(
+        unavailableWords({ ...land, unavailable: ["capacity", ...land.unavailable] }, "w/b"),
+      ).toBe("the land takes it: just land w/b; no slot is free: needs the reviewer");
       // Unavailable for another reason alone, it says that reason, as any edge's.
       expect(unavailableWords({ ...land, unavailable: ["capacity"] }, "w/b")).toBe(
         "no slot is free: needs the reviewer",
@@ -173,9 +171,7 @@ describe("an unavailable action", () => {
       expect(unavailableWords({ ...explicit, operation }, "w/b")).toBe("its adapter takes it");
     }
     expect(takerWords(PASS, "w/b")).toBeNull();
-    expect(unavailableWords(explicit, "w/b")).toBe(
-      "needs an explicit action: needs the reviewer",
-    );
+    expect(unavailableWords(explicit, "w/b")).toBe("needs an explicit action: needs the reviewer");
   });
 });
 
@@ -357,15 +353,7 @@ describe("taking an action", () => {
     expect(asked[1]?.body).toEqual(asked[0]?.body);
     asked[1]?.answer(reply(200, { ok: true, result: CASES.samples.applied }));
     expect((await again).done).toBe(true);
-    const other = take(
-      "",
-      "w/b",
-      BOARD,
-      OFFER,
-      REWORK,
-      { rework: { reason: "x" } },
-      first.sent,
-    );
+    const other = take("", "w/b", BOARD, OFFER, REWORK, { rework: { reason: "x" } }, first.sent);
     await asking(asked, 3);
     expect(keyOf(asked, 2)).not.toBe(key);
     asked[2]?.answer(reply(200, { ok: true, result: {} }));

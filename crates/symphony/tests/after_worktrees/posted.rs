@@ -449,6 +449,7 @@ pub(super) fn finished_branches_follow_the_board() {
         ],
         sessions: vec![session("silver", "worktree-one")],
         latest_message: 0,
+        workflow_generation: None,
     };
     // Every done task's own branch is finished too, `b/one` among them; `tools/live`,
     // `tools/reused` and `worktree-two` are not.

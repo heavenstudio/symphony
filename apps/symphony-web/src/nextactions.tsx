@@ -207,7 +207,9 @@ export function unavailableWords(action: Action, slug: string): string {
     .map((code) => WHY[code] ?? "not supported here");
   const why = theirs && taker !== null ? [taker, ...others] : others;
   const needs =
-    action.responsible.length > 0 && others.length > 0 ? `: needs ${whose(action.responsible)}` : "";
+    action.responsible.length > 0 && others.length > 0
+      ? `: needs ${whose(action.responsible)}`
+      : "";
   return `${[...new Set(why)].join("; ")}${needs}`;
 }
 

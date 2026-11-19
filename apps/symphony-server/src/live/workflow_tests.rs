@@ -301,7 +301,11 @@ fn a_relabel_that_moves_no_task_reaches_the_page() {
         ))
     );
     hears(&project, &[1, 2]);
-    assert_eq!(place(&project, "flow/one"), placed, "the relabel moved no task");
+    assert_eq!(
+        place(&project, "flow/one"),
+        placed,
+        "the relabel moved no task"
+    );
     assert_eq!(project.hub.workflow_generation(), Some(2));
 }
 

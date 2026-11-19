@@ -385,12 +385,14 @@ fn a_workflow_chunk_that_does_not_load_is_said_and_retried_into_its_phases() {
         site.requests()
     );
     assert_eq!(
-        page.eval(&format!(
-            "document.querySelector('{notice}') === null"
-        )),
+        page.eval(&format!("document.querySelector('{notice}') === null")),
         json!(true)
     );
-    let asked = site.requests().iter().filter(|r| r.contains(&chunk)).count();
+    let asked = site
+        .requests()
+        .iter()
+        .filter(|r| r.contains(&chunk))
+        .count();
     assert_eq!(asked, 2, "{:?}", site.requests());
 }
 
