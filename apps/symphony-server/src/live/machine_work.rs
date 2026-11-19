@@ -339,7 +339,10 @@ impl Hub {
         self.note_asks(store);
         self.health.reading(store.database().queries());
         let now = self.now();
-        let snapshot = if ahead {
+        // After a sleep, nothing judges the sessions until the idle sweep has looked at their
+        // listeners again ([`super::presence`]): not the dispatch, not the give.
+        let judging = !ahead && self.judges();
+        let snapshot = if !judging {
             None
         } else {
             match self
@@ -370,7 +373,7 @@ impl Hub {
         // Each tick gives the open tasks no orchestrator holds on the board it read, when one that
         // stays could take them ([`symphony_board::Store::give_if_due`]): every project the server
         // serves, whatever starts its sweeps. The give's own write delivers its GIVEN line.
-        let snapshot = match !ahead && self.give(store, &snapshot) {
+        let snapshot = match judging && self.give(store, &snapshot) {
             true => read()?,
             false => snapshot,
         };
@@ -408,6 +411,50 @@ impl Hub {
         }
         agents.machine_work.guidance = guidance;
         self.update_board(store, snapshot, agents)
+    }
+
+    /// A round of the idle sweep began, on the hub's clocks ([`super::presence`]).
+    pub(crate) fn sweep_began(&self) {
+        let (wall, mono) = ((self.clock)(), (self.retry_clock)());
+        (self.presence.lock())
+            .unwrap_or_else(|e| e.into_inner())
+            .began(wall, mono);
+    }
+
+    /// The round of the idle sweep under way ended, answered or failed.
+    pub(crate) fn sweep_ended(&self) {
+        (self.presence.lock())
+            .unwrap_or_else(|e| e.into_inner())
+            .ended();
+    }
+
+    /// Whether this tick judges the sessions ([`super::presence::Presence::judges`]); the log says
+    /// when a wait for the sweep begins, and when one ends with no round.
+    pub(crate) fn judges(&self) -> bool {
+        let (wall, mono) = ((self.clock)(), (self.retry_clock)());
+        let judging = (self.presence.lock())
+            .unwrap_or_else(|e| e.into_inner())
+            .judges(wall, mono);
+        match judging {
+            super::presence::Judging::Now => true,
+            super::presence::Judging::Waits { began } => {
+                if began {
+                    eprintln!(
+                        "· callbacks wait for the idle sweep: the machine slept since its last round began"
+                    );
+                }
+                false
+            }
+            super::presence::Judging::Anyway { first } => {
+                if first {
+                    eprintln!(
+                        "· callbacks judged without the idle sweep: no round ended within {} s awake of the wake",
+                        super::presence::AT_MOST.as_secs()
+                    );
+                }
+                true
+            }
+        }
     }
 
     /// The assignment pass has its own retry: a callback failure never delays a healthy give,

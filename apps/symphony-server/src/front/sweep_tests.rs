@@ -590,3 +590,27 @@ fn the_time_left_to_a_round_is_the_sooner_of_its_two_clocks() {
     assert_eq!(sweep_left(last, at(300, 300), interval), Duration::ZERO);
     assert_eq!(sweep_left(last, at(1, 1920), interval), Duration::ZERO);
 }
+
+#[test]
+fn each_round_is_told_to_the_hub_whose_tick_waits_after_a_sleep_for_the_next() {
+    let mut fixture = SweepFixture::without_hub("exit 0");
+    let (hub, clock) = clocked_hub(&fixture);
+    let at = clock.now();
+    // Before any round, the tick judges, however far the wall clock went.
+    clock.set(at + 3600.0);
+    assert!(hub.judges());
+    clock.set(at);
+    let sweep = TestClock::new();
+    maintain_on(&mut fixture, &sweep);
+    waited("no first round was recorded", || {
+        Some(hub.health.report(at)).filter(|report| report.sweep.ok > 0)
+    });
+    assert!(hub.judges());
+    // An hour on the hub's wall clock and next to none awake: the machine slept.
+    clock.set(at + 3600.0);
+    assert!(!hub.judges());
+    next_round(&sweep, 1);
+    waited("the tick still waits after the round past the wake", || {
+        hub.judges().then_some(())
+    });
+}

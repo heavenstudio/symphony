@@ -945,3 +945,146 @@ fn the_lock_names_each_workspace_package_with_its_version_and_no_source() {
     assert!(own.contains_key("symphony-app") && own.contains_key("symphony-board"));
     assert!(!own.contains_key("serde"));
 }
+
+/// The branch `slug` started at `from` with one commit of `message` writing a file of its own,
+/// then squashed onto main as a pull request delivers it, its receipt kept: the receipt.
+fn deliver(
+    repo: &Scratch,
+    slug: &str,
+    from: &str,
+    message: &str,
+) -> symphony_board::land::delivery::Receipt {
+    use crate::release::receipts::tests::{keep, squash};
+    repo.git(&["checkout", "-q", "-b", slug, from]);
+    repo.write(&format!("{}.txt", slug.replace('/', "-")), slug);
+    let head = repo.commit(message);
+    repo.git(&["checkout", "-q", "main"]);
+    let receipt = squash(&repo.root, slug, &head);
+    keep(&repo.root, &receipt);
+    receipt
+}
+
+#[test]
+fn what_a_delivered_landing_said_is_read_from_the_head_its_receipt_kept() {
+    let tree = Tree::new();
+    let repo = Scratch::new(&tree);
+    repo.release("release-2026-11-17");
+    let receipt = deliver(
+        &repo,
+        "tools/reader",
+        "main",
+        "Open a board to read\n\nConsumer-Note: board: schema 21 adds the writers' table",
+    );
+    // The squash itself says nothing: what the host wrote is its title alone.
+    let tip = repo.git(&["rev-parse", "HEAD"]);
+    assert_eq!(tip, receipt.squash);
+    assert_eq!(entries(&repo.root, "release-2026-11-17..HEAD").unwrap(), []);
+    let said = |repo: &Scratch| {
+        let history = history(
+            &repo.root,
+            &through(&repo.root, "release-2026-11-18", &tip).unwrap(),
+        )
+        .unwrap();
+        history[1].entries.clone()
+    };
+    assert_eq!(
+        said(&repo),
+        [entry("board: schema 21 adds the writers' table")]
+    );
+    let taking = taking(&repo.root, "release-2026-11-18", &tip).unwrap();
+    assert!(
+        (taking.iter()).any(|line| line.contains("schema 21 adds the writers' table")),
+        "{taking:?}"
+    );
+    // By the receipt alone, borne out: one git does not bear out, or none, reads nothing.
+    let path = symphony_board::land::delivery::Receipt::path(
+        &crate::release::receipts::lands(&repo.root).unwrap(),
+        "tools/reader",
+    );
+    let wrong = symphony_board::land::delivery::Receipt {
+        tree: receipt.parent.clone(),
+        ..receipt.clone()
+    };
+    std::fs::write(&path, serde_json::to_string(&wrong).unwrap()).unwrap();
+    assert_eq!(said(&repo), []);
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(said(&repo), []);
+}
+
+#[test]
+fn a_release_on_a_delivered_head_stays_in_the_notes_and_is_the_one_before_the_next() {
+    let tree = Tree::new();
+    let repo = Scratch::new(&tree);
+    let first = repo.git(&["rev-parse", "HEAD"]);
+    repo.release("release-2026-11-17");
+    // Main moves on; a release candidate held at the first commit is fixed on a branch of its
+    // own, delivered by a squash, and released on that branch's head.
+    repo.land("tools/other", |repo| {
+        repo.commit("Other work\n\nConsumer-Note: settings: `other` is read");
+    });
+    let fix = deliver(
+        &repo,
+        "tests/fix",
+        &first,
+        "Fix it\n\nConsumer-Note: board: the fix moves a row",
+    );
+    repo.git(&[
+        "tag",
+        "-a",
+        "release-2026-11-18",
+        "-m",
+        "release-2026-11-18",
+        &fix.head,
+    ]);
+    repo.land("tools/later", |repo| {
+        repo.commit("Later work\n\nConsumer-Note: settings: `later` is read");
+    });
+    let tip = repo.git(&["rev-parse", "HEAD"]);
+    let names = |releases: Vec<(String, String)>| -> Vec<String> {
+        releases.into_iter().map(|(name, _)| name).collect()
+    };
+    assert_eq!(
+        names(releases(&repo.root, &tip).unwrap()),
+        ["release-2026-11-17", "release-2026-11-18"],
+        "held by the squash that delivered its head"
+    );
+    assert_eq!(
+        names(releases(&repo.root, &fix.parent).unwrap()),
+        ["release-2026-11-17"],
+        "not before its squash"
+    );
+    let history = history(
+        &repo.root,
+        &through(&repo.root, "release-2026-11-19", &tip).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(history.len(), 3);
+    assert_eq!(history[1].commit, fix.head);
+    assert_eq!(history[1].entries, [entry("board: the fix moves a row")]);
+    assert_eq!(
+        history[2].previous.as_deref(),
+        Some("release-2026-11-18"),
+        "the next tag composes from it"
+    );
+    // What main held that the candidate's release did not, and what landed since; the fix said
+    // its own in the release on its head, and its squash does not say it again.
+    assert_eq!(
+        history[2].entries,
+        [
+            entry("settings: `other` is read"),
+            entry("settings: `later` is read")
+        ]
+    );
+    let document = document(&history);
+    assert!(document.contains("release-2026-11-18"), "{document}");
+    // With its receipt gone it is a tag main does not hold, as before receipts.
+    std::fs::remove_file(symphony_board::land::delivery::Receipt::path(
+        &crate::release::receipts::lands(&repo.root).unwrap(),
+        "tests/fix",
+    ))
+    .unwrap();
+    assert_eq!(
+        names(releases(&repo.root, &tip).unwrap()),
+        ["release-2026-11-17"]
+    );
+}

@@ -69,6 +69,7 @@ mod health;
 mod held_stream;
 mod keyed;
 mod launches;
+mod lost_observers;
 mod low_volume;
 mod marker;
 mod marker_retirement;

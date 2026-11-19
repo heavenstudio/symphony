@@ -162,8 +162,8 @@ fn opened_machine_activity_keeps_complete_counts_paging_and_disconnect_fallback(
         "/api/task-board?view=waiting&q=&status=build&days=1&cursor=more-builds&activity=1&work=0",
         &more,
     );
-    chrome.eval("const more = document.querySelector('[data-status=build] button'); more.scrollIntoView({block:'nearest'}); more.click()");
-    assert!(chrome.wait_for("document.querySelector('[data-status=build] [id=\"row-feature/build-32\"]') !== null && document.querySelector('[data-status=build] button') === null", SHOWN));
+    chrome.eval("const more = document.querySelector('[data-status=build] button:not(.card-more)'); more.scrollIntoView({block:'nearest'}); more.click()");
+    assert!(chrome.wait_for("document.querySelector('[data-status=build] [id=\"row-feature/build-32\"]') !== null && document.querySelector('[data-status=build] button:not(.card-more)') === null", SHOWN));
     assert_eq!(
         chrome.eval(
             "document.querySelector('[data-status=build] [id=\"row-feature/build-00\"]') !== null"

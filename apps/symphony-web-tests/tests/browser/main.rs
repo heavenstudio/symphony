@@ -22,6 +22,7 @@
 mod agents;
 mod assets;
 mod binaries;
+mod board_identity;
 mod board_place;
 mod board_search;
 mod board_status;
@@ -57,6 +58,7 @@ mod panel_open;
 mod persistent;
 mod phone;
 mod phone_board;
+mod phone_labels;
 mod polish;
 mod preload;
 mod projects;
