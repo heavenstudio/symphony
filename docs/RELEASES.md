@@ -1096,7 +1096,10 @@ updates up to it (`updates.json` in the machine folder,
 Nothing here moves a board, points `current` or touches a server or a database: it reads, and
 writes the ledger and the tasks. `--status` says the open updates, each with its failures and
 task, and the newest served, each with its total, the part after a release serving it, and where
-each time comes from ([status](#status)).
+each time comes from ([status](#status)). The owner reads the same in the Runs page's Schema
+updates section, which every server draws from the ledger ([RUNS](RUNS.md#the-runs-page)), and
+while a board is a schema ahead of the server, the read-only notice on every page names its open
+update's task, which the page links.
 
 ### The install
 

@@ -28,7 +28,7 @@
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use symphony::machine::release::{self, Manifest};
 use symphony::machine::updates::{self, Failure, Ledger, Stamp, Task, Update};
@@ -56,7 +56,7 @@ pub(crate) struct Look<'a> {
     pub(crate) ends: &'a [Ended],
     /// The machine's server as it answers now, and what its project list says it writes: by id,
     /// whether it writes the board, none where it cannot say yet; a project an older server says
-    /// nothing of is not listed ([`symphony::machine::command::writes`], [`settled`]).
+    /// nothing of is not listed ([`symphony::machine::command::writes`], [`unsure`]).
     pub(crate) front: Option<Front>,
     pub(crate) writes: Option<Vec<(String, Option<bool>)>>,
     /// What the refresh said of the server's following `current`, when it waited for it.
@@ -194,35 +194,27 @@ fn goal(look: &Look<'_>, seen: &Seen<'_>) -> i64 {
     }
 }
 
-/// How long a refresh waits for the machine's server to say whether it writes each board there is:
-/// a server that has just taken over reads its boards in its first seconds.
+/// How long a refresh waits, once the machine's server answers as the release, for it to say
+/// whether it writes each board there is: a server that has just taken over reads its boards in its
+/// first seconds.
 pub(crate) const SETTLE: Duration = Duration::from_secs(30);
 
-/// What the machine's server says it writes, asked with `read` again a second apart, for at most
-/// `bound`, while it cannot say yet for a registered project whose board is there: its last answer.
-pub(crate) fn settled(
-    registry: &Registry,
-    read: impl Fn() -> Option<Vec<(String, Option<bool>)>>,
-    bound: Duration,
-    step: Duration,
-) -> Option<Vec<(String, Option<bool>)>> {
-    let boards: Vec<&str> = (registry.projects.iter())
+/// The registered projects whose board is there: those whose server's word on writes a refresh
+/// waits for.
+pub(crate) fn with_boards(registry: &Registry) -> Vec<String> {
+    (registry.projects.iter())
         .filter(|entry| {
             symphony_board::git::checkout_common_dir(&entry.root)
                 .is_some_and(|common| common.join(symphony_board::server::FOLDER).is_dir())
         })
-        .map(|entry| entry.id.as_str())
-        .collect();
-    let started = Instant::now();
-    loop {
-        let said = read();
-        let unsure = (said.iter().flatten())
-            .any(|(id, writes)| writes.is_none() && boards.contains(&id.as_str()));
-        if !unsure || started.elapsed() + step > bound {
-            return said;
-        }
-        std::thread::sleep(step);
-    }
+        .map(|entry| entry.id.clone())
+        .collect()
+}
+
+/// Whether the machine's server's project list (`said`) cannot say yet whether it writes one of
+/// `boards`; never where no server answers, nor for a project it says nothing of writes for.
+pub(crate) fn unsure(boards: &[String], said: Option<&[(String, Option<bool>)]>) -> bool {
+    (said.into_iter().flatten()).any(|(id, writes)| writes.is_none() && boards.contains(id))
 }
 
 /// What the machine's server's project list says of `seen`'s board: whether it writes it, none
@@ -488,7 +480,7 @@ fn one(look: &Look<'_>, boards: &dyn Boards, ledger: &mut Ledger, seen: &Seen<'_
     let failed = matches!(seen.end, Some(End::Red { .. } | End::Theirs(_)));
     let waiting = matches!(seen.end, Some(End::Waiting(_)));
     // A server whose list cannot say yet whether it writes the board, once the refresh waited for
-    // it ([`settled`]), is neither its completion nor its failure: the next refresh judges it.
+    // it ([`unsure`]), is neither its completion nor its failure: the next refresh judges it.
     let unsure = seen.live == Some(goal) && listed(look, seen) == Some(None);
     if !failed && (available.is_none() || look.front.is_none() || waiting || unsure) {
         lines.push(format!(

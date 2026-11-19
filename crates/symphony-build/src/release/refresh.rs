@@ -222,7 +222,8 @@ pub(crate) fn release(
     refresh.steps.extend(steps);
     let mut server_line = None;
     if pointed {
-        let line = server(machine, before, logged, against);
+        let boards = super::updates::with_boards(&registry);
+        let line = server(machine, before, logged, against, &boards);
         server_line = Some(line.clone());
         say(&mut refresh, out, line);
     }
@@ -235,12 +236,7 @@ pub(crate) fn release(
         held: held.as_deref(),
         ends: &judgement.ends,
         front: symphony::machine::command::running(machine, None),
-        writes: super::updates::settled(
-            &registry,
-            || symphony::machine::command::writes(machine),
-            super::updates::SETTLE,
-            Duration::from_secs(1),
-        ),
+        writes: symphony::machine::command::writes(machine),
         server: server_line.as_deref(),
         now: seen_now(),
     };
@@ -934,9 +930,16 @@ fn prune(folder: &Path, kept: usize) {
 
 /// What the machine's server does with the release `current` now names, said: the server this
 /// machine's folder `machine` records, as it answered before `current` moved (`before`), waited for
-/// while it is another release's, bounded ([`follows`]); one that did not follow is said with what
-/// its reload wrote in its log since that log was `logged` bytes long ([`reload_said`]).
-fn server(machine: &Path, before: Option<Front>, logged: u64, against: &Against<'_>) -> String {
+/// while it is another release's, and then until it can say whether it writes each of `boards`,
+/// bounded ([`follows`]); one that did not follow is said with what its reload wrote in its log
+/// since that log was `logged` bytes long ([`reload_said`]).
+fn server(
+    machine: &Path,
+    before: Option<Front>,
+    logged: u64,
+    against: &Against<'_>,
+    boards: &[String],
+) -> String {
     let tag = against.tag;
     let Some(front) = before else {
         return format!(
@@ -951,7 +954,7 @@ fn server(machine: &Path, before: Option<Front>, logged: u64, against: &Against<
     );
     match front.release.as_deref() {
         Some(running) if running == tag => format!("{named} is {tag} already"),
-        Some(running) => match follows(machine, against) {
+        Some(running) => match follows(machine, against, boards) {
             Ok(new) => format!(
                 "{named}, the release {running}, followed current by its own reload \
                  (apps/symphony-server/src/reload.rs): process {} on port {} answers as {tag}",
@@ -1030,21 +1033,32 @@ fn reload_said(machine: &Path, from: u64) -> String {
 
 /// The server this machine's folder `machine` records once it answers as `against`'s release: its
 /// reload's hand-off. Waited for within [`RELOAD`] (the tests' [`RELOAD_SECONDS`]) and the
-/// refresh's time; else how long it was waited for.
-fn follows(machine: &Path, against: &Against<'_>) -> Result<Front, Duration> {
+/// refresh's time; else how long it was waited for. Once it answers, it is waited for a little
+/// longer ([`super::updates::SETTLE`], within the same bounds) until its project list can say
+/// whether it writes each of `boards`, which it reads in its first seconds: a release's refresh
+/// judges each board's update by that word ([`super::updates::unsure`]).
+fn follows(machine: &Path, against: &Against<'_>, boards: &[String]) -> Result<Front, Duration> {
     let wait = (std::env::var(RELOAD_SECONDS).ok())
         .and_then(|seconds| seconds.parse::<u64>().ok())
         .map_or(RELOAD, Duration::from_secs);
     let began = Instant::now();
-    let until = (began + wait).min(against.until.until);
+    let mut until = (began + wait).min(against.until.until);
+    let mut followed: Option<Front> = None;
     loop {
         if let Some(now) = symphony::machine::command::running(machine, None)
             && now.release.as_deref() == Some(against.tag)
         {
-            return Ok(now);
+            let said = symphony::machine::command::writes(machine);
+            if !super::updates::unsure(boards, said.as_deref()) {
+                return Ok(now);
+            }
+            if followed.is_none() {
+                until = (Instant::now() + super::updates::SETTLE).min(against.until.until);
+            }
+            followed = Some(now);
         }
         if Instant::now() >= until || against.until.interrupted() {
-            return Err(until.saturating_duration_since(began));
+            return followed.ok_or_else(|| until.saturating_duration_since(began));
         }
         #[expect(
             clippy::disallowed_methods,

@@ -249,15 +249,19 @@ pub fn path(machine: &Path) -> PathBuf {
     machine.join(FILE)
 }
 
-/// `seconds` as the owner reads a wait: `4 h 46 min`, `3 min 10 s`, `40 s`.
+/// `seconds` as the owner reads a wait: `4 h 46 min`, `3 min 10 s`, `40 s`; to the second under an
+/// hour, and to the nearest minute from an hour on.
 pub fn said(seconds: f64) -> String {
     let seconds = seconds.max(0.0).round() as u64;
-    let (hours, minutes, rest) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
-    match (hours, minutes) {
-        (0, 0) => format!("{rest} s"),
-        (0, _) => format!("{minutes} min {rest} s"),
-        _ => format!("{hours} h {minutes} min"),
+    if seconds < 3600 {
+        let (minutes, rest) = (seconds / 60, seconds % 60);
+        return match minutes {
+            0 => format!("{rest} s"),
+            _ => format!("{minutes} min {rest} s"),
+        };
     }
+    let minutes = (seconds + 30) / 60;
+    format!("{} h {} min", minutes / 60, minutes % 60)
 }
 
 #[cfg(test)]

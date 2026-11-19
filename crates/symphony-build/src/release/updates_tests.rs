@@ -829,14 +829,14 @@ fn a_latency_is_said_with_what_came_after_a_release_serving_it_and_nothing_unkno
         at: 1000.0,
         source: "schema-seen.log".into(),
     });
-    assert_eq!(latency(&update), "It took 1 h 6 min. ");
+    assert_eq!(latency(&update), "It took 1 h 7 min. ");
     update.available = Some(Stamp {
         at: 4000.0,
         source: "the manifest".into(),
     });
     assert_eq!(
         latency(&update),
-        "It took 1 h 6 min from the board reaching schema 19 to the server writing it, 16 min 40 s \
+        "It took 1 h 7 min from the board reaching schema 19 to the server writing it, 16 min 40 s \
          of it after a release serving it was installed. "
     );
 }
@@ -1293,8 +1293,7 @@ fn a_server_that_cannot_say_yet_whether_it_writes_the_board_neither_completes_no
 }
 
 #[test]
-fn the_servers_word_is_asked_again_while_it_cannot_say_for_a_board_there_and_no_longer() {
-    use std::cell::Cell;
+fn a_server_is_unsure_while_it_cannot_say_whether_it_writes_a_registered_board_that_is_there() {
     let tree = Tree::new();
     tree.write("alpha/.git/symphony/tasks/schema-seen.log", "");
     std::fs::create_dir_all(tree.path("bare/.git")).unwrap();
@@ -1305,46 +1304,21 @@ fn the_servers_word_is_asked_again_while_it_cannot_say_for_a_board_there_and_no_
         .unwrap()
     };
     let registry = Registry {
-        projects: vec![entry("alpha"), entry("bare")],
+        projects: vec![entry("alpha"), entry("bare"), entry("gone")],
     };
-    let step = Duration::from_millis(1);
-    // Unsure of alpha's board twice, then sure: asked three times.
-    let asked = Cell::new(0);
-    let said = settled(
-        &registry,
-        || {
-            asked.set(asked.get() + 1);
-            let alpha = (asked.get() >= 3).then_some(true);
-            Some(vec![("alpha".into(), alpha), ("bare".into(), None)])
-        },
-        Duration::from_secs(5),
-        step,
-    );
+    let boards = with_boards(&registry);
     assert_eq!(
-        asked.get(),
-        3,
-        "a project with no board there is never waited for"
+        boards,
+        ["alpha"],
+        "a project with no board, or no checkout, is not waited for"
     );
-    assert_eq!(said.unwrap()[0], ("alpha".to_string(), Some(true)));
-    // Never sure: asked until the bound, then its last answer.
-    let asked = Cell::new(0);
-    let said = settled(
-        &registry,
-        || {
-            asked.set(asked.get() + 1);
-            Some(vec![("alpha".into(), None)])
-        },
-        Duration::from_millis(20),
-        step,
+    let said = |alpha: Option<bool>| vec![("alpha".to_string(), alpha), ("bare".to_string(), None)];
+    assert!(unsure(&boards, Some(&said(None))));
+    assert!(!unsure(&boards, Some(&said(Some(true)))));
+    assert!(!unsure(&boards, Some(&said(Some(false)))), "a no is a word");
+    assert!(
+        !unsure(&boards, Some(&[])),
+        "a server that says nothing of writes is not waited for"
     );
-    assert!(asked.get() >= 2, "asked again before the bound");
-    assert_eq!(said.unwrap(), [("alpha".to_string(), None)]);
-    // No server, or a list that says nothing of alpha: asked once.
-    let asked = Cell::new(0);
-    let none = || {
-        asked.set(asked.get() + 1);
-        None
-    };
-    assert_eq!(settled(&registry, none, Duration::from_secs(5), step), None);
-    assert_eq!(asked.get(), 1);
+    assert!(!unsure(&boards, None), "nor is none");
 }

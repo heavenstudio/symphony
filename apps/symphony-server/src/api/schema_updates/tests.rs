@@ -132,7 +132,7 @@ fn each_update_is_said_with_its_times_their_sources_its_waits_its_failures_and_i
             total: Some(17_170.0),
             total_said: Some("4 h 46 min".into()),
             after_available: Some(11_810.0),
-            after_available_said: Some("3 h 16 min".into()),
+            after_available_said: Some("3 h 17 min".into()),
             failures: 0,
             failure: None,
             task: None,

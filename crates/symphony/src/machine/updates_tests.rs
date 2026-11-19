@@ -120,4 +120,17 @@ fn a_wait_is_said_in_hours_and_minutes_or_minutes_and_seconds() {
     assert_eq!(said(190.0), "3 min 10 s");
     assert_eq!(said(17_170.0), "4 h 46 min");
     assert_eq!(said(3600.0), "1 h 0 min");
+    assert_eq!(
+        said(11_810.0),
+        "3 h 17 min",
+        "from an hour on, to the nearest minute"
+    );
+    assert_eq!(said(11_789.0), "3 h 16 min");
+    assert_eq!(said(3599.4), "59 min 59 s", "under an hour, to the second");
+    assert_eq!(said(3599.6), "1 h 0 min");
+    assert_eq!(
+        said(7_170.0),
+        "2 h 0 min",
+        "a round up carries into the hour"
+    );
 }
