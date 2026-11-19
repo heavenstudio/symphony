@@ -982,7 +982,11 @@ impl Store {
     }
 
     /// The best work for `handle`: its own reservation, then priority, then a red ([`crate::red`])
-    /// before other work, then its areas, then the order made.
+    /// before other work, then its areas, then the order made. A task a custom workflow holds is
+    /// offered where an edge leaving its position gives the executor's role, nobody there holds it,
+    /// and admission's preview shows nothing stopping `handle` taking that edge now
+    /// ([`Store::workflow_actions`]): its reservations, dependencies and authority are the edge's,
+    /// never the board's own claim's (docs/WORKFLOW.md, "Operations").
     pub fn next_for(&self, handle: &str) -> Result<Option<Task>, Error> {
         let view = self.retrying(|| self.shown(&Which::Pullable(handle)))?;
         let me = view
@@ -1002,17 +1006,14 @@ impl Store {
             .iter()
             .map(|l| l.slug.as_str())
             .collect();
+        let tasks = view.tasks();
+        let operating = self.operating_for(&tasks)?;
         /// A task's rank, least first: not reserved for the session, priority, not red, not in
         /// its areas, the order made.
         type Rank = (bool, i64, bool, bool, i64);
-        let mut best: Option<(Rank, Task)> = None;
-        for task in view.tasks() {
-            // A task a custom workflow holds is taken by its edges alone (docs/WORKFLOW.md).
-            if waiting.contains(task.slug.as_str())
-                || crate::store::workflow::position_held(&task.fields)
-            {
-                continue;
-            }
+        // Each candidate with its rank, and the edge to preview for one a workflow holds.
+        let mut candidates: Vec<(Rank, Task, Option<String>)> = Vec::new();
+        for task in tasks {
             let reservers: Vec<&str> = (task.roles.iter())
                 .filter(|r| {
                     r.role == "reserved" && !matches!(r.health, Health::Lost | Health::Left)
@@ -1026,6 +1027,23 @@ impl Store {
             if (task.roles.iter()).any(|r| r.role == "executor" && r.health.holds()) {
                 continue;
             }
+            let edge = if crate::store::workflow::position_held(&task.fields) {
+                let claim = (operating.as_ref())
+                    .and_then(|o| o.placed(&task))
+                    .and_then(|placed| {
+                        (placed.claims().into_iter())
+                            .find(|c| c.role == symphony_api::workflow::Role::Executor)
+                            .map(|c| c.edge.id.clone())
+                    });
+                let Some(edge) = claim else {
+                    continue;
+                };
+                Some(edge)
+            } else if waiting.contains(task.slug.as_str()) {
+                continue;
+            } else {
+                None
+            };
             let key = (
                 !mine,
                 task.priority,
@@ -1033,11 +1051,26 @@ impl Store {
                 !areas.contains(&area(&task.slug)),
                 task.id,
             );
-            if best.as_ref().is_none_or(|(least, _)| key < *least) {
-                best = Some((key, task));
+            candidates.push((key, task, edge));
+        }
+        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        let principal = crate::workflow::agent_session(handle);
+        let host = crate::workflow::Host::local();
+        for (_, task, edge) in candidates {
+            let Some(edge) = edge else {
+                return Ok(Some(task));
+            };
+            // Admission's own preview decides a held task, read only for the best of them.
+            let next = match self.workflow_actions(&task.slug, &principal, &host) {
+                Ok(next) => next,
+                Err(Error::Refused(_)) => continue,
+                Err(error) => return Err(error),
+            };
+            if (next.actions.iter()).any(|a| a.edge == edge && a.unavailable.is_empty()) {
+                return Ok(Some(task));
             }
         }
-        Ok(best.map(|(_, task)| task))
+        Ok(None)
     }
 
     /// Every session that has held executor on `slug` or on a work subtask under it, now or before:

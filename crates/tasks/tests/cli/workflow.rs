@@ -186,7 +186,7 @@ fn an_agent_reads_and_takes_an_edge_through_the_api_as_the_session_it_names() {
 }
 
 #[test]
-fn a_session_recovers_a_lost_holders_task_which_pull_and_next_offer_to_no_claim() {
+fn a_session_recovers_a_lost_holders_task_which_pull_and_next_then_offer_to_its_claim() {
     let mut c = Case::new();
     let amber = c.register("worker");
     let birch = c.register("worker");
@@ -222,9 +222,56 @@ fn a_session_recovers_a_lost_holders_task_which_pull_and_next_offer_to_no_claim(
              claim → build/working  Claim, by its executor\n"
         )
     );
-    // Ready and unstaffed, yet no claim but its edge takes it.
+    // Ready and unstaffed: PULL lists it, `next` offers it, and the board's claim takes its edge.
     let pulled = c.ok(&birch, &["pull"]);
+    assert!(pulled.contains("ready_unstaffed=1"), "{pulled}");
+    assert!(pulled.contains("sim/jump"), "{pulled}");
+    assert!(c.ok(&birch, &["next"]).starts_with("sim/jump  p"));
+    assert_eq!(
+        c.ok(&birch, &["claim", "sim/jump"]),
+        "claimed sim/jump (sim/jump@4): it is at build/working, workflow revision 4; its edges: \
+         `just tasks workflow actions sim/jump`\n"
+    );
+    assert!(c.ok(&amber, &["next"]).starts_with("nothing to take"));
+    let again = c.run_as(&amber, &["claim", "sim/jump"], "");
+    assert_eq!(again.code, 1);
+    assert!(
+        again.err.starts_with(
+            "✖ explicit_action_required: no edge leaving sim/jump's build/working gives the \
+             executor role"
+        ),
+        "{}",
+        again.err
+    );
+}
+
+#[test]
+fn a_pull_recovers_a_lost_holder_by_its_positions_action_and_lists_the_work_again() {
+    let mut c = Case::new();
+    let amber = c.register("worker");
+    let orch = c.register("orchestrator");
+    c.store()
+        .activate_workflow(&flow(), &Host::local())
+        .unwrap();
+    c.ok(&amber, &["create", "sim/jump", "Jump departure"]);
+    c.ok(&amber, &["claim", "sim/jump"]);
+    let pulled = c.ok(&orch, &["pull"]);
     assert!(pulled.contains("ready_unstaffed=0"), "{pulled}");
-    assert!(!pulled.contains("sim/jump"), "{pulled}");
-    assert!(c.ok(&birch, &["next"]).starts_with("nothing to take"));
+    let now: f64 = c.env.vars["TASKS_NOW"].parse().unwrap();
+    let lost = now + symphony_board::health::LIVE_SECONDS + symphony_board::health::STALE_SECONDS;
+    c.env
+        .vars
+        .insert("TASKS_NOW".into(), (lost + 1.0).to_string());
+    c.store().touch(&orch).unwrap();
+    let pulled = c.ok(&orch, &["pull"]);
+    assert!(pulled.contains("ready_unstaffed=1"), "{pulled}");
+    assert!(pulled.contains("sim/jump"), "{pulled}");
+    let shown = c.ok(&orch, &["show", "sim/jump"]);
+    assert!(
+        shown.contains(&format!(
+            "board (system): the board's recovery (sim/jump@3): {amber}'s executor lost; \
+             build/working → build/available, workflow revision 3"
+        )),
+        "{shown}"
+    );
 }
