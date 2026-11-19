@@ -94,7 +94,11 @@ pub struct Pair {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowDefinition"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowDefinition")
+)]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
     pub format: u32,
@@ -110,7 +114,11 @@ pub struct Definition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowPhase"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowPhase")
+)]
 #[serde(deny_unknown_fields)]
 pub struct Phase {
     pub id: String,
@@ -122,7 +130,11 @@ pub struct Phase {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowState"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowState")
+)]
 #[serde(deny_unknown_fields)]
 pub struct State {
     pub id: String,
@@ -130,7 +142,11 @@ pub struct State {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowPosition"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowPosition")
+)]
 #[serde(deny_unknown_fields)]
 pub struct Position {
     pub at: Pair,
@@ -150,7 +166,11 @@ pub struct Position {
 
 /// All holder exits must be explicit, including intentional stays for manual recovery.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowRecovery"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowRecovery")
+)]
 #[serde(deny_unknown_fields)]
 pub struct Recovery {
     pub release: RecoveryAction,
@@ -160,7 +180,11 @@ pub struct Recovery {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowRecoveryAction"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowRecoveryAction")
+)]
 #[serde(deny_unknown_fields)]
 pub struct RecoveryAction {
     /// None means stay; manual must then be true. No implicit move to ready.
@@ -173,7 +197,11 @@ pub struct RecoveryAction {
 
 /// A requirement for an external policy receipt. No expression, executable or cached pass.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowGuard"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowGuard")
+)]
 #[serde(deny_unknown_fields)]
 pub struct Guard {
     pub id: String,
@@ -183,7 +211,11 @@ pub struct Guard {
 /// The host must bind these requirements to a trusted principal outside request JSON.
 /// Task roles also require the relationship to this task; reviewers must be independent.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowAuthority"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowAuthority")
+)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Authority {
     TaskRole { role: Role },
@@ -192,7 +224,11 @@ pub enum Authority {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowEffect"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowEffect")
+)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Effect {
     AcquireRole {
@@ -225,7 +261,11 @@ pub enum Effect {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowRetryBound"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowRetryBound")
+)]
 #[serde(deny_unknown_fields)]
 pub struct RetryBound {
     pub maximum: u32,
@@ -255,7 +295,11 @@ pub struct Edge {
 
 /// Metadata supplied by a reader of a committed project file, never inferred from a label.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowSource"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowSource")
+)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
     pub commit: String,
@@ -263,7 +307,11 @@ pub struct Source {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowRevision"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowRevision")
+)]
 #[serde(deny_unknown_fields)]
 pub struct Revision {
     pub format: u32,
@@ -272,7 +320,11 @@ pub struct Revision {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowPositionSnapshot"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowPositionSnapshot")
+)]
 #[serde(deny_unknown_fields)]
 pub struct PositionSnapshot {
     pub workflow: Revision,
@@ -292,7 +344,11 @@ pub struct WorkflowRead {
 
 /// No caller-supplied principal. These fields fence intention, not authority.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowInputValue"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowInputValue")
+)]
 #[serde(
     tag = "kind",
     content = "value",
@@ -308,7 +364,11 @@ pub enum InputValue {
 
 /// Operation inputs remain separate from input-revision fencing and host-provided authority.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowOperationRequest"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowOperationRequest")
+)]
 #[serde(deny_unknown_fields)]
 pub struct OperationRequest {
     pub project: String,
@@ -339,7 +399,11 @@ vocabulary!(RefusalCode as "WorkflowRefusalCode" {
 });
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowNextAction"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowNextAction")
+)]
 #[serde(deny_unknown_fields)]
 pub struct NextAction {
     pub edge: String,
@@ -353,7 +417,11 @@ pub struct NextAction {
 
 /// A principal-scoped preview, never an authorization receipt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowNextActions"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowNextActions")
+)]
 #[serde(deny_unknown_fields)]
 pub struct NextActions {
     pub snapshot: PositionSnapshot,
@@ -361,7 +429,11 @@ pub struct NextActions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowOperationResult"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowOperationResult")
+)]
 #[serde(deny_unknown_fields)]
 pub struct OperationResult {
     pub transition: String,
@@ -397,7 +469,11 @@ pub struct BoardWorkflow {
 /// pair a blocked task resumes to, its workflow revision, which only its own transitions move and
 /// which an [`OperationRequest`] names, and the person's recovery it waits on, if any.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowPlace"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowPlace")
+)]
 pub struct TaskPlace {
     pub phase: String,
     pub state: String,
@@ -411,7 +487,11 @@ pub struct TaskPlace {
 /// A holder's exit that left its task waiting on a person's recovery by hand, until the task's
 /// next transition: which exit (`release` or `lost_holder`), whose and of which role.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS), ts(rename = "WorkflowManualRecovery"))]
+#[cfg_attr(
+    feature = "typescript",
+    derive(ts_rs::TS),
+    ts(rename = "WorkflowManualRecovery")
+)]
 pub struct ManualRecovery {
     pub trigger: String,
     pub holder: String,

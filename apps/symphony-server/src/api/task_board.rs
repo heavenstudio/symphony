@@ -47,7 +47,11 @@ pub(super) fn workflow_id(id: &str) -> bool {
 
 /// The column `task` goes in: the process overlay its machine work puts it in (Build, Test), else
 /// its phase's when a custom workflow holds it ([`PHASE`]), else its status.
-pub(super) fn column(work: &symphony_api::MachineWork, task: &symphony_api::Task, activity: bool) -> String {
+pub(super) fn column(
+    work: &symphony_api::MachineWork,
+    task: &symphony_api::Task,
+    activity: bool,
+) -> String {
     match (work.task_stage(task, activity), &task.workflow) {
         (symphony_api::TaskStage::Lifecycle(_), Some(place)) => format!("{PHASE}{}", place.phase),
         (stage, _) => stage.as_str().to_string(),

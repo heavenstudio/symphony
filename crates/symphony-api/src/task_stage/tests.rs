@@ -409,7 +409,10 @@ fn waiting_board_metadata_is_optional_and_round_trips_complete_totals() {
     listing.waiting.as_mut().unwrap().states = vec![("working".into(), 2)];
     listing.waiting.as_mut().unwrap().workflow = Some(3);
     let value = serde_json::to_value(&listing).unwrap();
-    assert_eq!(value["waiting"]["states"], serde_json::json!([["working", 2]]));
+    assert_eq!(
+        value["waiting"]["states"],
+        serde_json::json!([["working", 2]])
+    );
     assert_eq!(value["waiting"]["workflow"], 3);
     assert_eq!(
         serde_json::from_value::<TaskListing>(value).unwrap(),

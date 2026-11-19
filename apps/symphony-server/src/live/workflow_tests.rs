@@ -157,8 +157,14 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
     assert_eq!(status, 200, "{read}");
     assert_eq!(read["project"], database);
     assert_eq!(read["workflow"]["activation_generation"], 1);
-    assert_eq!(read["workflow"]["revision"]["digest"], custom.revision.digest);
-    assert_eq!(read["workflow"]["definition"]["phases"][1]["label"], "Verify");
+    assert_eq!(
+        read["workflow"]["revision"]["digest"],
+        custom.revision.digest
+    );
+    assert_eq!(
+        read["workflow"]["definition"]["phases"][1]["label"],
+        "Verify"
+    );
     let (_, tasks) = answer(&shared, asked("GET", "/api/tasks", None));
     assert_eq!(
         tasks["tasks"][0]["workflow"],
@@ -204,7 +210,10 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
     assert_eq!(status, 200, "{taken}");
     assert_eq!(taken["ok"], true);
     assert_eq!(taken["result"]["transition"], "flow/one@2");
-    assert_eq!(taken["result"]["next"]["snapshot"]["at"]["state"], "blocked");
+    assert_eq!(
+        taken["result"]["next"]["snapshot"]["at"]["state"],
+        "blocked"
+    );
     // The same request again answers what the first did; it moves nothing.
     let (status, again) = answer(
         &shared,

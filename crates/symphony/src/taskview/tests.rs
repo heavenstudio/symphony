@@ -348,8 +348,7 @@ fn a_tasks_place_is_its_position_as_a_page_shows_it() {
     );
     let recovered = |manual: bool| {
         let mut position = position.clone();
-        position["manual"] =
-            json!({"trigger": "lost_holder", "holder": "amber", "role": "executor", "manual": manual});
+        position["manual"] = json!({"trigger": "lost_holder", "holder": "amber", "role": "executor", "manual": manual});
         super::place(&fields(json!({"workflow": position}))).unwrap()
     };
     assert_eq!(

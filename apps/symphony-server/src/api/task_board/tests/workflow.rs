@@ -217,7 +217,15 @@ async fn the_build_overlay_takes_a_held_task_its_machine_builds() {
             orchestrators: vec![],
             unstarted: 0,
         };
-        project(&request, tasks, "", &BTreeMap::new(), work.clone(), vec![], None)
+        project(
+            &request,
+            tasks,
+            "",
+            &BTreeMap::new(),
+            work.clone(),
+            vec![],
+            None,
+        )
     };
     for (activity, column) in [(true, "build"), (false, "phase:build")] {
         let bytes = axum::body::to_bytes(read(activity).into_body(), usize::MAX)
@@ -237,7 +245,11 @@ fn a_listing_selects_a_phase_by_its_id_alone() {
             .unwrap();
         status_argument(&request)
     };
-    for good in ["status=phase:build", "status=phase:verify-2", "status=phase:a_b"] {
+    for good in [
+        "status=phase:build",
+        "status=phase:verify-2",
+        "status=phase:a_b",
+    ] {
         assert_eq!(argument(good), Ok(()), "{good}");
     }
     for bad in [
@@ -258,7 +270,14 @@ async fn a_state_facet_names_a_workflow_id() {
         let (status, body) = raw(&board(), &format!("view=waiting&wait={good}"), None).await;
         assert_eq!(status, StatusCode::OK, "{good}: {body}");
     }
-    for bad in ["state:Blocked", "state:", "state:1st", "state:a%20b", "states:x", "blocked"] {
+    for bad in [
+        "state:Blocked",
+        "state:",
+        "state:1st",
+        "state:a%20b",
+        "states:x",
+        "blocked",
+    ] {
         let (status, body) = raw(&board(), &format!("view=waiting&wait={bad}"), None).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
         assert!(body.contains("or state:STATE"), "{body}");

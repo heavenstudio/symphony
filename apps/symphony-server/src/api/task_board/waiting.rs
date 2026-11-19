@@ -197,9 +197,8 @@ pub(super) fn project(
     tasks.tasks.retain(|task| {
         wait.as_ref()
             .is_none_or(|wanted| !task.is_finished() && kind(task) == wanted)
-            && (selected_state.as_ref()).is_none_or(|wanted| {
-                !task.is_finished() && state(task) == Some(wanted.as_str())
-            })
+            && (selected_state.as_ref())
+                .is_none_or(|wanted| !task.is_finished() && state(task) == Some(wanted.as_str()))
     });
     let mut columns = std::collections::BTreeMap::<String, WaitingColumn>::new();
     let mut lifecycle = std::collections::BTreeMap::<String, usize>::new();
