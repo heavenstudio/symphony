@@ -147,6 +147,11 @@ fn a_limit_reads_the_one_line_that_sets_it_in_toml_or_rust() {
         "a comment and a comparison set nothing"
     );
     assert_eq!(
+        limit("m.rs:x").read("x == 3\nx >= 4\n"),
+        Err("no line of m.rs sets x".into()),
+        "a comparison sets nothing"
+    );
+    assert_eq!(
         limit("m.rs:x").read("x = 1\n[t]\nx = 2\n"),
         Err("m.rs sets x on 2 lines (1, 3), so no one number is its limit".into())
     );

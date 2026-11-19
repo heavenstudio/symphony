@@ -184,6 +184,20 @@ fn a_waiver_is_for_the_branchs_tip_or_the_one_named_and_never_of_tests_review_or
         Some(main.as_str()),
         "resolved whole"
     );
+    let nowhere = ran(
+        &orch,
+        &["pictures", "--waive", "--tip", "no-such-tip", "--why", WHY],
+    );
+    assert_eq!(
+        (nowhere.code, nowhere.err),
+        (
+            1,
+            format!(
+                "✖ --tip no-such-tip names no commit in {}\n",
+                root.display()
+            )
+        )
+    );
     for never in ["tests", "review", "owner"] {
         let refused = ran(&orch, &[never, "--waive", "--why", WHY]);
         assert_eq!(refused.code, 1);
