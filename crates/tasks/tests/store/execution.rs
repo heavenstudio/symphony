@@ -487,10 +487,40 @@ on_both! {
         let before = read(&c, &paused.id);
         assert_eq!((before.state.ending, before.current), (Some(Ending::Superseded), false));
 
-        assert_eq!(answered(c.step(&resumed.id)).0, Operation::Resume);
+        // The resume's answer is lost: it is reconciled as a resume, by its key, never sent anew.
+        fake.script([Fault::Lost]);
+        let (operation, outcome) = answered(c.step(&resumed.id));
+        assert_eq!(operation, Operation::Resume);
+        assert!(is_unknown(&outcome), "{outcome:?}");
+        let (operation, outcome) = answered(c.step(&resumed.id));
+        assert_eq!(operation, Operation::Reconcile);
+        assert!(matches!(outcome, Outcome::Found(_)), "{outcome:?}");
         let bound = read(&c, &resumed.id).state.resource.unwrap();
         assert_eq!((bound.id.as_str(), bound.generation.as_str()), (resource.as_str(), "g1+"));
         assert_eq!(fake.keys(Operation::Resume).len(), 1);
+        assert_eq!(fake.keys(Operation::Reconcile), fake.keys(Operation::Resume));
+    }
+
+    fn a_lost_answer_from_a_provider_that_cannot_reconcile_is_held_unsent(backend: Backend) {
+        let f = board(backend);
+        let fake = Fake::default();
+        let mut capabilities = capabilities();
+        capabilities.operations.retain(|kind| *kind != Operation::Reconcile);
+        let profile = Profile::new(scope(), "fake".into(), capabilities);
+        let c = Coordinator::new(&f.store, profile, &fake, worker()).unwrap();
+        let attempt = admit(&c, "k1");
+        fake.script([Fault::Lost]);
+        assert!(is_unknown(&answered(c.step(&attempt.id)).1));
+        let Ok(Worked::Held(why)) = c.step(&attempt.id) else {
+            panic!("held");
+        };
+        assert!(why.contains("cannot reconcile"), "{why}");
+        let held = read(&c, &attempt.id).state;
+        assert_eq!((held.dispatch, held.held.as_deref()), (Dispatch::Held, Some(why.as_str())));
+        assert_eq!(c.step(&attempt.id), Ok(Worked::Waited), "a held attempt waits for a person");
+        assert_eq!(fake.keys(Operation::Start).len(), 1, "never sent twice");
+        assert!(fake.keys(Operation::Reconcile).is_empty());
+        assert_eq!(f.store.live_attempts(TASK).unwrap(), std::slice::from_ref(&attempt.id));
     }
 
     fn only_a_complete_collection_from_the_current_runtime_is_eligible_then_it_is_cleaned(backend: Backend) {
@@ -687,5 +717,223 @@ on_both! {
         assert!(matches!(there.admit(&owner_grant(), asked(OTHER_TASK)), Err(Refusal::Full(_))));
         assert!(matches!(answered(there.step(&attempt.id)).1, Outcome::Found(_)));
         assert_eq!(fake.resources(), 1);
+    }
+}
+
+/// A provider that gives no view and resumes only on a new resource.
+fn viewless() -> Profile {
+    let mut capabilities = capabilities();
+    capabilities.external_view = false;
+    capabilities.resume_modes = vec![ResumeMode::NewResource];
+    Profile::new(scope(), "fake".into(), capabilities)
+}
+
+#[test]
+fn pacing_profiles_and_admissions_are_checked_before_anything_is_written() {
+    let f = Fixture::on(
+        Backend::SurrealDb,
+        Seed::default().task(TASK, "ready").task("sim/done", "done"),
+    );
+    let fake = Fake::default();
+    let millis = std::time::Duration::from_millis;
+    let paced = |change: &dyn Fn(&mut Pacing)| {
+        let mut pacing = Pacing::default();
+        change(&mut pacing);
+        coordinator(&f, &fake).with_pacing(pacing).map(|_| ())
+    };
+    assert_eq!(paced(&|_| {}), Ok(()));
+    for (why, change) in [
+        (
+            "no time to call",
+            &(|p: &mut Pacing| p.call = millis(0)) as &dyn Fn(&mut Pacing),
+        ),
+        ("past the kit's bound", &|p: &mut Pacing| {
+            p.call = millis(30_001)
+        }),
+        ("a lease shorter than its call", &|p: &mut Pacing| {
+            p.lease = p.call
+        }),
+        ("never observed", &|p: &mut Pacing| p.observe = millis(0)),
+        ("no backoff", &|p: &mut Pacing| p.backoff = millis(0)),
+        ("a cap under the first wait", &|p: &mut Pacing| {
+            p.backoff_cap = millis(1)
+        }),
+    ] {
+        assert!(matches!(paced(change), Err(Refusal::Invalid(_))), "{why}");
+    }
+    let unnamed = Profile::new(scope(), String::new(), capabilities());
+    assert!(matches!(
+        Coordinator::new(&f.store, unnamed, &fake, worker()),
+        Err(Refusal::Invalid(_))
+    ));
+
+    let c = coordinator(&f, &fake);
+    let grant = owner_grant();
+    let blank_lane = Admission::new(TASK, " ", "executor", input("r1"));
+    let mut no_digest = input("r1");
+    no_digest.digest = String::new();
+    for refused in [
+        blank_lane,
+        Admission::new(TASK, "executor", "executor", no_digest),
+        asked(TASK).request_key(""),
+    ] {
+        assert!(matches!(c.admit(&grant, refused), Err(Refusal::Invalid(_))));
+    }
+    assert!(matches!(
+        c.admit(&grant, asked("sim/done")),
+        Err(Refusal::Invalid(why)) if why.contains("is done")
+    ));
+    assert!(
+        f.store.dump().unwrap().execution_attempts.is_empty(),
+        "nothing was written"
+    );
+}
+
+on_both! {
+    fn controls_refuse_what_does_not_hold_for_the_attempt(backend: Backend) {
+        let f = board(backend);
+        let fake = Fake::default();
+        let c = Coordinator::new(&f.store, viewless(), &fake, worker()).unwrap();
+        let grant = owner_grant();
+        let attempt = admit(&c, "k1");
+        let id = attempt.id.as_str();
+        assert!(matches!(
+            c.stop(&grant, id, StopMode::Pause),
+            Err(Refusal::Invalid(why)) if why.contains("cancel it instead")
+        ));
+        assert!(matches!(c.external_link(&grant, id), Err(Refusal::Invalid(_))), "nothing bound");
+        let resource = started(&c, id);
+        assert!(matches!(
+            c.external_link(&grant, id),
+            Err(Refusal::Invalid(why)) if why.contains("no view")
+        ));
+        assert!(matches!(
+            c.retry(&grant, id, "it is running", None),
+            Err(Refusal::Invalid(why)) if why.contains("neither held nor ended")
+        ));
+        let nothing = Continuation {
+            checkpoint: None,
+            conversation: None,
+            mode: ResumeMode::NewResource,
+        };
+        assert!(matches!(c.resume(&grant, id, nothing, None), Err(Refusal::Invalid(_))));
+        let running = Continuation {
+            checkpoint: Some(ContentRef::new("checkpoint".into(), "cd".into())),
+            conversation: None,
+            mode: ResumeMode::NewResource,
+        };
+        assert!(matches!(
+            c.resume(&grant, id, running, None),
+            Err(Refusal::Invalid(why)) if why.contains("not known to be paused")
+        ));
+
+        fake.runtime(&resource, RuntimeState::Failed);
+        answered(c.step(id));
+        assert_eq!(
+            c.stop(&grant, id, StopMode::Pause),
+            Err(Refusal::Invalid("it has ended".into()))
+        );
+        let reused = Continuation {
+            checkpoint: Some(ContentRef::new("checkpoint".into(), "cd".into())),
+            conversation: None,
+            mode: ResumeMode::ReuseWithNewGeneration,
+        };
+        assert!(matches!(
+            c.resume(&grant, id, reused, None),
+            Err(Refusal::Invalid(why)) if why.contains("cannot resume")
+        ));
+        // A retry after an ended attempt links it and leaves how it ended as it was.
+        let retry = c.retry(&grant, id, "it failed on its own", None).unwrap();
+        let before = read(&c, id).state;
+        assert_eq!(before.ending, Some(Ending::Failed));
+        assert_eq!(before.successor.as_deref(), Some(retry.id.as_str()));
+        assert_eq!(kinds(&c, id).last().map(String::as_str), Some("followed"));
+    }
+
+    fn collection_and_cleanup_refuse_reports_out_of_their_order(backend: Backend) {
+        let f = board(backend);
+        let fake = Fake::default();
+        let c = coordinator(&f, &fake);
+        let grant = owner_grant();
+        let report = Artifact {
+            name: "report.json".into(),
+            reference: "store://report".into(),
+            digest: "d".into(),
+            size: 1,
+            generation: "g1".into(),
+            runtime_epoch: 0,
+            verified: true,
+        };
+
+        // Cancelled before anything was sent: nothing bound, so nothing to clean.
+        let never = admit(&c, "k1");
+        c.cancel(&grant, &never.id).unwrap();
+        assert!(matches!(
+            c.begin_cleanup(&grant, &never.id),
+            Err(Refusal::Invalid(why)) if why.contains("nothing to clean")
+        ));
+
+        let attempt = c.admit(&grant, asked(OTHER_TASK)).unwrap();
+        let id = attempt.id.as_str();
+        let resource = started(&c, id);
+        fake.runtime(&resource, RuntimeState::Succeeded);
+        answered(c.step(id));
+        assert!(matches!(
+            c.record_artifact(&grant, id, report.clone()),
+            Err(Refusal::Invalid(why)) if why.contains("not under way")
+        ));
+        assert!(matches!(
+            c.end_collection(&grant, id, Collection::Complete, None),
+            Err(Refusal::Invalid(why)) if why.contains("NotStarted")
+        ));
+        assert!(matches!(
+            c.end_collection(&grant, id, Collection::Collecting, None),
+            Err(Refusal::Invalid(_))
+        ));
+        assert!(matches!(
+            c.end_collection(&grant, id, Collection::None, Some("  ")),
+            Err(Refusal::Invalid(why)) if why.contains("how that is known")
+        ));
+        let collecting = c.begin_collection(&grant, id).unwrap();
+        assert_eq!(c.begin_collection(&grant, id), Ok(collecting), "begun once");
+        let mut unnamed = report.clone();
+        unnamed.digest = String::new();
+        assert!(matches!(c.record_artifact(&grant, id, unnamed), Err(Refusal::Invalid(_))));
+        let ended = c
+            .end_collection(&grant, id, Collection::None, Some("the run wrote nothing"))
+            .unwrap();
+        assert_eq!(
+            c.end_collection(&grant, id, Collection::None, Some("again")),
+            Ok(ended),
+            "ended once"
+        );
+        assert!(matches!(
+            c.end_collection(&grant, id, Collection::Failed, Some("other")),
+            Err(Refusal::Invalid(_))
+        ));
+        assert!(matches!(
+            c.begin_collection(&grant, id),
+            Err(Refusal::Invalid(why)) if why.contains("ended already")
+        ));
+
+        let key = c.begin_cleanup(&grant, id).unwrap();
+        assert!(matches!(
+            c.end_cleanup(&grant, id, &key, Cleanup::Running, None),
+            Err(Refusal::Invalid(_))
+        ));
+        let failed = c.end_cleanup(&grant, id, &key, Cleanup::Failed, Some("busy")).unwrap();
+        assert!(failed.state.open(), "a failed cleanup is still owed");
+        assert_eq!(c.end_cleanup(&grant, id, &key, Cleanup::Failed, None), Ok(failed));
+        assert!(matches!(
+            c.end_cleanup(&grant, id, &key, Cleanup::Complete, None),
+            Err(Refusal::Conflict(why)) if why.contains("ended already")
+        ));
+        let again = c.begin_cleanup(&grant, id).unwrap();
+        assert_ne!(again, key, "a new cleanup has a key of its own");
+        assert!(matches!(
+            c.end_cleanup(&grant, id, &key, Cleanup::Complete, None),
+            Err(Refusal::Conflict(_))
+        ), "the earlier cleanup's late report changes nothing");
+        c.end_cleanup(&grant, id, &again, Cleanup::Complete, None).unwrap();
     }
 }

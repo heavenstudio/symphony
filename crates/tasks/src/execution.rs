@@ -332,3 +332,43 @@ pub enum Collected {
     /// alone, never as the attempt's artifact.
     Stale,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_says_what_was_refused_and_carries_a_board_error_as_it_was() {
+        let said = |refusal: Refusal| refusal.to_string();
+        assert_eq!(
+            said(Refusal::Unauthorized("no grant".into())),
+            "not authorized: no grant"
+        );
+        assert_eq!(said(Refusal::Scope), "another project's or board's attempt");
+        assert_eq!(
+            said(Refusal::Unknown("ab".into())),
+            "there is no execution attempt ab"
+        );
+        assert_eq!(
+            said(Refusal::Busy(Some("ab".into()))),
+            "the lane holds attempt ab"
+        );
+        assert_eq!(
+            said(Refusal::Busy(None)),
+            "the lane holds no attempt to follow"
+        );
+        assert_eq!(
+            said(Refusal::Full(vec!["a".into(), "b".into()])),
+            "capacity is full: a, b"
+        );
+        assert_eq!(said(Refusal::Conflict("taken".into())), "conflict: taken");
+        assert_eq!(said(Refusal::Invalid("blank".into())), "refused: blank");
+        assert_eq!(
+            said(Refusal::Unavailable("down".into())),
+            "unavailable: down"
+        );
+        let error = Error::Db("lost".into());
+        assert_eq!(said(Refusal::from(error.clone())), error.to_string());
+        assert_eq!(Refusal::from(error.clone()), Refusal::Board(error));
+    }
+}

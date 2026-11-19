@@ -461,6 +461,112 @@ fn a_failed_reconcile_holds_the_attempt() {
 }
 
 #[test]
+fn a_reconcile_refused_or_unsupported_holds_the_attempt_saying_why() {
+    let refused = answer(
+        &admitted(true),
+        true,
+        Outcome::Rejected(Rejection::Provider("gone".into())),
+    );
+    let why = refused.state.held.unwrap();
+    assert!(why.contains("its start could not be reconciled"), "{why}");
+    assert!(why.contains("the provider refused: gone"), "{why}");
+    let unsupported = answer(
+        &admitted(true),
+        true,
+        Outcome::Unsupported(Operation::Reconcile),
+    );
+    assert_eq!(unsupported.state.dispatch, Dispatch::Held);
+    let why = unsupported.state.held.unwrap();
+    assert!(why.contains("the provider cannot reconcile"), "{why}");
+    assert_eq!(
+        unsupported.state.pending,
+        admitted(true).pending,
+        "still owed"
+    );
+    assert_eq!(
+        unsupported.release, None,
+        "its place is kept while it may run"
+    );
+}
+
+#[test]
+fn a_start_found_again_on_the_resource_already_bound_binds_nothing_new() {
+    let state = State {
+        dispatch: Dispatch::Unknown,
+        resource: Some(binding()),
+        ..admitted(true)
+    };
+    let found = answer(&state, true, Outcome::Found(receipt("res", "g1")));
+    assert_eq!(found.state.resource, Some(binding()));
+    assert_eq!(found.state.dispatch, Dispatch::Starting);
+    assert_eq!(found.state.pending, None);
+    assert!(found.facts.is_empty(), "{:?}", found.facts);
+}
+
+fn stopping(cancel: bool) -> State {
+    let request = Request::Stop {
+        resource: resource(&identity(every_operation()), &attempt(), &binding()),
+        mode: StopMode::Terminate,
+    };
+    let asked = Asked {
+        initiator: principal("owner"),
+        mode: Some(StopMode::Terminate),
+    };
+    State {
+        cancellation: if cancel {
+            Cancellation::Requested
+        } else {
+            Cancellation::None
+        },
+        cancel: cancel.then(|| asked.clone()),
+        stop: Some(asked),
+        pending: Some(Pending {
+            sequence: 2,
+            kind: Operation::Stop,
+            key: "k2".into(),
+            digest: keys::digest(&request),
+            request,
+            initiator: principal("owner"),
+            sent: true,
+            first_sent: Some(1),
+        }),
+        ..running()
+    }
+}
+
+#[test]
+fn a_stop_taken_settles_the_stop_and_a_cancel_it_stood_for_and_a_refused_one_settles_the_stop() {
+    let taken = answer(
+        &stopping(true),
+        false,
+        Outcome::Accepted(receipt("res", "g1")),
+    );
+    assert_eq!((taken.state.stop, taken.state.cancel), (None, None));
+    assert_eq!(
+        taken.state.cancellation,
+        Cancellation::Requested,
+        "observed until it ceased"
+    );
+    assert_eq!(taken.state.dispatch, Dispatch::Running);
+    assert_eq!(taken.due_in, Some(5_000));
+
+    let refused = answer(
+        &stopping(false),
+        false,
+        Outcome::Rejected(Rejection::Provider("busy".into())),
+    );
+    assert_eq!(refused.state.stop, None);
+    assert_eq!(refused.state.pending, None);
+    assert_eq!(
+        refused.state.cancellation,
+        Cancellation::None,
+        "no cancel was asked"
+    );
+    assert_eq!(refused.state.dispatch, Dispatch::Running);
+    assert_eq!(refused.due_in, Some(5_000));
+}
+
+#[test]
 fn answers_that_settle_nothing_back_off_and_are_held_past_the_bound() {
     let mut state = admitted(true);
     let mut waits = Vec::new();
@@ -598,6 +704,42 @@ fn lost_contact_on_an_observation_is_no_failure() {
     let applied = observe(&running(), Outcome::Unknown(Unknown::ContactLost));
     assert_eq!(applied.state.dispatch, Dispatch::Running);
     assert_eq!(applied.state.ending, None);
+}
+
+#[test]
+fn an_observation_the_provider_refuses_holds_the_attempt() {
+    for outcome in [
+        Outcome::Unsupported(Operation::Observe),
+        Outcome::Rejected(Rejection::Provider("no".into())),
+    ] {
+        let applied = observe(&running(), outcome);
+        assert_eq!(applied.state.dispatch, Dispatch::Held);
+        assert_eq!(
+            applied.state.held.as_deref(),
+            Some("the provider cannot observe it")
+        );
+        assert_eq!(applied.release, None);
+    }
+}
+
+#[test]
+fn a_provisioning_observation_of_an_unsettled_start_shows_it_starting() {
+    let unknown = State {
+        dispatch: Dispatch::Unknown,
+        unknowns: 2,
+        ..running()
+    };
+    let applied = observe(&unknown, observed_as(RuntimeState::Provisioning));
+    assert_eq!(
+        (applied.state.dispatch, applied.state.unknowns),
+        (Dispatch::Starting, 0)
+    );
+    let applied = observe(&running(), observed_as(RuntimeState::Provisioning));
+    assert_eq!(
+        applied.state.dispatch,
+        Dispatch::Running,
+        "never back to starting"
+    );
 }
 
 #[test]
