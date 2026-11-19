@@ -278,6 +278,16 @@ fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
                 .into()
         )
     );
+    // A task role is never the board's.
+    assert!(
+        supports(&|d| {
+            rework(d).authority = vec![Authority::TaskRole {
+                role: symphony_api::workflow::Role::Executor,
+            }];
+        })
+        .unwrap_err()
+        .starts_with("unsupported edge rework: no authority of this automatic edge")
+    );
     let mut owner_only = Host::local();
     owner_only.grants = Grants::none()
         .grant("owner", crate::workflow::local_owner())

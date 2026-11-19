@@ -292,6 +292,30 @@ on_both! {
         assert_eq!(f.store.observe_attempt(&attempt.id, &Host::local()).unwrap(), None);
     }
 
+    fn a_success_or_a_stop_moves_nothing(backend: Backend) {
+        let custom = attempts(MOVE);
+        let f = under(backend, &custom);
+        let fake = Fake::default();
+        let c = proposing(&f, &fake);
+        let (attempt, resource) = working(&f, &c, TASK, "k1");
+        let claimed = transitions(&f, TASK);
+        fake.runtime(&resource, RuntimeState::Succeeded);
+        answered(c.step(&attempt.id));
+        assert_eq!(read(&c, &attempt.id).state.ending, Some(Ending::Succeeded));
+        assert_eq!(f.store.observe_attempt(&attempt.id, &Host::local()).unwrap(), None);
+        // A stop with no cancel asked ends it stopped, which no position answers either.
+        let stopped = c.admit(&owner_grant(), asked(TASK).request_key("k2")).unwrap();
+        started(&c, &stopped.id);
+        c.stop(&owner_grant(), &stopped.id, StopMode::Terminate).unwrap();
+        while read(&c, &stopped.id).state.live() {
+            answered(c.step(&stopped.id));
+        }
+        assert_eq!(read(&c, &stopped.id).state.ending, Some(Ending::Stopped));
+        assert_eq!(f.store.observe_attempt(&stopped.id, &Host::local()).unwrap(), None);
+        assert_eq!(transitions(&f, TASK), claimed, "the task stays where its claim put it");
+        assert_eq!(roles(&f, TASK), [("amber-heron".into(), "executor".into())]);
+    }
+
     fn a_cancel_that_ends_an_attempt_at_once_is_acknowledged_by_the_position(backend: Backend) {
         let custom = attempts(MOVE);
         let f = under(backend, &custom);
