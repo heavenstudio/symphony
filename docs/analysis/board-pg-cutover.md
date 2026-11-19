@@ -3,8 +3,9 @@
 The procedure that moves a live board from SurrealDB to PostgreSQL: the order, what is copied
 when, how long a board cannot be written, how to go back, and what the two stores measured side
 by side. [What a live move waits for](#the-choice) is decided: the pieces not built yet, a clean
-rehearsal, and the memory peak found and answered. Today PostgreSQL serves only scratch boards
-([POSTGRESQL](../POSTGRESQL.md)), and no command here moves a live one.
+rehearsal, and the memory peak found and answered. PostgreSQL serves the board whose home names
+it ([POSTGRESQL](../POSTGRESQL.md)), and `tasks-move` moves a board's store there and back; it
+is proved on scratch boards, and no live board has moved.
 
 ## What the comparison showed
 
@@ -56,8 +57,8 @@ memory task of [the choice](#the-choice).
 | Holds, stopped-cluster snapshots, reclaim and the schema fence on PostgreSQL | landed, proved on scratch boards |
 | A copy does not let an old task number or version be taken for a new one | landed with `tools/board-recovery-generation`, board schema 22: every copy of a whole board replaces its [recovery generation](../TASKS.md#a-board-that-was-copied-or-restored), and a write naming a task read before the copy is refused. The cutover is itself such a copy |
 | PostgreSQL starting for a board that is not a scratch one | landed with `tools/board-pg-cutover-pieces`: PostgreSQL serves any board whose home names it (`backend.json`), and a board outside a scratch place gets that name only by the move below; there its server outlives the command that started it, as SurrealDB's does |
-| The cutover command: hold, export, copy, compare, switch, with each failure leaving the board as it was | landed with the same task, proved on scratch boards: `just tasks database move ENGINE`, [one board's move](#one-boards-move) |
-| Restoring a PostgreSQL snapshot over the board it was taken from | landed with the same task: `just tasks database restore SNAPSHOT`, under the move's journal; the cluster it replaces is kept ([POSTGRESQL](../POSTGRESQL.md#holds-snapshots-and-recovery)) |
+| The cutover command: hold, export, copy, compare, switch, with each failure leaving the board as it was | landed with the same task, proved on scratch boards: `tasks-move ENGINE`, [one board's move](#one-boards-move) |
+| Restoring a PostgreSQL snapshot over the board it was taken from | landed with the same task: `tasks-move --restore SNAPSHOT`, under the move's journal; the cluster it replaces is kept ([POSTGRESQL](../POSTGRESQL.md#holds-snapshots-and-recovery)) |
 | The release refresh on a PostgreSQL board: its snapshot before a schema move | landed with the same task: the refresh reads the board's schema and writers on the engine its home names, snapshots it with `pg_dump` through its running server, and waits on no SurrealDB pin ([RELEASES](../RELEASES.md#the-refresh)) |
 | A copy of a board ten times today's size | measured by `tools/board-copy-at-ten-times`, landed. PostgreSQL takes it in 78.5 to 141.8 s of the 270 s its server gives a copy, the time going with the machine's load, and a quiet machine reaches the 270 s at about 32 times today's board; SurrealDB refuses it in one line under the shipped 256 MiB memtable and takes it in 68.1 s under 2 GiB, which no shipped setting gives ([the numbers](board-store-baseline.md#a-board-ten-times-the-size-measured-2026-11-18)). Today's boards copy on both; this bounds growth, and the way back for a board that has grown, not the first move |
 | A PostgreSQL copy reported failed does not replace the board | landed with the same task: the server ends a copy at 270 s, thirty short of its caller's 300, with the board as it was. A copy whose commit and answer take those last thirty seconds still can |
@@ -90,8 +91,10 @@ of its own, and each board moves by itself.
 
 ## One board's move
 
-`just tasks database move postgresql --as HANDLE` does all of it, and `move surrealdb` is the
-same move the other way (`Home::move_to`, `crates/tasks/src/server/moving.rs`).
+`tasks-move postgresql --as HANDLE` does all of it, and `tasks-move surrealdb` is the same move
+the other way (`Home::move_to`, `crates/tasks/src/server/moving.rs`). It is a program of its
+own, the owner's to run from the main checkout as `tasks-reclaim` is, and no board command: the
+`tasks` every session runs links none of it.
 
 1. **Hold.** The board is held as for any maintenance: its database is stopped, and every board
    command is refused and says why. Agents' work in progress is untouched; their board commands
@@ -102,9 +105,11 @@ same move the other way (`Home::move_to`, `crates/tasks/src/server/moving.rs`).
    through a server of its own, which no record names: its schema, which must be this build's
    (a move migrates nothing), and the databases the store holds, which must be the board's alone,
    as the whole store changes places. The board is written out whole as `export.json`: the eleven
-   tables of the dump, and the tables no copy holds, below.
+   tables of the dump, and the tables no copy holds, below. The export is written where it is
+   kept, in `moved/STAMP-ENGINE/`, before anything of the board changes places.
 3. **Copy.** The export goes into a new store of the other engine in a work folder of the move's
-   own (`moving/`), the dump in one transaction, then the carried tables.
+   own (`moving/`), the dump in one transaction, then the carried tables, every lease among them
+   ended first.
 4. **Compare.** The new board is read back and compared with what was read, row by row, the dump
    and the carried tables alike; a number is the same by what it counts (one engine writes a
    whole number of seconds `3.0` where the other writes `3`). Any difference stops the move.
@@ -117,13 +122,14 @@ same move the other way (`Home::move_to`, `crates/tasks/src/server/moving.rs`).
 Nothing is deleted but the move's work folder. The old store and the export stay in `moved/`,
 and the snapshot with the snapshots, until the owner says otherwise.
 
-**A failure.** Before the switch the board's folder is untouched: the work folder is removed and
-the board is on the engine it was on. Marking the journal committed is the commit point. A step
+**A failure.** Before the switch nothing of the board has changed places: the work folder is
+removed, the export already written stays in `moved/STAMP-ENGINE/` beside nothing else, and the
+board is on the engine it was on. Marking the journal committed is the commit point. A step
 that fails before it is undone at once, and the board is as it was, its recovery bindings
 included. After it the board is on the new engine, and the command says the move committed and
 what is left. A move cut short at any step (a process killed, a machine that lost power) leaves
 its journal standing: while it stands nothing reads the folder as either engine, no server starts,
-and the hold is not released. Only the holder's next `database move` or `database restore`
+and the hold is not released. Only the holder's next `tasks-move`, a move or a restore,
 settles it, undoing a move that never committed and finishing one that did, each told by the
 journal and by what is on disk; an ordinary command is refused and finishes nothing. A step that
 can be neither finished nor undone leaves the hold and the journal, and says where the data is.
@@ -132,12 +138,16 @@ can be neither finished nor undone leaves the hold and the journal, and says whe
 move carries these row by row, under the same key on both engines, and compares them too: each
 session's callback address and what it has seen (`callback_state`), the lines not yet delivered
 (`callback_event`, `chat_event`), who writes the board (`writer`), the artifact ledger, the
-unanswered-wait restores, and the task holds (`counter`'s `hold` rows). What it leaves, and why
-nothing is lost with it: a dispatcher's lease of seconds, which no dispatcher holds across a hold
-and whose next revision is taken past the carried one; the counters a command reads and moves
-within itself; what the copy derives (each sender's last word, the search indexes); the board's
-schema record and recovery generation, which the new board has of its own; and the marker, which
-each engine keeps its own way. A test names every table of the board as copied, carried or left
+unanswered-wait restores, the leases (`callback_lease`: a recipient's, a session's close or
+restore, a host's dispatch) and the counters (`counter`): the task holds, each recipient's place
+in its outbox, which keys its next line past the ones carried, and the fences. A lease is carried
+ended and its revision moved on by one. The revision is the token its holder's writes carry, so a
+holder from before the move finds a lease that is no longer its own, the next one taken is past
+both, and none stands that the hold did not see; this holds after a move back as well. What it
+leaves, and why nothing is lost with it: the counters the copy sets from the rows it copies
+(messages, tasks, asks); what the copy derives (each sender's last word, the search indexes); the
+board's schema record and recovery generation, which the new board has of its own; and the
+marker, which each engine keeps its own way and the move raises past the old board's. A test names every table of the board as copied, carried or left
 (`crates/tasks/src/store/copy.rs`), and fails on one that is none.
 
 **What a reader kept.** A reader holds the board's rows under its marker. Its connection ends
@@ -164,7 +174,7 @@ minutes; the rehearsal gives the real figure, for the whole of it, before any li
 - **After the switch, before anyone wrote.** The kept SurrealDB store in `moved/` is the board as
   it was; putting it back is by hand, held: the PostgreSQL cluster moved out, the store moved
   back, the mark rewritten. No command does it, as the move in reverse loses nothing either.
-- **After writes on PostgreSQL.** The same move in reverse, `just tasks database move surrealdb`:
+- **After writes on PostgreSQL.** The same move in reverse, `tasks-move surrealdb`:
   hold, export from PostgreSQL, copy into SurrealDB, compare, switch, release. It costs a second hold of about the same length. The round trip
   (SurrealDB, PostgreSQL, and back to an export, every table compared) is tested on a generated
   board of the live one's shape. Going back to the old store as it was kept instead is quicker and
@@ -173,7 +183,7 @@ minutes; the rehearsal gives the real figure, for the whole of it, before any li
   spells them in Latin letters and PostgreSQL keeps them, so the same query can rank such a word
   differently on each.
 - **A PostgreSQL board that breaks later.** Its snapshots are whole stopped clusters, and
-  `just tasks database restore SNAPSHOT` puts one back over the board it was taken from, keeping
+  `tasks-move --restore SNAPSHOT` puts one back over the board it was taken from, keeping
   the cluster it replaces. What was written since the snapshot is in that kept cluster, not on
   the board.
 

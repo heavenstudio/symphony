@@ -221,6 +221,15 @@ server would replay and its clean stop remove), else among the newest three whos
 the room the old store takes comes back only once it is removed. The exports stay in
 `symphony/tasks/reclaim/exports/`. `--dir FOLDER` rehearses on a copy of `symphony/tasks/` (`cp -c`, a clone).
 
+The `tasks-move` binary, the owner's to run the same way, moves the board's store to the other
+engine (`tasks-move postgresql --as HANDLE`, `tasks-move surrealdb --as HANDLE`) and puts a
+snapshot of a PostgreSQL board back over it (`tasks-move --restore SNAPSHOT --as HANDLE`): held,
+exported, copied, every row compared, then switched under a journal with a commit point. A
+failure before it leaves the board on the engine it was on, nothing is deleted, and a move cut
+short is settled by its holder's next `tasks-move`
+([one board's move](analysis/board-pg-cutover.md#one-boards-move),
+[POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)).
+
 **Snapshots.** `just tasks snapshot` clones the board's store, `symphony/tasks/data`, into
 `symphony/tasks/snapshots/YYYY-MM-DDTHH-MM-SSZ` (the time it was taken, in UTC; `.N` after another taken
 in the same second); `--list` names those kept, the newest first
@@ -458,8 +467,6 @@ refusal's words, in place of the board until a read answers.
 | `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
 | `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it; it moves nothing while a writer seen in the last week is behind the schema it would move to, naming each, unless `--leave-behind` ([Who writes a board](#who-writes-a-board)) |
 | `just tasks database [hold WHY \| release [--of HOLDER]] [--as HANDLE]` | the board's database: whether it is held, what runs on its data, what a start or replay under way does, and the snapshots kept until the owner removes them; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release` by its holder (or by another naming it with `--of`), which starts nothing |
-| `just tasks database move ENGINE --as HANDLE` | move the board's store to `postgresql` or `surrealdb`: held, exported, copied, every row compared, then switched under a journal with a commit point; a failure before it leaves the board on the engine it was on, nothing is deleted, and a move cut short is settled by its holder's next run ([one board's move](analysis/board-pg-cutover.md#one-boards-move)) |
-| `just tasks database restore SNAPSHOT --as HANDLE` | put a snapshot of the board's PostgreSQL back over the board it was taken from, held and under the same journal; the cluster it replaces is kept ([POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)) |
 | `just tasks schema [--accept VERSION]` | the board's schema and the highest its live board was seen at; exit 1, in the rollback's words, while it went back below it; `--accept VERSION` (`none` for a store with no board), the owner's, accepts an older board they meant ([A board that went back](#a-board-that-went-back)) |
 | `just tasks snapshot [--list]` | a copy-on-write clone of the board's store, taken only while no server has it open; one whose write-ahead log holds writes is kept until the owner removes it, and the newest three of the others; `--list` names them ([Snapshots](#where-it-lives)) |
 | `just tasks callback [ADDRESS] [--chat] [--if-free] [--off] --as HANDLE` | register a native channel; addressed events start a turn directly (`just tasks help callback`) |

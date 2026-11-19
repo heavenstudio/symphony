@@ -312,11 +312,12 @@ impl Store {
 
 /// The tables a move of the board to another engine carries beside the dump's
 /// ([`Store::carried`]): what the board's commands keep for sessions and programs and no copy
-/// derives, each keyed alike on both engines. `counter` is carried for its task holds alone
-/// ([`HELD`]): its other rows are fences a command reads and moves within itself, and each
-/// engine's own marker.
-pub const CARRIED: [&str; 7] = [
+/// derives, each keyed alike on both engines. Of `counter` every row is carried but the ones
+/// each engine or the copy makes for itself ([`own`]): the task holds, each recipient's place in
+/// its outbox (the number its next line is keyed by), and the fences, which only ever count up.
+pub const CARRIED: [&str; 8] = [
     "callback_state",
+    "callback_lease",
     "callback_event",
     "chat_event",
     "writer",
@@ -325,40 +326,68 @@ pub const CARRIED: [&str; 7] = [
     "counter",
 ];
 
-/// What begins the id of a task's hold in `counter` (`counter:['hold', SLUG]`).
-const HELD: &str = "hold";
+/// The counters the copy sets from the rows it copies.
+const COPIED: [&str; 3] = ["message", "task", "ask"];
 
 /// A carried row's id as either engine keys it: SurrealDB lists a record's id as its table and
 /// its key, PostgreSQL as the key alone.
-fn key(table: &str, id: &Value) -> Value {
+fn key(table: &str, id: &Value, postgresql: bool) -> Value {
     match id.as_array().map(Vec::as_slice) {
-        Some([named, key]) if named == table => key.clone(),
+        Some([named, key]) if !postgresql && named == table => key.clone(),
         _ => id.clone(),
     }
 }
 
-/// Whether `id`, a key of `counter`, is a task's hold.
-fn hold(id: &Value) -> bool {
-    id.get(0).and_then(Value::as_str) == Some(HELD)
+/// Whether `id`, a key of `counter`, is a row a board has of its own and no move carries: the
+/// counters the copy sets ([`COPIED`]), and the part of the marker no session owns, which each
+/// engine keeps its own way (`board_structure`, or `['board']` and one row a connection).
+fn own(id: &Value) -> bool {
+    match id {
+        Value::String(name) => {
+            // `board` is the marker of boards before `board_structure`, kept retired.
+            ["board_structure", "board"].contains(&name.as_str())
+                || COPIED.contains(&name.as_str())
+        }
+        other => other.get(0).and_then(Value::as_str) == Some("board"),
+    }
+}
+
+/// `carried`, a board's ([`Store::carried`]), as a move writes it on the other engine: every
+/// lease ended and its revision moved on by one. The revision of a lease is the token its
+/// holder's writes carry, so a holder from before the move meets a lease that is no longer its
+/// own, and the next one taken is past both; a lease that stood would outlive the hold the move
+/// ran under.
+pub fn leases_ended(mut carried: Value) -> Value {
+    let leases = carried.get_mut("callback_lease").and_then(Value::as_array_mut);
+    for lease in leases.into_iter().flatten() {
+        if lease.get("until").is_some() {
+            lease["until"] = serde_json::json!(0);
+        }
+        if let Some(revision) = lease.get("revision").and_then(Value::as_i64) {
+            lease["revision"] = serde_json::json!(revision + 1);
+        }
+    }
+    carried
 }
 
 impl Store {
     /// Every row of the tables a move carries beside the dump ([`CARRIED`]), by table, each
     /// with its key as `id` and in the order of its key as text: what [`Store::carry`] writes
-    /// on the other engine, and what is compared with its reading there.
+    /// on the other engine, its leases ended first ([`leases_ended`]), and what is compared with
+    /// its reading there.
     pub fn carried(&self) -> Result<Value, Error> {
-        let raw = self.raw();
+        let (raw, postgresql) = (self.raw(), self.database().is_postgresql());
         let mut tables = serde_json::Map::new();
         for table in CARRIED {
             let listed = raw.table(table).get()?;
             let mut rows: Vec<Value> = (listed.as_array().into_iter().flatten())
                 .map(|row| {
                     let mut row = row.clone();
-                    row["id"] = key(table, &row["id"]);
+                    row["id"] = key(table, &row["id"], postgresql);
                     row.sort_all_objects();
                     row
                 })
-                .filter(|row| table != "counter" || hold(&row["id"]))
+                .filter(|row| table != "counter" || !own(&row["id"]))
                 .collect();
             crate::order::sort_by(&mut rows, &|a, b| {
                 a["id"].to_string().cmp(&b["id"].to_string())
@@ -369,8 +398,8 @@ impl Store {
     }
 
     /// `carried`, another board's ([`Store::carried`]), written here row by row under its keys,
-    /// replacing what those tables held: the task holds alone of `counter`. A table it does not
-    /// know is refused before anything is written.
+    /// replacing what those tables held: of `counter`, all but the rows a board has of its own.
+    /// A table it does not know is refused before anything is written.
     pub fn carry(&self, carried: &Value) -> Result<(), Error> {
         let tables = carried.as_object().cloned().unwrap_or_default();
         if let Some(unknown) = tables
@@ -381,13 +410,13 @@ impl Store {
                 "{unknown} is no table a move carries: nothing was written"
             )));
         }
-        let raw = self.raw();
+        let (raw, postgresql) = (self.raw(), self.database().is_postgresql());
         for (table, rows) in &tables {
             if table == "counter" {
                 let listed = raw.table(table).get()?;
                 for row in listed.as_array().into_iter().flatten() {
-                    let id = key(table, &row["id"]);
-                    if hold(&id) {
+                    let id = key(table, &row["id"], postgresql);
+                    if !own(&id) {
                         raw.row(table, id).delete()?;
                     }
                 }
@@ -596,7 +625,7 @@ const DUMPED: [&str; 11] = [
 
 /// The tables a move leaves, each with why nothing of the board is lost with it.
 #[cfg(test)]
-const LEFT: [(&str, &str); 7] = [
+const LEFT: [(&str, &str); 6] = [
     (
         "recovery",
         "the copy gives the new board a generation of its own",
@@ -614,10 +643,6 @@ const LEFT: [(&str, &str); 7] = [
     (
         "session_revision",
         "a session's part of the marker, which the move raises past the old board's",
-    ),
-    (
-        "callback_lease",
-        "a dispatcher's lease of seconds, taken again; no dispatcher runs across a hold",
     ),
 ];
 
@@ -647,25 +672,58 @@ mod placed {
     }
 
     #[test]
-    fn a_carried_key_reads_alike_from_both_engines_and_only_a_hold_is_carried_of_counter() {
+    fn a_carried_key_reads_alike_from_both_engines_and_a_boards_own_counters_are_not_carried() {
         use serde_json::json;
-        assert_eq!(
-            key("writer", &json!(["writer", ["host", "/bin"]])),
-            json!(["host", "/bin"])
-        );
-        assert_eq!(
-            key("writer", &json!(["host", "/bin"])),
-            json!(["host", "/bin"])
-        );
-        assert_eq!(key("chat_event", &json!("7")), json!("7"));
-        assert!(hold(&json!(["hold", "sim/jump"])));
-        for other in [
+        let compound = json!(["writer", ["host", "/bin"]]);
+        assert_eq!(key("writer", &compound, false), json!(["host", "/bin"]));
+        // PostgreSQL lists the key alone, so one that begins with its table's name is whole.
+        assert_eq!(key("writer", &compound, true), compound);
+        assert_eq!(key("writer", &json!(["host", "/bin"]), true), json!(["host", "/bin"]));
+        assert_eq!(key("chat_event", &json!("7"), false), json!("7"));
+        for carried in [
+            json!(["hold", "sim/jump"]),
+            json!(["callback-event", "amber-heron"]),
             json!(["slots", "h"]),
-            json!("message"),
-            json!(["board", 7]),
-            json!(null),
+            json!(["agent", "a"]),
+            json!("tree"),
         ] {
-            assert!(!hold(&other), "{other}");
+            assert!(!own(&carried), "{carried}");
         }
+        for kept in [
+            json!("message"),
+            json!("task"),
+            json!("ask"),
+            json!("board_structure"),
+            json!("board"),
+            json!(["board"]),
+            json!(["board", 7]),
+        ] {
+            assert!(own(&kept), "{kept}");
+        }
+    }
+
+    #[test]
+    fn a_carried_lease_is_ended_and_its_revision_moved_on() {
+        use serde_json::json;
+        let carried = json!({
+            "callback_lease": [
+                {"id": "amber-heron", "until": 1_900_000_000.5, "revision": 12, "pull": 3},
+                {"id": ["session", "amber-heron"], "until": 5, "revision": 1, "doing": "close"},
+                {"id": "no-lease-yet", "asked": 2},
+            ],
+            "counter": [{"id": ["hold", "sim/jump"], "last": 0, "until": 9, "revision": 4}],
+        });
+        assert_eq!(
+            leases_ended(carried),
+            json!({
+                "callback_lease": [
+                    {"id": "amber-heron", "until": 0, "revision": 13, "pull": 3},
+                    {"id": ["session", "amber-heron"], "until": 0, "revision": 2, "doing": "close"},
+                    {"id": "no-lease-yet", "asked": 2},
+                ],
+                "counter": [{"id": ["hold", "sim/jump"], "last": 0, "until": 9, "revision": 4}],
+            })
+        );
+        assert_eq!(leases_ended(json!({})), json!({}));
     }
 }

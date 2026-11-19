@@ -239,9 +239,8 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     assert_eq!(code, 0);
     assert!(
         out.starts_with(concat!(
-            "usage: just tasks database [-h]\n",
-            "                           [hold WHY | release [--of HOLDER] | move ENGINE |\n",
-            "                           restore SNAPSHOT] [--as ACTOR]\n"
+            "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]]\n",
+            "                           [--as ACTOR]\n"
         )),
         "{out}"
     );
@@ -569,6 +568,18 @@ fn programs() -> PathBuf {
     symphony_board::server::postgres::discover_programs(&workspace).unwrap()
 }
 
+/// `tasks-move ARGS` in `env`: its code, what it said and what it refused.
+fn moving(env: &symphony_board::cli::Env, args: &[&str]) -> (i32, String, String) {
+    let args: Vec<String> = args.iter().map(|word| (*word).to_string()).collect();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = symphony_board::move_main(&args, env, &mut out, &mut err);
+    (
+        code,
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
 /// `alpha`'s PostgreSQL stopped when the case ends, whichever engine its board is on then.
 struct Stopped<'a>(&'a Alpha);
 
@@ -583,8 +594,8 @@ impl Drop for Stopped<'_> {
     }
 }
 
-/// The board's store is moved to PostgreSQL and back by the command, a snapshot of its
-/// PostgreSQL put back over it, and each word it does not take refused with its usage.
+/// The board's store is moved to PostgreSQL and back by `tasks-move`, a snapshot of its
+/// PostgreSQL put back over it, and the board's own command takes neither word.
 #[test]
 fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_command() {
     use symphony_board::NewTask;
@@ -607,45 +618,19 @@ fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_comma
     };
     create("sim/one");
 
-    for (words, said) in [
-        (
-            vec!["database", "move", "oracle", "--as", "mover"],
-            "move takes one ENGINE",
-        ),
-        (
-            vec!["database", "move", "--as", "mover"],
-            "move takes one ENGINE",
-        ),
-        (
-            vec!["database", "restore", "--as", "mover"],
-            "restore takes one SNAPSHOT",
-        ),
-        (
-            vec![
-                "database",
-                "move",
-                "postgresql",
-                "--of",
-                "x",
-                "--as",
-                "mover",
-            ],
-            "--of names the holder of a hold to release",
-        ),
-    ] {
-        let (code, _, err) = alpha.run(&words);
-        assert_eq!(code, 2, "{words:?}");
-        assert!(
-            err.contains(said) && err.contains("usage: just tasks database"),
-            "{err}"
-        );
+    let env = alpha.env();
+    // The board's own command takes neither word: the move is a program of its own.
+    for word in ["move", "restore"] {
+        let (code, _, err) = alpha.run(&["database", word, "postgresql", "--as", "mover"]);
+        assert_eq!(code, 2, "{word}");
+        assert!(err.contains("usage: just tasks database"), "{err}");
     }
-    let (code, _, err) = alpha.run(&["database", "move", "postgresql"]);
+    let (code, _, err) = moving(&env, &["postgresql"]);
     assert_eq!(code, 2);
     assert!(err.contains("no session: pass --as HANDLE"), "{err}");
     assert_eq!(alpha.home().backend().unwrap(), Engine::SurrealDb);
 
-    let (code, out, err) = alpha.run(&["database", "move", "postgresql", "--as", "mover"]);
+    let (code, out, err) = moving(&env, &["postgresql", "--as", "mover"]);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("✔ the board is on PostgreSQL"), "{out}");
     assert!(out.contains("rows compared with what was read"), "{out}");
@@ -659,7 +644,7 @@ fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_comma
     let (code, out, err) = alpha.run(&["list"]);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("sim/one"), "{out}");
-    let (code, _, err) = alpha.run(&["database", "move", "postgresql", "--as", "mover"]);
+    let (code, _, err) = moving(&env, &["postgresql", "--as", "mover"]);
     assert_eq!(code, 2);
     assert!(
         err.contains("is on PostgreSQL already: nothing was moved"),
@@ -684,13 +669,13 @@ fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_comma
         .to_str()
         .unwrap()
         .to_string();
-    let (code, _, err) = alpha.run(&["database", "restore", "never-taken", "--as", "mover"]);
+    let (code, _, err) = moving(&env, &["--restore", "never-taken", "--as", "mover"]);
     assert_eq!(code, 2);
     assert!(
         err.contains("never-taken is no snapshot of this board's PostgreSQL"),
         "{err}"
     );
-    let (code, out, err) = alpha.run(&["database", "restore", &name, "--as", "mover"]);
+    let (code, out, err) = moving(&env, &["--restore", &name, "--as", "mover"]);
     assert_eq!(code, 0, "{err}");
     assert!(
         out.contains("✔ the board's PostgreSQL is the snapshot"),
@@ -707,7 +692,7 @@ fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_comma
             .0,
         0
     );
-    let (code, out, err) = alpha.run(&["database", "move", "surrealdb", "--as", "mover"]);
+    let (code, out, err) = moving(&env, &["surrealdb", "--as", "mover"]);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("✔ the board is on SurrealDB"), "{out}");
     assert!(
@@ -739,24 +724,14 @@ fn under_the_recipes_marker_a_board_outside_a_scratch_place_is_not_moved_or_rest
     let mut env = alpha.env();
     env.vars.insert("SYMPHONY_UNASKED".into(), "1".into());
     for words in [
-        ["database", "move", "postgresql", "--as", "mover"],
-        [
-            "database",
-            "restore",
-            "2026-01-01T00-00-00Z",
-            "--as",
-            "mover",
-        ],
+        &["postgresql", "--as", "mover"][..],
+        &["--restore", "2026-01-01T00-00-00Z", "--as", "mover"],
     ] {
-        let ran = run(&env, &words, "");
-        assert_eq!(ran.code, 2, "{words:?}");
-        assert!(ran.err.contains("SYMPHONY_UNASKED is set"), "{}", ran.err);
-        assert!(
-            ran.err.contains("is outside a scratch place"),
-            "{}",
-            ran.err
-        );
-        assert!(ran.err.contains("Nothing was touched"), "{}", ran.err);
+        let (code, out, err) = moving(&env, words);
+        assert_eq!((code, out.as_str()), (2, ""), "{words:?}");
+        assert!(err.contains("SYMPHONY_UNASKED is set"), "{err}");
+        assert!(err.contains("is outside a scratch place"), "{err}");
+        assert!(err.contains("Nothing was touched"), "{err}");
     }
     let folder = alpha.root.join(".git/symphony/tasks");
     assert!(!folder.join("hold").exists() && !folder.join("moving").exists());

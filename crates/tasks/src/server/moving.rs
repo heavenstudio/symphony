@@ -156,7 +156,7 @@ pub(super) fn unsettled(journal: &Path) -> String {
     };
     format!(
         "{what} ({}): the board is held and nothing reads or starts its store until its holder \
-         settles it with `tasks database move` or `tasks database restore`, which finishes what \
+         settles it with `tasks-move`, a move or a restore, which finishes what \
          committed and undoes what did not",
         journal.display()
     )
@@ -613,6 +613,8 @@ impl Home {
         let read = source.board(true);
         source.end()?;
         let (board, carried, marker) = read?;
+        // No lease stands across the hold, and none is its old holder's after it.
+        let carried = crate::store::leases_ended(carried);
 
         let aside = self.aside(now, from);
         fs::create_dir_all(&aside).map_err(io("could not make", &aside))?;

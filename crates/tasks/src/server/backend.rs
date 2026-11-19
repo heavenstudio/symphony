@@ -1,7 +1,8 @@
 //! The durable engine identity of a board home, beside its server record: `backend.json`,
 //! `{"format":1,"engine":"postgresql"}` or `surrealdb`. Absence preserves a SurrealDB board;
 //! malformed metadata, orphan PostgreSQL data, or data of the wrong engine refuse rather than
-//! falling back. Initialization is explicit, atomic under the starters' lock, and scratch-only;
+//! falling back. Making a home a PostgreSQL board in place is explicit, atomic under the starters' lock, and a
+//! scratch home's alone;
 //! an identity changes only by a move of the board's store ([`super::moving`]), and while that
 //! move's journal stands the home names no engine at all.
 
@@ -235,7 +236,7 @@ impl Home {
     }
 
     /// The selected board server, for commands and the machine server's board reader alike.
-    /// `start` false never starts one; PostgreSQL selection remains scratch-only.
+    /// `start` false never starts one. PostgreSQL serves the home whose identity names it.
     pub fn board_server(&self, root: &Path, start: bool) -> Result<Running, ServerError> {
         match self.backend()? {
             Engine::SurrealDb if start => self.ensure(),
@@ -284,7 +285,7 @@ impl Home {
         if self.identity()?.is_none() && !super::scratch(&self.dir) {
             return Err(ServerError::Io(format!(
                 "the board in {} names no engine and is not in a scratch place: PostgreSQL \
-                 serves it once its store is moved there (`tasks database move postgresql`); \
+                 serves it once its store is moved there (`tasks-move postgresql`); \
                  nothing was made or started",
                 self.dir.display()
             )));

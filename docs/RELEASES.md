@@ -101,7 +101,7 @@ under MIT: crates.io is the package manager their versions live in
 - **The helpers:** `symphony-env`, `symphony-args`, `symphony-schema`, `process-cwd` and
   `repository-read`, each on a version line of its own from 1.0.0.
 - **The product:** the library and its `symphony` command as `symphony-app`, the board
-  (`symphony-board`: `tasks`, `agent-send`, `tasks-copy` and `tasks-reclaim`), the server
+  (`symphony-board`: `tasks`, `agent-send`, `tasks-copy`, `tasks-reclaim` and `tasks-move`), the server
   (`symphony-server`), the Chrome driver `symphony shot` drives as `symphony-chrome`, and the app's
   wire types (`symphony-api`). One version for the five, from 0.1.0, each requiring the others at
   exactly it (`=0.1.0`), so they are always taken together; below 1.0, it promises no name.

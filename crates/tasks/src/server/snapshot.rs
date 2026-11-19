@@ -142,7 +142,7 @@ impl Before {
         match self {
             Before::Replay => "the board's command",
             Before::Reclaim => "`tasks-reclaim`",
-            Before::Move => "`tasks database move`",
+            Before::Move => "`tasks-move`",
         }
     }
 }

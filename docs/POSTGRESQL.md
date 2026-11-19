@@ -2,7 +2,7 @@
 
 PostgreSQL serves the board whose home names it. A scratch home (a temporary folder, or a
 checkout's artifacts folder) is made a PostgreSQL board in place; a board anywhere else becomes
-one only by a move of its store, `just tasks database move postgresql`
+one only by a move of its store, `tasks-move postgresql`
 ([the cutover procedure](analysis/board-pg-cutover.md#one-boards-move)), and with no identity
 PostgreSQL makes and starts nothing there. The machine server and the board commands use the same
 home selection. No live board has moved: that waits for what the cutover's
@@ -64,14 +64,14 @@ recovery rebind` gives it a generation of its own, and then takes no token read 
 The source's own binding is not touched, and clients already open on the source keep writing the
 source.
 
-`just tasks database restore SNAPSHOT --as HANDLE` (`Postgres::restore_over`) puts a snapshot
+`tasks-move --restore SNAPSHOT --as HANDLE` (`Postgres::restore_over`) puts a snapshot
 back over the board it was taken from: one of that board's own snapshots, by its name or path.
 The board is held for it (its caller's hold, left standing, or one set now and released after)
 and its server stopped; the snapshot is copied beside the data, then switched in under the
 journal a move runs under: the cluster in place is moved into `moved/STAMP-postgresql/`, the copy
 moved in, the journal marked committed, the home's recovery bindings revoked. Nothing is deleted,
 the snapshot included. A failure before the commit leaves the board on the cluster it had; one
-cut short is settled by its holder's next `database restore` or `database move`, undone before
+cut short is settled by its holder's next `tasks-move`, a restore or a move, undone before
 the commit and finished after. The restored board refuses every bound write until
 `just tasks recovery rebind`. The record of the highest schema the board was seen at stays
 outside the database, so a snapshot of an older schema restores a board that went back, which

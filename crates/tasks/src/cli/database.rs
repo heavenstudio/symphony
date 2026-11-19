@@ -1,13 +1,10 @@
 //! `tasks database`: the board's database said, held stopped for work on its data, or released
-//! ([`crate::server::Home::hold`]); its store moved to the other engine
-//! ([`crate::server::Home::move_to`]), or a PostgreSQL snapshot put back over it
-//! ([`crate::server::Postgres::restore_over`]). Read before the board's argument table, as
-//! `migrate` is, and run without opening the board, so none of it starts the board's server;
-//! a move reads and writes through servers of its own.
+//! ([`crate::server::Home::hold`]). Read before the board's argument table, as `migrate` is, and
+//! run without opening the board, so none of it ever starts the database.
 
 use super::{Env, machine};
 use crate::DATABASE;
-use crate::server::{Engine, Hold, Home, ServerError};
+use crate::server::{Hold, Home, ServerError};
 use std::io::Write;
 use std::path::Path;
 
@@ -15,14 +12,12 @@ use std::path::Path;
 pub const COMMAND: &str = "database";
 
 /// Its usage, wrapped as argparse wraps a line past 78 columns.
-pub const USAGE: &str = "usage: just tasks database [-h]
-                           [hold WHY | release [--of HOLDER] | move ENGINE |
-                           restore SNAPSHOT] [--as ACTOR]\n";
+pub const USAGE: &str = "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]]
+                           [--as ACTOR]\n";
 
 /// Its `--help`.
-pub const HELP: &str = "usage: just tasks database [-h]
-                           [hold WHY | release [--of HOLDER] | move ENGINE |
-                           restore SNAPSHOT] [--as ACTOR]
+pub const HELP: &str = "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]]
+                           [--as ACTOR]
 
 Say the state of the board's database, hold it stopped for work on its data (a
 snapshot, a replay on a clone, a swap), or release the hold. None of it opens
@@ -48,39 +43,9 @@ the board, so none of it ever starts the database.
                                board's next command starts the database.
                                Only its holder releases it, or another
                                handle naming the holder with --of HOLDER
-  just tasks database move ENGINE
-                               move the board's store to ENGINE (postgresql
-                               or surrealdb): hold the board, stop its
-                               server, keep a snapshot, read the board
-                               through a server of the move's own, write it
-                               as an export, copy it into a new store of
-                               ENGINE, and compare every row read back.
-                               Then switch the home under a journal
-                               (symphony/tasks/move.json): the old store
-                               moved into symphony/tasks/moved/, the new
-                               one in, the identity, the commit. A failure
-                               before the commit leaves the board on the
-                               engine it was on; after it the board is on
-                               ENGINE. While the journal stands nothing
-                               starts or reads the store and the hold is
-                               not released: its holder's next move or
-                               restore finishes what committed and undoes
-                               what did not. Nothing is deleted. A board
-                               at another schema than this build's, or a
-                               store with another database, is refused.
-  just tasks database restore SNAPSHOT
-                               put a snapshot of the board's PostgreSQL
-                               (`just tasks snapshot --list`, by its name
-                               or path) back over the board it was taken
-                               from, held and under the same journal: the
-                               cluster in place is moved into
-                               symphony/tasks/moved/, never deleted.
 
-After a move or a restore the board holds a new recovery generation and is
-bound to none: `just tasks recovery rebind` binds it again (docs/TASKS.md).
-Under SYMPHONY_UNASKED, which the `just tasks` recipe sets, a move or a
-restore of a board outside a scratch place is refused: a guard against
-accident, which grants nothing by its absence.
+The board's store is moved to the other engine, and a PostgreSQL snapshot put
+back over its board, by `tasks-move`, a program of its own (its --help).
 
 Each hold and release is a line of symphony/tasks/hold.log. It acts on the
 board of the repository it runs in, never on a server TASKS_SERVER names or
@@ -107,8 +72,6 @@ enum Asked {
     Say,
     Hold(String),
     Release,
-    Move(Engine),
-    Restore(String),
 }
 
 /// `tasks database ARGS` (the words after `database`) in `env`: what it did goes to `out`, a
@@ -140,15 +103,6 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
         ["hold", why] if !why.trim().is_empty() => Asked::Hold((*why).to_string()),
         ["hold", ..] => return usage(err, "hold takes one WHY, the reason in a few words"),
         ["release"] => Asked::Release,
-        ["move", engine] => match Engine::named(engine) {
-            Some(engine) => Asked::Move(engine),
-            None => return usage(err, "move takes one ENGINE: postgresql or surrealdb"),
-        },
-        ["move", ..] => return usage(err, "move takes one ENGINE: postgresql or surrealdb"),
-        ["restore", snapshot] if !snapshot.trim().is_empty() => {
-            Asked::Restore((*snapshot).to_string())
-        }
-        ["restore", ..] => return usage(err, "restore takes one SNAPSHOT, its name or path"),
         _ => {
             return usage(err, &format!("unrecognized arguments: {}", args.join(" ")));
         }
@@ -164,26 +118,6 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
         }
     };
     let actor = actor.filter(|actor| !actor.trim().is_empty());
-    if matches!(asked, Asked::Move(_) | Asked::Restore(_)) {
-        let Some(by) = actor else {
-            let _ = writeln!(
-                err,
-                "✖ no session: pass --as HANDLE or set TASKS_SESSION, the one who holds the \
-                 board's database while it is moved or restored"
-            );
-            return 2;
-        };
-        return match switched(&asked, &home, env, &by) {
-            Ok(done) => {
-                let _ = writeln!(out, "✔ {done}");
-                0
-            }
-            Err(why) => {
-                let _ = writeln!(err, "✖ {why}");
-                2
-            }
-        };
-    }
     let pg = (|| -> Result<Option<crate::server::Postgres>, String> {
         if home.backend().map_err(|why| why.to_string())? != crate::server::Engine::PostgreSql {
             return Ok(None);
@@ -255,7 +189,6 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
         }
         (Asked::Hold(why), Some(by)) => hold(&home, &by, &why, out, err),
         (Asked::Release, Some(by)) => release(&home, &by, of.as_deref(), out, err),
-        (Asked::Move(_) | Asked::Restore(_), Some(_)) => unreachable!("answered above"),
         (_, None) => {
             let _ = writeln!(
                 err,
@@ -267,77 +200,6 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
     }
 }
 
-/// A move or a restore of `home`'s store as `by`: what it did.
-fn switched(asked: &Asked, home: &Home, env: &Env, by: &str) -> Result<String, String> {
-    if env.var(crate::confine::MARKER).is_some() && !crate::server::scratch(home.dir()) {
-        return Err(format!(
-            "{} is set, as the `just tasks` recipe sets it, and the board at {} is outside a \
-             scratch place: its store is not moved or restored under it. Nothing was touched",
-            crate::confine::MARKER,
-            home.dir().display()
-        ));
-    }
-    let project = crate::project::find(&env.cwd, machine(env).as_deref())?;
-    let programs = crate::server::postgres::discover_programs(&project.place.root)?;
-    let now = crate::store::now();
-    let rebind = "It holds a new recovery generation and is bound to none: `just tasks \
-                  recovery rebind` binds it again";
-    match asked {
-        Asked::Move(to) => {
-            let moved = (home.move_to(*to, &programs, by, now)).map_err(|why| why.to_string())?;
-            Ok(format!(
-                "the board is on {}{}. Its {} store is kept in {}{}{}. {rebind}. {}",
-                moved.to,
-                if moved.finished {
-                    ": a move that had committed is finished".to_string()
-                } else {
-                    format!(", {} rows compared with what was read", moved.rows)
-                },
-                moved.from,
-                moved.aside.display(),
-                if moved.finished {
-                    ""
-                } else {
-                    ", with its export"
-                },
-                (moved.snapshot.as_ref()).map_or_else(String::new, |snapshot| format!(
-                    ", and its snapshot in {}",
-                    snapshot.display()
-                )),
-                if moved.held {
-                    "The board is still held, by the hold set before the move"
-                } else {
-                    "The hold is released: the board's next command starts its server"
-                }
-            ))
-        }
-        Asked::Restore(snapshot) => {
-            let pg = home.postgresql(&programs);
-            let named = Path::new(snapshot);
-            let path = if named.components().count() == 1 {
-                (pg.snapshots().map_err(|why| why.to_string())?.into_iter())
-                    .find(|path| path.file_name() == Some(named.as_os_str()))
-                    .ok_or_else(|| {
-                        format!(
-                            "{snapshot} is no snapshot of this board's PostgreSQL (`just tasks \
-                             snapshot --list`): nothing was restored"
-                        )
-                    })?
-            } else {
-                env.cwd.join(named)
-            };
-            let aside = (pg.restore_over(&path, by, now)).map_err(|why| why.to_string())?;
-            Ok(format!(
-                "the board's PostgreSQL is the snapshot {}. The cluster it replaced is kept in \
-                 {}. {rebind}",
-                path.display(),
-                aside.display()
-            ))
-        }
-        _ => unreachable!("a move or a restore"),
-    }
-}
-
 fn usage(err: &mut dyn Write, said: &str) -> i32 {
     let _ = writeln!(err, "{USAGE}just tasks database: error: {said}");
     2
@@ -346,7 +208,7 @@ fn usage(err: &mut dyn Write, said: &str) -> i32 {
 /// The board of the project `env`'s working directory is in, as [`super::reach_board`] finds it,
 /// refused for a server `TASKS_SERVER` names, a scratch database and a process Cargo runs from that
 /// board's repository ([`crate::live::cargo_refusal`]).
-fn home(env: &Env) -> Result<Home, String> {
+pub(crate) fn home(env: &Env) -> Result<Home, String> {
     if env.var("TASKS_SERVER").is_some() {
         return Err(
             "TASKS_SERVER names a server by its address, which `tasks database` does not hold: \
