@@ -348,6 +348,16 @@ pub fn connect(env: &Env) -> Result<Store, String> {
     Ok(capped(looking_up(store, env), env))
 }
 
+/// As [`connect`], following no workflow ([`following`]): `agent-send`'s, whose message moves no
+/// task, so the program that sends it links none of the workflow, its parser or its git reading.
+/// The next write a `tasks` command makes follows what the branch commits.
+pub(super) fn connect_unfollowing(env: &Env) -> Result<Store, String> {
+    let reached = reach(env, &env.cwd, true)?;
+    let database = reached.database();
+    let (store, _) = opened(reached, database, &Clock::of(env)?, crate::Opening::write())?;
+    Ok(capped(looking_up(store, env), env))
+}
+
 /// `store`, each read of its unanswered-post lookup waiting [`crate::UNANSWERED_WAIT`] at most, or
 /// what `TASKS_UNANSWERED_WAIT` sets ([`Env::seconds`]), and sent once: a command does without the
 /// posts rather than wait minutes on them.
@@ -706,6 +716,18 @@ fn open_as_database(
     clock: &Clock,
     how: crate::Opening,
 ) -> Result<Store, String> {
+    let (store, how) = opened(reached, database, clock, how)?;
+    following(&store, &how);
+    Ok(store)
+}
+
+/// As [`open_as_database`], following nothing: the store, and the opening it was made by.
+fn opened(
+    reached: Reached,
+    database: crate::Database,
+    clock: &Clock,
+    how: crate::Opening,
+) -> Result<(Store, crate::Opening), String> {
     let (clock, probe, host) = parts(clock);
     let how = how
         .of(reached.project.as_deref())
@@ -715,8 +737,7 @@ fn open_as_database(
     let store = Store::opening_on(database, clock, probe, &host, &how)
         .map(|store| naming(store, named))
         .map_err(|e| e.to_string())?;
-    following(&store, &how);
-    Ok(store)
+    Ok((store, how))
 }
 
 /// A live board opened to write follows the workflow its project's default branch commits

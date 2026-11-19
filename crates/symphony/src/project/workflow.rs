@@ -3,7 +3,8 @@
 //! accept a custom workflow the local host supports, which the board activates once the project's
 //! default branch commits it, and refuse one it does not, naming what it needs.
 
-use symphony_api::workflow::{Definition, Revision, Source};
+use symphony_api::workflow::{Revision, Source};
+use symphony_board::workflow::written;
 pub use symphony_board::workflow::{Mapping, Validated, builtin, candidate, prerequisites};
 
 /// Read the project file from an actual commit in a repository root, never from its index or
@@ -44,20 +45,15 @@ pub fn committed(root: &std::path::Path, reference: &str) -> Result<(Validated, 
 /// A custom workflow is valid, its mappings map onto it, and the local host supports all it
 /// needs (`symphony_board::workflow::activate::supported`): a capability its grants name, and
 /// nothing this release cannot run yet. Refused as `unsupported_activation`, naming what, so the
-/// project learns before its default branch commits a workflow the board would not activate.
-pub(super) fn require_supported(
-    definition: Option<&Definition>,
-    mappings: &[Mapping],
-) -> Result<(), String> {
-    if let Some(definition) = definition {
-        let validated = Validated::new(definition.clone())?;
-        validated.check_mappings(mappings)?;
+/// project learns before its default branch commits a workflow the board would not activate. The
+/// file `text` is read by the board's own reader ([`written`]), as the board reads it when the
+/// branch commits it: a field it refuses is named, without TOML's line.
+pub(super) fn require_supported(text: &str) -> Result<(), String> {
+    let (definition, _) = written(text).map_err(|why| format!("{}: {why}", super::FILE))?;
+    if let Some(validated) = definition {
         let host = symphony_board::workflow::Host::local();
         return symphony_board::workflow::activate::supported(&validated, &host)
             .map_err(|why| format!("symphony.toml: unsupported_activation: {why}"));
-    }
-    if !mappings.is_empty() {
-        return Err("symphony.toml: workflow_mappings: no [workflow] to map onto".into());
     }
     Ok(())
 }

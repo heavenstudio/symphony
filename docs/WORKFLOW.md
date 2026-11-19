@@ -51,7 +51,8 @@ recovery service holds `recovery`, and no adapter is registered. A hosted board 
 request extends it.
 
 Every command that opens a project's live board to write follows the workflow its default
-branch commits (`workflow::follow`, `Store::follow_committed`): a project that commits no
+branch commits (`workflow::follow`, `Store::follow_committed`), but `agent-send`, whose message
+moves no task and whose program links none of the workflow: a project that commits no
 `[workflow]` on a board that never activated one reads the branch tip and writes nothing, and a
 repository without that branch commits nothing. A committed definition, or mappings, other than
 the active one's is activated, in one transaction fenced on the active generation and on the
