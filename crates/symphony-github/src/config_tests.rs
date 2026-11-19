@@ -1,6 +1,10 @@
 use super::*;
 
 const ON: &str = "enabled = true\nrepository = \"o/n\"\ntoken_file = \"/secrets/token\"\n";
+/// A delivery's settings, all but the App that reads who bypasses the rules.
+const PUBLISH: &str = "enabled = true\nrepository = \"o/n\"\ntoken_file = \"/secrets/token\"\n\
+                       pull_requests = \"publish\"\nchecks_token_file = \"/secrets/checks\"\n\
+                       checks_app_id = 42\nlanding_app_id = 43\n";
 
 #[test]
 fn nothing_written_is_everything_off() {
@@ -21,7 +25,8 @@ fn each_capability_is_its_own_setting() {
         for pulls in ["off", "track", "publish"] {
             let text = format!(
                 "{ON}issues = \"{issues}\"\npull_requests = \"{pulls}\"\nimport_labels = \
-                 [\"a\"]\nchecks_token_file = \"/secrets/checks\"\nchecks_app_id = 42\nlanding_app_id = 43\n"
+                 [\"a\"]\nchecks_token_file = \"/secrets/checks\"\nchecks_app_id = 42\nlanding_app_id = 43\n\
+                 policy_token_file = \"/secrets/policy\"\npolicy_app_id = 44\n"
             );
             let config = parse(&text).unwrap();
             assert_eq!(
@@ -126,13 +131,60 @@ fn what_does_not_hold_together_is_refused_by_name() {
 
 #[test]
 fn an_upstream_is_pinned_by_its_number_where_pull_requests_are_published() {
-    let publish = format!(
-        "{ON}pull_requests = \"publish\"\nchecks_token_file = \"/secrets/checks\"\n\
-         checks_app_id = 42\nlanding_app_id = 43\n"
-    );
+    let publish = format!("{PUBLISH}policy_token_file = \"/secrets/policy\"\npolicy_app_id = 44\n");
     assert_eq!(parse(&publish).unwrap().upstream_id, None);
     let config = parse(&format!("{publish}upstream_id = 88\n")).unwrap();
     assert_eq!(config.upstream_id, Some(88));
+}
+
+#[test]
+fn what_reads_who_bypasses_the_rules_is_a_third_app_with_a_token_of_its_own() {
+    let cases: [(&str, &str); 8] = [
+        (
+            &format!("{PUBLISH}policy_token_file = \"/secrets/policy\"\n"),
+            "pull_requests = \"publish\" needs policy_token_file and policy_app_id",
+        ),
+        (
+            &format!("{PUBLISH}policy_app_id = 44\n"),
+            "needs policy_token_file and policy_app_id: the GitHub App GitHub shows who bypasses",
+        ),
+        (
+            "token_file = \"/secrets/token\"\npolicy_token_file = \"/secrets/token\"\n",
+            "policy_token_file is token_file or checks_token_file",
+        ),
+        (
+            "checks_token_file = \"/secrets/checks\"\npolicy_token_file = \"/secrets/checks\"\n",
+            "the token that reads who bypasses the rules is a token of its own",
+        ),
+        (
+            "landing_app_id = 43\npolicy_app_id = 43\n",
+            "policy_app_id is landing_app_id or checks_app_id",
+        ),
+        (
+            "checks_app_id = 42\npolicy_app_id = 42\n",
+            "what reads who bypasses the rules neither merges nor writes the checks",
+        ),
+        (
+            "policy_token_file = \"policy\"\n",
+            "policy_token_file is an absolute path outside the repository",
+        ),
+        (
+            "policy_app_id = 0\n",
+            "policy_app_id is a GitHub App's number",
+        ),
+    ];
+    for (text, why) in cases {
+        let refused = parse(text).unwrap_err();
+        assert!(refused.contains(why), "{text:?}: {refused}");
+    }
+    let config = parse(&format!(
+        "{PUBLISH}policy_token_file = \"/secrets/policy\"\npolicy_app_id = 44\n"
+    ))
+    .unwrap();
+    assert_eq!(
+        (config.policy_token_file, config.policy_app_id),
+        (Some(PathBuf::from("/secrets/policy")), Some(44))
+    );
 }
 
 #[test]

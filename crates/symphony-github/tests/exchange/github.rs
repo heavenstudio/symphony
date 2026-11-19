@@ -51,6 +51,11 @@ struct Inner {
     rulesets: BTreeMap<i64, Value>,
     /// Other repositories the token reads, by `OWNER/NAME`: what each says of itself.
     neighbours: BTreeMap<String, Value>,
+    /// The one GitHub App shown a ruleset's `bypass_actors`, as GitHub shows them only to who
+    /// may write the ruleset; none is every asker, for the exchange that reads no ruleset.
+    reader: Option<i64>,
+    /// The requests each App made, as `asked` keeps them for all.
+    asked_as: Vec<(i64, String, String)>,
 }
 
 pub(crate) struct Fake(Mutex<Inner>);
@@ -83,6 +88,8 @@ impl Fake {
             pulls: Vec::new(),
             checks: Vec::new(),
             acting: 0,
+            reader: None,
+            asked_as: Vec::new(),
             made: 100,
             about: json!({
                 "default_branch": "main", "archived": false, "allow_squash_merge": true,
@@ -177,6 +184,19 @@ impl Fake {
     /// Every request made so far: its method, path and body.
     pub(crate) fn asked(&self) -> Vec<(String, String, Option<String>)> {
         self.inner().asked.clone()
+    }
+
+    /// The requests made as the GitHub App `app`: each one's method and path.
+    pub(crate) fn asked_as(&self, app: i64) -> Vec<(String, String)> {
+        (self.inner().asked_as.iter())
+            .filter(|(by, ..)| *by == app)
+            .map(|(_, method, path)| (method.clone(), path.clone()))
+            .collect()
+    }
+
+    /// From now a ruleset's bypass list is shown to the App `app` alone.
+    pub(crate) fn shown_to(&self, app: i64) {
+        self.inner().reader = Some(app);
     }
 
     /// The requests that change the repository.
@@ -329,6 +349,7 @@ impl Fake {
     ) -> (Response, bool) {
         let mut inner = self.inner();
         inner.acting = app;
+        inner.asked_as.push((app, method.into(), path.into()));
         inner
             .asked
             .push((method.into(), path.into(), body.map(str::to_string)));
@@ -622,7 +643,8 @@ impl Inner {
                     Some(ruleset) => {
                         let mut shown = ruleset.clone();
                         // As GitHub: a list the asker may not see is left out, never shown empty.
-                        if shown["bypass_actors"].is_null() {
+                        let hidden = self.reader.is_some_and(|reader| reader != self.acting);
+                        if hidden || shown["bypass_actors"].is_null() {
                             shown.as_object_mut().unwrap().remove("bypass_actors");
                         }
                         answer(200, &shown)
