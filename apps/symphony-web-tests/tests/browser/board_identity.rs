@@ -96,7 +96,13 @@ fn listing() -> Value {
         "orchestrators": [{"handle": "calm-orchestrator", "health": "live"}], "unstarted": 0})
 }
 
+/// The board at `width` in `scheme`, its lanes at the first: opened from the blank page, so its
+/// history entry is a new one and keeps no place. Opened again at the URL it shows, Chrome would
+/// replace its entry and keep the place the board wrote in it (`PlaceKeeper`, boardplace.ts) if
+/// that write reached the browser first, and the lanes would come back where the opening before
+/// left them, the Ready lane's cards out of the window and not drawn.
 fn open(page: &mut crate::Chrome, site: &Site, width: u32, scheme: &str) {
+    page.open("about:blank");
     page.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": width <= 760}),
