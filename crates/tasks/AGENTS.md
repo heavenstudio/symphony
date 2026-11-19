@@ -251,7 +251,7 @@ keeps running against a newer board for a while, and a change keeps what it read
 - a new meaning goes in a field older binaries ignore and keep, beside the old one, which keeps its
   meaning, with no schema change: an orchestrator's `seen`, `statuses` and PULL entries keep the
   whole-board meaning older dispatchers read, and what it hears and was told lives in `narrowing`,
-  `pull_withheld`, `pull_awaiting` and `pull_said`, written at both acknowledgement sites
+  `pull_withheld`, `pull_awaiting`, `pull_said` and `pull_idle`, written at both acknowledgement sites
   (`store/callback_state.rs`, `store/pull_account.rs`); `revision`, which every older write moves,
   is never read, and taking or releasing a `callback_lease` rewrites no `seen` or `statuses`;
 - with an older dispatcher interleaving, no entry an orchestrator hears is lost and no line is said
