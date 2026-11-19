@@ -38,6 +38,7 @@ fn at(custom: &Custom, phase: &str, state: &str) -> Facts {
             generation: 2,
             revision: 4,
             digest: custom.revision.digest.clone(),
+            manual: None,
         }),
         roles: Vec::new(),
         dependencies: Vec::new(),

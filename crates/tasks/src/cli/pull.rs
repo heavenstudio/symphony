@@ -766,6 +766,16 @@ pub(crate) fn digest_on(
         }
     }
     for t in tasks {
+        // A task a custom workflow holds is staffed and moved by its edges and its recovery alone
+        // (docs/WORKFLOW.md): no list here offers it to the board's own claims and handovers, and
+        // its executor at work counts as executing.
+        if crate::store::workflow::position_held(&t.fields) {
+            if t.status == "in_progress" && staffed(t) {
+                executing += 1;
+                running.push(t.slug.clone());
+            }
+            continue;
+        }
         let cancelled = look.cancelled(t);
         let blocked = (!cancelled.is_empty())
             .then(|| format!("cancelled dependencies: {}", cancelled.join(", ")));

@@ -165,7 +165,14 @@ BEGIN
             AND role.role IN (a ->> 'role', 'reserved') AND role.handle <> a ->> 'handle') THEN
         RAISE EXCEPTION 'stale';
     END IF;
-    IF EXISTS (SELECT 1 FROM workflow WHERE id = v -> 'receipt') THEN
+    PERFORM 1 FROM session WHERE handle IN (SELECT s ->> 'handle' FROM jsonb_array_elements(v -> 'seen') AS s)
+        FOR SHARE;
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'seen') AS s
+            WHERE NOT EXISTS (SELECT 1 FROM session WHERE handle = s ->> 'handle'
+                AND last_seen = (s ->> 'last_seen')::double precision)) THEN
+        RAISE EXCEPTION 'stale';
+    END IF;
+    IF v ->> 'receipt' IS NOT NULL AND EXISTS (SELECT 1 FROM workflow WHERE id = v -> 'receipt') THEN
         RAISE EXCEPTION 'stale';
     END IF;
     IF v ->> 'actor' IS NOT NULL AND NOT EXISTS (SELECT 1 FROM session
@@ -180,15 +187,22 @@ BEGIN
         FROM jsonb_array_elements(v -> 'add') AS a
         ON CONFLICT (id) DO UPDATE SET (slug, handle, role, since, expires)
             = (EXCLUDED.slug, EXCLUDED.handle, EXCLUDED.role, EXCLUDED.since, EXCLUDED.expires);
-    INSERT INTO workflow (id, kind, body, at) VALUES (
-        jsonb_build_array('event', v ->> 'slug', v -> 'transition' -> 'revision'), 'event',
-        v -> 'transition', (v -> 'transition' ->> 'at')::double precision);
-    INSERT INTO workflow (id, kind, body, at) VALUES (v -> 'receipt', 'receipt', v -> 'receipt_body',
-        (v -> 'transition' ->> 'at')::double precision);
-    UPDATE task SET status = v -> 'transition' ->> 'status',
-        fields = board_fields(id, fields, '{{_board,workflow}}', v -> 'position'),
-        updated = (v -> 'transition' ->> 'at')::double precision, version = version + 1
-        WHERE slug = v ->> 'slug';
+    IF v ->> 'transition' IS NOT NULL THEN
+        INSERT INTO workflow (id, kind, body, at) VALUES (
+            jsonb_build_array('event', v ->> 'slug', v -> 'transition' -> 'revision'), 'event',
+            v -> 'transition', (v -> 'transition' ->> 'at')::double precision);
+        UPDATE task SET status = v -> 'transition' ->> 'status',
+            fields = board_fields(id, fields, '{{_board,workflow}}', v -> 'position'),
+            updated = (v -> 'transition' ->> 'at')::double precision, version = version + 1
+            WHERE slug = v ->> 'slug';
+    ELSE
+        UPDATE task SET updated = (v ->> 'now')::double precision, version = version + 1
+            WHERE slug = v ->> 'slug';
+    END IF;
+    IF v ->> 'receipt' IS NOT NULL THEN
+        INSERT INTO workflow (id, kind, body, at) VALUES (v -> 'receipt', 'receipt', v -> 'receipt_body',
+            (v -> 'transition' ->> 'at')::double precision);
+    END IF;
     IF (v ->> 'moved')::boolean THEN
         DELETE FROM counter WHERE id = jsonb_build_array('hold', v ->> 'slug');
     END IF;
@@ -212,4 +226,12 @@ UPDATE task SET fields = board_fields(id, fields, '{_board,workflow}', v -> 'pla
 
 pub(in crate::store) fn receipt() -> Pg<'static> {
     Pg::read("(SELECT body FROM workflow WHERE id = v -> 'receipt')")
+}
+
+pub(in crate::store) fn leaving() -> Pg<'static> {
+    Pg::read(
+        "coalesce((SELECT jsonb_agg(DISTINCT r.slug ORDER BY r.slug) FROM role r JOIN task t ON t.slug = r.slug \
+         WHERE r.handle = v ->> 'actor' AND r.role <> 'orchestrator' \
+         AND t.fields #> '{_board,workflow}' IS NOT NULL), '[]')",
+    )
 }

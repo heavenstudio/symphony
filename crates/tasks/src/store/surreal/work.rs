@@ -83,7 +83,9 @@ RETURN {{
 /// Cancellation does not satisfy a prerequisite. Block its unfinished dependents, or the task
 /// being created/moved if one of its prerequisites was cancelled earlier, in the same transaction.
 /// Already blocked work still needs each new cancellation's reason on its thread. The line ends with
-/// the status the dependent held, `(was ready)`, which `depends` gives it back.
+/// the status the dependent held, `(was ready)`, which `depends` gives it back. A dependent a
+/// custom workflow holds is its workflow's: only its edges move it, whose dependency predicates
+/// refuse it while the prerequisite is cancelled (docs/WORKFLOW.md).
 pub(in crate::store) fn block_cancelled_dependencies(cancelling: bool) -> String {
     // Ordinary moves/creates use link_slug's index; only cancellation needs the reverse lookup.
     let scope = if cancelling {
@@ -96,6 +98,7 @@ pub(in crate::store) fn block_cancelled_dependencies(cancelling: bool) -> String
             AND {scope}
             AND type::record('task', target).status = 'cancelled'
             AND type::record('task', slug).status NOT IN ['done', 'cancelled']
+            AND type::record('task', slug).fields._board.workflow = NONE
             ORDER BY slug, target;
 FOR $dependent IN array::distinct($blocked_links.slug) {{
     LET $cancelled = $blocked_links.filter(|$link| $link.slug = $dependent).target;

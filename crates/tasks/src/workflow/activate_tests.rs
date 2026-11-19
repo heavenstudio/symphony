@@ -439,6 +439,7 @@ fn a_reactivation_moves_only_what_changes_and_fences_the_rest() {
         generation: 1,
         revision,
         digest: old.revision.digest.clone(),
+        manual: None,
     };
     let mut kept = standing("sim/kept", "ready");
     kept.position = Some(at("build", "available", 4));

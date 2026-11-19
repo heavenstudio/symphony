@@ -38,6 +38,7 @@ fn moved(slug: &str, revision: u64, to: Pair, status: &str) -> Transition {
         principal: owner(),
         effects: vec![],
         key: Some(format!("key{revision}")),
+        recovery: None,
         at: 1000.0 + revision as f64,
     }
 }

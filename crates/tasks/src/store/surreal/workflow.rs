@@ -97,12 +97,13 @@ RETURN {
     },
 };";
 
-/// An admitted operation, written whole, or `stale` (read and decide again) when anything it was
-/// decided on moved: the active generation and digest, the task's version, each dependency its
-/// edge's predicate read, each role it relied on, no other holder or reservation of a role it takes, its key
-/// unused, its agent still on the board. Then its roles, its transition and receipt, the task at
-/// its new position and status, its hold settled when its status moves, its line on the thread.
-/// No `RETURN`: `Store::written` reads the task after.
+/// An admitted operation or a recovery, written whole, or `stale` (read and decide again) when
+/// anything it was decided on moved: the active generation and digest, the task's version, each
+/// dependency its edge's predicate read, each role it relied on, no other holder or reservation of
+/// a role it takes, each lost holder still unseen (`$seen`), its key unused, its agent still on
+/// the board. Then its roles, its transition (none for a recovery that moves nothing) and its
+/// receipt (none for a recovery), the task at its new position and status, its hold settled when
+/// its status moves, its line on the thread. No `RETURN`: `Store::written` reads the task after.
 pub(in crate::store) const APPLY: &str = "
 LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
 IF $active = NONE OR $active.generation != $generation OR $active.digest != $digest { THROW 'stale' };
@@ -116,16 +117,25 @@ FOR $r IN $holding {
 FOR $r IN $add {
     IF array::len(SELECT VALUE handle FROM role WHERE slug = $slug AND role IN [$r.role, 'reserved'] AND handle != $r.handle) > 0 { THROW 'stale' };
 };
-IF record::exists(type::record('workflow', $receipt)) { THROW 'stale' };
+FOR $s IN $seen {
+    IF (SELECT VALUE last_seen FROM ONLY type::record('session', $s.handle)) != $s.last_seen { THROW 'stale' };
+};
+IF $receipt != NONE { IF record::exists(type::record('workflow', $receipt)) { THROW 'stale' }; };
 IF $actor != NONE AND (!record::exists(type::record('session', $actor)) OR type::record('session', $actor).left_at != NONE) { THROW 'stale' };
 FOR $r IN $drop { DELETE type::record('role', [$slug, $r.handle, $r.role]) RETURN NONE; };
 FOR $r IN $add { UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
-CREATE type::record('workflow', ['event', $slug, $transition.revision])
-    CONTENT { kind: 'event', body: $transition, at: $transition.at } RETURN NONE;
-CREATE type::record('workflow', $receipt)
-    CONTENT { kind: 'receipt', body: $receipt_body, at: $transition.at } RETURN NONE;
-UPDATE type::record('task', $slug) SET status = $transition.status, fields._board.workflow = $position,
-    updated = $transition.at, version += 1 RETURN NONE;
+IF $transition != NONE {
+    CREATE type::record('workflow', ['event', $slug, $transition.revision])
+        CONTENT { kind: 'event', body: $transition, at: $transition.at } RETURN NONE;
+    UPDATE type::record('task', $slug) SET status = $transition.status, fields._board.workflow = $position,
+        updated = $transition.at, version += 1 RETURN NONE;
+} ELSE {
+    UPDATE type::record('task', $slug) SET updated = $now, version += 1 RETURN NONE;
+};
+IF $receipt != NONE {
+    CREATE type::record('workflow', $receipt)
+        CONTENT { kind: 'receipt', body: $receipt_body, at: $transition.at } RETURN NONE;
+};
 IF $moved { DELETE type::record('counter', ['hold', $slug]) RETURN NONE; };
 ";
 
@@ -143,3 +153,9 @@ UPDATE type::record('task', $slug) SET fields._board.workflow = $placed RETURN N
 /// The receipt `$receipt` names, or NULL.
 pub(in crate::store) const RECEIPT: &str =
     "RETURN (SELECT VALUE body FROM ONLY type::record('workflow', $receipt)) ?? NULL;";
+
+/// The tasks a custom workflow holds on which `$actor` holds a role but the orchestrator's, sorted:
+/// what its leave recovers first.
+pub(in crate::store) const LEAVING: &str = "RETURN array::sort(array::distinct(
+    (SELECT VALUE slug FROM role WHERE handle = $actor AND role != 'orchestrator'
+        AND type::record('task', slug).fields._board.workflow != NONE)));";

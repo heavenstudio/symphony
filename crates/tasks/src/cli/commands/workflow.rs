@@ -4,6 +4,9 @@
 //! principal is the agent session `--as` names, as the local host binds it, never one the
 //! command's input names; the owner acts from the Symphony.
 //!
+//! `recover SLUG HOLDER` asks the board's recovery service for a holder whose session holds
+//! nothing now ([`Store::recover_holder`]), at the word of the session `--as` names.
+//!
 //! `apply` sends the task's workflow revision the session read (`--revision`, which `actions`
 //! prints), never the one it finds: a task another moved since is refused as stale, so the
 //! session reads it again before it acts. Its key (`--key`, by default the task, the revision and
@@ -20,8 +23,10 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "show" => show(store, c),
         "actions" => actions(store, c),
         "apply" => apply(store, c),
+        "recover" => recover(store, c),
         other => Err(Stop::Refused(format!(
-            "workflow takes show, actions SLUG or apply SLUG EDGE --revision N, not {other:?}"
+            "workflow takes show, actions SLUG, apply SLUG EDGE --revision N or recover SLUG \
+             HOLDER, not {other:?}"
         ))),
     }
 }
@@ -172,6 +177,46 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
     }
     c.say(&format!("took {} ({})", request.edge, result.transition));
     for line in action_lines(&slug, &result.next) {
+        c.say(&line);
+    }
+    Ok(())
+}
+
+/// `HOLDER`'s lost work on `SLUG` recovered by its position's lost-holder action, at the word of
+/// the session that asks.
+fn recover(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let usage = "workflow recover SLUG HOLDER";
+    let slug = required(c, "slug", usage)?;
+    let holder = (c.parsed.get("edge").map(str::to_string))
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| Stop::Refused(format!("{usage}: HOLDER is missing")))?;
+    let by = c.actor()?;
+    let host = Host::local();
+    match store.recover_holder(&slug, &holder, &by, &host)? {
+        Some(t) => {
+            let from = t.from.as_ref().unwrap_or(&t.to);
+            let went = if *from == t.to {
+                format!("stays at {}", named(from))
+            } else {
+                format!("{} → {}", named(from), named(&t.to))
+            };
+            let manual = (t.recovery.as_ref()).is_some_and(|r| r.manual);
+            c.say(&format!(
+                "recovered {holder} on {slug} ({}): {went}{}",
+                t.id,
+                if manual {
+                    "; it waits on a person's recovery"
+                } else {
+                    ""
+                }
+            ));
+        }
+        None => c.say(&format!(
+            "{holder} let go of what the position of {slug} does not staff"
+        )),
+    }
+    let next = store.workflow_actions(&slug, &agent_session(&by), &host)?;
+    for line in action_lines(&slug, &next) {
         c.say(&line);
     }
     Ok(())

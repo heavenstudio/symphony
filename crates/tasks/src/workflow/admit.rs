@@ -221,6 +221,7 @@ pub fn admit(
             principal: principal.clone(),
             effects: edge.effects.clone(),
             key: Some(request.idempotency_key.clone()),
+            recovery: None,
             at,
         },
         add,

@@ -9,16 +9,16 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Barrier};
 use symphony_api::workflow::Pair;
 
-const BACKENDS: [Backend; 2] = [Backend::SurrealDb, Backend::PostgreSql];
+pub(super) const BACKENDS: [Backend; 2] = [Backend::SurrealDb, Backend::PostgreSql];
 
-fn pair(phase: &str, state: &str) -> Pair {
+pub(super) fn pair(phase: &str, state: &str) -> Pair {
     Pair {
         phase: phase.into(),
         state: state.into(),
     }
 }
 
-fn refused(result: Result<impl std::fmt::Debug, Error>) -> String {
+pub(super) fn refused(result: Result<impl std::fmt::Debug, Error>) -> String {
     match result {
         Err(Error::Refused(why)) => why,
         other => panic!("expected a refusal, got {other:?}"),
@@ -42,9 +42,9 @@ fn two(depends: bool) -> Custom {
 }
 
 /// A board with sessions amber and birch, sim/a and sim/b ready and sim/busy in progress, the
-/// three orchestrated by orch, sim/a depending on sim/dep (done) and sim/b on sim/busy, and
-/// `custom` activated.
-fn board(backend: Backend, custom: &Custom) -> Fixture {
+/// three orchestrated by orch, sim/a depending on sim/dep (done) and sim/b on sim/busy, sim/gone
+/// cancelled, and `custom` activated.
+pub(super) fn board(backend: Backend, custom: &Custom) -> Fixture {
     let seed = Seed::default()
         .session("amber")
         .session("birch")
@@ -53,6 +53,7 @@ fn board(backend: Backend, custom: &Custom) -> Fixture {
         .task("sim/b", "ready")
         .task("sim/busy", "in_progress")
         .task("sim/dep", "done")
+        .task("sim/gone", "cancelled")
         .role("sim/a", "orch", "orchestrator")
         .role("sim/b", "orch", "orchestrator")
         .role("sim/busy", "orch", "orchestrator")
@@ -64,7 +65,7 @@ fn board(backend: Backend, custom: &Custom) -> Fixture {
 }
 
 /// The request of `edge` on `slug` from where `principal` reads it now, under `key`.
-fn request(
+pub(super) fn request(
     store: &Store,
     slug: &str,
     principal: &Principal,
@@ -85,7 +86,7 @@ fn request(
     }
 }
 
-fn apply(
+pub(super) fn apply(
     store: &Store,
     principal: &Principal,
     request: &OperationRequest,
@@ -93,7 +94,7 @@ fn apply(
     store.apply_operation(principal, &Host::local(), request)
 }
 
-fn take(
+pub(super) fn take(
     store: &Store,
     slug: &str,
     principal: &Principal,
@@ -103,7 +104,7 @@ fn take(
     apply(store, principal, &request)
 }
 
-fn roles(f: &Fixture, slug: &str) -> Vec<(String, String)> {
+pub(super) fn roles(f: &Fixture, slug: &str) -> Vec<(String, String)> {
     let task = f.store.get(slug).unwrap();
     let mut roles: Vec<_> = (task.roles.iter())
         .map(|r| (r.handle.clone(), r.role.clone()))
@@ -112,7 +113,7 @@ fn roles(f: &Fixture, slug: &str) -> Vec<(String, String)> {
     roles
 }
 
-fn events(f: &Fixture, slug: &str) -> Vec<(u64, Option<String>, Pair)> {
+pub(super) fn events(f: &Fixture, slug: &str) -> Vec<(u64, Option<String>, Pair)> {
     let dump = f.store.dump().unwrap();
     (dump.workflow.iter())
         .filter(|row| row.kind == "event")
@@ -373,12 +374,17 @@ fn the_board_writers_neither_move_nor_staff_a_task_the_workflow_holds() {
         explicit(f.store.take_role("sim/a", "birch", "reviewer"));
         explicit(f.store.move_to("sim/a", "cancelled", "owner"));
         take(&f.store, "sim/a", &agent_session("amber"), "claim").unwrap();
-        explicit(f.store.release("sim/a", "amber", Some("executor")));
+        // A lost executor is no takeover's: its position's recovery answers it.
+        f.advance(crate::health::LIVE_SECONDS + crate::health::STALE_SECONDS + 1.0);
+        f.store.touch("birch").unwrap();
+        f.store.touch("orch").unwrap();
+        explicit(f.store.claim("sim/a", "birch"));
         // The orchestrator's role is the board's coordination, which its writers keep.
         f.task("sim/c");
         f.store.take_role("sim/c", "birch", "orchestrator").unwrap();
         assert_eq!(f.store.get("sim/a").unwrap().status, "in_progress");
         assert_eq!(events(&f, "sim/a").len(), 2);
+        // A release is the position's recovery (store::admission::recovery), not a refusal.
     }
 }
 
@@ -407,5 +413,14 @@ fn a_task_filed_under_the_workflow_starts_at_its_initial_pair_on_the_record() {
              build/available (ready), not backlog: file it there and move it on by an edge"
         );
         assert!(f.store.get("sim/backlog").is_err());
+        // A prerequisite cancelled before the filing is its workflow's to answer, by its edges'
+        // dependency predicates: the board's own block leaves it at its initial pair.
+        let mut after = crate::NewTask::new("sim/after", "After", "owner");
+        after.depends = vec!["sim/gone".into()];
+        assert_eq!(f.store.create(&after).unwrap().status, "ready");
+        assert_eq!(
+            events(&f, "sim/after"),
+            vec![(1, None, pair("build", "available"))]
+        );
     }
 }

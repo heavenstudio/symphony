@@ -243,6 +243,7 @@ pub fn plan(
                 principal: by.clone(),
                 effects: Vec::new(),
                 key: None,
+                recovery: None,
                 at,
             },
         });

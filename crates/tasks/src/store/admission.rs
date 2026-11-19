@@ -167,7 +167,13 @@ impl Store {
                 .map_err(refusal)?;
             let transition = &admitted.transition;
             let status = transition.status.clone();
-            let slots = self.taken(&decided, &admitted, principal, request)?;
+            let taking = Taking {
+                status: &status,
+                acquires: admitted.acquires,
+                add: &admitted.add,
+                what: format!("{slug} cannot take {}", request.edge),
+            };
+            let slots = self.taken(&decided, taking, principal)?;
             let receipt = Receipt {
                 principal: principal.clone(),
                 key: request.idempotency_key.clone(),
@@ -205,6 +211,7 @@ impl Store {
                 "said": said(transition),
                 "now": at,
                 "slots": slots,
+                "seen": [],
             });
             let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
             let guard = if guarded { sql_cap::GUARD } else { "" };
@@ -289,6 +296,7 @@ impl Store {
             principal,
             effects: Vec::new(),
             key: None,
+            recovery: None,
             at: self.now(),
         }))
     }
@@ -382,22 +390,21 @@ impl Store {
     fn taken(
         &self,
         decided: &Decided,
-        admitted: &admit::Admitted,
+        taking: Taking<'_>,
         principal: &Principal,
-        request: &OperationRequest,
     ) -> Result<Vec<Value>, Failure> {
-        let status = &admitted.transition.status;
-        let starts = crate::slots::OPEN.contains(&status.as_str())
+        let status = taking.status;
+        let starts = crate::slots::OPEN.contains(&status)
             && !crate::slots::OPEN.contains(&decided.task.status.as_str());
         let Some(cap) = self.slots() else {
             return Ok(Vec::new());
         };
-        if !(admitted.acquires || starts) {
+        if !(taking.acquires || starts) {
             return Ok(Vec::new());
         }
         let slug = &decided.task.slug;
         let view = self.view(&Which::Starting(slug))?;
-        let mut by: Vec<String> = (admitted.add.iter())
+        let mut by: Vec<String> = (taking.add.iter())
             .filter(|(_, role)| role == "executor")
             .map(|(handle, _)| handle.clone())
             .chain(view.holders("executor").map(|r| r.handle.clone()))
@@ -408,9 +415,9 @@ impl Store {
             by.push(handle.to_string());
         }
         let opens = Opens {
-            status: Some(status.clone()),
+            status: Some(status.to_string()),
             by,
-            what: format!("{slug} cannot take {}", request.edge),
+            what: taking.what,
             ..Opens::default()
         };
         self.slots_taken(&view, slug, &opens, cap)
@@ -421,6 +428,15 @@ impl Store {
                 other => other,
             })
     }
+}
+
+/// What a write takes under the cap: the status it moves its task to, whether it takes a slot,
+/// the roles it adds, and what a refusal says cannot happen.
+struct Taking<'a> {
+    status: &'a str,
+    acquires: bool,
+    add: &'a [(String, String)],
+    what: String,
 }
 
 fn context(decided: &Decided) -> Context<'_> {
@@ -529,6 +545,9 @@ fn stopped(failure: Failure) -> Error {
         Failure::Again => Error::Db("the board kept moving under a workflow read".into()),
     }
 }
+
+mod recovery;
+pub(in crate::store) use recovery::Released;
 
 #[cfg(test)]
 #[path = "admission_tests.rs"]

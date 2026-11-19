@@ -291,6 +291,13 @@ impl Store {
     /// (`[limits] orchestrator_tasks`) lets go of work none of which is in progress or in review,
     /// which the board gives to one under it or leaves waiting ([`orchestration::WAITING`]).
     pub fn release(&self, slug: &str, handle: &str, role: Option<&str>) -> Result<Task, Error> {
+        // A custom workflow's roles on a task it holds go by its position's recovery
+        // (docs/WORKFLOW.md, "Recovery"); the orchestrator's stays the board's.
+        let role = match self.released_by_workflow(slug, handle, role)? {
+            crate::store::admission::Released::Done(task) => return Ok(*task),
+            crate::store::admission::Released::Orchestrator => Some("orchestrator"),
+            crate::store::admission::Released::Board => role,
+        };
         // Only a holder of the role reads the board for it; a task not found is the rule's to refuse.
         if role.is_none_or(|role| role == "orchestrator") {
             let orchestrating = match self.get(slug) {

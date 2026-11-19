@@ -184,3 +184,47 @@ fn an_agent_reads_and_takes_an_edge_through_the_api_as_the_session_it_names() {
         "{stale}"
     );
 }
+
+#[test]
+fn a_session_recovers_a_lost_holders_task_which_pull_and_next_offer_to_no_claim() {
+    let mut c = Case::new();
+    let amber = c.register("worker");
+    let birch = c.register("worker");
+    c.store()
+        .activate_workflow(&flow(), &Host::local())
+        .unwrap();
+    c.ok(&amber, &["create", "sim/jump", "Jump departure"]);
+    c.ok(
+        &amber,
+        &["workflow", "apply", "sim/jump", "claim", "--revision", "1"],
+    );
+    let live = c.run_as(&birch, &["workflow", "recover", "sim/jump", &amber], "");
+    assert_eq!(live.code, 1, "{}", live.out);
+    assert!(
+        live.err.starts_with(&format!(
+            "✖ explicit_action_required: {amber} is live on the board: only a lost holder's \
+             work is recovered"
+        )),
+        "{}",
+        live.err
+    );
+    let now: f64 = c.env.vars["TASKS_NOW"].parse().unwrap();
+    let lost = now + symphony_board::health::LIVE_SECONDS + symphony_board::health::STALE_SECONDS;
+    c.env
+        .vars
+        .insert("TASKS_NOW".into(), (lost + 1.0).to_string());
+    c.store().touch(&birch).unwrap();
+    assert_eq!(
+        c.ok(&birch, &["workflow", "recover", "sim/jump", &amber]),
+        format!(
+            "recovered {amber} on sim/jump (sim/jump@3): build/working → build/available\n\
+             sim/jump at build/available, workflow revision 3 (generation 1)\n  \
+             claim → build/working  Claim, by its executor\n"
+        )
+    );
+    // Ready and unstaffed, yet no claim but its edge takes it.
+    let pulled = c.ok(&birch, &["pull"]);
+    assert!(pulled.contains("ready_unstaffed=0"), "{pulled}");
+    assert!(!pulled.contains("sim/jump"), "{pulled}");
+    assert!(c.ok(&birch, &["next"]).starts_with("nothing to take"));
+}

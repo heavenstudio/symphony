@@ -15,9 +15,12 @@ use symphony_plugin::execution::{Principal, PrincipalKind};
 pub mod activate;
 pub mod admit;
 mod builtin;
+pub mod recover;
 mod validate;
 pub use crate::store::admission::Receipt;
-pub use crate::store::workflow::{Active, Followed, Recorded, TaskPosition, Transition};
+pub use crate::store::workflow::{
+    Active, Followed, Recorded, Recovered, TaskPosition, Transition, Trigger,
+};
 pub use activate::Host;
 pub use builtin::{builtin, legacy_pair};
 

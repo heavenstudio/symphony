@@ -35,6 +35,41 @@ pub struct TaskPosition {
     pub generation: u64,
     pub revision: u64,
     pub digest: String,
+    /// The recovery that left it waiting on a person's manual recovery, until its next
+    /// transition: none for a task no holder's exit stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual: Option<Recovered>,
+}
+
+/// The exit of a holder a recovery answered (`Store::recover_holder`): an agent's own release of
+/// its role, or a holder lost, by the position's configured action (docs/WORKFLOW.md, "Recovery").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Recovered {
+    pub trigger: Trigger,
+    pub holder: String,
+    /// The role of the position's staffing the holder held there.
+    pub role: String,
+    /// Whether the action asks a person to recover the task by hand.
+    pub manual: bool,
+}
+
+/// What a recovery answers: the position's `release` action, or its `lost_holder` one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Trigger {
+    Release,
+    LostHolder,
+}
+
+impl Trigger {
+    /// Its name in the definition and on the record.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Trigger::Release => "release",
+            Trigger::LostHolder => "lost_holder",
+        }
+    }
 }
 
 impl TaskPosition {
@@ -79,6 +114,9 @@ pub struct Transition {
     /// The idempotency key of the request that made it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
+    /// The holder's exit it answered, for a recovery's move or stay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<Recovered>,
     pub at: f64,
 }
 
@@ -97,6 +135,7 @@ impl Transition {
             generation: self.generation,
             revision: self.revision,
             digest: self.digest.clone(),
+            manual: self.recovery.clone().filter(|r| r.manual),
         }
     }
 }
@@ -345,7 +384,15 @@ impl Store {
 
 /// Whether a custom workflow holds `task`: its row carries a workflow position.
 pub(super) fn held(task: &crate::rows::TaskRow) -> bool {
-    (task.fields.get("_board")).is_some_and(|board| board.contains_key("workflow"))
+    position_held(&task.fields)
+}
+
+/// Whether a task's board fields hold a workflow position: a task a custom workflow holds, which
+/// only its edges and its recovery move and staff.
+pub(crate) fn position_held(
+    fields: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
+) -> bool {
+    (fields.get("_board")).is_some_and(|board| board.contains_key("workflow"))
 }
 
 /// The refusal of a legacy move or staffing of `slug`, a task a custom workflow holds.

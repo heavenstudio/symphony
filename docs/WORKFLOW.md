@@ -123,12 +123,44 @@ taking it now, its authority named without saying who holds it: never a permit.
 `Store::workflow_read` answers the active definition, revision and generation. A task filed while
 a custom workflow is active starts at the definition's initial pair, its first transition
 recorded in the write that files it, and a filing that asks for another status is refused.
-The board's own writers neither move nor staff a task the workflow holds: a move, claim, release,
-reservation, verdict, block, close or handover of its executor, reviewer or reservation refuses as
-`explicit_action_required`, naming `just tasks workflow actions`, and a status written past them
-meets the database's fence with the same code. The orchestrator's role stays the board's
-coordination, which its writers keep. Recovery of a lost holder, PULL and staffing do not read
-the workflow yet (`tools/workflow-operations`).
+The board's own writers neither move nor staff a task the workflow holds: a move, claim,
+reservation, verdict, block, close or takeover of its executor, reviewer or reservation refuses
+as `explicit_action_required`, naming `just tasks workflow actions`, and a status written past
+them meets the database's fence with the same code; a release and a leave go by the position's
+recovery ([below](#recovery)). The orchestrator's role stays the board's coordination, which its
+writers keep. `just tasks next` and PULL offer no task a workflow holds to a claim, nor name one
+unstaffed, orphaned or unreviewed (a working one counts as executing), and the board's block of
+a dependant whose prerequisite was cancelled leaves one to its edges' dependency predicates.
+Staffing and the launcher do not read the workflow yet (`tools/workflow-operations`).
+
+## Recovery
+
+A holder's exit from a task a custom workflow holds is answered by the position's configured
+action, never by a target the board invents (`symphony_board::workflow::recover`), and written as
+an admitted operation is, by the board's recovery service, which the host must grant `recovery`
+(`Host::local` does). Three exits come there: an agent's own `just tasks release` of its role
+(the position's `release` action), a session's `just tasks leave` (its `lost_holder` action, for
+each task it staffs), and `just tasks workflow recover SLUG HOLDER`, which any session on the
+board may ask for a holder whose session is lost or left (`Store::recover_holder`, its
+`lost_holder` action); a live, stale or unswept holder lets go of its own.
+
+The action reads the role the position staffs. A role the position does not staff (an executor's
+left after its work went to review, a reservation) goes alone, and the position stays as it
+was. The staffed role goes when the action releases it; where it does not, an agent's own release
+is refused as `explicit_action_required` (an edge takes it out), and a lost or leaving holder keeps
+it. Every reservation on the task goes when the action releases them. The task then moves to the
+action's target, which clears a block's resume pair, or stays, keeping it: either way a
+transition by the recovery service records the move or the stay with what it recovered (the
+trigger, the holder, its role) and the slot effect, and a manual action leaves the position marked
+until its next transition (`TaskPosition::manual`), its thread line saying it waits on a person.
+A move into work is counted under the project's cap as a start is.
+
+The write is fenced on the active workflow, the task's version, each role it relies on or drops
+and, for a lost holder, the holder's session as it was read: a holder that beats again, or takes
+an edge first, wins, and the recovery decides again from where it left the task. The orchestrator
+role is never a workflow's: a release or leave of it is the board's own. Nothing recovers a lost
+holder by itself yet, and attempt failure and cancellation acknowledgement wait on durable
+attempts (`tools/workflow-operations`, `tools/workflow-attempt-integration`).
 
 ## Records on the board
 

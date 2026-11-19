@@ -108,7 +108,7 @@ BEGIN \
     FOR dependent_ IN SELECT l.slug, string_agg(l.target, ', ' ORDER BY l.target) AS cancelled \
         FROM link l JOIN task t ON t.slug = l.target JOIN task d ON d.slug = l.slug \
         WHERE l.kind = 'dep' AND {scope} AND t.status = 'cancelled' \
-            AND d.status NOT IN ('done', 'cancelled') \
+            AND d.status NOT IN ('done', 'cancelled') AND d.fields #> '{{_board,workflow}}' IS NULL \
         GROUP BY l.slug ORDER BY l.slug \
     LOOP \
         SELECT status INTO was_ FROM task WHERE slug = dependent_.slug; \
