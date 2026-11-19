@@ -117,7 +117,183 @@ pub struct Recorded {
     pub revision: Revision,
 }
 
+/// What following the default branch's workflow did: nothing, on a board whose project commits
+/// none and never activated one; nothing, as what it commits is active already; or activated it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Followed {
+    Legacy,
+    Unchanged(Active),
+    Activated(Active),
+}
+
+/// How many times an activation is planned again after the board changed under it.
+const PLANS: usize = 5;
+
+/// What an activation reads ([`sql::STANDINGS`]).
+#[derive(Deserialize)]
+struct Standings {
+    active: Option<Active>,
+    tasks: Vec<Read>,
+}
+
+#[derive(Deserialize)]
+struct Read {
+    slug: String,
+    version: i64,
+    status: String,
+    position: Option<TaskPosition>,
+    blocked_from: Option<String>,
+}
+
 impl Store {
+    /// The workflow `committed` sets made active on this board, as automatic activation B runs
+    /// it (docs/DECISIONS.md#configurable-workflow-activation): a file with no `[workflow]` on a
+    /// board that never activated one writes nothing; one that drops the workflow a board
+    /// activated is refused, as a return to the board's own writers is not supported yet; a
+    /// custom definition is activated unless it is the active one ([`Store::activate_workflow`]).
+    pub fn follow_committed(
+        &self,
+        committed: &crate::workflow::Committed,
+        host: &crate::workflow::Host,
+    ) -> Result<Followed, Error> {
+        match &committed.custom {
+            Some(custom) => self.activate_workflow(custom, host),
+            None => match self.workflow_active()? {
+                None => Ok(Followed::Legacy),
+                Some(active) => Err(Error::Refused(format!(
+                    "workflow: commit {} sets no [workflow], and generation {} is active; a \
+                     return to the board's own writers is not supported yet \
+                     (tools/workflow-return-to-default), so the active workflow stays",
+                    committed.commit, active.generation
+                ))),
+            },
+        }
+    }
+
+    /// `custom` activated as the next generation, in one write: its definition recorded under its
+    /// digest, every task a workflow holds or the board's writers keep open placed on it
+    /// ([`crate::workflow::activate::plan`]), each move recorded, and the activation recorded with
+    /// the mappings it applied. Unchanged when its digest is active already. Refused whole, the
+    /// previous generation left active and nothing written, when the host does not support it
+    /// ([`crate::workflow::activate::supported`]) or a task cannot be placed; planned again when
+    /// the board changed between the read and the write, or another activation won.
+    pub fn activate_workflow(
+        &self,
+        custom: &crate::workflow::Custom,
+        host: &crate::workflow::Host,
+    ) -> Result<Followed, Error> {
+        use crate::workflow::activate;
+        let digest = &custom.revision.digest;
+        // What each write opening asks first, in one small read: is it the active one already.
+        if let Some(active) = self.workflow_active()?
+            && active.digest == *digest
+        {
+            return Ok(Followed::Unchanged(active));
+        }
+        activate::supported(&custom.definition, host).map_err(refused_workflow)?;
+        let by = crate::workflow::board_service("activation");
+        for _ in 0..PLANS {
+            // The versions first, the holders after: a claim between the two is seen by the
+            // second, or fences the write by the version it moved.
+            let read: Standings =
+                self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
+            if let Some(active) = &read.active
+                && active.digest == *digest
+            {
+                return Ok(Followed::Unchanged(active.clone()));
+            }
+            let old = match &read.active {
+                None => None,
+                Some(active) => Some(
+                    self.workflow_definition(&active.digest)?
+                        .ok_or_else(|| {
+                            Error::Db(format!(
+                                "the active workflow's definition {} is not recorded",
+                                active.digest
+                            ))
+                        })?
+                        .definition,
+                ),
+            };
+            let board = self.board()?;
+            let tasks: Vec<activate::Standing> = (read.tasks.into_iter())
+                .map(|task| {
+                    let roles = (board.tasks.iter())
+                        .find(|t| t.slug == task.slug)
+                        .map(|t| {
+                            (t.roles.iter())
+                                .map(|r| (r.handle.clone(), r.role.clone(), r.health.holds()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    activate::Standing {
+                        slug: task.slug,
+                        version: task.version,
+                        status: task.status,
+                        position: task.position,
+                        blocked_from: task.blocked_from,
+                        roles,
+                    }
+                })
+                .collect();
+            let expected = read.active.as_ref().map_or(0, |a| a.generation);
+            let generation = expected + 1;
+            let at = self.now();
+            let plan = activate::plan(custom, old.as_ref(), &tasks, generation, &by, at)
+                .map_err(refused_workflow)?;
+            let moved: Vec<Value> = (plan.moved.iter())
+                .map(|m| {
+                    json!({
+                        "slug": m.transition.slug, "version": m.version, "expected": m.expected,
+                        "transition": m.transition, "position": m.transition.position(),
+                    })
+                })
+                .collect();
+            let kept: Vec<Value> = (plan.kept.iter())
+                .map(|(slug, version)| json!({"slug": slug, "version": version}))
+                .collect();
+            let vars = json!({
+                "expected": expected,
+                "generation": generation,
+                "digest": digest,
+                "definition": Recorded {
+                    definition: custom.definition.definition().clone(),
+                    revision: custom.revision.clone(),
+                },
+                "activation": {
+                    "generation": generation,
+                    "digest": digest,
+                    "revision": custom.revision,
+                    "previous": read.active,
+                    "mappings": activate::recorded_mappings(&custom.mappings),
+                    "moved": plan.moved.len(),
+                    "principal": by,
+                    "at": at,
+                },
+                "moved": moved,
+                "kept": kept,
+                "at": at,
+            });
+            match self.retrying(|| {
+                self.transact::<Value>(both(sql::ACTIVATE, pg::activate()), vars.clone())
+            }) {
+                Ok(_) => {
+                    return Ok(Followed::Activated(Active {
+                        generation,
+                        digest: digest.clone(),
+                    }));
+                }
+                Err(Error::Refused(why))
+                    if why.starts_with("stale_task:") || why.starts_with("stale_workflow:") => {}
+                Err(other) => return Err(other),
+            }
+        }
+        Err(Error::Refused(format!(
+            "workflow: the board changed under each of {PLANS} plans of its activation; nothing \
+             was activated, and the previous workflow stays"
+        )))
+    }
+
     /// The active custom workflow, or none on a board that never activated one.
     pub fn workflow_active(&self) -> Result<Option<Active>, Error> {
         let body: Value =
@@ -171,6 +347,15 @@ impl Store {
     }
 }
 
+/// An activation refused in the planner's words, which name the workflow where they do not.
+fn refused_workflow(why: String) -> Error {
+    Error::Refused(if why.starts_with("workflow") {
+        why
+    } else {
+        format!("workflow: {why}")
+    })
+}
+
 /// `body` as `T`, none for null; a body in another shape is the database's error, named `what`.
 fn decoded<T: serde::de::DeserializeOwned>(body: Value, what: &str) -> Result<Option<T>, Error> {
     if body.is_null() {
@@ -220,3 +405,7 @@ fn rank(value: &Value) -> u8 {
 #[cfg(test)]
 #[path = "workflow_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "activation_tests.rs"]
+mod activation_tests;

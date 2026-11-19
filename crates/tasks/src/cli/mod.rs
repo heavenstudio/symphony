@@ -712,9 +712,28 @@ fn open_as_database(
         .live(reached.live)
         .scratch(crate::live::SCRATCH_FLAG);
     let named = reached.project.is_none();
-    Store::opening_on(database, clock, probe, &host, &how)
+    let store = Store::opening_on(database, clock, probe, &host, &how)
         .map(|store| naming(store, named))
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    following(&store, &how);
+    Ok(store)
+}
+
+/// A live board opened to write follows the workflow its project's default branch commits
+/// (automatic activation B, [`crate::workflow::follow`]): a project that commits none and never
+/// activated one reads its file and branch tip and writes nothing. An activation refused leaves
+/// the previous workflow active, and is said on stderr, as the command runs on under it. A
+/// scratch board, a board no project names and a migrate follow nothing.
+fn following(store: &Store, how: &crate::Opening) {
+    if how.access != crate::schema::Access::Write || how.migrating {
+        return;
+    }
+    let Some(main) = how.live.as_ref().and_then(crate::live::Live::main) else {
+        return;
+    };
+    if let Err(why) = crate::workflow::follow(store, main) {
+        eprintln!("{why}");
+    }
 }
 
 /// The board `reached`, read by `clock`, its tables taken as they are: the recorder's and the
@@ -802,6 +821,37 @@ fn parts(clock: &Clock) -> (Box<dyn Fn() -> f64 + Send + Sync>, Probe, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a live board opened to write follows its project's committed workflow.
+    #[test]
+    fn a_live_board_opened_to_write_follows_its_committed_workflow_and_nothing_else_does() {
+        use crate::store_fixture::{Backend, Fixture, Seed};
+        use crate::workflow::activate::tests::{MAPPED, TWO};
+        let repo = crate::workflow::tests::Scratch::new("following");
+        std::fs::write(repo.0.join("symphony.toml"), format!("{TWO}{MAPPED}")).unwrap();
+        repo.commit("workflow");
+        let live = crate::live::Live {
+            project: "demo".into(),
+            common: repo.0.join(".git"),
+        };
+        let f = Fixture::on(
+            Backend::SurrealDb,
+            Seed::default().task("sim/ready", "ready"),
+        );
+        let write = crate::Opening::write();
+        for how in [
+            write.clone(),
+            write.clone().live(Some(live.clone())).migrating(),
+            crate::Opening::read().live(Some(live.clone())),
+        ] {
+            following(&f.store, &how);
+            assert_eq!(f.store.workflow_active().unwrap(), None, "{how:?}");
+        }
+        following(&f.store, &write.live(Some(live)));
+        assert_eq!(f.store.workflow_active().unwrap().unwrap().generation, 1);
+        assert_eq!(f.store.get("sim/ready").unwrap().status, "ready");
+        assert!(f.store.workflow_position("sim/ready").unwrap().is_some());
+    }
 
     #[test]
     fn explicit_scratch_servers_keep_their_backend_and_database() {

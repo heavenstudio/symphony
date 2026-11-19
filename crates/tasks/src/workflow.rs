@@ -10,11 +10,13 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::Path;
 use symphony_api::workflow::{Definition, FORMAT, Pair, Revision, Source};
-use symphony_plugin::execution::Principal;
+use symphony_plugin::execution::{Principal, PrincipalKind};
 
+pub mod activate;
 mod builtin;
 mod validate;
-pub use crate::store::workflow::{Active, Recorded, TaskPosition, Transition};
+pub use crate::store::workflow::{Active, Followed, Recorded, TaskPosition, Transition};
+pub use activate::Host;
 pub use builtin::{builtin, legacy_pair};
 
 /// A project's file, at the top of the tree a commit holds.
@@ -160,18 +162,22 @@ pub struct Custom {
 /// project with no workflow; a file that is a link, a folder or not UTF-8 refuses the read, as
 /// does a branch that names no commit.
 pub fn committed(main: &Path, branch: &str) -> Result<Committed, String> {
+    let commit = tip(main, branch)
+        .ok_or_else(|| format!("workflow committed on {branch}: the branch names no commit"))?;
+    committed_at(main, branch, commit)
+}
+
+/// The commit at the tip of `branch` in the repository whose main checkout is `main`, or none.
+fn tip(main: &Path, branch: &str) -> Option<String> {
+    let at = format!("refs/heads/{branch}^{{commit}}");
+    git(main, &["rev-parse", "--verify", "--quiet", &at])
+        .ok()
+        .map(|commit| commit.trim().to_string())
+}
+
+/// [`committed`] at `commit`, the tip of `branch`, which its refusals name.
+fn committed_at(main: &Path, branch: &str, commit: String) -> Result<Committed, String> {
     let refuse = |what: String| format!("workflow committed on {branch}: {what}");
-    let commit = git(
-        main,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{branch}^{{commit}}"),
-        ],
-    )
-    .map_err(|_| refuse("the branch names no commit".into()))?;
-    let commit = commit.trim().to_string();
     let listed = git(main, &["ls-tree", "-z", &commit, "--", FILE]).map_err(refuse)?;
     let Some(entry) = listed.split('\0').find(|line| !line.is_empty()) else {
         return Ok(Committed {
@@ -211,6 +217,39 @@ pub fn committed(main: &Path, branch: &str) -> Result<Committed, String> {
         }
     };
     Ok(Committed { commit, custom })
+}
+
+/// The workflow the project's default branch commits, followed on its board (automatic
+/// activation B, [`crate::Store::follow_committed`]) under the local host's policy
+/// ([`Host::local`]). The project is the one whose main checkout is `main`: its default branch
+/// is named in the file there, and the workflow is read from that branch's tip alone.
+///
+/// A repository with no such branch commits no workflow: on a board that never activated one it
+/// changes nothing and says nothing, as a project file the default branch cannot be read from
+/// (`main` by default) does. Once a workflow is active, a missing branch is said.
+pub fn follow(store: &crate::Store, main: &Path) -> Result<Followed, String> {
+    let text = std::fs::read_to_string(main.join(FILE)).unwrap_or_default();
+    let branch = crate::land::Settings::parse(&text)
+        .map(|settings| settings.default_branch)
+        .unwrap_or_else(|_| "main".into());
+    let committed = match tip(main, &branch) {
+        Some(commit) => committed_at(main, &branch, commit)?,
+        None => {
+            if store
+                .workflow_active()
+                .map_err(|e| e.to_string())?
+                .is_none()
+            {
+                return Ok(Followed::Legacy);
+            }
+            return Err(format!(
+                "workflow committed on {branch}: the branch names no commit"
+            ));
+        }
+    };
+    store
+        .follow_committed(&committed, &Host::local())
+        .map_err(|e| e.to_string())
 }
 
 /// `git -C main ARGS`'s output, as text; its error output when it fails, or text that is not
@@ -288,6 +327,21 @@ impl Grants {
     }
 }
 
+/// The local owner, as the local host authenticates it: the person at this machine's board.
+pub fn local_owner() -> Principal {
+    Principal::new(PrincipalKind::Human, "local".into(), "owner".into())
+}
+
+/// The board's own service `name` (its activation, its recovery), acting for no person.
+pub fn board_service(name: &str) -> Principal {
+    Principal::new(PrincipalKind::Service, "board".into(), name.into())
+}
+
+/// An agent session, by the handle the board bound it to.
+pub fn agent_session(handle: &str) -> Principal {
+    Principal::new(PrincipalKind::Agent, "local".into(), handle.into())
+}
+
 fn normalize(mut d: Definition) -> Definition {
     d.phases.sort_by(|a, b| a.id.cmp(&b.id));
     d.states.sort_by(|a, b| a.id.cmp(&b.id));
@@ -307,4 +361,4 @@ fn normalize(mut d: Definition) -> Definition {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

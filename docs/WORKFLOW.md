@@ -17,10 +17,9 @@ implementation unchanged; `candidate` selects the immutable built-in v1 definiti
 
 The selected activation contract is automatic activation of a valid committed definition when
 the board reads it, with complete mappings and prerequisites required, as decided by
-[the activation card](DECISIONS.md#configurable-workflow-activation). Its records and the fences
-on every writer are on the board ([below](#records-on-the-board)); that automatic transaction,
-retained live-position/blocked-resume mappings and authoritative admission remain implementation
-work. A candidate's validation or a host
+[the activation card](DECISIONS.md#configurable-workflow-activation). The board activates
+([below](#activation-and-mappings)) and keeps its records behind fences on every writer
+([records](#records-on-the-board)); authoritative admission remains implementation work. A candidate's validation or a host
 prerequisite check is not activation. The [graph design](analysis/configurable-delivery-workflow.md)
 describes the remaining system; artifact policy receipts and execution attempts retain their
 separate ownership.
@@ -40,7 +39,35 @@ A capability a definition declares is supported only when the host's `Grants` gi
 principal, and a principal holds only the capabilities a grant names: the definition's
 declaration mints nothing, and an unknown capability fails the prerequisites. A principal is
 `symphony_plugin::execution::Principal`, built by the host from what it authenticated (an agent
-session by its handle, the local owner, a board service), never read from a request.
+session by its handle, the local owner, a board service), never read from a request. The local
+host's policy is fixed in code (`Host::local`): the local owner holds `owner`, the board's
+recovery service holds `recovery`, and no adapter is registered. A hosted board brings its own
+`Host`, built from the principals its ingress authenticated; nothing in a project file or a
+request extends it.
+
+Every command that opens a project's live board to write follows the workflow its default
+branch commits (`workflow::follow`, `Store::follow_committed`): a project that commits no
+`[workflow]` on a board that never activated one reads the branch tip and writes nothing, and a
+repository without that branch commits nothing. A committed definition whose digest is not the
+active one is activated, in one transaction fenced on the active generation and on the version
+of every task it reads (`Store::activate_workflow`). It records the definition under its digest,
+places every task a workflow holds and every open task the board's writers keep, records each
+move as a transition by the board's activation service and the activation with the mappings it
+applied, and moves the active generation to it. A task whose pair, resume pair and status stay
+keeps its revision; done and cancelled tasks the board's writers kept stay theirs. A new commit of
+identical content is a new generation that moves nothing.
+
+The whole activation is refused, nothing written and the previous workflow left active, and the
+command says why on stderr and runs on: a capability, adapter or guard the host does not support
+(every guard, until revision-bound guards); recovery on attempt failure or cancellation
+acknowledgement that moves work, automatic edges and retry bounds, which need durable attempts;
+`accepted_output` and `landed` dependencies, parent integration, and an adapter's prepare or
+finalize, as no adapter runs here yet and a prepared intent never completes on a caller's word; a
+pair or resume pair neither declared nor mapped; a mapping onto a position recording an outcome, satisfied dependants or a completion its
+source lacks; and a task whose live executor or reviewer it would move or restaff. A live holder
+stands in for a live attempt until durable attempts are read here. A file that drops `[workflow]`
+after an activation is refused as well: returning to the board's own writers is not supported
+yet, and rolling back is a forward activation of another committed definition with mappings.
 
 ## Records on the board
 

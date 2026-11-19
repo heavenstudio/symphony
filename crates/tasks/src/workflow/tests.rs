@@ -199,11 +199,11 @@ fn a_declared_capability_nobody_is_granted_is_unsupported() {
     );
 }
 
-/// A folder under the system's temporary one, removed when dropped.
-struct Scratch(PathBuf);
+/// A folder under the system's temporary one, a git repository on `main`, removed when dropped.
+pub(crate) struct Scratch(pub(crate) PathBuf);
 
 impl Scratch {
-    fn new(name: &str) -> Scratch {
+    pub(crate) fn new(name: &str) -> Scratch {
         let dir = std::env::temp_dir().join(format!(
             "workflow-{name}-{}-{}",
             std::process::id(),
@@ -218,7 +218,7 @@ impl Scratch {
         scratch
     }
 
-    fn git(&self, args: &[&str]) {
+    pub(crate) fn git(&self, args: &[&str]) {
         let done = crate::sys::output(
             crate::sys::command("git")
                 .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
@@ -229,12 +229,12 @@ impl Scratch {
         assert!(done.status.success(), "git {args:?}: {done:?}");
     }
 
-    fn commit(&self, message: &str) {
+    pub(crate) fn commit(&self, message: &str) {
         self.git(&["add", "-A"]);
         self.git(&["commit", "-q", "--allow-empty", "-m", message]);
     }
 
-    fn head(&self) -> String {
+    pub(crate) fn head(&self) -> String {
         let out = crate::sys::output(
             crate::sys::git()
                 .arg("-C")
