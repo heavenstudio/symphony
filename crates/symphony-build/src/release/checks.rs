@@ -22,6 +22,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+use super::alone::Alone;
 use super::group::{self, Bound};
 use super::record::Checking;
 use super::span::Span;
@@ -128,6 +129,10 @@ pub(crate) struct Ran {
     /// The machine's load when it ended; none when it never ran or the system did not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) load: Option<Load>,
+    /// Its failures rerun alone by the run, when it is a red test run of the lanes
+    /// ([`super::alone`]): each rerun, or why none was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) alone: Option<Alone>,
 }
 
 /// The machine's load at a moment: its load averages over 1, 5 and 15 minutes and the processors
@@ -167,13 +172,25 @@ impl Load {
 }
 
 impl Ran {
-    /// Whether it passed: it ran to its end and exited 0, and every step it listed passed.
+    /// Whether it passed, as the release is judged: it ran to its end and exited 0, and every step
+    /// it listed passed; or it is red only in failures that each passed when the run reran it alone
+    /// ([`super::alone`]): its own, its lanes' reds being those failures, or, for a check that
+    /// listed its steps, those of a step of it, every other step green.
     pub(crate) fn green(&self) -> bool {
-        self.error.is_none()
-            && !self.timed_out
-            && !self.interrupted
-            && self.exit_code == Some(0)
+        if self.error.is_some() || self.timed_out || self.interrupted || self.exit_code.is_none() {
+            return false;
+        }
+        if self.alone.as_ref().is_some_and(Alone::passed) {
+            return true;
+        }
+        (self.exit_code == Some(0) || self.passed_alone_in_steps())
             && self.steps.iter().all(Ran::green)
+    }
+
+    /// Whether a step it listed is green only by its failures passing alone: a check that exited
+    /// red for that step is no red when every other step is green.
+    fn passed_alone_in_steps(&self) -> bool {
+        (self.steps.iter()).any(|step| step.alone.as_ref().is_some_and(Alone::passed))
     }
 
     /// How it ended, in a few words: `exit 0`, `exit 101`, `signal 9`, stopped at the run's time or
@@ -202,6 +219,9 @@ impl Ran {
             );
         }
         match (self.exit_code, self.signal) {
+            (Some(code), _) if code != 0 && self.green() => {
+                format!("exit {code}, every failure passed alone")
+            }
             (Some(code), _) => format!("exit {code}"),
             (None, Some(signal)) => format!("signal {signal}"),
             (None, None) => "ended without a status".into(),
@@ -223,6 +243,7 @@ impl Ran {
             timed_out: false,
             interrupted: false,
             load: None,
+            alone: None,
         }
     }
 }
@@ -355,6 +376,7 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
         timed_out,
         interrupted,
         load,
+        alone: None,
     }
 }
 

@@ -6,8 +6,9 @@ judges those attempts. It is stage 2 of the [execution design](analysis/remote-e
 under [its card](DECISIONS.md#execution-provider-attempts), built on the kit's
 [execution adapter contract](EXECUTION_ADAPTER.md), whose types it reuses. A project supplies the
 provider as a kit `Adapter`, its credentials and its storage; the host that runs Symphony builds
-the grants and runs the coordinator. Nothing starts it: local terminals launch as before, and no
-route, setting or client page reaches it yet ([what is not delivered](#what-this-does-not-deliver)).
+the grants and runs the coordinator. The board's own launcher is its first provider: each local
+terminal is an attempt ([local terminals](#local-terminals)). No route, setting or client page
+reaches attempts yet ([what is not delivered](#what-this-does-not-deliver)).
 
 ## The record
 
@@ -110,12 +111,57 @@ revision. A grant is never deserialized, so no payload, query or claimed handle 
 or board, an attempt of one, and a worker grant on some tasks alone are refused; a coordinator
 steps only its own configuration's attempts and refuses another's before touching its lease.
 
+## Local terminals
+
+`just tasks launch`, `restore` and `close` run hc as a provider of attempts
+([`launch/attempts.rs`](../crates/tasks/src/launch/attempts.rs)), through the coordinator's public
+API alone, so a local run and a remote one are one history. The provider is the configuration
+`local-hc`, built in the launcher: no project setting names it, and no local command reads a
+remote one. Its scope is the board's own identity, the project's id (its file's, else the
+registry's, else its main checkout's folder name) and the board's database, the same from the main
+checkout and from a linked worktree: `execution::board_scope` is the one constructor every host of
+the board's attempts shares, a launch naming its project by `Hc::project`, and
+`launch::attempts::profile` is the provider under it. Its resource is the terminal's own address. It starts,
+finds again, observes and terminates a terminal and resumes a conversation in a new one; it pauses
+nothing and gives no view. A lane is the role and the handle: who may execute or review a task
+stays the board's role rules, and no launch is refused over an attempt.
+
+- **A launch** admits its attempt before hc is started, its input the task as the board holds it,
+  the commit its checkout is at and its first message. The start is `hc run` alone; the first
+  message, which may wait a minute, stays the launcher's step, and hc's receipt of it is the
+  observation that records the attempt running, with the conversation when the launch chose it.
+  A terminal hc answered is the attempt's however long the answer took: where it came after the
+  call's bound or the step's lease, the start is settled by the reconcile it then owes, answered
+  with the terminal found, and the launch goes on.
+- **A refusal or a rollback** leaves the attempt ended with why. An hc that refuses the run is a
+  rejected start, its error the reason. A launch or a restore that fails after its terminal
+  started cancels the attempt: the cancel is sent as the terminate that closes the terminal, the
+  failure in its receipt, and the closed terminal is observed gone. A terminal that will not
+  close leaves the attempt live with its cancellation unconfirmed, as the launch's own error says.
+- **A restore** admits a resume of the attempt its handle ran last on the task it restores, from
+  the recorded conversation, at the next runtime epoch, once that attempt is recorded ended: one
+  still read as running is observed gone first, as the restore starts only where no terminal runs
+  as the handle, and a start that never answered is reconciled absent and cancelled. Where the handle ran no
+  attempt on that task, or one that never had a terminal, the restore admits a plain start; an
+  attempt the handle left running on another task reads so until that task's close or cleanup.
+- **A close** asks a terminate as the closer, and the close's own last look and kill are its
+  answer: a terminal that stays refuses the stop, and the attempt goes on running. Cleanup, a
+  finished task's close and the idle sweep say a terminal they closed is gone, by one observation.
+
+No attempt replaces the launch records on the task (`task_session`) or changes a reader of them,
+and none is made up for a launch from before attempts: its close ends no attempt, and its restore
+is its first. A terminal an older build closes leaves its attempt reading
+running until the next restore, close or cleanup of its handle observes it. An attempt of another
+configuration is never read as a terminal: only a `local-hc` resource is an address given to hc.
+A task that also holds attempts a host admitted under another name for this board cannot list its
+ended ones here, so a restore there starts plainly; its live ones are still read one by one.
+
 ## What this does not deliver
 
 This is the board's half alone; full provider integration is not complete.
 
-- **Local terminals are unchanged.** hc's launch, sessions and links keep their own calls;
-  running them as a provider of attempts is the board task `tools/local-provider-attempts`.
+- **No worker runs for local attempts.** Each is stepped by the command that acts on its terminal,
+  and none is observed between commands: a terminal that ends by itself reads running until then.
 - **No one sees attempts yet.** The authorized task API, controls, history and session-link
   presentation in the client are the board task `tools/attempt-history-presentation`; until it
   lands, attempts are reachable only through the Rust API.
@@ -124,6 +170,7 @@ This is the board's half alone; full provider integration is not complete.
 
 ## Tests
 
+`crates/tasks/tests/launch/attempts.rs` runs the local provider against `fake-hc`.
 `crates/tasks/tests/store/execution.rs` runs the coordinator on each database against a
 deterministic provider (`tests/store/execution/fake.rs`) that scripts lost responses, outages,
 crashes before and after the provider acted, refusals, conflicts and calls that race a second

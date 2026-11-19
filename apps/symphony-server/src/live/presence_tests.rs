@@ -284,26 +284,42 @@ mod tick {
         "in_progress_orphaned p2 tools/child — Task tools/child",
     ];
 
+    /// What the orchestrator hears once its child, with no terminal and no tool call since it
+    /// connected, rests past the live window while its listener answers: idle, never LOST.
+    const IDLE: [&str; 2] = ["PULL idle=1 (was 0)", "idle child"];
+
+    /// [`LOST`] of a child the orchestrator was told is idle: the loss takes that row back.
+    const LOST_FROM_IDLE: [&str; 4] = [
+        LOST[0],
+        "PULL executing=0 (was 1) in_progress_orphaned=1 (was 0) idle=0 (was 1)",
+        LOST[2],
+        "resolved idle child",
+    ];
+
     #[test]
     fn after_each_sleep_the_tick_waits_for_a_round_and_a_listener_that_answers_is_never_lost() {
         let mut night = Night::new();
         night.round();
         assert_eq!(night.tick(), Vec::<String>::new());
-        for _ in 0..4 {
+        for wake in 0..4 {
             night.sleep();
             // The wake's first ticks judge nothing: the child's listener has not been looked at.
             night.held();
             night.second();
             night.held();
             night.round();
-            assert_eq!(night.tick(), Vec::<String>::new());
+            // Its listener answered the round: neither STALE nor LOST is said, wake after wake.
+            // At rest since it connected, it is idle, said at the first wake alone.
+            let said: &[&str] = if wake == 0 { &IDLE } else { &[] };
+            assert_eq!(night.tick(), said, "wake {wake}");
         }
-        // Its listener gone, the round after the wake retires it: the loss is said, once.
+        // Its listener gone, the round after the wake retires it: the loss is said, once, and
+        // takes back the idle row the first wake said.
         night.child = None;
         night.sleep();
         night.held();
         night.round();
-        assert_eq!(night.tick(), LOST);
+        assert_eq!(night.tick(), LOST_FROM_IDLE);
         night.sleep();
         night.round();
         assert_eq!(night.tick(), Vec::<String>::new());

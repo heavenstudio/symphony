@@ -4,6 +4,7 @@ import {
   blocked,
   Ends,
   ends,
+  fold,
   NAMES,
   OrchestratorBanner,
   savedStage,
@@ -64,7 +65,45 @@ describe("a cut line's end", () => {
   });
 });
 
+describe("a closed card's line", () => {
+  it.each([
+    ["", ""],
+    ["A reason", "A reason"],
+    // A line break, a run of spaces, a tab and a carriage return each fold to one space.
+    ["waits\nfor the register", "waits for the register"],
+    ["the register   regroup", "the register regroup"],
+    ["waits\r\n\t  for", "waits for"],
+    // Every white space Unicode names, not only ASCII's.
+    ["waits\u2028for\u00a0the\u3000register", "waits for the register"],
+    // The ends are folded, not trimmed: the board trims a reason's ends before it is drawn.
+    ["\n candidate alpha\t", " candidate alpha "],
+  ])("folds %j to %j", (text, folded) => {
+    expect(fold(text)).toBe(folded);
+  });
+});
+
 describe("waiting cards", () => {
+  it("draws a reason written on several lines on one, keeping its end, and titles it as written", () => {
+    const why = "Saved owner answer recovery waits\nfor the register   regroup of candidate alpha";
+    const t = aTask("tools/review-app-verdicts-saved-owner-answer-recovery-alpha", {
+      status: "blocked",
+      from: "ready",
+      waits_on: { kind: "task", who: "docs/research-handoff\nregister-alpha", why, since: now },
+    });
+    const html = render(<WaitCard task={t} now={now} />);
+    const reason = html.match(/<span class="why" title="([^"]*)">(.*?)<\/span><\/div>/s);
+    expect(reason?.[1]).toBe(why);
+    expect(reason?.[2]).toBe(
+      '<span class="cut-head">Saved owner answer recovery waits for the register regroup of</span>' +
+        '<span class="cut-tail"> candidate alpha</span>',
+    );
+    // The wait folds as well, its title as written.
+    expect(html).toContain(
+      '<span class="on" title="On docs/research-handoff\nregister-alpha">' +
+        '<span class="cut-head">On docs/research-handoff</span>' +
+        '<span class="cut-tail"> register-alpha</span></span>',
+    );
+  });
   it("tells apart cards whose title, slug, wait and reason differ only at the end", () => {
     const cards = ["alpha", "beta", "gamma"].map((end) =>
       render(
