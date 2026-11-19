@@ -7,10 +7,7 @@ line where the project is loaded or linted (`just symphony-status --lint`), and 
 read, where the Symphony runs with the file as it is. A file that does not load is run as the plain
 project: the server serves the project with the defaults, and every page of it says so and why,
 until it loads. Three keys nothing acted on are gone (`[agents] transports`, `[board] export` and
-`[board] disposable`): a file that still writes one loads, the key ignored whatever it holds, and
-the load a server runs with, the lint and the settings check each say on stderr that it does
-nothing, by its line, failing nothing; the release after refuses it as any unknown key
-(`RETIRED` in `crates/symphony/src/project/file.rs`). The board reads its own keys (`[board]`'s
+`[board] disposable`), each refused as any unknown key is. The board reads its own keys (`[board]`'s
 commands and thresholds, `[limits]`, `[agents] launch`, `[agents.models]` and `[stamps]`) from the
 main checkout's copy, so a branch cannot change its own. A path is relative to the project's root
 and stays inside it, unless its key says otherwise.
