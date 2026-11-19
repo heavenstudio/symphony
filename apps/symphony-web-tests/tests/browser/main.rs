@@ -76,6 +76,7 @@ mod task_gates;
 mod timeline;
 mod touch;
 mod waiting_board;
+mod workflow_board;
 
 use std::time::Duration;
 

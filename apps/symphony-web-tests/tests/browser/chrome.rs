@@ -136,6 +136,11 @@ impl Chrome {
         self.0.call_on(session, method, params).asserted()
     }
 
+    /// The viewport's pixels as a PNG.
+    pub fn screenshot(&mut self) -> Vec<u8> {
+        self.0.screenshot(json!({})).asserted()
+    }
+
     /// Drain through a browser-scheduled observation marker.
     pub fn pump(&mut self, window: Duration) {
         self.0.pump(window).asserted();
