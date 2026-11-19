@@ -159,11 +159,16 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged(backend: Bac
     );
     slot.unlock().unwrap();
     f.store.dispatch_callbacks().unwrap();
-    // Ending the test restores raw health: lost, said once the run no longer holds it.
-    assert!(
-        std::iter::repeat_with(|| o.text())
-            .take(2)
-            .any(|text| text.contains("LOST child — its work is claimable: tools/child")),
+    // Ending the test restores raw health: lost, said once the run no longer holds it, and its
+    // task orphaned.
+    let sender = f.session("worker");
+    assert_eq!(
+        o.drain(&f, &sender, "parent"),
+        [
+            "LOST child — its work is claimable: tools/child",
+            "PULL executing=0 (was 1) in_progress_orphaned=1 (was 0)",
+            "in_progress_orphaned p2 tools/child — Task tools/child",
+        ],
         "ending the test restores raw health"
     );
 }

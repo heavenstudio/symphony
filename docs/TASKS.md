@@ -736,8 +736,8 @@ while it runs. One that finds another running waits until that pass has ended,
 and takes over if the other's lease lapses first.
 The shared Symphony server schedules PULL digests and STALE/LOST transitions and
 retries failed deliveries. After the machine sleeps, its clock judges no session until a round of
-the idle sweep begun after the wake has ended, answered or failed, or a round's timeout of awake
-time has passed: the sleep's gap is nobody's silence, and the sweep first confirms each listener
+the idle sweep begun after the wake has ended, answered or failed, or a round's timeout and the
+slack it may start late within (240 + 30 s) of awake time have passed: the sleep's gap is nobody's silence, and the sweep first confirms each listener
 that still answers, so a quiet child whose listener answers is not said lost again at every wake,
 while one the round finds gone is said lost once (`apps/symphony-server/src/live/presence.rs`).
 Per-recipient leases prevent concurrent writers
@@ -1549,9 +1549,13 @@ once that successor no longer qualifies, the unanswered conversation can recover
 the sole automatic recovery attempt described above.
 
 What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, the
-owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, GIVEN (one line for every task the board gave the recipient since its last read, [Tasks and roles](#tasks-and-roles)), BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
+owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, GIVEN (one line for every task the board gave the recipient since its last read, [Tasks and roles](#tasks-and-roles)), BLOCKED, WATCH, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
 child, never once a pass (a child it already hears as stale is not also listed idle, in a pushed PULL, a wait
-or `tasks pull` alike). A recipient is never told its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
+or `tasks pull` alike). WATCH says the pane watch could not ask hc, while it looks for no BLOCKED: once hc has
+failed at every sample for 30 s, never for one slow answer that the next sample answers, and again only after
+hc has answered. A gap of more than 30 s between two samples is time nobody sampled, the machine asleep or no
+server, and the stretch starts again at the sample after it
+(`OUTAGE_SECONDS`, `crates/tasks/src/cli/attach/panes.rs`). A recipient is never told its own writes: not its own moves, not a role move it made (a hand-over, a take-over), and not what its own
 children (the sessions it registered, `--parent`) take on or let go, their reservations, claims and releases
 and the moves and readiness those make; a child's own move, to review say, is still said, and so is one it made
 before a claim or release between two looks (a block, then a release, says the block). What is read is the
@@ -1573,7 +1577,8 @@ them to `wait`), and nothing else dispatches to a session without one, so betwee
 nothing lost. Waiting is the session's sign of life, as a monitor's is: it beats for HANDLE every twenty seconds
 or so, at a look, so an orchestrator waiting on its board is not called stale for it. Each look also watches
 the panes HANDLE oversees, one hc sample a look, as the server's clock does for a channel, so a pane waiting on
-a prompt is said as `BLOCKED` by the second look that sees it; and while HANDLE holds the chat seat (see the
+a prompt is said as `BLOCKED` by the second look that sees it, and hc failing at every look for 30 s as one
+`WATCH`; and while HANDLE holds the chat seat (see the
 callback section above) the owner's chat events come with the rest.
 What waiting costs, measured on 2026-11-11: once HANDLE has its callback state and is on the chat seat's waiting
 list (its first look puts it there), a look at a board that stood still is nine reads and no write; a poll between
