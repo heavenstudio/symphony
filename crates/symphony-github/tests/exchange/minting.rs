@@ -633,6 +633,9 @@ fn github_not_answering_is_unavailable_and_the_old_file_kept() {
     let _alone = crate::starting();
     for planted in [
         Planted::Answer(502, json!({"message": "Bad Gateway"})),
+        Planted::Answer(429, json!({"message": "slow down"})),
+        Planted::Answer(201, json!({"expires_at": clock(9_000)})),
+        Planted::Answer(201, json!({"token": "ghs_odd", "expires_at": "tomorrow"})),
         Planted::Lost,
     ] {
         let (d, apps) = delivery("mint-unavailable", &[Role::Landing], "");
@@ -857,6 +860,21 @@ fn tokens_says_whether_each_is_current_and_never_the_token() {
         "{ran:?}"
     );
     assert_eq!(ran.code, 1);
+    // Settings that do not read, and settings that name no token file.
+    d.rig.settings.set(Some("enabled = maybe\n".into()));
+    let ran = d.run(&["tokens"]);
+    assert!(
+        ran.out
+            .starts_with("turned off: its settings do not read: "),
+        "{ran:?}"
+    );
+    assert_eq!(ran.code, 1);
+    d.rig.settings.set(None);
+    let ran = d.run(&["tokens"]);
+    assert_eq!(
+        (ran.out.as_str(), ran.code),
+        ("the committed settings name no token file\n", 0)
+    );
     // It reads no remote and writes nothing.
     assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
     assert_eq!(d.rig.github.asked().len(), 0);

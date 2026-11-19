@@ -151,21 +151,22 @@ fn tokens(ctx: &Context<'_>, out: &mut dyn Write) -> i32 {
         let Some(file) = config.file_of(role) else {
             continue;
         };
-        let app = config.app_of(role);
-        let maker = |what: &str| match &app {
-            Some(app) => format!("App {} makes {what} at its next use", app.id),
-            None => String::new(),
-        };
-        let said = match mint::standing(ctx, &config, role) {
-            Ok(None) => continue,
-            Ok(Some(Held::Unknown)) if app.is_none() => {
-                "kept by hand: when it expires is not known here".to_string()
+        let next = |id: i64, what: &str| format!("App {id} makes {what} at its next use");
+        let said = match (
+            mint::standing(ctx, &config, role, file),
+            config.app_of(role),
+        ) {
+            (Err(why), _) => {
+                code = 1;
+                format!("refused: {why}")
             }
-            Ok(Some(Held::Unknown)) => {
-                format!("holds no expiry this program wrote; {}", maker("another"))
-            }
-            Ok(Some(Held::Absent)) => format!("absent; {}", maker("one")),
-            Ok(Some(Held::Token { expires, .. })) => {
+            (Ok(_), None) => "kept by hand: when it expires is not known here".to_string(),
+            (Ok(Held::Unknown), Some(app)) => format!(
+                "holds no expiry this program wrote; {}",
+                next(app.id, "another")
+            ),
+            (Ok(Held::Absent), Some(app)) => format!("absent; {}", next(app.id, "one")),
+            (Ok(Held::Token { expires, .. }), Some(app)) => {
                 let left = expires.at - ctx.now;
                 if left > mint::MARGIN {
                     format!("current until {} (in {} min)", expires.text, left / 60)
@@ -174,15 +175,11 @@ fn tokens(ctx: &Context<'_>, out: &mut dyn Write) -> i32 {
                         "expires at {} (in {} min); {}",
                         expires.text,
                         left / 60,
-                        maker("another")
+                        next(app.id, "another")
                     )
                 } else {
-                    format!("expired at {}; {}", expires.text, maker("another"))
+                    format!("expired at {}; {}", expires.text, next(app.id, "another"))
                 }
-            }
-            Err(why) => {
-                code = 1;
-                format!("refused: {why}")
             }
         };
         let _ = writeln!(out, "{} {}: {said}", role.file_key(), file.display());

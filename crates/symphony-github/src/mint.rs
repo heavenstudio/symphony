@@ -200,22 +200,24 @@ fn kept(real: &Path, key: &str) -> Result<Held, Stop> {
     Ok(held(&text))
 }
 
-/// What the token file of `role` holds now, read and never made, for `tokens` to say: none
-/// where the settings name no file for it.
+/// What `file`, the token file of `role`, holds now, read and never made, for `tokens` to say:
+/// [`Held::Unknown`] where the settings give it no App and its token reads.
 ///
 /// # Errors
 ///
 /// The file is refused, as a run that uses it would refuse it.
-pub fn standing(ctx: &Context<'_>, config: &Config, role: Role) -> Result<Option<Held>, String> {
-    let Some(file) = config.file_of(role) else {
-        return Ok(None);
-    };
+pub fn standing(
+    ctx: &Context<'_>,
+    config: &Config,
+    role: Role,
+    file: &Path,
+) -> Result<Held, String> {
     let folders: Vec<&Path> = ctx.repository.iter().map(PathBuf::as_path).collect();
     if config.app_of(role).is_none() {
-        return credential::read(file, &folders).map(|_| Some(Held::Unknown));
+        return credential::read(file, &folders).map(|_| Held::Unknown);
     }
     let real = place(file, &folders, role.file_key()).map_err(Stop::said)?;
-    kept(&real, role.file_key()).map(Some).map_err(Stop::said)
+    kept(&real, role.file_key()).map_err(Stop::said)
 }
 
 /// The permissions `role`'s token is asked for, each the least the calls it is sent with need
