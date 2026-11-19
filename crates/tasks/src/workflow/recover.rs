@@ -148,6 +148,13 @@ pub fn recover(
                 role: staffed_role,
                 manual: action.manual,
             }),
+            // A stay keeps the accepted output standing; a recovery never accepts one.
+            accepted: super::admit::accepted_after(
+                Some(declared),
+                destination,
+                facts.accepted.as_deref(),
+                None,
+            ),
             at,
         }),
         drop,

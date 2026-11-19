@@ -26,8 +26,9 @@ validation or a host prerequisite check is not activation. The
 [graph design](analysis/configurable-delivery-workflow.md) describes the remaining system:
 configured staffing, PULL, recovery and attempts (`tools/workflow-operations`,
 `tools/workflow-attempt-integration`), the app's reading of phases and actions
-(`app/workflow-actions`), landing adapters, guards and accepted outputs each have a task of their
-own; artifact policy receipts and execution attempts retain their separate ownership.
+(`app/workflow-actions`), landing adapters and guards each have a task of their own; artifact
+policy receipts and execution attempts retain their separate ownership. A dependency on an
+accepted output is admitted here ([accepted outputs](#accepted-outputs)).
 
 ## Activation and mappings
 
@@ -76,7 +77,7 @@ The whole activation is refused, nothing written and the previous workflow left 
 command says why on stderr and runs on: a capability, adapter or guard the host does not support
 (every guard, until revision-bound guards); recovery on attempt failure or cancellation
 acknowledgement that moves work, automatic edges and retry bounds, which need durable attempts;
-`accepted_output` and `landed` dependencies, parent integration, and an adapter's prepare or
+`landed` dependencies, parent integration, and an adapter's prepare or
 finalize, as no adapter runs here yet and a prepared intent never completes on a caller's word; a
 pair or resume pair neither declared nor mapped; a mapping onto a position recording an outcome, satisfied dependants or a completion its
 source lacks; and a task whose live executor or reviewer it would move or restaff. A live holder
@@ -104,8 +105,11 @@ any guard (`guard_unavailable`); a human wait taken by anyone but a person (`hum
 principal meeting none of the edge's authorities (`unauthorized`); an input the edge does not
 declare (`unknown_id`), one it declares and the request lacks, an `acquire_role` taken by anyone
 but an agent, or a resume to a pair other than the one its block saved
-(`explicit_action_required`); any input revision, as the board records none (`stale_input`); a
-dependency predicate not met (`dependency`); and a start past the project's cap (`capacity`).
+(`explicit_action_required`); an input revision naming anything but the accepted output of a task
+it depends on, for an edge depending on `accepted_output`, as the board records no other
+(`stale_input`); a dependency predicate not met (`dependency`), and for `accepted_output` an
+output the request does not name (`explicit_action_required`) or one other than the output
+standing (`stale_input`); and a start past the project's cap (`capacity`).
 
 A task role is held on this task: a holder of its row, or, by an edge that takes the role, a
 session no other holder or reservation stands against, its own reservation consumed. A
@@ -113,8 +117,9 @@ reviewer's role, by holding or taking it, is a fresh session's (RULES.md
 `workflow/reviewers-not-the-owner`): never one that executed the task or work under it, filed it,
 or orchestrates or orchestrated it, whatever the graph says. A capability is held only by a
 principal the host's grants name. A `done` dependency is met by a task the workflow holds at a
-position that satisfies its dependants, or one the board's writers keep in done; a dependency not
-on the board meets nothing.
+position that satisfies its dependants, or one the board's writers keep in done; an
+`accepted_output` dependency by the output standing for it, named
+([accepted outputs](#accepted-outputs)); a dependency not on the board meets nothing.
 
 The write is one transaction that checks again everything the decision read: the active
 generation and digest, the task's version, each dependency's version, each role relied on, no
@@ -145,6 +150,34 @@ writers keep. `just tasks next` and PULL offer no task a workflow holds to a cla
 unstaffed, orphaned or unreviewed (a working one counts as executing), and the board's block of
 a dependant whose prerequisite was cancelled leaves one to its edges' dependency predicates.
 Staffing and the launcher do not read the workflow yet (`tools/workflow-operations`).
+
+## Accepted outputs
+
+A task's accepted output is the identity of the transition that accepted it, `SLUG@REVISION`:
+the one an edge records when it moves the task to a position that satisfies its dependants from
+one that does not (built-in v1's approve, covered close, subtask completion and land). The board
+mints it, so it is never a caller's claim, and the transition record keeps it, never changed, as
+its `accepted`. It stands while the task stays at positions that satisfy dependants: every later
+transition there carries it, an edge's, an activation's mapping or a recovery's stay. A move to a
+position that does not satisfy them supersedes it (a reopen, a rework, an activation whose new
+definition no longer has the pair satisfy them, which records that as a transition that moves
+nothing), and none stands until an edge accepts the task's output again, under a new identity. A
+mapping or a recovery never accepts one, and a task the board's own writers keep, done before the
+activation or not, has none.
+
+An edge depending on `accepted_output` is taken only on the output standing for each task its task
+depends on, each named in the request's `input_revisions` under that task's slug: none standing is
+`dependency`, one not named is `explicit_action_required`, and one other than the output standing,
+superseded or never accepted, is `stale_input`, so a caller that read an output a supersession
+replaced never takes the new one unread. The receipt keeps the request, and with it the outputs it
+took. The write is fenced on each prerequisite's version (held `FOR SHARE` in PostgreSQL), so a
+supersession and an admission racing from one read let one of them win: a supersession written
+first makes the admission decide again and refuses it, and an admission written first took the
+output standing then. What a supersession does to a dependant already admitted or delivered is
+not this check's (`tools/workflow-revision-guards`). `just tasks workflow actions SLUG` prints the
+task's own output standing and, where an edge leaving its pair depends on accepted outputs, the
+one standing for each task it depends on, which `workflow apply … --accept SLUG=OUTPUT` names;
+`Store::accepted_outputs` reads the same.
 
 ## Recovery
 
@@ -180,7 +213,8 @@ attempts (`tools/workflow-operations`, `tools/workflow-attempt-integration`).
 From board schema 24 a custom workflow's records are one `workflow` table in both stores, each a
 `kind` and a `body` under a compound id: the active generation (`['active']`), each definition by
 its digest, each activation by its generation, and each transition of a task by its slug and the
-workflow revision it made (`['event', SLUG, REVISION]`). A task the workflow holds keeps its
+workflow revision it made (`['event', SLUG, REVISION]`), with the accepted output standing after it
+([accepted outputs](#accepted-outputs)). A task the workflow holds keeps its
 position in `fields._board.workflow`: its pair, the pair a blocked task resumes to, the generation
 and digest it was last moved under, and its workflow revision, which only its own transitions move.
 The position, and the status it projects to, change only in the one write that records their

@@ -57,7 +57,10 @@ pub(in crate::store) fn standings() -> Pg<'static> {
     'tasks', coalesce((SELECT jsonb_agg(jsonb_build_object(
         'slug', slug, 'version', version, 'status', status,
         'position', fields #> '{_board,workflow}',
-        'blocked_from', fields #> '{_board,blocked,from}') ORDER BY slug)
+        'blocked_from', fields #> '{_board,blocked,from}',
+        'accepted', (SELECT w.body -> 'accepted' FROM workflow w
+            WHERE w.id = jsonb_build_array('event', task.slug, task.fields #> '{_board,workflow,revision}')))
+        ORDER BY slug)
         FROM task WHERE status NOT IN ('done', 'cancelled') OR fields #> '{_board,workflow}' IS NOT NULL),
         '[]'::jsonb))",
     )
@@ -116,14 +119,18 @@ pub(in crate::store) fn admission() -> Pg<'static> {
         "jsonb_build_object(
     'active', (SELECT body FROM workflow WHERE id = '[\"active\"]'::jsonb),
     'task', (SELECT jsonb_build_object('slug', slug, 'version', version, 'status', status,
-        'created_by', created_by, 'position', fields #> '{_board,workflow}')
+        'created_by', created_by, 'position', fields #> '{_board,workflow}',
+        'accepted', (SELECT w.body -> 'accepted' FROM workflow w
+            WHERE w.id = jsonb_build_array('event', task.slug, task.fields #> '{_board,workflow,revision}')))
         FROM task WHERE slug = v ->> 'slug'),
     'roles', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', handle, 'role', role))
         FROM role WHERE slug = v ->> 'slug'), '[]'::jsonb),
     'dependencies', coalesce((SELECT jsonb_agg(target) FROM link
         WHERE slug = v ->> 'slug' AND kind = 'dep'), '[]'::jsonb),
     'found', coalesce((SELECT jsonb_agg(jsonb_build_object('slug', t.slug, 'version', t.version,
-        'status', t.status, 'position', t.fields #> '{_board,workflow}'))
+        'status', t.status, 'position', t.fields #> '{_board,workflow}',
+        'accepted', (SELECT w.body -> 'accepted' FROM workflow w
+            WHERE w.id = jsonb_build_array('event', t.slug, t.fields #> '{_board,workflow,revision}'))))
         FROM task t JOIN link l ON l.target = t.slug
         WHERE l.slug = v ->> 'slug' AND l.kind = 'dep'), '[]'::jsonb),
     'receipt', (SELECT body FROM workflow WHERE id = v -> 'receipt'),
