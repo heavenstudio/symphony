@@ -102,11 +102,11 @@ END;", super::act()))
 }
 
 pub(in crate::store) fn waiting_orchestrators() -> Pg<'static> {
-    Pg::read(super::rows(
+    super::listed(
         "s",
         "session s WHERE handle IN (SELECT jsonb_array_elements_text(coalesce((SELECT doc -> 'waiting' FROM callback_state WHERE id = '\"chat\"'), '[]'))) AND kind = 'orchestrator' AND left_at IS NULL AND NOT EXISTS (SELECT 1 FROM callback_state c WHERE c.id = to_jsonb(s.handle) AND c.doc ? 'address')",
         "s.handle",
-    ))
+    )
 }
 pub(in crate::store) fn session_kind() -> Pg<'static> {
     Pg::read("(SELECT to_jsonb(kind) FROM session WHERE handle = v ->> 'handle')")

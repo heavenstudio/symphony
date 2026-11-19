@@ -10,9 +10,9 @@ and stamps; builds and tests still run locally. This is a concept deliverable fo
 described here is implemented by this document. What is built of it, the task operation, is
 [TASKS](../TASKS.md#a-land-delivered-by-a-pull-request) and
 [GITHUB](../GITHUB.md#delivering-a-land), with the reading of the repository's protection
-before each step ([GITHUB](../GITHUB.md#the-protection-a-delivery-needs)); the import
-operation, the generated-output and release-candidate deliveries and the protecting itself are
-not.
+before each step ([GITHUB](../GITHUB.md#the-protection-a-delivery-needs)), and the release
+cadence and candidate read its receipts ([RELEASES](../RELEASES.md#the-cadence)); the import
+operation, the generated-output delivery and the protecting itself are not.
 
 ## Scope and ownership
 

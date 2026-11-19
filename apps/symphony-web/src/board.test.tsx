@@ -164,6 +164,37 @@ describe("the approved B board", () => {
     localStorage.setItem(STAGE_KEY, "unknown");
     expect(columns(board())).toEqual(["review"]);
   });
+  // The wait strip and the stage tabs are rows that scroll across on a phone (scrollrow.ts), which
+  // finds each row's chosen one by `aria-pressed` and `aria-current`: one of each, whatever the
+  // counts, a stage with nothing in it saying its zero whole.
+  it("draws a phone's wait strip and stage tabs as scrolling rows, one chosen in each", () => {
+    vi.stubGlobal("innerWidth", 390);
+    localStorage.setItem(STAGE_KEY, "design");
+    const html = board({
+      counts: [
+        ["design", 12],
+        ["review", 19],
+        ["concept", 0],
+      ],
+      waiting: {
+        kinds: [["check", 30]],
+        columns: [
+          { status: "design", ordinary: 0, blocked: 12, oldest: null },
+          { status: "review", ordinary: 1, blocked: 18, oldest: null },
+        ],
+      },
+    });
+    expect(html).toContain(
+      '<nav class="wait-strip scroll-row" aria-label="Filter tasks by what they wait on">',
+    );
+    expect(html).toContain('<nav class="stage-tabs scroll-row" aria-label="Task stages">');
+    expect(html.match(/aria-current="page"/g)).toHaveLength(1);
+    expect(html).toContain('aria-current="page">Design <i>0</i><b>+12</b></button>');
+    expect(html).toContain(">Review <i>1</i><b>+18</b></button>");
+    expect(html).toContain(">Concept <i>0</i></button>");
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(1);
+    expect(html).toContain('class="open-count" aria-pressed="true">30 open</button>');
+  });
   it("opens the linked row's original stage before a saved phone tab", () => {
     vi.stubGlobal("innerWidth", 390);
     vi.stubGlobal("location", { hash: "#row-work%2Fa" });

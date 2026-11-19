@@ -73,8 +73,20 @@ fn log(env: &Env) -> Option<File> {
 pub(super) fn run(env: &Env, err: &mut dyn Write) -> i32 {
     let store =
         Clock::of(env).and_then(|clock| open_unchecked(reach(env, &env.cwd, false)?, &clock));
-    // Its passes give the open tasks no orchestrator holds first ([`crate::Store::giving`]).
-    let store = store.map(|store| super::looking_up(store, env).giving());
+    // Its passes give the open tasks no orchestrator holds first ([`crate::Store::giving`]), and
+    // are held to the project's limits as the writes that start it are ([`super::capped`]): a
+    // digest it says counts each orchestrator's slots against the same cap, so a recipient heard
+    // by both is never told a slot count it had come and gone.
+    let store = store.map(|store| {
+        let store = super::capped_saying(super::looking_up(store, env), env, &mut |problem| {
+            let _ = writeln!(
+                err,
+                "[{}] tasks: {problem}",
+                sys::local_minute(trigger::now())
+            );
+        });
+        store.giving()
+    });
     match store.and_then(|store| store.dispatch_detached().map_err(|e| e.to_string())) {
         Ok(_) => 0,
         Err(why) => {

@@ -255,6 +255,9 @@ pub(crate) struct Hub {
     chat_retry: Mutex<retry::Retry>,
     dispatch_retry: Mutex<retry::Retry>,
     give_retry: Mutex<retry::Retry>,
+    /// The idle sweep's rounds as the tick needs them: after a sleep, its dispatch and its give wait
+    /// for a round begun after the wake ([`presence`]).
+    presence: Mutex<presence::Presence>,
     retry_clock: Box<dyn Fn() -> Instant + Send + Sync>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect`], held to `repository` as every
     /// reach from `root` here is ([`taskview::serve`]), or a test's board.
@@ -428,6 +431,7 @@ impl Hub {
             chat_retry: Mutex::default(),
             dispatch_retry: Mutex::default(),
             give_retry: Mutex::default(),
+            presence: Mutex::default(),
             retry_clock: Box::new(Instant::now),
             connect_reader: Box::new(taskview::connect),
             panes: Box::new(|root| {
@@ -2576,6 +2580,9 @@ mod machine_work;
 
 pub(crate) use health::{Signal, Standing};
 mod owner_asks;
+mod presence;
+#[cfg(test)]
+mod presence_tests;
 #[cfg(test)]
 mod readiness_tests;
 mod reports;

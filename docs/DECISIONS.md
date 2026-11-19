@@ -5,6 +5,23 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### GitHub delivery
+
+- [ ] **github-delivery-policy-write-trial** — The read-only App you approved was made and tried, and GitHub does not show it the lists either: reading a repository's administration is not enough. The one level left to try is writing it, and an identity that can write a repository's administration can also change or remove the rules it is there to read. May that be tried, on the throwaway repository only? A: yes, the third App is given Administration (write) there, for one reading, to learn whether GitHub then shows the lists, and is put back to Administration (read) right after it. B: no; a person confirms the lists by hand when delivery is turned on, and lands check everything else. C: neither, and pull-request landing stays off. Recommended: A, because it risks only the throwaway repository and settles what GitHub does; it decides nothing for the real one. Approve and say A, B or C in the note, or comment. [[analysis/github-pr-landing#Permissions and protection]]
+  [2026-11-19 02:45] agent — Posted for the board task `tools/github-pr-verified-activation`, as **github-delivery-policy-reader** said it would be if reading was not enough.
+
+    **What was tried.** The third App, with Administration (read) and Metadata (read), installed on the throwaway repository alone, read both rule sets and the rules in effect. Neither list of who is let past was in its answers. Its own standing was: let past neither.
+
+    **Under A,** the change is to that one App on that one repository. It is not installed anywhere else, the check publisher and the landing App keep exactly the rights they have, and nothing is granted until you answer. The trial is one reading with a token that is revoked after it, and the App is put back to Administration (read) as soon as that reading is done, so write lasts only that reading; it edits no rule. Whether write shows the lists is not known.
+
+    **What A does not decide.** If write does show the lists, using it for real would mean an identity on the real repository that could remove its protection, present at every land. That would be a card of its own, with the trial's result on it, and B stays open then.
+
+    **Under B,** every land still reads the rules, their settings and each App's own standing, which is what the two Apps can see today. What goes unread is whether someone was added to a list after the day a person looked.
+
+    **Earlier verdicts checked.** **github-delivery-policy-reader**, approved as A, covers the read-only identity and says a write level is asked separately. **github-delivery-proof-setup** gives the two Apps no Administration, which stays so under every option here.
+
 ## Auto-approved: spot-check
 
 ### Releases
@@ -338,6 +355,11 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### Board
 
+- [r] **board-pg-memory-at-ten-times** — You approved moving the live boards to PostgreSQL only after its memory peak was found and brought under 512 MiB, or shown it cannot be ([[DECISIONS#board-pg-cutover]], B). It is found and fixed for a board of today's size: with thirty sessions writing at once the server now peaks at 377 to 419 MiB over three runs (1,590 to 1,846 before), and at 161 to 165 with ten. On a board ten times today's size it is not under: 1.7 to 1.8 GiB over two runs, down from 14.9. That larger board is a copy of today's made ten times, measured on scratch boards on a busy machine. The 512 MiB target is unchanged and was not met there. May the live boards move at today's size? A: no, the move stays held until more work brings the ten-times peak down. B: yes, the move may go ahead once its other conditions are met, with the ten-times result left open as known. Approve and say A or B in the note, or comment. [[analysis/board-store-baseline#PostgreSQL's memory peak, measured 2026-11-18]]
+  [2026-11-19 01:47] agent — Posted for the board task `perf/board-pg-memory-peak`. Nothing live moves before you answer.
+  [2026-11-19 02:40] owner · approved — B
+  [2026-11-19 02:48] agent — B recorded: the live move may proceed at today’s board size once the other cutover conditions are met. The ten-times peak of 1.7–1.8 GiB remains an open limitation; the 512 MiB target is unchanged. This lifts the memory-decision hold, and I have routed it to the cutover work. No live board was moved by this reply.
+  [2026-11-19 02:48] agent · resolved
 - [r] **postgresql-binary-source** — The board is moving from SurrealDB to PostgreSQL, so every machine that runs a board needs the PostgreSQL program. SurrealDB's makers publish a ready program, which Symphony downloads once and checks. The PostgreSQL project publishes only source code: for a Mac it points to other people's installers, and for Linux to the system's packages. Nothing on the board's pages changes under any option. Where should the program come from? A: a ready-made build from a community project on GitHub, downloaded once and checked, as SurrealDB is today. B: PostgreSQL's own source code from postgresql.org, downloaded, checked and compiled once on each machine. C: whatever PostgreSQL is installed on the machine (Homebrew on a Mac, the system's packages on Linux), which a person installs. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/postgresql-binary-source#The options]]
   [2026-11-15 12:05] agent — Posted for the board task `docs/postgresql-binary-source-card`. Each source was read today, and B was tried on this Mac; the pages read are listed in the analysis.
 
@@ -418,6 +440,8 @@ their dated history work is in [REVIEW](REVIEW.md).
     [[analysis/board-pg-cutover#The choice]] now reads as decided.
   [2026-11-18 18:12] agent · resolved
   [2026-11-18 18:16] agent — Filed: perf/board-pg-memory-peak (started now), tools/board-pg-cutover-pieces, tools/board-pg-cutover-rehearsal, tools/board-pg-this-board-moves. No live board moves before the memory result and the rehearsal are on the board.
+  [2026-11-18 19:53] agent — The memory result, from the board task `perf/board-pg-memory-peak`: found, and under the target on a board of today's size. A read of the whole board was answered as one value, which each command's PostgreSQL process built whole and kept until the command ended, so thirty commands held thirty boards. The reads now answer a row at a time. Thirty sessions peak at 377 to 419 MiB over three runs (1,590 to 1,846 before, the same day and export), ten at 161 to 165 (601 to 605 before), nothing failed. The CPU is not shown equal: the server's was 54.6 to 57.3 s and once 83.7 against 56.2 to 62.8, the `tasks` processes' 57.3 to 65.9 s against 50.0 to 57.4, leaning higher. No setting changed and the target is as you approved it. On a board ten times today's size the peak is 1.7 to 1.8 GiB, down from 14.9: still over 512 MiB, so the live move stays held until you answer this result, and the one on today's board does not stand in for it. SurrealDB was not run on that copy; its 3.3 GiB is another fixture's figure ([[analysis/board-store-baseline#PostgreSQL's memory peak, measured 2026-11-18]]). Scratch boards only; no live board was touched.
+  [2026-11-19 02:04] agent — The ten-times result above is put to you as a card of its own, **board-pg-memory-at-ten-times**: the live move stays held until you answer it there.
 - [r] **board-search-by-meaning** — The board can find tasks by what they mean as well as by their words, with a small language model that runs on this machine: you asked for tasks to be searchable by meaning, and chose the model. Nothing calls it today: the board page searches by words, no skill or document names it but the board's own guide and help, and the consuming project's tools never call it. It costs 153 of the 189 packages the board is built from, a 133 MB download for each project, and a pass every minute on the server for each project, 13 hours of it on this repository's board since 2026-11-14. What becomes of it? A: delete it; the board searches by words alone. B: move the model into a program of its own, as an approved branch that never landed does: the board and the server build without it, and search by meaning works where that program is built. C: keep it in the board behind a build switch that is off by default. D: keep it as it is. Recommended: B. Approve and say A, B, C or D in the note, or comment. [[analysis/code-review-2026-11#4. Eight tenths of the board's dependencies serve a search mode nothing calls]]
   [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
 

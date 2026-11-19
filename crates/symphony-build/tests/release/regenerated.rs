@@ -87,15 +87,21 @@ fn ended() -> i64 {
 }
 
 /// A run with the stand-in check, `extra` in its environment, started in the background, its
-/// stdout to `said`.
+/// stdout to `said` and its stderr to the file beside it ([`errors`]).
 fn started(fixture: &Fixture, said: &std::path::Path, extra: &[(&str, &str)]) -> Child {
     fixture
         .command(NOW, &["--check", CHECK], extra)
         .stdin(Stdio::null())
         .stdout(fs::File::create(said).unwrap())
-        .stderr(Stdio::null())
+        .stderr(fs::File::create(said.with_extension("err")).unwrap())
         .spawn()
         .unwrap()
+}
+
+/// What the run [`started`] with its stdout to `said` wrote on its stderr: why it stopped, when
+/// it did, which its stdout does not say.
+fn errors(said: &std::path::Path) -> String {
+    fs::read_to_string(said.with_extension("err")).unwrap_or_default()
 }
 
 /// Wait until the run started with its stdout to `said` has said `line`, still running, with the
@@ -342,7 +348,14 @@ fn a_night_checks_what_the_regenerator_lands_on_main_while_it_waits() {
     let code = ended_with(&mut night);
     drop(making);
     let out = fs::read_to_string(&said).unwrap();
-    assert_eq!(code, Some(0), "{out}");
+    assert_eq!(
+        code,
+        Some(0),
+        "{out}\nits stderr:\n{}\nits fixture was {}, the remote's main at {}",
+        errors(&said),
+        fixture.root.display(),
+        &landed[..12]
+    );
     assert!(
         out.contains(&format!(
             "release: origin/main moved on to {} while the run waited for the regenerator: \

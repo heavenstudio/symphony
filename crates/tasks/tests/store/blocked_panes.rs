@@ -108,6 +108,24 @@ fn tick(f: &Fixture) {
     f.store.dispatch_callbacks_snapshot().unwrap();
 }
 
+/// hc failing at two ticks of the server clock the outage's stretch apart, which says its WATCH.
+fn hc_down_for_the_stretch(f: &Fixture) {
+    panes(None);
+    tick(f);
+    f.advance(symphony_board::cli::attach::OUTAGE_SECONDS);
+    tick(f);
+}
+
+/// The server clock's ticks for `seconds` of the fixture's clock: one now and one a second after
+/// it, `seconds` times.
+fn ticks(f: &Fixture, seconds: u32) {
+    tick(f);
+    for _ in 0..seconds {
+        f.advance(1.0);
+        tick(f);
+    }
+}
+
 /// Launched into `pane`, on `slug`.
 fn launch(f: &Fixture, slug: &str, handle: &str, pane: &str) {
     f.store
@@ -222,9 +240,7 @@ fn hc_failing_is_said_once_and_a_known_block_is_not_repeated(backend: Backend) {
     );
 
     panes(None);
-    for _ in 0..3 {
-        tick(&f);
-    }
+    ticks(&f, 32);
     let said = o.drain(&f, &worker, &orch);
     assert_eq!(said.len(), 1, "{said:?}");
     assert!(
@@ -237,12 +253,13 @@ fn hc_failing_is_said_once_and_a_known_block_is_not_repeated(backend: Backend) {
 
     // hc answers again with the same prompt still waiting: nothing new to say.
     panes(Some(json!([pane("t2", "blocked")])));
+    f.advance(1.0);
     tick(&f);
     assert_eq!(o.drain(&f, &worker, &orch), Vec::<String>::new());
     // A second outage is a second WATCH.
     panes(None);
-    tick(&f);
-    tick(&f);
+    f.advance(1.0);
+    ticks(&f, 30);
     assert_eq!(o.drain(&f, &worker, &orch).len(), 1);
 }
 }
@@ -416,5 +433,124 @@ fn a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent(ba
     assert!(blocked(other.drain(&f, &executor, &unrelated)).is_empty());
     tick(&f);
     assert!(blocked(next.drain(&f, &executor, &current)).is_empty(), "one episode is said once");
+}
+}
+
+on_both! {
+fn a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_wakes(backend: Backend) {
+    if !paired_child("blocked_panes::a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_wakes", backend) {
+        return;
+    }
+    // The night of the incident: no tool call since before the sleep, its turn retrying its
+    // model at each wake, then ended on an error at its prompt, its listener answering throughout.
+    let f = Fixture::on(backend, crate::common::Seed::default());
+    let orch = f.session("orchestrator");
+    let mut child = symphony_board::NewSession::new("worker");
+    child.parent = Some(orch.clone());
+    let worker = f.session_with(child);
+    f.task("tests/quiet");
+    f.store.take_role("tests/quiet", &orch, "orchestrator").unwrap();
+    f.store.claim("tests/quiet", &worker).unwrap();
+    launch(&f, "tests/quiet", &worker, "t2");
+    // Its terminal, named for it: the agents view finds a terminal of no conversation by name.
+    let terminal = |status: &str| {
+        let mut terminal = pane("t2", status);
+        terminal["name"] = json!(worker);
+        terminal
+    };
+    panes(Some(json!([terminal("working")])));
+    let o = listen(&f, &orch);
+    assert!(o.text().starts_with(BUSY_PULL));
+    let w = listen(&f, &worker);
+    // The barrier's sender, whose own write is no sign of the child's.
+    let sender = f.session("worker");
+    let state = std::env::temp_dir().join(format!(
+        "quiet-at-prompt-{}-{}.json",
+        std::process::id(),
+        f.store.database().database()
+    ));
+    // Each wake as the server takes it: the sweep's round first, then the clock's tick.
+    let wake = || {
+        f.advance(1800.0);
+        crate::common::sweep_presence(&f.store, state.clone());
+        tick(&f);
+        o.drain(&f, &sender, &orch)
+    };
+    for _ in 0..3 {
+        assert_eq!(wake(), Vec::<String>::new(), "a turn under way is not idle");
+    }
+    panes(Some(json!([terminal("idle")])));
+    assert_eq!(
+        wake(),
+        ["PULL idle=1 (was 0)".to_string(), format!("idle {worker}")],
+        "at its prompt, idle: said once, neither LOST nor takeover"
+    );
+    for _ in 0..3 {
+        assert_eq!(wake(), Vec::<String>::new(), "not again at each wake");
+    }
+    drop(w);
+}
+}
+
+on_both! {
+fn hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_answer(backend: Backend) {
+    if !paired_child("blocked_panes::hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_answer", backend) {
+        return;
+    }
+    let f = Fixture::on(backend, crate::common::Seed::default());
+    let (orch, worker, o) = waiting_worker(&f);
+    tick(&f);
+    assert_eq!(o.drain(&f, &worker, &orch).len(), 1, "its block, once");
+    // The WATCH lines said since the last read; a sleep's gap may say the worker is quiet too.
+    let watching = || {
+        let lines = o.drain(&f, &worker, &orch);
+        assert!(!lines.iter().any(|l| l.starts_with("BLOCKED ")), "{lines:?}");
+        (lines.iter())
+            .filter(|l| l.starts_with("WATCH hc unanswered at observation: "))
+            .count()
+    };
+    let answering = || panes(Some(json!([pane("t2", "blocked")])));
+    // The incident: the clock ticks once a second, and hc fails at one sample in four under load.
+    for second in 0..40 {
+        f.advance(1.0);
+        panes((second % 4 != 3).then(|| json!([pane("t2", "blocked")])));
+        tick(&f);
+    }
+    assert_eq!(watching(), 0, "a failed sample between answers is a slow answer");
+    // Failing at every tick for the stretch: one WATCH, at its end and not before.
+    answering();
+    f.advance(1.0);
+    tick(&f);
+    panes(None);
+    f.advance(1.0);
+    ticks(&f, 29);
+    assert_eq!(watching(), 0, "short of the stretch");
+    f.advance(1.0);
+    tick(&f);
+    assert_eq!(watching(), 1, "the stretch");
+    ticks(&f, 60);
+    assert_eq!(watching(), 0, "still failing, no second");
+    // Answered, then failing for the stretch again: a second.
+    answering();
+    f.advance(1.0);
+    tick(&f);
+    panes(None);
+    f.advance(1.0);
+    ticks(&f, 30);
+    assert_eq!(watching(), 1, "a second outage");
+    // A sleep spanning the stretch, failing at the clock's last tick before it and its first
+    // after it: nothing, and the stretch starts again at the wake.
+    answering();
+    f.advance(1.0);
+    tick(&f);
+    panes(None);
+    f.advance(1.0);
+    ticks(&f, 20);
+    f.advance(1_800.0);
+    ticks(&f, 29);
+    assert_eq!(watching(), 0, "the sleep is no part of the stretch");
+    f.advance(1.0);
+    tick(&f);
+    assert_eq!(watching(), 1, "a stretch awake after the wake");
 }
 }
