@@ -2,6 +2,8 @@
 include!("common/commit_fixture.rs");
 use symphony_board::{rpc, sys};
 
+#[path = "after_commit/delivery.rs"]
+mod delivery;
 #[path = "after_commit/publication_reports.rs"]
 mod publication_reports;
 #[path = "after_commit/uploads.rs"]
@@ -243,66 +245,34 @@ fn commits_only_immutable_edits_and_preserves_the_real_index() {
 }
 
 #[test]
-fn a_project_delivering_by_pull_request_commits_no_save_to_its_default_branch() {
+fn a_save_under_delivery_is_kept_pending_on_a_branch_and_filed_as_the_owners_task() {
     isolated(
-        "a_project_delivering_by_pull_request_commits_no_save_to_its_default_branch",
-        |f| {
-            let root = f.repo();
-            write(
-                &root.join("symphony.toml"),
-                "[land]\ndelivery = [\"symphony-github\", \"deliver\"]\n",
-            );
-            git(&root, &["add", "symphony.toml"]);
-            git(&root, &["commit", "-qm", "deliver by pull request"]);
-            let tip = git(&root, &["rev-parse", "main"]);
-            let verdict = DOC.replace("[ ]", "[x]");
-            let refused = commit_verdicts(
-                &root,
-                &[f.edit("docs/a.md", DOC, &verdict)],
-                "owner verdict",
-            );
-            assert!(!refused.committed);
-            let error = "not saved: this project delivers by pull request ([land] delivery), so \
-                         nothing is committed to main here, and a save has no pull request of its \
-                         own in this build: land the edit as a task's branch";
-            assert_eq!(refused.error, error);
-            assert_eq!(git(&root, &["rev-parse", "main"]), tip);
-            assert_eq!(f.main("docs/a.md"), DOC);
-            // The fixture's edit wrote the file, as an edit handed to that entry is: put back.
-            git(&root, &["checkout", "-q", "--", "docs/a.md"]);
-            // The app's own save, by the entry its routes take: refused before a file is
-            // written, so the main checkout stays clean and at its tip.
-            let saves = ClosingSaves::start(&root);
-            for (route, payload) in [
-                (
-                    "/api/decision",
-                    json!({"path":"docs/a.md", "slug":"one", "state":"approved", "note":"yes", "tap":"t"}),
-                ),
-                (
-                    "/api/comment",
-                    json!({"path":"docs/a.md", "after_line":1, "kind":"comment", "title":"T", "body":"words"}),
-                ),
-            ] {
-                let refused = saves.0.post("", route, &payload).unwrap_err();
-                assert_eq!(refused.status, 409, "{route}");
-                assert_eq!(refused.error, error, "{route}");
-            }
-            drop(saves);
-            assert_eq!(git(&root, &["rev-parse", "main"]), tip);
-            assert_eq!(git(&root, &["status", "--porcelain"]), "");
-            assert_eq!(
-                std::fs::read_to_string(root.join("docs/a.md")).unwrap(),
-                DOC
-            );
-            // And the committer every save ends in, asked directly: refused before it is
-            // queued, so no worker commits and none files a failure.
-            let committer = ClosingCommitter::start(&root);
-            let refused = committer.0.submit(f.edit("docs/a.md", DOC, &verdict));
-            assert_eq!(refused.unwrap_err(), error);
-            committer.0.close();
-            assert_eq!(git(&root, &["rev-parse", "main"]), tip);
-            f.clean_workers();
-        },
+        "a_save_under_delivery_is_kept_pending_on_a_branch_and_filed_as_the_owners_task",
+        delivery::kept_pending_on_a_branch_and_filed_as_the_owners_task,
+    );
+}
+
+#[test]
+fn pending_saves_a_then_b_go_through_delivery_cancellation_cover_and_restart() {
+    isolated(
+        "pending_saves_a_then_b_go_through_delivery_cancellation_cover_and_restart",
+        delivery::a_then_b_through_delivery_cancellation_and_restart,
+    );
+}
+
+#[test]
+fn a_save_journaled_before_delivery_was_set_and_one_that_no_longer_applies_are_kept() {
+    isolated(
+        "a_save_journaled_before_delivery_was_set_and_one_that_no_longer_applies_are_kept",
+        delivery::journaled_before_the_key_and_no_longer_applying,
+    );
+}
+
+#[test]
+fn a_pending_save_settled_on_its_branch_is_proved_by_its_receipt_alone() {
+    isolated(
+        "a_pending_save_settled_on_its_branch_is_proved_by_its_receipt_alone",
+        delivery::a_settled_conflict_is_proved_by_its_receipt_alone,
     );
 }
 

@@ -89,6 +89,19 @@ impl Saves {
         }
     }
 
+    /// Take up again the saves kept for delivery by pull request (`commit::pending`), with no
+    /// new save: asked by the server as it starts and each time it reads main's pages again,
+    /// which a land's fast-forward of the checkout makes it do. It starts the committer for
+    /// that alone where such saves are kept, and does nothing where none is.
+    pub fn settle(&self) {
+        if self.closed.load(Ordering::Acquire) || !commit::pending::kept(&self.root) {
+            return;
+        }
+        self.committer
+            .get_or_init(|| commit::Committer::start(&self.root, self.writes.clone()))
+            .wake();
+    }
+
     /// The saves of the checkout `root`. A verdict waiting on an agent is an ask on the board
     /// ([`symphony_board::Ask`]), opened by the save's journal record ([`crate::callbacks`]): no
     /// save files a task for it.
@@ -564,11 +577,11 @@ impl Saves {
     ) -> Result<(Value, Option<NewAsk>), Failure> {
         let (root, rel) = self.scope(scope, string(payload, "path"))?;
         let target = Self::target(&root, &rel)?;
-        // Refused before a file is written: a save on the default branch of a project that
-        // delivers by pull request would commit what its host never holds.
-        if root == self.root && commit::on_main(&root) {
-            commit::delivered_by_the_host(&root).map_err(|error| Failure { status: 409, error })?;
-        }
+        // On the default branch of a project that delivers by pull request the save writes no file
+        // and commits nothing here: it is kept and delivered by a pull request of its own
+        // (`commit::pending`), and answered as pending.
+        let main = root == self.root && commit::on_main(&root);
+        let pending = main && commit::delivers(&root);
         // A branch's file, by its path in the worktree: git is asked of it.
         let file = (root != self.root).then(|| crate::project::Project::of(&root).file(&rel));
         let tap: String = if route == "/api/decision" {
@@ -594,6 +607,13 @@ impl Saves {
             ));
         }
         let original = std::fs::read_to_string(&target).map_err(|e| e.to_string())?;
+        // Written against the document as the saves still waiting leave it, as its page shows it.
+        let original = if pending {
+            let file = crate::project::Project::of(&root).file(&rel);
+            commit::pending::shown(&root, &file, original)
+        } else {
+            original
+        };
         if route == "/api/decision"
             && let Some(file) = &file
         {
@@ -687,7 +707,9 @@ impl Saves {
             })?,
             None => text,
         };
-        std::fs::write(&target, &text).map_err(|e| e.to_string())?;
+        if !pending {
+            std::fs::write(&target, &text).map_err(|e| e.to_string())?;
+        }
         let ask = self.document_ask(route, payload, &root, &rel, &text, comment.as_ref());
         if route != "/api/comment" {
             let cleared = self
@@ -706,7 +728,7 @@ impl Saves {
                 eprintln!("· could not clear postponed card {slug}: {error}");
             }
         }
-        if root == self.root && commit::on_main(&root) {
+        if main {
             self.committer
                 .get_or_init(|| commit::Committer::start(&self.root, self.writes.clone()))
                 .submit(commit::Edit {
@@ -727,6 +749,10 @@ impl Saves {
         }
         drop(taps);
         drop(_held);
+        if pending {
+            // Kept, not committed: the page says so until the remote holds it.
+            return Ok((json!({"ok":true,"delivery":"pending"}), ask));
+        }
         Ok((json!({"ok":true}), ask))
     }
 
