@@ -59,13 +59,23 @@ export function zoomable(image: Element): boolean {
 }
 
 /**
- * A picture for the viewer, from its original or its src; none for a document picture still
- * waiting to come into view, whose src is no picture yet.
+ * What a picture is called: its alt, else the caption of the figure it stands in; nothing when
+ * neither names it.
+ */
+export function nameOf(image: Element): string {
+  const alt = (image.getAttribute("alt") ?? "").trim();
+  if (alt !== "") return alt;
+  return (image.closest("figure")?.querySelector("figcaption")?.textContent ?? "").trim();
+}
+
+/**
+ * A picture for the viewer, from its original or its src, captioned by its name; none for a
+ * document picture still waiting to come into view, whose src is no picture yet.
  */
 export function photo(image: Element): Photo | null {
   const src = image.getAttribute("src");
   const shown = image.getAttribute("data-full") ?? (src === WAITING ? null : src);
-  return shown === null ? null : { src: shown, caption: image.getAttribute("alt") ?? "" };
+  return shown === null ? null : { src: shown, caption: nameOf(image) };
 }
 
 /** A mockup's frame, 1280 pixels wide, scaled to its box's width. */
@@ -108,7 +118,7 @@ export function scan(resize: ResizeObserver, targets: Set<Element>, reach = PAGE
     if (!image.hasAttribute("tabindex")) image.setAttribute("tabindex", "0");
     if (!image.hasAttribute("role")) image.setAttribute("role", "button");
     if (!image.hasAttribute("aria-label")) {
-      image.setAttribute("aria-label", `Open picture ${image.getAttribute("alt") ?? ""}`);
+      image.setAttribute("aria-label", `Open picture ${nameOf(image)}`.trim());
     }
   }
   if (!reach.views) return;
@@ -262,6 +272,9 @@ export function pressed(event: Event, viewer: Viewer, reach = PAGE_REACH): void 
   const set = image && zoomable(image) ? pictureSet(image) : null;
   if (!set) return;
   event.preventDefault();
+  // The picture takes the focus first, where a touch gives it none, so the viewer, closed, gives
+  // it back to the picture it was opened on.
+  if (image?.hasAttribute("tabindex")) (image as HTMLElement).focus?.({ preventScroll: true });
   viewer.open(...set);
 }
 

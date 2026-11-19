@@ -2497,6 +2497,7 @@ run, by `result`:
 
 | What the land finds | What it does |
 | --- | --- |
+| The publication or the merge refused for the branch's protection (`policy`: [what the program reads of it](GITHUB.md#the-protection-a-delivery-needs)) | nothing is pushed or merged, and the refusal names what is missing to the orchestrator; a land run again reads it again |
 | The merge refused (a conflict, a moved head, checks, permission) | the task stays open, the refusal goes to who acts on it, and the next land validates again before asking again |
 | No answer to the merge | it reads the pull request (`result`): merged at the head, the commit is proved and adopted; open, the next land asks again; unknown, the land says so and the next one reads it first |
 | A commit that is not the squash of the head (a merge commit, another tree), or the pull request closed unmerged | held for reconciliation: said once to the orchestrator, nothing closed, no receipt |

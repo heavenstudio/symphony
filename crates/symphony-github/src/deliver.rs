@@ -4,6 +4,10 @@
 //! nothing: what a task needs and whether it stands is the evidence the land hands it, which it
 //! writes down as checks and never reads the board for.
 //!
+//! `publish` and `merge` first read the protection of the base branch ([`crate::preflight`]) and
+//! refuse where it does not hold a delivery to its evidence; evidence that blocks is still
+//! said there, by its checks alone on the pull request already bound.
+//!
 //! - `publish` pushes the head to the branch named as the task, never forced and only to an
 //!   `origin` that names the repository the settings do; finds the pull request of that branch
 //!   before it opens one, as a draft; and writes one check for the assessment, one for each stamp and
@@ -26,6 +30,7 @@
 use crate::config::{Config, PullRequests, Repository};
 use crate::credential;
 use crate::github::clean_title;
+use crate::preflight::{self, Operation, Wanted};
 use crate::reconcile::{Context, Outcome};
 use crate::state::{Binding, Entry, Event, Pull, State, Store};
 use crate::transport::{Failure, Request, Transport};
@@ -124,9 +129,9 @@ fn unavailable(why: impl Into<String>) -> Value {
 type Stopped = Value;
 
 /// The repository's calls, each answered with its status.
-struct Host<'a> {
-    transport: &'a dyn Transport,
-    repository: Repository,
+pub(crate) struct Host<'a> {
+    pub(crate) transport: &'a dyn Transport,
+    pub(crate) repository: Repository,
 }
 
 /// A write that may have been made.
@@ -179,7 +184,7 @@ impl Host<'_> {
     }
 
     /// A read: its status and JSON.
-    fn get(&self, rest: &str) -> Result<(u16, Value), Stopped> {
+    pub(crate) fn get(&self, rest: &str) -> Result<(u16, Value), Stopped> {
         match self.send("GET", self.path(rest), None)? {
             Ok(answer) => Ok(answer),
             Err(Lost(why)) => Err(unavailable(why)),
@@ -307,6 +312,18 @@ fn checks(snapshot: &Snapshot, repository: i64) -> Result<Vec<Check>, String> {
     Ok(wanted)
 }
 
+/// What makes the requests that carry the token `file` holds, the settings' key `key`.
+fn connect(
+    ctx: &Context<'_>,
+    file: Option<&Path>,
+    key: &str,
+) -> Result<Box<dyn Transport>, Stopped> {
+    let file = file.ok_or_else(|| refused(format!("the settings name no {key}")))?;
+    let folders: Vec<&Path> = ctx.repository.iter().map(PathBuf::as_path).collect();
+    let token = credential::read(file, &folders).map_err(refused)?;
+    (ctx.connect)(token).map_err(unavailable)
+}
+
 /// One delivery's run: the settings, the state and what it is said through.
 struct Run<'a> {
     ctx: &'a Context<'a>,
@@ -338,10 +355,7 @@ impl Run<'_> {
     }
 
     fn connect(&self, file: Option<&Path>, key: &str) -> Result<Box<dyn Transport>, Stopped> {
-        let file = file.ok_or_else(|| refused(format!("the settings name no {key}")))?;
-        let folders: Vec<&Path> = self.ctx.repository.iter().map(PathBuf::as_path).collect();
-        let token = credential::read(file, &folders).map_err(refused)?;
-        (self.ctx.connect)(token).map_err(unavailable)
+        connect(self.ctx, file, key)
     }
 
     /// The repository as GitHub names it now, which must be the one the state is bound to.
@@ -373,6 +387,38 @@ impl Run<'_> {
                 });
                 self.store.save(&self.state).map_err(unavailable)?;
                 Ok((id, name))
+            }
+        }
+    }
+
+    /// The protection of `base` read now and held to what a delivery needs
+    /// ([`crate::preflight`]), journaled by its digest: asked before each step that a policy
+    /// gone since the last one must stop.
+    fn protected(&self, host: &Host<'_>, id: i64, base: &str, slug: &str) -> Result<(), Stopped> {
+        let wanted = Wanted {
+            repository: id,
+            base,
+            checks_app: self.config.checks_app_id.unwrap_or_default(),
+            landing_app: self.config.landing_app_id.unwrap_or_default(),
+            operation: Operation::Task,
+        };
+        match preflight::check(host, &wanted) {
+            Ok(policy) => {
+                self.journal(Event::Ack, "policy", slug, &policy.digest, json!(base));
+                Ok(())
+            }
+            Err(stopped) => {
+                if stopped["kind"] == json!("policy") {
+                    let id = crate::digest(&["policy", slug, base]);
+                    self.journal(
+                        Event::Failed,
+                        "policy",
+                        slug,
+                        &id,
+                        stopped["missing"].clone(),
+                    );
+                }
+                Err(stopped)
             }
         }
     }
@@ -567,6 +613,15 @@ impl Run<'_> {
             repository: self.repository.clone(),
         };
         let (id, name) = self.bound(&host)?;
+        // Evidence that stands is made public only where the branch is held to it. Evidence
+        // that blocks takes nothing from any protection, so it is still said where the policy
+        // does not hold, and by its checks alone.
+        if let Err(stopped) = self.protected(&host, id, &base, &snapshot.slug) {
+            if snapshot.eligible || stopped["kind"] != json!("policy") {
+                return Err(stopped);
+            }
+            return self.blocked(&host, &snapshot, id, &name, stopped);
+        }
         (remote.push(&head, &snapshot.slug)).map_err(|why| {
             refused(format!(
                 "{} was not pushed to the branch {} of {name}: {}",
@@ -599,6 +654,39 @@ impl Run<'_> {
         }
         let wanted = checks(&snapshot, id).map_err(refused)?;
         self.stand(&wanted, &head, &snapshot.slug)?;
+        Ok(json!({
+            "state": "published",
+            "repository": {"id": id, "name": name},
+            "pull": {"number": pull.number, "url": pull.url},
+            "head": now["head"]["sha"],
+        }))
+    }
+
+    /// Evidence that blocks, said on a branch whose policy does not hold: its checks written on
+    /// the pull request already bound to the task, at the head that pull request is at, and
+    /// nothing else. No head is pushed and no pull request opened past the policy: with none
+    /// bound, or one at another head, the policy's refusal `stopped` is the answer.
+    fn blocked(
+        &self,
+        host: &Host<'_>,
+        snapshot: &Snapshot,
+        id: i64,
+        name: &str,
+        stopped: Stopped,
+    ) -> Result<Value, Stopped> {
+        let kept = (self.state.pulls.get(&snapshot.slug)).filter(|kept| kept.task == snapshot.task);
+        let Some(pull) = kept else {
+            return Err(stopped);
+        };
+        let now = host.read(&format!("/pulls/{}", pull.number), "the pull request")?;
+        if now["state"] != json!("open")
+            || now["base"]["repo"]["id"] != json!(id)
+            || now["head"]["sha"] != json!(snapshot.head)
+        {
+            return Err(stopped);
+        }
+        let wanted = checks(snapshot, id).map_err(refused)?;
+        self.stand(&wanted, &snapshot.head, &snapshot.slug)?;
         Ok(json!({
             "state": "published",
             "repository": {"id": id, "name": name},
@@ -693,6 +781,14 @@ impl Run<'_> {
                 ),
             ));
         }
+        // Read again here: the policy that stood when the head was published may be gone, and
+        // from this step on the pull request is ready and its merge asked for.
+        let id = request["repository"].as_i64().unwrap_or_default();
+        let base = now["base"]["ref"].as_str().unwrap_or_default().to_string();
+        if !plain(&base, "-._/") {
+            return Err(refused("the pull request names no base branch"));
+        }
+        self.protected(&host, id, &base, &slug)?;
         if now["draft"] == json!(true) {
             self.ready(&host, &slug, &pull, &now)?;
         }
@@ -880,6 +976,98 @@ pub fn run(
     }
     let _ = writeln!(out, "{}", answer(ctx, remote, verb, &request));
     Ok(0)
+}
+
+/// `preflight [--branch BASE]`: the protection of `base` read as a delivery reads it before it
+/// writes, and said: that it holds, or each thing missing on a line of its own. It writes
+/// nothing, here or there, and exits 0 only where a delivery would go on.
+///
+/// # Errors
+///
+/// The state kept here does not read.
+pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome {
+    let stopped = |out: &mut dyn Write, answer: &Value| {
+        let _ = writeln!(out, "{}", text(answer, "why"));
+        Ok(1)
+    };
+    let config = match ctx.source.load() {
+        Ok(loaded) => loaded.config,
+        Err(why) => {
+            let _ = writeln!(out, "turned off: its settings do not read: {why}");
+            return Ok(1);
+        }
+    };
+    let serves = config.enabled && config.pull_requests == PullRequests::Publish;
+    let Some(repository) = config.repository.clone().filter(|_| serves) else {
+        let _ = writeln!(
+            out,
+            "turned off: the committed settings do not say enabled = true and pull_requests = \
+             \"publish\""
+        );
+        return Ok(1);
+    };
+    if !plain(base, "-._/") {
+        return Err(format!("no branch is named {base:?}"));
+    }
+    let folder = ctx.board.state_folder().map_err(|e| e.said().to_string())?;
+    let bound = match Store::existing(&folder) {
+        Some(store) => store.state()?.and_then(|state| state.binding),
+        None => None,
+    };
+    let transport = match connect(ctx, config.token_file.as_deref(), "token_file") {
+        Ok(transport) => transport,
+        Err(answer) => return stopped(out, &answer),
+    };
+    let host = Host {
+        transport: transport.as_ref(),
+        repository: repository.clone(),
+    };
+    let id = match &bound {
+        Some(binding) => binding.repository_id,
+        None => match host.get("") {
+            Ok((_, value)) => value["id"].as_i64().unwrap_or_default(),
+            Err(answer) => return stopped(out, &answer),
+        },
+    };
+    let _ = writeln!(
+        out,
+        "{} (id {id}{}), {base}: checks from App {}, merged by App {}",
+        repository.full_name(),
+        if bound.is_some() {
+            ", as bound here"
+        } else {
+            ", bound to nothing here yet"
+        },
+        config.checks_app_id.unwrap_or_default(),
+        config.landing_app_id.unwrap_or_default()
+    );
+    let wanted = Wanted {
+        repository: id,
+        base,
+        checks_app: config.checks_app_id.unwrap_or_default(),
+        landing_app: config.landing_app_id.unwrap_or_default(),
+        operation: Operation::Task,
+    };
+    match preflight::check(&host, &wanted) {
+        Ok(policy) => {
+            let _ = writeln!(
+                out,
+                "holds: a delivery would go on (policy {})",
+                short(&policy.digest)
+            );
+            Ok(0)
+        }
+        Err(answer) => match answer["missing"].as_array() {
+            Some(missing) => {
+                let _ = writeln!(out, "does not hold: a delivery would be refused");
+                for line in missing {
+                    let _ = writeln!(out, "  missing: {}", line.as_str().unwrap_or_default());
+                }
+                Ok(1)
+            }
+            None => stopped(out, &answer),
+        },
+    }
 }
 
 #[cfg(test)]
