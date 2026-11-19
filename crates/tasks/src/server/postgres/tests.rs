@@ -143,15 +143,21 @@ fn postgresqls_record_says_its_server_its_socket_and_whether_it_is_ready() {
         Some(PidFile {
             pid: 86894,
             socket: PathBuf::from("/tmp/symphony-pg-try1"),
-            ready: true
+            ready: true,
+            stopping: false
         })
     );
-    for status in ["starting", "stopping", "standby "] {
-        assert!(!pid_file(&recorded(status)).unwrap().ready, "{status}");
+    for (status, stopping) in [("starting", false), ("stopping", true), ("standby ", false)] {
+        let record = pid_file(&recorded(status)).unwrap();
+        assert_eq!(
+            (record.ready, record.stopping),
+            (false, stopping),
+            "{status}"
+        );
     }
     // A record cut short, as a server that is still writing it leaves it, is not ready.
     let short = pid_file("86894\n/tmp/board/postgresql\n1794856071\n5432\n/tmp/s\n").unwrap();
-    assert!(!short.ready);
+    assert!(!short.ready && !short.stopping);
     assert_eq!(pid_file("86894\n/tmp/board/postgresql\n"), None);
     assert_eq!(pid_file("not a pid\n"), None);
     assert_eq!(pid_file(""), None);

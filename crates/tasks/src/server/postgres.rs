@@ -20,12 +20,14 @@
 //! a scratch SurrealDB's rule; any other board's outlives its starter, as its SurrealDB does, and
 //! ends at a stop or a hold. A start waits for the supervisor's word, never polls; a stop is
 //! PostgreSQL's fast shutdown, waited for by `pg_ctl`. Both take the board's starters' lock, as
-//! SurrealDB's do.
+//! SurrealDB's do. A start that finds a server of the data stopping, as a scratch board's is in
+//! the moment after the command that started it ended, waits for that server's end
+//! ([`Postgres::outgoing_ended`]) and then starts its own.
 
 use super::scratch::{Lifeline, scratch};
 use super::starters::Doing;
 use super::{Home, ServerError, io, last_argument_is};
-use crate::sys::{Stdio, command, output, pid_alive, wait_output};
+use crate::sys::{Stdio, command, gone, load_said, output, pid_alive, wait_output};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
@@ -171,7 +173,14 @@ impl Postgres {
     /// board stopped: the move's own server on the held data ([`super::moving`]).
     pub(super) fn serve(&self) -> Result<Serving, ServerError> {
         let version = self.version()?;
-        if let Some(serving) = self.running(&version)? {
+        // The record is read once for a server that serves, as every command of a board whose
+        // server outlives its starter finds it, and again only after a wait.
+        let mut record = self.recorded();
+        if let Some(outgoing) = record.as_ref().filter(|record| record.stopping) {
+            self.outgoing_ended(outgoing)?;
+            record = self.recorded();
+        }
+        if let Some(serving) = self.serving(record, &version)? {
             return Ok(serving);
         }
         self.make()?;
@@ -266,7 +275,16 @@ impl Postgres {
     /// this data and is ready; one starting or stopping is not. Refused when the record names a
     /// server of this data that is not ready, so a start never joins one.
     fn running(&self, version: &str) -> Result<Option<Serving>, ServerError> {
-        let Some(record) = self.recorded() else {
+        self.serving(self.recorded(), version)
+    }
+
+    /// [`Postgres::running`], of the record `record` read of it.
+    fn serving(
+        &self,
+        record: Option<PidFile>,
+        version: &str,
+    ) -> Result<Option<Serving>, ServerError> {
+        let Some(record) = record else {
             return Ok(None);
         };
         if record.ready {
@@ -277,12 +295,51 @@ impl Postgres {
             }));
         }
         Err(ServerError::NotUp(format!(
-            "the board's PostgreSQL (pid {}) runs on {} and is not ready: it is starting or \
-             stopping, and is left to; its log is {}",
+            "the board's PostgreSQL (pid {}) runs on {} and is not ready: it is {}, and is left \
+             to, never signalled. Run the command again once it is ready or has ended; its log \
+             is {}",
             record.pid,
             self.data().display(),
+            if record.stopping {
+                "stopping"
+            } else {
+                "starting"
+            },
             self.log().display()
         )))
+    }
+
+    /// The server `record` names, which is stopping, waited for until it has ended: a scratch
+    /// board's is asked to end as the command that started it ends ([`SUPERVISED`]'s watchdog),
+    /// and the next command meets it on its way out. The wait is for the end of its process, as
+    /// the kernel says it ([`gone`]), the board's patience its backstop, which only a stall
+    /// reaches and which says the load; then the start goes on, to a server of its own. It is
+    /// never signalled, and the wait is told before it is made. One that is starting is not
+    /// waited for: [`Postgres::running`] refuses it.
+    fn outgoing_ended(&self, record: &PidFile) -> Result<(), ServerError> {
+        let left = |why: String| {
+            ServerError::NotUp(format!(
+                "the board's PostgreSQL (pid {}) on {} is stopping, {why}: it is left to finish, \
+                 never signalled. Run the command again once it has ended; its log is {}",
+                record.pid,
+                self.data().display(),
+                self.log().display()
+            ))
+        };
+        (self.home.tell)(&format!(
+            "· the board's PostgreSQL (pid {}) is stopping: this start waits for its end, then \
+             starts its own",
+            record.pid
+        ));
+        match gone(record.pid, self.home.patience) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(left(format!(
+                "and has not ended in the {} s this start waited for it ({})",
+                self.home.patience.as_secs(),
+                load_said()
+            ))),
+            Err(why) => Err(left(format!("and its end could not be waited for ({why})"))),
+        }
     }
 
     /// What `postmaster.pid` says, when the process it names is a live server of this data: a
@@ -648,20 +705,24 @@ fn major(version: &str) -> Option<u32> {
 }
 
 /// What `postmaster.pid` says of its server: its pid (the first line), the folder of its socket
-/// (the fifth), and whether it is ready to accept connections (the eighth, `ready` padded).
+/// (the fifth), and whether it is ready to accept connections or on its way out (the eighth,
+/// `ready` or `stopping`, padded).
 #[derive(Debug, PartialEq)]
 struct PidFile {
     pid: i64,
     socket: PathBuf,
     ready: bool,
+    stopping: bool,
 }
 
 fn pid_file(text: &str) -> Option<PidFile> {
     let lines: Vec<&str> = text.lines().collect();
+    let status = lines.get(7).map(|status| status.trim());
     Some(PidFile {
         pid: lines.first()?.trim().parse().ok()?,
         socket: PathBuf::from(lines.get(4)?.trim()),
-        ready: lines.get(7).is_some_and(|status| status.trim() == "ready"),
+        ready: status == Some("ready"),
+        stopping: status == Some("stopping"),
     })
 }
 
