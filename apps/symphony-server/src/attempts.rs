@@ -22,7 +22,7 @@
 //! through a provider this server holds ([`crate::execution`]). A view's address is answered to
 //! the one who asked, `no-store`, and kept nowhere: not in the board, a log, a cache or a thread.
 
-use crate::execution::{Provider, Providers};
+use crate::execution::{Provider, Providers, Served};
 use crate::live::Hub;
 use axum::http::StatusCode;
 use serde_json::Value;
@@ -30,9 +30,9 @@ use std::time::Instant;
 use symphony_api::{AttemptControl, AttemptControls, AttemptLink, AttemptViewAsk, TaskAttempts};
 use symphony_board::Store;
 use symphony_board::execution::{
-    Act, Adapter, Attempt, Continuation, Coordinator, Grant, Operation, Outcome, Principal,
-    PrincipalKind, Profile, Reader, Refusal, Scope, board_scope, resume_mode, resume_word,
-    stop_mode, stop_word,
+    Act, Adapter, Attempt, Continuation, Coordinator, ExternalLink, Grant, Operation, Outcome,
+    Principal, PrincipalKind, Profile, Reader, Refusal, Scope, board_scope, resume_mode,
+    resume_word, stop_mode, stop_word,
 };
 use symphony_plugin::execution::{Authorization, Call, Unknown};
 
@@ -240,47 +240,89 @@ impl Adapter for Unreached {
     }
 }
 
+/// The grant the server makes its coordinators with: it only makes them, and steps no attempt.
+fn worker(scope: &Scope) -> Grant {
+    Grant::from_host(
+        symphony_board::workflow::board_service("symphony-server"),
+        scope.clone(),
+        &[Act::Work],
+        POLICY,
+    )
+}
+
+/// A coordinator of `provider`'s configuration, under its own profile and capacity.
+fn provided<'a>(
+    store: &'a Store,
+    scope: &Scope,
+    provider: &'a Provider,
+) -> Result<Coordinator<'a>, Refusal> {
+    let profile = Profile::new(
+        scope.clone(),
+        provider.configuration().to_string(),
+        provider.capabilities().clone(),
+    );
+    let made = Coordinator::new(store, profile, provider.adapter(), worker(scope))?;
+    Ok(match provider.capacity() {
+        Some((capacity, limit)) => made.with_capacity(capacity, limit),
+        None => made,
+    })
+}
+
 /// A coordinator for `attempt`'s configuration on `store`: its provider's, when this server holds
-/// it, else the profile the attempt pinned, with an adapter nothing reaches. The server's worker
-/// grant only makes it; the server steps no attempt.
+/// it, else the profile the attempt pinned, with an adapter nothing reaches.
 fn coordinator<'a>(
     store: &'a Store,
     scope: &Scope,
     attempt: &Attempt,
     provider: Option<&'a Provider>,
 ) -> Result<Coordinator<'a>, Failed> {
-    let identity = &attempt.identity;
-    let worker = Grant::from_host(
-        symphony_board::workflow::board_service("symphony-server"),
-        scope.clone(),
-        &[Act::Work],
-        POLICY,
-    );
     let made = match provider {
-        Some(provider) => {
-            let profile = Profile::new(
-                scope.clone(),
-                provider.configuration().to_string(),
-                provider.capabilities().clone(),
-            );
-            Coordinator::new(store, profile, provider.adapter(), worker).map(|c| {
-                match provider.capacity() {
-                    Some((capacity, limit)) => c.with_capacity(capacity, limit),
-                    None => c,
-                }
-            })
-        }
+        Some(provider) => provided(store, scope, provider),
         None => {
+            let identity = &attempt.identity;
             let mut profile = Profile::new(
                 scope.clone(),
                 identity.configuration.clone(),
                 identity.capabilities.clone(),
             );
             profile.contract = identity.contract;
-            Coordinator::new(store, profile, &Unreached, worker)
+            Coordinator::new(store, profile, &Unreached, worker(scope))
         }
     };
     made.map_err(refused)
+}
+
+/// What goes through a provider alone, held by [`Providers::of`]: a binary that installs no
+/// provider links neither, nor the admission a resume makes.
+pub(crate) const SERVED: Served = Served {
+    resume: resumed,
+    view: linked,
+};
+
+/// A resume of attempt `id` through `provider`.
+fn resumed(
+    store: &Store,
+    scope: &Scope,
+    provider: &Provider,
+    grant: &Grant,
+    id: &str,
+    continuation: Continuation,
+    key: Option<&str>,
+) -> Result<(), Refusal> {
+    provided(store, scope, provider)?
+        .resume(grant, id, continuation, key)
+        .map(|_| ())
+}
+
+/// A view of attempt `id`'s resource through `provider`, resolved now.
+fn linked(
+    store: &Store,
+    scope: &Scope,
+    provider: &Provider,
+    grant: &Grant,
+    id: &str,
+) -> Result<ExternalLink, Refusal> {
+    provided(store, scope, provider)?.external_link(grant, id)
 }
 
 /// Why a provider is needed and not held.
@@ -352,18 +394,27 @@ fn controlled(hub: &Hub, store: &Store, asked: &AttemptControl) -> Result<TaskAt
             let mode = mode
                 .and_then(resume_mode)
                 .ok_or_else(|| bad(format!("a resume names its mode, not {mode:?}")))?;
-            if provider.is_none() {
+            let Some((provider, served)) = hub.providers.serving(&attempt.identity.configuration)
+            else {
                 return Err(unserved(&attempt, "a resume"));
-            }
+            };
             let continuation = Continuation {
                 checkpoint: attempt.state.checkpoint.clone(),
                 conversation: attempt.state.conversation.clone(),
                 mode,
             };
             let grant = asker.grant(&scope, &asked.slug, &[Act::Resume]);
-            coordinator(store, &scope, &attempt, provider)?
-                .resume(&grant, &attempt.id, continuation, asked.key.as_deref())
-                .map_err(refused)?;
+            let key = asked.key.as_deref();
+            (served.resume)(
+                store,
+                &scope,
+                provider,
+                &grant,
+                &attempt.id,
+                continuation,
+                key,
+            )
+            .map_err(refused)?;
         }
         other => return Err(bad(format!("no control {other:?}: cancel, stop or resume"))),
     }
@@ -386,16 +437,11 @@ fn viewed(hub: &Hub, store: &Store, asked: &AttemptViewAsk) -> Result<AttemptLin
     if local(&attempt) {
         return Err((StatusCode::CONFLICT, LOCAL.into()));
     }
-    let Some(provider) = hub
-        .providers
-        .of_configuration(&attempt.identity.configuration)
-    else {
+    let Some((provider, served)) = hub.providers.serving(&attempt.identity.configuration) else {
         return Err(unserved(&attempt, "a view"));
     };
     let grant = asker.grant(&scope, &asked.slug, &[Act::Link]);
-    let link = coordinator(store, &scope, &attempt, Some(provider))?
-        .external_link(&grant, &attempt.id)
-        .map_err(refused)?;
+    let link = (served.view)(store, &scope, provider, &grant, &attempt.id).map_err(refused)?;
     Ok(AttemptLink {
         url: link.url,
         valid_for_ms: link.valid_for_ms,

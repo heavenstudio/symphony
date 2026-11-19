@@ -11,7 +11,10 @@
 
 use std::sync::{Arc, OnceLock};
 
-use symphony_board::execution::{Adapter, Capabilities};
+use symphony_board::Store;
+use symphony_board::execution::{
+    Adapter, Capabilities, Continuation, ExternalLink, Grant, Refusal, Scope,
+};
 
 /// One provider configuration's adapter, as a host links it.
 #[derive(Clone)]
@@ -64,13 +67,36 @@ impl Provider {
     }
 }
 
-/// The providers this process holds, by configuration.
+/// A resume of attempt `id` through `provider`, under `grant`, from a continuation and with an
+/// optional request key.
+pub(crate) type Resume =
+    fn(&Store, &Scope, &Provider, &Grant, &str, Continuation, Option<&str>) -> Result<(), Refusal>;
+/// A view of attempt `id`'s resource through `provider`, under `grant`.
+pub(crate) type View = fn(&Store, &Scope, &Provider, &Grant, &str) -> Result<ExternalLink, Refusal>;
+
+/// What the server does through a provider alone, a resume and a view: held with the providers a
+/// host installs ([`Providers::of`]), so a binary that installs none, the Symphony's own, links
+/// neither, nor the admission a resume makes (as a binary that installs no plugin links no
+/// plugin's loopback).
+#[derive(Clone, Copy)]
+pub(crate) struct Served {
+    pub(crate) resume: Resume,
+    pub(crate) view: View,
+}
+
+/// The providers this process holds, by configuration, and what is done through them.
 #[derive(Clone, Default)]
-pub(crate) struct Providers(Arc<Vec<Provider>>);
+pub(crate) struct Providers {
+    held: Arc<Vec<Provider>>,
+    served: Option<Served>,
+}
 
 impl Providers {
     pub(crate) fn of(providers: Vec<Provider>) -> Providers {
-        Providers(Arc::new(providers))
+        Providers {
+            held: Arc::new(providers),
+            served: Some(crate::attempts::SERVED),
+        }
     }
 
     /// The installed ones, none when nothing was installed.
@@ -80,9 +106,14 @@ impl Providers {
 
     /// The provider of `configuration`, if this process holds it.
     pub(crate) fn of_configuration(&self, configuration: &str) -> Option<&Provider> {
-        self.0
+        self.held
             .iter()
             .find(|provider| provider.configuration == configuration)
+    }
+
+    /// The provider of `configuration` and what is done through it, if this process holds it.
+    pub(crate) fn serving(&self, configuration: &str) -> Option<(&Provider, Served)> {
+        Some((self.of_configuration(configuration)?, self.served?))
     }
 }
 
@@ -143,6 +174,9 @@ mod tests {
         assert_eq!(held.of_configuration("cloud").unwrap().capacity(), None);
         assert!(held.of_configuration("Cloud").is_none());
         assert!(Providers::default().of_configuration("cloud").is_none());
+        assert!(held.serving("lab").is_some());
+        assert!(held.serving("cloud ").is_none());
+        assert!(Providers::default().serving("cloud").is_none());
     }
 
     #[test]
