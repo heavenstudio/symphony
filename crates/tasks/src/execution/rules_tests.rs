@@ -906,13 +906,13 @@ fn only_a_quiescent_settled_attempt_with_its_resource_is_resumable() {
         quiescent: Some(9),
         ..running()
     };
-    assert_eq!(resumable(&paused), Ok((binding(), 9)));
+    assert_eq!(resumable(&paused, false), Ok((binding(), 9)));
     let stopped = State {
         dispatch: Dispatch::Terminal,
         ending: Some(Ending::Stopped),
         ..paused.clone()
     };
-    assert!(resumable(&stopped).is_ok());
+    assert!(resumable(&stopped, true).is_ok());
 
     for (refused, why) in [
         (running(), "not known to be paused"),
@@ -952,7 +952,7 @@ fn only_a_quiescent_settled_attempt_with_its_resource_is_resumable() {
             "not known to be paused",
         ),
     ] {
-        let error = resumable(&refused).unwrap_err();
+        let error = resumable(&refused, false).unwrap_err();
         assert!(error.contains(why), "{error}");
     }
 }
@@ -980,4 +980,166 @@ fn an_attempt_stays_open_while_anything_is_owed_for_it() {
         ..State::default()
     };
     assert!(!rejected.open(), "nothing was bound to clean");
+}
+
+#[test]
+fn a_cancel_after_an_authoritative_absence_ends_it_with_nothing_provisioned() {
+    // Its start sent and its answer lost, then reconciled to an authoritative absence: owed unsent
+    // again, its dispatch still unknown.
+    let sent = sending(every_operation(), &admitted(false));
+    let lost = answer(&sent, false, Outcome::Unknown(Unknown::ContactLost)).state;
+    assert_eq!(lost.dispatch, Dispatch::Unknown);
+    let absent = answer(
+        &lost,
+        true,
+        Outcome::Absent {
+            evidence: "none".into(),
+        },
+    )
+    .state;
+    assert_eq!(absent.dispatch, Dispatch::Unknown);
+    assert!(!absent.pending.as_ref().expect("owed").sent);
+
+    let applied = cancel(&absent, &principal("owner"), 9).expect("asked");
+    assert_eq!(applied.state.dispatch, Dispatch::Terminal);
+    assert_eq!(applied.state.ending, Some(Ending::Cancelled));
+    assert_eq!(applied.state.cancellation, Cancellation::Confirmed);
+    assert_eq!(applied.state.pending, None);
+    assert_eq!(applied.state.quiescent, Some(9));
+    assert_eq!(applied.release.as_deref(), Some("pool"));
+    assert_eq!(applied.due_in, None);
+    assert_eq!(
+        next_of(every_operation(), &applied.state, 3_000),
+        Next::Wait,
+        "the start is never sent again"
+    );
+}
+
+#[test]
+fn a_held_attempt_refuses_a_stop_and_a_cancel_of_it_sends_nothing() {
+    let id = identity(every_operation());
+    let owner = principal("owner");
+    // Started, then observed past the bound of answers that settle nothing: held, its resource
+    // bound.
+    let mut state = answer(
+        &admitted(true),
+        false,
+        Outcome::Accepted(receipt("res", "g1")),
+    )
+    .state;
+    for _ in 0..3 {
+        state = observe(&state, Outcome::Unknown(Unknown::ContactLost)).state;
+    }
+    assert_eq!(state.dispatch, Dispatch::Held);
+    assert_eq!(state.resource, Some(binding()));
+
+    for mode in [StopMode::Pause, StopMode::Terminate] {
+        let why = stop(&id, &state, &owner, mode).unwrap_err();
+        assert!(why.contains("held for a person"), "{why}");
+    }
+
+    let asked = cancel(&state, &owner, 9).expect("asked");
+    assert_eq!(asked.state.cancellation, Cancellation::Requested);
+    assert_eq!(
+        asked.state.dispatch,
+        Dispatch::Held,
+        "held until a person settles it"
+    );
+    assert_eq!(asked.release, None, "it keeps its place");
+    assert_eq!(
+        next_of(every_operation(), &asked.state, 0),
+        Next::Wait,
+        "nothing is sent for it"
+    );
+}
+
+/// An attempt running on `binding()`, paused by the stop it was asked, as its worker makes it.
+fn paused() -> State {
+    let id = identity(every_operation());
+    let asked = stop(&id, &running(), &principal("owner"), StopMode::Pause)
+        .expect("asked")
+        .state;
+    let sent = sending(every_operation(), &asked);
+    let taken = answer_on(
+        every_operation(),
+        &sent,
+        Outcome::Accepted(receipt("res", "g1")),
+    )
+    .state;
+    let paused = observe(&taken, observed_as(RuntimeState::Paused)).state;
+    assert_eq!(paused.dispatch, Dispatch::Paused);
+    paused
+}
+
+#[test]
+fn a_resume_that_reuses_the_resource_takes_its_cleanup_with_it() {
+    let paused = paused();
+    assert!(paused.open());
+    let reused = followed(&paused, "next", Relation::Resume, true)
+        .expect("followed")
+        .expect("not followed before");
+    let state = &reused.state;
+    assert_eq!(
+        (state.dispatch, state.ending),
+        (Dispatch::Terminal, Some(Ending::Superseded))
+    );
+    assert_eq!(state.successor.as_deref(), Some("next"));
+    assert_eq!(state.resource_handed_to.as_deref(), Some("next"));
+    assert_eq!(
+        state.resource, paused.resource,
+        "its history keeps the binding"
+    );
+    assert_eq!(reused.release.as_deref(), Some("pool"));
+    assert!(matches!(
+        reused.facts.as_slice(),
+        [
+            Fact::Followed {
+                relation: Relation::Resume,
+                ..
+            },
+            Fact::Ended {
+                ending: Ending::Superseded
+            }
+        ]
+    ));
+    assert!(!state.open(), "its resource's cleanup is the resume's");
+    assert_eq!(followed(state, "other", Relation::Resume, true), Ok(None));
+
+    // A resume on a new resource, or a retry, leaves the resource's cleanup to it.
+    for relation in [Relation::Resume, Relation::Retry] {
+        let kept = followed(&paused, "next", relation, false)
+            .expect("followed")
+            .expect("not followed before");
+        assert_eq!(kept.state.resource_handed_to, None);
+        assert!(kept.state.open(), "its resource is not cleaned up");
+    }
+}
+
+#[test]
+fn a_resource_whose_cleanup_has_begun_is_resumed_only_on_a_new_one() {
+    let stopped = observe(&running(), observed_as(RuntimeState::Terminated)).state;
+    assert_eq!(stopped.ending, Some(Ending::Stopped));
+    assert!(resumable(&stopped, true).is_ok());
+    for cleanup in [
+        crate::execution::record::Cleanup::Running,
+        crate::execution::record::Cleanup::Complete,
+        crate::execution::record::Cleanup::Failed,
+    ] {
+        // As its cleanup's begin writes it.
+        let cleaning = State {
+            cleanup,
+            cleanup_key: Some("cleanup-1".into()),
+            cleanups: 1,
+            ..stopped.clone()
+        };
+        let why = resumable(&cleaning, true).unwrap_err();
+        assert!(why.contains("cleanup has begun"), "{why}");
+        let why = followed(&cleaning, "next", Relation::Resume, true).unwrap_err();
+        assert!(why.contains("cleanup has begun"), "{why}");
+        assert!(resumable(&cleaning, false).is_ok());
+        assert!(matches!(
+            followed(&cleaning, "next", Relation::Resume, false),
+            Ok(Some(_))
+        ));
+    }
 }

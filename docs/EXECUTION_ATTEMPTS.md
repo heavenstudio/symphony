@@ -11,14 +11,14 @@ route, setting or client page reaches it yet ([what is not delivered](#what-this
 
 ## The record
 
-An attempt is a row of `execution_attempt` (schema 23): its identity, written once at admission
-and never again, beside its state, which each write replaces under the row's revision. Its facts
-are appended to `execution_fact` and never changed; `execution_fence` holds the fences admission
-writes (a request key, a task's lane, a capacity scope) and `execution_artifact` its collected
-artifacts. The four are schemaless, with no event: no reader caches them and no write of theirs
-moves the board's marker. A whole-board copy and dump carry them (`rows::Dump`'s `execution_*`
-rows, each holding its own record's id), so a restored board recovers its attempts, their
-reservations and their request keys.
+An attempt is a row of `execution_attempt` (schema 23): its identity, written once at admission and
+never again, beside its state, which each write replaces under the row's revision. Its facts are
+appended to `execution_fact` and never changed; `execution_fence` holds the fences admission writes
+(a request key, a task's lane, a capacity scope) and `execution_artifact` its collected artifacts.
+The four are schemaless, with no event: no reader caches them and no write of theirs moves the
+board's marker. A whole-board copy and dump carry them (`rows::Dump`'s `execution_*` rows, each
+holding its own record's id), so a restored board recovers its attempts, their reservations and
+their request keys.
 
 The identity pins the project, board, task, lane, role and handle, the task's input (its revision,
 digest, repository revision and manifest), the provider configuration with the contract and
@@ -26,9 +26,10 @@ capabilities negotiated then, who asked and under which policy revision, the req
 runtime epoch and the capacity scope, and the predecessor a retry or a resume follows. Changing any
 of it is another attempt. The state keeps each dimension apart: dispatch (pending, starting,
 unknown, running, paused, held, terminal, with how it ended), cancellation, collection, cleanup, the
-bound resource and its generation, the conversation, the operation owed, and the evidence
-references the provider reported. `Store::live_attempts` names a task's attempts whose runtime may
-still be alive, held ones included: what a workflow change waits on.
+bound resource and its generation, the resume that resource was handed to, the conversation, the
+operation owed, and the evidence references the provider reported. `Store::live_attempts` names a
+task's attempts whose runtime may still be alive, held ones included: what a workflow change waits
+on.
 
 ## Admission
 
@@ -42,10 +43,11 @@ key, before anything is sent. A task the board does not hold, or a closed one, t
 
 `Coordinator::step` acts for one attempt under a lease the database's clock times, each lease the
 next epoch, and `run_due` steps the attempts due under its configuration: a pass the host calls,
-starting no thread and no scheduler of its own. Before an operation is sent, the step records it
-as sent; the answer is written only while that lease holds, else kept as a stale fact that
-changes nothing. An operation's key is a function of its project, board, configuration, attempt,
-kind and sequence alone, so a repeat sends the same key.
+starting no thread and no scheduler of its own. Before an operation is sent, the step records it as
+sent, and before one is reconciled it records the reconcile the same way, so the facts name every
+call a worker made, under which epoch; the answer is written only while that lease holds, else kept
+as a stale fact that changes nothing. An operation's key is a function of its project, board,
+configuration, attempt, kind and sequence alone, so a repeat sends the same key.
 
 An answer that settles nothing (lost contact, a deadline, an invalid reply) never fails the
 attempt and never starts another: the operation is reconciled by its key, after a backoff that
@@ -57,10 +59,14 @@ A worker that dies leaves its lease to run out, and the attempt is due again the
 
 ## Controls
 
-A cancel bars every result of the attempt from the moment it is written. One asked before
-anything was sent ends the attempt at once; one asked while the start is in flight is sent once
-the start's resource is known; one the provider refuses leaves the cancellation unconfirmed. A
-stop asks the bound resource to pause or terminate, in a mode its provider offers; a cancel asked
+A cancel bars every result of the attempt from the moment it is written. One asked while its
+start or resume has not reached the provider, never sent or answered by an authoritative absence,
+ends the attempt at once with nothing provisioned, whatever its dispatch; one asked while the
+start is in flight is sent once the start's resource is known; one the provider refuses leaves
+the cancellation unconfirmed. A held attempt does no I/O, so a cancel of it bars its results and
+sends nothing: it stays held, in its lane and its capacity place, until a person's retry
+supersedes it. A stop asks the bound resource to pause or terminate, in a mode its provider
+offers, and is refused for a held attempt, which waits for a person; a cancel asked
 while a stop is in flight is sent once the stop is answered, whether it was taken or refused,
 and only a cancel, or the terminate that stands in for one on a provider that cannot cancel,
 settles it. A resume admits another attempt continuing a paused or ended one, from a checkpoint
@@ -69,7 +75,11 @@ it; a retry admits a new execution after a held or ended one, and is a person's 
 naming the evidence that the predecessor was found or isolated. Either is admitted in the same
 transaction that links the two and ends a still-live predecessor superseded, its capacity place
 handed to the new attempt, so following an attempt never needs a free place and is never half
-done. `external_link` resolves a view for its caller, never kept.
+done. A resume that reuses its predecessor's resource at a new generation takes that resource's
+cleanup in the same transaction: from then on the predecessor no longer counts it as open and
+its cleanup is refused while the resume holds the resource or may still take it, and a resume of
+a resource whose cleanup has begun is refused, on a new resource alone. `external_link` resolves
+a view for its caller, never kept.
 
 ## Evidence and what may count
 
@@ -78,7 +88,9 @@ project's storage collected. An artifact is kept only when the attempt's current
 generation and runtime epoch made it; any other is a stale fact alone. Its name is a relative path
 that leads nowhere above the manifest; the same artifact reported again changes nothing, and
 another under the same name is refused. Cleanup begins once the attempt has ended and its
-collection has, under a key a late report of an earlier cleanup cannot match.
+collection has, under a key a late report of an earlier cleanup cannot match. A resource handed
+to a resume is that resume's to clean; one the resume ended without taking (refused, or
+cancelled before it was sent) is its predecessor's again, whose cleanup then takes it back.
 
 `Coordinator::eligibility` says whether an attempt's result may be put forward as the task's
 evidence, and every reason it may not: it holds its lane, it succeeded, no cancel was asked, its
@@ -111,6 +123,7 @@ This is the board's half alone; full provider integration is not complete.
 
 `crates/tasks/tests/store/execution.rs` runs the coordinator on each database against a
 deterministic provider (`tests/store/execution/fake.rs`) that scripts lost responses, outages,
-crashes before and after the provider acted, refusals, conflicts and calls that race a second
-worker or a cancel. `execution/rules_tests.rs` holds the transitions without a database, and
-`tests/consumer_api.rs` the shapes a host calls.
+crashes before and after the provider acted, refusals, conflicts and calls that race a second worker
+or a cancel, and races admissions from stores of their own for one request key, one lane and the
+last place of a capacity scope. `execution/rules_tests.rs` holds the transitions without a database,
+and `tests/consumer_api.rs` the shapes a host calls.
