@@ -665,6 +665,24 @@ pub(super) fn document(site: &Site, blocks: Vec<Value>) {
     site.set_json("/api/asks", &json!({"asks":[],"recipient":null}));
 }
 
+/// Wait until the page's feed follows the document's intro, before a test pushes an event. The
+/// page opens its feed before the intro is near the screen, then opens it again naming the intro,
+/// live all along: the server sends the second stream what was pushed in between, the stand-in
+/// never does (`Site::following`), and the event is lost.
+fn wait_for_the_feed_on_the_intro(site: &Site) {
+    test_time::until_true("the page's feed following the intro", super::STALL, || {
+        site.following("intro")
+    })
+    .unwrap_or_else(|stall| {
+        let feeds: Vec<String> = site
+            .targets()
+            .into_iter()
+            .filter(|target| target.starts_with(symphony_api::FEED_PATH))
+            .collect();
+        panic!("{stall}: the feed requests {feeds:?}")
+    });
+}
+
 fn assert_notice_surface(browser: &mut super::chrome::Chrome, selector: &str, role: &str) {
     let surface = browser.eval(&format!(
         r#"(() => {{
@@ -1059,6 +1077,7 @@ fn document_page_end_clears_the_reconnect_notice_and_two_real_toasts_rise_over_a
             })
             .collect();
         site.set_json("/api/activity", &json!({"items":items}));
+        wait_for_the_feed_on_the_intro(&site);
         let version = 4183 + i as u64;
         site.push(
             version,
@@ -1415,6 +1434,7 @@ fn a_question_read_the_feeds_news_replaces_is_aborted_not_left_in_flight() {
         (sent > 0).then_some(sent)
     })
     .unwrap_or_else(|stall| panic!("{stall}: {:#?}", question_reads(&mut browser)));
+    wait_for_the_feed_on_the_intro(&site);
     site.push(
         4183,
         r#"{"version":4183,"changes":[{"region":"asks","data":{"threads":[{"id":7,"path":"docs/PROBE.md"}]}}]}"#,
@@ -1494,6 +1514,7 @@ fn restored_ask_feed_and_navigation_preserve_drafts_while_rendering_typed_answer
     site.set_json("/api/asks", &json!({"asks":[ask],"recipient":"fixture"}));
     // Another document's thread moving is no reason to read this one's again.
     browser.eval("window.asksHeard=0;addEventListener('review:asks',()=>asksHeard++)");
+    wait_for_the_feed_on_the_intro(&site);
     site.push(
         4183,
         r#"{"version":4183,"changes":[{"region":"asks","data":{"threads":[{"id":8,"path":"docs/OTHER.md"}]}}]}"#,
