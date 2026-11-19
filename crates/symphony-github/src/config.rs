@@ -68,6 +68,26 @@ impl PullRequests {
     }
 }
 
+/// What the adapter does with the project's releases: `publish` answers the release run's
+/// `release` ([`crate::release`]), a GitHub Release for a tag pushed.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Releases {
+    #[default]
+    Off,
+    Publish,
+}
+
+impl Releases {
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Releases::Off => "off",
+            Releases::Publish => "publish",
+        }
+    }
+}
+
 /// The file as written. Every key is known, so a mistyped one is refused, never ignored.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -79,6 +99,8 @@ struct Written {
     issues: Issues,
     #[serde(default)]
     pull_requests: PullRequests,
+    #[serde(default)]
+    releases: Releases,
     token_file: Option<PathBuf>,
     #[serde(default)]
     import_labels: Vec<String>,
@@ -116,6 +138,7 @@ pub struct Config {
     pub repository: Option<Repository>,
     pub issues: Issues,
     pub pull_requests: PullRequests,
+    pub releases: Releases,
     /// Where the token is, never the token.
     pub token_file: Option<PathBuf>,
     pub import_labels: Vec<String>,
@@ -334,6 +357,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
         repository,
         issues: written.issues,
         pull_requests: written.pull_requests,
+        releases: written.releases,
         token_file: written.token_file,
         import_labels: written.import_labels,
         import_comments: written.import_comments,

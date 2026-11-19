@@ -174,6 +174,21 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
             .publish
     );
     assert!(refused("[releases]\npublish = \"yes\"\n").contains("publish"));
+    // Its GitHub Release is asked of the command the project names, and of none unsaid.
+    assert!(parsed("").unwrap().releases.github.is_empty());
+    assert!(
+        (parsed("[releases]\ngithub = []\n").unwrap().releases.github).is_empty(),
+        "an empty command is none"
+    );
+    assert_eq!(
+        parsed("[releases]\ngithub = [\"symphony-github\", \"release\"]\n")
+            .unwrap()
+            .releases
+            .github,
+        ["symphony-github", "release"]
+    );
+    assert!(refused("[releases]\ngithub = [\" \", \"release\"]\n").contains("names no command"));
+    assert!(refused("[releases]\ngithub = \"symphony-github\"\n").contains("github"));
 }
 
 #[test]

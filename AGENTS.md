@@ -391,7 +391,8 @@ tagged `release-YYYY-MM-DD` and that tag alone pushed, then the machine refreshe
 tip is held as the release candidate, the local branch `release-candidate` that is never pushed,
 until its reds' own tasks, started there, land; then it is rerun and released. `--due` is what a
 land's `[board] on_land` runs, `--refresh`, `--rerun` and `--drop` are an orchestrator's retries,
-and `--status` runs nothing ([status](docs/RELEASES.md#status)). It is Symphony's own release
+`--github` asks for the GitHub Release of releases tagged already
+([RELEASES](docs/RELEASES.md#a-github-release)), and `--status` runs nothing ([status](docs/RELEASES.md#status)). It is Symphony's own release
 command, not a recipe `symphony init` installs.
 
 Board roles, verdicts and configured review callbacks belong to Symphony, and so does the
