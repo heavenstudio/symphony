@@ -413,8 +413,28 @@ fn the_activation_write_is_refused_as_stale_after_another_write_and_planned_agai
         let mut unplaced = empty;
         unplaced["expected"] = json!(0);
         assert_eq!(
-            refused(write(unplaced)),
+            refused(write(unplaced.clone())),
             "stale_task: sim/backlog was filed or reopened while its workflow activated"
+        );
+        // Every task it read planned but one: that one is named.
+        let open = [
+            "backlog",
+            "blocked",
+            "concept",
+            "design",
+            "in_progress",
+            "ready",
+        ];
+        unplaced["kept"] = (open.iter())
+            .map(|s| {
+                let slug = format!("sim/{s}");
+                json!({"slug": slug, "version": f.store.raw().row("task", slug.as_str()).get().unwrap()["version"]})
+            })
+            .collect();
+        assert_eq!(
+            refused(write(unplaced)),
+            "stale_task: sim/review was filed or reopened while its workflow activated",
+            "{backend:?}"
         );
         assert_eq!(f.store.raw().table("workflow").count().unwrap(), 0);
 
@@ -511,6 +531,82 @@ fn a_task_filed_between_the_plan_and_its_write_is_placed_by_the_next_plan() {
             Some((pair("build", "available"), 1, 1)),
             "{backend:?}"
         );
+    }
+}
+
+/// With a generation active, a task filed and a done one reopened between the next plan's read
+/// and its write are placed by the active generation, at pairs the next one maps away: the write
+/// is stale, and the next plan moves each by the mappings, so none is left at a pair the active
+/// definition does not declare.
+#[test]
+fn a_task_placed_between_a_later_plan_and_its_write_is_moved_by_the_next_plan() {
+    for backend in BACKENDS {
+        // sim/late approved before any workflow is active: done, with no position.
+        let seed = Seed::default()
+            .session("birch")
+            .session("orch")
+            .task("sim/open", "backlog")
+            .task("sim/late", "review")
+            .role("sim/late", "birch", "reviewer")
+            .role("sim/late", "orch", "orchestrator");
+        let f = Fixture::on(backend, seed);
+        (f.store.verdict("sim/late", "birch", "approve", "good")).unwrap();
+        let first = custom(&format!("{TWO}{MAPPED}{HELD}"));
+        f.store.activate_workflow(&first, &Host::local()).unwrap();
+        assert_eq!(f.store.workflow_position("sim/late").unwrap(), None);
+        // Its reviewer is lost, so a plan may move the task it reviews once it reopens.
+        f.advance(LIVE_SECONDS + STALE_SECONDS + 1.0);
+        // The next commit renames the initial pair and the reviewed one, and maps each on.
+        let text = (TWO.replace(r#"state = "available""#, r#"state = "open""#))
+            .replace(
+                r#"{ id = "available", label = "Available" }"#,
+                r#"{ id = "open", label = "Open" }"#,
+            )
+            .replace(r#"state = "awaiting""#, r#"state = "waiting""#)
+            .replace(
+                r#"{ id = "awaiting", label = "Awaiting" }"#,
+                r#"{ id = "waiting", label = "Waiting" }"#,
+            );
+        let map = |phase: &str, from: &str, to: &str| {
+            format!(
+                "[[workflow_mappings]]\nfrom = {{ phase = \"{phase}\", state = \"{from}\" }}\nto = {{ phase = \"{phase}\", state = \"{to}\" }}\n"
+            )
+        };
+        let next = custom(&format!(
+            "{text}{}{}",
+            map("build", "available", "open"),
+            map("verify", "awaiting", "waiting")
+        ));
+        let next = at_commit(&next, 'c');
+        let other = f.other();
+        let late = f.late(move || {
+            (other.create(&crate::NewTask::new("sim/filed", "Filed late", "owner"))).unwrap();
+            other.move_to("sim/late", "review", "orch").unwrap();
+            // Each placed by the generation active at its write.
+            for (slug, at) in [
+                ("sim/filed", pair("build", "available")),
+                ("sim/late", pair("verify", "awaiting")),
+            ] {
+                let position = other.workflow_position(slug).unwrap().unwrap();
+                assert_eq!((position.at(), position.generation), (at, 1), "{slug}");
+            }
+        });
+        assert!(matches!(
+            late.activate_workflow(&next, &Host::local()),
+            Ok(Followed::Activated(Active { generation: 2, .. }))
+        ));
+        for (slug, at) in [
+            ("sim/open", pair("build", "open")),
+            ("sim/filed", pair("build", "open")),
+            ("sim/late", pair("verify", "waiting")),
+        ] {
+            let position = f.store.workflow_position(slug).unwrap().unwrap();
+            assert_eq!(
+                (position.at(), position.revision, position.generation),
+                (at, 2, 2),
+                "{backend:?} {slug}"
+            );
+        }
     }
 }
 

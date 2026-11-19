@@ -121,7 +121,9 @@ BEGIN
             WHERE slug = t_ ->> 'slug';
     END LOOP;
     SELECT slug INTO stale_ FROM task
-        WHERE status NOT IN ('done', 'cancelled') AND fields #> '{_board,workflow}' IS NULL ORDER BY slug LIMIT 1;
+        WHERE (status NOT IN ('done', 'cancelled') OR fields #> '{_board,workflow}' IS NOT NULL)
+            AND slug NOT IN (SELECT p ->> 'slug' FROM jsonb_array_elements((v -> 'kept') || (v -> 'moved')) AS p)
+        ORDER BY slug LIMIT 1;
     IF stale_ IS NOT NULL THEN
         RAISE EXCEPTION '%', 'refused: stale_task: ' || stale_ || ' was filed or reopened while its workflow activated';
     END IF;

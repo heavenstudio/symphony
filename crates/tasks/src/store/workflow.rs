@@ -298,7 +298,7 @@ impl Store {
     /// previous generation left active and nothing written, when the host does not support it
     /// ([`crate::workflow::activate::supported`]) or a task cannot be placed; planned again when
     /// the board changed between the read and the write (a task it read, an executor or reviewer
-    /// it read as lost beating, an open task with no position filed or reopened), or another
+    /// it read as lost beating, a task filed or reopened that it did not plan), or another
     /// activation won.
     pub fn activate_workflow(
         &self,

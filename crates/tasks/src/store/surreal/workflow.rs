@@ -64,9 +64,11 @@ RETURN {
 /// An activation, whole: refused as stale unless the active generation is still `$expected`,
 /// every task it read is still at its version (and workflow revision) and each holder it read as
 /// lost is still unseen (`$seen`); then each kept task written at its version, each moved one
-/// recorded and moved, refused as stale where an open task with no position is left (one filed or
-/// reopened since the read), the definition recorded once under its digest, the activation
-/// recorded, and the active generation moved to it.
+/// recorded and moved, refused as stale where a task the read would select is neither kept nor
+/// moved (one filed or reopened since the read, at the old generation's pair or at none), the
+/// definition recorded once under its digest, the activation recorded, and the active generation
+/// moved to it. Each task the read selected is kept or moved, and stays selected, so a count over
+/// theirs is the whole check, and the task is named only where it refuses.
 pub(in crate::store) const ACTIVATE: &str = "
 LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
 IF ($active.generation ?? 0) != $expected {
@@ -93,10 +95,12 @@ FOR $m IN $moved {
     UPDATE type::record('task', $m.slug) SET status = $m.transition.status,
         fields._board.workflow = $m.position, updated = $at, version += 1 RETURN NONE;
 };
-LET $unplaced = (SELECT VALUE slug FROM task
-    WHERE status NOT IN ['done', 'cancelled'] AND fields._board.workflow = NONE ORDER BY slug LIMIT 1);
-IF array::len($unplaced) > 0 {
-    THROW string::concat('refused: stale_task: ', $unplaced[0], ' was filed or reopened while its workflow activated');
+LET $standing = (SELECT VALUE slug FROM task
+    WHERE status NOT IN ['done', 'cancelled'] OR fields._board.workflow != NONE);
+IF array::len($standing) > array::len($kept) + array::len($moved) {
+    LET $planned = array::concat($kept.map(|$t| $t.slug), $moved.map(|$m| $m.slug));
+    LET $unplanned = array::sort(array::complement($standing, $planned));
+    THROW string::concat('refused: stale_task: ', $unplanned[0], ' was filed or reopened while its workflow activated');
 };
 IF (SELECT VALUE kind FROM ONLY type::record('workflow', ['definition', $digest])) = NONE {
     CREATE type::record('workflow', ['definition', $digest])

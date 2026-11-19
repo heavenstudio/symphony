@@ -63,11 +63,12 @@ project file that generation was activated from: a commit of that file's bytes, 
 format, is the active workflow, and no other record is read to say so. A committed definition,
 or mappings, other than the active one's is activated, in one transaction fenced on the active
 generation, on the version of every task it reads and on the session of each executor or
-reviewer it reads as lost, and refused as stale where an open task it did not place stands when
-it writes, one filed or reopened since its read: a lost holder that beats meanwhile, or that task,
-is read again by the next plan (`Store::activate_workflow`). A commit that changes neither, any
-landing of other files, leaves the active generation, every task's version and every record as
-they were, and the active revision names the commit that activated it. It records the definition under its digest,
+reviewer it reads as lost, and refused as stale where a task it would read, open or placed, is
+one it did not plan when it writes, filed or reopened since its read at the old generation's pair
+or at none: a lost holder that beats meanwhile, or that task, is read again by the next plan
+(`Store::activate_workflow`). A commit that changes neither, any landing of other files, leaves
+the active generation, every task's version and every record as they were, and the active
+revision names the commit that activated it. It records the definition under its digest,
 places every task a workflow holds and every open task the board's writers keep, records each
 move as a transition by the board's activation service and the activation with the mappings it
 applied, and moves the active generation to it. A task whose pair, resume pair and status stay
