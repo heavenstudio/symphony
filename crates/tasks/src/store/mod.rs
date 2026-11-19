@@ -1271,7 +1271,7 @@ fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
     let (read, vars) = reading(which, sessions);
     let statement = Statement {
         surreal: read.into(),
-        postgres: Some(Pg::read(pg::reading::reading(which, sessions))),
+        postgres: Some(pg::reading::reading(which, sessions)),
     };
     (statement, vars)
 }
