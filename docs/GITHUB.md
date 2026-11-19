@@ -35,10 +35,12 @@ refusal as turned off.
 | `export_label` | none | a label put on each issue the adapter creates |
 | `checks_token_file` | none | the absolute path of a file holding the token that writes a delivery's checks, never `token_file` |
 | `checks_app_id` | none | the number of the GitHub App that token is of: a check by any other is not read as the adapter's |
+| `landing_app_id` | none | the number of the GitHub App `token_file`'s token is of where a land is delivered: the one actor [the default branch's rules](#the-protection-a-delivery-needs) let update it, never `checks_app_id` |
 | `close_issues` | `false` | whether a delivered task's mapped issue is closed once the board closed the task |
 
 `enabled = true` needs `repository` and `token_file`, an `issues` that imports needs
-`import_labels`, and `pull_requests = "publish"` needs `checks_token_file` and `checks_app_id`. The settings are read again before every operation that writes GitHub or the
+`import_labels`, and `pull_requests = "publish"` needs `checks_token_file`, `checks_app_id` and
+`landing_app_id`. The settings are read again before every operation that writes GitHub or the
 board, so a landing that turns the adapter off stops a run at its next dispatch.
 
 The issues are listed from where the last listing ended, and that place holds only under the
@@ -64,8 +66,9 @@ read and write for `export` and `exchange`. A token that GitHub refuses (401) pa
 exchange with everything kept; the next preview that succeeds lifts the pause.
 
 A delivery uses two tokens, each held by the same rules. `token_file`'s opens and merges the pull
-request: pull requests read and write, contents read and write, and issues write where
-`close_issues` is set. `checks_token_file`'s writes the checks: an installation token of the one
+request and reads [the protection](#the-protection-a-delivery-needs): an installation token of
+the GitHub App `landing_app_id` names, with pull requests read and write, contents read and
+write, and issues write where `close_issues` is set, and no administration. `checks_token_file`'s writes the checks: an installation token of the one
 GitHub App `checks_app_id` names, with checks read and write and nothing else. GitHub takes a
 check from an App alone, so what merges cannot say the evidence stands. The adapter mints no
 token: whoever installs the App keeps a current one in the file. The head itself is pushed by the
@@ -89,6 +92,10 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
   are made as.
 - **`resolve SLUG local|remote`** keeps one side of a conflict, or takes up a suspended mapping
   again. It writes only the adapter's own folder; the next preview shows what follows.
+- **`preflight [--branch BASE]`** reads [the protection](#the-protection-a-delivery-needs) of
+  BASE, the default branch unless named, as a delivery reads it before it writes, and says that
+  it holds or each thing missing on a line of its own. It writes nothing, here or on GitHub, and
+  exits 0 only where a delivery would go on.
 - **`deliver VERB --request FILE`** answers one verb of [a land's delivery](#delivering-a-land).
   A land runs it; an operator has no reason to.
 
@@ -194,7 +201,9 @@ The adapter answers only `enabled` settings whose `pull_requests` is `"publish"`
 it answers `refused` and asks GitHub nothing. It decides nothing: the land hands it the task's
 evidence, and it reads no board for it.
 
-- **`publish`** pushes the head to the branch named as the task, never forced, and only when
+- **`publish`** reads [the protection](#the-protection-a-delivery-needs) of the default branch
+  first and refuses where it does not hold, then pushes the head to the branch named as the
+  task, never forced, and only when
   `origin` is the settings' repository on GitHub.com. It finds the open pull request of that
   branch into the default branch before it opens one, as a draft, which nobody merges, then writes the evidence as checks on the
   head: `symphony/assessment`, `symphony/NAME` for each stamp (success where it stands, neutral
@@ -202,7 +211,7 @@ evidence, and it reads no board for it.
   one is what a branch's protection requires, from the App `checks_app_id` names. It is written
   last when it passes and first when it fails, so it never passes over a stamp not yet written,
   and the checks are read back as that App's before `published` is answered.
-- **`merge`** marks the draft ready and asks GitHub once for a squash of the bound pull request at
+- **`merge`** reads the protection again, refusing as `publish` does, then marks the draft ready and asks GitHub once for a squash of the bound pull request at
   the head it is given, which GitHub refuses for any other head. A mark that fails or whose answer
   is lost merges nothing. A pull request already merged is answered as merged,
   with no second request.
@@ -217,8 +226,10 @@ where it stands, and no more.
 A land that finds the evidence of a bound pull request withdrawn publishes that too: `publish`
 with a snapshot that is not eligible pushes the head the branch is at and fails
 `symphony/eligible` there before any other check moves. The pull request stays as it is, ready
-if a merge was asked for before: what keeps it from merging then is the failed check a protected
-branch requires, and on a branch not so protected nothing does. A waived stamp's check is
+if a merge was asked for before: what keeps it from merging then is the failed check the
+branch's rules require. Where the protection no longer holds, a snapshot that blocks is still
+said, by its checks alone, on the pull request already bound and at the head it is at: no head
+is pushed and no pull request opened past a policy that does not hold. A waived stamp's check is
 neutral and says only that the assessment waived it: the assessor's reason is board text and is
 sent nowhere.
 
@@ -235,9 +246,75 @@ expires within the hour. A token that expired is answered 401, `unavailable`, an
 until the file holds a current one. Keeping it current is the operator's, by whatever they run
 for it; nothing here does.
 
-Protecting the default branch (the required check, its App, squash alone, no bypass) is the
-repository owner's act on GitHub. The adapter edits no protection, rule or visibility, and
-nothing here turns delivery on.
+## The protection a delivery needs
+
+A delivery is held to its evidence by GitHub only where the default branch's rules say so, and
+the adapter reads them before each step that counts on them: before `publish` pushes a head
+whose evidence stands, and again before `merge` marks the pull request ready and asks for the
+squash (`crates/symphony-github/src/preflight.rs`). Where they do not hold it answers `refused`
+with `kind` `policy` and each thing missing, and pushes, opens, marks and merges nothing; an
+answer GitHub did not give is `unavailable`, never a pass. `preflight` says the same to an
+operator. The adapter edits no rule, ruleset, protection or visibility: putting them right is a
+repository administrator's act on GitHub, and nothing here turns delivery on.
+
+It makes three kinds of read, with `token_file`'s token: the repository, the rules in effect for
+the branch (`GET /repos/OWNER/NAME/rules/branches/BRANCH`, every page), which GitHub evaluates
+from every active ruleset that applies, an organization's among them, and each ruleset those
+rules come from (`GET /repos/OWNER/NAME/rulesets/ID`) for who may bypass it. A rule holds
+everyone only when its ruleset's bypass list was read and is empty. What must hold:
+
+| What | How it is read |
+| --- | --- |
+| The repository is the one bound, and the branch its default one | its number, which a rename keeps, and `default_branch`; not archived |
+| A pull request is required | a `pull_request` rule nobody bypasses |
+| `symphony/eligible` is required from the App that writes it | a `required_status_checks` rule nobody bypasses naming that check with `integration_id` = `checks_app_id`; one naming it from any source or another App does not count, and no rule may hold the branch up to date (`strict_required_status_checks_policy`), which a delivery's one merge of the default branch does not meet |
+| No force push, no deletion | `non_fast_forward` and `deletion` rules nobody bypasses |
+| Only the landing App updates the branch | an `update` rule whose ruleset's one bypass actor is the App `landing_app_id` (`Integration`) |
+| Squash and no other method | the repository's merge settings narrowed by the pull request rules nobody bypasses; no `merge_queue` rule and no auto-merge |
+| The merging token is not said to administer | the repository's `permissions.admin` for the token is `false`; absent or anything else is unknown and refused |
+
+The two halves are two rulesets, since one ruleset has one bypass list: the requirements with
+nobody on theirs, and the update restriction with the landing App alone on its own. Without the
+second, anyone who may write merges a pull request whose check is green, and a check stays
+green on GitHub after the board withdrew its evidence until a land says otherwise
+([delivering a land](#delivering-a-land)); with it, only a land merges, and a land reads the
+evidence again first. Classic branch protection is not read: GitHub layers it with rulesets and
+applies the most restrictive of each rule, so it adds to what is required and takes nothing
+away, and reading it asks for administration.
+
+**The rights each read needs**, by GitHub's own reference
+([rules](https://docs.github.com/en/rest/repos/rules),
+[repositories](https://docs.github.com/en/rest/repos/repos#get-a-repository)): the rules in
+effect and the rulesets are shown to anyone who may read the repository, the repository's merge
+settings with contents read and write, and a ruleset's `bypass_actors` only to who has write
+access to that ruleset. So a token that does not administer the repository, as the landing
+App's must not, is not shown the bypass lists, and the adapter reads a list it is not shown as
+unknown and refuses. Which credential may read them for a delivery is not decided, and until it
+is no repository passes with a landing token of the rights above: delivery stays off.
+
+**What these reads establish, and what they do not.**
+
+- Established at each read: the repository's number, the rules GitHub says are in effect for
+  the branch, each ruleset's bypass list where shown, and the merge settings.
+- Configured, not verified: that `token_file`'s token is of the App `landing_app_id` names. No
+  read names the App an installation token is of. A token of anyone else is refused the merge
+  by GitHub itself under the update restriction, which this adapter relies on and does not
+  prove.
+- Configured, not verified: that what merges cannot change the rules it is held to. No read
+  proves it. `permissions.admin` is what the repository says of the token and does not measure
+  write access to a ruleset, which an App's administration permission or a custom role that
+  edits repository rules gives. And since a bypass list is shown only to who may write its
+  ruleset, a pass whose lists were read with `token_file` means that token may write those
+  rulesets: `token_file` is never given more rights to reach a pass.
+- Not established: how GitHub applies the two rulesets together to a merge by the landing App,
+  which a disposable repository proves and no read does; and that the rules stay as read. A
+  repository administrator can change a rule between the adapter's read and GitHub's own act on
+  the request that follows, and nothing here closes that: the next step and the next land read
+  again and refuse, and the journal keeps a digest of each policy that held (`policy`), so a
+  change is seen after the fact. No check constrains an administrator who removes a protection.
+- Not done by this build: telling GitHub when evidence is withdrawn at the moment the board
+  records it. It is told at the next land, so until the update restriction above is in force a
+  green check can outlive its evidence where a person can merge.
 
 ## Checking it
 
@@ -245,5 +322,5 @@ nothing here turns delivery on.
 and a repository held in memory with every failure above planted, and the exchange on a real
 scratch board through `tasks api` with its requests made by a real `curl` to a loopback server.
 The delivery's verbs are asked of the same repository in memory, which answers pull requests,
-their merge and a commit's checks. None needs a GitHub repository or a credential. A run against GitHub itself needs a disposable
+their merge and a commit's checks, and its rules and rulesets, which it holds a merge to. None needs a GitHub repository or a credential. A run against GitHub itself needs a disposable
 repository and a token its owner supplies, and is nobody's to start without that word.
