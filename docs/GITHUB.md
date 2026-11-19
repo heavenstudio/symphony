@@ -334,6 +334,50 @@ an organization's ruleset was not tried; where it does not, a rule from one hold
   records it. It is told at the next land, so until the update restriction above is in force a
   green check can outlive its evidence where a person can merge.
 
+## Setting a repository up for delivery
+
+What a person with the organization's and the repository's administration does on GitHub, in
+this order. The adapter does none of it and no agent does it without that person's word.
+
+**Read this first.** The update restriction of step 4 stops every direct push to the default
+branch the moment it is active, a land's own push among them, and with it whatever else
+commits there by pushing. So it is turned on together with the settings of step 6 and not
+before, and only once everything that reaches the default branch is delivered by a pull
+request. Until then steps 1 to 3 change nothing a land does.
+
+1. **Three GitHub Apps** in the organization, each with no webhook and installed on the one
+   repository alone ("Only select repositories"). GitHub adds Metadata (read) to each.
+
+   | App | Repository permissions | Its number is |
+   | --- | --- | --- |
+   | the check publisher | Checks: Read and write | `checks_app_id` |
+   | the landing App | Contents: Read and write; Pull requests: Read and write; Issues: Read and write only where `close_issues` is set | `landing_app_id` |
+   | the policy reader | Administration: Read and write | `policy_app_id` |
+
+   The policy reader's permission is the one that can change or remove the rules of step 4; it
+   is asked because GitHub shows a ruleset's bypass list to nothing less
+   ([the rights each read needs](#the-protection-a-delivery-needs)).
+2. **A private key for each App**, kept outside every checkout and readable by its owner
+   alone. Whoever holds a key can act as its App.
+3. **The repository's merge settings**: squash merging allowed, merge commits and rebase
+   merging not, auto-merge off.
+4. **Two rulesets** on the default branch, both active:
+   - one with an empty bypass list that requires a pull request with squash as its one merge
+     method, requires the status check `symphony/eligible` from the check publisher (its App
+     chosen as the source, and "require branches to be up to date" off), blocks force pushes
+     and restricts deletions;
+   - one that restricts updates, with the landing App as its only bypass actor.
+5. **A current installation token of each App** in a file of its own (`token_file`,
+   `checks_token_file`, `policy_token_file`), limited to the one repository, as
+   [the token](#the-token) says. GitHub expires each within the hour.
+6. **The settings**, landed on the default branch: `symphony-github.toml` with `enabled`,
+   `repository`, `pull_requests = "publish"`, the three files and the three numbers, and
+   `[land] delivery` in `symphony.toml` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)).
+
+Then `symphony-github preflight` says whether a delivery would go on, and names each thing
+missing where it would not. Other Apps installed on the repository are worth a look as well:
+one that holds Administration can edit the rules, whatever these steps set.
+
 ## Checking it
 
 `just test-rs -p symphony-github` runs its tests: each module's own, the exchange on a board
