@@ -257,13 +257,14 @@ export function flowOf(definition: Definition, own: Lanes): Flow {
  * Read the active definition of the board under `scope`, tried again until it answers or `signal`
  * ends, and name its IDs in `names`: the board's workflow over its `own` lanes and tabs, or none
  * when the read says none is active or is not one a board draws, which leaves the board as its own
- * writers draw it.
+ * writers draw it. `wait` is the wait before each read again (`tryAgain`'s).
  */
 export async function readFlow(
   scope: string,
   signal: AbortSignal,
   names: Map<string, string>,
   own: Lanes,
+  wait?: Parameters<typeof tryAgain>[3],
 ): Promise<Flow | null> {
   const read: { definition?: Definition | null | undefined } = {};
   const ask = async () => {
@@ -274,7 +275,7 @@ export async function readFlow(
     }
   };
   await ask();
-  await tryAgain(() => !("definition" in read), ask, signal);
+  await tryAgain(() => !("definition" in read), ask, signal, wait);
   const { definition } = read;
   if (signal.aborted || !definition) return null;
   putStyle();
