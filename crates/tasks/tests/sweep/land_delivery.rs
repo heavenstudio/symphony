@@ -160,6 +160,8 @@ enum Merges {
     Squash,
     /// A merge commit of two parents.
     ByCommit,
+    /// A merge commit of two parents, the head first and the base second.
+    Reversed,
     /// One commit whose tree is the default branch's own: the head's change lost.
     WrongTree,
     /// Refused, for this kind of reason.
@@ -252,6 +254,9 @@ impl<'r> Host<'r> {
         let asked = self.merges == Merges::AsAsked && method == "merge";
         if self.merges == Merges::ByCommit || asked {
             args.extend(["-p", head]);
+        }
+        if self.merges == Merges::Reversed {
+            args = vec!["commit-tree", &tree, "-p", head, "-p", &base, "-m", title];
         }
         let made = git(bare, &args);
         git(bare, &["update-ref", "refs/heads/main", &made]);

@@ -4,6 +4,7 @@
 //! public; and everything else squashed as a task, whatever it asks.
 
 use crate::deliver::{APP, Delivery, HEAD, LANDING, SLUG, snapshot};
+use crate::github::Fault;
 use serde_json::{Value, json};
 
 /// What a case changes of a delivery before it publishes.
@@ -168,7 +169,7 @@ fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anyt
         "the settings name no upstream_id: no import is delivered here, from \
          https://github.com/up/stream.git or any other"
     );
-    let refusals: [(&str, Change, &str); 7] = [
+    let refusals: [(&str, Change, &str); 8] = [
         (
             "https://example.com/up/stream",
             Box::new(|_| {}),
@@ -196,6 +197,14 @@ fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anyt
             Box::new(|d| upstream(d, json!({"id": PINNED}))),
             "whether the upstream or this repository is private is not shown: an import is made \
              only where nothing private is published",
+        ),
+        (
+            URL,
+            Box::new(|d| {
+                let moved = Fault::Status(301, Vec::new());
+                d.rig.github.fault("GET", "/repos/up/stream", moved);
+            }),
+            "the upstream up/stream moved (301)",
         ),
         (
             "https://github.com/o/n",

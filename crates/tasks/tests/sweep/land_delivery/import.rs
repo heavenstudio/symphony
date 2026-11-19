@@ -519,6 +519,30 @@ fn an_import_the_host_squashed_is_held_and_closes_nothing() {
 }
 
 #[test]
+fn an_import_merged_with_its_parents_in_another_order_is_held() {
+    let (r, bare, upstream, _) = importing();
+    let first = commit(&upstream, "up/a.txt");
+    let (people, _, tip) = import_ready(&r, SLUG, &upstream, &first, Some(&first));
+    let base = head(&bare, "main");
+    let host = Host::new(&r, &bare).merging(Merges::Reversed);
+    let line = landed(&r, SLUG, &people.orch, &host).1.unwrap_err();
+    let made = head(&bare, "main");
+    assert!(
+        line.contains(&format!(
+            "{} has the parents {}, {}, not the base then the head {}: what landed is not the \
+             import that was read",
+            &made[..7],
+            &tip[..7],
+            &base[..7],
+            &tip[..7]
+        )),
+        "{line}"
+    );
+    assert!(landings(&r, SLUG).is_empty());
+    assert!(Receipt::read(&lands(&r), SLUG).is_none());
+}
+
+#[test]
 fn a_delivery_command_that_pins_no_upstream_merges_no_import() {
     let (r, bare, upstream, _) = importing();
     let before = head(&bare, "main");
