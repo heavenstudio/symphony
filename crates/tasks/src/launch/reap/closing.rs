@@ -86,6 +86,7 @@ impl Round<'_> {
                 return Ok(Some(kept));
             }
         }
+        crate::launch::attempts::closed(store, hc, &handle, &address, &why)?;
         if let Some(callback) = self.callbacks.get(&handle) {
             let said = if hold.is_some() {
                 "idle terminal closed after an hour"

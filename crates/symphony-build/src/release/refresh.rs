@@ -593,6 +593,7 @@ impl Judged {
                 && Instant::now() >= against.until.until,
             error,
             load: None,
+            alone: None,
         };
         (ran, line)
     }
