@@ -762,7 +762,7 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   the candidate as the one before left it, keeps it. A slug has one receipt and one retained
   head, and neither is ever replaced: a second delivery of a slug is refused by its land, by
   name, before anything is published
-  ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)), so the count never loses a squash and
+  ([TASKS](TASKS.md#a-slug-is-delivered-once)), so the count never loses a squash and
   a release tagged on a delivered head stays held by the receipt that delivered it. The entries
   a delivered landing said ([its notes](#its-notes)) are read from the head its receipt kept, as
   the squash carries none, less the commits of each head delivered onto the line before it: a

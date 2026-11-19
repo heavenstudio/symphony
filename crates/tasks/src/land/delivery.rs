@@ -62,10 +62,12 @@
 //!    the head stays reachable under [`RETAINED`], as a squash leaves it in no history.
 //!
 //!    A slug is delivered once. Its receipt and its retained head are what the release run
-//!    counts, holds a release by and reads its notes from, so neither is ever replaced: a land
-//!    of a slug whose receipt is of another head (a done task reopened, a slug filed again as
-//!    another task) is refused by name before anything is published ([`Landing::repeated`]),
-//!    and so is one whose receipt file does not read as its own. A merge a run before asked
+//!    counts, holds a release by and reads its notes from, so neither is ever replaced. A landed
+//!    task moves no further on the board, so what reaches a second delivery is the slug filed
+//!    again as another task: its land is refused by name before anything is published
+//!    ([`Landing::repeated`]) where the slug's receipt is of another head, or of the head its
+//!    branch is at with no word of this task's own that it landed it, and so is one whose
+//!    receipt file does not read as its own. A merge a run before asked
 //!    for, found beside a receipt of another delivery or a retained head that is another
 //!    commit, is held for a person ([`Landing::prove`]); the same delivery proved again keeps
 //!    the receipt it has.
@@ -565,35 +567,60 @@ impl Landing<'_> {
         ))
     }
 
-    /// Refuse a second delivery of this slug, before anything is asked of the host: its kept
-    /// receipt is of another head than its branch is at (a done task reopened with more work,
-    /// or the slug filed again as another task), or the file kept for it does not read as its
-    /// receipt. Nothing where it has none, or one of the head its branch is at, which a land
-    /// run again answers as it did.
-    pub(super) fn repeated(&self) -> Result<(), Refusal> {
+    /// Refuse a second delivery of this slug, before anything is asked of the host. A landed
+    /// task moves no further on the board, so a second delivery is the slug filed again as
+    /// another task (a board made again over a repository that keeps its receipts), whose branch
+    /// may be at another head or at the very head delivered before. Refused where the slug's
+    /// kept receipt is of another head than its branch is at; where it is of that head and is
+    /// not this task's own delivery ([`Landing::own`]); and where the file kept for it does not
+    /// read as its receipt. Nothing where it has none, or where it is this task's own, which a
+    /// land run again answers as it did.
+    pub(super) fn repeated(&self) -> Result<(), Stop> {
         let slug = self.slug;
         let then = "What it still needs goes in a new task, whose slug is its own: nothing was \
                     published or merged, and the receipt is as it was";
-        let earlier = Receipt::held(&self.folder, slug)
-            .map_err(|why| Refusal::to(why, "@orchestrator", then.into()))?;
-        let tip = rev(&self.main, &format!("refs/heads/{slug}"));
-        match (earlier, tip) {
-            (Some(earlier), Some(tip)) if earlier.head != tip => Err(Refusal::to(
-                format!(
-                    "{slug} was delivered already as {} from {} by pull request #{} of {}, and \
-                     its branch is now at {}: a slug is delivered once, its receipt and the head \
-                     kept under {RETAINED}{slug} never replaced",
-                    short(&earlier.squash),
-                    short(&earlier.head),
-                    earlier.pull,
-                    earlier.name,
-                    short(&tip)
-                ),
-                "@orchestrator",
-                then.into(),
-            )),
-            _ => Ok(()),
+        let refused = |line: String| self.refuse(Refusal::to(line, "@orchestrator", then.into()));
+        let earlier = Receipt::held(&self.folder, slug).map_err(refused)?;
+        let (Some(earlier), Some(tip)) = (earlier, rev(&self.main, &format!("refs/heads/{slug}")))
+        else {
+            return Ok(());
+        };
+        let now = if earlier.head != tip {
+            format!("its branch is now at {}", short(&tip))
+        } else if self.own(&earlier)? {
+            return Ok(());
+        } else {
+            "its branch is at that head again, as a task that never landed it".to_string()
+        };
+        Err(refused(format!(
+            "{slug} was delivered already as {} from {} by pull request #{} of {}, and {now}: a \
+             slug is delivered once, its receipt and the head kept under {RETAINED}{slug} never \
+             replaced",
+            short(&earlier.squash),
+            short(&earlier.head),
+            earlier.pull,
+            earlier.name,
+        )))
+    }
+
+    /// Whether `receipt`, kept for this slug of the head its branch is at, is this task's own
+    /// delivery: its thread has the landed line naming the receipt's squash (a land run again
+    /// after it closed), or the journal kept for the slug is of that head, bound to the receipt's
+    /// pull request (a run cut between the receipt and the journal's next stage). A task id is no
+    /// such word: a board made again numbers its tasks again.
+    fn own(&self, receipt: &Receipt) -> Result<bool, Stop> {
+        let slug = self.slug;
+        let landed = landed_line(slug, &self.settings.default_branch, &receipt.squash);
+        if (self.store.thread(slug)?.iter()).any(|post| post.text.starts_with(&landed)) {
+            return Ok(true);
         }
+        let journal = Journal::read(&self.folder, slug);
+        Ok(journal.is_some_and(|journal| {
+            journal.head == receipt.head
+                && (journal.binding.as_ref()).is_some_and(|binding| {
+                    binding.repository == receipt.repository && binding.pull == receipt.pull
+                })
+        }))
     }
 
     /// The pull request a run before bound this task to, read before the land judges anything:
@@ -1643,10 +1670,7 @@ impl Landing<'_> {
             journal.stage = Stage::Reconciled;
             journal.write(&self.folder).map_err(here)?;
         }
-        let landed = format!(
-            "landed {slug} on {default} at {}",
-            &squash[..squash.len().min(12)]
-        );
+        let landed = landed_line(slug, &default, &squash);
         let how = match &journal.import {
             Some(import) => format!(
                 "merged from {}, an import of {},",
@@ -1717,6 +1741,15 @@ impl Landing<'_> {
         Journal::drop_in(&self.folder, slug);
         Ok(line)
     }
+}
+
+/// How the landed line of `slug`, delivered to `default` as `squash`, starts: what a land that
+/// closed its task wrote, and what a land run again reads.
+fn landed_line(slug: &str, default: &str, squash: &str) -> String {
+    format!(
+        "landed {slug} on {default} at {}",
+        &squash[..squash.len().min(12)]
+    )
 }
 
 /// Why a commit the host named is not proved.

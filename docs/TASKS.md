@@ -2591,7 +2591,7 @@ answers a new pull request for one.
 
 | What the land finds | What it does |
 | --- | --- |
-| A receipt of the slug whose head is not the one its branch is at | refused before anything is published, to the orchestrator, naming the commit and the head it was delivered as and its pull request: what it still needs goes in a new task, whose slug is its own |
+| A receipt of the slug whose head is not the one its branch is at, or of that very head with no word of this task's own that it landed it (no landed line on its thread naming the squash, no journal of that head bound to the receipt's pull request) | refused before anything is published, to the orchestrator, naming the commit and the head it was delivered as and its pull request: what it still needs goes in a new task, whose slug is its own. A task's id is no such word, as a board made again numbers its tasks again |
 | A file kept as the slug's receipt that does not read as it (cut short, or naming another slug) | refused before anything is published, naming the file and why: a person judges it, and a land never writes over it |
 | A merge a run before asked for, proved beside a receipt of another delivery of the slug or a retained head that is another commit | held for reconciliation, by name; the receipt and `refs/symphony/delivered/SLUG` stay as they were, and nothing is closed |
 | The same delivery proved again (a run cut short after its receipt was kept) | the receipt it has is kept as it was written, and the land goes on to close the task once |

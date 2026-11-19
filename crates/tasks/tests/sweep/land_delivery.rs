@@ -1809,12 +1809,10 @@ fn the_delivery_command_is_run_with_its_verb_and_request_and_its_refusal_merges_
 
 const RETAINED_SLUG: &str = "refs/symphony/delivered/sim/jump";
 
-#[test]
-fn a_slug_delivered_once_is_refused_a_second_delivery_before_anything_is_published() {
-    let (r, bare) = delivering();
-    // The slug was delivered before, as a task this board no longer holds (a board made again,
-    // the slug filed again): its squash on the default branch, its receipt and its head kept in
-    // the repository, which outlive the board. A landed task itself moves no further.
+/// `SLUG` delivered before, as a task this board no longer holds (a board made again, the slug
+/// filed again): its squash on the default branch, its receipt and its head kept in the
+/// repository, which outlive the board. A landed task itself moves no further. The receipt.
+fn delivered_earlier(r: &Repo) -> Receipt {
     let parent = head(&r.root, "main");
     let earlier = r.add("earlier", None, "main");
     write(&earlier, "sim/earlier.gd", "extends Node\n");
@@ -1844,6 +1842,15 @@ fn a_slug_delivered_once_is_refused_a_second_delivery_before_anything_is_publish
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, serde_json::to_string_pretty(&receipt).unwrap()).unwrap();
     git(&r.root, &["update-ref", RETAINED_SLUG, &first]);
+    receipt
+}
+
+#[test]
+fn a_slug_delivered_once_is_refused_a_second_delivery_before_anything_is_published() {
+    let (r, bare) = delivering();
+    let receipt = delivered_earlier(&r);
+    let first = receipt.head.clone();
+    let path = Receipt::path(&lands(&r), SLUG);
     let was = fs::read(&path).unwrap();
 
     let (people, _, second) = ready(&r, SLUG);
@@ -1876,6 +1883,91 @@ fn a_slug_delivered_once_is_refused_a_second_delivery_before_anything_is_publish
     let (_, again) = landed(&r, SLUG, &people.orch, &host);
     assert!(again.unwrap_err().contains("a slug is delivered once"));
     assert!(host.verbs().is_empty());
+}
+
+#[test]
+fn a_slug_filed_again_at_the_very_head_delivered_before_is_refused_as_delivered() {
+    let (r, bare) = delivering();
+    let receipt = delivered_earlier(&r);
+    let first = receipt.head.clone();
+    let path = Receipt::path(&lands(&r), SLUG);
+    let was = fs::read(&path).unwrap();
+    // Filed again with its branch at the head the receipt kept, assessed, green and approved
+    // there: everything a delivery reads stands, and the host would merge it a second time.
+    git(&r.root, &["branch", SLUG, &first]);
+    let store = &r.board.store;
+    let people = People {
+        orch: r.board.session("orchestrator"),
+        exe: r.board.session("worker"),
+        assessor: r.board.session("reviewer"),
+    };
+    r.task(SLUG);
+    store.take_role(SLUG, &people.orch, "orchestrator").unwrap();
+    store.claim(SLUG, &people.exe).unwrap();
+    store.move_to(SLUG, "review", &people.exe).unwrap();
+    assess(&r, SLUG, &people.assessor, &["tests", "review"], &first);
+    ran(&r, SLUG, &first, "cargo test -p sim", 0);
+    approve(&r, SLUG, &format!("{first}: reads well"));
+    let refused = format!(
+        "{SLUG} was delivered already as {} from {} by pull request #2 of owner/name, and its \
+         branch is at that head again, as a task that never landed it: a slug is delivered once, \
+         its receipt and the head kept under {RETAINED_SLUG} never replaced",
+        &receipt.squash[..7],
+        &first[..7]
+    );
+    let host = Host::new(&r, &bare);
+    assert_eq!(
+        landed(&r, SLUG, &people.orch, &host).1.unwrap_err(),
+        refused
+    );
+    assert!(host.verbs().is_empty(), "{:?}", host.verbs());
+    assert_eq!(fs::read(&path).unwrap(), was, "the receipt as it was");
+    assert_eq!(head(&r.root, RETAINED_SLUG), first);
+    assert_eq!(head(&bare, "main"), receipt.squash, "nothing merged");
+    assert!(landings(&r, SLUG).is_empty());
+    // Another delivery's journal is no word of this one: of another pull request, or of
+    // another head, it is refused the same.
+    let journal = |head: &str, pull| Journal {
+        slug: SLUG.into(),
+        operation: "task".into(),
+        stage: Stage::Eligible,
+        head: head.into(),
+        base_observed: receipt.parent.clone(),
+        revision: "r0".into(),
+        title: String::new(),
+        body: String::new(),
+        by: people.orch.clone(),
+        closes: vec!["done".into()],
+        stood: String::new(),
+        binding: Some(symphony_board::land::delivery::Binding {
+            repository: 7,
+            name: "owner/name".into(),
+            pull,
+            url: String::new(),
+        }),
+        squash: None,
+        held: None,
+        import: None,
+    };
+    for other in [journal(&first, 3), journal(&receipt.parent, 2)] {
+        other.write(&lands(&r)).unwrap();
+        let host = Host::new(&r, &bare);
+        assert_eq!(
+            landed(&r, SLUG, &people.orch, &host).1.unwrap_err(),
+            refused
+        );
+        assert!(host.verbs().is_empty(), "{:?}", host.verbs());
+    }
+    // This delivery's own journal, of that head and bound to the receipt's pull request (a run
+    // cut between the receipt and the journal's next stage), is not refused: the land goes on
+    // to read its pull request.
+    journal(&first, 2).write(&lands(&r)).unwrap();
+    let host = Host::new(&r, &bare);
+    let (said, _) = landed(&r, SLUG, &people.orch, &host);
+    assert!(!said.contains("a slug is delivered once"), "{said}");
+    assert_eq!(host.verbs().first().map(String::as_str), Some("result"));
+    assert_eq!(fs::read(&path).unwrap(), was, "the receipt as it was");
+    assert_eq!(head(&r.root, RETAINED_SLUG), first);
 }
 
 #[test]
