@@ -37,6 +37,25 @@ impl Host {
     }
 }
 
+/// Refused where `custom` commits an approval authority and names no project: an attestation
+/// binds the project it is for, and the activation records the one its guards are held to. The
+/// project file's reader refuses the same ([`super::authorities`]); this holds for a `Custom` a
+/// caller builds itself.
+pub fn bound(custom: &Custom) -> Result<(), String> {
+    let named = custom
+        .project
+        .as_deref()
+        .is_some_and(|p| !p.trim().is_empty());
+    if custom.authorities.is_empty() || named {
+        return Ok(());
+    }
+    Err(
+        "workflow_authorities: an attestation names the project it is for, and the workflow \
+         names none"
+            .into(),
+    )
+}
+
 /// The definition refused unless this host supports everything it needs, with no approval
 /// authority committed: [`supported_with`] for none, so any guard is refused.
 pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {

@@ -290,22 +290,39 @@ mod guarded {
     }
 
     fn observation(seed: u8, generation: u64) -> Signed {
+        observation_of(seed, generation, &format!("s{generation}"))
+    }
+
+    /// The first observation of `approvals` at `generation` in epoch e1, in `state`.
+    fn observation_of(seed: u8, generation: u64, state: &str) -> Signed {
         let observed = Observation {
             contract: ATTESTATION_CONTRACT,
             adapter: "approvals".into(),
             issuer: "ledger".into(),
             epoch: "e1".into(),
             generation,
-            state: format!("s{generation}"),
+            state: state.into(),
             previous: None,
             at: NOW,
         };
         signed(seed, true, serde_json::to_string(&observed).unwrap())
     }
 
+    /// This machine's time, which the board holds an attestation to whatever `TASKS_NOW` pins.
+    fn machine_now() -> f64 {
+        (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH))
+            .unwrap()
+            .as_secs_f64()
+    }
+
     /// amber's submit of sim/jump from its workflow revision 2, passed at generation 3, on the
-    /// input revision design=r7.
+    /// input revision design=r7, issued a second ago by this machine's clock for five minutes.
     fn submit_attestation(custom: &Custom, amber: &str) -> Signed {
+        submit_attested_at(custom, amber, machine_now() - 1.0)
+    }
+
+    /// [`submit_attestation`], issued at `issued` for five minutes.
+    fn submit_attested_at(custom: &Custom, amber: &str, issued: f64) -> Signed {
         let attestation = Attestation {
             contract: ATTESTATION_CONTRACT,
             adapter: "approvals".into(),
@@ -328,8 +345,8 @@ mod guarded {
             result: Attested::Pass,
             facts: vec!["ledger:decision/41".into()],
             reasons: Vec::new(),
-            issued_at: NOW - 1.0,
-            expires_at: NOW + 300.0,
+            issued_at: issued,
+            expires_at: issued + 300.0,
         };
         signed(7, false, serde_json::to_string(&attestation).unwrap())
     }
@@ -352,7 +369,7 @@ mod guarded {
 
     #[test]
     fn a_session_takes_a_guarded_edge_with_the_authoritys_signed_word_and_no_other() {
-        let (c, amber, custom) = claimed();
+        let (mut c, amber, custom) = claimed();
         let dir = scratch("workflow-guarded-cli");
         let file = |name: &str, signed: &Signed| {
             let path = dir.join(name);
@@ -384,7 +401,7 @@ mod guarded {
         let json: serde_json::Value =
             serde_json::from_str(&c.ok(&amber, &["workflow", "observe", &observed, "--json"]))
                 .unwrap();
-        assert_eq!(json["observed"], "already at");
+        assert_eq!(json["observed"], "unchanged");
         assert_eq!(json["authority"]["generation"], 3);
         assert_eq!(json["authority"]["state"], "s3");
         let forged = file("forged.json", &observation(8, 4));
@@ -437,6 +454,29 @@ mod guarded {
             bad_revision.err
         );
         with.extend(["--input-revision", "design=r7"]);
+        // An attestation expired by this machine's clock is refused, though TASKS_NOW pins the
+        // command's clock inside its time: the caller sets that clock, never the guard's.
+        let issued = machine_now() - 400.0;
+        let expired = file("expired.json", &submit_attested_at(&custom, &amber, issued));
+        let pinned = c.env.vars["TASKS_NOW"].clone();
+        c.env
+            .vars
+            .insert("TASKS_NOW".into(), (issued + 1.0).to_string());
+        let late = c.run_as(
+            &amber,
+            &[
+                &submit[..],
+                &["--attestation", &expired, "--input-revision", "design=r7"],
+            ]
+            .concat(),
+            "",
+        );
+        c.env.vars.insert("TASKS_NOW".into(), pinned);
+        assert!(
+            late.err.starts_with("✖ guard_unavailable:") && late.err.contains("expired"),
+            "{}",
+            late.err
+        );
         assert_eq!(
             c.ok(&amber, &with),
             "took submit (sim/jump@3)\nsim/jump at verify/awaiting, workflow revision 3 (generation 1)\n  accept → verify/accepted  Accept, by owner  (not now: human_wait, unauthorized)\n"
@@ -449,6 +489,21 @@ mod guarded {
             .unwrap()
             .unwrap();
         assert_eq!(admission.guards[0].guard, "approved");
+        // Another decision at the generation accepted leaves the authority unknown: the state
+        // accepted stays, marked in conflict.
+        let other = file("other.json", &observation_of(7, 3, "x3"));
+        assert_eq!(
+            c.ok(&amber, &["workflow", "observe", &other]),
+            "approvals: in conflict at generation 3 of e1 (s3); nothing it attests is admitted \
+             until it reports a state following this one\n"
+        );
+        let third = file("third.json", &observation_of(7, 3, "y3"));
+        let json: serde_json::Value =
+            serde_json::from_str(&c.ok(&amber, &["workflow", "observe", &third, "--json"]))
+                .unwrap();
+        assert_eq!(json["observed"], "conflicted");
+        assert_eq!(json["authority"]["conflicted"], true);
+        assert_eq!(json["authority"]["state"], "s3");
     }
 
     #[test]

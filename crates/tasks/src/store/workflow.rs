@@ -232,6 +232,7 @@ impl Store {
             return Ok(Followed::Unchanged(active));
         }
         activate::supported_with(&custom.definition, host, &custom.authorities)
+            .and_then(|()| activate::bound(custom))
             .map_err(refused_workflow)?;
         let by = crate::workflow::board_service("activation");
         for _ in 0..PLANS {

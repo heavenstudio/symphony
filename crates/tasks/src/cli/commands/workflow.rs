@@ -205,17 +205,15 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
 fn observe(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let path = required(c, "slug", "workflow observe FILE")?;
     let observed = store.observe_authority(&signed(&path, "workflow observe")?)?;
+    if c.parsed.flag("json") {
+        c.say(&pretty(&observed.answer()));
+        return Ok(());
+    }
     let (what, accepted) = match &observed {
         Observing::Accepted(a) => ("accepted", a),
         Observing::Unchanged(a) => ("already at", a),
         Observing::Conflicted(a) => ("in conflict at", a),
     };
-    if c.parsed.flag("json") {
-        c.say(&pretty(
-            &serde_json::json!({"observed": what, "authority": accepted}),
-        ));
-        return Ok(());
-    }
     c.say(&format!(
         "{}: {what} generation {} of {} ({}){}",
         accepted.adapter,

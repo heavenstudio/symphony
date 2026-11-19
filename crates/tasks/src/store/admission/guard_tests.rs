@@ -6,7 +6,9 @@ use super::tests::{BACKENDS, board, refused, request, take};
 use super::*;
 use crate::store_fixture::{Backend, Fixture, Seed};
 use crate::workflow::activate::tests::{MAPPED, custom};
-use crate::workflow::guard::tests::{guarded_text, passing, sign_attestation, sign_observation};
+use crate::workflow::guard::tests::{
+    guarded_text, passing, sign_attestation, sign_observation, two_authorities_text,
+};
 use crate::workflow::{Custom, Followed, Observing, agent_session, local_owner};
 use std::sync::{Arc, Barrier};
 use symphony_api::workflow::{
@@ -63,8 +65,8 @@ fn attestation(f: &Fixture, slug: &str, generation: u64) -> Attestation {
         task_revision: position.revision,
         at: position.at(),
         generation,
-        issued_at: f.now() - 1.0,
-        expires_at: f.now() + 300.0,
+        issued_at: crate::store::now() - 1.0,
+        expires_at: crate::store::now() + 300.0,
         ..passing(&guarded_two(7))
     }
 }
@@ -229,14 +231,35 @@ fn a_decision_revoked_since_the_attestation_refuses_it_and_stops_its_dispatch() 
             )
             .contains("task revision")
         );
-        // Expired by the time of the dispatch.
-        f.advance(400.0);
+        // Held to this machine's clock, never the store's, which its caller sets: an attestation
+        // expired by the machine stays expired with the store's clock inside its time, and one
+        // issued at the store's clock an hour ahead is ahead of the machine.
+        let now = crate::store::now();
+        let expired = Attestation {
+            issued_at: now - 400.0,
+            expires_at: now - 100.0,
+            ..fresh.clone()
+        };
+        f.advance(now - 200.0 - f.now());
         assert!(
             refused(
                 f.store
-                    .revalidate_dispatch("sim/a", 4, &[sign_attestation(7, &fresh)])
+                    .revalidate_dispatch("sim/a", 4, &[sign_attestation(7, &expired)])
             )
             .contains("expired")
+        );
+        f.advance(now + 3_600.0 - f.now());
+        let ahead = Attestation {
+            issued_at: f.now(),
+            expires_at: f.now() + 300.0,
+            ..fresh
+        };
+        assert!(
+            refused(
+                f.store
+                    .revalidate_dispatch("sim/a", 4, &[sign_attestation(7, &ahead)])
+            )
+            .contains("ahead")
         );
     }
 }
@@ -362,6 +385,87 @@ fn a_revocation_racing_an_admission_never_lets_it_land_on_the_revoked_generation
             }
         }
     }
+}
+
+#[test]
+fn two_first_observations_racing_never_let_one_overwrite_the_other() {
+    for backend in BACKENDS {
+        for round in 0..6 {
+            let f = board(backend, &guarded_two(7));
+            let gate = Arc::new(Barrier::new(2));
+            let observers: Vec<_> = ["s3", "x3"]
+                .into_iter()
+                .map(|state| {
+                    let (store, gate) = (f.other(), Arc::clone(&gate));
+                    let observed = Observation {
+                        state: state.into(),
+                        ..observation("e1", 3, None)
+                    };
+                    std::thread::spawn(move || {
+                        gate.wait();
+                        store.observe_authority(&sign_observation(7, &observed))
+                    })
+                })
+                .collect();
+            for observer in observers {
+                observer.join().unwrap().unwrap();
+            }
+            // The one that wrote second read the first's state, whichever it was: two decisions
+            // at one generation, which hold every admission.
+            let state = accepted_state(&f);
+            assert!(state.conflicted, "{backend:?}, round {round}: {state:?}");
+        }
+    }
+}
+
+/// On PostgreSQL a first observation finds no row to lock before it writes, so another first one
+/// can commit between its lock and its write: it decides again on the state that one left, and
+/// marks the conflict, never overwriting it (SurrealDB's optimistic transaction conflicts by
+/// itself).
+#[test]
+fn a_first_observation_meeting_another_before_its_write_decides_again() {
+    let f = board(Backend::PostgreSql, &guarded_two(7));
+    let crate::Database::PostgreSql(client) = f.store.database() else {
+        unreachable!("a PostgreSQL board");
+    };
+    let (holding, watching) = (client.another(), client.another());
+    holding
+        .simple(
+            "BEGIN; INSERT INTO workflow (id, kind, body, at) VALUES \
+             ('[\"authority\", \"approvals\"]', 'authority', '{\"adapter\": \"approvals\", \
+             \"issuer\": \"ledger\", \"epoch\": \"e1\", \"generation\": 3, \"state\": \"x3\", \
+             \"conflicted\": false, \"admitted\": 0}', 1.0)",
+        )
+        .unwrap();
+    let observing = {
+        let store = f.other();
+        std::thread::spawn(move || observe(&store, 3, None))
+    };
+    // It waits on the uncommitted row's key: past its read and the lock that found no row.
+    let waiting = || {
+        watching
+            .simple(
+                "SELECT count(*) FROM pg_stat_activity \
+                 WHERE wait_event_type = 'Lock' AND datname = current_database()",
+            )
+            .unwrap()[0]
+            .value()
+            != Some("0")
+    };
+    test_time::wait::until_true(
+        "the observation to wait on the row",
+        std::time::Duration::from_secs(30),
+        waiting,
+    )
+    .unwrap();
+    holding.simple("COMMIT").unwrap();
+    let observed = observing.join().unwrap();
+    assert!(
+        matches!(observed, Ok(Observing::Conflicted(_))),
+        "{observed:?}"
+    );
+    let state = accepted_state(&f);
+    assert!(state.conflicted && state.state == "x3", "{state:?}");
 }
 
 #[test]
@@ -522,6 +626,88 @@ fn a_changed_key_is_a_new_activation_and_the_old_keys_word_stops() {
         assert_eq!(current.activation_generation, 2);
         let request = accept(&f, "accept-2");
         applied(&f.store, &request, &[sign_attestation(8, &current)]).unwrap();
+    }
+}
+
+#[test]
+fn a_workflow_committing_an_authority_and_naming_no_project_never_activates() {
+    let f = Fixture::on(Backend::SurrealDb, Seed::default());
+    let unbound = Custom {
+        project: None,
+        ..guarded_two(7)
+    };
+    let refusal = refused(f.store.activate_workflow(&unbound, &Host::local()));
+    assert!(refusal.contains("names none"), "{refusal}");
+    assert_eq!(f.store.workflow_active().unwrap(), None);
+}
+
+#[test]
+fn an_edge_two_authorities_guard_is_met_by_each_ones_own_word_and_fenced_on_both() {
+    for backend in BACKENDS {
+        let f = board(
+            backend,
+            &custom(&format!("{}{MAPPED}", two_authorities_text())),
+        );
+        let amber = agent_session("amber");
+        take(&f.store, "sim/a", &amber, "claim").unwrap();
+        take(&f.store, "sim/a", &amber, "submit").unwrap();
+        let reviews = |generation: u64, previous: Option<u64>| Observation {
+            adapter: "reviews".into(),
+            issuer: "panel".into(),
+            ..observation("f1", generation, previous.map(|p| ("f1", p)))
+        };
+        observe(&f.store, 3, None).unwrap();
+        f.store
+            .observe_authority(&sign_observation(8, &reviews(5, None)))
+            .unwrap();
+        let approved = attestation(&f, "sim/a", 3);
+        let reviewed = Attestation {
+            adapter: "reviews".into(),
+            issuer: "panel".into(),
+            epoch: "f1".into(),
+            generation: 5,
+            guard: "reviewed".into(),
+            ..approved.clone()
+        };
+        // `approvals`'s key on `reviewed`, at the state the board accepted from `reviews`.
+        let crossed = Attestation {
+            guard: "reviewed".into(),
+            epoch: "f1".into(),
+            generation: 5,
+            ..approved.clone()
+        };
+        let given = [
+            sign_attestation(7, &approved),
+            sign_attestation(8, &reviewed),
+        ];
+        let crossing = refused(applied(
+            &f.store,
+            &accept(&f, "crossed"),
+            &[
+                sign_attestation(7, &approved),
+                sign_attestation(7, &crossed),
+            ],
+        ));
+        assert!(
+            crossing.starts_with("guard_unavailable:") && crossing.contains("only reviews"),
+            "{backend:?}: {crossing}"
+        );
+        applied(&f.store, &accept(&f, "accept"), &given).unwrap();
+        let states = f.store.workflow_authorities().unwrap().accepted;
+        let counted: Vec<(&str, u64)> = (states.iter())
+            .map(|a| (a.adapter.as_str(), a.admitted))
+            .collect();
+        assert_eq!(counted, [("approvals", 1), ("reviews", 1)], "{backend:?}");
+        assert_eq!(
+            f.store.revalidate_dispatch("sim/a", 4, &[]).unwrap().len(),
+            2
+        );
+        // One authority's later decision stops the dispatch, whatever the other's says.
+        f.store
+            .observe_authority(&sign_observation(8, &reviews(6, Some(5))))
+            .unwrap();
+        let revoked = refused(f.store.revalidate_dispatch("sim/a", 4, &[]));
+        assert!(revoked.contains("from reviews"), "{backend:?}: {revoked}");
     }
 }
 

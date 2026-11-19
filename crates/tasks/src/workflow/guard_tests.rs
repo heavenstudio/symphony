@@ -55,6 +55,39 @@ pub(crate) fn attester(seed: u8) -> Attester {
     }
 }
 
+/// [`guarded_text`] of seed 7 with its acceptance guarded by `reviewed` as well, which a second
+/// authority, `reviews` of the issuer `panel`, attests by the key of seed 8.
+pub(crate) fn two_authorities_text() -> String {
+    let reviews = Attester {
+        adapter: "reviews".into(),
+        issuer: "panel".into(),
+        ..attester(8)
+    };
+    let text = guarded_text(7)
+        .replacen(
+            "adapters = [\"approvals\"]",
+            "adapters = [\"approvals\", \"reviews\"]",
+            1,
+        )
+        .replacen(
+            "guards = [{ id = \"approved\", adapter = \"approvals\" }]",
+            "guards = [{ id = \"approved\", adapter = \"approvals\" }, \
+             { id = \"reviewed\", adapter = \"reviews\" }]",
+            1,
+        )
+        .replacen(
+            "guards = [\"approved\"]",
+            "guards = [\"approved\", \"reviewed\"]",
+            1,
+        );
+    assert!(text.contains("guards = [\"approved\", \"reviewed\"]"));
+    format!(
+        "{text}\n[[workflow_authorities]]\nadapter = \"reviews\"\nissuer = \"panel\"\n\
+         contract = 1\nkey = \"{}\"\n",
+        reviews.key
+    )
+}
+
 /// `payload` signed by `seed`'s key as an observation or an attestation.
 pub(crate) fn signed(seed: u8, observation: bool, payload: &str) -> Signed {
     let signature = signing(seed).sign(&signed_message(observation, payload));
@@ -325,6 +358,115 @@ fn a_signature_by_any_other_key_or_over_any_other_bytes_does_not_verify() {
     let mut upper = sign_attestation(7, &attestation);
     upper.signature = upper.signature.to_uppercase();
     assert!(unverified(upper).contains("64 bytes"));
+}
+
+#[test]
+fn a_guard_is_met_only_by_its_own_authority_never_by_another_one_the_workflow_commits() {
+    let custom = custom(&two_authorities_text());
+    let mut case = Case::new();
+    case.attesters = custom.authorities.clone();
+    case.accepted.push(Accepted {
+        adapter: "reviews".into(),
+        issuer: "panel".into(),
+        epoch: "f1".into(),
+        generation: 5,
+        state: "t5".into(),
+        ..accepted()
+    });
+    case.custom = custom;
+    let approved = Attestation {
+        workflow: case.custom.revision.digest.clone(),
+        ..passing(&case.custom)
+    };
+    // `reviews`'s word on `reviewed`, at the state the board accepted from it.
+    let reviewed = Attestation {
+        adapter: "reviews".into(),
+        issuer: "panel".into(),
+        epoch: "f1".into(),
+        generation: 5,
+        guard: "reviewed".into(),
+        ..approved.clone()
+    };
+    let met = case
+        .check(&[
+            sign_attestation(7, &approved),
+            sign_attestation(8, &reviewed),
+        ])
+        .unwrap();
+    let by: Vec<(&str, &str, &str)> = (met.iter())
+        .map(|c| (c.guard.as_str(), c.adapter.as_str(), c.issuer.as_str()))
+        .collect();
+    assert_eq!(
+        by,
+        [
+            ("approved", "approvals", "ledger"),
+            ("reviewed", "reviews", "panel")
+        ]
+    );
+    // Each authority attesting the other's guard, its own key and issuer, the other's state.
+    let by_approvals = Attestation {
+        guard: "reviewed".into(),
+        epoch: "f1".into(),
+        generation: 5,
+        ..approved.clone()
+    };
+    let by_reviews = Attestation {
+        guard: "approved".into(),
+        epoch: "e1".into(),
+        generation: 3,
+        ..reviewed.clone()
+    };
+    for given in [
+        [
+            sign_attestation(7, &approved),
+            sign_attestation(7, &by_approvals),
+        ],
+        [
+            sign_attestation(8, &by_reviews),
+            sign_attestation(8, &reviewed),
+        ],
+    ] {
+        let refused = case.check(&given).unwrap_err();
+        assert_eq!(refused.code, RefusalCode::GuardUnavailable);
+        assert!(refused.message.contains("only"), "{refused}");
+    }
+    // Nor does either alone meet the edge's other guard.
+    let alone = case.check(&[sign_attestation(7, &approved)]).unwrap_err();
+    assert!(
+        alone
+            .message
+            .contains("taken with an attestation from reviews"),
+        "{alone}"
+    );
+}
+
+#[test]
+fn a_payload_naming_a_binding_or_an_input_twice_is_refused() {
+    let mut case = Case::new();
+    case.inputs = BTreeMap::from([("design".to_string(), "r7".to_string())]);
+    let mut attestation = passing(&case.custom);
+    attestation.input_revisions = case.inputs.clone();
+    let payload = serde_json::to_string(&attestation).unwrap();
+    assert!(case.check(&[signed(7, false, &payload)]).is_ok());
+    for field in ["\"task\":\"sim/b\",", "\"project\":\"elsewhere\","] {
+        let twice = payload.replacen('{', &format!("{{{field}"), 1);
+        let refused = case.check(&[signed(7, false, &twice)]).unwrap_err();
+        assert_eq!(refused.code, RefusalCode::GuardUnavailable);
+        assert!(refused.message.contains("duplicate field"), "{refused}");
+    }
+    // Read last-wins, the first revision named would be passed over for the one the board binds.
+    let twice = payload.replacen(
+        "\"design\":\"r7\"",
+        "\"design\":\"r1\",\"design\":\"r7\"",
+        1,
+    );
+    assert_ne!(twice, payload);
+    let refused = case.check(&[signed(7, false, &twice)]).unwrap_err();
+    assert_eq!(refused.code, RefusalCode::GuardUnavailable);
+    assert!(
+        refused.message.contains("input design is named twice"),
+        "{refused}"
+    );
 }
 
 #[test]

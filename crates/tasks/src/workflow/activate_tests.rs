@@ -186,6 +186,22 @@ fn a_definition_needing_what_this_release_cannot_run_is_unsupported() {
         supported_with(&attested.definition, &Host::local(), &attested.authorities),
         Ok(())
     );
+    // Its authorities bind the project the workflow names, and refuse a workflow naming none.
+    assert_eq!(bound(&attested), Ok(()));
+    for project in [None, Some(" ".to_string())] {
+        let unbound = Custom {
+            project,
+            ..attested.clone()
+        };
+        assert!(bound(&unbound).unwrap_err().contains("names none"));
+        assert_eq!(
+            bound(&Custom {
+                authorities: Vec::new(),
+                ..unbound
+            }),
+            Ok(())
+        );
+    }
     let mut later = attested.authorities.clone();
     later[0].contract = 2;
     assert!(

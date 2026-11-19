@@ -585,12 +585,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "workflow_observe" => {
             args!(signed: need);
             let signed: symphony_api::workflow::Signed = signed;
-            let (observed, authority) = match board.get()?.observe_authority(&signed)? {
-                crate::workflow::Observing::Accepted(a) => ("accepted", a),
-                crate::workflow::Observing::Unchanged(a) => ("unchanged", a),
-                crate::workflow::Observing::Conflicted(a) => ("conflicted", a),
-            };
-            json!({"observed": observed, "authority": authority})
+            board.get()?.observe_authority(&signed)?.answer()
         }
         "move" => {
             args!(slug: need, status: need, handle: actor, from: take, reason: take, on: take, why: take);

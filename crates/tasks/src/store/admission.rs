@@ -218,7 +218,9 @@ impl Store {
                 attesters: &decided.attesters,
                 accepted: &decided.accepted,
                 given: attestations,
-                now: at,
+                // This machine's time, never the store's, which its caller may pin (TASKS_NOW):
+                // an attestation's expiry is a bound only on a clock no caller sets.
+                now: super::now(),
             };
             let admitted =
                 admit::admit(context, &decided.facts, principal, host, request, &guarding, at)

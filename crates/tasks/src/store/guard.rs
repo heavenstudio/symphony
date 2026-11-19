@@ -30,6 +30,19 @@ pub enum Observing {
     Conflicted(Accepted),
 }
 
+impl Observing {
+    /// What the api and `workflow observe --json` answer: the outcome's name and the state
+    /// accepted after it.
+    pub fn answer(&self) -> serde_json::Value {
+        let (observed, authority) = match self {
+            Observing::Accepted(a) => ("accepted", a),
+            Observing::Unchanged(a) => ("unchanged", a),
+            Observing::Conflicted(a) => ("conflicted", a),
+        };
+        serde_json::json!({"observed": observed, "authority": authority})
+    }
+}
+
 /// The approval authorities the active activation commits and the state accepted from each.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct Authorities {
@@ -242,7 +255,8 @@ impl Store {
             attesters: &read.attesters,
             accepted: &read.accepted,
             given: if fresh.is_empty() { &recorded } else { fresh },
-            now: self.now(),
+            // The machine's time, as for an admission ([`Store::apply_attested`]).
+            now: super::now(),
         };
         guard::check(definition, edge, &binding, &guarding)
             .map_err(|refusal| Error::Refused(refusal.to_string()))

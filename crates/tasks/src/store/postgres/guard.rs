@@ -44,10 +44,17 @@ BEGIN
     IF held_ IS DISTINCT FROM v -> 'expected' THEN
         RAISE EXCEPTION 'stale';
     END IF;
+    -- A first observation locks no row above, so another first one may commit in between. At the
+    -- store's repeatable read that update is a serialization failure, tried again; the update
+    -- also takes the row only at the state this one read, so it holds at any isolation.
     INSERT INTO workflow (id, kind, body, at) VALUES (
         jsonb_build_array('authority', v ->> 'adapter'), 'authority', v -> 'body',
         (v ->> 'now')::double precision)
-        ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, at = EXCLUDED.at;
+        ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, at = EXCLUDED.at
+        WHERE workflow.body IS NOT DISTINCT FROM v -> 'expected';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'stale';
+    END IF;
 END;
 ",
     )

@@ -400,6 +400,9 @@ pub struct Attestation {
     pub activation_generation: u64,
     pub task_revision: u64,
     pub at: Pair,
+    /// Each input named once: a name given twice refuses the attestation, where a map read
+    /// keeps the last, so what it binds never depends on which of the two a reader keeps.
+    #[serde(deserialize_with = "named_once")]
     pub input_revisions: std::collections::BTreeMap<String, String>,
     pub principal: Attestee,
     pub result: Attested,
@@ -436,4 +439,38 @@ pub struct Observation {
     pub state: String,
     pub previous: Option<AuthorityState>,
     pub at: f64,
+}
+
+/// A map of text to text, refused when it names a key twice.
+fn named_once<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<std::collections::BTreeMap<String, String>, D::Error> {
+    struct Once;
+    impl<'de> serde::de::Visitor<'de> for Once {
+        type Value = std::collections::BTreeMap<String, String>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a map naming each input once")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut named = std::collections::BTreeMap::new();
+            while let Some((name, revision)) = map.next_entry::<String, String>()? {
+                match named.entry(name) {
+                    std::collections::btree_map::Entry::Vacant(at) => {
+                        at.insert(revision);
+                    }
+                    std::collections::btree_map::Entry::Occupied(at) => {
+                        let twice = format!("input {} is named twice", at.key());
+                        return Err(serde::de::Error::custom(twice));
+                    }
+                }
+            }
+            Ok(named)
+        }
+    }
+    deserializer.deserialize_map(Once)
 }

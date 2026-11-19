@@ -335,6 +335,8 @@ pub struct Guarding<'a> {
     pub attesters: &'a [Attester],
     pub accepted: &'a [Accepted],
     pub given: &'a [Signed],
+    /// The time the attestations are held to: the machine's clock where a store decides, never
+    /// one its caller can pin.
     pub now: f64,
 }
 
@@ -451,6 +453,15 @@ pub fn check(
                 ),
             }));
         };
+        // A guard is decided on the word of its own adapter's authority alone: the key that
+        // verified the attestation and the state it is held to below are that authority's.
+        if attestation.adapter != *adapter {
+            return Err(unavailable(format!(
+                "the attestation given for {guard_id} of {id} is from {}, and only {adapter} \
+                 attests {guard_id}",
+                attestation.adapter
+            )));
+        }
         bound(&attestation, guard_id, binding)?;
         if attestation.principal != attestee(binding.principal) {
             return Err(Refusal::new(
