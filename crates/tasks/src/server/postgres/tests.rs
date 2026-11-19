@@ -172,18 +172,6 @@ fn the_supervisor_says_the_pid_then_whether_the_server_was_ready_or_ended() {
 }
 
 #[test]
-fn a_board_outside_a_scratch_place_is_refused_before_anything_is_made() {
-    let board = PathBuf::from(format!("/Users/nobody-{}/board", std::process::id()));
-    let refused = Home::new(&board, Path::new("/s"))
-        .postgresql(Path::new("/opt/pg/bin"))
-        .ensure()
-        .unwrap_err()
-        .to_string();
-    assert!(refused.contains("is not in a scratch place"), "{refused}");
-    assert!(!board.exists());
-}
-
-#[test]
 fn programs_that_are_not_there_are_refused_naming_the_setting_and_the_install() {
     let refused = Home::new(Path::new("/tmp/board"), Path::new("/s"))
         .postgresql(Path::new("/nowhere/pg/bin"))

@@ -51,6 +51,11 @@ impl Postgres {
     /// Snapshots are kept until explicitly removed; a partial copy is never listed as one.
     pub fn snapshot(&self, now: f64) -> Result<PathBuf, ServerError> {
         let _locked = self.home.lock(Doing::Snapshotting)?;
+        self.snapshot_held(now)
+    }
+
+    /// [`Postgres::snapshot`] under the caller's starters' lock.
+    pub(in crate::server) fn snapshot_held(&self, now: f64) -> Result<PathBuf, ServerError> {
         self.home.allow_postgresql()?;
         self.stopped()?;
         let folder = self.home.dir.join(SNAPSHOTS);
@@ -109,6 +114,17 @@ impl Postgres {
                 data.display()
             )));
         }
+        let taking = self.staged(snapshot)?;
+        // The copied cluster holds the recovery generation its source had. This home is bound to
+        // none before that data is in place, so nothing written here takes a token read on the
+        // source until a rebind replaces the generation (`crate::store::recovery`).
+        self.home.revoke_recoveries()?;
+        fs::rename(&taking, &data).map_err(io("could not publish", &data))
+    }
+
+    /// `snapshot` copied whole beside the board's data, as `postgresql.restoring`, ready to be
+    /// moved in: refused for a cluster of another major, or one a server runs on.
+    fn staged(&self, snapshot: &Path) -> Result<PathBuf, ServerError> {
         let version_file = snapshot.join("PG_VERSION");
         let version =
             fs::read_to_string(&version_file).map_err(io("could not read", &version_file))?;
@@ -130,11 +146,96 @@ impl Postgres {
             Err(why) if why.kind() == std::io::ErrorKind::NotFound => {}
             Err(why) => return Err(io("could not remove", &pid)(why)),
         }
-        // The copied cluster holds the recovery generation its source had. This home is bound to
-        // none before that data is in place, so nothing written here takes a token read on the
-        // source until a rebind replaces the generation (`crate::store::recovery`).
-        self.home.revoke_recoveries()?;
-        fs::rename(&taking, &data).map_err(io("could not publish", &data))
+        Ok(taking)
+    }
+
+    /// `snapshot`, one of this board's own ([`Postgres::snapshots`]), put back over the board it
+    /// was taken from, as `by`, at `now`: the folder that keeps the cluster it replaced. The
+    /// board is held for it (the caller's hold, left standing, or one set now and released
+    /// after), its server stopped, the snapshot copied beside the data, then switched in under
+    /// the journal a move's switch runs under ([`crate::server::moving`]): the cluster in place
+    /// moved aside into `moved/`, the copy moved in, the commit, the home's recovery bindings
+    /// revoked. Nothing is deleted. A failure before the commit leaves the board on the cluster
+    /// it had; a journal an earlier call left is settled instead, which is then what this
+    /// answers (a committed restore finished) or refuses with (one undone).
+    pub fn restore_over(&self, snapshot: &Path, by: &str, now: f64) -> Result<PathBuf, ServerError> {
+        use crate::server::moving::{Journal, Kind, Left, Settled};
+        let home = &self.home;
+        let _locked = home.lock(Doing::Moving)?;
+        match home.settle(by)? {
+            Settled::Nothing => {}
+            Settled::Finished(journal) => return Ok(journal.aside),
+            Settled::Undone(journal) => {
+                return Err(ServerError::Io(format!(
+                    "a switch to {} had stopped before it committed, and is now undone: the \
+                     board is on {} as it was. Nothing was restored by this command; run it again",
+                    journal.to, journal.from
+                )));
+            }
+        }
+        home.allow_postgresql()?;
+        let canonical = |path: &Path| path.canonicalize().ok();
+        let own = self.snapshots()?;
+        if canonical(snapshot).is_none()
+            || !own.iter().any(|one| canonical(one) == canonical(snapshot))
+        {
+            return Err(ServerError::Io(format!(
+                "{} is no snapshot of this board ({}): nothing was restored",
+                snapshot.display(),
+                home.dir.join(SNAPSHOTS).display()
+            )));
+        }
+        if !self.data().exists() {
+            return Err(ServerError::Io(format!(
+                "the board has no PostgreSQL data at {} to restore over: a board with none is \
+                 restored into with `Postgres::restore`",
+                self.data().display()
+            )));
+        }
+        let took = home.held_for(by, "restoring a snapshot over the board")?;
+        let staging = home.dir.join(format!("{DATA}.restoring"));
+        let left = |why: ServerError| {
+            let _ = fs::remove_dir_all(&staging);
+            let released = if took {
+                home.release_as(by, None).map(|_| "and its hold is released")
+            } else {
+                Ok("and still held")
+            };
+            match released {
+                Ok(hold) => ServerError::Io(format!(
+                    "the snapshot was not restored: {why}. The board is on the cluster it had, \
+                     {hold}"
+                )),
+                Err(unreleased) => unreleased,
+            }
+        };
+        let staged = self
+            .stop_held()
+            .and_then(|_| self.stopped())
+            .and_then(|()| self.staged(snapshot));
+        let staged = match staged {
+            Ok(staged) => staged,
+            Err(why) => return Err(left(why)),
+        };
+        let engine = crate::server::Engine::PostgreSql;
+        let aside = home.aside(now, engine);
+        let journal = Journal::new(
+            Kind::Restore,
+            (engine, engine),
+            &aside,
+            &staged,
+            &staged,
+            (by, took),
+        );
+        match home.switch(journal) {
+            Ok(()) => {}
+            Err(Left::Unchanged(why)) => return Err(left(why)),
+            Err(Left::Standing(why)) => return Err(why),
+        }
+        if took {
+            home.release_as(by, None)?;
+        }
+        Ok(aside)
     }
 
     /// Reclaim the named database's dead space using PostgreSQL's rewrite. It needs temporary

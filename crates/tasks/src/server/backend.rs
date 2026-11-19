@@ -1,12 +1,15 @@
 //! The durable engine identity of a board home, beside its server record: `backend.json`,
 //! `{"format":1,"engine":"postgresql"}` or `surrealdb`. Absence preserves a SurrealDB board;
 //! malformed metadata, orphan PostgreSQL data, or data of the wrong engine refuse rather than
-//! falling back. Initialization is explicit, atomic under the starters' lock, and scratch-only.
+//! falling back. Initialization is explicit, atomic under the starters' lock, and scratch-only;
+//! an identity changes only by a move of the board's store ([`super::moving`]), and while that
+//! move's journal stands the home names no engine at all.
 
 use super::{Doing, Home, Postgres, Running, ServerError, io, postgres, scratch};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;
+use std::fmt;
 use std::path::Path;
 
 const FILE: &str = "backend.json";
@@ -17,6 +20,45 @@ const FILE: &str = "backend.json";
 pub enum Engine {
     SurrealDb,
     PostgreSql,
+}
+
+impl Engine {
+    /// The folder of its data in a board's home.
+    pub(super) fn data(self) -> &'static str {
+        match self {
+            Engine::SurrealDb => super::DATA,
+            Engine::PostgreSql => postgres::DATA,
+        }
+    }
+
+    /// The name of the folder of its data in a board's home.
+    pub fn data_folder(self) -> &'static str {
+        self.data()
+    }
+
+    /// Its name as the identity file and a command spell it.
+    pub fn word(self) -> &'static str {
+        match self {
+            Engine::SurrealDb => "surrealdb",
+            Engine::PostgreSql => "postgresql",
+        }
+    }
+
+    /// The engine a command names, as [`Engine::word`] spells it.
+    pub fn named(word: &str) -> Option<Engine> {
+        [Engine::SurrealDb, Engine::PostgreSql]
+            .into_iter()
+            .find(|engine| engine.word() == word)
+    }
+}
+
+impl fmt::Display for Engine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Engine::SurrealDb => "SurrealDB",
+            Engine::PostgreSql => "PostgreSQL",
+        })
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -57,7 +99,19 @@ fn present(path: &Path) -> Result<bool, ServerError> {
 }
 
 impl Home {
-    fn identity(&self) -> Result<Option<Engine>, ServerError> {
+    /// Refused while a move's or a restore's journal stands ([`super::moving`]): between its
+    /// steps the home holds an identity and data that are not one engine's, so nothing reads it
+    /// as either.
+    fn settled(&self) -> Result<(), ServerError> {
+        let journal = self.dir.join(super::moving::JOURNAL);
+        if present(&journal)? {
+            return Err(ServerError::Io(super::moving::unsettled(&journal)));
+        }
+        Ok(())
+    }
+
+    /// The identity file's engine, with no look at the data or at a journal: the move's own read.
+    pub(super) fn identity(&self) -> Result<Option<Engine>, ServerError> {
         let path = self.dir.join(FILE);
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
@@ -115,6 +169,7 @@ impl Home {
 
     /// The engine this board owns. No identity means SurrealDB, with no PostgreSQL data present.
     pub fn backend(&self) -> Result<Engine, ServerError> {
+        self.settled()?;
         let engine = self.identity()?.unwrap_or(Engine::SurrealDb);
         self.data_matches(engine)?;
         Ok(engine)
@@ -137,20 +192,37 @@ impl Home {
             return self.data_matches(engine);
         }
         self.data_matches(engine)?;
-        let path = self.dir.join(FILE);
-        let temporary = path.with_extension(format!("json.{}", std::process::id()));
+        self.identify(engine)
+    }
+
+    /// The identity written whole, whatever it was: a scratch home's first, or a move's switch.
+    /// The caller holds the starters' lock.
+    pub(super) fn identify(&self, engine: Engine) -> Result<(), ServerError> {
+        let text =
+            serde_json::to_vec(&Identity { format: 1, engine }).expect("an identity serializes");
+        self.publish(FILE, &text)
+    }
+
+    /// `text` as the file `name` of this home, whole and durable before this returns: written
+    /// and synced beside itself, renamed into place, then the home synced.
+    pub(super) fn publish(&self, name: &str, text: &[u8]) -> Result<(), ServerError> {
+        let path = self.dir.join(name);
+        let temporary = self.dir.join(format!("{name}.{}", std::process::id()));
         let mut file = OpenOptions::new()
             .create(true)
             .truncate(true)
             .write(true)
             .open(&temporary)
-            .map_err(io("could not write backend identity", &temporary))?;
-        let text =
-            serde_json::to_vec(&Identity { format: 1, engine }).expect("an identity serializes");
-        file.write_all(&text)
+            .map_err(io("could not write", &temporary))?;
+        file.write_all(text)
             .and_then(|()| file.sync_all())
-            .map_err(io("could not sync backend identity", &temporary))?;
-        fs::rename(&temporary, &path).map_err(io("could not publish backend identity", &path))?;
+            .map_err(io("could not sync", &temporary))?;
+        fs::rename(&temporary, &path).map_err(io("could not publish", &path))?;
+        self.synced()
+    }
+
+    /// This home's folder synced, so a rename in it is durable.
+    pub(super) fn synced(&self) -> Result<(), ServerError> {
         File::open(&self.dir)
             .and_then(|folder| folder.sync_all())
             .map_err(io("could not sync board home", &self.dir))
@@ -201,10 +273,21 @@ impl Home {
     }
 
     pub(super) fn allow_postgresql(&self) -> Result<(), ServerError> {
+        self.settled()?;
         if self.identity()? == Some(Engine::SurrealDb) {
             return Err(ServerError::Io(
                 "this board owns SurrealDB data: PostgreSQL was not started".into(),
             ));
+        }
+        // Outside a scratch place a board is on PostgreSQL only by its identity, which a move
+        // of its store writes: with none, no cluster is made beside whatever the board holds.
+        if self.identity()?.is_none() && !super::scratch(&self.dir) {
+            return Err(ServerError::Io(format!(
+                "the board in {} names no engine and is not in a scratch place: PostgreSQL \
+                 serves it once its store is moved there (`tasks database move postgresql`); \
+                 nothing was made or started",
+                self.dir.display()
+            )));
         }
         self.data_matches(Engine::PostgreSql)
     }

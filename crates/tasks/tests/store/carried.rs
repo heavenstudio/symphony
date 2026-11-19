@@ -44,6 +44,11 @@ fn seeded(f: &Fixture) {
     raw.row("counter", json!(["hold", "tools/one"]))
         .create(json!({"last": 0, "ts": 1_800_000_002.5}))
         .unwrap();
+    // A dispatcher's lease, which no move carries: on the new board a holder of this revision
+    // finds no lease of its own to write under, and the next one taken is past it.
+    raw.row("callback_lease", "amber-heron")
+        .create(json!({"until": 1_900_000_000.0, "revision": 12}))
+        .unwrap();
     // A fence of a command's own and the copy's counters, which no move carries.
     raw.row("counter", json!(["slots", "amber-heron"]))
         .create(json!({"last": 4}))
@@ -109,6 +114,12 @@ fn carried_across(from: Backend, to: Backend) {
         "a fence is not carried"
     );
     assert_eq!(raw.row("counter", "message").get().unwrap(), counters);
+    assert_eq!(raw.table("callback_lease").count().unwrap(), 0, "no lease is carried");
+    assert_eq!(
+        raw.row("callback_state", "amber-heron").field("revision").unwrap(),
+        json!(12),
+        "the revision the next lease is taken past"
+    );
     // Carried again, it is the same board: nothing doubled.
     target.store.carry(&carried).unwrap();
     assert_eq!(target.store.carried().unwrap(), carried);

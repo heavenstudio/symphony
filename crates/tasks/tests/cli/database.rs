@@ -239,8 +239,9 @@ fn a_held_board_refuses_every_command_naming_the_hold_until_its_release() {
     assert_eq!(code, 0);
     assert!(
         out.starts_with(concat!(
-            "usage: just tasks database [-h] [hold WHY | release [--of HOLDER]]\n",
-            "                           [--as ACTOR]\n"
+            "usage: just tasks database [-h]\n",
+            "                           [hold WHY | release [--of HOLDER] | move ENGINE |\n",
+            "                           restore SNAPSHOT] [--as ACTOR]\n"
         )),
         "{out}"
     );
@@ -560,4 +561,141 @@ fn another_handle_releases_a_hold_only_by_naming_its_holder() {
             &serde_json::json!("dunlin-probe")
         )
     );
+}
+
+/// The folder of the machine's PostgreSQL programs, as the project file names them.
+fn programs() -> PathBuf {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    symphony_board::server::postgres::discover_programs(&workspace).unwrap()
+}
+
+/// `alpha`'s PostgreSQL stopped when the case ends, whichever engine its board is on then.
+struct Stopped<'a>(&'a Alpha);
+
+impl Drop for Stopped<'_> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.0.root.join(".git/symphony/tasks/move.json"));
+        let home = self.0.home();
+        if let Some(hold) = home.held() {
+            let _ = home.release(&hold.by, None);
+        }
+        let _ = home.postgresql(&programs()).stop();
+    }
+}
+
+/// The board's store is moved to PostgreSQL and back by the command, a snapshot of its
+/// PostgreSQL put back over it, and each word it does not take refused with its usage.
+#[test]
+fn a_board_is_moved_between_engines_and_a_snapshot_restored_over_it_by_the_command() {
+    use symphony_board::NewTask;
+    use symphony_board::server::Engine;
+    let alpha = Alpha::new("database-move");
+    let _stopped = Stopped(&alpha);
+    std::fs::write(
+        alpha.root.join("symphony.toml"),
+        format!(
+            "[project]\nid = \"alpha\"\n[board]\npostgresql = {:?}\n",
+            programs().display().to_string()
+        ),
+    )
+    .unwrap();
+    let create = |slug: &str| {
+        symphony_board::cli::connect(&alpha.env())
+            .unwrap()
+            .create(&NewTask::new(slug, "A task", "owner"))
+            .unwrap();
+    };
+    create("sim/one");
+
+    for (words, said) in [
+        (vec!["database", "move", "oracle", "--as", "mover"], "move takes one ENGINE"),
+        (vec!["database", "move", "--as", "mover"], "move takes one ENGINE"),
+        (vec!["database", "restore", "--as", "mover"], "restore takes one SNAPSHOT"),
+        (
+            vec!["database", "move", "postgresql", "--of", "x", "--as", "mover"],
+            "--of names the holder of a hold to release",
+        ),
+    ] {
+        let (code, _, err) = alpha.run(&words);
+        assert_eq!(code, 2, "{words:?}");
+        assert!(err.contains(said) && err.contains("usage: just tasks database"), "{err}");
+    }
+    let (code, _, err) = alpha.run(&["database", "move", "postgresql"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("no session: pass --as HANDLE"), "{err}");
+    assert_eq!(alpha.home().backend().unwrap(), Engine::SurrealDb);
+
+    let (code, out, err) = alpha.run(&["database", "move", "postgresql", "--as", "mover"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("✔ the board is on PostgreSQL"), "{out}");
+    assert!(out.contains("rows compared with what was read"), "{out}");
+    assert!(out.contains("Its SurrealDB store is kept in"), "{out}");
+    assert!(out.contains("`just tasks recovery rebind` binds it again"), "{out}");
+    assert!(out.contains("The hold is released"), "{out}");
+    assert_eq!(alpha.home().backend().unwrap(), Engine::PostgreSql);
+    let (code, out, err) = alpha.run(&["list"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("sim/one"), "{out}");
+    let (code, _, err) = alpha.run(&["database", "move", "postgresql", "--as", "mover"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("is on PostgreSQL already: nothing was moved"), "{err}");
+
+    // A snapshot of it, a task made after, and the snapshot put back by its name.
+    assert_eq!(alpha.run(&["database", "hold", "a snapshot", "--as", "mover"]).0, 0);
+    let (code, _, err) = alpha.run(&["snapshot"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(alpha.run(&["database", "release", "--as", "mover"]).0, 0);
+    create("sim/two");
+    let snapshots = alpha.home().postgresql(&programs()).snapshots().unwrap();
+    let name = snapshots[0].file_name().unwrap().to_str().unwrap().to_string();
+    let (code, _, err) = alpha.run(&["database", "restore", "never-taken", "--as", "mover"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("never-taken is no snapshot of this board's PostgreSQL"), "{err}");
+    let (code, out, err) = alpha.run(&["database", "restore", &name, "--as", "mover"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("✔ the board's PostgreSQL is the snapshot"), "{out}");
+    assert!(out.contains("The cluster it replaced is kept in"), "{out}");
+    let (_, out, _) = alpha.run(&["list"]);
+    assert!(out.contains("sim/one") && !out.contains("sim/two"), "{out}");
+
+    // And back, under the caller's own hold, which the move leaves standing.
+    assert_eq!(alpha.run(&["database", "hold", "a move", "--as", "mover"]).0, 0);
+    let (code, out, err) = alpha.run(&["database", "move", "surrealdb", "--as", "mover"]);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("✔ the board is on SurrealDB"), "{out}");
+    assert!(out.contains("The board is still held, by the hold set before the move"), "{out}");
+    assert_eq!(alpha.run(&["database", "release", "--as", "mover"]).0, 0);
+    let (_, out, _) = alpha.run(&["list"]);
+    assert!(out.contains("sim/one"), "{out}");
+}
+
+/// Under the marker the board recipes set, a board outside a scratch place is not moved or
+/// restored, and nothing of it is touched.
+#[test]
+fn under_the_recipes_marker_a_board_outside_a_scratch_place_is_not_moved_or_restored() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("database-unasked-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let alpha = Alpha {
+        root: repository(&dir.join("alpha")),
+        machine: dir.join("machine"),
+    };
+    std::fs::create_dir_all(&alpha.machine).unwrap();
+    std::fs::write(alpha.root.join("symphony.toml"), "[project]\nid = \"alpha\"\n").unwrap();
+    let mut env = alpha.env();
+    env.vars.insert("SYMPHONY_UNASKED".into(), "1".into());
+    for words in [
+        ["database", "move", "postgresql", "--as", "mover"],
+        ["database", "restore", "2026-01-01T00-00-00Z", "--as", "mover"],
+    ] {
+        let ran = run(&env, &words, "");
+        assert_eq!(ran.code, 2, "{words:?}");
+        assert!(ran.err.contains("SYMPHONY_UNASKED is set"), "{}", ran.err);
+        assert!(ran.err.contains("is outside a scratch place"), "{}", ran.err);
+        assert!(ran.err.contains("Nothing was touched"), "{}", ran.err);
+    }
+    let folder = alpha.root.join(".git/symphony/tasks");
+    assert!(!folder.join("hold").exists() && !folder.join("moving").exists());
+    drop(alpha);
+    std::fs::remove_dir_all(&dir).unwrap();
 }

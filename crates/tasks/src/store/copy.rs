@@ -404,6 +404,39 @@ impl Store {
     }
 }
 
+impl Store {
+    /// The board's marker ([`Store::marker`]) moved past `other`, the marker of the board this
+    /// one was copied from: what it is then. A reader that kept that board's rows under its
+    /// marker, and reaches this one where that one was, never meets the same number over other
+    /// rows, however few commits this board has seen.
+    pub fn marker_past(&self, other: u64) -> Result<u64, Error> {
+        let now = self.marker()?;
+        if now > other {
+            return Ok(now);
+        }
+        // Each engine keeps the part of its marker no session owns in a row of its own.
+        let id = if self.database().is_postgresql() {
+            serde_json::json!(["board"])
+        } else {
+            serde_json::json!("board_structure")
+        };
+        let (raw, more) = (self.raw(), other - now + 1);
+        let row = raw.row("counter", id);
+        if row.exists()? {
+            row.add("last", more)?;
+        } else {
+            row.create(serde_json::json!({"last": more}))?;
+        }
+        let moved = self.marker()?;
+        if moved <= other {
+            return Err(Error::Refused(format!(
+                "the board's marker reads {moved} after it was moved past {other}"
+            )));
+        }
+        Ok(moved)
+    }
+}
+
 /// `error` with `more` after its words.
 fn said_after(mut error: Error, more: &str) -> Error {
     let (Error::Refused(message) | Error::Db(message)) = &mut error;
@@ -539,5 +572,77 @@ mod tests {
         expected["array"][1] = original["array"][1].clone();
         restore_numbers(&mut current, &original, &normalized);
         assert_eq!(current, expected);
+    }
+}
+
+/// The tables a move takes by the dump ([`Store::dump`], [`Store::copy`]).
+#[cfg(test)]
+const DUMPED: [&str; 11] = [
+    "task",
+    "link",
+    "session",
+    "role",
+    "message",
+    "delivery",
+    "delivery_key",
+    "barred_key",
+    "task_session",
+    "ask",
+    "usage",
+];
+
+/// The tables a move leaves, each with why nothing of the board is lost with it.
+#[cfg(test)]
+const LEFT: [(&str, &str); 7] = [
+    ("recovery", "the copy gives the new board a generation of its own"),
+    ("meta", "the opening that makes the new board writes its schema"),
+    ("copied_fields", "written by the copy, from the rows it copies"),
+    ("said", "written by the copy: each sender's last word"),
+    ("words", "written by the copy: the search indexes"),
+    (
+        "session_revision",
+        "a session's part of the marker, which the move raises past the old board's",
+    ),
+    (
+        "callback_lease",
+        "a dispatcher's lease of seconds, taken again; no dispatcher runs across a hold",
+    ),
+];
+
+#[cfg(test)]
+mod placed {
+    use super::*;
+
+    /// A table added to the board is copied, carried or left on purpose: one in none of the
+    /// three would be dropped by a move of the board to another engine without a word.
+    #[test]
+    fn every_table_of_the_board_is_copied_carried_or_left_with_its_reason() {
+        let placed: Vec<&str> = (DUMPED.into_iter())
+            .chain(CARRIED)
+            .chain(LEFT.iter().map(|(table, _)| *table))
+            .collect();
+        for table in crate::store::postgres::schema::TABLES {
+            assert_eq!(
+                placed.iter().filter(|name| **name == table.name).count(),
+                1,
+                "{} is placed once among DUMPED, CARRIED and LEFT (store/copy.rs): a table a \
+                 move neither copies nor carries is lost by it",
+                table.name
+            );
+        }
+        assert_eq!(placed.len(), crate::store::postgres::schema::TABLES.len());
+        assert!(LEFT.iter().all(|(_, why)| !why.is_empty()));
+    }
+
+    #[test]
+    fn a_carried_key_reads_alike_from_both_engines_and_only_a_hold_is_carried_of_counter() {
+        use serde_json::json;
+        assert_eq!(key("writer", &json!(["writer", ["host", "/bin"]])), json!(["host", "/bin"]));
+        assert_eq!(key("writer", &json!(["host", "/bin"])), json!(["host", "/bin"]));
+        assert_eq!(key("chat_event", &json!("7")), json!("7"));
+        assert!(hold(&json!(["hold", "sim/jump"])));
+        for other in [json!(["slots", "h"]), json!("message"), json!(["board", 7]), json!(null)] {
+            assert!(!hold(&other), "{other}");
+        }
     }
 }
