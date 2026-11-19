@@ -67,8 +67,7 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
    choice snapped to, focused or shown as current sits whole, clear of the fade. One that is not
    whole in the row's window (data-cut) is its empty shape, which takes no tap: no label is read
    in part, and the shape fading at the edge says there are more. */
-.scroll-row { --fade:20px; scrollbar-width:none; scroll-snap-type:x mandatory; scroll-padding-inline:var(--fade); overscroll-behavior-x:contain; }
-.scroll-row::-webkit-scrollbar { display:none; }
+.scroll-row { --fade:20px; scrollbar-width:none; scroll-snap-type:x mandatory; scroll-padding-inline:var(--fade); }
 .scroll-row > * { scroll-snap-align:start; }
 /* A phone's header is two rows that never wrap further: the project's name, the switch and the
    buttons, then the pages spread across the width. Pages that do not fit scroll (.scroll-row). A
@@ -89,14 +88,14 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
   #appearance { width:32px; height:32px; }
   /* The row's own padding is the room a focused page's outline needs (2px, 2px off it), taken
      back from the header around it. */
-  .app-pages { order:10; flex-basis:100%; gap:clamp(0px,calc(4vw - 13.6px),2px); overflow-x:auto; padding:4px; margin:0 -4px; }
-  /* Narrow padding that the spread widens again, and a size that follows the window from 390
-     wide down to 320, so the Symphony's seven pages show whole at both; a project's own beyond
-     them scroll. */
-  .app-pages > a { flex:1 0 auto; text-align:center; padding:6px clamp(2.5px,calc(4vw - 12.1px),3px); font-size:clamp(.71875rem,3.6vw,.8125rem); }
+  .app-pages { order:10; flex-basis:100%; gap:0; overflow-x:auto; padding:4px; margin:0 -4px; }
+  /* The narrowest padding, which the spread widens with whatever room the row has, and a size
+     that follows the window from 390 wide down to 320, so the Symphony's seven pages show whole
+     at both; a project's own beyond them scroll. */
+  .app-pages > a { flex:1 0 auto; text-align:center; padding:6px 2.5px; font-size:clamp(.71875rem,3.6vw,.8125rem); }
   .app-pages > a:only-child { flex:none; }
   /* The marks are read here alone: a desk's row scrolls nowhere. */
-  .scroll-row[data-overflow]:not([data-overflow=none]) { mask-image:linear-gradient(to right,var(--s,#000),#000 var(--fade),#000 calc(100% - var(--fade)),var(--e,#000)); }
+  .scroll-row[data-overflow]:not([data-overflow=none]) { mask-image:linear-gradient(90deg,var(--s,#000),#000 var(--fade),#000 calc(100% - var(--fade)),var(--e,#000)); }
   .scroll-row:not([data-overflow=end]) { --s:transparent; }
   .scroll-row:not([data-overflow=start]) { --e:transparent; }
   .scroll-row > [data-cut] { color:transparent !important; border-color:var(--border) !important; pointer-events:none; }
@@ -105,8 +104,8 @@ html { scroll-padding-bottom:calc(var(--dock) + 8px); }
 /* A narrow phone draws the bell alone, its name kept for a reader that is told it, so the first
    row has room for the project's name. */
 @media (max-width:374px) {
-  #bell { padding:0 8px; }
-  #bell .bell-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+  #bell { padding:0 8px; gap:0; }
+  #bell .bell-label { font-size:0; }
 }
 /* A plugin component's wrapper names its kind for a project stylesheet and lays out nothing. */
 [data-component] { display:contents; }

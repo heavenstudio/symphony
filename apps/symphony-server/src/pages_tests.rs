@@ -366,7 +366,7 @@ fn a_phones_header_is_the_clients() {
         .find("@media (max-width:760px) {\n  .app-header")
         .expect("the frame's phone header");
     assert!(
-        style[frame..].contains(".app-pages { order:10; flex-basis:100%; gap:clamp("),
+        style[frame..].contains(".app-pages { order:10; flex-basis:100%; gap:0;"),
         "the pages' row of its own"
     );
     assert!(!PAGES.contains(".app-header"), "{PAGES}");
