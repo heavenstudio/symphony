@@ -66,11 +66,19 @@ fn only_the_orchestrator_of_a_blocked_sessions_work_hears_it() {
     }
 }
 
+/// Looks a quarter minute apart: the third failing one ends hc's outage stretch.
+fn quarter_minutes(polls: usize) -> Watch {
+    Watch {
+        interval: 15.0,
+        ..Watch::polls(polls)
+    }
+}
+
 #[test]
 fn hc_absent_is_said_once() {
     let m = Monitor::new("hc-absent");
     let (orch, _) = launched_child(&m);
-    m.watch(&orch, Watch::polls(5), &idle);
+    m.watch(&orch, quarter_minutes(6), &idle);
     assert_eq!(
         watched(&m),
         [
@@ -87,10 +95,11 @@ fn hc_failing_is_said_once_and_the_block_it_hid_is_said_when_it_answers() {
     let set = |text: String| fs::write(&state, text).unwrap();
     let blocked = json!({ "terminals": [child_pane("blocked")] }).to_string();
     set("not json".into());
-    m.watch(&orch, Watch::polls(5), &|_, n| match n {
-        2 => set(blocked.clone()),
+    // Failing at the looks at 0, 15 and 30 s, answering at 45, failing at 60, 75 and 90, answering
+    // at 105.
+    m.watch(&orch, quarter_minutes(7), &|_, n| match n {
+        2 | 6 => set(blocked.clone()),
         3 => set("not json".into()),
-        4 => set(blocked.clone()),
         _ => {}
     });
     let lines = watched(&m);
@@ -101,7 +110,8 @@ fn hc_failing_is_said_once_and_the_block_it_hid_is_said_when_it_answers() {
     let block = format!(
         "BLOCKED {child} sim/a t1 — observed waiting on an approval or a question; inspect its terminal before acting"
     );
-    // Two outages, each said once; the block once, not again after the second.
+    // Two outages, each said once at the end of its stretch; the block once, not again after the
+    // second.
     assert_eq!(
         said,
         [
