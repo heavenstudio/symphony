@@ -284,6 +284,19 @@ the pull request at the head given (`merge_method` `merge`), titled `Merge branc
 land's own merge is, which the release cadence counts; its message names the head, the pull
 request and the commit imported.
 
+The land fetches the upstream itself for every head it delivers, ordinary tasks as well as
+imports, to refuse a task head that holds its commits
+([TASKS](TASKS.md#an-import-delivered-by-a-pull-request)). It fetches with git and the
+machine's own credentials; the adapter's token reads the upstream through GitHub's API only.
+While `[land.upstream]` is set, an upstream that machine cannot fetch stops every delivery of the
+repository before `publish` is asked. The line names the upstream and git's reason, and the
+lander lands again once it answers. A renamed repository keeps answering through GitHub's
+redirect until another takes its old name. An address that no longer answers, such as a
+repository deleted or made private, is corrected on the default branch, but no delivery makes
+that correction, since its land is refused too. [The protection below](#the-protection-a-delivery-needs)
+lets only the landing App update the branch, so the repository's administrator merges the
+correction at GitHub, as the adapter edits no rule.
+
 What this does not establish: that a history kept private is never pushed elsewhere. An import
 is the one operation that brings another repository's commits in, and a task head holding them
 is refused, but a branch that copies a private history's files as commits of its own is a task,

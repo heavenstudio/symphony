@@ -1,10 +1,23 @@
 //! A land delivered by pull request of a head that imports the project's upstream
 //! (`[land.upstream]`, docs/TASKS.md "Imports"): merged by a merge commit only where the project
 //! file, the head's assessment at that head and the history fetched from the upstream agree, one
-//! import after another; a task beside it squashed as ever; and what refuses before anything is
-//! asked, what is held once merged, and what a lost answer or a refused merge leaves.
+//! import after another; a task beside it squashed as ever, and refused with an import while the
+//! upstream does not answer; and what refuses before anything is asked, what is held once merged,
+//! and what a lost answer or a refused merge leaves.
 
 use super::*;
+use std::net::{TcpListener, TcpStream};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use symphony_board::land::{NETWORK, land_by_with_clock};
+
+/// What the land's line says after the reason an upstream was not fetched: that every land reads
+/// it, and what the lander does.
+const UNFETCHED: &str = "every land reads it while symphony.toml on main names it \
+                         ([land.upstream]), a task's as well as an import's, so nothing landed. \
+                         Land again once it answers; an address that no longer answers is \
+                         corrected on main by the project's owner, as no land delivers it";
 
 /// The project file of a project that delivers by pull request and imports `upstream`'s main.
 fn manifest(upstream: &Path) -> String {
@@ -221,6 +234,72 @@ fn a_task_in_a_project_that_imports_is_squashed_as_ever() {
         ("task", tip.as_str())
     );
     assert!(receipt.import.is_none());
+}
+
+#[test]
+fn an_upstream_that_does_not_answer_refuses_a_tasks_land_as_well_and_publishes_nothing() {
+    // An address with no repository there: git says so at once.
+    let r = Repo::new();
+    let gone = r.dir.join("gone");
+    project_file(&r, &manifest(&gone));
+    let bare = remote(&r);
+    let before = head(&bare, "main");
+    let (people, ..) = ready(&r, SLUG);
+    let (line, ..) = refused_unasked(&r, &bare, &people.orch, &before);
+    let named = format!("the upstream {} was not fetched: ", gone.display());
+    assert!(line.starts_with(&named), "{line}");
+    assert!(line.ends_with(&format!(": {UNFETCHED}")), "{line}");
+
+    // An address that takes the fetch and never answers: refused once the land's network timeout
+    // passes, the line naming the upstream and not origin.
+    let r = Repo::new();
+    let silent = TcpListener::bind("127.0.0.1:0").unwrap();
+    silent.set_nonblocking(true).unwrap();
+    let url = format!("git://{}/upstream", silent.local_addr().unwrap());
+    let upstream = format!("[land.upstream]\nurl = \"{url}\"\nbranch = \"main\"\n");
+    project_file(&r, &format!("{DELIVERS}{upstream}"));
+    let bare = remote(&r);
+    let before = head(&bare, "main");
+    let (people, ..) = ready(&r, SLUG);
+    // Time stands still until the address holds the fetch; from then on each look at the clock is
+    // past the network timeout of any deadline read before it.
+    let (began, held, ticks) = (Instant::now(), Mutex::new(None), AtomicU64::new(0));
+    let clock = || {
+        let mut held = held.lock().unwrap();
+        if held.is_none() {
+            *held = silent.accept().ok().map(|(fetch, _): (TcpStream, _)| fetch);
+        }
+        let looks = match *held {
+            Some(_) => ticks.fetch_add(1, Ordering::SeqCst) + 1,
+            None => 0,
+        };
+        began + (NETWORK + Duration::from_secs(1)) * u32::try_from(looks).unwrap()
+    };
+    let host = Host::new(&r, &bare);
+    let env = landing(&r, &[]);
+    let result = land_by_with_clock(
+        &r.board.store,
+        &env,
+        SLUG,
+        &people.orch,
+        &mut Vec::new(),
+        &host,
+        &clock,
+    );
+    let line = result.map_err(refusal).unwrap_err();
+    assert!(
+        held.lock().unwrap().is_some(),
+        "the fetch never reached {url}"
+    );
+    assert_eq!(
+        line,
+        format!(
+            "the upstream {url} was not fetched: no answer within {} s: {UNFETCHED}",
+            NETWORK.as_secs()
+        )
+    );
+    assert!(host.verbs().is_empty(), "{:?}", host.verbs());
+    assert_nothing_landed(&r, &bare, &before);
 }
 
 #[test]
