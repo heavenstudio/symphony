@@ -88,9 +88,10 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
         ),
         "It blocks every release, so it is staffed before anything else".into(),
         "never a test or check loosened".into(),
-        "a test red on the machine's load (it passes alone, or fails on a wall-clock bound, a \
-         sleep-ordered step or a timeout under load) is discarded in this fix instead, as RULES.md \
-         `tests/no-test-fails-on-load` says"
+        "A test the run reran alone that passed is no red, and has a task of its own; a test red \
+         here failed alone too, or was not rerun. One red on the machine's load all the same (it \
+         fails on a wall-clock bound, a sleep-ordered step or a timeout under load) is discarded \
+         in this fix instead, as RULES.md `tests/no-test-fails-on-load` says"
             .into(),
         "What its fix needs to land is read at review by an assessor, before any reviewer \
          (`/assess-task`): a fix in code that leaves the failing tests unchanged needs its tests"

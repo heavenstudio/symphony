@@ -238,11 +238,11 @@ rerun's time is, so this, with the one scheduler and the time per test
 
 ### B. The run reruns each failure alone
 
-Chosen on [its card](../DECISIONS.md#release-run-reruns-alone), and not built yet. The run
-already knows the command that reruns each failure alone, and writes it into the red it files
-([RELEASES](../RELEASES.md#the-release-run), step 5). It runs them itself: once the tests have
-ended, each test the run named failed is run again alone, one at a time, in the same checkout
-and build.
+Chosen on [its card](../DECISIONS.md#release-run-reruns-alone), and built
+([RELEASES](../RELEASES.md#the-release-run), step 5, `crates/symphony-build/src/release/alone.rs`).
+The run knew the command that reruns each failure alone, and wrote it into the red it filed; it
+runs them itself: once the tests have ended, each test the run named failed is run again alone,
+one at a time, in the same checkout and build (`tools/test-lanes.sh --alone`).
 
 - **Fails alone:** red, as now, its task saying it failed twice.
 - **Passes alone:** not a red of the release. The run says both results and the load at each,
