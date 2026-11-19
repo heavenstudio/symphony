@@ -40,7 +40,7 @@ fn releases_are_ordered_oldest_first_by_day_then_number_each_once() {
             "release-2026-11-13"
         ]
     );
-    assert!(oldest_first([]).is_empty());
+    assert_eq!(oldest_first([]).len(), 0);
 }
 
 #[test]
@@ -163,7 +163,9 @@ fn one_publication_runs_at_a_time_and_a_second_asks_nothing() {
     let lines = asking.publish(&wanted, &releases);
     assert_eq!(lines.len(), 1);
     assert!(
-        lines[0].starts_with("another publication holds ") && lines[0].ends_with(AGAIN),
+        !lines[0].0
+            && lines[0].1.starts_with("another publication holds ")
+            && lines[0].1.ends_with(AGAIN),
         "{lines:?}"
     );
     assert!(!folder.join(LEDGER).exists());
@@ -172,7 +174,10 @@ fn one_publication_runs_at_a_time_and_a_second_asks_nothing() {
     let lines = asking.publish(&["release-2026-11-13".to_string()], &releases);
     assert_eq!(
         lines,
-        ["release-2026-11-13: no release of that name is tagged here"]
+        [(
+            false,
+            "release-2026-11-13: no release of that name is tagged here".to_string()
+        )]
     );
     assert!(!folder.join(LEDGER).exists());
     let _ = fs::remove_dir_all(&folder);

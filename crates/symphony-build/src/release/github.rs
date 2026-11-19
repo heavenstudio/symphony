@@ -233,10 +233,14 @@ impl Asking<'_> {
     }
 
     /// Each of `wanted` asked for, oldest first, among `releases` (those tagged here, newest
-    /// first, each with its commit), and the ledger kept after each: one line for each release.
-    /// One publication runs at a time: with another running, nothing is asked and each is left
-    /// as the ledger has it.
-    pub(crate) fn publish(&self, wanted: &[String], releases: &[(Release, String)]) -> Vec<String> {
+    /// first, each with its commit), and the ledger kept after each: one line for each release,
+    /// with whether it is published. One publication runs at a time: with another running,
+    /// nothing is asked and each is left as the ledger has it.
+    pub(crate) fn publish(
+        &self,
+        wanted: &[String],
+        releases: &[(Release, String)],
+    ) -> Vec<(bool, String)> {
         let locked = fs::create_dir_all(self.folder).and_then(|()| {
             (OpenOptions::new().create(true).truncate(false).write(true))
                 .open(self.folder.join(LOCK))
@@ -244,9 +248,12 @@ impl Asking<'_> {
         let lock = match locked.map(|file| file.try_lock().map(|()| file)) {
             Ok(Ok(file)) => file,
             _ => {
-                return vec![format!(
-                    "another publication holds {}: nothing is asked; {AGAIN}",
-                    self.folder.join(LOCK).display()
+                return vec![(
+                    false,
+                    format!(
+                        "another publication holds {}: nothing is asked; {AGAIN}",
+                        self.folder.join(LOCK).display()
+                    ),
                 )];
             }
         };
@@ -255,7 +262,10 @@ impl Asking<'_> {
         for tag in oldest_first(wanted.iter().map(String::as_str)) {
             let Some((_, commit)) = releases.iter().find(|(release, _)| release.name() == tag)
             else {
-                lines.push(format!("{tag}: no release of that name is tagged here"));
+                lines.push((
+                    false,
+                    format!("{tag}: no release of that name is tagged here"),
+                ));
                 continue;
             };
             let latest = (releases.first()).is_some_and(|(newest, _)| newest.name() == tag);
@@ -274,13 +284,13 @@ impl Asking<'_> {
                 },
             };
             lines.push(if asked.pending() {
-                format!("{}; {AGAIN}", asked.line(&tag))
+                (false, format!("{}; {AGAIN}", asked.line(&tag)))
             } else {
-                asked.line(&tag)
+                (true, asked.line(&tag))
             });
             ledger.releases.insert(tag, asked);
             if let Err(why) = ledger.write(self.folder) {
-                lines.push(format!("the ledger was not kept: {why}"));
+                lines.push((false, format!("the ledger was not kept: {why}")));
             }
         }
         drop::<File>(lock);

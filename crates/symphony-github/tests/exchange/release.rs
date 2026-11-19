@@ -82,7 +82,7 @@ fn a_tag_is_published_once_with_its_notes_and_nothing_uploaded() {
     assert_eq!(made["make_latest"], "true");
     // One write, the release's creation: no asset, no edit, no tag.
     assert_eq!(writes(&rig), [format!("POST {RELEASES}")]);
-    assert!(rig.github.tags_made().is_empty());
+    assert_eq!(rig.github.tags_made().len(), 0);
     assert_eq!(events(&rig), [Event::Intent, Event::Ack]);
     let state = rig.state();
     assert_eq!(state.binding.unwrap().repository_id, 77);
@@ -158,7 +158,7 @@ fn a_lost_answer_not_found_at_once_is_unknown_and_the_next_run_finds_it() {
             .contains("its answer was lost"),
         "{answer}"
     );
-    assert!(rig.state().releases.is_empty());
+    assert_eq!(rig.state().releases.len(), 0);
     assert_eq!(events(&rig), [Event::Intent, Event::Unknown]);
 
     let next = ask(&rig, &request(TAG, COMMIT));
@@ -196,7 +196,7 @@ fn turned_off_or_not_serving_releases_asks_github_nothing() {
     rig.settings.set(Some("releases = \"sometimes\"\n".into()));
     let answer = ask(&rig, &request(TAG, COMMIT));
     assert_eq!(answer["state"], "refused");
-    assert!(rig.github.asked().is_empty());
+    assert_eq!(rig.github.asked().len(), 0);
 }
 
 #[test]
@@ -218,7 +218,7 @@ fn another_repository_than_the_one_bound_is_refused() {
     gone.github.rename("m");
     let answer = ask(&gone, &request(TAG, COMMIT));
     assert_eq!(answer["state"], "refused", "{answer}");
-    assert!(writes(&gone).is_empty());
+    assert_eq!(writes(&gone).len(), 0);
 }
 
 #[test]
@@ -248,12 +248,12 @@ fn a_tag_github_does_not_hold_at_the_commit_is_never_made_by_a_release() {
             (answer["why"].as_str().unwrap()).contains(&format!("names {OTHER}")),
             "{answer}"
         );
-        assert!(writes(&rig).is_empty());
-        assert!(rig.github.tags_made().is_empty());
+        assert_eq!(writes(&rig).len(), 0);
+        assert_eq!(rig.github.tags_made().len(), 0);
         assert!(events(&rig).is_empty(), "nothing was dispatched");
     }
-    assert!(writes(&rig).is_empty());
-    assert!(rig.github.tags_made().is_empty());
+    assert_eq!(writes(&rig).len(), 0);
+    assert_eq!(rig.github.tags_made().len(), 0);
 }
 
 #[test]
@@ -270,7 +270,7 @@ fn a_request_that_names_no_release_or_commit_is_refused_before_anything_is_asked
         let answer = ask(&rig, &request(tag, commit));
         assert_eq!(answer["state"], "refused", "{tag:?} {commit:?}: {answer}");
     }
-    assert!(rig.github.asked().is_empty());
+    assert_eq!(rig.github.asked().len(), 0);
 
     // A request that is no JSON object is the command's own refusal.
     let file = rig.dir.0.join("release.json");
@@ -330,12 +330,12 @@ fn a_github_that_does_not_answer_makes_nothing_and_a_later_run_publishes() {
             answer["state"], wanted,
             "{method} {path} {fault:?}: {answer}"
         );
-        assert!(rig.github.releases().is_empty());
-        assert!(rig.state().releases.is_empty());
+        assert_eq!(rig.github.releases().len(), 0);
+        assert_eq!(rig.state().releases.len(), 0);
         if method == "POST" {
             assert_eq!(events(&rig), [Event::Intent, Event::Failed]);
         } else {
-            assert!(events(&rig).is_empty());
+            assert_eq!(events(&rig).len(), 0);
         }
         let later = ask(&rig, &request(TAG, COMMIT));
         assert_eq!(later["state"], "published", "{later}");
@@ -372,7 +372,7 @@ fn a_release_made_meanwhile_is_found_and_one_removed_there_is_not_made_again() {
             .contains("it is not made again"),
         "{answer}"
     );
-    assert!(rig.github.releases().is_empty());
+    assert_eq!(rig.github.releases().len(), 0);
 }
 
 #[test]
@@ -381,5 +381,41 @@ fn a_token_file_that_is_not_kept_right_is_refused_and_shown_nowhere() {
     std::fs::remove_file(&rig.token_file).unwrap();
     let answer = ask(&rig, &request(TAG, COMMIT));
     assert_eq!(answer["state"], "refused", "{answer}");
-    assert!(rig.github.asked().is_empty());
+    assert_eq!(rig.github.asked().len(), 0);
+}
+
+#[test]
+fn a_second_writer_of_the_state_and_an_annotated_tag_not_answered_make_nothing() {
+    // Another run holds the state's lock: nothing is asked of GitHub.
+    let rig = rig("release-locked");
+    assert_eq!(ask(&rig, &request(TAG, COMMIT))["state"], "published");
+    let asked = rig.github.asked().len();
+    {
+        let _held = rig.store().lock().unwrap();
+        let answer = ask(&rig, &request(TAG, COMMIT));
+        assert_eq!(answer["state"], "unavailable", "{answer}");
+        assert!(
+            answer["why"]
+                .as_str()
+                .unwrap()
+                .contains("one writer at a time"),
+            "{answer}"
+        );
+    }
+    assert_eq!(rig.github.asked().len(), asked);
+
+    // The tag's own object is not answered: unavailable, and nothing is dispatched.
+    let rig = rig_with_tag_fault();
+    let answer = ask(&rig, &request(TAG, COMMIT));
+    assert_eq!(answer["state"], "unavailable", "{answer}");
+    assert_eq!(writes(&rig).len(), 0);
+    assert_eq!(events(&rig).len(), 0);
+    assert_eq!(ask(&rig, &request(TAG, COMMIT))["state"], "published");
+}
+
+fn rig_with_tag_fault() -> Rig {
+    let rig = rig("release-tag-object");
+    rig.github
+        .fault("GET", "/repos/o/n/git/tags/", Fault::Status(500, vec![]));
+    rig
 }

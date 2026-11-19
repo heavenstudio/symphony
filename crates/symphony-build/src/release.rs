@@ -964,12 +964,10 @@ fn github_by_hand(
         until: Bound::until(Instant::now() + GITHUB_BY_HAND),
     };
     let lines = asking.publish(wanted, &ordered);
-    for line in &lines {
+    for (_, line) in &lines {
         let _ = writeln!(out, "release: GitHub: {line}");
     }
-    let done =
-        |line: &String| line.starts_with("published ") || line.contains(" is there already: ");
-    i32::from(!lines.iter().all(done))
+    i32::from(!lines.iter().all(|(published, _)| *published))
 }
 
 /// This repository's release tags, each with the commit it tags.
@@ -1469,7 +1467,7 @@ impl Refreshing<'_> {
             now: self.options.now,
             until: Bound::hearing(Instant::now() + GITHUB, self.heard),
         };
-        for line in asking.publish(&wanted, &ordered) {
+        for (_, line) in asking.publish(&wanted, &ordered) {
             let _ = writeln!(out, "release: GitHub: {line}");
         }
     }

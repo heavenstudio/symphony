@@ -346,7 +346,7 @@ fn a_red_run_and_a_run_under_no_push_ask_for_nothing() {
     );
     let out = fixture.run(NOW + 120.0, &["--refresh", "--no-push"], 0);
     assert_eq!(said(&out), ["not published: --no-push publishes nothing"]);
-    assert!(stand.asked().is_empty());
+    assert_eq!(stand.asked().len(), 0);
     assert!(!fixture.records().join("github.json").exists());
 }
 
