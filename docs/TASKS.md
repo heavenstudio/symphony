@@ -2571,7 +2571,10 @@ agree:
 - **The history** fetched now from the upstream's address: U on the upstream's branch; the
   default branch **B** sharing a commit with it; where B and that branch last met an ancestor of
   U, so U is newer than all B holds of it; U not in B already; U merged by a commit on H's own
-  first-parent line; and every other commit H adds either that line's own or U's.
+  first-parent line; and every other commit H adds either that line's own or U's. An upstream
+  whose branch was rewritten meets B at an older commit, which this does not tell from new
+  history: the import's own check that U continues the last import finds it
+  ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md#the-import), step 2), and its review.
 
 Each refusal names who acts, before anything is published. With an upstream named, a task head
 that holds any of its commits is refused, never squashed, and the refusal names the newest
