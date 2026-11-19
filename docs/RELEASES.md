@@ -887,9 +887,9 @@ the hour, and its green release refreshes the server and its projects
   landing waits, approved, while a run or the release candidate holds the release (`just release
   --status`: `next run: in progress`, or a candidate open), since a run started then judges
   nothing of main's newest commit ([main while it is open](#main-while-it-is-open)), and lands
-  once neither does. A second one waits until `current` names a release serving the first's
-  schema (`--status`'s `machine:` and `last refresh:` lines), so the board is never two schemas
-  ahead of the server, which reads nothing of a board that far ahead.
+  once neither does. A second one does not wait for `current` to name a release serving the
+  first's schema (the owner, 2026-11-19: "remove this rule"): the board may then stand more than
+  one schema ahead of the machine's server until a release at its schema is `current`.
 
 ## The refresh
 
