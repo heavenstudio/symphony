@@ -5,7 +5,8 @@ when, how long a board cannot be written, how to go back, and what the two store
 by side. [What a live move waits for](#the-choice) is decided: the pieces not built yet, a clean
 rehearsal, and the memory peak found and answered: it is found, under the target on a board of
 today's size, and over it on one ten times the size, which the card `board-pg-memory-at-ten-times`
-([DECISIONS](../DECISIONS.md)) puts to the owner before any live move. Today PostgreSQL serves only scratch boards
+([DECISIONS](../DECISIONS.md)) decides: a board of today's size may move once the pieces and the
+rehearsal are done, with the ten-times peak left open. Today PostgreSQL serves only scratch boards
 ([POSTGRESQL](../POSTGRESQL.md)), and no command here moves a live one.
 
 ## What the comparison showed
@@ -150,9 +151,10 @@ prerequisites, and the memory peak.
   scratch boards ([what the comparison showed](#what-the-comparison-showed)). It was no setting,
   and one connection per command only in that a backend keeps its memory for its command's
   life: the fix is in what the reads ask the server to build. On a board ten times the size it
-  is 1.7 to 1.8 GiB, over the target, which is unchanged: the live move stays held until the
-  owner answers the card `board-pg-memory-at-ten-times` ([DECISIONS](../DECISIONS.md)), and the result on
-  today's board does not stand in for it.
+  is 1.7 to 1.8 GiB, over the target, which is unchanged. The card `board-pg-memory-at-ten-times`
+  ([DECISIONS](../DECISIONS.md)) decides it, B: the memory peak no longer holds the move of a
+  board of today's size, which waits for the prerequisites and the rehearsal alone, and the
+  ten-times peak stays an open limit, not a target met.
 
 The target was part of what the store was approved with. The cutover is the one step that takes
 a hold on a live board and a second hold to undo. Everything before it is free to do and free to
