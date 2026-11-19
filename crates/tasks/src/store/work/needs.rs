@@ -28,8 +28,9 @@ impl Store {
     /// `catalogue` ([`Catalogue::needs`]: [`crate::stamps::NONE`] alone for none), with a line on its
     /// thread saying them, the tip read and what it needed before: its last assessment's stamps,
     /// else the catalogue's defaults ([`Needs::line`]). Refused: an empty reason, a stamp the
-    /// catalogue lacks, a task done or cancelled, and a writer that executed the task or work under
-    /// it, orchestrates or orchestrated it, or filed it ([`Held::unfresh`]).
+    /// catalogue lacks, an import named with no tip or not as a whole commit, a task done or
+    /// cancelled, and a writer that executed the task or work under it, orchestrates or
+    /// orchestrated it, or filed it ([`Held::unfresh`]).
     pub fn set_needs(
         &self,
         slug: &str,
@@ -45,15 +46,33 @@ impl Store {
             ));
         }
         let stamps = catalogue.needs(&needs.stamps).map_err(refused)?;
-        let tip = (needs.tip.as_deref())
-            .map(str::trim)
-            .filter(|tip| !tip.is_empty())
-            .map(str::to_string);
+        let named = |field: &Option<String>| {
+            (field.as_deref())
+                .map(str::trim)
+                .filter(|named| !named.is_empty())
+                .map(str::to_string)
+        };
+        let (tip, import) = (named(&needs.tip), named(&needs.import));
+        if let Some(import) = &import {
+            if tip.is_none() {
+                return Err(refused(
+                    "an import is named at the head the assessment read (--tip TIP): it binds \
+                     that head to the upstream commit it imports"
+                        .into(),
+                ));
+            }
+            if import.len() != 40 || !import.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(refused(format!(
+                    "an import names its upstream commit whole, not {import:?}"
+                )));
+            }
+        }
         let written = Needs {
             stamps,
             tip,
             by: handle.into(),
             why: why.into(),
+            import,
         };
         let value = serde_json::to_value(&written).expect("needs are JSON");
         let held: Held = self.ever_held(slug)?;

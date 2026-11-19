@@ -175,6 +175,7 @@ fn the_needs_are_read_from_the_boards_own_field_alone() {
         tip: Some("1a2b3c4d5e6f".into()),
         by: "able-otter".into(),
         why: "a store query and its test, no page or wire".into(),
+        import: None,
     };
     let fields = |plugin: &str, value: Value| {
         BTreeMap::from([(
@@ -209,6 +210,7 @@ fn the_threads_line_says_the_stamps_the_tip_read_what_it_needed_before_and_who()
         tip: Some("1a2b3c4d5e6f7a8b".into()),
         by: "able-otter".into(),
         why: "a store query and its test, no page or wire".into(),
+        import: None,
     };
     assert_eq!(
         needs.line(&strings(&["review"])),

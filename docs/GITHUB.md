@@ -37,10 +37,11 @@ refusal as turned off.
 | `checks_app_id` | none | the number of the GitHub App that token is of: a check by any other is not read as the adapter's |
 | `landing_app_id` | none | the number of the GitHub App `token_file`'s token is of where a land is delivered: the one actor [the default branch's rules](#the-protection-a-delivery-needs) let update it, never `checks_app_id` |
 | `close_issues` | `false` | whether a delivered task's mapped issue is closed once the board closed the task |
+| `upstream_id` | none | the number at GitHub of the one repository [an import](#delivering-an-import) is of; with none, no import is delivered and the default branch permits squash alone |
 
 `enabled = true` needs `repository` and `token_file`, an `issues` that imports needs
-`import_labels`, and `pull_requests = "publish"` needs `checks_token_file`, `checks_app_id` and
-`landing_app_id`. The settings are read again before every operation that writes GitHub or the
+`import_labels`, `pull_requests = "publish"` needs `checks_token_file`, `checks_app_id` and
+`landing_app_id`, and `upstream_id` needs `pull_requests = "publish"`. The settings are read again before every operation that writes GitHub or the
 board, so a landing that turns the adapter off stops a run at its next dispatch.
 
 The issues are listed from where the last listing ended, and that place holds only under the
@@ -219,7 +220,7 @@ evidence, and it reads no board for it.
 - **`landed`** keeps the commit, and closes the task's mapped issue where `close_issues` says.
 
 The pull request's title and text, and the squash commit's title, are the task's curated text
-(`publish SLUG`) or, with none, its slug. The title and brief the land hands over, the thread,
+(`publish SLUG`) or, with none, its slug; an import's merge commit is titled as below. The title and brief the land hands over, the thread,
 the handles and the reasons in the evidence are sent nowhere: a check says a stamp's name and
 where it stands, and no more.
 
@@ -246,6 +247,39 @@ expires within the hour. A token that expired is answered 401, `unavailable`, an
 until the file holds a current one. Keeping it current is the operator's, by whatever they run
 for it; nothing here does.
 
+## Delivering an import
+
+A downstream project imports its upstream's history by a task whose head merges an upstream
+commit, which the land delivers as an import, merged by a merge commit and never squashed, only
+where the project file, the head's assessment and the history fetched from the upstream agree
+([TASKS](TASKS.md#an-import-delivered-by-a-pull-request)). Each `publish` and `merge` of one
+says so: `operation` `import`, and `upstream` with its address, its branch and the commit
+imported. The adapter delivers it only where the settings pin the upstream by its number,
+`upstream_id`, and answers anything else as a task: squashed, and refused where it asks for a
+merge commit.
+
+Before `publish` pushes an import's head, and again before `merge` asks for it, the adapter reads
+the upstream at the address the land fetched, with `token_file`'s token, and refuses, pushing and
+merging nothing, where:
+
+- the address is not a repository on GitHub.com, or that token cannot read it;
+- the repository there is not the one `upstream_id` pins (a rename keeps its number), or it is
+  the repository delivered to;
+- the upstream is private and the repository delivered to is not, which would publish its
+  history; or either does not say whether it is private;
+- the evidence names another import, or none, than the operation asked for.
+
+Its `published` answer names the upstream's number and name, which the land requires of an
+import: an older adapter answers none, and nothing merges. The merge is GitHub's merge commit of
+the pull request at the head given (`merge_method` `merge`), titled `Merge branch 'SLUG'` as the
+land's own merge is, which the release cadence counts; its message names the head, the pull
+request and the commit imported.
+
+What this does not establish: that a history kept private is never pushed elsewhere. An import
+is the one operation that brings another repository's commits in, and a task head holding them
+is refused, but a branch that copies a private history's files as commits of its own is a task,
+and only its review sees what it publishes.
+
 ## The protection a delivery needs
 
 A delivery is held to its evidence by GitHub only where the default branch's rules say so, and
@@ -270,7 +304,7 @@ everyone only when its ruleset's bypass list was read and is empty. What must ho
 | `symphony/eligible` is required from the App that writes it | a `required_status_checks` rule nobody bypasses naming that check with `integration_id` = `checks_app_id`; one naming it from any source or another App does not count, and no rule may hold the branch up to date (`strict_required_status_checks_policy`), which a delivery's one merge of the default branch does not meet |
 | No force push, no deletion | `non_fast_forward` and `deletion` rules nobody bypasses |
 | Only the landing App updates the branch | an `update` rule whose ruleset's one bypass actor is the App `landing_app_id` (`Integration`) |
-| Squash and no other method | the repository's merge settings narrowed by the pull request rules nobody bypasses; no `merge_queue` rule and no auto-merge |
+| Squash and no other method, or with `upstream_id` squash and merge commits | the repository's merge settings narrowed by the pull request rules nobody bypasses; no `merge_queue` rule and no auto-merge; with `upstream_id`, no `required_linear_history` rule, which refuses a merge commit |
 | The merging token is not said to administer | the repository's `permissions.admin` for the token is `false`; absent or anything else is unknown and refused |
 
 The two halves are two rulesets, since one ruleset has one bypass list: the requirements with

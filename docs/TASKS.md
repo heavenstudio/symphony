@@ -1325,7 +1325,7 @@ reads with their JSON types, so a change that would break one fails its own task
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
 task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
 review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes. The current API is 2.2.
+keep their shapes. The current API is 2.3.
 
 ### What a program outside the board keeps
 
@@ -1378,7 +1378,8 @@ Minor 2 adds one read, for the program that makes a task's evidence public
   (`crates/tasks/src/land/evidence.rs`): `version` (1), `slug`, `task` (the task's `id`),
   `status`, `head`, `branch` (the default branch), `policy` and `catalogue` (digests of the
   committed project file and of the stamps' catalogue), `assessment` (who assessed, the commit
-  read, why, the stamps named) and `assessed` (whether it read the head), `stamps` (every stamp of
+  read, why, the stamps named, and from minor 3 `import`, the whole upstream commit it names the
+  head an import of, only where it names one) and `assessed` (whether it read the head), `stamps` (every stamp of
   the catalogue, each `met`, `waived` or `missing` with its reader's line and the runs or thread
   lines it stands on), `blocking` (each reason it is not eligible), `eligible`, and `revision`, a
   digest of all of it: two snapshots of one revision say the same.
@@ -2470,8 +2471,10 @@ land takes no waiver: a refusal is what the run's own log says, read by its reco
 
 With `[land] delivery` naming a command ([PROJECT_FILE](PROJECT_FILE.md#land)), `just land SLUG`
 makes no merge and no push of the default branch: the host of the project's repository squashes
-the task's head into one commit there, and the main checkout follows it. With no such key the
-land is the one above, and nothing here is reached. This repository sets none.
+the task's head into one commit there, and the main checkout follows it. A head that imports the
+project's upstream is the one exception, merged there by a merge commit
+([below](#an-import-delivered-by-a-pull-request)). With no such key the land is the one above, and
+nothing here is reached. This repository sets none.
 
 The board names no host. The command is the project's own program, run in the main checkout as
 `COMMAND VERB --request FILE`, FILE one JSON object and its standard output another whose `state`
@@ -2491,18 +2494,21 @@ A land keeps a journal of the delivery in the lands' folder, written before each
 1. **Prepared.** The remote default branch is fetched, and the project file it commits must be
    the one committed here. A head that changes a generator's outputs is refused, unless it is
    [what the regenerator made](#what-the-generators-make-delivered-by-a-pull-request), as is one
-   that merges a commit the remote default does not hold: an import of another history, which a
+   that merges a commit the remote default does not hold and is not
+   [an import of the upstream](#an-import-delivered-by-a-pull-request): another history, which a
    squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). A task that is not
    eligible at its head is refused before anything is published.
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
    published again or refused, never merged as it was.
-3. **Merge requested.** One `merge`, a squash of that pull request at that head.
+3. **Merge requested.** One `merge`, a squash of that pull request at that head, or a merge
+   commit for an import.
 4. **Merged remotely.** The commit the host made is proved by git alone: on the fetched default
-   branch, of one parent, its tree the merge of that parent and the head. A receipt of the head
-   and the commit is kept for good (`receipts/` in the lands' folder), and the head stays
-   reachable under `refs/symphony/delivered/SLUG`, since a squash leaves it in no history; a head
-   with a receipt does not go back to review.
+   branch, of one parent, its tree the merge of that parent and the head (an import's proof is
+   [its own](#an-import-delivered-by-a-pull-request)). A receipt of the head and the commit is kept
+   for good (`receipts/` in the lands' folder), and the head stays reachable under
+   `refs/symphony/delivered/SLUG`, since a squash leaves it in no history; a head with a receipt
+   does not go back to review.
 5. **Reconciled.** A clean main checkout whose default branch the remote's descends from is
    fast-forwarded. A dirty or diverged one is left as it is, the land answering "landed remotely,
    reconciliation pending" once on the thread, and a land run again closes the task once the
@@ -2527,7 +2533,7 @@ run, by `result`:
 | The publication or the merge refused for the branch's protection (`policy`: [what the program reads of it](GITHUB.md#the-protection-a-delivery-needs)) | nothing is pushed or merged, and the refusal names what is missing to the orchestrator; a land run again reads it again |
 | The merge refused (a conflict, a moved head, checks, permission) | the task stays open, the refusal goes to who acts on it, and the next land validates again before asking again |
 | No answer to the merge | it reads the pull request (`result`): merged at the head, the commit is proved and adopted; open, the next land asks again; unknown, the land says so and the next one reads it first |
-| A commit that is not the squash of the head (a merge commit, another tree), or the pull request closed unmerged | held for reconciliation: said once to the orchestrator, nothing closed, no receipt |
+| A commit that is not the squash of the head (a merge commit, another tree), an import the host squashed, or the pull request closed unmerged | held for reconciliation: said once to the orchestrator, nothing closed, no receipt |
 | A land run again after it closed | refused: the task landed once |
 
 One limit holds by design: evidence withdrawn after the last reading and before the host acts on
@@ -2545,6 +2551,44 @@ the regenerator, which makes nothing twice, and no release run a second time, so
 its landing made due is asked for by the next landing or the release run's `--due`, run by hand
 ([RELEASES](RELEASES.md#the-cadence)). The sweep keeps the worktree and branch of a squashed
 head, which it finds in no history.
+
+### An import delivered by a pull request
+
+A downstream project brings its upstream's history in by an import
+([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md#the-import)): a task whose branch merges an upstream
+commit **U** (`git merge --no-ff U`), then any fixes. A squash would put U's files on the default
+branch and leave U out of its history, so the next import would merge it all again. Such a head
+is delivered as an import, merged by the host with a merge commit, and only where three things
+agree:
+
+- **The project file** on the remote default branch names the upstream: `[land.upstream] url` and
+  `branch` ([PROJECT_FILE](PROJECT_FILE.md#landupstream)). With none, no import is delivered, and
+  every head is a task.
+- **The assessment** at that head names U whole:
+  `just tasks needs SLUG STAMP… --tip H --import U` (`--import` resolves U to its whole commit,
+  and only with `--tip`). An import named at another head binds nothing at this one, so the head
+  is judged as a task. The evidence carries it (`assessment.import`), so its revision binds it.
+- **The history** fetched now from the upstream's address: U on the upstream's branch; the
+  default branch **B** sharing a commit with it; where B and that branch last met an ancestor of
+  U, so U is newer than all B holds of it; U not in B already; U merged by a commit on H's own
+  first-parent line; and every other commit H adds either that line's own or U's.
+
+Each refusal names who acts, before anything is published. With an upstream named, a task head
+that holds any of its commits is refused, never squashed, and the refusal names the newest
+upstream commit it holds and the command that assesses it as an import. The program is told the
+operation, the upstream's address and U on every publication and merge; it holds the upstream to
+the repository its own settings pin (for GitHub, [`upstream_id`](GITHUB.md#delivering-an-import))
+and answers that repository's number, which the land requires: a program that does not deliver
+imports pins nothing, and nothing merges.
+
+The merge commit is titled `Merge branch 'SLUG'`, as the land's own merge is, so the release
+cadence counts it as one. It is proved by git alone: on the fetched default branch, of two
+parents, the base it was made on then the head, its tree the merge of the two, and U in its
+history. Its receipt keeps, besides a squash's fields, `import`: the upstream's address, branch
+and number, U, the upstream's tip as fetched, where B and the upstream met before, the commit's
+parents, and where they meet after. An import the host squashed is held, and so is a task the
+host merged by a merge commit: neither closes. The repair of a squashed import is forward, a new
+import task of the same U, whose merge changes no file and puts U in the history.
 
 ### A document save under delivery
 

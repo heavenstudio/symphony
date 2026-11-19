@@ -28,7 +28,10 @@
 //!   bypass actor is that App. Without it anyone who may write merges a pull request whose check
 //!   is green, evidence withdrawn since or not;
 //! - **the merge method**: what the repository and those rules permit is the operation's method
-//!   and no other; no merge queue and no auto-merge, which this build does not deliver through.
+//!   and no other: squash alone, or squash and merge commits where the settings name an upstream
+//!   an import is merged from ([`Operation::Imports`]), and then no rule that requires a linear
+//!   history, which no merge commit meets; no merge queue and no auto-merge, which this build does
+//!   not deliver through.
 //!
 //! Classic branch protection is not read: it can add to what the rules require and never take
 //! from it, and reading it asks for administration, which the token must not have.
@@ -53,19 +56,34 @@ const METHODS: [(&str, &str); 3] = [
     ("rebase", "allow_rebase_merge"),
 ];
 
-/// What is delivered, which decides the merge method the base branch must permit.
+/// What is delivered to the base branch, which decides the merge methods it must permit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
-    /// A task's head, squashed into one commit.
+    /// Tasks alone, each head squashed into one commit.
     Task,
+    /// Tasks, squashed, and imports of the one upstream the settings name, each merged by a merge
+    /// commit that keeps the upstream's history: what a repository with `upstream_id` delivers,
+    /// whichever of the two a step is for, since the branch's rules are one for both.
+    Imports,
 }
 
 impl Operation {
-    /// The methods the base branch may permit for it: the one it is merged by.
+    /// What a repository whose settings say `upstream_id` or not delivers.
+    #[must_use]
+    pub fn of(imports: bool) -> Operation {
+        if imports {
+            Operation::Imports
+        } else {
+            Operation::Task
+        }
+    }
+
+    /// The methods the base branch may permit for it: the ones it merges by.
     #[must_use]
     pub fn permitted(self) -> &'static [&'static str] {
         match self {
             Operation::Task => &["squash"],
+            Operation::Imports => &["merge", "squash"],
         }
     }
 }
@@ -280,6 +298,12 @@ pub fn judge(
     if named("merge_queue").next().is_some() {
         missing.push(format!(
             "{base} merges through a merge queue, which this build delivers nothing through"
+        ));
+    }
+    if wanted.operation == Operation::Imports && named("required_linear_history").next().is_some() {
+        missing.push(format!(
+            "a rule requires a linear history of {base}, which refuses the merge commit an import \
+             is delivered by"
         ));
     }
     methods(

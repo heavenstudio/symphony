@@ -654,10 +654,12 @@ options:
     ),
     (
         "needs",
-        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] --why WHY
+        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] [--import IMPORT]
+                        --why WHY
                         slug stamps [stamps ...]
 "#,
-        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] --why WHY
+        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] [--import IMPORT]
+                        --why WHY
                         slug stamps [stamps ...]
 
 As the task's assessor, write the stamps it needs, from the catalogue `just
@@ -665,6 +667,14 @@ tasks stamps` lists, with the tip read and why: the board's own field, and a
 line on its thread saying them and what it needed before. Refused to a session
 that executed the task or work under it, orchestrates or orchestrated it, or
 filed it, and on an empty reason or a stamp the catalogue lacks.
+
+A head that merges a commit of the project's upstream ([land.upstream]) is an
+import: with --import, the assessment names that commit, resolved to the whole
+commit, beside the head --tip names, and a land delivered by a pull request
+merges that head by a merge commit, keeping the upstream's history. An import
+named at no tip is refused; one named at another tip than the head delivers
+nothing, and a head of upstream commits whose assessment names none is never
+squashed.
 
 positional arguments:
   slug
@@ -675,6 +685,9 @@ options:
   --as ACTOR
   --tip TIP   the commit the assessment read, resolved to the whole commit;
               left out, the assessment read the brief alone
+  --import IMPORT
+              the upstream commit the head imports, resolved to the whole
+              commit; only with --tip
   --why WHY   one line for each stamp it left out or added
 "#,
     ),

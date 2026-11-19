@@ -15,7 +15,10 @@
 //! - the approve names the head. One that covers it by time, or that stands over a merge of
 //!   documents it did not read, does not;
 //! - each stamp of the catalogue is said: met at the head, waived by that assessment with its
-//!   author and reason, or missing.
+//!   author and reason, or missing;
+//! - the upstream commit the assessment names the head an import of, where it names one, is part
+//!   of it, so its revision changes with it: a delivery merges an import only under a snapshot
+//!   that says it is one ([`super::delivery`]).
 
 use super::needs::{self, Needed, REVIEW, TESTS};
 use super::{Covered, MANIFEST, approval, covered, independent, run_git, short};
@@ -75,6 +78,11 @@ pub struct Assessment {
     pub tip: Option<String>,
     pub why: String,
     pub stamps: Vec<String>,
+    /// The whole upstream commit it names the head an import of, where it names one
+    /// ([`crate::stamps::Needs::import`]): said only then, so another task's snapshot reads as it
+    /// did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<String>,
 }
 
 /// A task's evidence at its branch's head.
@@ -147,6 +155,7 @@ pub fn snapshot(
         tip: needs.tip.clone(),
         why: needs.why.clone(),
         stamps: needs.stamps.clone(),
+        import: needs.import.clone(),
     });
     let assessed = (assessment.as_ref()).is_some_and(|read| read.tip.as_deref() == Some(head));
     let mut blocking = Vec::new();

@@ -36,8 +36,9 @@ pub use context::{run, serve};
 pub const MAJOR: i64 = 2;
 
 /// The api's minor within [`MAJOR`]: 1 added a task's `id`, `bound`, `edit_bound` and
-/// `integration_state`; 2 added `evidence`.
-pub const MINOR: i64 = 2;
+/// `integration_state`; 2 added `evidence`; 3 added `import` to its `assessment`, where the
+/// assessment names one.
+pub const MINOR: i64 = 3;
 
 /// Why a call has no result.
 enum Fail {

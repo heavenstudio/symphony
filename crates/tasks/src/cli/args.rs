@@ -256,6 +256,7 @@ const COMMANDS: &[Command] = &[
         opts: &[
             AS,
             opt("--tip", "tip", STR),
+            opt("--import", "import", STR),
             Opt {
                 required: true,
                 ..opt("--why", "why", STR)

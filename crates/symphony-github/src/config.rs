@@ -90,6 +90,7 @@ struct Written {
     landing_app_id: Option<i64>,
     #[serde(default)]
     close_issues: bool,
+    upstream_id: Option<i64>,
 }
 
 /// The one GitHub.com repository the adapter may reach.
@@ -129,6 +130,11 @@ pub struct Config {
     pub landing_app_id: Option<i64>,
     /// Whether a delivered task's mapped issue is closed once the board closed the task.
     pub close_issues: bool,
+    /// The number at GitHub of the one repository an import is of, where the project imports
+    /// from an upstream: a delivery merges an import's head by a merge commit only from the
+    /// repository of that number ([`crate::deliver`]), and the default branch then permits merge
+    /// commits beside squash ([`crate::preflight`]). With none, no import is delivered.
+    pub upstream_id: Option<i64>,
 }
 
 /// The settings with the revision they were read at: a digest of the committed file's text, so a
@@ -162,7 +168,8 @@ fn label(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn repository(text: &str) -> Result<Repository, String> {
+/// The repository `OWNER/NAME` names on GitHub.com, refused where it is not that plainly.
+pub(crate) fn repository(text: &str) -> Result<Repository, String> {
     let refusal =
         || format!("repository is OWNER/NAME on GitHub.com, never a URL or another host: {text:?}");
     let (owner, name) = text.split_once('/').ok_or_else(refusal)?;
@@ -180,6 +187,19 @@ fn repository(text: &str) -> Result<Repository, String> {
         owner: owner.into(),
         name: name.into(),
     })
+}
+
+/// Refuse an `upstream_id` that names no repository, or that nothing delivers through.
+fn upstream(written: &Written) -> Result<(), String> {
+    match written.upstream_id {
+        Some(id) if id <= 0 => Err("upstream_id is a GitHub repository's number".into()),
+        Some(_) if written.pull_requests != PullRequests::Publish => Err(
+            "upstream_id needs pull_requests = \"publish\": an import is delivered by a pull \
+             request"
+                .into(),
+        ),
+        _ => Ok(()),
+    }
 }
 
 /// The settings `text` gives.
@@ -218,6 +238,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
             return Err(wrong(format!("{key} is a GitHub App's number")));
         }
     }
+    upstream(&written).map_err(wrong)?;
     if written.landing_app_id.is_some() && written.landing_app_id == written.checks_app_id {
         return Err(wrong(
             "landing_app_id is checks_app_id: what merges is never what writes the checks".into(),
@@ -275,6 +296,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
         checks_app_id: written.checks_app_id,
         landing_app_id: written.landing_app_id,
         close_issues: written.close_issues,
+        upstream_id: written.upstream_id,
     })
 }
 

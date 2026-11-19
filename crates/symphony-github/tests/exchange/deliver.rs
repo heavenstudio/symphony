@@ -866,6 +866,7 @@ fn withdrawn(head: &str) -> Value {
             tip: Some(head.into()),
             why: "a private reason".into(),
             stamps: vec!["tests".into(), "review".into()],
+            import: None,
         }),
         assessed: true,
         stamps: vec![
