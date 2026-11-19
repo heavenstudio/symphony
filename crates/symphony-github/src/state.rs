@@ -97,6 +97,16 @@ pub struct Pull {
     pub landed: Option<String>,
 }
 
+/// The GitHub Release a release's tag is published as ([`crate::release`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Released {
+    /// The release's number at GitHub.
+    pub id: i64,
+    pub url: String,
+    /// The commit the tag named when it was published or found.
+    pub commit: String,
+}
+
 /// Which side an operator kept of a conflict.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -119,6 +129,9 @@ pub struct State {
     /// The pull request each delivered task is bound to, by its slug.
     #[serde(default)]
     pub pulls: BTreeMap<String, Pull>,
+    /// The GitHub Release each release is published as, by its tag.
+    #[serde(default)]
+    pub releases: BTreeMap<String, Released>,
     /// The `updated_at` the next listing starts from.
     pub cursor: Option<String>,
     /// The settings' revision the cursor was read under. Under another, what the listing
