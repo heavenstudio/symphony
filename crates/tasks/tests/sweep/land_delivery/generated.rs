@@ -5,7 +5,7 @@
 use super::*;
 use std::time::Duration;
 use symphony_board::land::RECIPE;
-use symphony_board::land::regenerate::{self, Pending, WITHDRAWN};
+use symphony_board::land::regenerate::{self, PENDING, Pending, WITHDRAWN};
 
 /// How many times the bundle was made.
 fn made(r: &Repo) -> usize {
@@ -904,4 +904,37 @@ fn a_cancelled_tasks_pull_request_is_forgotten_only_once_it_is_told_or_no_longer
         assert!(lands(&r).join(WITHDRAWN).exists());
         assert!(!host.verbs().contains(&"merge".to_string()));
     }
+}
+
+#[test]
+fn a_project_file_the_remote_default_does_not_commit_refuses_a_generated_one_too() {
+    let (r, bare) = generating(true);
+    let (made_as, orch) = assessed(&r);
+    // Committed here and pushed nowhere: the generators and keys read here are not the remote's.
+    project_file(&r, &format!("{}push = false\n", manifest(&r, true)));
+    let host = Host::new(&r, &bare);
+    let refused = landed(&r, &made_as.slug, &orch, &host).1.unwrap_err();
+    assert!(
+        refused.starts_with("symphony.toml here is not the one origin/main commits at"),
+        "{refused}"
+    );
+    assert!(host.verbs().is_empty(), "nothing published");
+    assert!(Journal::read(&lands(&r), &made_as.slug).is_none());
+}
+
+#[test]
+fn a_record_gone_between_the_publication_and_the_request_asks_for_no_merge() {
+    let (r, bare) = generating(true);
+    let (made_as, orch) = assessed(&r);
+    // What a round that found it stale does to the record, while it is published.
+    let host = Host::new(&r, &bare).before("publish", || {
+        fs::remove_file(lands(&r).join(PENDING)).unwrap();
+    });
+    let refused = landed(&r, &made_as.slug, &orch, &host).1.unwrap_err();
+    assert!(
+        refused.contains("is no longer what the regenerator delivers: no merge asked"),
+        "{refused}"
+    );
+    assert_eq!(host.verbs(), ["publish"], "no merge asked");
+    assert!(Receipt::read(&lands(&r), &made_as.slug).is_none());
 }

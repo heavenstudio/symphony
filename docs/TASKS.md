@@ -2547,9 +2547,12 @@ is one commit on that tip, of the generators' outputs alone, and it becomes a ta
   recorded commit, that commit one commit on the recorded tip, which the remote default branch
   holds, changing the generators' outputs alone, and the inputs at the fetched remote default
   branch those it was made of, each key read again there in the regenerator's worktree, under
-  its lock. It is judged twice, before anything is published and again right before the merge is
-  asked for. A stale one is refused to the orchestrator and the regenerator started. A task the
-  record does not name that changes a generator's outputs is refused as before.
+  its lock. The project file here must be the one the remote default branch commits, as for any
+  task: the generators and keys it is judged by are read from it. It is judged twice, before
+  anything is published and again right before the merge is asked for, and a record that no
+  longer names the task by then (a round cancelled it meanwhile) asks for no merge. A stale one
+  is refused to the orchestrator and the regenerator started. A task the record does not name
+  that changes a generator's outputs is refused as before.
 - **A base that moves under the request.** The host merges onto the default branch it has then,
   which no check here pins. Where that base gained an input after the last reading, what the
   default branch then holds of the outputs is stale: the record stays until the round the land

@@ -587,11 +587,13 @@ impl Landing<'_> {
         let slug = self.slug;
         let default = self.settings.default_branch.clone();
         let base = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
-        let operation = match self.generated(&base, tip) {
-            Some(generated) => generated.map(|()| GENERATED),
-            None => self.admit(&base, tip).map(|()| TASK),
-        }
-        .map_err(|refusal| self.refuse(refusal))?;
+        // The settings a head is judged by are the remote default branch's, whatever is delivered.
+        let operation = (self.committed(&base))
+            .and_then(|()| match self.generated(&base, tip) {
+                Some(generated) => generated.map(|()| GENERATED),
+                None => self.admit(&base, tip).map(|()| TASK),
+            })
+            .map_err(|refusal| self.refuse(refusal))?;
         self.owner_lines(&base, tip)
             .map_err(|refusal| self.refuse(refusal))?;
         let mut snapshot = self.eligible(task, tip)?;
@@ -669,12 +671,18 @@ impl Landing<'_> {
             .clone()
             .ok_or_else(|| here("unbound".into()))?;
         // What the regenerator made is judged again on the remote default branch as it is now:
-        // the last reading before the request, which nothing here recalls.
+        // the last reading before the request, which nothing here recalls. A record that no
+        // longer names the task (a round cancelled it as stale meanwhile) asks for no merge.
         if operation == GENERATED {
             let now = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
-            if let Some(Err(refusal)) = self.generated(&now, tip) {
-                return Err(self.refuse(refusal));
-            }
+            let again = (self.committed(&now)).and_then(|()| {
+                self.generated(&now, tip).unwrap_or_else(|| {
+                    Err(Refusal::here(format!(
+                        "{slug} is no longer what the regenerator delivers: no merge asked"
+                    )))
+                })
+            });
+            again.map_err(|refusal| self.refuse(refusal))?;
         }
         // Before the request: from here the pull request decides, never a merge made here.
         journal.stage = Stage::MergeRequested;
@@ -699,11 +707,10 @@ impl Landing<'_> {
         self.settle(journal, Some(asked))
     }
 
-    /// Refuse a head a squash must not deliver: one whose project file is not the remote default
-    /// branch's, one that changes a generator's outputs, which no hosted merge puts back, and one
-    /// that merges a commit the remote default does not hold.
-    fn admit(&self, base: &str, tip: &str) -> Result<(), Refusal> {
-        let (slug, default) = (self.slug, &self.settings.default_branch);
+    /// Refuse while the project file here is not the one the remote default branch commits at
+    /// `base`: every delivery, a task's or the regenerator's, is judged by the settings there.
+    fn committed(&self, base: &str) -> Result<(), Refusal> {
+        let default = &self.settings.default_branch;
         let file = |at: &str| rev(&self.main, &format!("{at}:{}", super::MANIFEST));
         if file("HEAD") != file(base) {
             return Err(Refusal::here(format!(
@@ -713,6 +720,13 @@ impl Landing<'_> {
                 short(base)
             )));
         }
+        Ok(())
+    }
+
+    /// Refuse a head a squash must not deliver: one that changes a generator's outputs, which no
+    /// hosted merge puts back, and one that merges a commit the remote default does not hold.
+    fn admit(&self, base: &str, tip: &str) -> Result<(), Refusal> {
+        let (slug, default) = (self.slug, &self.settings.default_branch);
         let range = format!("{base}...{tip}");
         let changed = super::git_z(&self.main, &["diff", "--name-only", "-z", &range])?;
         let generated: Vec<&str> = (changed.iter())
