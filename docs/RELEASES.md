@@ -640,6 +640,25 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   covered by a red's task whose land has not advanced it yet, it waits for that land; covered by
   any other landing, its fix is on main and not in the candidate, which is dropped. One cancelled
   with no landing is answered, its fix made outside this repository.
+- **The advance of a fix a pull request delivered.** There the host squashes the fix into main
+  and the candidate still takes the fix's own commits, both read from the land's one receipt: the
+  squash is the landing, its one parent is main before the land, and the head the receipt kept
+  (reachable under `refs/symphony/delivered/SLUG`, as no history of main holds it) is what
+  landed. The same test picks the commit, among the commits an approve named and that head, which
+  vouches for itself: the squash was asked for under evidence that stood on it, so a land cut
+  before it closed the task advances the candidate all the same. Main is never merged into the
+  candidate: a head that merged main gives the commit approved before that merge, or none, which
+  drops it. The record's advance keeps the squash (`merge`), the commit taken (`to`) and, under
+  `delivered`, the receipt's head, parent, repository, pull request and evidence revision. A
+  receipt whose head is gone from the repository makes the candidate wait, said. The candidate's
+  tip is then a commit main does not hold in its history, and neither is the release tagged on it:
+  each is on the line by the squash that delivered it there, read from the receipts, which is how
+  the candidate stays open, how its rerun is allowed, how the count goes on from that release and
+  how the next release of main's tip is one that moved forward. A pull request that did not
+  merge leaves no receipt, and the red waits as for any task still open. A fix that changes what
+  the client is built from is not delivered so yet: a delivery refuses a head that changes a
+  generator's outputs, and the candidate's fix must commit them, so that fix waits for the
+  delivery of generated outputs and its red stays open, or the candidate is dropped.
 - **The rerun.** Once every red is answered, the candidate's tip is rerun: by the `--due` of the
   land that answered the last red, else by the next landing's, the next scheduled run, or `just
   release --rerun`, an orchestrator's retry. It waits for no regenerator, as a fix commits the
@@ -730,8 +749,8 @@ The candidate is dropped, and a run of main's tip is due at once, whatever the c
   main before any approve;
 - a red's task was closed as covered by a landing that did not advance it, its fix on main and not
   in the candidate;
-- a release it does not descend from was tagged (one on main passed it), or its tip is not on
-  `origin/main`;
+- a release it does not hold was tagged (one on main passed it), or its tip is not on
+  `origin/main`, each by its history or by the squash that delivered it there;
 - or `just release --drop`, an orchestrator's act, drops it.
 
 A release of its tip tagged by other means ends it as released. Each bound is read whenever it is
@@ -758,15 +777,23 @@ the hour, and its green release refreshes the server and its projects
 
 - **The count** is `[releases] every_landings` in `symphony.toml`, 20 unless the project says. `0`
   turns the cadence off, and then only the scheduled run or `just release` releases.
-- **A line that delivers by pull request** (`[land] delivery` in the project file its tip
-  commits, [TASKS](TASKS.md#a-land-delivered-by-a-pull-request)) is not counted: its tasks land
-  as squashed commits, which are no merges, so the count refuses by name, no run is due by
-  landings there, and a release candidate's settle says the same and advances nothing.
 - **A landing** is a merge on the main line's first-parent line whose subject names a branch:
   "Merge branch 'SLUG'", the merge `just land` makes, or "Merge branch 'SLUG' into BRANCH", git's
   own made by hand. A merge of the default branch itself ("Merge branch 'main' into SLUG", a task
   catching up, which reached the line), of another repository's branch or of a remote-tracking
-  branch is none, and neither is any other commit.
+  branch is none, and neither is any other commit but a squash a receipt names.
+- **A land delivered by a pull request** (`[land] delivery`,
+  [TASKS](TASKS.md#a-land-delivered-by-a-pull-request)) is one squashed commit of one parent,
+  which is no merge, so it is a landing by its receipt alone: the file the land keeps once it
+  proved the commit the host made (`receipts/SLUG.json` in the lands' folder), read by
+  `crates/symphony-build/src/release/receipts.rs`. A commit on the line counts as the landing of
+  the receipt's task when it is the receipt's squash and git bears the receipt out: its one parent
+  and its tree are the ones recorded. No subject, patch or pull request title makes a landing, so
+  a squash with no receipt is none. A receipt that names a commit on the line which is not the
+  one it recorded stops the count by name (`landings: cannot be counted: the receipt of SLUG …`)
+  and no run starts by landings until a person has judged it; `just release` by hand still runs.
+  Merges and squashes count on one line together, and a line with no receipt counts as it always
+  did.
 - **Counted since** the newest release on that line, or a later run that checked something on it,
   green or red, whichever is nearer the tip. A run that stopped short before its first check (a
   fetch that failed, a process in its folders) is not counted from. So a red tip is counted from
@@ -801,6 +828,17 @@ the hour, and its green release refreshes the server and its projects
   `symphony-build` and makes the link or renews it (`tools/rs-bin.sh --link symphony-build` does
   it alone). A main checkout that links none starts no count: the land shows its refusal. No
   landing is lost meanwhile: the next count reads them all from git.
+- **A landing whose command never ran.** The count is read from the line and the receipts each
+  time, never added to by the command, so a land cut between its merge and its `on_land` (a
+  delivered land's receipt is kept before the task is closed and the command started) loses no
+  landing: the next count asked takes it, and one told twice is counted once. What it does lose is
+  the asking. Nothing counts by itself, so when that landing was the one that made a run due and
+  no other landing follows, no run starts until something asks: `--status` says
+  `next run: due: N of M landed; the next landing starts it, or `just release --due``, and
+  `just release --due`, an orchestrator's retry, starts it, as the scheduled run does at its hour.
+  A land run again after such a cut does not start the command a second time
+  ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)): a project's command need not be safe
+  to run twice.
 - **The release candidate holds it.** Before it counts, `--due` settles the release candidate
   under the run's lock ([the advance](#the-release-candidate)), unless a run holds the lock, which
   settles it itself. While one is open and a red of it waits, the count starts nothing, however
