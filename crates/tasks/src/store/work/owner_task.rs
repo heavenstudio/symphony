@@ -119,31 +119,47 @@ impl Store {
         if let Some(assignee) = &new.assignee {
             let _ = write!(said, " for {assignee}");
         }
-        let creating = sql::Creating {
-            acts: new.by != OWNER,
-            receipt: receipt.is_some(),
-            red: red.is_some(),
-            arm: arm.is_some(),
+        let file_as = |placing: Option<crate::workflow::Transition>| {
+            let creating = sql::Creating {
+                acts: new.by != OWNER,
+                receipt: receipt.is_some(),
+                red: red.is_some(),
+                arm: arm.is_some(),
+                placed: placing.is_some(),
+            };
+            let body = || both(sql::create(&creating), Pg::script(pg::create(&creating)));
+            let mut vars = self.acting(
+                &new.by,
+                (self.clock)(),
+                json!({
+                    "slug": new.slug, "title": title, "body": new.body, "status": new.status,
+                    "priority": new.priority, "parent": parent, "instruction": new.instruction,
+                    "needed": needed, "links": links, "assignee": new.assignee, "said": said,
+                    "owner_save": receipt, "red": red, "arm": arm,
+                    "taken": format!("{REFUSED}task {} already exists", new.slug),
+                    "unassignable": new.assignee.as_ref()
+                        .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),
+                    "unplaced": format!("{REFUSED}{UNPLACED}"),
+                    "placed": placing.as_ref().map(crate::workflow::Transition::position),
+                    "placing": placing,
+                }),
+            );
+            if red.is_some()
+                && let (Some(vars), Value::Object(filer)) = (vars.as_object_mut(), filing(&new.by))
+            {
+                vars.extend(filer);
+            }
+            self.retrying(|| self.written_statement(body(), vars.clone(), &new.slug, deliver))
         };
-        let body = || both(sql::create(&creating), Pg::script(pg::create(&creating)));
-        let mut vars = self.acting(
-            &new.by,
-            (self.clock)(),
-            json!({
-                "slug": new.slug, "title": title, "body": new.body, "status": new.status,
-                "priority": new.priority, "parent": parent, "instruction": new.instruction,
-                "needed": needed, "links": links, "assignee": new.assignee, "said": said,
-                "owner_save": receipt, "red": red, "arm": arm,
-                "taken": format!("{REFUSED}task {} already exists", new.slug),
-                "unassignable": new.assignee.as_ref()
-                    .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),
-            }),
-        );
-        if red.is_some()
-            && let (Some(vars), Value::Object(filer)) = (vars.as_object_mut(), filing(&new.by))
-        {
-            vars.extend(filer);
+        // Filed as the board's own in its one write; a board with a custom workflow active refuses
+        // that in the same write, and the task is filed again at the workflow's initial pair.
+        match file_as(None) {
+            Err(Error::Refused(why)) if why == UNPLACED => file_as(self.placing(new)?),
+            filed => filed,
         }
-        self.retrying(|| self.written_statement(body(), vars.clone(), &new.slug, deliver))
     }
 }
+
+/// The refusal of a filing written as the board's own while a custom workflow is active, which
+/// files it again at the workflow's initial pair (`sql::UNPLACED`).
+const UNPLACED: &str = "a custom workflow is active, which starts the task at its initial pair";

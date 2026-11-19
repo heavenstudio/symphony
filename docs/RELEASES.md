@@ -890,9 +890,9 @@ the hour, and its green release refreshes the server and its projects
   landing waits, approved, while a run or the release candidate holds the release (`just release
   --status`: `next run: in progress`, or a candidate open), since a run started then judges
   nothing of main's newest commit ([main while it is open](#main-while-it-is-open)), and lands
-  once neither does. A second one waits until `current` names a release serving the first's
-  schema (`--status`'s `machine:` and `last refresh:` lines), so the board is never two schemas
-  ahead of the server, which reads nothing of a board that far ahead.
+  once neither does. A second one does not wait for `current` to name a release serving the
+  first's schema: the board may then stand more than one schema ahead of the machine's server
+  until a release at its schema is `current`.
 
 ## The refresh
 
@@ -1140,8 +1140,11 @@ the newer release moved stays at that release's schema, which the older release'
 and writes nothing to ([the switch](#the-switch)) and the older release's `tasks` refuses. Its
 store as it was before the move is the snapshot the refresh took
 (`before-schema-N-RELEASE.surql`, or `.sql` of a board on PostgreSQL), and a board put back to it is one that went back, which the
-owner accepts ([TASKS](TASKS.md#a-board-that-went-back)). Pointing `current` on the machine whose
-server is the shared one is the owner's word, as any switch of that server is. The next green
+owner accepts ([TASKS](TASKS.md#a-board-that-went-back)). Pointing `current` back on the machine whose
+server is the shared one is the owner's word. Pointing it forward is not: while this
+repository's board is at a schema the release `current` names does not serve, an orchestrator
+points `current` at the newest green release that serves it, at once and without asking, and
+another project's pages save nothing until that project takes the release. The next green
 refresh points `current` at the release it installs.
 
 ## Who runs it

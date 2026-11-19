@@ -1,0 +1,594 @@
+//! Admission of one typed operation on a task an active custom workflow holds (docs/WORKFLOW.md,
+//! "Admission"): what the store read decides whether the principal the host bound may take the
+//! edge from the pair the caller saw, and what the transition writes. Nothing here writes; the
+//! store fences the write on everything read here (`crate::store::workflow`), so a decision made
+//! on a snapshot that moved is never written.
+//!
+//! The principal is the host's, never the request's: the request fences intention (the snapshot
+//! the caller saw, its key, its inputs), and a principal holds a capability only through the
+//! host's grants ([`super::Grants`]). A task role is held on this task alone, a reviewer is fresh
+//! (`Held::unfresh`), and every check this release cannot make refuses: a guard, an adapter, an
+//! input revision, a dependency on a landing or an accepted output.
+
+use super::{Host, TaskPosition, Transition};
+use crate::Held;
+use std::fmt;
+use symphony_api::workflow::{
+    Authority, Definition, Dependency, Edge, Effect, NextAction, NextActions, OperationRequest,
+    Pair, Position, PositionSnapshot, RefusalCode, Revision, Role, Slot,
+};
+use symphony_plugin::execution::{Principal, PrincipalKind};
+
+/// An operation refused: its stable code and what it says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refusal {
+    pub code: RefusalCode,
+    pub message: String,
+}
+
+impl Refusal {
+    pub fn new(code: RefusalCode, message: impl Into<String>) -> Refusal {
+        Refusal {
+            code,
+            message: message.into(),
+        }
+    }
+
+    /// Its code as the wire says it.
+    pub fn word(&self) -> String {
+        word(&self.code)
+    }
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.word(), self.message)
+    }
+}
+
+/// The active workflow admission decides under: its definition, revision and generation.
+#[derive(Clone, Copy, Debug)]
+pub struct Context<'a> {
+    pub definition: &'a Definition,
+    pub revision: &'a Revision,
+    pub generation: u64,
+}
+
+/// A task admission decides on, read in one snapshot: who filed it, where it stands, the role rows
+/// on it, each task it depends on, who ever executed or orchestrated it, and whether the principal,
+/// when an agent, is a session the board knows and that has not left.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Facts {
+    pub slug: String,
+    pub created_by: String,
+    pub position: Option<TaskPosition>,
+    /// Each role row on the task: its holder's handle and the role.
+    pub roles: Vec<(String, String)>,
+    pub dependencies: Vec<Prerequisite>,
+    pub held: Held,
+    pub present: bool,
+}
+
+/// A task another depends on: its status and position, none when it is not on the board.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Prerequisite {
+    pub slug: String,
+    pub found: Option<(String, Option<TaskPosition>)>,
+}
+
+/// What an admitted operation writes: its transition, the role rows it adds and drops, and
+/// whether it takes a task slot under the cap.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Admitted {
+    pub transition: Transition,
+    pub add: Vec<(String, String)>,
+    pub drop: Vec<(String, String)>,
+    pub acquires: bool,
+}
+
+/// The snapshot a caller fences its next request on.
+pub fn snapshot(context: Context, position: &TaskPosition) -> PositionSnapshot {
+    PositionSnapshot {
+        workflow: context.revision.clone(),
+        activation_generation: context.generation,
+        task_revision: position.revision,
+        at: position.at(),
+    }
+}
+
+/// `request` admitted for `principal` on what `facts` read, at `at`, or refused with the first
+/// thing that stops it: a task no workflow holds, a stale workflow, generation or task, an edge
+/// unknown or not leaving the task's pair, then [`blockers`]. Capacity is the store's to decide,
+/// in the write ([`Admitted::acquires`]).
+pub fn admit(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    host: &Host,
+    request: &OperationRequest,
+    at: f64,
+) -> Result<Admitted, Refusal> {
+    let position = held(facts)?;
+    let expected = &request.expected;
+    if expected.workflow.digest != context.revision.digest {
+        return Err(Refusal::new(
+            RefusalCode::StaleWorkflow,
+            format!(
+                "the active workflow is {}, not {}",
+                context.revision.digest, expected.workflow.digest
+            ),
+        ));
+    }
+    if expected.activation_generation != context.generation {
+        return Err(Refusal::new(
+            RefusalCode::StaleActivation,
+            format!(
+                "the active generation is {}, not {}",
+                context.generation, expected.activation_generation
+            ),
+        ));
+    }
+    if expected.task_revision != position.revision || expected.at != position.at() {
+        return Err(Refusal::new(
+            RefusalCode::StaleTask,
+            format!(
+                "{} is at {} (workflow revision {}), not {} (revision {})",
+                facts.slug,
+                named(&position.at()),
+                position.revision,
+                named(&expected.at),
+                expected.task_revision
+            ),
+        ));
+    }
+    let edge = (context.definition.edges.iter())
+        .find(|e| e.id == request.edge)
+        .ok_or_else(|| {
+            Refusal::new(
+                RefusalCode::UnknownId,
+                format!(
+                    "workflow {} declares no edge {}",
+                    context.revision.digest, request.edge
+                ),
+            )
+        })?;
+    if edge.from != position.at() {
+        return Err(Refusal::new(
+            RefusalCode::UnknownId,
+            format!(
+                "edge {} leaves {}, and {} is at {}",
+                edge.id,
+                named(&edge.from),
+                facts.slug,
+                named(&position.at())
+            ),
+        ));
+    }
+    if let Some(refusal) = blockers(context, facts, principal, host, edge, Some(request))
+        .into_iter()
+        .next()
+    {
+        return Err(refusal);
+    }
+    let handle = agent(principal);
+    let mut add = Vec::new();
+    let mut drop = Vec::new();
+    for effect in &edge.effects {
+        match effect {
+            Effect::AcquireRole { role } => {
+                let handle = handle.expect("blockers() refuses an acquire_role with no agent");
+                let role = word(role);
+                if !holds(facts, handle, &role) {
+                    add.push((handle.to_string(), role));
+                }
+                if holds(facts, handle, "reserved") {
+                    drop.push((handle.to_string(), "reserved".into()));
+                }
+            }
+            Effect::ReleaseRole { role } => {
+                let role = word(role);
+                drop.extend(
+                    (facts.roles.iter())
+                        .filter(|(_, held)| *held == role)
+                        .cloned(),
+                );
+            }
+            _ => {}
+        }
+    }
+    let resume = edge
+        .effects
+        .iter()
+        .any(|e| matches!(e, Effect::Block { save_resume: true }))
+        .then(|| position.at());
+    let destination = position_of(context.definition, &edge.to)
+        .expect("a validated definition declares every edge's destination");
+    let revision = position.revision + 1;
+    Ok(Admitted {
+        transition: Transition {
+            id: Transition::id_of(&facts.slug, revision),
+            slug: facts.slug.clone(),
+            revision,
+            generation: context.generation,
+            digest: context.revision.digest.clone(),
+            edge: Some(edge.id.clone()),
+            operation: Some(edge.operation),
+            activation: None,
+            from: Some(position.at()),
+            to: edge.to.clone(),
+            resume,
+            status: super::activate::projection(destination.legacy),
+            principal: principal.clone(),
+            effects: edge.effects.clone(),
+            key: Some(request.idempotency_key.clone()),
+            recovery: None,
+            at,
+        },
+        add,
+        drop,
+        acquires: edge.effects.iter().any(|e| {
+            *e == Effect::Slot {
+                policy: Slot::Acquire,
+            }
+        }),
+    })
+}
+
+/// The edges leaving the task's pair, each with what stops `principal` taking it now: a preview,
+/// never a permit, which shows an action the principal cannot take with the reason, and names the
+/// authority it needs without saying who holds it.
+pub fn next_actions(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    host: &Host,
+) -> Result<NextActions, Refusal> {
+    let position = held(facts)?;
+    let actions = (context.definition.edges.iter())
+        .filter(|e| e.from == position.at() && !e.automatic)
+        .map(|edge| {
+            let mut unavailable: Vec<RefusalCode> =
+                blockers(context, facts, principal, host, edge, None)
+                    .into_iter()
+                    .map(|r| r.code)
+                    .collect();
+            unavailable.dedup();
+            NextAction {
+                edge: edge.id.clone(),
+                operation: edge.operation,
+                destination: edge.to.clone(),
+                label: edge.label.clone(),
+                responsible: edge.authority.clone(),
+                required_inputs: edge.inputs.clone(),
+                unavailable,
+            }
+        })
+        .collect();
+    Ok(NextActions {
+        snapshot: snapshot(context, position),
+        actions,
+    })
+}
+
+/// Everything that stops `principal` taking `edge` from where the task stands, in the order a
+/// refusal names them: what this release cannot run (an adapter, a guard), a human wait, the
+/// authority, the inputs `request` gives (none for a preview), the dependencies, and a resume
+/// to a pair other than the one the block saved.
+pub fn blockers(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    host: &Host,
+    edge: &Edge,
+    request: Option<&OperationRequest>,
+) -> Vec<Refusal> {
+    let mut found = Vec::new();
+    let id = &edge.id;
+    if edge.automatic {
+        found.push(Refusal::new(
+            RefusalCode::UnsupportedWriter,
+            format!("edge {id} is automatic: the board takes it, never a caller"),
+        ));
+    }
+    for effect in &edge.effects {
+        let adapter = match effect {
+            Effect::Prepare { adapter } | Effect::Finalize { adapter } => adapter.as_str(),
+            Effect::ParentIntegration => "parent integration",
+            _ => continue,
+        };
+        found.push(Refusal::new(
+            RefusalCode::UnsupportedAdapter,
+            format!(
+                "edge {id} needs {adapter}, which no host-verified adapter runs here yet \
+                 (tools/workflow-landing-adapters)"
+            ),
+        ));
+    }
+    if let Some(guard) = edge.guards.first() {
+        found.push(Refusal::new(
+            RefusalCode::GuardUnavailable,
+            format!("edge {id} is guarded by {guard}, which no receipt answers here yet"),
+        ));
+    }
+    if edge.human_wait && principal.kind != PrincipalKind::Human {
+        found.push(Refusal::new(
+            RefusalCode::HumanWait,
+            format!("edge {id} waits on a person's deliberate action"),
+        ));
+    }
+    if let Err(refusal) = authorized(facts, principal, host, edge) {
+        found.push(refusal);
+    }
+    if agent(principal).is_none()
+        && let Some(role) = edge.effects.iter().find_map(|e| match e {
+            Effect::AcquireRole { role } => Some(role),
+            _ => None,
+        })
+    {
+        found.push(Refusal::new(
+            RefusalCode::ExplicitActionRequired,
+            format!(
+                "edge {id} gives its taker the {} role, which only an agent session holds",
+                word(role)
+            ),
+        ));
+    }
+    if let Some(request) = request {
+        found.extend(inputs(edge, request));
+    }
+    if let Err(refusal) = dependencies(context, facts, edge) {
+        found.push(refusal);
+    }
+    let position = facts.position.as_ref();
+    if edge.effects.contains(&Effect::ClearBlock)
+        && let Some(resume) = position.and_then(|p| p.resume.as_ref())
+        && *resume != edge.to
+    {
+        found.push(Refusal::new(
+            RefusalCode::ExplicitActionRequired,
+            format!(
+                "edge {id} resumes {} at {}, and its block saved {}",
+                facts.slug,
+                named(&edge.to),
+                named(resume)
+            ),
+        ));
+    }
+    found
+}
+
+/// Whether `principal` meets one of `edge`'s authority alternatives on this task: a task role it
+/// holds here (or takes, by the edge's own acquire_role, when no one else holds it and no other
+/// session's reservation stands), as a fresh reviewer where the role is the reviewer's, or a
+/// capability the host granted it. An agent is a session the board knows and that has not left.
+fn authorized(
+    facts: &Facts,
+    principal: &Principal,
+    host: &Host,
+    edge: &Edge,
+) -> Result<(), Refusal> {
+    let handle = agent(principal);
+    let acquires = |role: &Role| {
+        (edge.effects.iter()).any(|e| matches!(e, Effect::AcquireRole { role: r } if r == role))
+    };
+    let mut why = None;
+    for authority in &edge.authority {
+        let met = match authority {
+            Authority::ProjectCapability { capability }
+            | Authority::SystemCapability { capability } => {
+                host.grants.holds(principal, capability)
+            }
+            Authority::TaskRole { role } => match handle {
+                None => false,
+                Some(_) if !facts.present => {
+                    why = Some(format!("{} is no session on the board", who(principal)));
+                    false
+                }
+                Some(handle) => {
+                    let word = word(role);
+                    let relation = if acquires(role) {
+                        takes(facts, handle, &word)
+                    } else if holds(facts, handle, &word) {
+                        Ok(())
+                    } else {
+                        Err(format!("{handle} is not the {word} of {}", facts.slug))
+                    };
+                    match relation.and_then(|()| fresh(facts, handle, *role)) {
+                        Ok(()) => true,
+                        Err(reason) => {
+                            why = Some(reason);
+                            false
+                        }
+                    }
+                }
+            },
+        };
+        if met {
+            return Ok(());
+        }
+    }
+    let needs: Vec<String> = edge.authority.iter().map(described).collect();
+    Err(Refusal::new(
+        RefusalCode::Unauthorized,
+        match why {
+            Some(why) => format!("{why}; edge {} needs {}", edge.id, needs.join(" or ")),
+            None => format!(
+                "{} may not take edge {} on {}: it needs {}",
+                who(principal),
+                edge.id,
+                facts.slug,
+                needs.join(" or ")
+            ),
+        },
+    ))
+}
+
+/// Whether `handle` may take `role` on the task by an edge that acquires it: no other session
+/// holds it, and no other session's reservation stands.
+fn takes(facts: &Facts, handle: &str, role: &str) -> Result<(), String> {
+    if let Some((other, _)) = (facts.roles.iter()).find(|(h, r)| r == role && h != handle) {
+        return Err(format!("{other} holds the {role} of {}", facts.slug));
+    }
+    if let Some((other, _)) = (facts.roles.iter()).find(|(h, r)| r == "reserved" && h != handle) {
+        return Err(format!("{} is reserved for {other}", facts.slug));
+    }
+    Ok(())
+}
+
+/// Refused where the role is the reviewer's and `handle` executed, orchestrates or orchestrated,
+/// or filed the task (RULES.md `workflow/reviewers-not-the-owner`), whatever the graph says.
+fn fresh(facts: &Facts, handle: &str, role: Role) -> Result<(), String> {
+    if role != Role::Reviewer {
+        return Ok(());
+    }
+    let orchestrates = holds(facts, handle, "orchestrator");
+    match facts.held.unfresh(handle, &facts.created_by, orchestrates) {
+        None => Ok(()),
+        Some(why) => Err(format!(
+            "{handle} {} {}: its reviewer is a fresh session, one that did not write, execute or \
+             request it",
+            match why {
+                crate::Unfresh::Executed => "executed",
+                crate::Unfresh::Orchestrated => "orchestrated",
+                crate::Unfresh::Filed => "filed",
+            },
+            facts.slug
+        )),
+    }
+}
+
+/// The request's inputs against the edge's: each one it declares given, none it does not, and no
+/// input revision, which the board records none of yet, so none is checked as current.
+fn inputs(edge: &Edge, request: &OperationRequest) -> Vec<Refusal> {
+    let mut found = Vec::new();
+    for given in request.inputs.keys() {
+        if !edge.inputs.contains(given) {
+            found.push(Refusal::new(
+                RefusalCode::UnknownId,
+                format!("edge {} declares no input {given}", edge.id),
+            ));
+        }
+    }
+    for needed in &edge.inputs {
+        if !request.inputs.contains_key(needed) {
+            found.push(Refusal::new(
+                RefusalCode::ExplicitActionRequired,
+                format!("edge {} needs the input {needed}", edge.id),
+            ));
+        }
+    }
+    if let Some(name) = request.input_revisions.keys().next() {
+        found.push(Refusal::new(
+            RefusalCode::StaleInput,
+            format!(
+                "the board records no revision of {name} yet, so none is current \
+                 (tools/workflow-accepted-output)"
+            ),
+        ));
+    }
+    found
+}
+
+/// The edge's dependency predicate on the tasks this one depends on: `done` is met by a task the
+/// workflow holds at a position that satisfies its dependants, or one the board's writers keep in
+/// done; a task not on the board meets nothing.
+fn dependencies(context: Context, facts: &Facts, edge: &Edge) -> Result<(), Refusal> {
+    match edge.dependencies {
+        Dependency::None => Ok(()),
+        Dependency::Landed | Dependency::AcceptedOutput => Err(Refusal::new(
+            RefusalCode::UnsupportedWriter,
+            format!(
+                "edge {} depends on {}, which this release does not check",
+                edge.id,
+                word(&edge.dependencies)
+            ),
+        )),
+        Dependency::Done => {
+            for prerequisite in &facts.dependencies {
+                let satisfied = match &prerequisite.found {
+                    None => false,
+                    Some((_, Some(position))) => position_of(context.definition, &position.at())
+                        .is_some_and(|p| p.satisfies_dependencies),
+                    Some((status, None)) => status == "done",
+                };
+                if !satisfied {
+                    return Err(Refusal::new(
+                        RefusalCode::Dependency,
+                        format!(
+                            "{} depends on {}, which is {}",
+                            facts.slug,
+                            prerequisite.slug,
+                            match &prerequisite.found {
+                                None => "not on the board".to_string(),
+                                Some((_, Some(p))) => format!("at {}", named(&p.at())),
+                                Some((status, None)) => status.clone(),
+                            }
+                        ),
+                    ));
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The task's position, refused for a task no workflow holds.
+fn held(facts: &Facts) -> Result<&TaskPosition, Refusal> {
+    facts.position.as_ref().ok_or_else(|| {
+        Refusal::new(
+            RefusalCode::UnknownId,
+            format!(
+                "the workflow holds no position of {}: the board's own writers keep it",
+                facts.slug
+            ),
+        )
+    })
+}
+
+/// The handle of an agent session the local host bound.
+fn agent(principal: &Principal) -> Option<&str> {
+    (principal.kind == PrincipalKind::Agent && principal.issuer == "local")
+        .then_some(principal.subject.as_str())
+}
+
+fn holds(facts: &Facts, handle: &str, role: &str) -> bool {
+    (facts.roles.iter()).any(|(h, r)| h == handle && r == role)
+}
+
+/// How a refusal names a principal: an agent by its handle, anyone else by issuer and subject.
+fn who(principal: &Principal) -> String {
+    match agent(principal) {
+        Some(handle) => handle.to_string(),
+        None => format!("{}/{}", principal.issuer, principal.subject),
+    }
+}
+
+fn described(authority: &Authority) -> String {
+    match authority {
+        Authority::TaskRole { role } => format!("the task's {}", word(role)),
+        Authority::ProjectCapability { capability } => {
+            format!("the project capability {capability}")
+        }
+        Authority::SystemCapability { capability } => format!("the system capability {capability}"),
+    }
+}
+
+fn position_of<'a>(definition: &'a Definition, pair: &Pair) -> Option<&'a Position> {
+    definition.positions.iter().find(|p| p.at == *pair)
+}
+
+fn named(pair: &Pair) -> String {
+    format!("{}/{}", pair.phase, pair.state)
+}
+
+/// A vocabulary value as its wire word.
+pub(crate) fn word<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .expect("a vocabulary value serializes to its word")
+}
+
+#[cfg(test)]
+#[path = "admit_tests.rs"]
+mod tests;

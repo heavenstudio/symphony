@@ -20,6 +20,7 @@ pub(in crate::store) const DUMP: &str = "RETURN {
     execution_facts: (SELECT * OMIT id FROM execution_fact),
     execution_fences: (SELECT * OMIT id FROM execution_fence),
     execution_artifacts: (SELECT * OMIT id FROM execution_artifact),
+    workflow: (SELECT record::id(id) AS key, kind, body, at FROM workflow),
 };";
 
 /// What the copy in one transaction says in SurrealQL: nothing, as a board on SurrealDB is copied
@@ -84,7 +85,9 @@ pub(in crate::store) fn swap(staging: &str, tables: &[&str]) -> String {
 IF $held != $sent.{table} {{ THROW string::concat(\"refused: the copy's staging was taken while it staged, as a copy of the board started meanwhile takes it, and the board is as it was: its {table} holds \", <string>$held, ' of the ', <string>$sent.{table}, ' rows it sent'); }};"
         );
     }
-    swap.push_str("DELETE said RETURN NONE;\n");
+    // A workflow's records go whether or not the dump has any: a dump with none lists no table
+    // for them, so the copy says what it said before workflows, and leaves no record behind.
+    swap.push_str("DELETE said RETURN NONE;\nDELETE workflow RETURN NONE;\n");
     for table in tables {
         let _ = writeln!(
             swap,

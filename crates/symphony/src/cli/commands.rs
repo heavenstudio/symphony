@@ -12,7 +12,7 @@ mod release_notes;
 mod shot;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
-const OWN: [(&str, &str); 16] = [
+const OWN: [(&str, &str); 18] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
@@ -25,6 +25,14 @@ const OWN: [(&str, &str); 16] = [
     (
         "triage",
         "the owner's verdict statistics, or the queue they see first",
+    ),
+    (
+        "render-card",
+        "draw one card as JSON: render-card PATH SLUG",
+    ),
+    (
+        "landing-checks",
+        "a branch's document and regeneration checks as JSON",
     ),
     (
         "verdict-asks",

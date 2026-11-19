@@ -223,6 +223,7 @@ pub fn everything() -> Dump {
             "artifact": {"name": "logs/run.txt", "reference": "store://1", "digest": "ad", "size": 12,
                 "generation": "g1", "runtime_epoch": 0, "verified": true},
         })],
+        workflow: Vec::new(),
     }
 }
 
@@ -729,7 +730,7 @@ fn tables(f: &Fixture) -> Vec<String> {
     names
 }
 
-const BOARD_TABLES: [&str; 31] = [
+const BOARD_TABLES: [&str; 32] = [
     "artifact_ledger",
     "ask",
     "barred_key",
@@ -760,6 +761,7 @@ const BOARD_TABLES: [&str; 31] = [
     "task_session",
     "unanswered_restore",
     "usage",
+    "workflow",
     "writer",
 ];
 

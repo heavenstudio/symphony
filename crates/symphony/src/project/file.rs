@@ -45,7 +45,14 @@ pub(super) struct File {
     pub(super) releases: FileReleases,
     pub(super) limits: FileLimits,
     pub(super) stamps: FileStamps,
-    pub(super) workflow: Option<symphony_api::workflow::Definition>,
+    /// The delivery workflow, read by the board's reader of the file
+    /// ([`symphony_board::workflow::written`], `super::workflow::require_supported`), which reads
+    /// it as it reads its own rows: kept here as written, so the Symphony links one reader of the
+    /// workflow and none for TOML.
+    pub(super) workflow: Option<toml::Value>,
+    /// Where tasks at pairs a newly committed workflow removed go when it activates, read as
+    /// `workflow` is.
+    pub(super) workflow_mappings: Option<toml::Value>,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
     pub(super) unknown: Unknown,
@@ -302,6 +309,9 @@ pub(super) struct FileLand {
     /// The command that delivers a task by a hosted pull request, in place of the land's own
     /// merge and push (`symphony_board::land::delivery`); none, and the land merges here.
     pub(super) delivery: Vec<String>,
+    /// The repository this one imports from (`symphony_board::land::Upstream`), strict as a
+    /// generator is: a misspelt key would change what a delivery merges.
+    pub(super) upstream: Option<symphony_board::land::Upstream>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -316,6 +326,7 @@ impl Default for FileLand {
             check: true,
             check_paths: None,
             delivery: Vec::new(),
+            upstream: None,
             unknown: Unknown::new(),
         }
     }

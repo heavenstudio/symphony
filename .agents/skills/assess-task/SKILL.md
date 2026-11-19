@@ -2,7 +2,7 @@
 name: assess-task
 description: Assess one task for the stamps its land needs, from the project's catalogue, its diff and its brief, independently of who filed, orchestrated or executed it. An assessor's whole prompt is `/assess-task SLUG HANDLE` (Codex `$assess-task SLUG HANDLE`), never /work or /review-task. Trigger on /assess-task SLUG or $assess-task SLUG.
 ---
-<!-- symphony-stamp: 6d6c7b99f9c0ea05 files=SKILL.md -->
+<!-- symphony-stamp: af0fdb1c1a1eceb4 files=SKILL.md -->
 
 # /assess-task SLUG HANDLE
 
@@ -52,7 +52,11 @@ told.
 5. Write the assessment once: `just tasks needs SLUG STAMP… --tip SHA --why "WHY" --as HANDLE`,
    SHA the whole commit `just tasks stamps SLUG` printed (with no branch, no `--tip`: the
    assessment read the brief alone, and the land adds the catalogue's defaults to it), `none` for
-   no stamp, and WHY one line for each stamp left out or added beside the defaults. The board
-   refuses it to a session that filed, orchestrates, orchestrated or executed the task or work
-   under it: say so on the thread and end.
+   no stamp, and WHY one line for each stamp left out or added beside the defaults. Where the
+   project names an upstream (`[land.upstream]` in `symphony.toml`) and the head imports one of
+   its commits (merged on the branch by `git merge --no-ff U`, as the brief says), add
+   `--import U`, U that upstream commit: it binds this head to the history it brings in, and
+   without it the land refuses a head holding the upstream's commits. The board refuses it to a
+   session that filed, orchestrates, orchestrated or executed the task or work under it: say so
+   on the thread and end.
 6. Then end: post nothing else, and say in one line the stamps you wrote and the tip you read.

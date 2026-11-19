@@ -792,12 +792,18 @@ fn results(reply: Value) -> Result<Vec<Value>, DbError> {
             .get("result")
             .and_then(Value::as_str)
             .map_or_else(|| first.to_string(), String::from);
-        return Err(match kind(first).as_str() {
-            "Thrown" => DbError::Thrown(
+        // A THROW in an event comes back as the event's error, the thrown words after its name:
+        // thrown all the same, so a refusal an event throws is the write's refusal.
+        let in_event = (said.strip_prefix("Error while processing event "))
+            .and_then(|rest| rest.split_once(": An error occurred: "))
+            .map(|(_, thrown)| thrown.to_string());
+        return Err(match (kind(first).as_str(), in_event) {
+            ("Thrown", _) => DbError::Thrown(
                 said.strip_prefix("An error occurred: ")
                     .unwrap_or(&said)
                     .to_string(),
             ),
+            (_, Some(thrown)) => DbError::Thrown(thrown),
             _ => DbError::Failed(said),
         });
     }
@@ -848,6 +854,24 @@ mod tests {
         let reply = json!({"id": 1, "result": [ok(Value::Null), not_executed(),
             {"kind": "Thrown", "result": "An error occurred: stale", "status": "ERR"}, not_executed()]});
         assert_eq!(results(reply), Err(DbError::Thrown("stale".into())));
+    }
+
+    /// A refusal an event throws is the write's, its words after the event's name.
+    #[test]
+    fn a_throw_in_an_event_is_thrown() {
+        let said = "Error while processing event workflow_position: An error occurred: \
+                    refused: workflow: sim/jump keeps its workflow position";
+        let reply = json!({"result": [
+            {"kind": "Internal", "result": said, "status": "ERR"}, not_executed()]});
+        assert_eq!(
+            results(reply),
+            Err(DbError::Thrown(
+                "refused: workflow: sim/jump keeps its workflow position".into()
+            ))
+        );
+        let other = "Error while processing event board_changed: the server is full";
+        let reply = json!({"result": [{"kind": "Internal", "result": other, "status": "ERR"}]});
+        assert_eq!(results(reply), Err(DbError::Failed(other.into())));
     }
 
     #[test]

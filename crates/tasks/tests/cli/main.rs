@@ -47,6 +47,7 @@ mod stamps;
 mod stats;
 mod sweep;
 mod test_lanes;
+mod workflow;
 mod write_load;
 
 use crate::children::Child as _;

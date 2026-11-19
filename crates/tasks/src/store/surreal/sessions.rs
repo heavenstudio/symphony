@@ -168,14 +168,18 @@ pub(in crate::store) const REVIVE: &str = "IF !record::exists(type::record('sess
 /// `$actor` leaves at `$now`: every role it holds released on the record, a task left in progress
 /// with no executor ready again, the pass's gives (`FENCES`, `gives`) and its callback
 /// registrations gone, fenced on the orchestrator roles read (`$held`, [`held_orchestrating`]).
-/// Needs an act's and a pass's variables.
+/// On a task a custom workflow holds only its orchestrator role goes here, and its status stays:
+/// its other roles went by the position's recovery before (`Store::leave`), which kept any it
+/// says a person recovers. Needs an act's and a pass's variables.
 pub(in crate::store) fn leave() -> String {
     format!(
         "{ACT}{FENCES}
 IF {HELD_ORCHESTRATING} != $held {{ THROW 'stale' }};
-FOR $slug IN array::sort(array::distinct(SELECT VALUE slug FROM role WHERE handle = $actor)) {{
-    DELETE role WHERE slug = $slug AND handle = $actor;
-    LET $ready = (SELECT VALUE status FROM ONLY type::record('task', $slug)) = 'in_progress'
+FOR $slug IN array::sort(array::distinct(SELECT VALUE slug FROM role WHERE handle = $actor
+        AND (role = 'orchestrator' OR type::record('task', slug).fields._board.workflow = NONE))) {{
+    LET $held = (SELECT VALUE fields._board.workflow FROM ONLY type::record('task', $slug)) != NONE;
+    DELETE role WHERE slug = $slug AND handle = $actor AND (!$held OR role = 'orchestrator');
+    LET $ready = !$held AND (SELECT VALUE status FROM ONLY type::record('task', $slug)) = 'in_progress'
         AND array::len(SELECT VALUE handle FROM role WHERE slug = $slug AND role = 'executor') = 0;
     UPDATE type::record('task', $slug) SET version += 1, status = IF $ready {{ 'ready' }} ELSE {{ status }},
         updated = IF $ready {{ $now }} ELSE {{ updated }} RETURN NONE;

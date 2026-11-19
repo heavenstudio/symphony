@@ -146,6 +146,46 @@ fn a_rule_nobody_bypasses_narrows_the_methods_and_one_somebody_does_narrows_none
 }
 
 #[test]
+fn a_repository_that_imports_permits_merge_commits_beside_squash_and_no_linear_history() {
+    assert_eq!(Operation::of(false), Operation::Task);
+    assert_eq!(Operation::of(true), Operation::Imports);
+    assert_eq!(Operation::Imports.permitted(), ["merge", "squash"]);
+    let imports = Wanted {
+        operation: Operation::Imports,
+        ..WANTED
+    };
+    let mut merges = repository();
+    merges["allow_merge_commit"] = json!(true);
+    let mut both = rules();
+    both[0]["parameters"]["allowed_merge_methods"] = json!(["merge", "squash"]);
+    assert_eq!(
+        judge(&merges, &both, &bypasses(), &imports),
+        Vec::<String>::new()
+    );
+    // Squash alone is a task's, and not what imports too.
+    assert_eq!(
+        judge(&merges, &rules(), &bypasses(), &imports),
+        ["main permits these merge methods: squash; a delivery takes exactly: merge, squash"]
+    );
+    // A rule that requires a linear history refuses the merge commit an import is, and only that.
+    let linear = json!({"type": "required_linear_history", "ruleset_id": 1});
+    both.push(linear.clone());
+    assert_eq!(
+        judge(&merges, &both, &bypasses(), &imports),
+        [
+            "a rule requires a linear history of main, which refuses the merge commit an import \
+             is delivered by"
+        ]
+    );
+    let mut tasks = rules();
+    tasks.push(linear);
+    assert_eq!(
+        judge(&repository(), &tasks, &bypasses(), &WANTED),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
 fn what_github_says_of_an_actor_is_said_in_plain_characters() {
     let mut bypasses = bypasses();
     bypasses.insert(
@@ -160,5 +200,126 @@ fn what_github_says_of_an_actor_is_said_in_plain_characters() {
     assert!(
         missing[0].ends_with("ruleset 1 is bypassed by Team31mrm 7 (always)"),
         "{missing:?}"
+    );
+}
+
+/// A transport that keeps what it was asked and answers each request with `answer`.
+struct Kept {
+    asked: std::cell::RefCell<Vec<crate::transport::Request>>,
+    answer: (u16, String),
+}
+
+impl Transport for Kept {
+    fn send(
+        &self,
+        request: &crate::transport::Request,
+    ) -> Result<crate::transport::Response, crate::transport::Failure> {
+        self.asked.borrow_mut().push(request.clone());
+        Ok(crate::transport::Response {
+            status: self.answer.0,
+            headers: BTreeMap::new(),
+            body: self.answer.1.clone(),
+        })
+    }
+}
+
+fn reading(status: u16, body: &Value) -> (Result<Bypass, Value>, Vec<crate::transport::Request>) {
+    let kept = Kept {
+        asked: std::cell::RefCell::default(),
+        answer: (status, body.to_string()),
+    };
+    let repository = Repository {
+        owner: "o".into(),
+        name: "n".into(),
+    };
+    let read = Reader::new(&kept, repository).bypass(2);
+    (read, kept.asked.into_inner())
+}
+
+#[test]
+fn the_policy_token_is_sent_with_one_read_of_one_ruleset_and_nothing_else() {
+    let landing = json!([{"actor_type": "Integration", "actor_id": 43, "bypass_mode": "always"}]);
+    for (status, body, read) in [
+        (
+            200,
+            json!({"id": 2, "enforcement": "active", "bypass_actors": landing}),
+            Bypass::Actors(vec![("Integration".into(), Some(43), "always".into())]),
+        ),
+        (
+            200,
+            json!({"id": 2, "enforcement": "active", "bypass_actors": []}),
+            Bypass::Actors(Vec::new()),
+        ),
+        // A list left out is not an empty one, whoever asks.
+        (
+            200,
+            json!({"id": 2, "enforcement": "active"}),
+            Bypass::Unknown("its bypass list is not shown to the policy token".into()),
+        ),
+        (
+            200,
+            json!({"id": 2, "enforcement": "disabled", "bypass_actors": []}),
+            Bypass::Unknown("it does not read as active".into()),
+        ),
+        (
+            200,
+            json!({"id": 3, "enforcement": "active", "bypass_actors": []}),
+            Bypass::Unknown("it does not read as active".into()),
+        ),
+        (
+            404,
+            json!({"message": "Not Found"}),
+            Bypass::Unknown("GitHub answered 404 to the policy token".into()),
+        ),
+        (
+            403,
+            json!({"message": "Resource not accessible by integration"}),
+            Bypass::Unknown("GitHub answered 403 to the policy token".into()),
+        ),
+    ] {
+        let (answer, asked) = reading(status, &body);
+        assert_eq!(answer, Ok(read), "{body}");
+        // One request, a read, of the ruleset and of nothing else, with nothing sent in it.
+        assert_eq!(
+            asked,
+            [crate::transport::Request {
+                method: "GET",
+                path: "/repos/o/n/rulesets/2".into(),
+                body: None,
+            }]
+        );
+    }
+    // No answer to judge is unavailable, never a list.
+    for status in [401, 429, 500] {
+        let (answer, asked) = reading(status, &json!({}));
+        let stopped = answer.unwrap_err();
+        assert_eq!(
+            (&stopped["state"], &stopped["kind"]),
+            (&json!("unavailable"), &json!("policy")),
+            "{status}"
+        );
+        assert!(
+            (stopped["why"].as_str().unwrap()).starts_with(
+                "who bypasses ruleset 2 was not read with the policy token (policy_token_file): "
+            ),
+            "{stopped}"
+        );
+        assert_eq!(asked.len(), 1);
+    }
+}
+
+#[test]
+fn a_policy_token_that_is_not_there_refuses_as_a_policy_that_does_not_hold() {
+    let answer = unread(&WANTED, "token_file /secrets/policy: No such file");
+    assert_eq!(
+        (&answer["state"], &answer["kind"]),
+        (&json!("refused"), &json!("policy"))
+    );
+    assert_eq!(
+        answer["missing"],
+        json!([
+            "who bypasses the rules of main cannot be read, policy_token_file not being usable: \
+             token_file /secrets/policy: No such file"
+        ])
     );
 }

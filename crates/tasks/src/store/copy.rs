@@ -64,100 +64,111 @@ impl Store {
             row["sid"] = row["id"].clone();
             row
         };
-        let tables = [
-            (
-                "task",
-                keyed(
-                    values(&dump.tasks).into_iter().map(with_sid).collect(),
-                    &|r| r["slug"].clone(),
+        // A workflow's records go in before the tasks: the task fence finds each managed task's
+        // transition among them as the task is written (`crate::schema`'s `workflow_position`).
+        // A dump with none lists no table for them, so its copy says what it said before
+        // workflows; the copy empties the board's records either way.
+        let workflow: Vec<Value> = (dump.workflow.iter())
+            .map(|row| json!({ "id": row.key, "kind": row.kind, "body": row.body, "at": row.at }))
+            .collect();
+        let workflow = (!workflow.is_empty()).then_some(("workflow", workflow));
+        let tables: Vec<(&str, Vec<Value>)> = workflow
+            .into_iter()
+            .chain([
+                (
+                    "task",
+                    keyed(
+                        values(&dump.tasks).into_iter().map(with_sid).collect(),
+                        &|r| r["slug"].clone(),
+                    ),
                 ),
-            ),
-            (
-                "link",
-                keyed(values(&dump.task_links), &|r| {
-                    json!([r["slug"], r["kind"], r["target"]])
-                }),
-            ),
-            (
-                "session",
-                keyed(values(&dump.sessions), &|r| r["handle"].clone()),
-            ),
-            (
-                "role",
-                keyed(values(&dump.roles), &|r| {
-                    json!([r["slug"], r["handle"], r["role"]])
-                }),
-            ),
-            (
-                "message",
-                keyed(
-                    values(&dump.messages).into_iter().map(with_sid).collect(),
-                    &|r| json!([r["slug"], r["sid"]]),
+                (
+                    "link",
+                    keyed(values(&dump.task_links), &|r| {
+                        json!([r["slug"], r["kind"], r["target"]])
+                    }),
                 ),
-            ),
-            (
-                "delivery",
-                keyed(values(&dump.deliveries), &|r| {
-                    json!([r["message"], r["handle"]])
-                }),
-            ),
-            (
-                "barred_key",
-                keyed(values(&dump.barred_keys), &|r| r["key"].clone()),
-            ),
-            (
-                "task_session",
-                keyed(values(&dump.task_sessions), &|r| {
-                    json!([r["slug"], r["handle"]])
-                }),
-            ),
-            (
-                "delivery_key",
-                keyed(values(&dump.delivery_keys), &|r| {
-                    json!([r["slug"], r["key"]])
-                }),
-            ),
-            (
-                "ask",
-                keyed(
-                    values(&dump.asks).into_iter().map(with_sid).collect(),
-                    &|r| r["sid"].clone(),
+                (
+                    "session",
+                    keyed(values(&dump.sessions), &|r| r["handle"].clone()),
                 ),
-            ),
-            (
-                "usage",
-                keyed(values(&dump.usages), &|r| {
-                    json!([
-                        r["handle"],
-                        r["slug"],
-                        r["role"],
-                        r["model"],
-                        r["speed"],
-                        r["round"]
-                    ])
-                }),
-            ),
-            (
-                "execution_attempt",
-                keyed(dump.execution_attempts.clone(), &|r| r["attempt"].clone()),
-            ),
-            (
-                "execution_fact",
-                keyed(dump.execution_facts.clone(), &|r| {
-                    json!([r["attempt"], r["seq"]])
-                }),
-            ),
-            (
-                "execution_fence",
-                keyed(dump.execution_fences.clone(), &|r| r["key"].clone()),
-            ),
-            (
-                "execution_artifact",
-                keyed(dump.execution_artifacts.clone(), &|r| {
-                    json!([r["attempt"], r["name"]])
-                }),
-            ),
-        ];
+                (
+                    "role",
+                    keyed(values(&dump.roles), &|r| {
+                        json!([r["slug"], r["handle"], r["role"]])
+                    }),
+                ),
+                (
+                    "message",
+                    keyed(
+                        values(&dump.messages).into_iter().map(with_sid).collect(),
+                        &|r| json!([r["slug"], r["sid"]]),
+                    ),
+                ),
+                (
+                    "delivery",
+                    keyed(values(&dump.deliveries), &|r| {
+                        json!([r["message"], r["handle"]])
+                    }),
+                ),
+                (
+                    "barred_key",
+                    keyed(values(&dump.barred_keys), &|r| r["key"].clone()),
+                ),
+                (
+                    "task_session",
+                    keyed(values(&dump.task_sessions), &|r| {
+                        json!([r["slug"], r["handle"]])
+                    }),
+                ),
+                (
+                    "delivery_key",
+                    keyed(values(&dump.delivery_keys), &|r| {
+                        json!([r["slug"], r["key"]])
+                    }),
+                ),
+                (
+                    "ask",
+                    keyed(
+                        values(&dump.asks).into_iter().map(with_sid).collect(),
+                        &|r| r["sid"].clone(),
+                    ),
+                ),
+                (
+                    "usage",
+                    keyed(values(&dump.usages), &|r| {
+                        json!([
+                            r["handle"],
+                            r["slug"],
+                            r["role"],
+                            r["model"],
+                            r["speed"],
+                            r["round"]
+                        ])
+                    }),
+                ),
+                (
+                    "execution_attempt",
+                    keyed(dump.execution_attempts.clone(), &|r| r["attempt"].clone()),
+                ),
+                (
+                    "execution_fact",
+                    keyed(dump.execution_facts.clone(), &|r| {
+                        json!([r["attempt"], r["seq"]])
+                    }),
+                ),
+                (
+                    "execution_fence",
+                    keyed(dump.execution_fences.clone(), &|r| r["key"].clone()),
+                ),
+                (
+                    "execution_artifact",
+                    keyed(dump.execution_artifacts.clone(), &|r| {
+                        json!([r["attempt"], r["name"]])
+                    }),
+                ),
+            ])
+            .collect();
         let last = dump.messages.iter().map(|m| m.id).max().unwrap_or(0);
         let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);
         let last_ask = dump.asks.iter().map(|a| a.id).max().unwrap_or(0);
@@ -347,6 +358,10 @@ impl Store {
         dump.execution_fences.sort_by_key(|row| text(&row["key"]));
         dump.execution_artifacts
             .sort_by_key(|row| (text(&row["attempt"]), text(&row["name"])));
+        // Each database orders compound ids its own way (PostgreSQL's jsonb puts a shorter array
+        // first): one order, so a board's export is one text in either.
+        dump.workflow
+            .sort_by(|a, b| crate::store::workflow::key_order(&a.key, &b.key));
         let fields = (dump.tasks.iter_mut()).flat_map(|task| task.fields.values_mut());
         for value in fields.flat_map(|namespace| namespace.values_mut()) {
             value.sort_all_objects();
@@ -703,7 +718,7 @@ mod tests {
 
 /// The tables a move takes by the dump ([`Store::dump`], [`Store::copy`]).
 #[cfg(test)]
-const DUMPED: [&str; 11] = [
+const DUMPED: [&str; 16] = [
     "task",
     "link",
     "session",
@@ -715,6 +730,11 @@ const DUMPED: [&str; 11] = [
     "task_session",
     "ask",
     "usage",
+    "execution_attempt",
+    "execution_fact",
+    "execution_fence",
+    "execution_artifact",
+    "workflow",
 ];
 
 /// The tables a move leaves, each with why nothing of the board is lost with it.

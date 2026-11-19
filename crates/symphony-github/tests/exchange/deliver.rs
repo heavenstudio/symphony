@@ -21,6 +21,9 @@ const CHECKS: &str = "ghs_fixtureCHECKS0123456789abcdefSECRET";
 pub(crate) const APP: i64 = 42;
 /// The number of the GitHub App that merges, whose token the settings' `token_file` holds.
 pub(crate) const LANDING: i64 = 43;
+/// The token of the GitHub App that reads who bypasses the rules, and that App's number.
+const POLICY: &str = "ghs_fixturePOLICY0123456789abcdefSECRET";
+pub(crate) const READER: i64 = 44;
 pub(crate) const SLUG: &str = "sim/jump";
 pub(crate) const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -75,12 +78,27 @@ pub(crate) struct Delivery {
     said: RefCell<String>,
 }
 
-fn settings(checks: &std::path::Path, more: &str) -> String {
+fn settings(checks: &std::path::Path, policy: &std::path::Path, more: &str) -> String {
     format!(
         "pull_requests = \"publish\"\nchecks_token_file = \"{}\"\nchecks_app_id = {APP}\n\
-         landing_app_id = {LANDING}\n{more}",
-        checks.display()
+         landing_app_id = {LANDING}\npolicy_token_file = \"{}\"\npolicy_app_id = {READER}\n{more}",
+        checks.display(),
+        policy.display()
     )
+}
+
+/// What makes a request as the App whose token it carries.
+fn connect(github: &Arc<Fake>) -> impl Fn(Secret) -> Result<Box<dyn Transport>, String> + use<> {
+    let github = Arc::clone(github);
+    move |token: Secret| -> Result<Box<dyn Transport>, String> {
+        let app = match token.expose() {
+            CHECKS => APP,
+            TOKEN => LANDING,
+            POLICY => READER,
+            _ => 0,
+        };
+        Ok(Box::new(As(Arc::clone(&github), app)))
+    }
 }
 
 impl Delivery {
@@ -88,10 +106,14 @@ impl Delivery {
     pub(crate) fn new(name: &str, more: &str) -> Delivery {
         let rig = Rig::off(name);
         rig.github.protect(APP, LANDING);
+        rig.github.shown_to(READER);
         let checks = rig.dir.0.join("secret/checks");
-        std::fs::write(&checks, format!("{CHECKS}\n")).unwrap();
-        std::fs::set_permissions(&checks, std::fs::Permissions::from_mode(0o600)).unwrap();
-        rig.enable(&settings(&checks, more));
+        let policy = rig.dir.0.join("secret/policy");
+        for (file, token) in [(&checks, CHECKS), (&policy, POLICY)] {
+            std::fs::write(file, format!("{token}\n")).unwrap();
+            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        rig.enable(&settings(&checks, &policy, more));
         let remote = Pushes {
             url: "git@github.com:o/n.git".into(),
             github: Arc::clone(&rig.github),
@@ -109,19 +131,28 @@ impl Delivery {
         self.rig.dir.0.join("secret/checks")
     }
 
+    pub(crate) fn policy_file(&self) -> PathBuf {
+        self.rig.dir.0.join("secret/policy")
+    }
+
+    /// `symphony-github ARGS`, each request made as the App whose token it carries.
+    pub(crate) fn run(&self, args: &[&str]) -> crate::Ran {
+        let _alone = crate::no_start();
+        crate::run(
+            args,
+            &self.rig.board,
+            &self.rig.settings,
+            &connect(&self.rig.github),
+            self.rig.now.get(),
+            vec![self.rig.dir.0.join("repository")],
+        )
+    }
+
     /// The answer to `verb` of `request`.
     pub(crate) fn ask(&self, verb: &str, request: &Value) -> Value {
         let file = self.rig.dir.0.join("request.json");
         std::fs::write(&file, request.to_string()).unwrap();
-        let github = Arc::clone(&self.rig.github);
-        let connect = move |token: Secret| -> Result<Box<dyn Transport>, String> {
-            let app = match token.expose() {
-                CHECKS => APP,
-                TOKEN => LANDING,
-                _ => 0,
-            };
-            Ok(Box::new(As(Arc::clone(&github), app)))
-        };
+        let connect = connect(&self.rig.github);
         let ctx = Context {
             source: &self.rig.settings,
             board: &self.rig.board,
@@ -188,7 +219,10 @@ impl Delivery {
             texts.push(format!("{method} {path} {}", body.unwrap_or_default()));
         }
         for text in texts {
-            assert!(!text.contains(TOKEN) && !text.contains(CHECKS), "{text}");
+            assert!(
+                !text.contains(TOKEN) && !text.contains(CHECKS) && !text.contains(POLICY),
+                "{text}"
+            );
         }
     }
 }
@@ -866,6 +900,7 @@ fn withdrawn(head: &str) -> Value {
             tip: Some(head.into()),
             why: "a private reason".into(),
             stamps: vec!["tests".into(), "review".into()],
+            import: None,
         }),
         assessed: true,
         stamps: vec![

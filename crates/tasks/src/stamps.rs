@@ -10,7 +10,8 @@
 //! refused where the file is read, here and by the Symphony's own reading of the file.
 //!
 //! A task's needs are its assessment ([`Needs`]): the stamps it needs, the tip the assessment read
-//! (none before the task has a branch), who made it and why. They are the board's own field
+//! (none before the task has a branch), who made it and why, and, for a head that imports an
+//! upstream's history, the upstream commit it imports. They are the board's own field
 //! `fields._board.needs` ([`NEEDS`]), out of `set_field`'s reach, which only `just tasks needs`
 //! writes ([`crate::Store::set_needs`]), each change a line on the task's thread ([`Needs::line`]).
 //! The assessor that writes them is a role in name only: the write itself is refused to a session
@@ -324,6 +325,11 @@ pub struct Needs {
     /// Why: one line for each stamp it left out or added.
     #[serde(default)]
     pub why: String,
+    /// The whole upstream commit the head it read imports, where the assessor names it so: what
+    /// a land delivered by a pull request merges by a merge commit rather than squashing
+    /// (`crate::land::delivery`). Only ever with a tip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<String>,
 }
 
 /// `stamps` as a line says them: `tests, review`, or `none`.
@@ -347,11 +353,16 @@ impl Needs {
         serde_json::from_value(value.clone()).ok()
     }
 
-    /// Where the assessment stands: `at 1a2b3c4`, or `from the brief` when it read no tip.
+    /// Where the assessment stands: `at 1a2b3c4`, or `from the brief` when it read no tip; with
+    /// `, an import of 5e6f7a8` after it where it names one.
     pub fn read(&self) -> String {
-        match &self.tip {
+        let read = match &self.tip {
             Some(tip) => format!("at {}", short(tip)),
             None => "from the brief".into(),
+        };
+        match &self.import {
+            Some(import) => format!("{read}, an import of {import}"),
+            None => read,
         }
     }
 
