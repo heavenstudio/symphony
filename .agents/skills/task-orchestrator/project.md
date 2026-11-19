@@ -36,3 +36,11 @@ Read this page with the orchestrator skill, as the [root guide](../../../AGENTS.
   release candidate is open, and for nothing else (not for `current` to serve the last schema);
   after its land, run `just release` at once, without asking, unless the land's own `--due`
   started a run ([the cadence](../../../docs/RELEASES.md#the-cadence)).
+- Bending a rule is an orchestrator's decision, given by the owner on 2026-11-19: where a rule
+  here would hold development back or slow it for no gain the task needs (a size or first-visit
+  budget at its line once the cut was made first, a wait the work does not need), decide it
+  without a card and without asking, and say on the task's thread which rule gave way, why, and
+  what was measured. A raised budget is still a commit of its own with its account, judged by the
+  task's reviewer. What stays the owner's word is unchanged: pointing `current` back, restarting
+  the shared server by hand, running a release by hand outside the cadence and the schema rule,
+  and turning publication or a project's delivery on.
