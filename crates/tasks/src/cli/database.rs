@@ -44,6 +44,9 @@ the board, so none of it ever starts the database.
                                Only its holder releases it, or another
                                handle naming the holder with --of HOLDER
 
+The board's store is moved to the other engine, and a PostgreSQL snapshot put
+back over its board, by `tasks-move`, a program of its own (its --help).
+
 Each hold and release is a line of symphony/tasks/hold.log. It acts on the
 board of the repository it runs in, never on a server TASKS_SERVER names or
 for a scratch database, which shares the board's server. Only builds that
@@ -205,7 +208,7 @@ fn usage(err: &mut dyn Write, said: &str) -> i32 {
 /// The board of the project `env`'s working directory is in, as [`super::reach_board`] finds it,
 /// refused for a server `TASKS_SERVER` names, a scratch database and a process Cargo runs from that
 /// board's repository ([`crate::live::cargo_refusal`]).
-fn home(env: &Env) -> Result<Home, String> {
+pub(crate) fn home(env: &Env) -> Result<Home, String> {
     if env.var("TASKS_SERVER").is_some() {
         return Err(
             "TASKS_SERVER names a server by its address, which `tasks database` does not hold: \

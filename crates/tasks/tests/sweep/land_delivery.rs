@@ -14,6 +14,8 @@ use symphony_board::land::delivery::{Journal, Receipt, Stage, Transport};
 use symphony_board::land::{Stop, evidence, land, land_by};
 use symphony_board::stamps::{Catalogue, Needs};
 
+mod generated;
+
 const SLUG: &str = "sim/jump";
 /// The project file of a project that delivers by pull request.
 const DELIVERS: &str = "[land]\ncheck = false\ndelivery = [\"host\", \"deliver\"]\n";
@@ -1699,37 +1701,4 @@ fn the_delivery_command_is_run_with_its_verb_and_request_and_its_refusal_merges_
     let line = refusal(result.unwrap_err());
     assert!(line.starts_with("nothing merged: sh "), "{line}");
     assert!(line.ends_with(" publish: cannot reach it"), "{line}");
-}
-
-#[test]
-fn the_regenerator_lands_nothing_where_the_project_delivers_by_pull_request() {
-    let r = Repo::new();
-    project_file(
-        &r,
-        "[land]\ncheck = false\ndelivery = [\"host\"]\ngenerators = [{ name = \"the client\", \
-         outputs = \"dist/\", command = [\"sh\", \"-c\", \"mkdir -p dist && echo built > dist/app.js\"] }]\n",
-    );
-    let bare = remote(&r);
-    let before = head(&r.root, "main");
-    let mut out = Vec::new();
-    let refused = symphony_board::land::regenerate::run(&r.board.store, &r.env(&r.root), &mut out)
-        .unwrap_err();
-    assert!(
-        refused.starts_with("[land] delivery is set: main lands by pull request alone"),
-        "{refused}"
-    );
-    assert_eq!(head(&r.root, "main"), before);
-    assert_eq!(head(&bare, "main"), before);
-    // A land there says so, and starts none.
-    let (people, _, tip) = in_review(&r, SLUG, "sim/jump.gd");
-    assess(&r, SLUG, &people.assessor, &[], &tip);
-    let host = Host::new(&r, &bare);
-    let (said, result) = landed(&r, SLUG, &people.orch, &host);
-    result.unwrap();
-    assert!(
-        said.contains(
-            "the regenerator is not started: with [land] delivery it commits nothing to main"
-        ),
-        "{said}"
-    );
 }

@@ -1,4 +1,4 @@
-//! A custom delivery workflow's records on the board (docs/WORKFLOW.md), from schema 23: the
+//! A custom delivery workflow's records on the board (docs/WORKFLOW.md), from schema 24: the
 //! active generation, the immutable definitions, activations, transitions and receipts in the
 //! `workflow` table, and the position of each task the workflow holds in its
 //! `fields._board.workflow`.

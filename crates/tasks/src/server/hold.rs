@@ -126,6 +126,20 @@ impl Home {
     /// the board's next command starts the database.
     pub fn release(&self, by: &str, of: Option<&str>) -> Result<Option<Hold>, ServerError> {
         let _locked = self.lock(Doing::Releasing)?;
+        self.release_as(by, of)
+    }
+
+    /// [`Home::release`] under the caller's starters' lock.
+    pub(super) fn release_as(
+        &self,
+        by: &str,
+        of: Option<&str>,
+    ) -> Result<Option<Hold>, ServerError> {
+        // A switch that stopped part way keeps its hold until its holder settles it.
+        let journal = self.dir.join(super::moving::JOURNAL);
+        if journal.exists() {
+            return Err(ServerError::Io(super::moving::unsettled(&journal)));
+        }
         let Some(hold) = self.held() else {
             return Ok(None);
         };
