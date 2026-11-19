@@ -5,7 +5,8 @@
 //! ([`Store::keep_owned`]), and to every open task nobody orchestrates
 //! ([`Store::give_unowned`]), which every reader of the whole board passes on when its read shows
 //! one ([`Store::give_if_due`]): the server's clock, a detached dispatcher, an orchestrator's
-//! `tasks wait`, monitor and `tasks pull`, and the idle sweep.
+//! `tasks wait`, monitor and `tasks pull`, and the idle sweep. A task its reviewer approved that no
+//! landing has closed is given as open work is, though it reads done ([`orchestration::owed`]).
 //!
 //! Each give is decided on one read and written in one transaction that throws `stale` if what it
 //! decided on moved: each task's `version`, the `last_seen` of each lost or left holder it drops,

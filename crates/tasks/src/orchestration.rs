@@ -67,13 +67,13 @@ impl<'t> Owners<'t> {
     }
 }
 
-/// The unfinished tasks nobody orchestrates ([`Owners::of`] empty), until the board gives them
-/// ([`unowned_tops`]): every orchestrator follows them meanwhile, and the owner's word on one
-/// reaches every orchestrator (`Store::inbox`). The board's health counts them as a defect
-/// (`crate::board_health::Report::unowned`).
+/// The tasks somebody answers for ([`owed`]) that nobody orchestrates ([`Owners::of`] empty), until
+/// the board gives them ([`unowned_tops`]): every orchestrator follows them meanwhile, and the
+/// owner's word on one reaches every orchestrator (`Store::inbox`). The board's health counts them
+/// as a defect (`crate::board_health::Report::unowned`).
 pub fn unowned<'t>(owners: &Owners, tasks: &'t [Task]) -> impl Iterator<Item = &'t Task> {
     (tasks.iter())
-        .filter(|t| !crate::health::FINISHED.contains(&t.status.as_str()))
+        .filter(|t| owed(t))
         .filter(|t| owners.of(&t.slug).is_empty())
 }
 
@@ -280,6 +280,36 @@ pub fn waiting(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Option<f64
         .and_then(Value::as_f64)
 }
 
+/// The board field marking a task its reviewer approved and no landing has closed: when the approve
+/// was given. The approve writes it with the task's move to done, and the landing's line, or a move
+/// back to review, lifts it (`Store::verdict`, `Store::landed`, `Store::move_to`), so a reader of
+/// the board tells such a task from a landed one without its thread.
+pub const UNLANDED: &str = "unlanded";
+
+/// When `task` was approved, while it is done and no landing has closed it ([`UNLANDED`]): work
+/// still somebody's to land, though it reads done.
+pub fn unlanded(task: &Task) -> Option<f64> {
+    marked_unlanded(&task.status, &task.fields)
+}
+
+/// [`unlanded`], of a task in `status` whose fields are `fields`.
+pub fn marked_unlanded(
+    status: &str,
+    fields: &BTreeMap<String, BTreeMap<String, Value>>,
+) -> Option<f64> {
+    (fields.get(crate::red::FIELDS))
+        .and_then(|board| board.get(UNLANDED))
+        .and_then(Value::as_f64)
+        .filter(|_| status == "done")
+}
+
+/// Whether somebody answers for `task`: it is unfinished, or approved and not landed
+/// ([`unlanded`]), whose land is still to make. What the board keeps an orchestrator on; the limit
+/// on the open tasks an orchestrator holds counts the unfinished alone ([`counted`]).
+pub fn owed(task: &Task) -> bool {
+    unfinished(task) || unlanded(task).is_some()
+}
+
 /// The live orchestrators of `board` past their first live line, but `except`: those that may show
 /// they stay ([`Pool::of`]), whose listening the board read does not hold (a channel, a `tasks
 /// wait`) and a store reads for them alone.
@@ -432,8 +462,8 @@ fn unfinished(task: &Task) -> bool {
     !FINISHED.contains(&task.status.as_str())
 }
 
-/// Of the unfinished tasks nobody orchestrates ([`unowned`]), the topmost of each tree they make:
-/// the nearest unfinished task to the top of each one's line of parents, which gives the role to
+/// Of the tasks nobody orchestrates ([`unowned`]), the topmost of each tree they make:
+/// the nearest such task to the top of each one's line of parents, which gives the role to
 /// every unowned task below it ([`Owners::of`] walks up). In the board's order.
 pub fn unowned_tops(tasks: &[Task]) -> Vec<&Task> {
     let owners = Owners::new(tasks);
@@ -462,15 +492,15 @@ pub fn give_due(tasks: &[Task], tops: &[&Task], pool: &Pool) -> bool {
         || (tasks.iter()).any(|t| waiting(&t.fields).is_some() && !waits.contains(t.slug.as_str()))
 }
 
-/// The unfinished tasks that are somebody's on `tasks` and would be nobody's were each role `gone`
-/// says dropped: the topmost of each tree they make, in the board's order. What a leave gives
+/// The tasks somebody answers for ([`owed`]) that are somebody's on `tasks` and would be nobody's
+/// were each role `gone` says dropped: the topmost of each tree they make, in the board's order. What a leave gives
 /// ([`crate::Store::leave`]) and what a release of the role is refused for.
 pub fn orphaned(tasks: &[Task], gone: impl Fn(&Task, &crate::Role) -> bool) -> Vec<&Task> {
     tops(tasks, &orphans(tasks, gone))
 }
 
-/// Every unfinished task of `tasks` that is somebody's and would be nobody's were each role `gone`
-/// says dropped, not only the top of each tree they make ([`orphaned`]).
+/// Every task of `tasks` somebody answers for ([`owed`]) that is somebody's and would be nobody's
+/// were each role `gone` says dropped, not only the top of each tree they make ([`orphaned`]).
 pub fn orphans(tasks: &[Task], gone: impl Fn(&Task, &crate::Role) -> bool) -> HashSet<&str> {
     let before = Owners::new(tasks);
     let after: Vec<Task> = (tasks.iter())
@@ -482,7 +512,7 @@ pub fn orphans(tasks: &[Task], gone: impl Fn(&Task, &crate::Role) -> bool) -> Ha
         .collect();
     let after_owners = Owners::new(&after);
     (tasks.iter())
-        .filter(|t| unfinished(t) && after_owners.of(&t.slug).is_empty())
+        .filter(|t| owed(t) && after_owners.of(&t.slug).is_empty())
         .filter(|t| !before.of(&t.slug).is_empty())
         .map(|t| t.slug.as_str())
         .collect()
@@ -1072,6 +1102,60 @@ mod tests {
             .map(|t| t.slug.as_str())
             .collect();
         assert_eq!(found, ["a", "e"]);
+    }
+
+    /// `t`, done and marked approved at `at` with no landing since.
+    fn approved(mut t: Task, at: Value) -> Task {
+        t.status = "done".into();
+        let board = t.fields.entry(crate::red::FIELDS.into()).or_default();
+        board.insert(UNLANDED.into(), at);
+        t
+    }
+
+    #[test]
+    fn an_approved_task_not_landed_is_done_with_the_boards_mark_and_a_time() {
+        let plain = task("a", None, Vec::new());
+        assert_eq!((unlanded(&plain), owed(&plain)), (None, true));
+        let marked = approved(plain.clone(), Value::from(12.5));
+        assert_eq!((unlanded(&marked), owed(&marked)), (Some(12.5), true));
+        assert!(!counted(&marked), "it takes no place under the limit");
+        // The mark says nothing off a done task, and nothing that is no time is a mark.
+        for status in ["review", "in_progress", "cancelled"] {
+            assert_eq!(unlanded(&at(marked.clone(), status)), None, "{status}");
+        }
+        assert!(!owed(&at(marked.clone(), "cancelled")));
+        for no_time in [Value::Null, Value::from("yes"), Value::from(true)] {
+            let odd = approved(plain.clone(), no_time.clone());
+            assert_eq!((unlanded(&odd), owed(&odd)), (None, false), "{no_time}");
+        }
+        let landed = at(plain, "done");
+        assert_eq!((unlanded(&landed), owed(&landed)), (None, false));
+    }
+
+    #[test]
+    fn an_approved_task_not_landed_is_given_and_orphaned_as_open_work_is() {
+        let ghost = || vec![held("ghost", "orchestrator", Health::Lost)];
+        let amber = || vec![held("amber", "orchestrator", Health::Live)];
+        let mut landed = task("landed", None, ghost());
+        landed.status = "done".into();
+        let tasks = vec![
+            approved(task("lost", None, ghost()), Value::from(1.0)),
+            approved(task("held", None, amber()), Value::from(1.0)),
+            approved(task("under", Some("parent"), Vec::new()), Value::from(1.0)),
+            task("parent", None, amber()),
+            landed,
+        ];
+        let slugs =
+            |found: Vec<&Task>| -> Vec<String> { found.iter().map(|t| t.slug.clone()).collect() };
+        assert_eq!(slugs(unowned_tops(&tasks)), ["lost"]);
+        assert!(may_give(&tasks).is_some());
+        let leaves = |_: &Task, r: &crate::Role| r.handle == "amber";
+        assert_eq!(slugs(orphaned(&tasks, leaves)), ["held", "parent"]);
+        assert_eq!(
+            orchestrated(&tasks, "amber"),
+            1,
+            "the open parent alone is counted"
+        );
     }
 
     #[test]

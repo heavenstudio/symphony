@@ -1496,7 +1496,7 @@ place in the pool's FIFO line, `<prefix>-<12-digit sequence>.place`, in the pool
 An orchestrator's callback uses it: it does not call an agent stale or lost while `running_test`, and it receives a PULL
 digest (`crates/tasks/src/cli/pull.rs`) once at its first dispatch, even when empty, then only when an actionable list gains an entry absent from the last delivered PULL after forgetting entries absent from any computed digest: red tasks ([Slots](#slots)) with no live executor 10 minutes after they were filed, in any status short of review, listed first as `red_unstaffed`, counted in the header only when there is one, and in no other list, `dependency_blocked` included, a cancelled dependency of its named in its note; ready tasks with no live executor
 (one on a subtask still to be executed counts), in-progress with none, review with no reviewer, tasks that landed
-(the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), and idle agents, each scoped to the orchestrator's own tasks and those with no orchestrator yet ([Tasks and roles](#tasks-and-roles)) (an idle agent another orchestrator launched is left out). An executor
+(the branch is on main, or `landed <slug> on main` is on the task's thread) and are still open (a status change on the task after that line voids it, whether a move, a verdict such as `changes`, or a re-claim: the task is new work, not a landing left open), tasks a reviewer approved that no landing has closed 10 minutes after the approve, done on the board and still to land, listed as `approved_unlanded`, counted in the header only when there is one, each with when it was approved and what its landing's record says it waits on (`approved 11-17 09:12, not landed; its landing waits on tests`), and idle agents, each scoped to the orchestrator's own tasks and those with no orchestrator yet ([Tasks and roles](#tasks-and-roles)) (an idle agent another orchestrator launched is left out). An executor
 or reviewer that is `running_test` counts as present however quiet the board says it is.
 A task in review whose tip a reviewer asked changes of is rework, counted in progress
 ([The pipeline alarm](#the-pipeline-alarm)). While the pipeline alarm stands, the whole board's
@@ -2379,6 +2379,15 @@ holds](#the-limit-on-the-tasks-an-orchestrator-holds)):
   in review) and the task waits for the next under its limit.
 - **Reopened.** A done task moved back to open work after its orchestrator went is given by the
   rule in that move, and waits with none under its limit.
+- **Approved, not landed.** A task its reviewer approved reads `done` before its land, and its
+  land is still somebody's to make: the approve marks it in its own write (the board's own field
+  `unlanded`, when it was approved), and the landing's line, or a move back to review, lifts the
+  mark. While it carries the mark the board keeps an orchestrator on it as on open work: a leaver's
+  or a lost holder's is given on by the rules above, it waits marked with none that stays, and any
+  orchestrator takes the role on it or hands it over, though no other role is taken on a done
+  task. It takes no place under the limit and no slot. Ten minutes after its approve, its
+  orchestrator's PULL lists it as `approved_unlanded` until it lands ([Sessions](#sessions)). A task done by a landing, by a close
+  as covered by another's landing or by a subtask's `done` never carries the mark.
 
 A task's own story (`--for`, the filer's work, its parent session, the task above it, the one it
 had) names its orchestrator while that one is live and under its limit. Otherwise the rule: the
