@@ -36,8 +36,9 @@
 //! ```
 //!
 //! A task its reviewer approved reads done before its land. While no landing has closed it
-//! ([`crate::orchestration::unlanded`]) it is listed as [`UNLANDED`], counted in the header only
-//! when there is one, with when it was approved and what its landing's record says it waits on:
+//! ([`crate::orchestration::unlanded`]) [`UNLANDED_SECONDS`] after its approve it is listed as
+//! [`UNLANDED`], counted in the header only when there is one, with when it was approved and what
+//! its landing's record says it waits on:
 //!
 //! ```text
 //!   approved_unlanded p2 tools/x — X   (approved 11-17 09:12, not landed; its landing waits on tests)
@@ -98,6 +99,9 @@ pub const OVER_LIMIT: &str = "over_limit";
 /// The list of the tasks a reviewer approved that no landing has closed
 /// ([`crate::orchestration::unlanded`]): done on the board, their land still somebody's to make.
 pub const UNLANDED: &str = "approved_unlanded";
+/// How long an approved task may go without its land before the digest lists it: ten minutes. Its
+/// orchestrator hears the approve as a VERDICT line and lands it; only one left unlanded is said.
+pub const UNLANDED_SECONDS: f64 = 600.0;
 /// A count a PULL could not say, as its recipient's next one is measured against.
 pub const UNKNOWN: &str = "unknown";
 /// One successful canonical observation, retained across scheduling and recipient scoping.
@@ -863,6 +867,7 @@ pub(crate) fn digest_on(
         // Approved and never landed: done to a reader, and still somebody's to land. A landing's
         // line on its thread, which a build that lifts no mark may have written, says it landed.
         if let Some(approved) = crate::orchestration::unlanded(t)
+            && now - approved >= UNLANDED_SECONDS
             && !posted.contains(&t.slug)
         {
             found.entry(UNLANDED).or_default().push(t.clone());

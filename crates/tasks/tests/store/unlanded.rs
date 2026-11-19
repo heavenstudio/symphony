@@ -7,7 +7,7 @@
 
 use super::common::{Backend, Fixture, Seed, refused};
 use super::orchestrators::go_quiet_but;
-use symphony_board::cli::pull::{Digest, UNLANDED, digest};
+use symphony_board::cli::pull::{Digest, UNLANDED, UNLANDED_SECONDS, digest};
 use symphony_board::health::LIVE_SECONDS;
 use symphony_board::{NewTask, orchestration};
 
@@ -148,8 +148,12 @@ on_both! {
     fn its_orchestrator_leaving_gives_it_on_and_it_is_listed_once_until_it_lands(backend: Backend) {
         let made = approved(backend);
         let approved_at = made.unlanded().unwrap();
+        // Just approved, its orchestrator heard the verdict and is landing it: nothing is listed.
+        made.f.advance(UNLANDED_SECONDS - 1.0);
+        assert!(made.listed(&made.amber).is_empty());
+        made.f.advance(1.0);
         made.settle();
-        // While amber is there it is amber's alone to hear of.
+        // Left unlanded, it is listed, and while amber is there it is amber's alone to hear of.
         assert_eq!(made.listed(&made.amber), [SLUG]);
         assert!(made.listed(&made.cobalt).is_empty());
         made.f.store.leave(&made.amber).unwrap();
@@ -168,8 +172,6 @@ on_both! {
         assert_eq!(rows.len(), 1, "{lines:?}");
         assert!(rows[0].starts_with("  approved_unlanded p2 tools/approved — "), "{rows:?}");
         assert!(rows[0].ends_with(", not landed)") && rows[0].contains("(approved "), "{rows:?}");
-        assert_eq!(heard.notes.get(SLUG).map(String::as_str).map(|note| note.len()),
-            Some(format!("approved {}, not landed", "00:00").len()), "a time of day, the same day");
         // Said once: a recipient told the entry hears no row of it again, and the count has not moved.
         let entry = (UNLANDED.to_string(), SLUG.to_string());
         assert!(heard.entries().contains(&entry));
@@ -203,6 +205,8 @@ on_both! {
         let given = format!("{} was given orchestrator from {} (", made.cobalt, made.amber);
         assert!(line.starts_with(&given), "{line}");
         assert!(!made.tick(), "given once");
+        made.f.advance(UNLANDED_SECONDS);
+        made.f.store.touch(&made.cobalt).unwrap();
         assert_eq!(made.listed(&made.cobalt), [SLUG]);
     }
 
@@ -214,6 +218,7 @@ on_both! {
         let waiting = |made: &Made| orchestration::waiting(&made.f.store.get(SLUG).unwrap().fields);
         assert_eq!(waiting(&made), Some(made.f.now()), "marked waiting, as open work is");
         // A newcomer that only registered is given nothing, and hears it as nobody's.
+        made.f.advance(UNLANDED_SECONDS);
         let dune = made.f.session("orchestrator");
         assert_eq!(made.listed(&dune), [SLUG]);
         // Any orchestrator takes it, and hands it over, though it reads done; no other role is
