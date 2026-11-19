@@ -151,6 +151,59 @@ fn a_call_tried_again_is_counted_on_its_own_thread_and_one_out_of_patience_gives
     assert_eq!(Store::tried_again_here(), before);
 }
 
+/// A call on a board that keeps moving under it goes on while its patience lasts, however many tries
+/// that takes, never cut off by a count of them, resting the backoff's wait before each; once its
+/// clock has passed its patience it gives up, naming its tries. Neither clock nor rest is waited on.
+#[test]
+fn a_call_goes_on_while_patience_lasts_however_many_tries_and_gives_up_once_it_ran_out() {
+    let before = Store::tried_again_here();
+    let rests = std::cell::RefCell::new(Vec::new());
+    let mut tries = 0;
+    let done = retried_on(
+        PATIENCE,
+        &|| Duration::ZERO,
+        &|wait| rests.borrow_mut().push(wait),
+        &mut || {
+            tries += 1;
+            if tries <= 10_000 {
+                Err(Failure::Again)
+            } else {
+                Ok(tries)
+            }
+        },
+    );
+    assert_eq!(done, Ok(10_001));
+    assert_eq!(Store::tried_again_here() - before, 10_000);
+    let rests = rests.into_inner();
+    assert_eq!(rests.len(), 10_000, "a rest before each try again");
+    assert!(
+        rests.iter().all(|wait| *wait < Duration::from_millis(64)),
+        "each rest within the backoff's ceiling"
+    );
+
+    let clock = std::cell::Cell::new(Duration::ZERO);
+    let mut tries = 0;
+    let gave_up = retried_on::<()>(
+        PATIENCE,
+        &|| clock.get(),
+        &|_| clock.set(clock.get() + Duration::from_secs(1)),
+        &mut || {
+            tries += 1;
+            Err(Failure::Again)
+        },
+    );
+    assert_eq!(
+        gave_up,
+        Err(Error::Db(
+            "gave up after 30 s and 31 tries: the board kept moving under the write".into()
+        ))
+    );
+    assert_eq!(
+        tries, 31,
+        "tried while its clock was short of 30 s, and once more at 30"
+    );
+}
+
 #[test]
 fn a_refusal_is_its_words_and_a_database_failure_says_so() {
     assert_eq!(

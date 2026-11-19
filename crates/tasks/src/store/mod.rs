@@ -814,25 +814,44 @@ impl Store {
 }
 
 /// `once` tried until it gives its result or refuses, again each time the board moved under it,
-/// for `patience` at most: each try again counted on this thread ([`Store::tried_again_here`]).
+/// for `patience` of the wall clock at most, sleeping the backoff's wait between two tries
+/// ([`retried_on`]).
 #[inline(never)]
 fn retried<T>(
     patience: Duration,
     once: &mut dyn FnMut() -> Result<T, Failure>,
 ) -> Result<T, Error> {
     let began = Instant::now();
+    retried_on(patience, &|| began.elapsed(), &rest, once)
+}
+
+/// The store's rest between two tries of a call that met a board moving under it.
+fn rest(wait: Duration) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the named helper of RULES.md code/no-timed-waits for a retry with backoff: the board store's"
+    )]
+    std::thread::sleep(wait);
+}
+
+/// `once` tried until it gives its result or refuses, again each time the board moved under it,
+/// for as long as `elapsed` is short of `patience`, however many tries that takes: each try again
+/// counted on this thread ([`Store::tried_again_here`]), after `rest` for the backoff's next wait.
+/// Its clock and its rest are its caller's, so a test moves them and never waits on either.
+fn retried_on<T>(
+    patience: Duration,
+    elapsed: &dyn Fn() -> Duration,
+    rest: &dyn Fn(Duration),
+    once: &mut dyn FnMut() -> Result<T, Failure>,
+) -> Result<T, Error> {
     let mut attempt = 0;
     loop {
         match once() {
             Ok(done) => return Ok(done),
             Err(Failure::Stop(error)) => return Err(error),
-            Err(Failure::Again) if began.elapsed() < patience => {
+            Err(Failure::Again) if elapsed() < patience => {
                 TRIED_AGAIN.with(|tried| tried.set(tried.get() + 1));
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "the named helper of RULES.md code/no-timed-waits for a retry with backoff: the board store's"
-                )]
-                std::thread::sleep(backoff(attempt));
+                rest(backoff(attempt));
                 attempt += 1;
             }
             Err(Failure::Again) => {
