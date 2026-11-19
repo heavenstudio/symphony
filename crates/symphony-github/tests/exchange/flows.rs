@@ -729,6 +729,8 @@ fn a_command_line_that_does_not_read_is_refused_and_does_nothing() {
             &["resolve", "tools/a", "local"],
             "tools/a is mapped to no issue",
         ),
+        (&["drop"], "drop takes one SLUG"),
+        (&["drop", "tools/a", "tools/b"], "drop takes one SLUG"),
     ] {
         let refused = rig.run(args);
         assert_eq!(refused.code, 1, "{args:?}: {}", refused.out);
