@@ -1821,6 +1821,8 @@ mod approval;
 mod carried;
 #[path = "land_covered.rs"]
 mod covered;
+#[path = "land_gates.rs"]
+mod gates;
 #[path = "land_generated.rs"]
 mod generated;
 #[path = "land_hooks.rs"]

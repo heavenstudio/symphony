@@ -448,6 +448,7 @@ stands is its reader's, which no key sets. A key not listed here refuses the cat
 | `default` | `true` for `review`, `false` for the rest | whether a task no assessment has read needs it |
 | `applies` | the Symphony's own | where an assessor needs it, as `just tasks stamps` prints it |
 | `skips` | the Symphony's own | where an assessor leaves it out |
+| `waivable` | `true` for `pictures`, `false` for the rest | whether a gate decision may waive it for one tip ([TASKS](TASKS.md#gate-decisions)); `true` on `tests`, `review` or `owner` refuses the catalogue, as they are never waived |
 
 ## `[releases]`
 

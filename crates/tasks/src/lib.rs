@@ -49,6 +49,7 @@ pub mod confine;
 pub mod covering;
 pub mod execution;
 pub mod folders;
+pub mod gates;
 pub mod git;
 pub mod health;
 mod json_object;

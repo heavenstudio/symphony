@@ -75,6 +75,14 @@ if [ "$1" = nextest ]; then
     name=nextest
     printf '<%s>\n' "$@" >"$STAND/nextest-args"
 else
+    # As Cargo does at every call: each binary's copy (BUILD=COPY) made again, unless it is its build.
+    for pair in ${UPLIFT-}; do
+        if [ "${pair%%=*}" -ef "${pair#*=}" ]; then
+            printf 'kept %s\n' "${pair#*=}"
+        else
+            rm -f "${pair#*=}" && cp "${pair%%=*}" "${pair#*=}" && printf 'copied %s\n' "${pair#*=}"
+        fi >>"$STAND/uplifts"
+    done
     case " $* " in
         *' --ignored --exact release::nextest::tests::the_pinned_runner_reports_a_fixture_failure_and_a_terminated_test '*)
             printf '%s\n' "$*" >"$STAND/runner-fixture-args"
@@ -226,6 +234,7 @@ impl Lanes {
             .env_remove("FAIL_REPORTER")
             .env_remove("FAIL_LIVE_FIXTURE")
             .env_remove("HOLD")
+            .env_remove("UPLIFT")
             .envs(vars.iter().copied())
             .stdin(Stdio::null());
         command
@@ -1148,4 +1157,102 @@ fn all_test_batches_get_an_isolated_hc_and_a_callers_override_wins() {
             );
         }
     }
+}
+
+/// The file `path` is, as the system names it: two names of one file have the same.
+fn identity(path: &Path) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt as _;
+    let metadata = fs::symlink_metadata(path).unwrap();
+    (metadata.dev(), metadata.ino())
+}
+
+#[test]
+fn every_binarys_copy_is_its_build_before_a_batch_starts_so_no_cargo_call_removes_it() {
+    let lanes = Lanes::new("nextest-binary-links");
+    let debug = lanes.root.join(".target/debug");
+    let deps = debug.join("deps");
+    let file = |path: &Path, text: &str| {
+        executable(path, text);
+        path.to_path_buf()
+    };
+    // Cargo's copy of the newest build, beside an older build and a dep-info file that says the
+    // same bytes: only the build itself, by name and bytes, is its source.
+    file(
+        &deps.join("tool_one-0000000000000000"),
+        "tool one, an older build",
+    );
+    let info = file(&deps.join("tool_one-0000000000000000.d"), "tool one");
+    let one = file(&deps.join("tool_one-ffffffffffffffff"), "tool one");
+    let one_copy = file(&debug.join("tool-one"), "tool one");
+    // A copy that is its build already, as Cargo links one where it can.
+    let two = file(&deps.join("tool_two-1111111111111111"), "tool two");
+    let two_copy = debug.join("tool-two");
+    fs::hard_link(&two, &two_copy).unwrap();
+    // A copy no build under deps/ is.
+    file(&deps.join("stray-2222222222222222"), "stray, its build");
+    let stray = file(&debug.join("stray"), "stray, another");
+    let before = [&info, &two_copy, &stray].map(|path| identity(path));
+    let mut metadata: serde_json::Value = serde_json::from_str(METADATA).unwrap();
+    metadata["rust-build-meta"]["non-test-binaries"] = serde_json::json!({
+        "first-package": [
+            {"name": "tool-one", "kind": "bin-exe", "path": "debug/tool-one"},
+            {"name": "tool-two", "kind": "bin-exe", "path": "debug/tool-two"}
+        ],
+        "second-package": [
+            {"name": "stray", "kind": "bin-exe", "path": "debug/stray"},
+            {"name": "gone", "kind": "bin-exe", "path": "debug/gone"}
+        ]
+    });
+    fs::write(lanes.stand.join("metadata.json"), metadata.to_string()).unwrap();
+    let uplift = format!(
+        "{}={} {}={}",
+        one.display(),
+        one_copy.display(),
+        two.display(),
+        two_copy.display()
+    );
+    let done = lanes.run(&[], &[("UPLIFT", &uplift)]);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(identity(&one_copy), identity(&one));
+    assert_eq!(fs::read_to_string(&one_copy).unwrap(), "tool one");
+    assert_eq!(
+        before,
+        [&info, &two_copy, &stray].map(|path| identity(path))
+    );
+    assert_ne!(
+        identity(&stray),
+        identity(&deps.join("stray-2222222222222222"))
+    );
+    assert!(!debug.join("gone").exists());
+    let err = String::from_utf8_lossy(&done.stderr);
+    assert_eq!(
+        err.lines()
+            .filter(|line| line.contains("no link to its build"))
+            .collect::<Vec<_>>(),
+        [format!(
+            "test-lanes: {} is no link to its build under deps/: a batch starting while a test runs it may leave it gone",
+            stray.display()
+        )],
+        "{err}"
+    );
+    let left: Vec<_> = (fs::read_dir(&debug).unwrap())
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".test-lanes"))
+        .collect();
+    assert_eq!(left, Vec::<String>::new());
+    // The serial build test and the runner fixture copy it again, before any batch starts; each of
+    // the eight batches' Cargo calls (perf, sweep, cli, server, store, launch, libraries, doc) finds
+    // its build there, and the one already linked is never copied.
+    let uplifts = fs::read_to_string(lanes.stand.join("uplifts")).unwrap();
+    let said = |copy: &Path| {
+        (uplifts.lines())
+            .filter_map(|line| line.strip_suffix(&format!(" {}", copy.display())))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        said(&one_copy),
+        [["copied"; 2].as_slice(), &["kept"; 8]].concat(),
+        "{uplifts}"
+    );
+    assert_eq!(said(&two_copy), ["kept"; 10], "{uplifts}");
 }
