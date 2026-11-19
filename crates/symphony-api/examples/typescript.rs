@@ -1334,6 +1334,7 @@ fn samples() -> Value {
     samples.insert("emptyQueue".into(), json!(api::Queue::default()));
     samples.insert("board".into(), json!(board));
     samples.extend(task_board_samples());
+    samples.extend(workflow_samples());
     samples.extend(agents_samples());
     samples.insert("reports".into(), json!(reports()));
     samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
@@ -1441,6 +1442,181 @@ fn task_board_samples() -> Vec<(String, Value)> {
         ("bareTaskChange", json!(bare)),
         ("taskAdded", json!(added)),
         ("taskRemoved", json!(removed)),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value))
+    .collect()
+}
+
+/// A custom workflow's reads, as [`samples`] holds them: the board's definition (built, then
+/// reviewed twice, a review sending work back to be built again, and a phase off the board) and
+/// the read of a board with none, a task's next actions and an edge's result, and a listing that
+/// holds its tasks in their phases.
+fn workflow_samples() -> Vec<(String, Value)> {
+    let pair = |phase: &str, state: &str| json!({"phase": phase, "state": state});
+    let position = |phase: &str, state: &str, staffing: Value, legacy: &str| {
+        json!({"at": pair(phase, state), "staffing": staffing, "slot": "release",
+            "dependencies": "none", "unsuccessful_dependency": "block", "accepts_work": true,
+            "terminal": false, "legacy": legacy, "outcome": null,
+            "satisfies_dependencies": false, "completion": "none", "recovery": null})
+    };
+    let edge = |id: &str, label: &str, from: Value, to: Value, operation: &str, by: Value| {
+        json!({"id": id, "label": label, "from": from, "to": to, "operation": operation,
+            "alias": null, "authority": [by], "inputs": [], "dependencies": "none",
+            "guards": [], "effects": [], "automatic": false, "retry": null, "human_wait": false})
+    };
+    let executor = json!({"kind": "task_role", "role": "executor"});
+    let reviewer = json!({"kind": "task_role", "role": "reviewer"});
+    let owner = json!({"kind": "project_capability", "capability": "owner"});
+    let phase = |id: &str, label: &str, order: u32, phone: u32, column: bool| {
+        json!({"id": id, "label": label, "order": order, "phone_order": phone, "column": column})
+    };
+    let mut rework = edge(
+        "rework",
+        "Send back",
+        pair("review", "awaiting"),
+        pair("build", "working"),
+        "changes",
+        reviewer.clone(),
+    );
+    rework["inputs"] = json!(["reason"]);
+    let definition = json!({
+        "format": 1,
+        "initial": pair("build", "available"),
+        "task_kinds": ["task"],
+        "phases": [
+            phase("build", "Build", 0, 2, true),
+            phase("review", "Review", 1, 1, true),
+            phase("verify", "Verify", 2, 0, true),
+            phase("parked", "Parked", 3, 3, false),
+        ],
+        "states": [
+            {"id": "available", "label": "Available"}, {"id": "working", "label": "Working"},
+            {"id": "blocked", "label": "Blocked"}, {"id": "awaiting", "label": "Awaiting review"},
+            {"id": "accepted", "label": "Accepted"},
+        ],
+        "positions": [
+            position("build", "available", Value::Null, "ready"),
+            position("build", "working", json!("executor"), "in_progress"),
+            position("build", "blocked", Value::Null, "blocked"),
+            position("review", "awaiting", Value::Null, "review"),
+            position("verify", "awaiting", Value::Null, "review"),
+            position("verify", "accepted", Value::Null, "done"),
+            position("parked", "available", Value::Null, "backlog"),
+        ],
+        "edges": [
+            edge("claim", "Claim", pair("build", "available"), pair("build", "working"), "claim", executor.clone()),
+            edge("submit", "Submit", pair("build", "working"), pair("review", "awaiting"), "request_review", executor),
+            rework,
+            edge("pass", "Pass review", pair("review", "awaiting"), pair("verify", "awaiting"), "approve", reviewer),
+            edge("accept", "Accept", pair("verify", "awaiting"), pair("verify", "accepted"), "close_covered", owner.clone()),
+            edge("block", "Block", pair("build", "available"), pair("build", "blocked"), "block", owner),
+        ],
+        "capabilities": ["owner"],
+        "adapters": [],
+        "guards": [],
+    });
+    let revision = json!({"format": 1, "digest": "d".repeat(64),
+        "source": {"commit": "1".repeat(40), "project_blob": "2".repeat(40)}});
+    let read: api::workflow::BoardWorkflow = serde_json::from_value(json!({
+        "project": "symphony",
+        "workflow": {"definition": definition, "revision": revision, "activation_generation": 2},
+    }))
+    .expect("a board's workflow read");
+    let none = api::workflow::BoardWorkflow {
+        project: "symphony".into(),
+        workflow: None,
+    };
+    let snapshot = json!({"workflow": revision, "activation_generation": 2, "task_revision": 7,
+        "at": pair("review", "awaiting")});
+    let next: api::workflow::NextActions = serde_json::from_value(json!({
+        "snapshot": snapshot,
+        "actions": [
+            {"edge": "pass", "operation": "approve", "destination": pair("verify", "awaiting"),
+             "label": "Pass review", "responsible": [{"kind": "task_role", "role": "reviewer"}],
+             "required_inputs": [], "unavailable": ["unauthorized"]},
+            {"edge": "rework", "operation": "changes",
+             "destination": pair("build", "working"), "label": "Send back",
+             "responsible": [{"kind": "project_capability", "capability": "owner"}],
+             "required_inputs": ["reason"], "unavailable": []},
+        ],
+    }))
+    .expect("a task's next actions");
+    let mut moved = next.clone();
+    moved.snapshot.task_revision = 8;
+    moved.snapshot.at = api::workflow::Pair {
+        phase: "build".into(),
+        state: "working".into(),
+    };
+    moved.actions.clear();
+    let applied = api::workflow::OperationResult {
+        transition: "w/a@8".into(),
+        next: moved,
+        effects: vec![api::workflow::Effect::ClearBlock],
+    };
+    let place = |phase: &str, state: &str, revision: u64| api::workflow::TaskPlace {
+        phase: phase.into(),
+        state: state.into(),
+        resume: None,
+        revision,
+        manual: None,
+    };
+    let mut building = task("w/a", "in_progress", None);
+    building.workflow = Some(place("build", "working", 4));
+    let mut reviewed = task("w/b", "review", None);
+    reviewed.workflow = Some(api::workflow::TaskPlace {
+        manual: Some(api::workflow::ManualRecovery {
+            trigger: "lost_holder".into(),
+            holder: "sable-finch".into(),
+            role: "reviewer".into(),
+        }),
+        ..place("review", "awaiting", 9)
+    });
+    let mut stopped = task("w/c", "blocked", None);
+    stopped.workflow = Some(api::workflow::TaskPlace {
+        resume: Some(api::workflow::Pair {
+            phase: "build".into(),
+            state: "available".into(),
+        }),
+        ..place("build", "blocked", 2)
+    });
+    let column = |status: &str, ordinary: usize, blocked: usize| api::WaitingColumn {
+        status: status.into(),
+        ordinary,
+        blocked,
+        oldest: Some(1.0),
+    };
+    let held = api::TaskListing {
+        machine_work: api::MachineWork::default(),
+        tasks: vec![building, reviewed, stopped],
+        statuses: vec!["in_progress".into(), "review".into(), "blocked".into()],
+        signoff: Vec::new(),
+        counts: vec![("phase:build".into(), 2), ("phase:review".into(), 1)],
+        lifecycle_counts: vec![
+            ("blocked".into(), 1),
+            ("in_progress".into(), 1),
+            ("review".into(), 1),
+        ],
+        next: None,
+        orchestrators: Vec::new(),
+        unstarted: 0,
+        waiting: Some(api::WaitingBoard {
+            kinds: vec![("nobody".into(), 1), ("working".into(), 2)],
+            columns: vec![column("phase:build", 1, 1), column("phase:review", 1, 0)],
+            states: vec![
+                ("awaiting".into(), 1),
+                ("blocked".into(), 1),
+                ("working".into(), 1),
+            ],
+            workflow: Some(2),
+        }),
+    };
+    [
+        ("workflow", json!(read)),
+        ("noWorkflow", json!(none)),
+        ("nextActions", json!(next)),
+        ("applied", json!(applied)),
+        ("heldListing", json!(held)),
     ]
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value))

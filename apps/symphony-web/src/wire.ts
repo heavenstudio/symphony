@@ -626,6 +626,12 @@ export type WaitingBoard = {
    * the selected wait kind and state: empty, and left out, on a board with none.
    */
   states?: Array<[string, number]>;
+  /**
+   * The active custom workflow's activation generation: absent on a board whose own writers keep
+   * its tasks, so a page draws a workflow's phases and states only where one is active, and
+   * reads its definition again when it changes (docs/WORKFLOW.md, "The app").
+   */
+  workflow?: number | null;
 };
 
 export type WaitingColumn = {

@@ -129,6 +129,9 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
     assert_eq!(none, json!({"project": database, "workflow": null}));
     let (_, tasks) = answer(&shared, asked("GET", "/api/tasks", None));
     assert!(tasks["tasks"][0].get("workflow").is_none(), "{tasks}");
+    let board = "/api/task-board?view=waiting&counts=1";
+    let (_, listing) = answer(&shared, asked("GET", board, None));
+    assert!(listing["waiting"].get("workflow").is_none(), "{listing}");
     let (status, unheld) = answer(
         &shared,
         asked("GET", "/api/workflow-actions?slug=flow/one", None),
@@ -162,6 +165,11 @@ fn the_owner_reads_a_workflow_and_takes_an_edge_through_the_pages_routes() {
         json!({"phase": "build", "state": "available", "revision": 1}),
         "{tasks}"
     );
+    // The board's listing says the generation a page reads the definition by, and the phase.
+    let (_, listing) = answer(&shared, asked("GET", board, None));
+    assert_eq!(listing["waiting"]["workflow"], 1, "{listing}");
+    assert_eq!(listing["waiting"]["states"], json!([["available", 1]]));
+    assert_eq!(listing["counts"], json!([["phase:build", 1]]));
 
     // The owner's preview: Block is theirs, Claim an agent's.
     let (status, next) = answer(

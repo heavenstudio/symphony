@@ -58,6 +58,7 @@ async fn page(query: &str, search: &str, scores: &BTreeMap<String, f64>) -> Task
         scores,
         work,
         vec!["review-build-00".into()],
+        None,
     );
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -176,6 +177,7 @@ async fn listing_of(records: &[symphony_api::Task], query: &str) -> TaskListing 
         &BTreeMap::new(),
         MachineWork::default(),
         vec![],
+        None,
     );
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -322,6 +324,7 @@ async fn finished_window_is_applied_before_stage_counts_including_searches() {
             &scores,
             work.clone(),
             vec![],
+            None,
         );
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -378,6 +381,7 @@ async fn subtasks_and_task_groups_leave_out_finished_instructions_to_staff_their
             &BTreeMap::new(),
             MachineWork::default(),
             vec![],
+            None,
         );
         async move {
             let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)

@@ -18,15 +18,8 @@ const PAGE: usize = 30;
 pub(super) const PHASE: &str = "phase:";
 
 /// A listing's `status`, when it names one: a board status, one of [`SELECTABLE`], or a phase's
-/// column ([`PHASE`] and a workflow ID); and its `state`, when it names one, a workflow ID.
+/// column ([`PHASE`] and a workflow ID).
 pub(super) fn status_argument(request: &Request) -> Result<(), String> {
-    if let Some(state) = query(request, "state")
-        && !workflow_id(&state)
-    {
-        return Err(format!(
-            "no state {state:?}: a listing's state is a workflow state's ID"
-        ));
-    }
     match query(request, "status") {
         Some(wanted)
             if !SELECTABLE.contains(&wanted.as_str())
@@ -45,7 +38,7 @@ pub(super) fn status_argument(request: &Request) -> Result<(), String> {
 
 /// Whether `id` is a workflow ID's shape: a lowercase ASCII letter, then lowercase letters, digits,
 /// `_` and `-` (docs/WORKFLOW.md, "Definition format 1").
-fn workflow_id(id: &str) -> bool {
+pub(super) fn workflow_id(id: &str) -> bool {
     id.starts_with(|c: char| c.is_ascii_lowercase())
         && id
             .chars()
@@ -82,6 +75,7 @@ pub(super) fn listing(
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone(),
+        hub.workflow_generation(),
     )
 }
 
@@ -92,6 +86,7 @@ fn project(
     scores: &std::collections::BTreeMap<String, f64>,
     work: symphony_api::MachineWork,
     mut signoff: Vec<String>,
+    workflow: Option<u64>,
 ) -> Response {
     let offset = query(request, "offset")
         .and_then(|v| v.parse::<usize>().ok())
@@ -159,7 +154,7 @@ fn project(
             && (search.is_empty() || scores.contains_key(&task.slug))
     });
     if query(request, "view").as_deref() == Some("waiting") {
-        return waiting::project(request, tasks, work, signoff);
+        return waiting::project(request, tasks, work, signoff, workflow);
     }
     let cursor = match query(request, "cursor")
         .map(|text| serde_json::from_str::<(String, i64, f64, String)>(&text))

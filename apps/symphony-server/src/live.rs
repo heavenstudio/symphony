@@ -1512,6 +1512,13 @@ impl Hub {
         self.changed.send_modify(|version| *version += 1);
     }
 
+    /// The active custom workflow's activation generation as the hub last read its board: none
+    /// before its first read and on a board with none.
+    pub(crate) fn workflow_generation(&self) -> Option<u64> {
+        let held = (self.workflow_generation.lock()).unwrap_or_else(|e| e.into_inner());
+        held.flatten()
+    }
+
     /// Keep `generation`, the custom workflow's active generation just read (none on a board that
     /// never activated one); once it changes after the first read, the change every page hears,
     /// so a page that draws by the definition reads it again.

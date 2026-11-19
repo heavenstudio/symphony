@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { BACKSTOP_MS, UnitRunReport } from "./src/unit-run.ts";
 
@@ -11,7 +12,21 @@ const KINDS = [...PAGES, "overlay", "panel"].sort();
 // `src/styles/shared.css` writes, one minified file package.sh puts first in every kind's styles.
 const SHARED_STYLES = "src/styles/shared.css";
 
+// Vite wraps each `import()` in its preload helper, which asks for the chunk's sheets and module
+// preloads beside it. Neither is wanted here: preloads are off (`modulePreload`), and a chunk a page
+// imports when it needs it puts its own sheet in the page (timeline.tsx, flow.tsx). So the helper
+// is `src/shared.ts`'s, which only calls the import, in the chunk every page shares: Vite's own
+// would be a file of its own beside each page that imports such a chunk.
+const PRELOAD_HELPER = "\0vite/preload-helper.js";
+const preloadHelper = {
+  name: "symphony:preload-helper",
+  enforce: "pre" as const,
+  resolveId: (id: string) =>
+    id === PRELOAD_HELPER ? fileURLToPath(new URL("./src/shared.ts", import.meta.url)) : null,
+};
+
 export default defineConfig({
+  plugins: [preloadHelper],
   // No public folder: the server serves the files package.sh publishes (the dev server's own
   // settings, src/dev-server.ts, go over these).
   publicDir: false,

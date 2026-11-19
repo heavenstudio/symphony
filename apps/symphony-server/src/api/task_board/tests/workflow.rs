@@ -1,5 +1,6 @@
 //! A board a custom workflow holds: each held task in its phase's column, blocked or not, the
-//! process overlays over it, and its coordination state counted and selected without moving it.
+//! process overlays over it, its coordination state counted and selected as a wait facet, and the
+//! active generation the page reads the definition by.
 
 use super::*;
 use symphony_api::workflow::TaskPlace;
@@ -39,8 +40,8 @@ fn columns(list: &TaskListing) -> Vec<WaitingColumn> {
     list.waiting.as_ref().unwrap().columns.clone()
 }
 
-/// The status a listing's `query` answers with, and its body.
-async fn raw(records: &[Task], query: &str) -> (StatusCode, String) {
+/// The status a listing's `query` answers with, and its body, while `generation` is active.
+async fn raw(records: &[Task], query: &str, generation: Option<u64>) -> (StatusCode, String) {
     let request = Request::builder()
         .uri(format!("/api/task-board?{query}"))
         .body(())
@@ -59,6 +60,7 @@ async fn raw(records: &[Task], query: &str) -> (StatusCode, String) {
         &BTreeMap::new(),
         MachineWork::default(),
         vec![],
+        generation,
     );
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -124,7 +126,7 @@ async fn a_held_task_goes_in_its_phase_column_blocked_or_not_and_a_status_word_n
 }
 
 #[tokio::test]
-async fn open_held_tasks_count_by_state_and_a_state_keeps_the_phase_columns() {
+async fn open_held_tasks_count_by_state_and_a_state_lists_them_across_their_phases() {
     let list = waiting(&board(), "counts=1").await;
     assert_eq!(
         list.waiting.as_ref().unwrap().states,
@@ -134,43 +136,59 @@ async fn open_held_tasks_count_by_state_and_a_state_keeps_the_phase_columns() {
             ("working".into(), 1)
         ]
     );
-    let blocked = waiting(&board(), "state=blocked").await;
-    assert_eq!(slugs(&blocked), ["w/stuck"]);
+    // Two phases share a state: its facet lists both, oldest wait first, as a wait kind's does.
+    let mut two = board();
+    two.push(held("w/fixing", "in_progress", "verify", "working", 5.0));
+    let working = waiting(&two, "wait=state:working").await;
+    assert_eq!(slugs(&working), ["w/fixing", "w/working"]);
     assert_eq!(
-        columns(&blocked),
-        vec![WaitingColumn {
-            status: "phase:build".into(),
-            ordinary: 0,
-            blocked: 1,
-            oldest: Some(20.0),
-        }]
+        columns(&working)
+            .iter()
+            .map(|c| (c.status.as_str(), c.ordinary))
+            .collect::<Vec<_>>(),
+        [("phase:build", 1), ("phase:verify", 1)]
     );
-    // The states are counted before the state chosen, as the wait kinds are before theirs.
+    // The states and the kinds are counted before the facet chosen.
+    let blocked = waiting(&board(), "wait=state:blocked").await;
+    assert_eq!(slugs(&blocked), ["w/stuck"]);
     assert_eq!(
         blocked.waiting.as_ref().unwrap().states,
         list.waiting.as_ref().unwrap().states
     );
-    let both = waiting(&board(), "state=working&status=phase:build").await;
-    assert_eq!(slugs(&both), ["w/working"]);
-    let none = waiting(&board(), "state=failed").await;
+    assert_eq!(
+        blocked.waiting.as_ref().unwrap().kinds,
+        list.waiting.as_ref().unwrap().kinds
+    );
+    let none = waiting(&board(), "wait=state:failed").await;
     assert!(none.tasks.is_empty() && columns(&none).is_empty());
-    // A finished held task is in no state's count.
+    // A finished held task is in no state's count, and no state's facet lists it.
     let mut finished = board();
-    finished.push(held("w/accepted", "done", "deploy", "accepted", 50.0));
-    let counted = waiting(&finished, "counts=1").await;
+    finished.push(held("w/accepted", "done", "verify", "accepted", 50.0));
+    let counted = waiting(&finished, "counts=1&all=1").await;
     assert_eq!(counted.waiting.as_ref().unwrap().states.len(), 3);
+    assert!(
+        waiting(&finished, "wait=state:accepted&all=1")
+            .await
+            .tasks
+            .is_empty()
+    );
 }
 
 #[tokio::test]
 async fn a_board_no_workflow_holds_sends_no_states() {
     let legacy = vec![task("legacy/review".into(), "review", 2, 40.0)];
-    let (status, body) = raw(&legacy, "view=waiting&counts=1").await;
+    let (status, body) = raw(&legacy, "view=waiting&counts=1", None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(!body.contains("\"states\""), "{body}");
     assert!(!body.contains("\"workflow\""), "{body}");
-    let (_, body) = raw(&board(), "view=waiting&status=phase:build").await;
+    let (_, body) = raw(&board(), "view=waiting&status=phase:build", Some(4)).await;
     assert!(body.contains("\"states\""), "{body}");
     assert!(body.contains("\"workflow\":{\"phase\":\"build\""), "{body}");
+    // The generation the page reads the definition by, active though no open task is held yet.
+    let (_, body) = raw(&legacy, "view=waiting", Some(4)).await;
+    let list: TaskListing = serde_json::from_str(&body).unwrap();
+    assert_eq!(list.waiting.as_ref().unwrap().workflow, Some(4));
+    assert!(list.waiting.as_ref().unwrap().states.is_empty());
 }
 
 #[tokio::test]
@@ -199,7 +217,7 @@ async fn the_build_overlay_takes_a_held_task_its_machine_builds() {
             orchestrators: vec![],
             unstarted: 0,
         };
-        project(&request, tasks, "", &BTreeMap::new(), work.clone(), vec![])
+        project(&request, tasks, "", &BTreeMap::new(), work.clone(), vec![], None)
     };
     for (activity, column) in [(true, "build"), (false, "phase:build")] {
         let bytes = axum::body::to_bytes(read(activity).into_body(), usize::MAX)
@@ -211,7 +229,7 @@ async fn the_build_overlay_takes_a_held_task_its_machine_builds() {
 }
 
 #[test]
-fn a_listing_selects_a_phase_and_a_state_by_their_ids_alone() {
+fn a_listing_selects_a_phase_by_its_id_alone() {
     let argument = |query: &str| {
         let request = Request::builder()
             .uri(format!("/api/task-board?{query}"))
@@ -219,14 +237,7 @@ fn a_listing_selects_a_phase_and_a_state_by_their_ids_alone() {
             .unwrap();
         status_argument(&request)
     };
-    for good in [
-        "status=phase:build",
-        "status=phase:verify-2",
-        "status=phase:a_b",
-        "state=awaiting_review",
-        "state=x",
-        "status=review&state=blocked",
-    ] {
+    for good in ["status=phase:build", "status=phase:verify-2", "status=phase:a_b"] {
         assert_eq!(argument(good), Ok(()), "{good}");
     }
     for bad in [
@@ -235,11 +246,21 @@ fn a_listing_selects_a_phase_and_a_state_by_their_ids_alone() {
         "status=phase:2nd",
         "status=phases:build",
         "status=build:phase",
-        "state=Blocked",
-        "state=",
-        "state=1st",
-        "state=a%20b",
     ] {
         assert!(argument(bad).is_err(), "{bad}");
+    }
+}
+
+/// A state's facet names a workflow ID; any other wait word is refused, naming both forms.
+#[tokio::test]
+async fn a_state_facet_names_a_workflow_id() {
+    for good in ["state:awaiting_review", "state:x", "decision"] {
+        let (status, body) = raw(&board(), &format!("view=waiting&wait={good}"), None).await;
+        assert_eq!(status, StatusCode::OK, "{good}: {body}");
+    }
+    for bad in ["state:Blocked", "state:", "state:1st", "state:a%20b", "states:x", "blocked"] {
+        let (status, body) = raw(&board(), &format!("view=waiting&wait={bad}"), None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+        assert!(body.contains("or state:STATE"), "{body}");
     }
 }
