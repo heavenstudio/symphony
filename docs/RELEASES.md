@@ -888,9 +888,8 @@ the hour, and its green release refreshes the server and its projects
   --status`: `next run: in progress`, or a candidate open), since a run started then judges
   nothing of main's newest commit ([main while it is open](#main-while-it-is-open)), and lands
   once neither does. A second one does not wait for `current` to name a release serving the
-  first's schema: the board may then stand more than one schema ahead of the machine's server,
-  which refuses a board that far ahead ([the switch](#the-switch)), until a release at its schema
-  is `current`.
+  first's schema: the board may then stand more than one schema ahead of the machine's server
+  until a release at its schema is `current`.
 
 ## The refresh
 
