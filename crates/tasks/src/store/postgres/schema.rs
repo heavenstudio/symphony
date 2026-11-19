@@ -931,7 +931,7 @@ mod tests {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 25);
+        assert_eq!(names.len(), 29);
         let defined = define();
         for name in names {
             assert!(
