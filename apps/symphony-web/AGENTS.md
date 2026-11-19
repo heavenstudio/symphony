@@ -695,9 +695,9 @@ What holds on every page, and each page's contract where its section above names
   (`TASKS_FIRST_VISIT_BYTES`) and a task's page's to 145,000 (`TASK_FIRST_VISIT_BYTES`), each
   lowered by its move and again once the chat moved and no kind was left to move; the board's
   alone was raised since, from 125,000, by the owner on 2026-11-19. Each is raised only by its
-  task's orchestrator's recorded decision once the cut came first, naming the constant (`just
-  tasks gate SLUG apps/symphony-web-tests/tests/browser/main.rs:NAME --raise NEW`, [gate
-  decisions](../../docs/TASKS.md#gate-decisions)), never by an agent's own word.
+  task's orchestrator's recorded decision once the cut came first, naming the constant
+  (`just tasks gate SLUG apps/symphony-web-tests/tests/browser/main.rs:NAME --raise NEW`,
+  [TASKS](../../docs/TASKS.md#gate-decisions)), never by an agent's own word.
   A visit counts each response the page loaded at what Chrome's
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the kind's scripts, the style sheets, API replies
