@@ -538,11 +538,81 @@ fn a_key_of_another_app_is_refused_by_github_and_said_so() {
         &d,
         &apps,
         &[
-            "GitHub refused the App's key (401)",
-            "landing_key_file is not App 43's private key, or landing_app_id is not that App's number",
+            "GitHub refused the App's JWT (401: A JSON web token could not be decoded)",
+            "landing_key_file is not App 43's private key, landing_app_id is not that App's \
+             number, or this machine's clock is more than a minute ahead of GitHub's or nine \
+             minutes behind it",
         ],
     );
     assert_eq!(apps.asked().len(), 1, "asked once, and refused");
+}
+
+#[test]
+fn a_jwt_github_reads_as_of_another_time_says_its_words_and_the_clock() {
+    let _alone = crate::starting();
+    let (d, apps) = delivery("mint-clock", &[Role::Landing], "");
+    apps.plant(Planted::Answer(
+        401,
+        json!({"message": "'Issued at' claim ('iat') must be an Integer representing a time in the past"}),
+    ));
+    refused(
+        &d,
+        &apps,
+        &[
+            "GitHub refused the App's JWT (401: 'Issued at' claim ('iat') must be an Integer \
+             representing a time in the past)",
+            "or this machine's clock is more than a minute ahead of GitHub's",
+        ],
+    );
+}
+
+#[test]
+fn a_release_run_asks_its_token_for_contents_write_and_publishes() {
+    let _alone = crate::starting();
+    let rig = crate::Rig::off("mint-release");
+    std::fs::remove_file(&rig.token_file).unwrap();
+    rig.enable(&format!(
+        "releases = \"publish\"\nlanding_app_id = {LANDING}\n{}",
+        makers(&[Role::Landing])
+    ));
+    rig.github.tag("release-2026-11-19", HEAD);
+    let apps = Apps::new(rig.now.get());
+    let connect = apps.connect(&rig.github);
+    let file = rig.dir.0.join("release.json");
+    std::fs::write(
+        &file,
+        json!({
+            "tag": "release-2026-11-19", "commit": HEAD, "latest": true, "by": "release run",
+            "body": "## release-2026-11-19\n",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let ran = crate::run(
+        &["release", "--request", file.to_str().unwrap()],
+        &rig.board,
+        &rig.settings,
+        &connect,
+        rig.now.get(),
+        vec![rig.dir.0.join("repository")],
+    );
+    assert_eq!(ran.code, 0, "{ran:?}");
+    let answer: Value = serde_json::from_str(&ran.out).unwrap();
+    assert_eq!(answer["state"], "published", "{answer}");
+    assert_eq!(rig.github.releases().len(), 1);
+    let asked = apps.asked();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_eq!(
+        asked[0].2,
+        json!({"repositories": ["n"], "permissions": {"contents": "write"}})
+    );
+    assert!(
+        !rig.github.asked_as(LANDING).is_empty(),
+        "the release made as the landing App"
+    );
+    for secret in apps.secrets() {
+        assert!(!ran.out.contains(&secret) && !ran.err.contains(&secret));
+    }
 }
 
 #[test]

@@ -946,6 +946,109 @@ fn an_agent_with_no_pane_and_a_live_beat_is_working() {
     assert_eq!(c.agent(&handle).state, "working");
 }
 
+/// The idle sweep's round confirms `handle`'s listener now: its registration confirmed until the
+/// next round and its margin, and its session seen, as the sweep's write leaves them.
+fn confirm(c: &Case, handle: &str) {
+    let raw = c.f.store.raw();
+    raw.row("callback_state", handle)
+        .put(
+            json!({"handle": handle, "address": format!("codex:thread-{handle}"), "host": "h",
+            "confirmed_until": c.f.now() + 390.0}),
+        )
+        .unwrap();
+    raw.row("session", handle)
+        .set(json!({"last_seen": c.f.now()}))
+        .unwrap();
+}
+
+#[test]
+fn with_no_pane_and_a_listener_that_answers_the_last_tool_call_says_idle_where_health_cannot() {
+    let c = Case::new();
+    let handle = c.worker();
+    c.f.store.bind_agent("agent-1", &handle, true).unwrap();
+    c.f.store.agent_beat("agent-1", &Beat::default()).unwrap();
+    // At the window's edge it still works; a second past it, it rests, its health live.
+    c.f.advance(LIVE_SECONDS);
+    confirm(&c, &handle);
+    assert_eq!(c.agent(&handle).state, "working");
+    c.f.advance(1.0);
+    confirm(&c, &handle);
+    let a = c.agent(&handle);
+    assert_eq!(
+        (a.state, a.health, a.confirmed),
+        ("idle", Health::Live, true)
+    );
+    // Between two rounds its health goes stale, and it rests all the same.
+    c.f.advance(LIVE_SECONDS + 5.0);
+    let a = c.agent(&handle);
+    assert_eq!((a.state, a.health), ("idle", Health::Stale));
+    // A tool call is work again.
+    c.f.store.agent_beat("agent-1", &Beat::default()).unwrap();
+    assert_eq!(c.agent(&handle).state, "working");
+}
+
+#[test]
+fn inside_a_long_tool_call_a_confirmed_agent_with_no_pane_works_until_the_call_could_have_ended() {
+    let c = Case::new();
+    let handle = c.worker();
+    c.f.store.bind_agent("agent-1", &handle, true).unwrap();
+    let long = Beat {
+        busy_for: Some(600.0),
+        call: Some("long".into()),
+        ended: false,
+    };
+    c.f.store.agent_beat("agent-1", &long).unwrap();
+    c.f.advance(600.0);
+    confirm(&c, &handle);
+    assert_eq!(c.agent(&handle).state, "working");
+    c.f.advance(1.0);
+    confirm(&c, &handle);
+    assert_eq!(c.agent(&handle).state, "idle");
+}
+
+#[test]
+fn a_confirmed_agent_that_never_made_a_tool_call_rests_from_when_it_connected() {
+    let c = Case::new();
+    let handle = c.worker();
+    c.f.advance(LIVE_SECONDS);
+    confirm(&c, &handle);
+    let a = c.agent(&handle);
+    assert_eq!((a.state, a.last_tool_call), ("working", None));
+    c.f.advance(1.0);
+    confirm(&c, &handle);
+    assert_eq!(c.agent(&handle).state, "idle");
+}
+
+#[test]
+fn rest_by_the_last_tool_call_is_only_for_a_confirmed_worker_with_no_pane() {
+    let c = Case::new();
+    let handle = c.worker();
+    c.f.advance(LIVE_SECONDS + 1.0);
+    // A listener the sweep did not confirm: health decides, as its STALE line says.
+    assert_eq!(c.agent(&handle).state, "idle");
+    assert!(!c.agent(&handle).confirmed);
+    c.f.store.touch(&handle).unwrap();
+    assert_eq!(c.agent(&handle).state, "working");
+    // An orchestrator waits at its prompt as its work.
+    confirm(&c, &c.orch);
+    let orch = c.agent(&c.orch);
+    assert_eq!((orch.state, orch.confirmed), ("working", true));
+    // A bound pane still decides.
+    confirm(&c, &handle);
+    assert_eq!(c.agent(&handle).state, "idle");
+    c.pane(&handle, "t5", "working", json!({}));
+    assert_eq!(c.agent(&handle).state, "working");
+    // A confirmation that lapsed confirms nothing.
+    *c.panes.borrow_mut() = Some(Vec::new());
+    c.f.advance(LIVE_SECONDS);
+    c.f.store.touch(&handle).unwrap();
+    assert_eq!(c.agent(&handle).state, "idle");
+    c.f.advance(301.0);
+    c.f.store.touch(&handle).unwrap();
+    let a = c.agent(&handle);
+    assert_eq!((a.state, a.confirmed), ("working", false));
+}
+
 #[test]
 fn an_agent_quiet_past_the_stale_line_with_no_pane_is_gone() {
     let c = Case::new();

@@ -941,6 +941,66 @@ fn a_kill_of_the_process_its_caller_started_ends_its_command_and_is_recorded() {
     fs::write(&release, "").unwrap();
 }
 
+/// Where the process `pid` works, as the kernel says it: what `lsof` lists as its `cwd`.
+#[cfg(target_os = "macos")]
+fn works_in(pid: libc::pid_t) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt as _;
+    // SAFETY: a struct of plain numbers and bytes, which all zeroes is a value of.
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = libc::c_int::try_from(std::mem::size_of::<libc::proc_vnodepathinfo>()).unwrap();
+    // SAFETY: writes at most `size` bytes into `info`, which is that large.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    assert_eq!(read, size, "the kernel does not say where {pid} works");
+    // SAFETY: the kernel wrote a NUL-terminated path into it.
+    let path = unsafe { std::ffi::CStr::from_ptr(info.pvi_cdir.vip_path.as_ptr().cast()) };
+    PathBuf::from(std::ffi::OsStr::from_bytes(path.to_bytes()))
+}
+
+/// A recorder works at the root while its command works in its caller's folder: whoever asks which
+/// processes work in a checkout (a release run's look after a check, the worktree sweep, a land)
+/// finds the command and never its recorder, however long that takes to write down how it ended.
+/// What it records is still its command's folder, and a work folder named from that folder is
+/// still found from it.
+#[cfg(target_os = "macos")]
+#[test]
+fn its_recorder_works_out_of_its_callers_folder_and_records_from_it_all_the_same() {
+    let case = Case::new();
+    let mut folders = Folders::new("recorder-elsewhere");
+    folders.work = folders.dir.join("named/from/here");
+    let (release, pid) = (folders.dir.join("release"), folders.dir.join("pid"));
+    let command = until_released(&release, &pid);
+    let mut started = spawn(
+        tasks(
+            &case,
+            &folders,
+            None,
+            &run_args("test", "elsewhere", &command),
+        )
+        .env("TASKS_WORK", "named/from/here"),
+    );
+    let running = folders.once(Step::Running);
+    let here = folders.dir.canonicalize().unwrap();
+    assert_eq!(works_in(written_pid(&pid)).canonicalize().unwrap(), here);
+    let recorder = libc::pid_t::try_from(running.pid).unwrap();
+    assert_eq!(
+        works_in(recorder),
+        Path::new("/"),
+        "its recorder works in its command's folder"
+    );
+    assert_eq!(Path::new(&running.checkout).canonicalize().unwrap(), here);
+    fs::write(&release, "").unwrap();
+    assert!(started.wait().unwrap().success());
+    assert_eq!(folders.once(Step::Finished).exit_code, Some(0));
+}
+
 #[test]
 fn a_command_that_cannot_start_is_said_and_recorded_as_a_shell_says_it_and_never_ran() {
     let case = Case::new();

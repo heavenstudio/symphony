@@ -237,10 +237,20 @@ fn a_recovery_racing_the_holders_own_transition_has_one_winner() {
 }
 
 #[test]
-fn next_offers_no_task_a_workflow_holds() {
+fn next_offers_a_held_task_by_its_open_claim_edge_and_none_whose_claim_is_taken() {
     for backend in BACKENDS {
         let f = board(backend, &workflow());
-        assert_eq!(f.store.next_for("amber").unwrap(), None);
+        let next = |handle: &str| f.store.next_for(handle).unwrap().map(|t| t.slug);
+        assert_eq!(next("amber").as_deref(), Some("sim/a"));
+        // Another's live reservation stands against it, as admission's own claim refuses it.
+        f.store.reserve("sim/a", "birch", 60.0).unwrap();
+        assert_eq!(next("amber").as_deref(), Some("sim/b"));
+        assert_eq!(next("birch").as_deref(), Some("sim/a"));
+        take(&f.store, "sim/a", &agent_session("birch"), "claim").unwrap();
+        take(&f.store, "sim/b", &agent_session("amber"), "claim").unwrap();
+        // Each claimed, and sim/busy at a position no claim leaves: nothing to take.
+        assert_eq!(next("amber"), None);
+        assert_eq!(next("birch"), None);
     }
 }
 

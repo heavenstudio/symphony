@@ -134,16 +134,16 @@ pub fn repository(url: &str) -> Option<Repository> {
 }
 
 /// An answer that made or found nothing, said for the land to carry.
-fn refused(why: impl Into<String>) -> Value {
+pub(crate) fn refused(why: impl Into<String>) -> Value {
     json!({"state": "refused", "why": why.into()})
 }
 
-fn unavailable(why: impl Into<String>) -> Value {
+pub(crate) fn unavailable(why: impl Into<String>) -> Value {
     json!({"state": "unavailable", "why": why.into()})
 }
 
 /// A request that came to no answer the verb can go on by: the answer to give in its place.
-type Stopped = Value;
+pub(crate) type Stopped = Value;
 
 /// The repository's calls, each answered with its status.
 pub(crate) struct Host<'a> {
@@ -152,17 +152,17 @@ pub(crate) struct Host<'a> {
 }
 
 /// A write that may have been made.
-struct Lost(String);
+pub(crate) struct Lost(pub(crate) String);
 
 impl Host<'_> {
-    fn path(&self, rest: &str) -> String {
+    pub(crate) fn path(&self, rest: &str) -> String {
         format!(
             "/repos/{}/{}{rest}",
             self.repository.owner, self.repository.name
         )
     }
 
-    fn send(
+    pub(crate) fn send(
         &self,
         method: &'static str,
         path: String,
@@ -269,7 +269,7 @@ struct Check {
     title: String,
 }
 
-fn plain(text: &str, more: &str) -> bool {
+pub(crate) fn plain(text: &str, more: &str) -> bool {
     !text.is_empty()
         && text.len() <= 200
         && !text.starts_with('-')
@@ -281,7 +281,7 @@ fn short(commit: &str) -> String {
     commit.chars().take(7).collect()
 }
 
-fn commit(text: &str) -> bool {
+pub(crate) fn commit(text: &str) -> bool {
     text.len() == 40 && text.chars().all(|c| c.is_ascii_hexdigit())
 }
 
@@ -351,9 +351,51 @@ fn checks(snapshot: &Snapshot, repository: i64) -> Result<Vec<Check>, String> {
     Ok(wanted)
 }
 
+/// The repository `host` reaches as GitHub names it now, its number and name, which must be the
+/// one `state` is bound to; with none bound yet, it is bound and kept in `store`.
+pub(crate) fn bound(
+    host: &Host<'_>,
+    store: &Store,
+    state: &mut State,
+) -> Result<(i64, String), Stopped> {
+    let value = match host.get("")? {
+        (200, value) => value,
+        (301, _) => return Err(refused("the repository moved to another name (301)")),
+        (status, _) => {
+            return Err(refused(format!(
+                "{} is missing or not accessible ({status})",
+                host.repository.full_name()
+            )));
+        }
+    };
+    let id = (value["id"].as_i64()).ok_or_else(|| unavailable("the repository has no id"))?;
+    let name = clean_title(value["full_name"].as_str().unwrap_or_default());
+    match &state.binding {
+        Some(binding) if binding.repository_id != id => Err(refused(format!(
+            "{name} is repository {id}, and what is kept here is bound to {} (id {}): \
+             nothing is published to another repository",
+            binding.full_name, binding.repository_id
+        ))),
+        Some(_) => Ok((id, name)),
+        None => {
+            state.binding = Some(Binding {
+                repository_id: id,
+                node_id: value["node_id"].as_str().unwrap_or_default().into(),
+                full_name: name.clone(),
+            });
+            store.save(state).map_err(unavailable)?;
+            Ok((id, name))
+        }
+    }
+}
+
 /// What makes the requests that carry `role`'s token, made first where the settings give its
 /// file an App ([`crate::mint`]).
-fn connect(ctx: &Context<'_>, config: &Config, role: Role) -> Result<Box<dyn Transport>, Stopped> {
+pub(crate) fn connect(
+    ctx: &Context<'_>,
+    config: &Config,
+    role: Role,
+) -> Result<Box<dyn Transport>, Stopped> {
     let token = mint::token(ctx, config, role).map_err(|stop| match stop {
         mint::Stop::Refused(why) => refused(why),
         mint::Stop::Unavailable(why) => unavailable(why),
@@ -397,35 +439,7 @@ impl Run<'_> {
 
     /// The repository as GitHub names it now, which must be the one the state is bound to.
     fn bound(&mut self, host: &Host<'_>) -> Result<(i64, String), Stopped> {
-        let value = match host.get("")? {
-            (200, value) => value,
-            (301, _) => return Err(refused("the repository moved to another name (301)")),
-            (status, _) => {
-                return Err(refused(format!(
-                    "{} is missing or not accessible ({status})",
-                    self.repository.full_name()
-                )));
-            }
-        };
-        let id = (value["id"].as_i64()).ok_or_else(|| unavailable("the repository has no id"))?;
-        let name = clean_title(value["full_name"].as_str().unwrap_or_default());
-        match &self.state.binding {
-            Some(binding) if binding.repository_id != id => Err(refused(format!(
-                "{name} is repository {id}, and what is kept here is bound to {} (id {}): \
-                 nothing is published to another repository",
-                binding.full_name, binding.repository_id
-            ))),
-            Some(_) => Ok((id, name)),
-            None => {
-                self.state.binding = Some(Binding {
-                    repository_id: id,
-                    node_id: value["node_id"].as_str().unwrap_or_default().into(),
-                    full_name: name.clone(),
-                });
-                self.store.save(&self.state).map_err(unavailable)?;
-                Ok((id, name))
-            }
-        }
+        bound(host, &self.store, &mut self.state)
     }
 
     /// The protection of `base` read now and held to what a delivery needs

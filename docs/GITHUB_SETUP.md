@@ -1,7 +1,7 @@
 # Setting up GitHub
 
 Symphony runs without GitHub. `symphony-github` is an optional program that connects a
-project's board to one repository on GitHub.com, and it does two things, each set up on its own:
+project's board to one repository on GitHub.com, and it does three things, each set up on its own:
 
 - **The issue exchange.** Open issues carrying a label you choose become proposals on the board,
   and tasks you opt in are published as issues. It needs one token and no GitHub App:
@@ -10,6 +10,10 @@ project's board to one repository on GitHub.com, and it does two things, each se
   evidence there as checks, and has GitHub squash it, in place of merging and pushing the default
   branch itself. It needs three GitHub Apps installed on the repository and two rulesets on its
   default branch: [its steps](#delivery-by-pull-request).
+- **GitHub Releases.** A release run publishes a GitHub Release for each tag it pushes, its text
+  the release's notes. It needs the exchange's one token with contents read and write, and is
+  the release run's alone, so it serves the Symphony's own repository:
+  [its steps](#github-releases).
 
 This page is the setup, in order, from nothing to a check that passes. How each part behaves,
 every setting and every refusal are in [GITHUB](GITHUB.md).
@@ -202,7 +206,29 @@ A repository that imports an upstream ([delivering an import](GITHUB.md#deliveri
 differs in three places: its merge settings allow merge commits beside squash; the requirements
 ruleset names Merge beside Squash, and no ruleset requires a linear history; and the settings add
 `upstream_id`, the upstream's repository number, to `symphony-github.toml` and `[land.upstream]`
-to `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#landupstream)).
+to `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#landupstream)). With a private upstream,
+leave out `landing_installation_id` and `landing_key_file`: a token the program makes reads the
+one repository, so `token_file` stays kept by hand, with a token that reads the upstream too.
+
+## GitHub Releases
+
+The release run ([RELEASES](RELEASES.md#a-github-release)) is the Symphony's own repository's,
+so these steps are for that repository.
+
+1. **The token.** `token_file`'s token, as [the exchange's step 1](#the-issue-exchange) keeps it,
+   with contents read and write on the repository: GitHub takes a release's creation as a write
+   of the repository's contents.
+2. **The adapter's word.** Commit `releases = "publish"` to `symphony-github.toml` on the default
+   branch, beside `enabled = true`, `repository` and `token_file`.
+3. **The run's command.** Commit `github = ["symphony-github", "release"]` to the `[releases]`
+   table of `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#releases)). The run starts that
+   program by name, so it is on the `PATH` of whoever starts the release run.
+4. **The releases tagged before.** The release run's `--github` asks for each release tagged in
+   the checkout, oldest first, and checks, tags and pushes nothing; one GitHub holds already is
+   left as it is.
+
+`symphony-github status` then says `releases: publish`, and the release run's `--status` counts
+the releases published and names each one pending with why.
 
 ## Checking it
 
@@ -214,6 +240,7 @@ enabled by the committed settings
 repository: OWNER/NAME
 issues: import
 pull requests: off
+releases: off
 token file: /Users/YOU/.config/symphony-github/token
 nothing is kept: /PATH/TO/PROJECT/.git/symphony/integrations/github is not there
 ```
@@ -287,11 +314,11 @@ reading nothing is not an error: read its first line.
 | `does not hold: a delivery would be refused`, then a `missing:` line for each thing (`preflight`) | Each line names the rule or setting to put right in steps 5 to 7: `no rule in effect for main requires a pull request` is the requirements ruleset missing or not active; `no rule restricts updates of main to the landing App` is the update restriction missing; `who bypasses ruleset N is not known` is the policy reader not installed or without Administration; `ruleset N is bypassed by …` is an actor to take off the requirements' bypass list; `symphony/eligible is required of main from another source` is the check's source to set to the check publisher; `a rule holds main's pull requests up to date` is the box to untick; `auto-merge is allowed` is the merge setting to turn off. |
 | A land refused: `[land] delivery is set and so is the land's merge check` | Add `check = false` to `[land]`, as step 6 says. |
 | A land refused: `the protection of main does not hold a delivery to its evidence` | As `preflight` says, which lists each thing missing. |
-| A land stopped on `GitHub refused the credential (401)` | A token was refused, or expired in a file whose App's key is not named: name the keys of step 6, or write a current token in it, and land again. |
+| A land stopped on `GitHub refused the credential (401)` | A token was refused, or expired in a file whose App's key is not named: name the keys of step 6, or write a current token in it, and land again. Where GitHub revoked a token the program made before it expires, delete its file: the next land makes a new one. |
 | `landing_key_file PATH is readable by others; chmod 600 it` (or `checks_key_file`, `policy_key_file`) | `chmod 600 PATH`. A key not there, or inside the repository, is said the same way. |
 | `openssl is not on PATH: … so install it; nothing was sent` | Install openssl, which signs each App's request for its token. |
 | `openssl could not sign with …_key_file PATH: write the App's private key there as GitHub gave it, a PEM file with no passphrase` | The file is not the key GitHub gave: generate a key again (step 3) and copy it there. |
-| `making token_file's token as App N: GitHub refused the App's key (401)` | The key is not App N's, or `landing_app_id` is not that App's number: check both on the App's settings page. |
+| `making token_file's token as App N: GitHub refused the App's JWT (401: …)` | GitHub's words follow the status. The key is not App N's, `landing_app_id` is not that App's number (check both on the App's settings page), or this machine's clock is more than a minute ahead of GitHub's or nine minutes behind it (a message naming `iat` or `exp` says so): set the clock right. |
 | `… GitHub found no installation N of App M (404)` | `…_installation_id` is not the installation's number (step 2), or the App is not installed. |
 | `… GitHub refused a token for OWNER/NAME with … (422: …)` | GitHub's words follow the status: give the App the permissions named (step 1) and install it on that repository (step 2). |
 | `making …'s token as App N: GitHub answered 5XX` (`unavailable`) | GitHub did not answer: the file is as it was, and the next land asks again. |

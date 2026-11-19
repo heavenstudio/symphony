@@ -166,6 +166,15 @@ fn each_token_is_asked_for_the_least_its_calls_need() {
         [("contents", "write"), ("pull_requests", "write")]
     );
     assert_eq!(
+        asked("releases = \"publish\"\n", Role::Landing),
+        [("contents", "write")],
+        "a release's creation"
+    );
+    assert_eq!(
+        asked(&format!("{publish}releases = \"publish\"\n"), Role::Landing),
+        [("contents", "write"), ("pull_requests", "write")]
+    );
+    assert_eq!(
         asked(&format!("{publish}close_issues = true\n"), Role::Landing),
         [
             ("contents", "write"),

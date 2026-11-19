@@ -17,7 +17,7 @@
 //! ones. A failure writes nothing, leaves the file as it was, and names what to put right
 //! without a key, a JWT or a token.
 
-use crate::config::{App, Config, PullRequests, Role};
+use crate::config::{App, Config, PullRequests, Releases, Role};
 use crate::credential::{self, Secret};
 use crate::reconcile::Context;
 use crate::transport::{Failure, Request};
@@ -237,6 +237,9 @@ pub fn permissions(config: &Config, role: Role) -> BTreeMap<&'static str, &'stat
                 asked.insert("contents", "write");
                 asked.insert("pull_requests", "write");
             }
+            if config.releases == Releases::Publish {
+                asked.insert("contents", "write");
+            }
             if config.issues.exports() || config.close_issues {
                 asked.insert("issues", "write");
             } else if config.issues.imports() {
@@ -432,8 +435,10 @@ fn make(
             Ok((token, expires))
         }
         401 => Err(Stop::Refused(format!(
-            "{making}: GitHub refused the App's key (401): {prefix}_key_file is not App {}'s \
-             private key, or {prefix}_app_id is not that App's number",
+            "{making}: GitHub refused the App's JWT (401: {}): {prefix}_key_file is not App {}'s \
+             private key, {prefix}_app_id is not that App's number, or this machine's clock is \
+             more than a minute ahead of GitHub's or nine minutes behind it",
+            message(),
             app.id
         ))),
         404 => Err(Stop::Refused(format!(
