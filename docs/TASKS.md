@@ -1109,8 +1109,9 @@ it did not land, no live work holds it and its lock holds nobody; the branch it 
 goes with it once merged, if no other worktree holds it and it still points where it did. Three
 things keep that branch, each said as `kept branch NAME: WHY`: a land's record of its merge
 naming it, as `just land SLUG` run again finishes an interrupted land from that record and the
-branch, in a worktree of its own; a delivery of it by pull request still under way, whose land
-run again reads the branch's tip; and its task done by an approve no landing has closed, as what
+branch, in a worktree of its own; a delivery of it by pull request not yet asked to merge, whose
+land run again reads the branch's tip (from the merge's request on, a land run again goes on from
+its journal alone, and the branch goes); and its task done by an approve no landing has closed, as what
 keeps such a task from going back to review once it is on main is its branch's tip.
 A head [a pull request squashed](#a-land-delivered-by-a-pull-request) is in no history of main,
 and is in main by its receipt alone: the HEAD, or the branch's tip, is exactly the head a receipt

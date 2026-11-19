@@ -527,13 +527,14 @@ fn every_guard_of_the_sweep_holds_over_a_squashed_head() {
     assert_unlanded(&r, &wt, &result);
 }
 
-#[test]
-fn a_delivery_still_under_way_keeps_the_branch_its_land_reads() {
-    let (r, wt, receipt) = delivered();
-    let journal = Journal {
+/// The journal of a delivery of [`SLUG`] at `receipt`'s head that went as far as `stage`, kept
+/// in `r`'s lands' folder as the land keeps it.
+fn journal(r: &Repo, receipt: &Receipt, stage: Stage) {
+    let merged = stage >= Stage::RemoteMerged;
+    Journal {
         slug: SLUG.into(),
         operation: "task".into(),
-        stage: Stage::RemoteMerged,
+        stage,
         head: receipt.head.clone(),
         base_observed: receipt.parent.clone(),
         revision: "r1".into(),
@@ -543,26 +544,57 @@ fn a_delivery_still_under_way_keeps_the_branch_its_land_reads() {
         closes: Vec::new(),
         stood: String::new(),
         binding: None,
-        squash: Some(receipt.squash.clone()),
+        squash: merged.then(|| receipt.squash.clone()),
         held: None,
         import: None,
-    };
-    journal.write(&lands(&r)).unwrap();
-    let result = r.sweep_with(|_| {});
-    let said = text(&result);
-    r.assert_removed(&wt, &said);
-    assert!(!r.branch(SLUG).is_empty(), "{said}");
-    assert!(
-        said.contains(&format!(
-            "kept branch {SLUG}: a delivery of it by pull request is under way, and `just land \
-             {SLUG}` run again reads its tip"
-        )),
-        "{said}"
-    );
-    assert!(
-        result.squashed.is_empty(),
-        "nothing deleted is said squashed"
-    );
+    }
+    .write(&lands(r))
+    .unwrap();
+}
+
+#[test]
+fn a_delivery_asked_to_merge_keeps_no_branch_as_its_land_reads_its_journal_alone() {
+    // From the merge's request on, a land run again goes on from its journal and never reads the
+    // branch: the land's own sweep, started while its journal says Dispatching, takes it.
+    for stage in [
+        Stage::MergeRequested,
+        Stage::RemoteMerged,
+        Stage::Reconciled,
+        Stage::Closed,
+        Stage::Dispatching,
+    ] {
+        let (r, wt, receipt) = delivered();
+        journal(&r, &receipt, stage);
+        let result = r.sweep_with(|_| {});
+        let said = text(&result);
+        r.assert_removed(&wt, &said);
+        assert!(r.branch(SLUG).is_empty(), "{stage:?}\n{said}");
+        assert_eq!(result.left_branches, [SLUG], "{stage:?}\n{said}");
+        assert!(result.kept_branches.is_empty(), "{stage:?}\n{said}");
+    }
+}
+
+#[test]
+fn a_delivery_not_yet_asked_to_merge_keeps_the_branch_its_land_reads() {
+    for stage in [Stage::Prepared, Stage::Eligible] {
+        let (r, wt, receipt) = delivered();
+        journal(&r, &receipt, stage);
+        let result = r.sweep_with(|_| {});
+        let said = text(&result);
+        r.assert_removed(&wt, &said);
+        assert!(!r.branch(SLUG).is_empty(), "{stage:?}\n{said}");
+        assert!(
+            said.contains(&format!(
+                "kept branch {SLUG}: a delivery of it by pull request is not yet asked to merge, \
+                 and `just land {SLUG}` run again reads its tip"
+            )),
+            "{stage:?}\n{said}"
+        );
+        assert!(
+            result.squashed.is_empty(),
+            "nothing deleted is said squashed"
+        );
+    }
 }
 
 #[test]

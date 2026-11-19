@@ -21,7 +21,7 @@
 //! `crates/tasks/tests/sweep/delivered.rs`.
 
 use super::{git, trigger};
-use crate::land::delivery::{Journal, RETAINED, Receipt};
+use crate::land::delivery::{Journal, RETAINED, Receipt, Stage};
 use crate::land::{FOLDER, REMOTE};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -70,13 +70,17 @@ impl Delivered {
         proof
     }
 
-    /// Why the branch `name` stays while a delivery of its task is under way, if one is: the land
-    /// run again reads the branch's tip against the pull request it is bound to.
+    /// Why the branch `name` stays while a delivery of its task is under way and not yet asked to
+    /// merge, if one is: a land run again then reads the branch's tip against the pull request
+    /// it is bound to. From [`Stage::MergeRequested`] on it goes on from its journal alone and
+    /// never reads the branch, so nothing keeps it: a branch kept once its worktree went would be
+    /// kept for good, as only the pass that removes its worktree deletes it.
     pub fn under_way(&self, name: &str) -> Option<String> {
-        let journal = Journal::read(self.lands.as_deref()?, name)?;
+        let journal = Journal::read(self.lands.as_deref()?, name)
+            .filter(|journal| journal.stage < Stage::MergeRequested)?;
         Some(format!(
-            "a delivery of it by pull request is under way, and `just land {}` run again reads \
-             its tip",
+            "a delivery of it by pull request is not yet asked to merge, and `just land {}` run \
+             again reads its tip",
             journal.slug
         ))
     }

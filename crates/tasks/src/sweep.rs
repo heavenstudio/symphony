@@ -21,9 +21,9 @@
 //!   session is registered at the main checkout, and a resumed agent's worktree has no lock); the
 //!   closed sessions of a task just finished (`--task`) do not count there;
 //! * its HEAD is an ancestor of `main` (detached or on a branch), or is exactly a head a pull
-//!   request squashed into main, proved by the receipt its land kept ([`delivered`]). A branch with no commits of its own
-//!   (a reviewer's, an executor's not started, one switched to another branch) is judged like any
-//!   other: the window, the sessions and the processes are what protect an agent about to start;
+//!   request squashed into main, proved by the receipt its land kept ([`delivered`]). A branch
+//!   with no commits of its own (a reviewer's, an executor's not started, one switched to another
+//!   branch) is judged like any other: the window, the sessions and the processes are what protect an agent about to start;
 //! * no task in concept, design, ready, in_progress, review or blocked has the branch's name as its
 //!   slug, or as its slug with the last `/` spelled `-` (`tools/python-zero-merge-risk` for
 //!   `tools/python-zero/merge-risk`), has a role held by a session bound to it, either way (of any
@@ -73,7 +73,7 @@
 //! merged into main or squashed into it by a receipt's proof, its head then kept under the
 //! delivery's own reference, if no worktree holds it and it still points where it did, unless a
 //! land's record of its merge names it (`just land SLUG` run again finishes from it and the
-//! branch), a delivery of it is still under way, or its
+//! branch), a delivery of it by pull request not yet asked to merge reads its tip again, or its
 //! task is done by an approve no landing has closed (the guard against moving it back to review
 //! reads the branch's tip, [`crate::land::reopenable`]), each said as `kept branch`; and each
 //! `worktree-agent-*` branch merged into main, or squashed into it, that no
@@ -1405,7 +1405,8 @@ fn recorded_lands(root: &Path) -> BTreeSet<String> {
 
 /// Why branch `name`, landed in main, stays though its worktree went, if it does: a land's
 /// record of its merge names it (`recorded`), which a land run again finishes from it; a delivery
-/// of it by pull request is under way ([`Delivered::under_way`]); or its task
+/// of it by pull request not yet asked to merge reads its tip ([`Delivered::under_way`]); or its
+/// task
 /// is done by an approve no landing has closed, which may still go back to review for a fresh
 /// approve, and the guard against sending back what landed reads the branch's tip
 /// (`crate::land::reopenable`).
