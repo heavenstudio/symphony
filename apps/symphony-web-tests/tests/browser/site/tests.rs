@@ -364,3 +364,46 @@ fn a_documents_outline_names_the_ids_its_fixture_gives_each_section_and_none_oth
         serde_json::json!({})
     );
 }
+
+/// An open feed stream follows the sections its request named, each by its whole key, and none
+/// once it is closed; a stream naming none, or no list, follows none.
+#[test]
+fn a_feed_stream_follows_the_sections_its_request_named_while_it_is_open() {
+    let dist = Dist::new("/assets/shell.js", &[]);
+    let site = Site::start(dist.path(), &board());
+    let backstop = test_time::backstop(std::time::Duration::from_secs(10));
+    let open = |query: &str, open: usize| {
+        let mut stream = TcpStream::connect(site.addr).unwrap();
+        write!(
+            stream,
+            "GET {}?since=1&document=docs%2FPROBE.md{query} HTTP/1.1\r\nHost: site\r\n\r\n",
+            symphony_api::FEED_PATH
+        )
+        .unwrap();
+        test_time::until_true("the feed stream open", backstop, || site.feeds() == open)
+            .expect("the stream never opened");
+        stream
+    };
+    let streams = [
+        open("", 1),
+        open("&sections=%5B%5D", 2),
+        open("&sections=intro", 3),
+    ];
+    assert!(
+        !site.following("intro"),
+        "a stream naming no section, an empty list or no list follows none"
+    );
+    let named = open("&sections=%5B%22intro%22%2C%22card%3Aone%22%5D", 4);
+    assert!(site.following("intro") && site.following("card:one"));
+    assert!(
+        !site.following("intr") && !site.following("one") && !site.following("other"),
+        "a section is followed by its whole key alone"
+    );
+    drop(named);
+    test_time::until_true("the closed stream counted no more", backstop, || {
+        site.feeds() == 3
+    })
+    .expect("the stream never closed");
+    assert!(!site.following("intro"), "a closed stream follows nothing");
+    drop(streams);
+}
