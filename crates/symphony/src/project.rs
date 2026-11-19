@@ -775,6 +775,9 @@ impl Project {
         {
             return Err("[land] delivery names no command: leave it out to land here".into());
         }
+        if let Some(upstream) = land.upstream.take() {
+            upstream.judged()?;
+        }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
                 "[verdicts] generators need a land command: a generated branch never moves the \

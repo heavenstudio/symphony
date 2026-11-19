@@ -207,6 +207,31 @@ fn needs_writes_an_assessment_its_tip_resolved_and_the_thread_says_it() {
         )),
         "{shown}"
     );
+    // An import, resolved to the whole upstream commit as the tip is.
+    let upstream = git_says(&root, &["rev-parse", "main"]);
+    assert_eq!(
+        c.ok(
+            &assessor,
+            &[
+                "needs",
+                "tools/query",
+                "review",
+                "tests",
+                "--tip",
+                &tip[..9],
+                "--import",
+                &upstream[..9],
+                "--why",
+                WHY
+            ],
+        ),
+        format!(
+            "tools/query needs tests, review at {}, an import of {upstream}\n",
+            &tip[..7]
+        )
+    );
+    let needs = c.store().get("tools/query").unwrap().needs().unwrap();
+    assert_eq!(needs.import.as_deref(), Some(upstream.as_str()));
     // None, with a reason, from the brief alone: no --tip.
     assert_eq!(
         c.ok(
@@ -260,6 +285,29 @@ fn needs_is_refused_to_the_tasks_own_sessions_and_on_what_it_cannot_take() {
             "✖ --tip nosuchcommit names no commit in {}\n",
             root.display()
         )
+    );
+    assert_eq!(
+        refused(
+            &assessor,
+            &[
+                "review",
+                "--tip",
+                "main",
+                "--import",
+                "nosuchcommit",
+                "--why",
+                WHY
+            ]
+        ),
+        format!(
+            "✖ --import nosuchcommit names no commit in {}\n",
+            root.display()
+        )
+    );
+    assert_eq!(
+        refused(&assessor, &["review", "--import", "main", "--why", WHY]),
+        "✖ an import is named at the head the assessment read (--tip TIP): it binds that head \
+         to the upstream commit it imports\n"
     );
     assert_eq!(c.store().get("tools/query").unwrap().needs(), None);
     // Outside a repository there is no catalogue a land holds the task to.

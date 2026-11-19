@@ -225,9 +225,13 @@ left red, or left to a project, is put right ([who runs it](docs/RELEASES.md#who
 The one exception is the run that follows a landing that moves the board's schema, which the
 orchestrator who landed it starts at once without asking
 ([the cadence](docs/RELEASES.md#the-cadence)).
-Restarting the shared server, its first switch to a release's own server among it, is a separate
-act that needs its own word, and so is pointing `current` back by hand ([the way
-back](docs/RELEASES.md#the-way-back)). A pin moved by hand to a commit of main waits until
+A schema move never waits for the owner: when this board is at a schema the release `current`
+names does not serve and a green release serving it is installed, an orchestrator points
+`current` forward at that release at once, without asking, and says so on the thread of the task
+that moved the schema; another project's pages then save nothing until it takes the release,
+which is that project's to do. Restarting the shared server by hand, its first switch to a
+release's own server among it, is a separate act that needs its own word, and so is pointing
+`current` back to an older release ([the way back](docs/RELEASES.md#the-way-back)). A pin moved by hand to a commit of main waits until
 `just tasks regenerate --status --wait` exits 0 and takes the commit it names, so it never
 carries a client older than its sources ([TASKS](docs/TASKS.md#the-regenerator)).
 

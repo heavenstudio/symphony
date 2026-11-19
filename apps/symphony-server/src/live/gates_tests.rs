@@ -580,6 +580,7 @@ fn an_assessed_task_reads_its_stamps_at_the_tip_and_offers_the_owners_approve_un
         tip: Some(tip.clone()),
         by: assessor.clone(),
         why: "the owner asked to see the page".into(),
+        import: None,
     };
     f.store
         .set_needs("tools/own", &Catalogue::symphony(), &needs)
@@ -727,6 +728,7 @@ fn a_tasks_tests_stamp_reads_the_runs_of_the_work_under_it_and_no_other_tasks() 
         tip: Some(tip.clone()),
         by: f.session("worker"),
         why: "a store query and its test".into(),
+        import: None,
     };
     f.store
         .set_needs("tools/runs", &Catalogue::symphony(), &needs)
@@ -796,6 +798,7 @@ fn a_landed_tasks_stamps_stand_on_the_tip_its_land_merged_once_the_sweep_removed
             tip: Some(at.clone()),
             by: "slate-owl".into(),
             why: "a store query and its test".into(),
+            import: None,
         };
         let task = (seed.dump.tasks.iter_mut())
             .find(|task| task.slug == slug)
@@ -1067,6 +1070,7 @@ fn a_gates_read_with_nothing_new_asks_the_board_once_and_reads_nothing_again() {
         tip: Some(tip.clone()),
         by: f.session("worker"),
         why: "it changes code the owner asked to see".into(),
+        import: None,
     };
     f.store
         .set_needs("tools/kept", &Catalogue::symphony(), &needs)

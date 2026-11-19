@@ -45,6 +45,7 @@ fn snapshot(eligible: bool, standing: &str) -> Snapshot {
             name: "tests".into(),
             standing: standing.into(),
         }],
+        assessment: None,
     }
 }
 
