@@ -919,7 +919,10 @@ Once a release's tag is pushed, the run does this, in order:
   forward move left behind (*The forward move*, below), saying nothing of the rest (`RELEASE
   serves board schema N, as the release current names serves N: only a board left behind it
   moves`; `RELEASE serves board schema N, behind the release current names, which serves M: none
-  moves back, and only a board left behind N moves`).
+  moves back, and only a board left behind N moves`). Each such board is judged and moved on its
+  own, as in the forward move: snapshotted just before its own move, and holding neither another
+  board nor `current`, which is pointed at the release as it would be with no board left behind;
+  one still held stays, its update's failure ([an update](#an-update), below).
   One that raises it, or the first, with no `current`, judges the live board of each project in the
   registry, this repository's aside (its board moves with its own main), one step `refresh-ID` for
   each. A project whose id is not a plain name, whose checkout is gone, or that is not a git
@@ -944,14 +947,15 @@ Once a release's tag is pushed, the run does this, in order:
     it up. It is the project's to finish, and holds nothing, as it is behind every release.
 
   **The forward move.** While this repository's board is at the release's schema and the release
-  `current` names serves another (or none is named), nothing holds the release: `this repository's
-  board is at schema N, which the release current names does not serve (it serves M): no
+  `current` names serves an older one (or none is named), nothing holds the release: `this
+  repository's board is at schema N, which the release current names does not serve (it serves M): no
   project's board holds current, each moving as its own writers allow`. Each board that can move
   is snapshotted just before its own move and moved; one that lags, red or the project's to
   finish, stays where it is, its update failed ([an update](#an-update), below), and `current` is
   pointed at the release all the same. A board left behind is moved by a later refresh once its
-  writers allow, as the release `current` names then serves past it. Projects left behind never
-  hold this repository's board back: their pages save nothing until their boards move.
+  writers allow, as the release `current` names then serves past it, and until then it holds no
+  later release at that schema either (*The boards*, above). Projects left behind never hold this
+  repository's board back: their pages save nothing until their boards move.
 
   Otherwise a board that lags, red or the project's to finish, holds the release: no board moves and
   `current` is not pointed, and each board that could move says it waits (`ID: its board can move
@@ -1051,8 +1055,9 @@ machine's server writes that board at `N`: its project list says so (`writes` in
 `/api/projects`), or, from a server that says nothing of writes, it is at `N` itself. A
 server at `N` that only reads or refuses the board is no completion, and one that writes it at
 another schema, compatible with the board, is. A server that cannot say yet (its list's `writes`
-is null: it has not read the board since it took over) is asked again each second for 30 seconds,
-and then the update waits for the next refresh, neither complete nor failed. Each refresh, once the boards, `current`
+is null: it has not read the board since it took over) is asked again every half second for up to
+30 seconds once it answers as the release, and then the update waits for the next refresh, neither
+complete nor failed. Each refresh, once the boards, `current`
 and the server are settled, reads every registered board again and brings the machine's ledger of
 updates up to it (`updates.json` in the machine folder,
 `crates/symphony-build/src/release/updates.rs`, its format `crates/symphony/src/machine/updates.rs`):

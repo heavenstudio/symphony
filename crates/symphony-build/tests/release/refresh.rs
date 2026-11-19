@@ -27,6 +27,8 @@ use symphony::machine::{Entry, Registry};
 const RELEASE: &str = "release-2026-11-12";
 /// The release a run a day later tags.
 const NEXT: &str = "release-2026-11-13";
+/// The release a run two days later tags.
+const LATER: &str = "release-2026-11-14";
 /// What names the stand-in for cargo.
 const BUILDER: &str = "SYMPHONY_RELEASE_BUILDER";
 /// The refresh's wait for the machine's server, in seconds, where the server has followed by the
@@ -1433,9 +1435,10 @@ fn updates(fixture: &Fixture) -> Vec<String> {
 /// alpha's writer is behind, beta moving and alpha left at 18. This repository's update is served,
 /// timed from its board reaching 19 and from that release's install; alpha's fails: one red task
 /// on alpha's own board, filed through the installed release of its schema; a retry posts its
-/// second failure on that same task; the refresh that moves alpha once its writer is rebuilt
-/// closes it. Every update served the first time files nothing, the ledger keeps each, and a
-/// refresh with nothing to do changes nothing.
+/// second failure on that same task, and a later release at the same schema is pointed at all the
+/// same, its third; the refresh that moves alpha once its writer is rebuilt closes it. Every update
+/// served the first time files nothing, the ledger keeps each, and a refresh with nothing to do
+/// changes nothing.
 #[test]
 fn a_board_ahead_points_current_forward_and_a_failed_update_is_one_task_until_it_is_served() {
     let (fixture, _) = refreshing();
@@ -1557,11 +1560,17 @@ fn a_board_ahead_points_current_forward_and_a_failed_update_is_one_task_until_it
         "{failures:?}"
     );
 
-    // A retry finds it again: the same task, a second failure posted on it, and no other.
+    // A retry finds it again: the same task, a second failure posted on it, and no other; current
+    // stays where the forward move pointed it, and the retry says so.
     let (code, out, err) = fixture.release_with(NOW + DAY + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert!(
         out.contains(&format!("; heard on {slug}, alpha's board\n")),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!("names {NEXT} (as it did)"))
+            && !out.contains("current is not pointed"),
         "{out}"
     );
     let failures: Vec<String> = (posts(&theirs, slug).into_iter())
@@ -1577,6 +1586,41 @@ fn a_board_ahead_points_current_forward_and_a_failed_update_is_one_task_until_it
         .collect();
     assert_eq!(filed_there, [slug], "never a second task for one update");
 
+    // A later release at the same schema, alpha still behind: a board left behind holds neither
+    // current nor another, so current is pointed at it, and alpha's one task hears a third failure.
+    fixture.land(
+        "crates/core/later.txt",
+        Some("c\n"),
+        "a later release at the same schema",
+    );
+    let (code, out, err) = fixture.release_with(NOW + 2.0 * DAY, &["--check", CHECK], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        current(&fixture).as_deref(),
+        Some(LATER),
+        "alpha left behind holds nothing: {out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "names {LATER} (it named {NEXT}, which stays installed)"
+        )) && !out.contains("current is not pointed"),
+        "{out}"
+    );
+    assert_eq!(alpha_board.schema("tasks").unwrap(), Some(18), "{out}");
+    assert!(
+        out.contains(&format!("; heard on {slug}, alpha's board\n")),
+        "{out}"
+    );
+    let failures: Vec<String> = (posts(&theirs, slug).into_iter())
+        .filter(|post| post.starts_with("Failure "))
+        .collect();
+    assert_eq!(failures.len(), 3, "{failures:?}");
+    let filed_there: Vec<String> = (theirs.tasks(None).unwrap().into_iter())
+        .map(|task| task.slug)
+        .collect();
+    assert_eq!(filed_there, [slug], "nothing else filed there");
+    assert!(fixture.reds().is_empty(), "nor here: {out}");
+
     // Alpha's writer rebuilt at 19: the next refresh moves its board, the update is served and its
     // task closed; the ledger keeps every update with its failures.
     Raw::on(&alpha_client).table("writer").delete().unwrap();
@@ -1586,9 +1630,14 @@ fn a_board_ahead_points_current_forward_and_a_failed_update_is_one_task_until_it
         Path::new("/work/alpha/.target/release/tasks"),
         19,
     );
-    let (code, out, err) = fixture.release_with(NOW + DAY + 120.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 2.0 * DAY + 60.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(alpha_board.schema("tasks").unwrap(), Some(19), "{out}");
+    assert!(
+        snapshot(&alpha, 19, LATER).is_file(),
+        "snapshotted just before its own move by the release current serves: {out}"
+    );
+    assert_eq!(current(&fixture).as_deref(), Some(LATER), "{out}");
     assert!(
         out.contains("updates: alpha@19 served")
             && out.contains(&format!(
@@ -1603,17 +1652,17 @@ fn a_board_ahead_points_current_forward_and_a_failed_update_is_one_task_until_it
             "symphony@19: served, failures 0",
             "alpha@18: served, failures 0",
             "beta@18: served, failures 0",
-            &format!("alpha@19: served, failures 2, task {slug} on alpha (closed)"),
+            &format!("alpha@19: served, failures 3, task {slug} on alpha (closed)"),
             "beta@19: served, failures 0",
         ]
     );
     // A refresh with nothing to do changes nothing.
     let before = ledger(&fixture);
-    let (code, out, err) = fixture.release_with(NOW + DAY + 180.0, &["--refresh"], &extra);
+    let (code, out, err) = fixture.release_with(NOW + 2.0 * DAY + 120.0, &["--refresh"], &extra);
     assert_eq!(code, 0, "{out}{err}");
     assert_eq!(ledger(&fixture), before, "{out}");
     // The status says them, the newest served first, each with where its times come from.
-    let (code, status, err) = fixture.release_with(NOW + DAY + 240.0, &["--status"], &extra);
+    let (code, status, err) = fixture.release_with(NOW + 2.0 * DAY + 180.0, &["--status"], &extra);
     assert_eq!(code, 0, "{status}{err}");
     assert!(
         status.contains("\nschema updates: 0 open, 5 served (ledger ")

@@ -168,9 +168,11 @@ pub(crate) fn release(
     let kept = release::current_installed(machine).map(|current| current.serves.schema);
     let target = manifest.serves.schema;
     // This repository's board, which moves with its own main: at the release's schema while current
-    // serves another, no project's board holds current (docs/RELEASES.md, "The forward move").
+    // serves an older one, or none is named, no project's board holds current (docs/RELEASES.md,
+    // "The forward move"). A release current serves already is the reconciling pass, below.
     let ours = Home::in_common(against.ours, against.surreal).schema(symphony_board::DATABASE);
-    let forward = matches!(ours, Ok(Some(at)) if at == target) && kept != Some(target);
+    let forward =
+        matches!(ours, Ok(Some(at)) if at == target) && kept.is_none_or(|kept| kept < target);
     if forward {
         say(
             &mut refresh,
@@ -337,8 +339,10 @@ pub(crate) struct Judgement {
 /// schema of the release `current` names (none: none named), its lines said in `refresh` and to
 /// `out` and its steps put in `steps`: whether nothing holds the release, and how each board
 /// ended. A release at `kept` or behind it moves only a board left behind it, and says nothing of
-/// the rest. `forward`: this repository's board is at `target` and current serves another, so no
-/// board holds another or current, and each is snapshotted and moved on its own.
+/// the rest. `forward`: this repository's board is at `target` and current serves an older one.
+/// Then, and in that reconciling pass (current already serves the schema, so no board left behind
+/// can hold it), no board holds another or current, each is snapshotted just before its own move
+/// and moved, and one that fails or lags keeps none of the rest.
 #[expect(
     clippy::too_many_arguments,
     reason = "the refresh's one pass over the boards, each part its own"
@@ -357,6 +361,7 @@ fn boards(
     if let Some(kept) = kept.filter(|_| reconciling) {
         say(refresh, out, no_move(against.tag, target, kept));
     }
+    let alone = forward || reconciling;
     let mut judged = Vec::new();
     for entry in &registry.projects {
         match project(entry, against) {
@@ -372,16 +377,16 @@ fn boards(
         .map(|board| board.id.clone())
         .collect();
     // What keeps a board that can move where it is: the boards that hold the release, a snapshot
-    // that failed, or the move that failed before it. Moving forward, nothing keeps another.
+    // that failed, or the move that failed before it. Each board alone, nothing keeps another.
     let mut kept_by = match holding.len() {
-        _ if forward => None,
+        _ if alone => None,
         0 => None,
         1 => Some(format!("{} holds the release", holding[0])),
         _ => Some(format!("{} hold the release", holding.join(", "))),
     };
-    // Every board's snapshot before the first move, so one that fails moves nothing; moving
-    // forward, each is snapshotted just before its own move instead.
-    if kept_by.is_none() && !forward {
+    // Every board's snapshot before the first move, so one that fails moves nothing; each board
+    // alone, each is snapshotted just before its own move instead.
+    if kept_by.is_none() && !alone {
         for board in &mut judged {
             if !matches!(board.verdict, Verdict::Move { .. }) {
                 continue;
@@ -408,7 +413,7 @@ fn boards(
                     Verdict::Done(said)
                 }
                 None => {
-                    let moving = if forward {
+                    let moving = if alone {
                         snapshot(&mut board, against)
                     } else {
                         Ok(())
@@ -422,7 +427,7 @@ fn boards(
                             Verdict::Done(said)
                         }
                         Err(why) => {
-                            if !forward {
+                            if !alone {
                                 kept_by = Some(format!("the move of {}'s board failed", board.id));
                             }
                             Verdict::Red(why)
@@ -453,7 +458,7 @@ fn boards(
         steps.push(ran);
     }
     Judgement {
-        clear: forward || kept_by.is_none(),
+        clear: alone || kept_by.is_none(),
         ends,
     }
 }
