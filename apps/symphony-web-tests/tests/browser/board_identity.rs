@@ -1,7 +1,8 @@
 //! Cards that differ only at the end of their title, slug, wait and reason are told apart closed,
-//! open in place to the whole of each by key and by touch, and every stage of the lane scroller
-//! is named above it and reached whole from the first. The listing holds a column of more than a
-//! page, so rows wait as placeholders under the cards that open.
+//! a reason written on several lines stays on the closed card's one line, cards open in place to
+//! the whole of each by key and by touch, and every stage of the lane scroller is named above it
+//! and reached whole from the first. The listing holds a column of more than a page, so rows wait
+//! as placeholders under the cards that open.
 use serde_json::{Value, json};
 
 use crate::{SHOWN, chrome, components::key, dist, site::Site};
@@ -128,20 +129,6 @@ fn open(page: &mut crate::Chrome, site: &Site, width: u32, scheme: &str) {
     ));
 }
 
-/// The picture of the page as it stands, kept as evidence under the task's artifacts.
-fn shot(page: &mut crate::Chrome, name: &str) {
-    page.eval("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
-    let image = page.call("Page.captureScreenshot", json!({"format":"png"}));
-    let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../artifacts/app/board-task-identity");
-    std::fs::create_dir_all(&folder).unwrap();
-    std::fs::write(
-        folder.join(format!("{name}.base64")),
-        image["data"].as_str().unwrap(),
-    )
-    .unwrap();
-}
-
 /// The texts of `part` on the three cards alike, as the page shows them: the end each line
 /// keeps, and whether that end is drawn whole inside its card.
 fn kept_ends(page: &mut crate::Chrome, part: &str) -> Value {
@@ -166,33 +153,6 @@ const ROWS_ALIGNED: &str = "(() => {
         return Math.abs(row.getBoundingClientRect().top - above.getBoundingClientRect().top - pitch) < 0.5;
     });
 })()";
-
-#[test]
-fn pictures_of_cards_alike_and_the_stages_beyond_the_window() {
-    let site = Site::start(dist(), &crate::common::fixture("board.json"));
-    site.set_json("/api/task-board", &listing());
-    let Some(mut page) = chrome() else { return };
-    for (width, scheme) in [
-        (1440, "light"),
-        (1440, "dark"),
-        (390, "light"),
-        (390, "dark"),
-    ] {
-        open(&mut page, &site, width, scheme);
-        shot(&mut page, &format!("{width}-{scheme}"));
-        if page.eval("document.querySelector('.card-more') !== null") == json!(true) {
-            page.eval(&format!(
-                "document.querySelector('{} .card-more').click()",
-                card("beta")
-            ));
-            shot(&mut page, &format!("{width}-{scheme}-opened"));
-            if width > 760 {
-                page.eval("document.querySelector('.stage-jump button:last-child').click()");
-                shot(&mut page, &format!("{width}-{scheme}-last-lane"));
-            }
-        }
-    }
-}
 
 #[test]
 fn closed_cards_alike_but_for_their_last_word_keep_that_word_in_view() {
@@ -242,6 +202,70 @@ fn closed_cards_alike_but_for_their_last_word_keep_that_word_in_view() {
             page.eval("(() => { const code = document.querySelector('[data-slug=\"ready/queued-00\"] code'); return [code.textContent, code.scrollWidth <= code.clientWidth]; })()"),
             json!(["ready/queued-00", true]),
             "{width}"
+        );
+    }
+}
+
+/// A reason as a blocked task may hold it: the board trims only its ends.
+const WRITTEN: &str = "Saved owner answer recovery waits\nfor the register   regroup of candidate alpha";
+
+#[test]
+fn a_reason_on_several_lines_is_folded_onto_the_closed_cards_line_and_opened_as_written() {
+    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let mut answer = listing();
+    answer["tasks"][0]["waits_on"]["why"] = json!(WRITTEN);
+    site.set_json("/api/task-board", &answer);
+    let Some(mut page) = chrome() else { return };
+    // The reason's text, its height and whether it is drawn whole inside its card, and the card's
+    // height.
+    let drawn = format!(
+        "(() => {{ const card = document.querySelector('{}'), why = card.querySelector('.why');
+            const box = card.getBoundingClientRect(), r = why.getBoundingClientRect();
+            return [why.textContent, r.height, r.top >= box.top && r.bottom <= box.bottom
+                && why.scrollHeight <= why.clientHeight + 1, box.height]; }})()",
+        card("alpha")
+    );
+    for width in [1440, 390] {
+        open(&mut page, &site, width, "light");
+        assert_eq!(
+            page.eval(&drawn),
+            json!([
+                "Saved owner answer recovery waits for the register regroup of candidate alpha",
+                16,
+                true,
+                110
+            ]),
+            "{width}: closed, the reason is one line in the card's box"
+        );
+        assert_eq!(
+            kept_ends(&mut page, ".task-wait .why"),
+            json!([
+                [" candidate alpha", true],
+                [" candidate beta", true],
+                [" candidate gamma", true]
+            ]),
+            "{width}: its end is still kept"
+        );
+        page.eval(&format!(
+            "document.querySelector('{} .card-more').click()",
+            card("alpha")
+        ));
+        assert!(page.wait_for(
+            &format!(
+                "document.querySelector('{}').dataset.open === 'true'",
+                card("alpha")
+            ),
+            SHOWN
+        ));
+        let opened = page.eval(&drawn);
+        assert_eq!(
+            [&opened[0], &opened[2]],
+            [&json!(WRITTEN), &json!(true)],
+            "{width}: opened, the reason is whole as written"
+        );
+        assert!(
+            opened[1].as_f64().unwrap() >= 32.0,
+            "{width}: its line break is drawn: {opened}"
         );
     }
 }

@@ -130,19 +130,6 @@ fn open(page: &mut crate::Chrome, site: &Site, width: u32) {
     assert!(page.wait_for("document.querySelector('[data-slug=\"review/decision\"]') !== null && document.documentElement.dataset.navigation === 'ready'",SHOWN));
 }
 
-fn shot(page: &mut crate::Chrome, name: &str) {
-    page.eval("document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))");
-    let image = page.call("Page.captureScreenshot", json!({"format":"png"}));
-    let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../artifacts/app/board-at-a-glance");
-    std::fs::create_dir_all(&folder).unwrap();
-    std::fs::write(
-        folder.join(format!("{name}.base64")),
-        image["data"].as_str().unwrap(),
-    )
-    .unwrap();
-}
-
 #[test]
 fn the_board_fills_the_window_for_both_its_ghost_and_its_cards() {
     for width in [390, 1600] {
@@ -204,7 +191,6 @@ fn named_waits_stay_in_their_stage_in_order_with_parked_last_and_no_unnamed_bloc
         json!(0)
     );
     assert_eq!(page.eval("(() => {const css=getComputedStyle(document.querySelector('.task-wait .why'));return [css.backgroundColor,css.paddingLeft,css.paddingRight]})()"),json!(["rgba(0, 0, 0, 0)","0px","0px"]),"the wait reason is plain text, not the retired why pill");
-    shot(&mut page, "waiting-wide");
     open(&mut page, &site, 390);
     assert_eq!(
         page.eval("document.documentElement.scrollWidth <= innerWidth"),
@@ -220,7 +206,6 @@ fn named_waits_stay_in_their_stage_in_order_with_parked_last_and_no_unnamed_bloc
         .unwrap()
         .contains("oldest 10 d")
     );
-    shot(&mut page, "waiting-phone");
 }
 
 #[test]
@@ -393,5 +378,4 @@ fn an_unnamed_legacy_block_is_ordinary_nobody_work_in_its_original_stage() {
         page.eval("document.querySelector('.orchestrator-banner:not(.warn)') !== null"),
         json!(true)
     );
-    shot(&mut page, "waiting-phone-no-orchestrator");
 }
