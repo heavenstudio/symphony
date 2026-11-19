@@ -428,10 +428,13 @@ fn imported(task: &Task, tip: &str) -> Option<String> {
     needs.import.filter(|_| needs.tip.as_deref() == Some(tip))
 }
 
-/// Whether `snapshot`'s assessment names the import `journal` delivers, and nothing where it
-/// delivers none: what is published and merged is what was read.
+/// Whether `snapshot`'s assessment names the import `journal` delivers at its head, and nothing
+/// where it delivers none: what is published and merged is what was read. An import named at
+/// another head binds nothing at this one.
 fn agrees(snapshot: &Snapshot, journal: &Journal) -> bool {
-    let named = (snapshot.assessment.as_ref()).and_then(|read| read.import.as_deref());
+    let named = (snapshot.assessment.as_ref())
+        .filter(|read| read.tip.as_deref() == Some(journal.head.as_str()))
+        .and_then(|read| read.import.as_deref());
     named == journal.import.as_ref().map(|import| import.commit.as_str())
 }
 

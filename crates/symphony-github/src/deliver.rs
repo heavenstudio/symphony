@@ -230,10 +230,12 @@ struct Snapshot {
     assessment: Option<Assessed>,
 }
 
-/// What a snapshot's assessment says, as far as a delivery reads it: the upstream commit it
-/// names the head an import of, where it names one.
+/// What a snapshot's assessment says, as far as a delivery reads it: the head it read, and the
+/// upstream commit it names that head an import of, where it names one.
 #[derive(Deserialize)]
 struct Assessed {
+    #[serde(default)]
+    tip: Option<String>,
     #[serde(default)]
     import: Option<String>,
 }
@@ -701,7 +703,9 @@ impl Run<'_> {
         // Refused before anything is pushed, where a stamp names no check, or where the evidence
         // that stands is of another operation than the one asked for.
         checks(&snapshot, 0).map_err(refused)?;
-        let named = (snapshot.assessment.as_ref()).and_then(|read| read.import.clone());
+        let named = (snapshot.assessment.as_ref())
+            .filter(|read| read.tip.as_deref() == Some(head.as_str()))
+            .and_then(|read| read.import.clone());
         if snapshot.eligible && named != import(request).map(|(_, commit)| commit) {
             return Err(refused(
                 "the evidence names another import, or none, than the operation asked for",

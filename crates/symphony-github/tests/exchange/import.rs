@@ -241,16 +241,21 @@ fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anyt
     // Evidence that names another import, or none, than the operation asked for.
     let d = importing("import-other");
     let other = "d".repeat(40);
+    let mut earlier = imported(Some(UPSTREAM));
+    earlier["assessment"]["tip"] = json!(other);
     for (snapshot, url) in [
         (imported(Some(&other)), Some(URL)),
         (imported(None), Some(URL)),
         (imported(Some(UPSTREAM)), None),
+        (earlier.clone(), Some(URL)),
     ] {
         assert_eq!(
             not_pushed(&d, &publish(&d, &snapshot, url)),
             "the evidence names another import, or none, than the operation asked for"
         );
     }
+    // An import named at another head binds nothing at this one, which is a task's.
+    assert_eq!(publish(&d, &earlier, None)["state"], "published");
 }
 
 #[test]

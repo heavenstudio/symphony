@@ -268,6 +268,33 @@ fn a_head_holding_upstream_commits_and_assessed_as_no_import_at_it_is_refused_ne
 }
 
 #[test]
+fn an_import_named_at_an_earlier_head_binds_nothing_at_one_that_no_longer_imports() {
+    let (r, bare, upstream, _) = importing();
+    let before = head(&bare, "main");
+    let first = commit(&upstream, "up/a.txt");
+    let (people, wt, own) = in_review(&r, SLUG, "sim/jump.gd");
+    let earlier = merges(&wt, &upstream, "main", &first);
+    assess_import(&r, SLUG, &people.assessor, &earlier, Some(&first));
+    // The branch drops the import: its head holds no upstream commit, and nobody assessed it.
+    git(&wt, &["reset", "-q", "--hard", &own]);
+    let tip = commit(&wt, "sim/fix.gd");
+    ran(&r, SLUG, &tip, "cargo test -p sim", 0);
+    approve(&r, SLUG, &format!("{tip}: reads well"));
+    let (line, ..) = refused_unasked(&r, &bare, &people.orch, &before);
+    assert_eq!(
+        line,
+        format!(
+            "{SLUG} is not eligible for delivery by pull request at {}: its assessment by {} read \
+             {}, not the head {}: an assessor reads the head",
+            &tip[..7],
+            people.assessor,
+            &earlier[..7],
+            &tip[..7]
+        )
+    );
+}
+
+#[test]
 fn an_import_named_where_no_upstream_is_or_where_its_history_says_otherwise_is_refused() {
     // The project file names no upstream: no import is delivered, whatever the assessment says.
     let (r, bare) = delivering();
