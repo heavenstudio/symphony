@@ -123,6 +123,20 @@ where validation allows it. Unknown fields and variants refuse the candidate.
 | `adapters` | required | declared host adapter IDs; declarations supply no adapter |
 | `guards` | required | opaque policy requirements by stable ID and adapter |
 
+## `[[workflow_mappings]]`
+
+Where a task goes when a newly committed `[workflow]` no longer declares the pair it stands at
+(or the pair it resumes to when blocked). Each entry names a removed pair and a pair the workflow
+declares, and no pair is mapped twice; a pair the workflow still declares is never remapped, as an
+ID keeps its meaning (rename it instead). Mappings with no `[workflow]` are refused. A task the
+board's existing writers kept starts from built-in v1's pair of its status
+([WORKFLOW](WORKFLOW.md#activation-and-mappings)).
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `from` | required | the removed `{ phase, state }` pair |
+| `to` | required | the declared `{ phase, state }` pair a task there goes to |
+
 ## `[project]`
 
 | Key | Default | What it sets |

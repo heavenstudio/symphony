@@ -1189,3 +1189,32 @@ fn authority_insert_all_matches_the_standard_set_length_and_reports_cost() {
         actual.len()
     );
 }
+
+#[test]
+fn workflow_mappings_are_a_known_key_checked_against_the_workflow() {
+    let mapped = "[[workflow_mappings]]\nfrom = { phase = \"ready\", state = \"available\" }\nto = { phase = \"build\", state = \"available\" }\n";
+    assert!(
+        Project::parse(Path::new("/tmp/demo"), mapped)
+            .unwrap_err()
+            .contains("workflow_mappings: no [workflow] to map onto")
+    );
+    assert!(
+        Project::parse(Path::new("/tmp/demo"), &format!("{CUSTOM}{mapped}"))
+            .unwrap_err()
+            .contains("unsupported_activation")
+    );
+    assert!(
+        Project::parse(
+            Path::new("/tmp/demo"),
+            &format!("{CUSTOM}{}", mapped.replace("\"build\"", "\"verify\""))
+        )
+        .unwrap_err()
+        .contains("names a destination the workflow does not declare")
+    );
+    let tree = tree::Tree::new();
+    tree.write("symphony.toml", mapped);
+    Project::of(&tree.root);
+    let problem = Project::problem(&tree.root).unwrap();
+    assert!(problem.contains("no [workflow] to map onto"), "{problem}");
+    assert!(!problem.contains("unknown"), "{problem}");
+}

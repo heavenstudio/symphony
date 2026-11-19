@@ -1,10 +1,12 @@
 # Workflow definitions
 
 `symphony_api::workflow` supplies additive data types for delivery definitions, positions and
-operation requests. `symphony::project::workflow` supplies the strict candidate reader,
-normalization, revision identity, host prerequisite checks and built-in definition v1. Existing
-public structs, Rust calls, task wire fields, CLI operations and board writers keep their
-meaning. No workflow HTTP or board API method is installed by these data types.
+operation requests. `symphony_board::workflow` supplies the strict candidate reader,
+normalization, revision identity, host prerequisite checks and grants, built-in definition v1 and
+the reader of the project file the default branch commits; `symphony::project::workflow`
+re-exports those items at their earlier paths. Existing public structs, Rust calls, task wire
+fields, CLI operations and board writers keep their meaning. No workflow HTTP or board API method
+is installed by these data types.
 
 The [project file](PROJECT_FILE.md#workflow) accepts `[workflow]` only as a candidate format:
 `candidate(text)` reads and validates that table without activating it. Ordinary project reads
@@ -21,6 +23,23 @@ and authoritative admission remain implementation work. A candidate's validation
 prerequisite check is not activation. The [graph design](analysis/configurable-delivery-workflow.md)
 describes the remaining system; artifact policy receipts and execution attempts retain their
 separate ownership.
+
+## Activation and mappings
+
+A board activates only what its project's default branch commits: `committed(main, branch)` reads
+the project file from the tip of that branch's tree, never the index or a working tree, and a
+file that is a link, a folder or not UTF-8 refuses the read. A file with no `[workflow]` is the
+board's existing writers. A custom definition carries its revision (the commit and the file's
+blob) and its `[[workflow_mappings]]` ([PROJECT_FILE](PROJECT_FILE.md#workflow_mappings)): each
+maps a pair the definition no longer declares to one it declares, once, and never remaps a pair
+still declared, since an ID keeps its meaning. A task the existing writers kept starts from
+built-in v1's pair of its status (`legacy_pair`).
+
+A capability a definition declares is supported only when the host's `Grants` give it to a
+principal, and a principal holds only the capabilities a grant names: the definition's
+declaration mints nothing, and an unknown capability fails the prerequisites. A principal is
+`symphony_plugin::execution::Principal`, built by the host from what it authenticated (an agent
+session by its handle, the local owner, a board service), never read from a request.
 
 ## Definition format 1
 

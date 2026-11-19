@@ -83,6 +83,7 @@ pub mod sweep;
 pub mod sys;
 pub mod usage;
 pub mod waits_on;
+pub mod workflow;
 
 #[path = "cli/api/assessment/publication.rs"]
 pub mod assessment_publication;

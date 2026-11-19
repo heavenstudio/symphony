@@ -41,7 +41,14 @@ const MOVES: [&[&str]; 9] = [
     &[],
 ];
 
-pub(super) fn at(status: &str) -> Pair {
+/// The pair of built-in v1 a task of a board status stands at when nobody holds it: what a task
+/// the board's existing writers kept starts from when a custom workflow activates. None for a
+/// word that is no status.
+pub fn legacy_pair(status: &str) -> Option<Pair> {
+    STATUSES.contains(&status).then(|| at(status))
+}
+
+fn at(status: &str) -> Pair {
     Pair {
         phase: status.into(),
         state: match status {
