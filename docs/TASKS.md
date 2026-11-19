@@ -2509,7 +2509,8 @@ file is written, and again where an edit is handed to the committer and in the c
 a squash by its receipt, and a release candidate advances to the head the receipt kept
 ([RELEASES](RELEASES.md#the-cadence)); a land run again after it was cut while dispatching starts
 nothing a second time, so a release run its landing made due is asked for by the next landing or
-`just release --due`. The sweep keeps the worktree and branch of a squashed
+the release run's `--due`, run by hand
+([RELEASES](RELEASES.md#the-cadence)). The sweep keeps the worktree and branch of a squashed
 head, which it finds in no history.
 
 ### A delivery whose host is gone
