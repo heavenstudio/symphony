@@ -286,6 +286,10 @@ pub struct Releases {
     /// Whether a green release, once pushed, publishes on crates.io each package whose version
     /// crates.io lacks; off unless the project says, so nothing is published but on its word.
     pub publish: bool,
+    /// The command a green release, once pushed, asks for its GitHub Release, run as
+    /// `COMMAND… --request FILE` (the GitHub adapter's `symphony-github release`); none, and no
+    /// program is run and nothing is published there.
+    pub github: Vec<String>,
     /// How many reruns of a release candidate may come back red before it is dropped and main's
     /// tip is run again; 0 holds no candidate.
     pub candidate_reruns: u32,
@@ -314,6 +318,7 @@ impl Default for Releases {
             every_landings: Releases::EVERY_LANDINGS,
             refresh: true,
             publish: false,
+            github: Vec::new(),
             candidate_reruns: Releases::CANDIDATE_RERUNS,
             candidate_hours: Releases::CANDIDATE_HOURS,
         }
@@ -775,6 +780,12 @@ impl Project {
         {
             return Err("[land] delivery names no command: leave it out to land here".into());
         }
+        if (file.releases.github.first()).is_some_and(|program| program.trim().is_empty()) {
+            return Err(
+                "[releases] github names no command: leave it out to publish no GitHub Release"
+                    .into(),
+            );
+        }
         if let Some(upstream) = land.upstream.take() {
             upstream.judged()?;
         }
@@ -824,6 +835,7 @@ impl Project {
                 every_landings: file.releases.every_landings,
                 refresh: file.releases.refresh,
                 publish: file.releases.publish,
+                github: file.releases.github,
                 candidate_reruns: file.releases.candidate_reruns,
                 candidate_hours: file.releases.candidate_hours,
             },

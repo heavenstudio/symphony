@@ -97,6 +97,17 @@ pub struct Pull {
     pub landed: Option<String>,
 }
 
+/// The GitHub Release a release's tag is published as ([`crate::release`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Released {
+    /// The release's number at GitHub.
+    pub id: i64,
+    pub url: String,
+    /// The commit the release was asked for: read as the tag's at GitHub before one is made,
+    /// and the request's own word for one found there.
+    pub commit: String,
+}
+
 /// Which side an operator kept of a conflict.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -119,6 +130,9 @@ pub struct State {
     /// The pull request each delivered task is bound to, by its slug.
     #[serde(default)]
     pub pulls: BTreeMap<String, Pull>,
+    /// The GitHub Release each release is published as, by its tag.
+    #[serde(default)]
+    pub releases: BTreeMap<String, Released>,
     /// The issues an operator dropped from a task's mapping, by the task's slug and the issue's
     /// id: none is mapped to that task again, or taken for its publication.
     #[serde(default)]
