@@ -113,19 +113,29 @@ fn action_lines(slug: &str, next: &NextActions) -> Vec<String> {
         if !a.required_inputs.is_empty() {
             line.push_str(&format!(", inputs {}", a.required_inputs.join(", ")));
         }
-        // An effect's edge is its adapter's, never this command's: said before what else stops it.
-        let (adapters, others): (Vec<_>, Vec<_>) =
-            (a.unavailable.iter()).partition(|code| **code == RefusalCode::ExplicitActionRequired);
-        if !adapters.is_empty() {
-            line.push_str(&match a.operation {
-                Operation::PrepareLand | Operation::ConfirmLand => {
-                    format!("  (taken by `just land {slug}`, never applied)")
-                }
-                _ => "  (taken by its adapter, never applied)".to_string(),
-            });
+        // An effect's edge is its adapter's, never this command's, which its operation says:
+        // the code alone marks other edges too (a resume to a pair its block did not save).
+        let taker = match a.operation {
+            Operation::PrepareLand | Operation::ConfirmLand => {
+                Some(format!("taken by `just land {slug}`, never applied"))
+            }
+            Operation::PrepareExternal | Operation::ConfirmExternal => {
+                Some("taken by its adapter, never applied".to_string())
+            }
+            _ => None,
+        };
+        let theirs =
+            |code: &&RefusalCode| taker.is_some() && **code == RefusalCode::ExplicitActionRequired;
+        if a.unavailable.iter().any(|code| theirs(&code))
+            && let Some(taker) = &taker
+        {
+            line.push_str(&format!("  ({taker})"));
         }
-        if !others.is_empty() {
-            let codes: Vec<String> = others.into_iter().map(word).collect();
+        let codes: Vec<String> = (a.unavailable.iter())
+            .filter(|code| !theirs(code))
+            .map(word)
+            .collect();
+        if !codes.is_empty() {
             line.push_str(&format!("  (not now: {})", codes.join(", ")));
         }
         lines.push(line);
@@ -306,6 +316,10 @@ mod tests {
                     Operation::PrepareExternal,
                     &[ExplicitActionRequired],
                 ),
+                // The code alone is no adapter's: a resume to a pair its block did not save.
+                action("resume", Operation::Resume, &[ExplicitActionRequired]),
+                // An effect's edge with nothing stopping it names no taker.
+                action("external", Operation::ConfirmExternal, &[]),
                 action("send_back", Operation::Advance, &[Unauthorized]),
                 action("plain", Operation::Advance, &[]),
             ],
@@ -336,6 +350,8 @@ mod tests {
                 "  (taken by `just land sim/a`, never applied)",
                 "  (taken by `just land sim/a`, never applied)  (not now: unsupported_adapter)",
                 "  (taken by its adapter, never applied)",
+                "  (not now: explicit_action_required)",
+                "",
                 "  (not now: unauthorized)",
                 "",
             ]
