@@ -599,8 +599,8 @@ fn receipt_id(principal: &Principal, key: &str) -> Value {
 
 /// The request's identity for its key: the digest of its JSON, whose maps are ordered.
 fn request_digest(request: &OperationRequest) -> String {
-    let text = serde_json::to_string(request).expect("a request serializes");
-    Sha256::digest(text.as_bytes())
+    let text = crate::workflow::canonical(request).expect("a request serializes");
+    Sha256::digest(text)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
