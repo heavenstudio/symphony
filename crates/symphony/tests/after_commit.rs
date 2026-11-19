@@ -269,6 +269,14 @@ fn a_save_journaled_before_delivery_was_set_and_one_that_no_longer_applies_are_k
 }
 
 #[test]
+fn a_pending_save_settled_on_its_branch_is_proved_by_its_receipt_alone() {
+    isolated(
+        "a_pending_save_settled_on_its_branch_is_proved_by_its_receipt_alone",
+        delivery::a_settled_conflict_is_proved_by_its_receipt_alone,
+    );
+}
+
+#[test]
 fn two_verdicts_race_without_lost_files_or_merge_commits() {
     isolated(
         "two_verdicts_race_without_lost_files_or_merge_commits",

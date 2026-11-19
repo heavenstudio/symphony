@@ -349,6 +349,9 @@ mod upload_tests;
 mod body_tests;
 
 #[cfg(test)]
+mod pending_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::HeaderValue;

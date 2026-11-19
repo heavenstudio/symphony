@@ -32,17 +32,7 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
         hub.gate_recorders(shared.recording.clone());
         hub.wake_at_board(shared.board_wakers.clone());
         // Saves kept for delivery by pull request are taken up again now and after each refresh.
-        let weak = Arc::downgrade(&shared);
-        let settle = move || {
-            if let Some(shared) = weak.upgrade()
-                && symphony::commit::pending::kept(&shared.root)
-            {
-                shared
-                    .saves
-                    .get_or_init(|| symphony::save::Saves::start(&shared.root))
-                    .settle();
-            }
-        };
+        let settle = settling(&shared);
         settle();
         hub.after_refresh(Box::new(settle));
         assert!(
@@ -53,6 +43,23 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// What takes up again the saves `shared`'s project keeps for delivery by pull request
+/// ([`symphony::save::Saves::settle`]): nothing where it keeps none, so a project that does not
+/// deliver that way starts no committer for it, and nothing once the server is gone.
+pub(crate) fn settling(shared: &Arc<Shared>) -> impl Fn() + Send + Sync + 'static {
+    let weak = Arc::downgrade(shared);
+    move || {
+        if let Some(shared) = weak.upgrade()
+            && symphony::commit::pending::kept(&shared.root)
+        {
+            shared
+                .saves
+                .get_or_init(|| symphony::save::Saves::start(&shared.root))
+                .settle();
+        }
+    }
 }
 
 /// A complete first read for data routes and replacement handover.

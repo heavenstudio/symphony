@@ -50,10 +50,31 @@ fn journal(root: &Path) -> Vec<String> {
     names
 }
 
+/// The land's receipt of a delivery of `slug`, kept in the lands' folder as the land keeps it.
+fn receipt(root: &Path, slug: &str, head: &str, parent: &str, squash: &str) {
+    use symphony_board::land::delivery::Receipt;
+    let receipt = Receipt {
+        slug: slug.into(),
+        task: 1,
+        operation: "task".into(),
+        repository: 7,
+        name: "host/project".into(),
+        pull: 3,
+        head: head.into(),
+        base_observed: parent.into(),
+        parent: parent.into(),
+        squash: squash.into(),
+        tree: git(root, &["rev-parse", &format!("{squash}^{{tree}}")]),
+        revision: "r".into(),
+        by: "lander".into(),
+    };
+    let path = Receipt::path(&root.join(".git/symphony/tasks/land"), slug);
+    write(&path, &serde_json::to_string(&receipt).unwrap());
+}
+
 /// What a delivered land of `branch` leaves: the host's one commit on the remote's `main`, its
 /// tree the merge of that tip and the branch, and the land's receipt of it under `slug`.
 fn landed(root: &Path, slug: &str, branch: &str) -> String {
-    use symphony_board::land::delivery::Receipt;
     let parent = git(root, &["rev-parse", "origin/main"]);
     let tree = git(root, &["merge-tree", "--write-tree", "origin/main", branch]);
     let squash = git(root, &["commit-tree", &tree, "-p", &parent, "-m", "squash"]);
@@ -62,23 +83,8 @@ fn landed(root: &Path, slug: &str, branch: &str) -> String {
         &["push", "-q", "origin", &format!("{squash}:refs/heads/main")],
     );
     git(root, &["fetch", "-q", "origin"]);
-    let receipt = Receipt {
-        slug: slug.into(),
-        task: 1,
-        operation: "task".into(),
-        repository: 7,
-        name: "host/project".into(),
-        pull: 3,
-        head: git(root, &["rev-parse", branch]),
-        base_observed: parent.clone(),
-        parent,
-        squash: squash.clone(),
-        tree,
-        revision: "r".into(),
-        by: "lander".into(),
-    };
-    let path = Receipt::path(&root.join(".git/symphony/tasks/land"), slug);
-    write(&path, &serde_json::to_string(&receipt).unwrap());
+    let head = git(root, &["rev-parse", branch]);
+    receipt(root, slug, &head, &parent, &squash);
     squash
 }
 
@@ -106,6 +112,22 @@ fn branches(root: &Path) -> Vec<String> {
 pub(super) fn kept_pending_on_a_branch_and_filed_as_the_owners_task(f: &Fixture) {
     let root = delivering(f);
     let tip = git(&root, &["rev-parse", "main"]);
+    // A commit on the default branch is refused whoever asks for it, and main does not move.
+    let verdict = DOC.replace("[ ]", "[x]");
+    let refused = commit_verdicts(
+        &root,
+        &[f.edit("docs/a.md", DOC, &verdict)],
+        "owner verdict",
+    );
+    assert!(!refused.committed);
+    assert_eq!(
+        refused.error,
+        "not committed: this project delivers by pull request ([land] delivery), so nothing is \
+         committed to main here: a save waits for the pull request that delivers it"
+    );
+    assert_eq!(git(&root, &["rev-parse", "main"]), tip);
+    // The fixture's edit wrote the file, as an edit handed to that entry is: put back.
+    git(&root, &["checkout", "-q", "--", "docs/a.md"]);
     let saves = ClosingSaves::start(&root);
     // Answered as pending, never as committed, and nothing of the checkout written.
     let answer = saves.post("", "/api/decision", payload(APPROVE));
@@ -449,5 +471,170 @@ pub(super) fn journaled_before_the_key_and_no_longer_applying(f: &Fixture) {
     let journaled: Value = serde_json::from_slice(&std::fs::read(&entry).unwrap()).unwrap();
     assert_eq!(journaled["delivery"]["tip"], made);
     assert_eq!(journaled["delivery"]["filed"], true);
+
+    // Equal text an earlier delivery brought is some other owner action's. A save kept on a
+    // main that held it already is covered by no such receipt, and is held for a person; only
+    // a delivery newer than the save's base covers it.
+    let third = "# C\n\n<!-- register:start -->\n- [ ] **three** — third proposal.\n<!-- register:end -->\n";
+    write(&root.join("docs/c.md"), third);
+    git(&root, &["add", "docs/c.md"]);
+    git(&root, &["commit", "-qm", "a third page"]);
+    let before = git(&root, &["rev-parse", "main"]);
+    let answered = third.replace("[ ]", "[x]");
+    write(&root.join("docs/c.md"), &answered);
+    git(
+        &root,
+        &["commit", "-qam", "an earlier delivery of the same text"],
+    );
+    git(&root, &["push", "-q", "origin", "main"]);
+    git(&root, &["fetch", "-q", "origin"]);
+    let earlier = git(&root, &["rev-parse", "main"]);
+    receipt(&root, "tools/earlier", &earlier, &before, &earlier);
+    let entry = folder.join(format!("{:020}.json", 9));
+    let kept = |base: &str| {
+        json!({"edit":{"rel":"docs/c.md","base":third,"new":answered},"publication":null,
+            "delivery":{"base":base}})
+        .to_string()
+    };
+    for base in [earlier.as_str(), ""] {
+        write(&entry, &kept(base));
+        pass(&root);
+        let pending = pending::saves(&root);
+        let State::Held(why) = &pending[2].state else {
+            panic!("{pending:?}");
+        };
+        assert!(why.contains("no delivery receipt"), "{base:?}: {why}");
+    }
+    write(&entry, &kept(&before));
+    pass(&root);
+    assert_eq!(pending::saves(&root).len(), 2);
+    assert!(!entry.exists());
+    f.clean_workers();
+}
+
+pub(super) fn a_settled_conflict_is_proved_by_its_receipt_alone(f: &Fixture) {
+    let root = delivering(f);
+    let saves = ClosingSaves::start(&root);
+    saves.post("", "/api/comment", payload(COMMENT));
+    let end = pending::shown(&root, "docs/a.md", DOC.into())
+        .lines()
+        .count();
+    saves.post(
+        "",
+        "/api/comment",
+        json!({"path":"docs/a.md","after_line":end,"kind":"comment","title":"V","body":"later"}),
+    );
+    drop(saves);
+    let pending = pending::saves(&root);
+    let [a, b] = [0, 1].map(|n| pending[n].branch.clone());
+    assert_eq!(pending[0].state, State::Waiting);
+    assert_eq!(pending[1].state, State::Queued);
+    assert!(pending.iter().all(|save| save.shown), "{pending:?}");
+    let tip = git(&root, &["rev-parse", &a]);
+
+    // Main changes the line A's words were written beside: they no longer apply to the page
+    // here, and the note says so by name where the page cannot draw them.
+    let revised = DOC.replace("first paragraph", "first paragraph, revised");
+    write(&root.join("docs/a.md"), &revised);
+    git(&root, &["commit", "-qam", "another landing"]);
+    git(&root, &["push", "-q", "origin", "main"]);
+    git(&root, &["fetch", "-q", "origin"]);
+    let moved = git(&root, &["rev-parse", "main"]);
+    pass(&root);
+    let pending = pending::saves(&root);
+    assert_eq!(pending[0].state, State::Conflicted);
+    assert!(!pending[0].shown && pending[1].shown, "{pending:?}");
+    let page = pending::shown(&root, "docs/a.md", revised.clone());
+    assert!(!page.contains("words") && page.contains("later"), "{page}");
+    let note = pending::note(&root, "docs/a.md").unwrap();
+    assert!(
+        note.contains(&format!(
+            "`{a}` (in conflict: its words no longer apply to `main` as it is here, so this \
+             page cannot show them; its branch holds them, and needs the conflict settled \
+             before its pull request delivers it)"
+        )),
+        "{note}"
+    );
+
+    // A receipt proves nothing unless it is this save's delivery on the fetched remote.
+    // One whose commit the remote does not hold:
+    let tree = git(&root, &["rev-parse", &format!("{a}^{{tree}}")]);
+    let unpushed = git(
+        &root,
+        &["commit-tree", &tree, "-p", &moved, "-m", "never pushed"],
+    );
+    receipt(&root, &a, &tip, &moved, &unpushed);
+    pass(&root);
+    assert_eq!(pending::saves(&root)[0].state, State::Conflicted);
+    // One of a head that does not hold the save's commit, its squash on the remote:
+    receipt(&root, &a, &moved, &moved, &moved);
+    pass(&root);
+    let pending = pending::saves(&root);
+    assert_eq!(pending.len(), 2, "{pending:?}");
+    assert_eq!(pending[0].state, State::Conflicted);
+    assert_eq!(pending[1].state, State::Queued);
+    assert_eq!(journal(&root).len(), 2);
+
+    // The conflict is settled on the branch, as any task's is: the owner's words beside the
+    // revised line, which the edit was never written against.
+    git(&root, &["checkout", "-q", &a]);
+    let conflict = Command::new("git")
+        .args(["merge", "-q", "main"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(!conflict.status.success(), "the merge must conflict");
+    let settled = revised.replace(
+        "first paragraph",
+        "> [!comment] T\n> words\n\nfirst paragraph",
+    );
+    write(&root.join("docs/a.md"), &settled);
+    git(&root, &["commit", "-qam", "settle the conflict with main"]);
+    git(&root, &["checkout", "-q", "main"]);
+    // Its delivery, by its receipt: proved though the edit no longer merges onto the squash.
+    let squash = landed(&root, &a, &a);
+    pass(&root);
+    let pending = pending::saves(&root);
+    assert_eq!(pending[0].state, State::Following);
+    assert_eq!(pending[1].state, State::Queued);
+    git(&root, &["merge", "-q", "--ff-only", "origin/main"]);
+    // The checkout follows: A is dropped and B, held back until now, gets its branch on it.
+    pass(&root);
+    let pending = pending::saves(&root);
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(
+        (&pending[0].branch, &pending[0].state),
+        (&b, &State::Waiting)
+    );
+    assert_eq!(git(&root, &["rev-parse", &format!("{b}^")]), squash);
+    let delivered = git(&root, &["show", &format!("{b}:docs/a.md")]);
+    for kept in ["words", "later", "first paragraph, revised"] {
+        assert!(delivered.contains(kept), "{delivered}");
+    }
+
+    // B's task is closed as done with no receipt of a delivery: held with why, never dropped,
+    // and a later save of the document waits for it no longer.
+    let store = f.store();
+    let app = symphony::verdicts::app_handle(&store).unwrap();
+    store
+        .landed(&b, &app, "closed by hand", true, &["review"])
+        .unwrap();
+    let saves = ClosingSaves::start(&root);
+    let top = json!({"path":"docs/a.md","after_line":1,"kind":"comment","title":"W","body":"top"});
+    saves.post("", "/api/comment", top);
+    drop(saves);
+    pass(&root);
+    let pending = pending::saves(&root);
+    assert_eq!(pending.len(), 2, "{pending:?}");
+    let State::Held(why) = &pending[0].state else {
+        panic!("{pending:?}");
+    };
+    assert!(
+        why.contains("is done and no delivery receipt proves"),
+        "{why}"
+    );
+    assert_eq!(pending[1].state, State::Waiting, "{pending:?}");
+    assert_eq!(git(&root, &["rev-parse", "main"]), squash);
+    assert_eq!(git(&root, &["status", "--porcelain"]), "");
     f.clean_workers();
 }

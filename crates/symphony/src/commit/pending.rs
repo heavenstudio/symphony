@@ -23,18 +23,22 @@
 //!   land delivers it by its pull request (`symphony_board::land::delivery`). Nothing here asks
 //!   for a merge, and a conflict with the default branch is settled on the branch as any
 //!   task's is, its new head assessed again.
-//! - **A receipt proves it.** The save is delivered once the land's receipt of its task names a
-//!   commit on the fetched remote default branch that holds the edit, and its entry is dropped
-//!   once the default branch here holds that commit too. Text found on the remote proves
-//!   nothing by itself: brought by another task's delivery, that task's receipt is named on the
-//!   save's own task, whose close is its orchestrator's; with no receipt at all the save is
-//!   held for a person ([`standing`]).
+//! - **A receipt proves it.** The save is delivered once the land's receipt of its own task
+//!   names a head that holds the save's commit and a squash on the fetched remote default
+//!   branch ([`own`]), and its entry is dropped once the default branch here holds that squash
+//!   too. The proof is that identity, so a conflict settled on the branch, which leaves the
+//!   owner's words beside lines they were not written against, is proved like any other. Text
+//!   found on the remote proves nothing by itself: brought by another task's delivery, that
+//!   task's receipt is named on the save's own task, whose close is its orchestrator's; with no
+//!   receipt at all the save is held for a person ([`standing`]).
 //!
-//! Every pass of the output worker (a start, each save) takes each entry up again. A step that
-//! fails (a board that does not answer, an edit that no longer applies, a task cancelled) is
-//! kept in the entry and said by [`note`]; the entry and the owner's words stay, and a save
-//! whose task was cancelled no longer holds back the next of its document. Nothing ever falls
-//! back to a commit on the default branch here.
+//! Every pass of the output worker (a start, each save, each refresh of the documents) takes
+//! each entry up again. A step that fails (a board that does not answer, an edit that no longer
+//! applies, a task cancelled, or done with no receipt that proves the save) is kept in the entry
+//! and said by [`note`]; the entry and the owner's words stay, and a save on no way to the
+//! default branch no longer holds back the next of its document. Words the page cannot draw,
+//! as they no longer apply to the default branch here, are said so by name, never left out
+//! without a word. Nothing ever falls back to a commit on the default branch here.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -59,6 +63,10 @@ pub const NOTE: &str = "pending-delivery";
 /// How far the delivery of a save went, kept in its journal entry.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub(super) struct Delivery {
+    /// The default branch's commit here as the save was kept: no delivery older than it is the
+    /// save's ([`covering`]). None in an entry a build that did not know the key journaled.
+    #[serde(default)]
+    base: String,
     /// The branch that holds the edit, once it is committed.
     #[serde(default)]
     branch: String,
@@ -68,12 +76,23 @@ pub(super) struct Delivery {
     /// Whether its task is on the board.
     #[serde(default)]
     filed: bool,
-    /// Whether that task was cancelled: the save is kept and no longer delivered.
+    /// Whether that task closed with no delivery: cancelled, or done with no receipt that
+    /// proves this save. The save is kept, and is on no way to the default branch.
     #[serde(default)]
-    cancelled: bool,
+    closed: bool,
     /// Why the last pass went no further, when it did not.
     #[serde(default)]
     problem: String,
+}
+
+impl Delivery {
+    /// A save kept now, in the checkout at `root`.
+    pub(super) fn saved(root: &Path) -> Self {
+        Self {
+            base: git(root, &["rev-parse", "--verify", "-q", &main_ref(root)]).unwrap_or_default(),
+            ..Self::default()
+        }
+    }
 }
 
 /// Where a pending save stands.
@@ -83,6 +102,10 @@ pub enum State {
     Queued,
     /// On its branch, waiting for its pull request.
     Waiting,
+    /// On its branch, and its words no longer apply to the default branch here: the branch
+    /// needs that conflict settled before its pull request can deliver it. The page cannot
+    /// draw them meanwhile.
+    Conflicted,
     /// A receipt proves it on the remote default branch; the one here has not followed yet.
     Following,
     /// Kept, and a step of its delivery failed: why.
@@ -98,6 +121,9 @@ pub struct Save {
     pub file: String,
     /// The branch and task that deliver it.
     pub branch: String,
+    /// Whether the page shows its words ([`shown`]): not once they no longer apply to the
+    /// default branch here.
+    pub shown: bool,
     pub state: State,
 }
 
@@ -151,7 +177,8 @@ fn entries(root: &Path) -> Vec<(u64, QueuedPublication)> {
 
 /// The remote default branch as last fetched.
 fn tracking(root: &Path) -> String {
-    format!("refs/remotes/origin/{}", Project::of(root).default_branch)
+    let remote = symphony_board::land::REMOTE;
+    format!("refs/remotes/{remote}/{}", Project::of(root).default_branch)
 }
 
 /// Whether the commit `at` holds `edit`: merging it onto the page there changes nothing.
@@ -179,22 +206,36 @@ fn lands(root: &Path) -> Option<PathBuf> {
     Some(symphony_board::sweep::trigger::folder(&common(root)?).join(symphony_board::land::FOLDER))
 }
 
-/// Whether `receipt` proves a delivery of `edit`: the commit it names is on the remote default
-/// branch as fetched, and holds the edit. The land proved that commit against the head before
-/// it kept the receipt; this binds it to the owner's edit.
+/// Whether `receipt`, another task's, proves a delivery of `edit`: the commit it names is on
+/// the remote default branch as fetched, and holds the edit.
 fn proves(root: &Path, receipt: &Receipt, edit: &Edit) -> bool {
     within(root, &receipt.squash, &tracking(root)) && holds(root, &receipt.squash, edit)
 }
 
-/// The receipt of the save's own delivery: its task's, proved for its edit.
-fn own(root: &Path, sequence: u64, edit: &Edit) -> Option<Receipt> {
-    Receipt::read(&lands(root)?, &format!("{BRANCHES}{sequence}"))
-        .filter(|receipt| proves(root, receipt, edit))
+/// The receipt of the save's own delivery: the one the land kept under its task, of a head that
+/// holds the save's own commit `tip`, whose squash is on the remote default branch as fetched.
+/// The binding is the receipt's identity, never the text: a conflict settled on the branch
+/// leaves the owner's words beside lines the edit was not written against, and the land proved
+/// the squash against that assessed head before it kept the receipt.
+fn own(root: &Path, sequence: u64, tip: &str) -> Option<Receipt> {
+    let slug = format!("{BRANCHES}{sequence}");
+    Receipt::read(&lands(root)?, &slug).filter(|receipt| {
+        receipt.slug == slug
+            && !tip.is_empty()
+            && within(root, tip, &receipt.head)
+            && within(root, &receipt.squash, &tracking(root))
+    })
 }
 
 /// The receipt of another task's delivery that brought `edit` to the remote default branch: its
-/// commit holds the edit and its parent does not.
-fn covering(root: &Path, sequence: u64, edit: &Edit) -> Option<Receipt> {
+/// commit holds the edit, its parent does not, and it is no older than the save: not held by
+/// `base`, the default branch as the save was kept. Equal text an earlier delivery brought is
+/// some other owner action's, and proves nothing of this one; a save with no `base` is covered
+/// by none.
+fn covering(root: &Path, sequence: u64, edit: &Edit, base: &str) -> Option<Receipt> {
+    if base.is_empty() {
+        return None;
+    }
     let own = format!("{BRANCHES}{sequence}");
     let read = std::fs::read_dir(lands(root)?.join(RECEIPTS)).ok()?;
     read.filter_map(|entry| {
@@ -202,7 +243,10 @@ fn covering(root: &Path, sequence: u64, edit: &Edit) -> Option<Receipt> {
         serde_json::from_slice::<Receipt>(&text).ok()
     })
     .find(|receipt| {
-        receipt.slug != own && proves(root, receipt, edit) && !holds(root, &receipt.parent, edit)
+        receipt.slug != own
+            && !within(root, &receipt.squash, base)
+            && proves(root, receipt, edit)
+            && !holds(root, &receipt.parent, edit)
     })
 }
 
@@ -221,19 +265,19 @@ enum Standing {
     Unproved,
 }
 
-fn standing(root: &Path, sequence: u64, edit: &Edit) -> Standing {
+fn standing(root: &Path, sequence: u64, edit: &Edit, delivery: &Delivery) -> Standing {
     let proved = |receipt: Receipt, covered| Standing::Proved {
         here: within(root, &receipt.squash, &main_ref(root)),
         receipt: Box::new(receipt),
         covered,
     };
-    if let Some(receipt) = own(root, sequence, edit) {
+    if let Some(receipt) = own(root, sequence, &delivery.tip) {
         return proved(receipt, false);
     }
     if !holds(root, &tracking(root), edit) {
         return Standing::Open;
     }
-    match covering(root, sequence, edit) {
+    match covering(root, sequence, edit, &delivery.base) {
         Some(receipt) => proved(receipt, true),
         None => Standing::Unproved,
     }
@@ -252,26 +296,46 @@ fn unproved(root: &Path) -> String {
 /// default branch, and none of a save whose delivery a receipt proves and the default branch
 /// here holds.
 pub fn saves(root: &Path) -> Vec<Save> {
-    let entries = entries(root);
+    listed(root, None)
+}
+
+/// [`saves`], of the document `only` alone when one is named: a page asks for its own.
+fn listed(root: &Path, only: Option<&str>) -> Vec<Save> {
+    let mut entries = entries(root);
+    entries.retain(|(_, saved)| only.is_none_or(|file| saved.edit.rel == file));
     if entries.is_empty() || !on_main(root) {
         return Vec::new();
     }
+    // Each document as the saves before this one leave it, as `shown` folds them.
+    let mut texts: BTreeMap<String, Option<String>> = BTreeMap::new();
     entries
         .into_iter()
         .filter_map(|(sequence, saved)| {
             let delivery = saved.delivery?;
-            let state = match standing(root, sequence, &saved.edit) {
+            let edit = &saved.edit;
+            let text = texts
+                .entry(edit.rel.clone())
+                .or_insert_with(|| std::fs::read_to_string(root.join(&edit.rel)).ok());
+            let merged =
+                (text.as_deref()).and_then(|text| merge(root, text, &edit.base, &edit.new).ok());
+            let shown = merged.is_some();
+            if let Some(merged) = merged {
+                *text = Some(merged);
+            }
+            let state = match standing(root, sequence, edit, &delivery) {
                 Standing::Proved { here: true, .. } => return None,
                 Standing::Proved { .. } => State::Following,
                 Standing::Unproved => State::Held(unproved(root)),
                 Standing::Open if !delivery.problem.is_empty() => State::Held(delivery.problem),
                 Standing::Open if delivery.tip.is_empty() => State::Queued,
+                Standing::Open if !shown => State::Conflicted,
                 Standing::Open => State::Waiting,
             };
             Some(Save {
                 sequence,
                 file: saved.edit.rel,
                 branch: format!("{BRANCHES}{sequence}"),
+                shown,
                 state,
             })
         })
@@ -287,7 +351,8 @@ pub fn kept(root: &Path) -> bool {
 
 /// The document `file` of the checkout at `root` as its pending saves leave it: `text`, the
 /// checkout's own, with each kept edit merged onto it in the order saved. An edit the text
-/// already holds changes nothing, and one that no longer applies is left out ([`note`] says so).
+/// already holds changes nothing, and one that no longer applies is left out, which [`note`]
+/// says of it by name ([`Save::shown`]).
 pub fn shown(root: &Path, file: &str, text: String) -> String {
     let entries = entries(root);
     if !entries.iter().any(|(_, saved)| saved.edit.rel == file) || !on_main(root) {
@@ -307,9 +372,7 @@ pub fn shown(root: &Path, file: &str, text: String) -> String {
 /// What a page says above the document `file` while saves of it wait for delivery: a Markdown
 /// note naming each and where it stands. None with none waiting.
 pub fn note(root: &Path, file: &str) -> Option<String> {
-    let saves: Vec<Save> = (saves(root).into_iter())
-        .filter(|save| save.file == file)
-        .collect();
+    let saves = listed(root, Some(file));
     if saves.is_empty() {
         return None;
     }
@@ -318,14 +381,29 @@ pub fn note(root: &Path, file: &str) -> Option<String> {
         .iter()
         .map(|save| {
             let task = &save.branch;
-            match &save.state {
-                State::Queued => format!("`{task}` (kept, its branch not made yet)"),
-                State::Waiting => format!("`{task}` (waiting for its pull request)"),
-                State::Following => format!(
-                    "`{task}` (delivered on the remote; `{default}` here has not followed yet)"
+            let stands = match &save.state {
+                State::Queued => "kept, its branch not made yet".to_string(),
+                State::Waiting => "waiting for its pull request".to_string(),
+                State::Conflicted => format!(
+                    "in conflict: its words no longer apply to `{default}` as it is here, so \
+                     this page cannot show them; its branch holds them, and needs the conflict \
+                     settled before its pull request delivers it"
                 ),
-                State::Held(why) => format!("`{task}` (kept, not delivered: {})", flat(why)),
-            }
+                State::Following => {
+                    format!("delivered on the remote; `{default}` here has not followed yet")
+                }
+                State::Held(why) => format!("kept, not delivered: {}", flat(why)),
+            };
+            // Never left out of the page without a word: the owner's answer is kept, and why
+            // it is not drawn is said beside it.
+            let unshown = match (&save.shown, &save.state) {
+                (true, _) | (_, State::Conflicted) => "",
+                (false, _) => {
+                    "; its words no longer apply to this page as it is here, so they are not \
+                     shown: they are kept"
+                }
+            };
+            format!("`{task}` ({stands}{unshown})")
         })
         .collect();
     Some(format!(
@@ -353,15 +431,16 @@ fn flat(text: &str) -> String {
 }
 
 /// Whether a save of `file` kept before the entry `sequence` is still on its way: the next save
-/// of that document waits for it, as it was written against it. One whose task was cancelled,
-/// or that could not be committed (it conflicts with the default branch), is on no way, and is
-/// waited for no longer: the later save carries its own change alone.
+/// of that document waits for it, as it was written against it. One whose task closed with no
+/// delivery (cancelled, or done unproved), or that could not be committed (it conflicts with
+/// the default branch), is on no way, and is waited for no longer: the later save carries its
+/// own change alone.
 fn behind(root: &Path, sequence: u64, file: &str) -> bool {
     entries(root).into_iter().any(|(earlier, saved)| {
         earlier < sequence
             && saved.edit.rel == file
             && saved.delivery.is_some_and(|delivery| {
-                !delivery.cancelled && (!delivery.tip.is_empty() || delivery.problem.is_empty())
+                !delivery.closed && (!delivery.tip.is_empty() || delivery.problem.is_empty())
             })
     })
 }
@@ -423,7 +502,7 @@ fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
             body: format!(
                 "The owner saved an answer on {page} in the Symphony, and this project delivers \
                  by pull request, so the save is not on {default}: the branch {slug} holds it, \
-                 as the one commit {} that changes {} alone. Its work is done and its text is \
+                 as the one commit {} of the owner's save of {}. Its work is done and its text is \
                  the owner's own: nothing on the branch is edited but to settle a conflict with \
                  {default}. Assess that diff for what it needs, then land it, which delivers it \
                  by its pull request. The Symphony keeps the save and shows it as pending until \
@@ -451,11 +530,23 @@ fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether the task of a filed save was cancelled.
-fn cancelled(root: &Path, delivery: &Delivery) -> Result<bool, String> {
+/// Why the task of a filed save delivers nothing more, when it closed with no delivery: it was
+/// cancelled, or it is done and no receipt proves this save ([`own`], read before this).
+fn closed(root: &Path, delivery: &Delivery) -> Result<Option<String>, String> {
     let task =
         (crate::taskview::connect(root)?.get(&delivery.branch)).map_err(|e| e.to_string())?;
-    Ok(task.status == "cancelled")
+    let slug = &delivery.branch;
+    Ok(match task.status.as_str() {
+        "cancelled" => Some(format!(
+            "its task {slug} was cancelled: the owner's words are kept here and are not delivered"
+        )),
+        "done" => Some(format!(
+            "its task {slug} is done and no delivery receipt proves this save on the remote: \
+             the owner's words are kept here, and a person reconciles them and removes its \
+             journal entry by name once settled"
+        )),
+        _ => None,
+    })
 }
 
 /// Said once on the task of a save another task's delivery brought: nothing more is delivered
@@ -500,7 +591,7 @@ impl OutputJob {
             .ok_or_else(|| format!("{}: not a journal entry's name", self.path.display()))?;
         let _commits = shared_lock(root, "verdict-commits.lock")?;
         let mut delivery = self.saved.delivery.clone().unwrap_or_default();
-        let kept = match standing(root, sequence, &edit) {
+        let kept = match standing(root, sequence, &edit, &delivery) {
             Standing::Proved { here: false, .. } | Standing::Unproved => true,
             Standing::Proved { covered: false, .. } => false,
             Standing::Proved { receipt, .. } => {
@@ -559,18 +650,10 @@ impl OutputJob {
             }
             delivery.filed = true;
         }
-        match cancelled(root, delivery) {
-            Ok(cancelled) => {
-                delivery.cancelled = cancelled;
-                delivery.problem = if cancelled {
-                    format!(
-                        "its task {} was cancelled: the owner's words are kept here and are not \
-                         delivered",
-                        delivery.branch
-                    )
-                } else {
-                    String::new()
-                };
+        match closed(root, delivery) {
+            Ok(why) => {
+                delivery.closed = why.is_some();
+                delivery.problem = why.unwrap_or_default();
             }
             Err(why) => delivery.problem = format!("its task could not be read: {why}"),
         }

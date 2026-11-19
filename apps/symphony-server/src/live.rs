@@ -3265,6 +3265,35 @@ mod tests {
         stopped(&hub);
     }
 
+    /// Each refresh of the documents calls what the hub was given for after it
+    /// ([`Hub::after_refresh`]): the server's saves take up again what they keep for delivery by
+    /// pull request there, which is what drops a delivered save once a land moved the checkout.
+    #[test]
+    fn a_refresh_of_the_documents_calls_what_was_given_for_after_it() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let tree = Tree::new();
+        let root = proposing(&tree, "- [ ] **branch-card** — A branch proposal.\n");
+        let hub = waking(&root);
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        hub.after_refresh(Box::new(move || {
+            counted.fetch_add(1, SeqCst);
+        }));
+        // A second giving is ignored: the first stays the one called.
+        hub.after_refresh(Box::new(|| panic!("given second, never called")));
+        assert_eq!(calls.load(SeqCst), 0, "nothing refreshed yet");
+        hub.ask_rescan();
+        let called = test_time::until_true(
+            "the refresh to call what was given for after it",
+            test_time::backstop(Duration::from_secs(20)),
+            || calls.load(SeqCst) > 0,
+        );
+        if let Err(stall) = called {
+            panic!("{stall}");
+        }
+        stopped(&hub);
+    }
+
     /// A card posted before its picture is on disk is held, and the loop posts it once the picture
     /// lands, with no watcher event and no other save: the board's tick looks at the pictures the
     /// held cards wait on and wakes the documents' loop, which runs on a period no test reaches.

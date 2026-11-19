@@ -1999,7 +1999,7 @@ struct QueuedPublication {
     #[serde(default)]
     dirty_reported: bool,
     /// A save of a project that delivers by pull request, and how far its delivery went
-    /// ([`pending`]): its entry is kept until the remote default branch holds its text.
+    /// ([`pending`]): its entry is kept until a receipt proves its delivery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     delivery: Option<pending::Delivery>,
 }
@@ -2039,7 +2039,7 @@ impl OutputJob {
             publication: None,
             dirty_retry: false,
             dirty_reported: false,
-            delivery: delivers(root).then(pending::Delivery::default),
+            delivery: delivers(root).then(|| pending::Delivery::saved(root)),
         };
         let held = Self::write_journal(&path, &saved)?;
         Ok(Self {
