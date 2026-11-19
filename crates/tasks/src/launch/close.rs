@@ -126,7 +126,9 @@ fn holding(ask: &Ask<'_>, task: &Task, board: SessionRow) -> Result<Closure, Err
             said
         })
     };
-    let attempt = ask.local.bound_to(&slugs(&mine, ask.slug), ask.handle, &address)?;
+    let attempt = ask
+        .local
+        .bound_to(&slugs(&mine, ask.slug), ask.handle, &address)?;
     let stopped = match attempt {
         Some(attempt) => {
             let evidence = format!("terminal {address} {}", ask.why);
@@ -156,11 +158,17 @@ fn holding(ask: &Ask<'_>, task: &Task, board: SessionRow) -> Result<Closure, Err
         if let Target::Found = target {
             record_found(ask, &terminal, role, board)?;
         }
-        retire(ask, &address, read.as_ref(), &ask.why)?;
-        stopped
+        retire(ask, &address, read.as_ref(), &ask.why)
     })();
     match written {
-        Ok(()) => Ok(closure(&address, ask, &ask.why)),
+        Ok(()) => match stopped {
+            Ok(()) => Ok(closure(&address, ask, &ask.why)),
+            Err(Error::Refused(why)) => Err(refused(format!(
+                "terminal {address} is killed and its close recorded, but its execution attempt \
+                 is not ended: {why}"
+            ))),
+            Err(problem) => Err(problem),
+        },
         Err(Error::Refused(why)) => Err(refused(format!(
             "terminal {address} is killed, but {why}, so this close records nothing more: the next \
              close or restore of {} finds it gone",
@@ -261,7 +269,9 @@ fn gone(ask: &Ask<'_>, target: &Target, mine: &[TaskSessionRow]) -> Result<Closu
         .bound_to(&slugs(mine, ask.slug), ask.handle, pane)?
     {
         let evidence = format!("terminal {pane}: {GONE}");
-        ask.local.end(&attempt.id, false, &evidence, &mut || Ok(())).board?;
+        ask.local
+            .end(&attempt.id, false, &evidence, &mut || Ok(()))
+            .board?;
     }
     Ok(closure(pane, ask, why))
 }

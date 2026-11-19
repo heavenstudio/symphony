@@ -49,9 +49,9 @@ const GENERATION: &str = "1";
 /// How many steps an attempt is given to end: a reconcile, a stop and an observation, with room.
 const ROUNDS: usize = 5;
 
-/// What hc can do for an attempt: start a terminal, find it again by its handle, observe it,
-/// terminate it and resume a conversation in a new one. It pauses nothing and gives no view; its
-/// focus and its screen are local.
+/// What hc can do for an attempt: start a terminal, say whether a start that never answered left
+/// one, observe it, terminate it and resume a conversation in a new one. It pauses nothing and
+/// gives no view; its focus and its screen are local.
 pub fn capabilities() -> Capabilities {
     let mut capabilities = Capabilities::default();
     capabilities.operations = vec![
@@ -219,9 +219,11 @@ impl<'a> Local<'a> {
     }
 
     fn coordinator<'b>(&'b self, adapter: &'b dyn Adapter) -> Result<Coordinator<'b>, Error> {
-        let mut pacing = Pacing::default();
-        pacing.call = Duration::from_secs(30);
-        pacing.lease = Duration::from_secs(60);
+        let pacing = Pacing {
+            call: Duration::from_secs(30),
+            lease: Duration::from_secs(60),
+            ..Pacing::default()
+        };
         Coordinator::new(
             self.store,
             self.profile.clone(),
@@ -600,7 +602,9 @@ pub(super) fn closed(
     let slugs: Vec<&str> = records.iter().map(|record| record.slug.as_str()).collect();
     if let Some(attempt) = local.bound_to(&slugs, handle, address)? {
         let evidence = format!("terminal {address}: {why}");
-        local.end(&attempt.id, false, &evidence, &mut || Ok(())).board?;
+        local
+            .end(&attempt.id, false, &evidence, &mut || Ok(()))
+            .board?;
     }
     Ok(())
 }

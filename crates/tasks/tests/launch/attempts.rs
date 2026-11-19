@@ -141,7 +141,10 @@ fn a_launch_admits_its_attempt_before_hc_is_started_and_records_it_running() {
     assert_eq!(identity.role, "executor");
     assert_eq!(identity.handle.as_deref(), Some(row.handle.as_str()));
     assert_eq!(identity.lane, format!("executor/{}", row.handle));
-    assert_eq!((identity.predecessor.as_deref(), identity.relation), (None, None));
+    assert_eq!(
+        (identity.predecessor.as_deref(), identity.relation),
+        (None, None)
+    );
     assert_eq!(identity.initiator.subject, w.orch);
     assert_eq!(identity.initiator.kind, PrincipalKind::Agent);
     assert_eq!(identity.capacity, None);
@@ -154,14 +157,22 @@ fn a_launch_admits_its_attempt_before_hc_is_started_and_records_it_running() {
     // Running in the terminal hc made, in the conversation the launch chose, and current.
     assert_eq!(attempt.state.dispatch, Dispatch::Running);
     assert_eq!(terminal_of(&attempt), row.pane);
-    assert_eq!(attempt.state.conversation.as_deref(), Some(row.claude_session.as_str()));
+    assert_eq!(
+        attempt.state.conversation.as_deref(),
+        Some(row.claude_session.as_str())
+    );
     assert_eq!(attempt.state.pending, None);
     assert!(attempt.current);
-    assert_eq!(w.store().live_attempts("sim/jump").unwrap(), [attempt.id.clone()]);
+    assert_eq!(
+        w.store().live_attempts("sim/jump").unwrap(),
+        std::slice::from_ref(&attempt.id)
+    );
     let facts = facts(&w, &attempt.id);
     assert_eq!(
         kinds(&facts),
-        ["admitted", "intent", "sent", "answer", "bound", "answer", "bound"],
+        [
+            "admitted", "intent", "sent", "answer", "bound", "answer", "bound"
+        ],
         "{facts:?}"
     );
     assert_eq!(
@@ -191,10 +202,16 @@ fn a_codex_launch_binds_no_conversation_it_does_not_know_and_a_reviewer_has_its_
     let all = attempts(&w, "sim/jump");
     assert_eq!(all.len(), 2);
     assert_eq!(all[1].identity.role, "reviewer");
-    assert_eq!(all[1].identity.lane, format!("reviewer/{}", reviewer.handle));
+    assert_eq!(
+        all[1].identity.lane,
+        format!("reviewer/{}", reviewer.handle)
+    );
     assert_eq!(terminal_of(&all[1]), reviewer.pane);
     // Each holds its own lane: both are current.
-    assert!(all.iter().all(|attempt| attempt.current && attempt.state.live()));
+    assert!(
+        all.iter()
+            .all(|attempt| attempt.current && attempt.state.live())
+    );
 }
 
 #[test]
@@ -208,7 +225,10 @@ fn an_hc_that_refuses_the_run_is_a_rejected_start_with_its_reason() {
     assert_eq!(attempt.state.resource, None);
     assert_eq!(attempt.state.cancellation, Cancellation::None);
     let facts = facts(&w, &attempt.id);
-    assert_eq!(kinds(&facts), ["admitted", "intent", "sent", "answer", "ended"]);
+    assert_eq!(
+        kinds(&facts),
+        ["admitted", "intent", "sent", "answer", "ended"]
+    );
     assert_eq!(facts[3]["outcome"]["Rejected"]["Provider"], problem);
     assert!(w.store().live_attempts("sim/jump").unwrap().is_empty());
     assert_eq!(w.calls_of(&["run"]).len(), 1);
@@ -231,7 +251,10 @@ fn a_first_message_refusal_cancels_the_attempt_by_closing_its_terminal_with_the_
     assert_eq!(attempt.state.dispatch, Dispatch::Terminal);
     assert_eq!(attempt.state.ending, Some(Ending::Cancelled));
     assert_eq!(attempt.state.cancellation, Cancellation::Confirmed);
-    assert_eq!((&attempt.state.pending, &attempt.state.cancel), (&None, &None));
+    assert_eq!(
+        (&attempt.state.pending, &attempt.state.cancel),
+        (&None, &None)
+    );
     let facts = facts(&w, &attempt.id);
     assert_eq!(
         kinds(&facts),
@@ -271,8 +294,7 @@ fn a_rollback_whose_terminal_will_not_close_leaves_the_attempt_live_and_says_so(
         }),
         ..Hooked::new(&w)
     };
-    let launched =
-        symphony_board::launch::launch(w.store(), &hc, &w.machine(), &w.ask("sim/jump"));
+    let launched = symphony_board::launch::launch(w.store(), &hc, &w.machine(), &w.ask("sim/jump"));
     let problem = refused(launched);
     let attempt = only(&w);
     let terminal = terminal_of(&attempt).to_string();
@@ -288,7 +310,10 @@ fn a_rollback_whose_terminal_will_not_close_leaves_the_attempt_live_and_says_so(
     assert_eq!(attempt.state.cancellation, Cancellation::Unconfirmed);
     let facts = facts(&w, &attempt.id);
     let refusal = facts.last().unwrap();
-    assert_eq!(refusal["outcome"]["Rejected"]["Provider"], "hc kill: refused");
+    assert_eq!(
+        refusal["outcome"]["Rejected"]["Provider"],
+        "hc kill: refused"
+    );
     // Its worktree stays, the terminal may still use it.
     assert!(w.wt.join("sim-jump").exists());
 }
@@ -353,7 +378,10 @@ fn a_close_that_keeps_its_terminal_leaves_the_attempt_running_with_the_stop_refu
     );
     let attempt = only(&w);
     assert_eq!(attempt.state.dispatch, Dispatch::Running);
-    assert_eq!((&attempt.state.stop, &attempt.state.pending), (&None, &None));
+    assert_eq!(
+        (&attempt.state.stop, &attempt.state.pending),
+        (&None, &None)
+    );
     let facts = facts(&w, &attempt.id);
     assert_eq!(
         facts.last().unwrap()["outcome"]["Rejected"]["Provider"],
@@ -373,9 +401,15 @@ fn a_restore_is_a_resume_linked_to_the_attempt_before_it() {
     w.close(&row.handle).unwrap();
     let [again] = <[_; 1]>::try_from(restored(&w, &row.handle).unwrap()).unwrap();
     let [first, second] = <[_; 2]>::try_from(attempts(&w, "sim/jump")).unwrap();
-    assert_eq!(second.identity.predecessor.as_deref(), Some(first.id.as_str()));
+    assert_eq!(
+        second.identity.predecessor.as_deref(),
+        Some(first.id.as_str())
+    );
     assert_eq!(second.identity.relation, Some(Relation::Resume));
-    assert_eq!(second.identity.runtime_epoch, first.identity.runtime_epoch + 1);
+    assert_eq!(
+        second.identity.runtime_epoch,
+        first.identity.runtime_epoch + 1
+    );
     assert_eq!(second.identity.lane, first.identity.lane);
     assert_eq!(second.identity.input, first.identity.input);
     assert_eq!(second.identity.initiator.kind, PrincipalKind::Service);
@@ -386,7 +420,10 @@ fn a_restore_is_a_resume_linked_to_the_attempt_before_it() {
     assert_eq!(second.state.dispatch, Dispatch::Running);
     assert_eq!(terminal_of(&second), again.row.pane);
     assert_ne!(terminal_of(&second), terminal_of(&first));
-    assert_eq!(second.state.conversation.as_deref(), Some(row.claude_session.as_str()));
+    assert_eq!(
+        second.state.conversation.as_deref(),
+        Some(row.claude_session.as_str())
+    );
     assert_eq!(facts(&w, &second.id)[1]["operation"], "Resume");
     assert_eq!(kinds(&facts(&w, &first.id)).last(), Some(&"followed"));
     assert_eq!(w.store().live_attempts("sim/jump").unwrap(), [second.id]);
@@ -402,7 +439,10 @@ fn a_restore_observes_gone_the_attempt_of_a_terminal_closed_outside_the_board() 
     assert_eq!(first.state.ending, Some(Ending::Stopped));
     let facts = facts(&w, &first.id);
     let seen = &facts[facts.len() - 3];
-    assert_eq!(seen["outcome"]["Observed"]["state"], "Destroyed", "{facts:?}");
+    assert_eq!(
+        seen["outcome"]["Observed"]["state"], "Destroyed",
+        "{facts:?}"
+    );
     assert_eq!(second.identity.relation, Some(Relation::Resume));
     assert_eq!(second.state.dispatch, Dispatch::Running);
 }
@@ -427,11 +467,20 @@ fn a_record_from_before_attempts_is_restored_as_a_plain_start_and_none_is_made_u
     assert_eq!(attempts(&w, "sim/jump"), vec![]);
     let [again] = <[_; 1]>::try_from(restored(&w, &handle).unwrap()).unwrap();
     let attempt = only(&w);
-    assert_eq!((attempt.identity.predecessor.as_deref(), attempt.identity.relation), (None, None));
+    assert_eq!(
+        (
+            attempt.identity.predecessor.as_deref(),
+            attempt.identity.relation
+        ),
+        (None, None)
+    );
     assert_eq!(attempt.identity.runtime_epoch, 0);
     assert_eq!(attempt.state.dispatch, Dispatch::Running);
     assert_eq!(terminal_of(&attempt), again.row.pane);
-    assert_eq!(attempt.state.conversation.as_deref(), Some("an-old-conversation"));
+    assert_eq!(
+        attempt.state.conversation.as_deref(),
+        Some("an-old-conversation")
+    );
     assert_eq!(facts(&w, &attempt.id)[1]["operation"], "Start");
     // The record is the one it had, reopened.
     let [record] = <[_; 1]>::try_from(w.store().task_sessions("sim/jump").unwrap()).unwrap();
@@ -446,7 +495,10 @@ fn an_unconfirmed_restore_cancels_its_resume_and_the_next_restore_follows_that_o
     w.set("FAKE_HC_DEAF", "1");
     let problem = refused(restored(&w, &row.handle));
     let [first, failed] = <[_; 2]>::try_from(attempts(&w, "sim/jump")).unwrap();
-    assert_eq!(failed.identity.predecessor.as_deref(), Some(first.id.as_str()));
+    assert_eq!(
+        failed.identity.predecessor.as_deref(),
+        Some(first.id.as_str())
+    );
     assert_eq!(failed.state.ending, Some(Ending::Cancelled));
     assert_eq!(failed.state.cancellation, Cancellation::Confirmed);
     let killed = terminal_of(&failed).to_string();
@@ -457,7 +509,7 @@ fn an_unconfirmed_restore_cancels_its_resume_and_the_next_restore_follows_that_o
         facts
             .iter()
             .filter_map(|fact| fact["outcome"]["Accepted"]["evidence"].as_str())
-            .last(),
+            .next_back(),
         Some(format!("terminal {killed} closed: {problem}").as_str()),
         "{facts:?}"
     );
@@ -465,7 +517,10 @@ fn an_unconfirmed_restore_cancels_its_resume_and_the_next_restore_follows_that_o
     restored(&w, &row.handle).unwrap();
     let all = attempts(&w, "sim/jump");
     assert_eq!(all.len(), 3);
-    assert_eq!(all[2].identity.predecessor.as_deref(), Some(failed.id.as_str()));
+    assert_eq!(
+        all[2].identity.predecessor.as_deref(),
+        Some(failed.id.as_str())
+    );
     assert_eq!(all[2].identity.runtime_epoch, 2);
     assert_eq!(all[2].state.dispatch, Dispatch::Running);
 }
@@ -480,13 +535,23 @@ fn a_restore_whose_run_hc_refuses_rejects_its_resume_and_the_next_starts_plainly
     let all = attempts(&w, "sim/jump");
     assert_eq!(all[1].state.ending, Some(Ending::Rejected));
     assert_eq!(all[1].state.resource, None);
-    assert_eq!(w.calls_of(&["kill"]).len(), 1, "only the close killed anything");
+    assert_eq!(
+        w.calls_of(&["kill"]).len(),
+        1,
+        "only the close killed anything"
+    );
     // No terminal was ever its: nothing to resume from, so the next restore is a start.
     w.env.vars.remove("FAKE_HC_FAIL");
     restored(&w, &row.handle).unwrap();
     let all = attempts(&w, "sim/jump");
     assert_eq!(all.len(), 3);
-    assert_eq!((all[2].identity.predecessor.as_deref(), all[2].identity.relation), (None, None));
+    assert_eq!(
+        (
+            all[2].identity.predecessor.as_deref(),
+            all[2].identity.relation
+        ),
+        (None, None)
+    );
     assert_eq!(all[2].state.dispatch, Dispatch::Running);
 }
 
@@ -501,7 +566,10 @@ fn cleanup_and_finish_say_the_terminal_they_closed_is_gone() {
     assert_eq!(attempt.state.ending, Some(Ending::Stopped));
     let facts = facts(&w, &attempt.id);
     let seen = &facts[facts.len() - 2];
-    assert_eq!(seen["outcome"]["Observed"]["state"], "Destroyed", "{facts:?}");
+    assert_eq!(
+        seen["outcome"]["Observed"]["state"], "Destroyed",
+        "{facts:?}"
+    );
     assert_eq!(seen["worker"]["subject"], "cleanup");
 
     // A terminal that went outside the board: cleanup records it gone, and its attempt with it.
@@ -623,7 +691,10 @@ fn a_remote_attempts_resource_is_never_given_to_hc_as_a_terminal() {
         .filter(|attempt| attempt.identity.configuration == CONFIGURATION)
         .collect();
     assert_eq!(local.len(), 2);
-    assert_eq!(local[1].identity.predecessor.as_deref(), Some(local[0].id.as_str()));
+    assert_eq!(
+        local[1].identity.predecessor.as_deref(),
+        Some(local[0].id.as_str())
+    );
     assert!(local.iter().all(|attempt| !attempt.state.live()));
     let grant = Grant::from_host(
         Principal::new(PrincipalKind::Human, "local".into(), "owner".into()),
@@ -714,8 +785,98 @@ fn a_restore_settles_a_start_that_never_answered_as_cancelled_and_starts_plainly
         "{facts:?}"
     );
     assert_eq!(second.identity.lane, lane);
-    assert_eq!((second.identity.predecessor.as_deref(), second.identity.relation), (None, None));
+    assert_eq!(
+        (
+            second.identity.predecessor.as_deref(),
+            second.identity.relation
+        ),
+        (None, None)
+    );
     assert_eq!(second.state.dispatch, Dispatch::Running);
     assert_eq!(terminal_of(&second), again.row.pane);
     assert_eq!(w.calls_of(&["run"]).len(), 1);
+}
+
+#[test]
+fn a_restore_is_refused_while_its_last_attempt_is_held_and_starts_no_terminal() {
+    let w = World::new();
+    let handle = w.f.session("worker");
+    w.store()
+        .record_launch(&NewLaunch {
+            claude_session: "its-conversation".into(),
+            worktree: w.wt.join("sim-jump").display().to_string(),
+            pane: "t-never".into(),
+            model: "sonnet".into(),
+            ..NewLaunch::new("sim/jump", &handle, "executor")
+        })
+        .unwrap();
+    let grant = reader(&w);
+    let lost = Coordinator::new(w.store(), profile(&w.hc()), &Lost, grant.clone()).unwrap();
+    let input = Input::new(
+        "r1".into(),
+        "digest".into(),
+        "commit".into(),
+        ContentRef::new("task:sim/jump".into(), "brief".into()),
+    );
+    let lane = format!("executor/{handle}");
+    let asked = Admission::new("sim/jump", &lane, "executor", input).handle(&handle);
+    let unsettled = lost.admit(&grant, asked).unwrap();
+    // Answer after answer settles nothing, until recovery gives it to a person.
+    let mut steps = 0;
+    while only(&w).state.dispatch != Dispatch::Held {
+        lost.step(&unsettled.id).unwrap();
+        steps += 1;
+        assert!(steps < 20, "never held: {:?}", only(&w).state);
+    }
+    let why = only(&w).state.held.expect("why it is held");
+    assert_eq!(
+        refused(restored(&w, &handle)),
+        format!(
+            "{handle}'s execution attempt {} is not known to have ended ({why}), so the restore \
+             starts no terminal",
+            unsettled.id
+        )
+    );
+    assert_eq!(w.calls_of(&["run"]), Vec::<Vec<String>>::new());
+    let held = only(&w);
+    assert_eq!(held.state.dispatch, Dispatch::Held);
+    assert_eq!(held.state.cancellation, Cancellation::Requested);
+}
+
+#[test]
+fn a_close_of_a_terminal_that_is_gone_observes_its_attempt_gone() {
+    let w = World::new();
+    let row = launched(&w).row;
+    w.hc().close(&row.pane).unwrap();
+    let before = w.calls().len();
+    let closure = w.close(&row.handle).unwrap();
+    assert_eq!(closure.why, symphony_board::launch::GONE);
+    let attempt = only(&w);
+    assert_eq!(attempt.state.ending, Some(Ending::Stopped));
+    assert_eq!(attempt.state.cancellation, Cancellation::None);
+    // No stop was asked of a terminal that is not there, and nothing was killed.
+    let facts = facts(&w, &attempt.id);
+    assert!(!kinds(&facts).contains(&"asked"), "{facts:?}");
+    let after: Vec<Vec<String>> = w.calls().split_off(before);
+    assert!(
+        after
+            .iter()
+            .all(|call| call[0] != "kill" && call[0] != "rm"),
+        "{after:?}"
+    );
+}
+
+#[test]
+fn a_launch_in_a_folder_that_is_no_checkout_pins_no_commit() {
+    let w = World::new();
+    let plain = w.dir().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    w.try_launch(&Ask {
+        worktree: Some(plain),
+        ..w.ask("sim/jump")
+    })
+    .unwrap();
+    let attempt = only(&w);
+    assert_eq!(attempt.identity.input.repository_revision, "unversioned");
+    assert_eq!(attempt.state.dispatch, Dispatch::Running);
 }

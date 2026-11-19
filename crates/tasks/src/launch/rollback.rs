@@ -6,18 +6,27 @@ use super::{Machine, attempts::Local, git, hc::Hc};
 use crate::{Error, Store};
 use std::path::Path;
 
+/// What a launch made before it failed.
+pub(super) struct Made<'a> {
+    pub(super) handle: &'a str,
+    /// The terminal hc started, or none.
+    pub(super) terminal: &'a str,
+    /// The checkout the launch made, never one it was given.
+    pub(super) checkout: Option<&'a Path>,
+    /// The execution attempt it admitted, with the provider that admitted it.
+    pub(super) attempt: Option<(&'a Local<'a>, &'a str)>,
+}
+
 pub(super) fn failed(
     store: &Store,
     hc: &dyn Hc,
     machine: &Machine,
-    handle: &str,
-    terminal: &str,
-    made: Option<&Path>,
-    attempt: Option<(&Local<'_>, &str)>,
+    made: &Made<'_>,
     mut problem: Error,
 ) -> Error {
+    let (handle, terminal) = (made.handle, made.terminal);
     let mut incomplete = Vec::new();
-    let closing = match attempt {
+    let closing = match made.attempt {
         Some((local, id)) => {
             let (closing, board) = local.abandon(id, hc, terminal, &problem.to_string());
             if let Err(why) = board {
@@ -41,7 +50,7 @@ pub(super) fn failed(
     // A terminal whose close failed may still be using the checkout. A caller's checkout is
     // never ours to remove, even when startup or its final board write fails.
     if closed
-        && let Some(path) = made.filter(|path| path.exists())
+        && let Some(path) = made.checkout.filter(|path| path.exists())
         && let Err(why) = git(
             &machine.root,
             &["worktree", "remove", "--force", &path.to_string_lossy()],

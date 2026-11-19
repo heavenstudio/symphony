@@ -458,7 +458,10 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
             },
             (&local, &admitted),
         )?;
-        local.running(&admitted, Some(conversation.as_str()).filter(|_| agent != "codex"))?;
+        local.running(
+            &admitted,
+            (agent != "codex").then_some(conversation.as_str()),
+        )?;
         let claude_session = if agent == "codex" {
             // The thread is known once the agent registers its callback (`just tasks callback`).
             "codex:".to_string()
@@ -482,16 +485,13 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
         })
     })();
     started.map_err(|problem| {
-        rollback::failed(
-            store,
-            hc,
-            m,
-            &handle,
-            &terminal,
-            checkout_made.then_some(path.as_path()),
-            attempt.as_deref().map(|id| (&local, id)),
-            problem,
-        )
+        let made = rollback::Made {
+            handle: &handle,
+            terminal: &terminal,
+            checkout: checkout_made.then_some(path.as_path()),
+            attempt: attempt.as_deref().map(|id| (&local, id)),
+        };
+        rollback::failed(store, hc, m, &made, problem)
     })
 }
 
@@ -615,7 +615,11 @@ struct Start<'launch> {
 
 /// Start `start`'s agent in its stream's tab, in a terminal of its own: its address, and where it
 /// shows.
-fn open(hc: &dyn Hc, m: &Machine, start: &Start<'_>) -> Result<(String, place::Place), LaunchError> {
+fn open(
+    hc: &dyn Hc,
+    m: &Machine,
+    start: &Start<'_>,
+) -> Result<(String, place::Place), LaunchError> {
     let place = place(hc, &m.project(), start.stream)?;
     let mut argv = vec!["env".to_string(), format!("TASKS_SESSION={}", start.handle)];
     argv.extend(m.board_env.iter().map(|(k, v)| format!("{k}={v}")));
