@@ -23,6 +23,7 @@ const PULL_SECONDS: f64 = 600.0;
 
 mod asks;
 mod finish;
+mod gate;
 mod limits;
 mod list;
 mod panes;
@@ -293,6 +294,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "stamps" => stamps::stamps(store, c)?,
         "runs" => runs::runs(store, c)?,
         "needs" => stamps::needs(store, c)?,
+        "gate" => gate::gate(store, c)?,
         "create" => create(store, c)?,
         "priority" => {
             // This command's input errors use exit 2, including a task the board does not hold;
@@ -346,7 +348,23 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             finish::after_finish(store, c, &t);
         }
         "claim" => {
-            let t = store.claim(&c.arg("slug"), &c.actor()?)?;
+            let (slug, actor) = (c.arg("slug"), c.actor()?);
+            // A task a custom workflow holds is claimed through its one edge that gives the
+            // executor's role, at the revision read now (docs/WORKFLOW.md, "Operations").
+            if crate::store::workflow::position_held(&store.get(&slug)?.fields) {
+                let principal = crate::workflow::agent_session(&actor);
+                let host = crate::workflow::Host::local();
+                let role = symphony_api::workflow::Role::Executor;
+                let taken = store.claim_by_workflow(&slug, &principal, &host, role)?;
+                let at = &taken.next.snapshot.at;
+                c.say(&format!(
+                    "claimed {slug} ({}): it is at {}/{}, workflow revision {}; its edges: `just \
+                     tasks workflow actions {slug}`",
+                    taken.transition, at.phase, at.state, taken.next.snapshot.task_revision
+                ));
+                return Ok(());
+            }
+            let t = store.claim(&slug, &actor)?;
             // Only a top-level task's slug is the branch that lands: a slice works on its parent's
             // branch, and an instruction subtask's slug is never one.
             let lands = crate::on_review::delivery_task(t.parent.as_deref(), t.instruction);

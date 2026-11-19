@@ -14,8 +14,10 @@
 //!   a waiver;
 //! - the approve names the head. One that covers it by time, or that stands over a merge of
 //!   documents it did not read, does not;
-//! - each stamp of the catalogue is said: met at the head, waived by that assessment with its
-//!   author and reason, or missing;
+//! - each stamp of the catalogue is said: met at the head, waived by that assessment or by a gate
+//!   decision for the head ([`crate::gates`]) with its author and reason, or missing; a raise a
+//!   gate decision gave and the head does not carry blocks it, as it refuses the default land
+//!   ([`needs::raises`]);
 //! - the upstream commit the assessment names the head an import of, where it names one, is part
 //!   of it, so its revision changes with it: a delivery merges an import only under a snapshot
 //!   that says it is one ([`super::delivery`]).
@@ -225,7 +227,19 @@ pub fn snapshot(
             detail,
             evidence,
         };
-        stamps.push(if !wanted {
+        let waiver = needed.waived.iter().find(|waiver| waiver.gate == name);
+        stamps.push(if let Some(waiver) = waiver {
+            stamp(
+                Standing::Waived,
+                format!(
+                    "Waived at {} by the gate decision of {}: {}",
+                    short(head),
+                    waiver.by,
+                    waiver.why
+                ),
+                Vec::new(),
+            )
+        } else if !wanted {
             match &assessment {
                 Some(read) if assessed => stamp(
                     Standing::Waived,
@@ -255,6 +269,12 @@ pub fn snapshot(
         if stamp.standing == Standing::Missing && needed.stamps.contains(&stamp.name) {
             blocking.push(format!("{}: {}", stamp.name, stamp.detail));
         }
+    }
+    let base = rev(main, &format!("refs/heads/{}", settings.default_branch));
+    if let Some(base) = base
+        && let Err(line) = needs::raises(main, &base, head, &needed.decisions)
+    {
+        blocking.push(line);
     }
     // Where a land takes it from: done by an approve where review is needed, which the review
     // stamp's reader said already; else in review or blocked, or done by an approve.

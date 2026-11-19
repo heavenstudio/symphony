@@ -74,6 +74,58 @@ impl Trigger {
 }
 
 impl TaskPosition {
+    /// The position `value` holds, read by field as its decoder reads it: none where a field is
+    /// missing, of another type, or one it does not know. No decoder of its own: every program
+    /// that lists a PULL reads a held task's position, and links what it reads
+    /// (tools/size-budget.toml).
+    pub fn of(value: &Value) -> Option<TaskPosition> {
+        const FIELDS: [&str; 7] = [
+            "phase",
+            "state",
+            "resume",
+            "generation",
+            "revision",
+            "digest",
+            "manual",
+        ];
+        let fields = known(value, &FIELDS)?;
+        let resume = match fields.get("resume") {
+            None | Some(Value::Null) => None,
+            Some(pair) => {
+                let pair = known(pair, &["phase", "state"])?;
+                Some(Pair {
+                    phase: text(pair, "phase")?,
+                    state: text(pair, "state")?,
+                })
+            }
+        };
+        let manual = match fields.get("manual") {
+            None | Some(Value::Null) => None,
+            Some(recovered) => {
+                let recovered = known(recovered, &["trigger", "holder", "role", "manual"])?;
+                Some(Recovered {
+                    trigger: match recovered.get("trigger")?.as_str()? {
+                        "release" => Trigger::Release,
+                        "lost_holder" => Trigger::LostHolder,
+                        _ => return None,
+                    },
+                    holder: text(recovered, "holder")?,
+                    role: text(recovered, "role")?,
+                    manual: recovered.get("manual")?.as_bool()?,
+                })
+            }
+        };
+        Some(TaskPosition {
+            phase: text(fields, "phase")?,
+            state: text(fields, "state")?,
+            resume,
+            generation: fields.get("generation")?.as_u64()?,
+            revision: fields.get("revision")?.as_u64()?,
+            digest: text(fields, "digest")?,
+            manual,
+        })
+    }
+
     /// Its pair.
     pub fn at(&self) -> Pair {
         Pair {
@@ -124,6 +176,30 @@ pub struct Transition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accepted: Option<String>,
     pub at: f64,
+}
+
+/// Of a recorded [`Transition`], what the pipeline alarm reads: the status it put its task at, and
+/// when. Read by field from the record's value ([`Moved::of`]), with no decoder of its own: every
+/// program that delivers a PULL (`agent-send` and `symphony` among them) composes the alarm, and
+/// links what it reads (tools/size-budget.toml).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Moved {
+    pub slug: String,
+    pub revision: u64,
+    pub status: String,
+    pub at: f64,
+}
+
+impl Moved {
+    /// The four fields of a recorded transition's `body`; none where one is missing.
+    pub fn of(body: &Value) -> Option<Moved> {
+        Some(Moved {
+            slug: body.get("slug")?.as_str()?.to_string(),
+            revision: body.get("revision")?.as_u64()?,
+            status: body.get("status")?.as_str()?.to_string(),
+            at: body.get("at")?.as_f64()?,
+        })
+    }
 }
 
 impl Transition {
@@ -462,6 +538,67 @@ impl Store {
         decoded(body, "workflow definition")
     }
 
+    /// The transitions recorded for each of `tasks`, a slug with the workflow revision its
+    /// position stands at, as the pipeline alarm reads them ([`Moved`]): in the order the tasks
+    /// are given, each task's oldest first, every one from its first revision, each read by its
+    /// id, never a scan of the record.
+    pub fn transitions(&self, tasks: &[(&str, u64)]) -> Result<Vec<Moved>, Error> {
+        let ids = (tasks.iter())
+            .flat_map(|&(slug, revision)| (1..=revision).map(move |r| event(slug, r)))
+            .collect();
+        let read = self.events(ids)?;
+        let unread = || {
+            Error::Db(format!(
+                "recorded transitions the alarm cannot read: {read}"
+            ))
+        };
+        let bodies = read.as_array().ok_or_else(unread)?;
+        bodies
+            .iter()
+            .map(|body| Moved::of(body).ok_or_else(unread))
+            .collect()
+    }
+
+    /// The accepted output standing for each of `tasks`, a slug with the workflow revision its
+    /// position stands at: the `accepted` the transition that made that revision left
+    /// (docs/WORKFLOW.md, "Accepted outputs"), with its slug and revision, in the order the tasks
+    /// are given, none for a task whose transition left none, each read by its id.
+    pub fn accepted_standing(
+        &self,
+        tasks: &[(&str, u64)],
+    ) -> Result<Vec<(String, u64, String)>, Error> {
+        let ids = (tasks.iter())
+            .filter(|&&(_, revision)| revision > 0)
+            .map(|&(slug, revision)| event(slug, revision))
+            .collect();
+        let read = self.events(ids)?;
+        Ok((read.as_array().into_iter().flatten())
+            .filter_map(|body| {
+                Some((
+                    body.get("slug")?.as_str()?.to_string(),
+                    body.get("revision")?.as_u64()?,
+                    body.get("accepted")?.as_str()?.to_string(),
+                ))
+            })
+            .collect())
+    }
+
+    /// The bodies of the transitions `ids` name, in their order, one no transition has left out:
+    /// each read by its id, never a scan of the record. Built as plain values, and read as one, so
+    /// no serializer or list reader of their own links where a PULL is composed
+    /// (tools/size-budget.toml).
+    fn events(&self, ids: Vec<Value>) -> Result<Value, Error> {
+        if ids.is_empty() {
+            return Ok(Value::Array(Vec::new()));
+        }
+        let vars = Value::Object(
+            [("ids".to_string(), Value::Array(ids))]
+                .into_iter()
+                .collect(),
+        );
+        self.retrying(|| self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone()))
+    }
+
     /// `slug`'s workflow position, or none for a task the board's own writers keep; refused for
     /// a task that is not there.
     pub fn workflow_position(&self, slug: &str) -> Result<Option<TaskPosition>, Error> {
@@ -504,6 +641,32 @@ pub(crate) fn position_held(
     fields: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
 ) -> bool {
     (fields.get("_board")).is_some_and(|board| board.contains_key("workflow"))
+}
+
+/// The position a task's board fields hold, none for a task the board's own writers keep (or one
+/// whose position is not in the board's shape, which the database's fences never write).
+pub(crate) fn task_position(
+    fields: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
+) -> Option<TaskPosition> {
+    TaskPosition::of(fields.get("_board")?.get("workflow")?)
+}
+
+/// The id of the transition that made workflow revision `revision` of `slug`.
+fn event(slug: &str, revision: u64) -> Value {
+    Value::from(vec![json!("event"), slug.into(), revision.into()])
+}
+
+/// `value`'s fields: none where it is no object, or names a field `allowed` does not.
+fn known<'v>(value: &'v Value, allowed: &[&str]) -> Option<&'v serde_json::Map<String, Value>> {
+    let fields = value.as_object()?;
+    (fields.keys())
+        .all(|key| allowed.contains(&key.as_str()))
+        .then_some(fields)
+}
+
+/// The text `fields` holds under `key`.
+fn text(fields: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    Some(fields.get(key)?.as_str()?.to_string())
 }
 
 /// The refusal of a legacy move or staffing of `slug`, a task a custom workflow holds.

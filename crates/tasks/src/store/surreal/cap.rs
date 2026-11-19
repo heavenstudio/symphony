@@ -3,10 +3,10 @@
 use super::branches::{OF_TASKS, ON_BRANCHES};
 
 /// The open tasks, through `task_status`, each with its red mark ([`crate::red`]).
-pub(in crate::store) const OPEN_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red FROM task WHERE status IN $slot_statuses";
+pub(in crate::store) const OPEN_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red, fields._board.workflow AS position FROM task WHERE status IN $slot_statuses";
 
 /// The tasks `$slot_wanted` names, by id.
-pub(in crate::store) const BY_ID: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red FROM $slot_wanted.map(|$s| type::record('task', $s))";
+pub(in crate::store) const BY_ID: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red, fields._board.workflow AS position FROM $slot_wanted.map(|$s| type::record('task', $s))";
 
 /// Their roles, through `role_slug`: a task holds a handful, and naming the two the cap reads would
 /// let the server take an index of every row holding one of them instead.
@@ -26,7 +26,7 @@ pub(in crate::store) const HOLDS: &str =
     "SELECT VALUE [record::id(id)[1], ts] FROM counter:['hold', NONE]..['hold', ..]";
 
 /// The tasks `$slot_holds` holds, by id, with the stamp each hold must match.
-pub(in crate::store) const HELD_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red, updated FROM $slot_holds.map(|$h| type::record('task', $h[0]))";
+pub(in crate::store) const HELD_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red, fields._board.workflow AS position, updated FROM $slot_holds.map(|$h| type::record('task', $h[0]))";
 
 /// Every statement the cap sends, which `tests/store/slots/cost.rs` has the server plan.
 pub const STATEMENTS: [&str; 9] = [
@@ -41,11 +41,19 @@ pub const STATEMENTS: [&str; 9] = [
     ON_BRANCHES,
 ];
 
+/// The active custom workflow's positions, each pair with its slot policy and the status it
+/// projects to (`$slot_positions`, none while no workflow is active), and the statuses a task
+/// holding a slot may be in (`$slot_statuses`): the board's own open ones, and each a position
+/// that holds a slot projects to ([`crate::slots::Entry::slot`]). Records read by id.
+pub(in crate::store) const SLOT_POSITIONS: &str = "LET $slot_positions = (((SELECT VALUE body.definition.positions FROM ONLY type::record('workflow', ['definition', (SELECT VALUE body.digest FROM ONLY workflow:['active']) ?? ''])) ?? []).map(|$p| { phase: $p.at.phase, state: $p.at.state, slot: $p.slot, legacy: $p.legacy }));
+LET $slot_statuses = array::union($slot_statuses, $slot_positions.filter(|$p| $p.slot != 'release').legacy);";
+
 /// The shared slot inputs before a snapshot's `RETURN`. `wanted` names the task being changed
 /// (`[$slug]`) or every task in a whole-board holdings observation (`$slugs`).
 pub(in crate::store) fn lets(wanted: &str) -> String {
     format!(
-        "LET $slot_open = ({OPEN_TASKS}); LET $slot_holds = ({HOLDS}); LET $slot_held = ({HELD_TASKS});
+        "{SLOT_POSITIONS}
+         LET $slot_open = ({OPEN_TASKS}); LET $slot_holds = ({HOLDS}); LET $slot_held = ({HELD_TASKS});
          LET $slot_wanted = array::union(array::union($slot_open.slug, $slot_held.slug), {wanted});"
     )
 }
@@ -53,7 +61,7 @@ pub(in crate::store) fn lets(wanted: &str) -> String {
 /// The shared snapshot field for admission and read-only holdings.
 pub(in crate::store) fn field() -> String {
     format!(
-        "slots: {{ open: $slot_open, holds: $slot_holds, held: $slot_held, roles: ({ROLES_OF}), counted: ({COUNTERS}), reds: ({RED_COUNTERS}) }},"
+        "slots: {{ open: $slot_open, holds: $slot_holds, held: $slot_held, roles: ({ROLES_OF}), counted: ({COUNTERS}), reds: ({RED_COUNTERS}), positions: $slot_positions }},"
     )
 }
 

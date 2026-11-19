@@ -68,6 +68,7 @@
 //! that moved, the rows added and the rows resolved. `tasks pull --as HANDLE` prints the whole
 //! digest ([`Digest::lines`]) on demand.
 
+mod held;
 mod pipeline;
 mod recovery;
 
@@ -681,6 +682,11 @@ pub fn heard_now(store: &Store, env: &crate::cli::Env, handle: &str) -> Result<D
     if store.give_if_due(&board) {
         board = store.board()?;
     }
+    // Then what the tasks a workflow holds need of the board itself: a lost holder recovered, a
+    // dependant cancelled by its position's policy ([`Store::settle_held`]).
+    if store.settle_held_if_due(&board) {
+        board = store.board()?;
+    }
     let holdings = store.slot_holdings()?;
     let probes = crate::cli::probes::machine(env);
     let now = store.now();
@@ -789,14 +795,32 @@ pub(crate) fn digest_on(
             found.entry("unanswered").or_default().push(t.clone());
         }
     }
+    // The workflow a held task stands on, read once and only where the board holds one.
+    let operating = store.operating_for(tasks)?;
+    let find = |slug: &str| look.task(slug);
     for t in tasks {
-        // A task a custom workflow holds is staffed and moved by its edges and its recovery alone
-        // (docs/WORKFLOW.md): no list here offers it to the board's own claims and handovers, and
-        // its executor at work counts as executing.
+        // A task a custom workflow holds is listed by the edges leaving its position and the role
+        // that position staffs (`pull/held.rs`), never by the board's own claims and handovers.
         if crate::store::workflow::position_held(&t.fields) {
-            if t.status == "in_progress" && staffed(t) {
+            let placed = operating.as_ref().and_then(|o| o.placed(t).map(|p| (o, p)));
+            let Some((operating, placed)) = placed else {
+                continue;
+            };
+            let judged = held::judged(operating, &placed, t, find, now);
+            if judged.executing {
                 executing += 1;
                 running.push(t.slug.clone());
+            }
+            for listed in judged.listed {
+                found.entry(listed.category).or_default().push(t.clone());
+                if let Some(note) = listed.note {
+                    (notes.entry(t.slug.clone()))
+                        .and_modify(|said: &mut String| {
+                            said.push_str("; ");
+                            said.push_str(&note);
+                        })
+                        .or_insert(note);
+                }
             }
             continue;
         }
