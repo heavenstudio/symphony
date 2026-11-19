@@ -36,13 +36,21 @@ fn serving(root: &Path) -> Arc<Shared> {
     Shared::new(1, 8123, root, None, gate)
 }
 
-fn branch(root: &Path, name: &str) -> bool {
+/// The commit `name` names in the repository at `root`, empty where it names none.
+fn tip(root: &Path, name: &str) -> String {
     symphony_board::sys::output(
         symphony_board::sys::Command::new("git")
             .args(["rev-parse", "--verify", "-q", name])
             .current_dir(root),
     )
-    .is_ok_and(|done| done.status.success())
+    .ok()
+    .filter(|done| done.status.success())
+    .map(|done| String::from_utf8_lossy(&done.stdout).trim().to_string())
+    .unwrap_or_default()
+}
+
+fn branch(root: &Path, name: &str) -> bool {
+    !tip(root, name).is_empty()
 }
 
 #[tokio::test]
@@ -97,6 +105,7 @@ async fn a_pending_answer_reads_the_pages_again_so_the_feed_brings_the_save() {
 fn what_follows_a_refresh_takes_a_kept_save_up_again() {
     let tree = Tree::new();
     let root = delivering(&tree);
+    let main = tip(&root, "main");
     let shared = serving(&root);
     let settle = crate::api::settling(&shared);
     settle();
@@ -128,6 +137,7 @@ fn what_follows_a_refresh_takes_a_kept_save_up_again() {
         panic!("{stall}");
     }
     shared.saves.get().unwrap().close();
-    assert!(!branch(&root, "refs/heads/main^2"), "main is no merge");
+    assert_eq!(tip(&root, "main"), main, "main moved");
+    assert_eq!(tip(&root, "docs/owner-save-4^"), main);
     drop(settle);
 }

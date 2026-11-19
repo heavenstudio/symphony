@@ -612,13 +612,18 @@ pub(super) fn a_settled_conflict_is_proved_by_its_receipt_alone(f: &Fixture) {
         assert!(delivered.contains(kept), "{delivered}");
     }
 
-    // B's task is closed as done with no receipt of a delivery: held with why, never dropped,
-    // and a later save of the document waits for it no longer.
+    // B's reviewer approves it: done on the board, and not landed until its land, through the
+    // whole wait for the host. It is still on its way, and a later save still waits for it.
     let store = f.store();
-    let app = symphony::verdicts::app_handle(&store).unwrap();
-    store
-        .landed(&b, &app, "closed by hand", true, &["review"])
-        .unwrap();
+    let reviewer = store
+        .register(&symphony_board::NewSession::new("worker"))
+        .unwrap()
+        .row
+        .handle;
+    store.take_role(&b, &reviewer, "reviewer").unwrap();
+    let head = git(&root, &["rev-parse", &b]);
+    let approved = store.verdict(&b, &reviewer, "approve", &head).unwrap();
+    assert_eq!(approved.status, "done");
     let saves = ClosingSaves::start(&root);
     let top = json!({"path":"docs/a.md","after_line":1,"kind":"comment","title":"W","body":"top"});
     saves.post("", "/api/comment", top);
@@ -626,11 +631,22 @@ pub(super) fn a_settled_conflict_is_proved_by_its_receipt_alone(f: &Fixture) {
     pass(&root);
     let pending = pending::saves(&root);
     assert_eq!(pending.len(), 2, "{pending:?}");
+    assert_eq!(pending[0].state, State::Waiting, "{pending:?}");
+    assert_eq!(pending[1].state, State::Queued, "{pending:?}");
+    // A landing closes it with no receipt that proves the save: held with why, never dropped,
+    // and the later save waits for it no longer.
+    let app = symphony::verdicts::app_handle(&store).unwrap();
+    store
+        .landed(&b, &app, "landed by hand", true, &["done"])
+        .unwrap();
+    pass(&root);
+    let pending = pending::saves(&root);
+    assert_eq!(pending.len(), 2, "{pending:?}");
     let State::Held(why) = &pending[0].state else {
         panic!("{pending:?}");
     };
     assert!(
-        why.contains("is done and no delivery receipt proves"),
+        why.contains("was closed and no delivery receipt proves"),
         "{why}"
     );
     assert_eq!(pending[1].state, State::Waiting, "{pending:?}");

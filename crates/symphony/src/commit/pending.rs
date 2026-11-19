@@ -34,7 +34,7 @@
 //!
 //! Every pass of the output worker (a start, each save, each refresh of the documents) takes
 //! each entry up again. A step that fails (a board that does not answer, an edit that no longer
-//! applies, a task cancelled, or done with no receipt that proves the save) is kept in the entry
+//! applies, a task cancelled, or closed with no receipt that proves the save) is kept in the entry
 //! and said by [`note`]; the entry and the owner's words stay, and a save on no way to the
 //! default branch no longer holds back the next of its document. Words the page cannot draw,
 //! as they no longer apply to the default branch here, are said so by name, never left out
@@ -76,8 +76,8 @@ pub(super) struct Delivery {
     /// Whether its task is on the board.
     #[serde(default)]
     filed: bool,
-    /// Whether that task closed with no delivery: cancelled, or done with no receipt that
-    /// proves this save. The save is kept, and is on no way to the default branch.
+    /// Whether that task closed with no delivery: cancelled, or closed by a landing or by hand
+    /// with no receipt that proves this save ([`closed`]). The save is kept, and is on no way to the default branch.
     #[serde(default)]
     closed: bool,
     /// Why the last pass went no further, when it did not.
@@ -432,7 +432,7 @@ fn flat(text: &str) -> String {
 
 /// Whether a save of `file` kept before the entry `sequence` is still on its way: the next save
 /// of that document waits for it, as it was written against it. One whose task closed with no
-/// delivery (cancelled, or done unproved), or that could not be committed (it conflicts with
+/// delivery (cancelled, or closed unproved), or that could not be committed (it conflicts with
 /// the default branch), is on no way, and is waited for no longer: the later save carries its
 /// own change alone.
 fn behind(root: &Path, sequence: u64, file: &str) -> bool {
@@ -504,7 +504,9 @@ fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
                  by pull request, so the save is not on {default}: the branch {slug} holds it, \
                  as the one commit {} of the owner's save of {}. Its work is done and its text is \
                  the owner's own: nothing on the branch is edited but to settle a conflict with \
-                 {default}. Assess that diff for what it needs, then land it, which delivers it \
+                 {default}, by merging {default} into the branch and never by rebasing it: the \
+                 delivery is proved by a head that holds that commit. Assess that diff for what \
+                 it needs, then land it, which delivers it \
                  by its pull request. The Symphony keeps the save and shows it as pending until \
                  the delivery's receipt proves it on the remote {default}.",
                 delivery.tip, edit.rel
@@ -531,20 +533,30 @@ fn filed(root: &Path, delivery: &Delivery, edit: &Edit) -> Result<(), String> {
 }
 
 /// Why the task of a filed save delivers nothing more, when it closed with no delivery: it was
-/// cancelled, or it is done and no receipt proves this save ([`own`], read before this).
+/// cancelled, or a landing closed it (or a hand did) and no receipt proves this save ([`own`],
+/// read before this). A task its reviewer approved is done on the board before its land, and
+/// through the whole wait for the host's merge: while that approve stands with no landing after
+/// it ([`symphony_board::land::approval`]) the save is on its way, and still waited for.
 fn closed(root: &Path, delivery: &Delivery) -> Result<Option<String>, String> {
-    let task =
-        (crate::taskview::connect(root)?.get(&delivery.branch)).map_err(|e| e.to_string())?;
+    let store = crate::taskview::connect(root)?;
     let slug = &delivery.branch;
+    let task = store.get(slug).map_err(|e| e.to_string())?;
     Ok(match task.status.as_str() {
         "cancelled" => Some(format!(
             "its task {slug} was cancelled: the owner's words are kept here and are not delivered"
         )),
-        "done" => Some(format!(
-            "its task {slug} is done and no delivery receipt proves this save on the remote: \
-             the owner's words are kept here, and a person reconciles them and removes its \
-             journal entry by name once settled"
-        )),
+        "done" => {
+            let thread = store.thread(slug).map_err(|e| e.to_string())?;
+            symphony_board::land::approval(&task, &thread)
+                .is_err()
+                .then(|| {
+                    format!(
+                        "its task {slug} was closed and no delivery receipt proves this save on \
+                         the remote: the owner's words are kept here, and a person reconciles \
+                         them and removes its journal entry by name once settled"
+                    )
+                })
+        }
         _ => None,
     })
 }
