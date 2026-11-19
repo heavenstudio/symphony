@@ -122,7 +122,7 @@ use Kind::{Array, Bool, Float, Int, Object, Text};
 
 /// The board's tables, including `words` (the full-text indexes, [`WORDS`]) and `copied_fields`
 /// (the imported fields' numeric spellings, [`super::copy`]).
-pub(in crate::store) const TABLES: [Table; 25] = [
+pub(in crate::store) const TABLES: [Table; 29] = [
     Table {
         name: "recovery",
         columns: &[req("generation", Text)],
@@ -299,6 +299,22 @@ pub(in crate::store) const TABLES: [Table; 25] = [
         columns: &[],
     },
     Table {
+        name: "execution_attempt",
+        columns: &[],
+    },
+    Table {
+        name: "execution_fact",
+        columns: &[],
+    },
+    Table {
+        name: "execution_fence",
+        columns: &[],
+    },
+    Table {
+        name: "execution_artifact",
+        columns: &[],
+    },
+    Table {
         name: "ask",
         columns: &[
             req("sid", Int),
@@ -389,6 +405,10 @@ CREATE INDEX IF NOT EXISTS ask_about ON ask (about, open);
 CREATE INDEX IF NOT EXISTS ask_answered ON ask (answered);
 CREATE INDEX IF NOT EXISTS usage_slug ON usage (slug);
 CREATE INDEX IF NOT EXISTS usage_handle ON usage (handle);
+CREATE INDEX IF NOT EXISTS execution_attempt_task ON execution_attempt ((doc ->> 'task'), ((doc ->> 'created')::bigint));
+CREATE INDEX IF NOT EXISTS execution_attempt_due ON execution_attempt (((doc ->> 'open')::boolean), ((doc ->> 'due')::bigint));
+CREATE INDEX IF NOT EXISTS execution_fact_attempt ON execution_fact ((doc ->> 'attempt'), ((doc ->> 'seq')::bigint));
+CREATE INDEX IF NOT EXISTS execution_artifact_attempt ON execution_artifact ((doc ->> 'attempt'), (doc ->> 'name'));
 ";
 
 /// The functions every statement and trigger here shares, and the triggers.

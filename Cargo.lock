@@ -4339,6 +4339,7 @@ dependencies = [
  "symphony-args",
  "symphony-docs",
  "symphony-env",
+ "symphony-plugin",
  "test-time",
  "tokio",
  "tokio-postgres",

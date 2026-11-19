@@ -523,6 +523,7 @@ pub fn generated() -> Dump {
         delivery_keys,
         asks,
         usages,
+        ..Dump::default()
     }
 }
 
