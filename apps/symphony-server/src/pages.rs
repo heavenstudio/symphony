@@ -67,7 +67,7 @@ fn frame(title: &str, icon: &str, links: &str, crumb: &str, notice: &str, body: 
 
 /// The header's row of pages, each as its `href` and name, the one at `active` lit.
 fn pages(links: Vec<(String, &str)>, active: Option<&str>) -> String {
-    let mut nav = String::from("<nav class=\"app-pages\" aria-label=\"Pages\">");
+    let mut nav = String::from("<nav class=\"app-pages scroll-row\" aria-label=\"Pages\">");
     for (href, name) in links {
         let lit = if active == Some(href.as_str()) {
             " class=\"active\" aria-current=\"page\""
