@@ -119,7 +119,10 @@ the failing step rerun alone as its text names them. A red is fixed in the code,
 load is discarded instead (`tests/no-test-fails-on-load`). A test or check is never loosened to
 turn it green (an assertion widened, a timeout or a budget raised, a test ignored or moved out of
 the release run): a fix that must change one says on its thread why the code was not the thing to
-fix, and a fresh reviewer judges that. Its assessor reads what its fix needs at review
+fix, and a fresh reviewer judges that. A budget or a cap that gives way, a red's or any task's,
+gives way by its orchestrator's decision recorded on the task (`just tasks gate`,
+[TASKS](docs/TASKS.md#gate-decisions)), once the cut came first, never by its executor's or its
+reviewer's word, and lands only at the number decided. Its assessor reads what its fix needs at review
 (`workflow/evidence-is-the-gate`): a fix that changes none of the project's tests and checks
 (`[land] check_paths`, [TASKS](docs/TASKS.md#the-default-landing)) needs its tests, the failing
 tests unchanged and green at its tip, and one that changes a test, a check, a budget or a run step

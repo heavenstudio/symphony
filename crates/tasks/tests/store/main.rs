@@ -65,6 +65,7 @@ mod fields;
 )]
 mod fixture_script;
 mod gate;
+mod gate_decisions;
 mod hand_over_outage;
 mod health;
 mod held_stream;

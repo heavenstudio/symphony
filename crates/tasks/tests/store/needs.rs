@@ -292,7 +292,7 @@ on_both! {
                 f.store
                     .set_field("tools/query", "_board", "needs", &json!("none"), &assessor)
             )
-            .ends_with("a task's needs by its assessor (tasks needs)")
+            .contains("a task's needs by its assessor (tasks needs)")
         );
         assert_eq!(f.store.get("tools/query").unwrap().needs(), None);
     }

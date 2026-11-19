@@ -54,10 +54,16 @@ fn catalogue_lines(catalogue: &Catalogue, main: Option<&Path>) -> Vec<String> {
         (None, _) => "STAMPS the Symphony's own: no repository here".into(),
     }];
     for stamp in &catalogue.stamps {
-        lines.push(if stamp.default {
-            format!("{} (needed by default)", stamp.name)
-        } else {
-            stamp.name.to_string()
+        let marks: Vec<&str> = [
+            (stamp.default, "needed by default"),
+            (stamp.waivable, "waivable at one tip by a gate decision"),
+        ]
+        .into_iter()
+        .filter_map(|(marked, said)| marked.then_some(said))
+        .collect();
+        lines.push(match marks.as_slice() {
+            [] => stamp.name.to_string(),
+            marks => format!("{} ({})", stamp.name, marks.join(", ")),
         });
         lines.push(format!("  met: {}", stamp.met));
         lines.push(format!("  applies: {}", stamp.applies));
@@ -67,8 +73,9 @@ fn catalogue_lines(catalogue: &Catalogue, main: Option<&Path>) -> Vec<String> {
 }
 
 /// What `stamps SLUG` adds for `task`: its needs as they stand (its assessment, else the
-/// catalogue's defaults), its branch's tip in the main checkout `main`, and what of `[land]
-/// check_paths` the branch changes from where it left the default branch.
+/// catalogue's defaults), its gate decisions that stand ([`crate::gates`]), its branch's tip in
+/// the main checkout `main`, and what of `[land] check_paths` the branch changes from where it left
+/// the default branch.
 fn task_lines(task: &Task, catalogue: &Catalogue, main: Option<&Path>) -> Vec<String> {
     let mut lines = vec![match task.needs() {
         Some(needs) => format!(
@@ -83,6 +90,17 @@ fn task_lines(task: &Task, catalogue: &Catalogue, main: Option<&Path>) -> Vec<St
             said(&catalogue.defaults())
         ),
     }];
+    let decisions = task.gates();
+    if decisions.is_empty() {
+        lines.push("GATES none: no gate decision on the task".into());
+    } else {
+        lines.push("GATES its decisions that stand, the newest on each gate:".into());
+        lines.extend(
+            decisions
+                .iter()
+                .map(|decision| format!("  {}", decision.line())),
+        );
+    }
     let Some(main) = main else {
         lines.push("TIP none: no repository here".into());
         return lines;

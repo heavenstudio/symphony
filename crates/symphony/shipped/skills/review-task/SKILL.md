@@ -44,7 +44,13 @@ standing instructions for a reviewer. Read them before step 3.
      a count or a wait on its condition belongs): that is a changes;
    - whether the change is bigger than what it solves (a new mechanism where an existing one
      serves, more files, options or pages than the ask needs, a committed tool for a problem met
-     once): name the smaller form, which may be "once and done", as a finding.
+     once): name the smaller form, which may be "once and done", as a finding;
+   - each gate decision on it (`GATES` in `just tasks stamps SLUG --as HANDLE`, a `gate …` line
+     on the thread, recorded by its orchestrator alone): for a raise, that the cut came first,
+     that the commit raising the limit is its own with an account that is true (what grew, what
+     was taken back, the number measured), and that the number the tip holds is the one decided;
+     for a waiver, that it names the tip you read. A limit raised in the diff that no raise names
+     is a changes: the gate is its orchestrator's to give way, never its executor's.
 
    That the default branch moved since the tip the evidence names is no finding: never send a
    branch back only for that. Ask for a merge only by naming what the default branch gained that
@@ -55,8 +61,9 @@ standing instructions for a reviewer. Read them before step 3.
    `just tasks verdict SLUG changes "what and where" --as HANDLE`. The board refuses the verdict
    of a session that ever executed SLUG or a slice of it (a subtask without `--instruction`).
    Never judge a task you executed, and never fix the branch yourself: a defect is a changes.
-   The verdict's text lists what you checked, what you ran with its result, and each defect with
-   its file and line and why it matters. Approve only what you would land; a nit is a follow-up
+   The verdict's text lists what you checked, what you ran with its result, each gate decision
+   at the tip (a raise you judged, a waiver you saw), and each defect with its file and line and
+   why it matters. Approve only what you would land; a nit is a follow-up
    named in the text, never a reason for a changes.
 7. After a changes, or a land that sent SLUG back to review because your approve does not name
    its tip, you stay its reviewer: the next round is yours. Resumed with a new tip, read the

@@ -1953,6 +1953,16 @@ impl Landing<'_> {
         }
         self.owner_lines(&base, &tip)
             .map_err(|refusal| self.refuse(refusal))?;
+        // Each raise its gate decisions gave, carried in its file at the tip.
+        let raised = needs::raises(&self.main, &base, &tip, &needed.decisions).map_err(|line| {
+            self.refuse(Refusal::to(
+                line,
+                "@executor",
+                "Commit the limit at the number decided, its message the account, or ask the \
+                 task's orchestrator for a decision of the number it holds; then land it again"
+                    .into(),
+            ))
+        })?;
         let judged = match &approved {
             Some(approval) => {
                 let covered = covered(&self.main, slug, &base, &tip, approval).map_err(|line| {
@@ -1998,6 +2008,12 @@ impl Landing<'_> {
         }
         if needed.told() {
             self.say(&needed.line(slug, &tip, &met));
+        }
+        if !raised.is_empty() {
+            self.say(&format!(
+                "land {slug}: its gate decisions: {}",
+                raised.join("; ")
+            ));
         }
         if self.delivers() {
             return self.deliver(&task, &tip, &judged);
