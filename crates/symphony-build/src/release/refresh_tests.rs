@@ -366,7 +366,11 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     )
     .unwrap();
     store
-        .create(&symphony_board::NewTask::new("sim/kept", "A task the snapshot holds", "owner"))
+        .create(&symphony_board::NewTask::new(
+            "sim/kept",
+            "A task the snapshot holds",
+            "owner",
+        ))
         .unwrap();
     let entry: Entry = serde_json::from_value(serde_json::json!({
         "id": "alpha", "name": "alpha", "root": root, "pin": 1,
@@ -407,8 +411,15 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     ));
     assert_eq!(moving.snapshot.as_deref(), Some(kept.as_path()));
     let text = fs::read_to_string(&kept).unwrap();
-    assert!(text.contains("CREATE TABLE") && text.contains("sim/kept"), "{text}");
-    assert_eq!(pg.current().unwrap().map(|s| s.pid), Some(serving.pid), "still serving");
+    assert!(
+        text.contains("CREATE TABLE") && text.contains("sim/kept"),
+        "{text}"
+    );
+    assert_eq!(
+        pg.current().unwrap().map(|s| s.pid),
+        Some(serving.pid),
+        "still serving"
+    );
     // Stopped, it is red and nothing is started.
     pg.stop().unwrap();
     let stopped = judge(&entry, &common, schema + 1, &against);

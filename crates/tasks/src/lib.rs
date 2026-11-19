@@ -91,8 +91,7 @@ pub use schema::{Access, Schema};
 pub use store::recovery;
 pub use store::{
     ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, CARRIED,
-    COVERED,
-    Callback, ChatSeat, CoveredLine, Database, Error, Filed, Given, HandOff, Held, KINDS,
+    COVERED, Callback, ChatSeat, CoveredLine, Database, Error, Filed, Given, HandOff, Held, KINDS,
     LANDS_FROM, LATE_SECONDS, Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, On, Opening,
     PIPELINE, PULLABLE, Pick, Presence, Program, ROLES, Raw, RawRows, ReportRead, ReportTask, Role,
     SLOT_READS, STATUSES, SearchHit, SearchSource, Session, StageRecord, Store,

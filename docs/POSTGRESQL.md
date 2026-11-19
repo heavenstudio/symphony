@@ -1,9 +1,12 @@
 # PostgreSQL board lifecycle
 
-PostgreSQL boards run only in scratch homes: temporary folders or a checkout's artifacts folder.
-The machine server and the board commands use the same home selection. Live activation and a
-migration command are not enabled: a live board moves by
-[the cutover procedure](analysis/board-pg-cutover.md), once what it waits for is there.
+PostgreSQL serves the board whose home names it. A scratch home (a temporary folder, or a
+checkout's artifacts folder) is made a PostgreSQL board in place; a board anywhere else becomes
+one only by a move of its store, `just tasks database move postgresql`
+([the cutover procedure](analysis/board-pg-cutover.md#one-boards-move)), and with no identity
+PostgreSQL makes and starts nothing there. The machine server and the board commands use the same
+home selection. No live board has moved: that waits for what the cutover's
+[choice](analysis/board-pg-cutover.md#the-choice) names.
 
 ## The board home owns its engine
 
@@ -18,12 +21,18 @@ syncs a temporary file, renames it into place, then syncs the home. Repeating th
 keeps it. The PostgreSQL cluster is `postgresql/`; a retained SurrealDB store belongs outside the
 active home's `data/` before that home can identify itself as PostgreSQL.
 
+An identity changes only by a move of the board's store. While a move's or a restore's journal
+(`move.json`) stands in the home, nothing reads it as either engine: every start and reach is
+refused, naming the journal, until its holder settles it.
+
 `Home::board_server` selects the engine for repository discovery, including the machine server's
 board reader. `[board] postgresql` names the machine's programs, never the selected engine; absent
 that override, the first executable `postgres` on `PATH` supplies the folder. Discovery validates
 PostgreSQL 18 or later and its same-folder companion tools before starting anything. A
-PostgreSQL server listens on its private Unix socket alone and ends with the process that started
-it. A command uses one connection for its lifetime; there is no pool.
+PostgreSQL server listens on its private Unix socket alone. On a scratch home it ends with the
+process that started it; on any other it outlives its starter, as the board's SurrealDB server
+does, and the next command finds it by its cluster's own record. A command uses one connection
+for its lifetime; there is no pool.
 
 ## Holds, snapshots and recovery
 
@@ -54,6 +63,19 @@ publishes no data when that fails: the restored board refuses every bound write 
 recovery rebind` gives it a generation of its own, and then takes no token read on its source.
 The source's own binding is not touched, and clients already open on the source keep writing the
 source.
+
+`just tasks database restore SNAPSHOT --as HANDLE` (`Postgres::restore_over`) puts a snapshot
+back over the board it was taken from: one of that board's own snapshots, by its name or path.
+The board is held for it (its caller's hold, left standing, or one set now and released after)
+and its server stopped; the snapshot is copied beside the data, then switched in under the
+journal a move runs under: the cluster in place is moved into `moved/STAMP-postgresql/`, the copy
+moved in, the journal marked committed, the home's recovery bindings revoked. Nothing is deleted,
+the snapshot included. A failure before the commit leaves the board on the cluster it had; one
+cut short is settled by its holder's next `database restore` or `database move`, undone before
+the commit and finished after. The restored board refuses every bound write until
+`just tasks recovery rebind`. The record of the highest schema the board was seen at stays
+outside the database, so a snapshot of an older schema restores a board that went back, which
+every opening refuses as it does any other.
 
 ## Free space and versions
 

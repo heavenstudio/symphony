@@ -295,7 +295,11 @@ fn switched(asked: &Asked, home: &Home, env: &Env, by: &str) -> Result<String, S
                 },
                 moved.from,
                 moved.aside.display(),
-                if moved.finished { "" } else { ", with its export" },
+                if moved.finished {
+                    ""
+                } else {
+                    ", with its export"
+                },
                 (moved.snapshot.as_ref()).map_or_else(String::new, |snapshot| format!(
                     ", and its snapshot in {}",
                     snapshot.display()

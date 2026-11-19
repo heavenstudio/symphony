@@ -871,7 +871,10 @@ Once a release's tag is pushed, the run does this, in order:
   from schema N to M, and stays at N while X holds the release`). Otherwise every board is
   snapshotted through its running database, all of them before the first move
   (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the
-  newest 5 kept): a snapshot that fails is red and no board moves. Then each board is moved in
+  newest 5 kept; for a board on PostgreSQL `before-schema-N-RELEASE.sql`, `pg_dump`'s text of
+  the board's database, which `psql` restores): a snapshot that fails is red and no board moves.
+  A board on PostgreSQL is read on that engine, by the PostgreSQL programs its project names, and
+  waits on no SurrealDB version, as a release pins none of the machine's PostgreSQL. Then each board is moved in
   turn by the release's own `tasks migrate` (`releases/RELEASE/bin/tasks`) run in the project's
   main checkout, the one command that moves a project's board, and its schema is read again. Where
   the only writers behind are a release's own, it runs with `--leave-behind`, which names them;
@@ -1055,7 +1058,7 @@ with no build of its own runs that release from then on. Nothing else goes back 
 the newer release moved stays at that release's schema, which the older release's server reads
 and writes nothing to ([the switch](#the-switch)) and the older release's `tasks` refuses. Its
 store as it was before the move is the snapshot the refresh took
-(`before-schema-N-RELEASE.surql`), and a board put back to it is one that went back, which the
+(`before-schema-N-RELEASE.surql`, or `.sql` of a board on PostgreSQL), and a board put back to it is one that went back, which the
 owner accepts ([TASKS](TASKS.md#a-board-that-went-back)). Pointing `current` on the machine whose
 server is the shared one is the owner's word, as any switch of that server is. The next green
 refresh points `current` at the release it installs.

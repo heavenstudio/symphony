@@ -373,7 +373,10 @@ impl Store {
     /// know is refused before anything is written.
     pub fn carry(&self, carried: &Value) -> Result<(), Error> {
         let tables = carried.as_object().cloned().unwrap_or_default();
-        if let Some(unknown) = tables.keys().find(|table| !CARRIED.contains(&table.as_str())) {
+        if let Some(unknown) = tables
+            .keys()
+            .find(|table| !CARRIED.contains(&table.as_str()))
+        {
             return Err(Error::Refused(format!(
                 "{unknown} is no table a move carries: nothing was written"
             )));
@@ -594,9 +597,18 @@ const DUMPED: [&str; 11] = [
 /// The tables a move leaves, each with why nothing of the board is lost with it.
 #[cfg(test)]
 const LEFT: [(&str, &str); 7] = [
-    ("recovery", "the copy gives the new board a generation of its own"),
-    ("meta", "the opening that makes the new board writes its schema"),
-    ("copied_fields", "written by the copy, from the rows it copies"),
+    (
+        "recovery",
+        "the copy gives the new board a generation of its own",
+    ),
+    (
+        "meta",
+        "the opening that makes the new board writes its schema",
+    ),
+    (
+        "copied_fields",
+        "written by the copy, from the rows it copies",
+    ),
     ("said", "written by the copy: each sender's last word"),
     ("words", "written by the copy: the search indexes"),
     (
@@ -637,11 +649,22 @@ mod placed {
     #[test]
     fn a_carried_key_reads_alike_from_both_engines_and_only_a_hold_is_carried_of_counter() {
         use serde_json::json;
-        assert_eq!(key("writer", &json!(["writer", ["host", "/bin"]])), json!(["host", "/bin"]));
-        assert_eq!(key("writer", &json!(["host", "/bin"])), json!(["host", "/bin"]));
+        assert_eq!(
+            key("writer", &json!(["writer", ["host", "/bin"]])),
+            json!(["host", "/bin"])
+        );
+        assert_eq!(
+            key("writer", &json!(["host", "/bin"])),
+            json!(["host", "/bin"])
+        );
         assert_eq!(key("chat_event", &json!("7")), json!("7"));
         assert!(hold(&json!(["hold", "sim/jump"])));
-        for other in [json!(["slots", "h"]), json!("message"), json!(["board", 7]), json!(null)] {
+        for other in [
+            json!(["slots", "h"]),
+            json!("message"),
+            json!(["board", 7]),
+            json!(null),
+        ] {
             assert!(!hold(&other), "{other}");
         }
     }

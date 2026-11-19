@@ -168,26 +168,36 @@ impl Home {
         if postgresql.is_none() && !self.surreal.is_file() {
             return Err(ServerError::NoSurreal(self.surreal.clone()));
         }
+        // Before anything is made: a board whose database does not run leaves no folder.
+        let served = match postgresql {
+            Some((postgres, running)) => (Some(postgres), running),
+            None => (None, self.running_now()?),
+        };
         let folder = file.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(folder).map_err(io("could not make", folder))?;
         let name = file
             .file_name()
             .map_or_else(|| "export".into(), |name| name.to_string_lossy());
         let partial = folder.join(format!(".{name}.{}.partial", std::process::id()));
-        let (mut export, program, running) = match postgresql {
-            Some((postgres, running)) => {
+        let (mut export, program, running) = match served {
+            (Some(postgres), running) => {
                 assert!(rpc::plain(database), "a database is a plain name");
                 let program = postgres.program("pg_dump");
                 let mut export = command(&program);
                 export
-                    .args(["--no-owner", "--no-password", "-U", super::postgres::USER, "-h"])
+                    .args([
+                        "--no-owner",
+                        "--no-password",
+                        "-U",
+                        super::postgres::USER,
+                        "-h",
+                    ])
                     .arg(postgres.socket())
                     .args(["-d", database, "-f"])
                     .arg(&partial);
                 (export, program, running)
             }
-            None => {
-                let running = self.running_now()?;
+            (None, running) => {
                 let mut export = command(&self.surreal);
                 export
                     .args(["export", "--endpoint", &format!("http://{}", running.addr)])

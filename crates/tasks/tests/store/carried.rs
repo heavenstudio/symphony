@@ -35,12 +35,9 @@ fn seeded(f: &Fixture) {
             "schema": 22, "seen": 1_800_000_000.25,
         }))
         .unwrap();
-    raw.row(
-        "unanswered_restore",
-        json!(["tools/one", "amber-heron", 9]),
-    )
-    .create(json!({"at": 1_800_000_001.0}))
-    .unwrap();
+    raw.row("unanswered_restore", json!(["tools/one", "amber-heron", 9]))
+        .create(json!({"at": 1_800_000_001.0}))
+        .unwrap();
     raw.row("counter", json!(["hold", "tools/one"]))
         .create(json!({"last": 0, "ts": 1_800_000_002.5}))
         .unwrap();
@@ -55,7 +52,12 @@ fn seeded(f: &Fixture) {
         .unwrap();
     assert!(
         f.store
-            .artifact_ledger_cas("tenant", "project", 0, &json!({"format": 1, "n": [null, 1e18]}))
+            .artifact_ledger_cas(
+                "tenant",
+                "project",
+                0,
+                &json!({"format": 1, "n": [null, 1e18]})
+            )
             .unwrap()
     );
 }
@@ -114,9 +116,15 @@ fn carried_across(from: Backend, to: Backend) {
         "a fence is not carried"
     );
     assert_eq!(raw.row("counter", "message").get().unwrap(), counters);
-    assert_eq!(raw.table("callback_lease").count().unwrap(), 0, "no lease is carried");
     assert_eq!(
-        raw.row("callback_state", "amber-heron").field("revision").unwrap(),
+        raw.table("callback_lease").count().unwrap(),
+        0,
+        "no lease is carried"
+    );
+    assert_eq!(
+        raw.row("callback_state", "amber-heron")
+            .field("revision")
+            .unwrap(),
         json!(12),
         "the revision the next lease is taken past"
     );

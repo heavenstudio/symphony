@@ -24,7 +24,6 @@ mod hold;
 mod home;
 mod home_fixture;
 mod left_replay;
-mod moving;
 /// The recipients' Unix sockets, served by this process (the perf tests').
 #[path = "../perf/listeners.rs"]
 #[expect(
@@ -32,6 +31,7 @@ mod moving;
     reason = "the perf target waits on what a socket hears; these tests read it in a wait of their own"
 )]
 mod listeners;
+mod moving;
 mod no_lsof;
 mod own_board;
 mod port;

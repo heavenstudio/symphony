@@ -806,8 +806,7 @@ impl<'a> Side<'a> {
         (store.carry(carried)).map_err(unwritten("the carried tables could not be written"))?;
         (store.marker_past(marker)).map_err(unwritten("the marker could not be moved"))?;
         let (there, kept, _) = self.board(false)?;
-        let rows = differing(&json!(board), &json!(there))?
-            + differing(carried, &kept)?;
+        let rows = differing(&json!(board), &json!(there))? + differing(carried, &kept)?;
         Ok(rows)
     }
 }
@@ -824,8 +823,7 @@ fn same(a: &Value, b: &Value) -> bool {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same(a, b))
         }
         (Value::Object(a), Value::Object(b)) => {
-            a.len() == b.len()
-                && (a.iter()).all(|(key, a)| b.get(key).is_some_and(|b| same(a, b)))
+            a.len() == b.len() && (a.iter()).all(|(key, a)| b.get(key).is_some_and(|b| same(a, b)))
         }
         _ => a == b,
     }
@@ -854,7 +852,10 @@ fn differing(written: &Value, read: &Value) -> Result<usize, ServerError> {
         read.as_object().unwrap_or(&empty),
     );
     let mut rows = 0;
-    for table in a.keys().chain(b.keys().filter(|table| !a.contains_key(*table))) {
+    for table in a
+        .keys()
+        .chain(b.keys().filter(|table| !a.contains_key(*table)))
+    {
         let was = a.get(table).and_then(Value::as_array).unwrap_or(&none);
         let is = b.get(table).and_then(Value::as_array).unwrap_or(&none);
         let differs = (0..was.len().max(is.len())).find(|&row| match (was.get(row), is.get(row)) {
@@ -885,9 +886,18 @@ mod tests {
         let board = json!({"tasks": [{"id": 1}, {"id": 2}], "asks": []});
         assert_eq!(differing(&board, &board).unwrap(), 2);
         for (other, said) in [
-            (json!({"tasks": [{"id": 1}], "asks": []}), "tasks has 1 rows against 2, and row 1"),
-            (json!({"tasks": [{"id": 1}, {"id": 3}], "asks": []}), "row 1 is {\"id\":3}"),
-            (json!({"tasks": [{"id": 1}, {"id": 2}], "asks": [], "more": [1]}), "more has 1 rows against 0"),
+            (
+                json!({"tasks": [{"id": 1}], "asks": []}),
+                "tasks has 1 rows against 2, and row 1",
+            ),
+            (
+                json!({"tasks": [{"id": 1}, {"id": 3}], "asks": []}),
+                "row 1 is {\"id\":3}",
+            ),
+            (
+                json!({"tasks": [{"id": 1}, {"id": 2}], "asks": [], "more": [1]}),
+                "more has 1 rows against 0",
+            ),
             (json!({"asks": []}), "tasks has 0 rows against 2, and row 0"),
         ] {
             let refused = differing(&board, &other).unwrap_err().to_string();
@@ -898,7 +908,10 @@ mod tests {
     #[test]
     fn a_number_is_the_same_by_what_it_counts_and_nothing_else_is_the_same_loosely() {
         let whole = json!({"ts": 1_800_000_000.0, "n": [1, {"k": 2.5}], "t": "3"});
-        assert!(same(&whole, &json!({"n": [1.0, {"k": 2.5}], "t": "3", "ts": 1_800_000_000})));
+        assert!(same(
+            &whole,
+            &json!({"n": [1.0, {"k": 2.5}], "t": "3", "ts": 1_800_000_000})
+        ));
         for other in [
             json!({"ts": 1_800_000_001, "n": [1, {"k": 2.5}], "t": "3"}),
             json!({"ts": 1_800_000_000, "n": [1, {"k": 2.5}], "t": 3}),
@@ -909,13 +922,21 @@ mod tests {
         ] {
             assert!(!same(&whole, &other), "{other}");
         }
-        let (large, next) = (json!(9_007_199_254_740_993_i64), json!(9_007_199_254_740_992_i64));
-        assert!(!same(&large, &next), "whole numbers are never compared as fractions");
+        let (large, next) = (
+            json!(9_007_199_254_740_993_i64),
+            json!(9_007_199_254_740_992_i64),
+        );
+        assert!(
+            !same(&large, &next),
+            "whole numbers are never compared as fractions"
+        );
     }
 
     #[test]
     fn a_database_defines_nothing_only_when_every_part_of_its_info_is_empty() {
-        assert!(defines_nothing(&json!({"tables": {}, "users": {}, "configs": []})));
+        assert!(defines_nothing(
+            &json!({"tables": {}, "users": {}, "configs": []})
+        ));
         assert!(defines_nothing(&json!({})));
         for holds in [
             json!({"tables": {"row": "DEFINE TABLE row"}, "users": {}}),
@@ -945,16 +966,26 @@ mod tests {
         fs::write(&path, serde_json::to_vec(&journal).unwrap()).unwrap();
         assert_eq!(read(&path).unwrap(), Some(journal.clone()));
         assert!(unsettled(&path).contains("a move to PostgreSQL stopped before it committed"));
-        let committed = Journal { committed: true, ..journal.clone() };
+        let committed = Journal {
+            committed: true,
+            ..journal.clone()
+        };
         fs::write(&path, serde_json::to_vec(&committed).unwrap()).unwrap();
         assert!(unsettled(&path).contains("a move to PostgreSQL committed and is not finished"));
         for torn in ["", "{", "{\"format\":2}", "[]"] {
             fs::write(&path, torn).unwrap();
             let refused = read(&path).unwrap_err().to_string();
-            assert!(refused.contains("does not read as a switch's journal"), "{refused}");
+            assert!(
+                refused.contains("does not read as a switch's journal"),
+                "{refused}"
+            );
             assert!(unsettled(&path).contains("a move or a restore stopped part way"));
         }
-        let newer = serde_json::to_string(&Journal { format: 2, ..journal }).unwrap();
+        let newer = serde_json::to_string(&Journal {
+            format: 2,
+            ..journal
+        })
+        .unwrap();
         fs::write(&path, newer).unwrap();
         assert!(read(&path).is_err());
         fs::remove_dir_all(&dir).unwrap();

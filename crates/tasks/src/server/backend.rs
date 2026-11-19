@@ -7,9 +7,9 @@
 
 use super::{Doing, Home, Postgres, Running, ServerError, io, postgres, scratch};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;
-use std::fmt;
 use std::path::Path;
 
 const FILE: &str = "backend.json";

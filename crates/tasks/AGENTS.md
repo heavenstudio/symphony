@@ -149,9 +149,12 @@ release and reclaim takes, `ending.rs` the asks to end, `apart.rs` a start off a
 server selection, `export.rs` what a refresh reads of a running board, and
 `scratch.rs` a fixture's supervised server. `postgres.rs` is the board's PostgreSQL beside it,
 the machine's own from `[board] postgresql` or discovered on `PATH`, which `Home` starts and stops
-for a scratch board alone, on a socket under `/tmp` and no TCP; `postgres/lifecycle.rs` its hold,
-stopped-cluster snapshot, scratch recovery and vacuum
-([POSTGRESQL](../../docs/POSTGRESQL.md)). `port.rs` is a child
+for the board whose identity names it, on a socket under `/tmp` and no TCP;
+`postgres/lifecycle.rs` its hold, stopped-cluster snapshot, recovery into a scratch home or over
+its own board, and vacuum ([POSTGRESQL](../../docs/POSTGRESQL.md)). `moving.rs` moves a board's
+store between the engines and holds the journalled switch a restore over a board shares; a
+table added to the board is placed as copied, carried or left in `store/copy.rs`, whose test
+fails on one that is none, since a move would drop it. `port.rs` is a child
 server's loopback port.
 
 `pg.rs` is the socket client of that PostgreSQL. `pg/external.rs` is the hosted board's settings,

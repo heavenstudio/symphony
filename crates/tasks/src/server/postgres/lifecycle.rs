@@ -158,7 +158,12 @@ impl Postgres {
     /// revoked. Nothing is deleted. A failure before the commit leaves the board on the cluster
     /// it had; a journal an earlier call left is settled instead, which is then what this
     /// answers (a committed restore finished) or refuses with (one undone).
-    pub fn restore_over(&self, snapshot: &Path, by: &str, now: f64) -> Result<PathBuf, ServerError> {
+    pub fn restore_over(
+        &self,
+        snapshot: &Path,
+        by: &str,
+        now: f64,
+    ) -> Result<PathBuf, ServerError> {
         use crate::server::moving::{Journal, Kind, Left, Settled};
         let home = &self.home;
         let _locked = home.lock(Doing::Moving)?;
@@ -197,7 +202,8 @@ impl Postgres {
         let left = |why: ServerError| {
             let _ = fs::remove_dir_all(&staging);
             let released = if took {
-                home.release_as(by, None).map(|_| "and its hold is released")
+                home.release_as(by, None)
+                    .map(|_| "and its hold is released")
             } else {
                 Ok("and still held")
             };
