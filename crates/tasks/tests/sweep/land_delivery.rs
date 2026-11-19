@@ -721,6 +721,73 @@ fn a_needed_stamp_that_is_red_refuses_as_it_does_here() {
 }
 
 #[test]
+fn the_evidence_says_a_stamp_a_gate_decision_waived_at_the_head_and_blocks_on_a_raise_not_made() {
+    use symphony_board::gates::{Decision, Kind};
+    let (r, _) = delivering();
+    write(&r.root, "tools/size-budget.toml", "symphony = 100\n");
+    git(&r.root, &["add", "-A"]);
+    git(&r.root, &["commit", "-qm", "the budget"]);
+    let (people, wt, _) = in_review(&r, SLUG, "ui/rows.gd");
+    write(&wt, "tools/size-budget.toml", "symphony = 130\n");
+    git(&wt, &["commit", "-qam", "past the line"]);
+    let tip = head(&wt, "HEAD");
+    assess(&r, SLUG, &people.assessor, &["tests", "pictures"], &tip);
+    ran(&r, SLUG, &tip, "cargo test -p sim", 0);
+    let decide = |decision: Decision| {
+        (r.board.store)
+            .decide_gate(SLUG, &Catalogue::symphony(), &decision)
+            .unwrap();
+    };
+    let waiver = Decision {
+        gate: "pictures".into(),
+        kind: Kind::Waive,
+        from: None,
+        to: None,
+        tip: Some(tip.clone()),
+        by: people.orch.clone(),
+        why: "nothing a page shows".into(),
+        at: 0.0,
+    };
+    decide(waiver.clone());
+    decide(Decision {
+        gate: "tools/size-budget.toml:symphony".into(),
+        kind: Kind::Raise,
+        from: Some(100),
+        to: Some(120),
+        tip: None,
+        why: "over after the cut".into(),
+        ..waiver
+    });
+    let mut env = r.env(&r.root);
+    (env.vars).insert(FOLDER_VAR.into(), work(&r).to_string_lossy().into_owned());
+    let read = evidence::of(&r.board.store, &env, SLUG, None).unwrap();
+    let pictures = read
+        .stamps
+        .iter()
+        .find(|stamp| stamp.name == "pictures")
+        .unwrap();
+    assert_eq!(pictures.standing, evidence::Standing::Waived);
+    assert_eq!(
+        pictures.detail,
+        format!(
+            "Waived at {} by the gate decision of {}: nothing a page shows",
+            &tip[..7],
+            people.orch
+        )
+    );
+    assert_eq!(
+        read.blocking,
+        [format!(
+            "tools/size-budget.toml:symphony raised 100 -> 120 by {}, but the tip {} sets it to \
+             130, which no decision gave: a raise lands at the number decided",
+            people.orch,
+            &tip[..7]
+        )]
+    );
+    assert!(!read.eligible);
+}
+
+#[test]
 fn a_head_changing_generated_paths_or_merging_another_history_is_refused() {
     let r = Repo::new();
     project_file(

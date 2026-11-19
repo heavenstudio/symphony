@@ -754,9 +754,10 @@ impl Store {
                 None
             };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let (reason, needs, unlanded, blocked, moved, holds) = (
+            let (reason, needs, gates, unlanded, blocked, moved, holds) = (
                 change.reason.is_some(),
                 change.needs.is_some(),
+                change.gates.is_some(),
                 change.unlanded.is_some(),
                 change.blocked.is_some(),
                 (change.status.as_deref()).map(|status| status == "cancelled"),
@@ -764,8 +765,24 @@ impl Store {
             );
             let placed = placing.is_some();
             let body = both(
-                surreal::rule(reason, needs, unlanded, blocked, moved, holds, placed),
-                pg::rule(reason, needs, unlanded, blocked, moved, holds, placed),
+                surreal::rule(
+                    reason,
+                    (needs, gates),
+                    unlanded,
+                    blocked,
+                    moved,
+                    holds,
+                    placed,
+                ),
+                pg::rule(
+                    reason,
+                    (needs, gates),
+                    unlanded,
+                    blocked,
+                    moved,
+                    holds,
+                    placed,
+                ),
             );
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
@@ -1251,6 +1268,9 @@ struct Change {
     /// The task's needs it writes, the board's own field ([`crate::stamps::Needs`],
     /// [`Store::set_needs`]).
     needs: Option<Value>,
+    /// The task's gate decisions it writes, every one, the board's own field
+    /// ([`crate::gates::Decision`], [`Store::decide_gate`]).
+    gates: Option<Value>,
     /// What the block it makes waits on, the board's own field ([`crate::waits_on::Blocked`]).
     blocked: Option<Value>,
     /// The mark of a task approved and not landed, the board's own field
@@ -1342,6 +1362,7 @@ impl Change {
             "say": say,
             "move_reason": self.reason,
             "needs": self.needs,
+            "gates": self.gates,
             "blocked": self.blocked,
             "unlanded": self.unlanded,
         })

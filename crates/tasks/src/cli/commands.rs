@@ -23,6 +23,7 @@ const PULL_SECONDS: f64 = 600.0;
 
 mod asks;
 mod finish;
+mod gate;
 mod limits;
 mod list;
 mod panes;
@@ -293,6 +294,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "stamps" => stamps::stamps(store, c)?,
         "runs" => runs::runs(store, c)?,
         "needs" => stamps::needs(store, c)?,
+        "gate" => gate::gate(store, c)?,
         "create" => create(store, c)?,
         "priority" => {
             // This command's input errors use exit 2, including a task the board does not hold;

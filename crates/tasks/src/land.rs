@@ -1963,6 +1963,7 @@ impl Landing<'_> {
         }
         self.owner_lines(&base, &tip)
             .map_err(|refusal| self.refuse(refusal))?;
+        let raised = self.raised(&base, &tip, &needed)?;
         let judged = match &approved {
             Some(approval) => {
                 let covered = covered(&self.main, slug, &base, &tip, approval).map_err(|line| {
@@ -2009,6 +2010,7 @@ impl Landing<'_> {
         if needed.told() {
             self.say(&needed.line(slug, &tip, &met));
         }
+        self.say_raised(&raised);
         if self.delivers() {
             return self.deliver(&task, &tip, &judged);
         }
@@ -3113,6 +3115,32 @@ impl Landing<'_> {
     /// the one landing alone: no branch's commit fixes git, and a land that cannot tell must not
     /// leave the answer behind. Asked before the merge and again right before the default branch
     /// moves, so an answer saved while the land merged and checked is not left behind either.
+    /// Each raise `needed`'s gate decisions gave, read at `tip` against the default branch at
+    /// `base` ([`needs::raises`]): the lines the landing says, or its refusal, to the executor,
+    /// where the tip sets a limit above the default branch's to a number no decision gave.
+    fn raised(&self, base: &str, tip: &str, needed: &Needed) -> Result<Vec<String>, Stop> {
+        needs::raises(&self.main, base, tip, &needed.decisions).map_err(|line| {
+            self.refuse(Refusal::to(
+                line,
+                "@executor",
+                "Commit the limit at the number decided, its message the account, or ask the \
+                 task's orchestrator for a decision of the number it holds; then land it again"
+                    .into(),
+            ))
+        })
+    }
+
+    /// The landing's line naming each of `raised` ([`Landing::raised`]), where there is one.
+    fn say_raised(&mut self, raised: &[String]) {
+        if !raised.is_empty() {
+            let slug = self.slug;
+            self.say(&format!(
+                "land {slug}: its gate decisions: {}",
+                raised.join("; ")
+            ));
+        }
+    }
+
     fn owner_lines(&self, base: &str, tip: &str) -> Result<(), Refusal> {
         let slug = self.slug;
         let held = self.answers_left(base, tip).map_err(|why| {
