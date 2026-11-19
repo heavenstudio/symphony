@@ -269,12 +269,13 @@ export function pressed(event: Event, viewer: Viewer, reach = PAGE_REACH): void 
     return;
   }
   const image = target.closest(reach.pictures);
-  const set = image && zoomable(image) ? pictureSet(image) : null;
+  if (!image || !zoomable(image)) return;
+  const set = pictureSet(image);
   if (!set) return;
   event.preventDefault();
   // The picture takes the focus first, where a touch gives it none, so the viewer, closed, gives
   // it back to the picture it was opened on.
-  if (image?.hasAttribute("tabindex")) (image as HTMLElement).focus?.({ preventScroll: true });
+  if (image.hasAttribute("tabindex")) (image as HTMLElement).focus({ preventScroll: true });
   viewer.open(...set);
 }
 

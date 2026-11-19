@@ -888,9 +888,10 @@ details.settled > .decision {
 .compare img[role="button"] {
   cursor: zoom-in;
 }
-/* A long reference with no place to break (a commit's hash) wraps inside its card rather than
- * running under the card's edge, every character of it read and selected. */
-.decision-text :not(pre) > code {
+/* A long reference with no place to break (a commit's hash, a path) wraps inside its card or its
+ * paragraph rather than running under the document's edge, every character of it read and
+ * selected; a word that fits its line, and a table's widths, are as they were. */
+.doc-body :not(pre) > code {
   overflow-wrap: break-word;
 }
 .compare figure:first-child:has(img[alt="Base"]) {
