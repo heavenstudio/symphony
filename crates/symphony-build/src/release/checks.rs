@@ -541,13 +541,13 @@ mod tests {
         let tree = Tree::new();
         let ready = tree.path("ready");
         let helper = tree.path("helper.pid");
-        let fifo = tree.path("hold");
+        // `ready` is written by the check's foreground child, which the stop's TERM to the group
+        // ends whenever it comes; bash runs its trap once that command completes. A shell that says
+        // it is ready and then blocks in a builtin can take the TERM before the block starts, and
+        // never runs the trap.
         let script = format!(
-            "mkfifo '{}'; exec 3<> '{}'; \
-             trap 'sleep 1000 & echo $! > \"{}\"; echo term; exit 37' TERM; \
-             echo ready > '{}'; read -r held <&3",
-            fifo.display(),
-            fifo.display(),
+            "trap 'sleep 1000 & echo $! > \"{}\"; echo term; exit 37' TERM; \
+             sh -c 'echo ready > \"{}\"; exec sleep 1000'; exit 1",
             helper.display(),
             ready.display()
         );
