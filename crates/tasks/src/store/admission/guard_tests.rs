@@ -133,7 +133,10 @@ fn a_guarded_acceptance_is_admitted_only_with_a_current_attestation_and_recorded
 
         // A retry under the same key answers its first result, with or without the attestation.
         assert_eq!(applied(&f.store, &request, &[]).unwrap(), result);
-        assert_eq!(applied(&f.store, &request, &[signed]).unwrap(), result);
+        assert_eq!(
+            applied(&f.store, &request, std::slice::from_ref(&signed)).unwrap(),
+            result
+        );
         assert_eq!(
             accepted_state(&f).admitted,
             1,
@@ -142,6 +145,13 @@ fn a_guarded_acceptance_is_admitted_only_with_a_current_attestation_and_recorded
         let mut other = request.clone();
         other.edge = "submit".into();
         assert!(refused(applied(&f.store, &other, &[])).contains("accept"));
+        // The same attestation under another key takes no second transition from that revision.
+        let mut twice = request.clone();
+        twice.idempotency_key = "accept-again".into();
+        assert!(
+            refused(applied(&f.store, &twice, std::slice::from_ref(&signed)))
+                .starts_with("stale_task:")
+        );
 
         // The dispatch checks the same guard again, by the attestation the admission recorded.
         assert_eq!(
