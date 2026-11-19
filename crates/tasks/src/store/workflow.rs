@@ -41,25 +41,42 @@ pub struct TaskPosition {
     pub manual: Option<Recovered>,
 }
 
-/// The exit of a holder a recovery answered (`Store::recover_holder`): an agent's own release of
-/// its role, or a holder lost, by the position's configured action (docs/WORKFLOW.md, "Recovery").
+/// What a recovery answered (docs/WORKFLOW.md, "Recovery"): a holder's exit
+/// (`Store::recover_holder`), an agent's own release of its role or a holder lost, or an execution
+/// attempt's ending (`Store::observe_attempt`), each by the position's configured action; or the
+/// automatic edge the board took on an attempt's failure.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recovered {
     pub trigger: Trigger,
+    /// The holder that exited; for an attempt, the handle it ran as, or the attempt where it ran
+    /// as none.
     pub holder: String,
-    /// The role of the position's staffing the holder held there.
+    /// The role of the position's staffing the holder held there; for an attempt, the role it ran
+    /// as.
     pub role: String,
     /// Whether the action asks a person to recover the task by hand.
     pub manual: bool,
+    /// The execution attempt whose ending it answered: an attempt's ending is answered once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<String>,
+    /// The automatic edge whose retry bound this recovery exhausted, sending the task to the
+    /// bound's `exhausted` pair: the board counts that edge's takes from here again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exhausted: Option<String>,
 }
 
-/// What a recovery answers: the position's `release` action, or its `lost_holder` one.
+/// What a recovery answers: the position's `release` action, its `lost_holder` one, or, on an
+/// execution attempt's ending, its `attempt_failure` or `cancellation_acknowledged` one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Trigger {
     Release,
     LostHolder,
+    /// An attempt that ended failed or rejected, no cancel asked of it.
+    AttemptFailure,
+    /// An attempt whose cancel is known to have taken: it ended after one was asked.
+    CancellationAcknowledged,
 }
 
 impl Trigger {
@@ -68,6 +85,8 @@ impl Trigger {
         match self {
             Trigger::Release => "release",
             Trigger::LostHolder => "lost_holder",
+            Trigger::AttemptFailure => "attempt_failure",
+            Trigger::CancellationAcknowledged => "cancellation_acknowledged",
         }
     }
 }
@@ -173,6 +192,15 @@ const PLANS: usize = 5;
 struct Standings {
     active: Option<Active>,
     tasks: Vec<Read>,
+    attempts: Vec<LiveRead>,
+}
+
+/// A live execution attempt, as an activation reads it.
+#[derive(Deserialize)]
+struct LiveRead {
+    attempt: String,
+    task: String,
+    cancellation: crate::execution::Cancellation,
 }
 
 #[derive(Deserialize)]
@@ -267,6 +295,13 @@ impl Store {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    let attempts = (read.attempts.iter())
+                        .filter(|live| live.task == task.slug)
+                        .map(|live| activate::Live {
+                            attempt: live.attempt.clone(),
+                            cancelled: live.cancellation != crate::execution::Cancellation::None,
+                        })
+                        .collect();
                     activate::Standing {
                         slug: task.slug,
                         version: task.version,
@@ -274,6 +309,7 @@ impl Store {
                         position: task.position,
                         blocked_from: task.blocked_from,
                         roles,
+                        attempts,
                     }
                 })
                 .collect();
@@ -426,6 +462,14 @@ impl Store {
             self.transact(both(sql::POSITION, pg::position()), json!({"slug": slug}))
         })?;
         decoded(body, "workflow position")
+    }
+
+    /// Every transition recorded of `slug`, by the workflow revision each made: none for a task no
+    /// workflow ever held.
+    pub fn workflow_transitions(&self, slug: &str) -> Result<Vec<Transition>, Error> {
+        let body: Value =
+            self.retrying(|| self.read(both(sql::EVENTS, pg::events()), json!({"slug": slug})))?;
+        Ok(decoded(body, "workflow transitions")?.unwrap_or_default())
     }
 
     /// `transition` recorded and its task put where it goes, in one write, when the task is at

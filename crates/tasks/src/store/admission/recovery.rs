@@ -173,22 +173,7 @@ impl Store {
             };
             let vars = vars(&decided, &recovery, holder, role, seen, slots, by, at);
             let guarded = !vars["slots"].as_array().is_none_or(Vec::is_empty);
-            let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
-            let guard = if guarded { sql_cap::GUARD } else { "" };
-            let body = both(
-                format!("{}{logged}{guard}", sql::APPLY),
-                pg::workflow::apply(
-                    &pg::logged(
-                        "v ->> 'slug'",
-                        "v ->> 'sender'",
-                        "'system'",
-                        "v ->> 'said'",
-                        "NULL",
-                    ),
-                    guarded,
-                ),
-            );
-            self.written(body, vars, slug)?;
+            self.written(applied(guarded), vars, slug)?;
             Ok(recovery.transition)
         })
     }
@@ -212,6 +197,26 @@ impl Store {
             ]),
         }
     }
+}
+
+/// The write of a recovery (`sql::APPLY`), its line on the thread by the system, and the slot
+/// counters it holds guarded after it when `guarded`.
+pub(super) fn applied(guarded: bool) -> crate::store::statement::Statement<'static> {
+    let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
+    let guard = if guarded { sql_cap::GUARD } else { "" };
+    both(
+        format!("{}{logged}{guard}", sql::APPLY),
+        pg::workflow::apply(
+            &pg::logged(
+                "v ->> 'slug'",
+                "v ->> 'sender'",
+                "'system'",
+                "v ->> 'said'",
+                "NULL",
+            ),
+            guarded,
+        ),
+    )
 }
 
 /// The write's variables: the roles the holder held that it relies on, those it drops, its
@@ -262,8 +267,9 @@ fn vars(
     })
 }
 
-/// The recovery's line on the task's thread.
-fn said(recovery: &Recovery, holder: &str) -> String {
+/// The recovery's line on the task's thread: the holder's exit, or the attempt's ending, it
+/// answered, and where the task went.
+pub(super) fn said(recovery: &Recovery, holder: &str) -> String {
     let let_go: Vec<String> = (recovery.drop.iter())
         .map(|(h, r)| format!("{h} {r}"))
         .collect();
@@ -280,7 +286,19 @@ fn said(recovery: &Recovery, holder: &str) -> String {
     let exit = match recovered.trigger {
         Trigger::Release => "released",
         Trigger::LostHolder => "lost",
+        Trigger::AttemptFailure => "failed",
+        Trigger::CancellationAcknowledged => "ended cancelled",
     };
+    let role = &recovered.role;
+    // An attempt no session holds is named by its id alone, its holder.
+    let mut what = match &recovered.attempt {
+        Some(attempt) if *attempt == recovered.holder => format!("{role} attempt {attempt} {exit}"),
+        Some(attempt) => format!("attempt {attempt} of {}'s {role} {exit}", recovered.holder),
+        None => format!("{holder}'s {role} {exit}"),
+    };
+    if let Some(edge) = &recovered.exhausted {
+        what.push_str(&format!(", and {edge}'s retry bound is exhausted"));
+    }
     let from = transition.from.as_ref().unwrap_or(&transition.to);
     let went = if *from == transition.to {
         format!("stays at {}", named(from))
@@ -288,8 +306,8 @@ fn said(recovery: &Recovery, holder: &str) -> String {
         format!("{} → {}", named(from), named(&transition.to))
     };
     let mut line = format!(
-        "the board's recovery ({}): {holder}'s {} {exit}; {went}, workflow revision {}",
-        transition.id, recovered.role, transition.revision
+        "the board's recovery ({}): {what}; {went}, workflow revision {}",
+        transition.id, transition.revision
     );
     if !let_go.is_empty() {
         line.push_str(&format!("; let go: {}", let_go.join(", ")));

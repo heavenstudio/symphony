@@ -8,10 +8,18 @@
 //! A role the task's position does not staff (an executor's left after its work went to review, a
 //! reservation) is the holder's alone to let go: it goes, and the position stays as it was. The
 //! orchestrator's role is the board's coordination, never a workflow's.
+//!
+//! An execution attempt's ending is answered the same way ([`observed`]): its failure by the
+//! automatic edge leaving the task's pair, while that edge's retry bound lasts, else by the
+//! position's `attempt_failure` action; an acknowledged cancel by its `cancellation_acknowledged`
+//! action. Only from where the task stood when the attempt was admitted: a task moved since is
+//! another's work, and the ending stays on its attempt.
 
 use super::admit::{Context, Facts, Refusal, word};
-use super::{Recovered, Transition, Trigger};
-use symphony_api::workflow::{Definition, Effect, Operation, Pair, Position, RefusalCode, Slot};
+use super::{Recovered, TaskPosition, Transition, Trigger};
+use symphony_api::workflow::{
+    Definition, Edge, Effect, Operation, Pair, Position, RecoveryAction, RefusalCode, Slot,
+};
 use symphony_plugin::execution::Principal;
 
 /// What a recovery writes: the move or stay it records, none when the holder held no role the
@@ -85,6 +93,15 @@ pub fn recover(
     let action = match trigger {
         Trigger::Release => &recovery.release,
         Trigger::LostHolder => &recovery.lost_holder,
+        Trigger::AttemptFailure | Trigger::CancellationAcknowledged => {
+            return Err(Refusal::new(
+                RefusalCode::UnknownId,
+                format!(
+                    "{} is an attempt's ending, not a holder's exit",
+                    trigger.as_str()
+                ),
+            ));
+        }
     };
     if action.release_role {
         drop.extend(staffed);
@@ -107,6 +124,49 @@ pub fn recover(
     }
     drop.sort();
     drop.dedup();
+    let recovered = Recovered {
+        trigger,
+        holder: holder.to_string(),
+        role: staffed_role,
+        manual: action.manual,
+        attempt: None,
+        exhausted: None,
+    };
+    Ok(Recovery {
+        transition: Some(acted(
+            context,
+            slug,
+            position,
+            declared,
+            action,
+            Some(Operation::Release),
+            recovered,
+            principal,
+            at,
+        )),
+        drop,
+        acquires: action.slot == Slot::Acquire,
+    })
+}
+
+/// The transition `action`, the recovery of `declared`, the position `slug` stands at, records:
+/// a move to its target or a stay, the role it lets go and its slot effect, what it `recovered`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one transition's parts, each read once"
+)]
+fn acted(
+    context: Context,
+    slug: &str,
+    position: &TaskPosition,
+    declared: &Position,
+    action: &RecoveryAction,
+    operation: Option<Operation>,
+    recovered: Recovered,
+    principal: &Principal,
+    at: f64,
+) -> Transition {
+    let here = position.at();
     let to = action.target.clone().unwrap_or_else(|| here.clone());
     let destination = position_of(context.definition, &to)
         .expect("a validated definition declares every recovery target");
@@ -120,39 +180,217 @@ pub fn recover(
         policy: action.slot,
     });
     let revision = position.revision + 1;
-    Ok(Recovery {
-        transition: Some(Transition {
-            id: Transition::id_of(slug, revision),
-            slug: slug.clone(),
-            revision,
-            generation: context.generation,
-            digest: context.revision.digest.clone(),
-            edge: None,
-            operation: Some(Operation::Release),
-            activation: None,
-            from: Some(here),
-            // A stay keeps the pair a blocked task resumes to; a move goes to ordinary work.
-            resume: action
-                .target
-                .is_none()
-                .then(|| position.resume.clone())
-                .flatten(),
-            to,
-            status: super::activate::projection(destination.legacy),
-            principal: principal.clone(),
-            effects,
-            key: None,
-            recovery: Some(Recovered {
-                trigger,
-                holder: holder.to_string(),
-                role: staffed_role,
-                manual: action.manual,
-            }),
-            at,
-        }),
+    Transition {
+        id: Transition::id_of(slug, revision),
+        slug: slug.to_string(),
+        revision,
+        generation: context.generation,
+        digest: context.revision.digest.clone(),
+        edge: None,
+        operation,
+        activation: None,
+        from: Some(here),
+        // A stay keeps the pair a blocked task resumes to; a move goes to ordinary work.
+        resume: action
+            .target
+            .is_none()
+            .then(|| position.resume.clone())
+            .flatten(),
+        to,
+        status: super::activate::projection(destination.legacy),
+        principal: principal.clone(),
+        effects,
+        key: None,
+        recovery: Some(recovered),
+        at,
+    }
+}
+
+/// An execution attempt's ending as the board observed it (`crate::Store::observe_attempt`): the
+/// attempt, what its ending answers, the role and handle it ran as, and the workflow revision and
+/// pair its task stood at when it was admitted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Observation {
+    pub attempt: String,
+    pub trigger: Trigger,
+    pub role: String,
+    pub handle: Option<String>,
+    pub revision: u64,
+    pub at: Pair,
+}
+
+/// What an attempt's ending proposes: the automatic edge the board takes through admission,
+/// recording what it answered, or a recovery written as a holder's is.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Proposal {
+    Edge { edge: String, answered: Recovered },
+    Recovery(Box<Recovery>),
+}
+
+/// What `observation` proposes for the task `facts` read, whose recorded `transitions` these are,
+/// as `principal` at `at`; or refused, nothing written: a task no workflow holds; one that moved
+/// since the attempt was admitted (`stale_task`), whose ending stays on the attempt; a pair the
+/// workflow no longer declares; and a position that declares no action for it, where the task
+/// stays as it was.
+///
+/// A failure takes the automatic edge leaving the pair while it has been taken fewer times than
+/// its retry bound since that bound was last exhausted; past it, the position's `attempt_failure`
+/// action, sent to the bound's `exhausted` pair to wait on a person. With no automatic edge, a
+/// failure is the position's `attempt_failure` action, and an acknowledged cancel its
+/// `cancellation_acknowledged` one. An action releases the position's staffed role, whoever
+/// holds it, and every reservation, as it says.
+pub fn observed(
+    context: Context,
+    facts: &Facts,
+    observation: &Observation,
+    transitions: &[Transition],
+    principal: &Principal,
+    at: f64,
+) -> Result<Proposal, Refusal> {
+    let slug = &facts.slug;
+    let position = facts.position.as_ref().ok_or_else(|| {
+        Refusal::new(
+            RefusalCode::UnknownId,
+            format!("no custom workflow holds {slug}"),
+        )
+    })?;
+    let here = position.at();
+    let id = &observation.attempt;
+    if position.revision != observation.revision || here != observation.at {
+        return Err(Refusal::new(
+            RefusalCode::StaleTask,
+            format!(
+                "{slug} is at {} (workflow revision {}), not at {} (revision {}) where attempt \
+                 {id} was admitted: its ending stays on the attempt and moves nothing",
+                named(&here),
+                position.revision,
+                named(&observation.at),
+                observation.revision
+            ),
+        ));
+    }
+    let declared = position_of(context.definition, &here).ok_or_else(|| {
+        Refusal::new(
+            RefusalCode::StaleWorkflow,
+            format!(
+                "{slug} is at {}, which the active workflow does not declare",
+                named(&here)
+            ),
+        )
+    })?;
+    let mut answered = Recovered {
+        trigger: observation.trigger,
+        holder: observation.handle.clone().unwrap_or_else(|| id.clone()),
+        role: observation.role.clone(),
+        manual: false,
+        attempt: Some(id.clone()),
+        exhausted: None,
+    };
+    let actions = declared.recovery.as_ref();
+    let action = match observation.trigger {
+        Trigger::AttemptFailure => {
+            let automatic: Vec<&Edge> = (context.definition.edges.iter())
+                .filter(|e| e.automatic && e.from == here)
+                .collect();
+            if let [_, second, ..] = automatic[..] {
+                return Err(Refusal::new(
+                    RefusalCode::UnsupportedActivation,
+                    format!(
+                        "more than one automatic edge leaves {}, {second} among them: the board \
+                         cannot choose",
+                        named(&here),
+                        second = second.id
+                    ),
+                ));
+            }
+            let failure = actions.map(|a| a.attempt_failure.clone());
+            match automatic.first() {
+                Some(edge) => match &edge.retry {
+                    Some(retry) if taken(transitions, &edge.id) >= retry.maximum => {
+                        // Exhausted: the failure's own action, sent where the bound says.
+                        answered.exhausted = Some(edge.id.clone());
+                        RecoveryAction {
+                            target: Some(retry.exhausted.clone()),
+                            manual: true,
+                            ..failure.unwrap_or(RecoveryAction {
+                                target: None,
+                                manual: true,
+                                slot: Slot::Retain,
+                                release_role: false,
+                                release_reservation: false,
+                            })
+                        }
+                    }
+                    _ => {
+                        return Ok(Proposal::Edge {
+                            edge: edge.id.clone(),
+                            answered,
+                        });
+                    }
+                },
+                None => failure.ok_or_else(|| undeclared(slug, &here, observation.trigger))?,
+            }
+        }
+        Trigger::CancellationAcknowledged => {
+            actions
+                .map(|a| a.cancellation_acknowledged.clone())
+                .ok_or_else(|| undeclared(slug, &here, observation.trigger))?
+        }
+        trigger @ (Trigger::Release | Trigger::LostHolder) => {
+            return Err(Refusal::new(
+                RefusalCode::UnknownId,
+                format!(
+                    "{} is a holder's exit, not an attempt's ending",
+                    trigger.as_str()
+                ),
+            ));
+        }
+    };
+    answered.manual = action.manual;
+    let staffing = declared.staffing.map(|r| word(&r));
+    let mut drop: Vec<(String, String)> = (facts.roles.iter())
+        .filter(|(_, r)| {
+            (action.release_role && staffing.as_deref() == Some(r.as_str()))
+                || (action.release_reservation && r == "reserved")
+        })
+        .cloned()
+        .collect();
+    drop.sort();
+    drop.dedup();
+    Ok(Proposal::Recovery(Box::new(Recovery {
+        transition: Some(acted(
+            context, slug, position, declared, &action, None, answered, principal, at,
+        )),
         drop,
         acquires: action.slot == Slot::Acquire,
-    })
+    })))
+}
+
+/// How many times the board took the automatic edge `edge` of the task whose `transitions` these
+/// are, since a recovery last exhausted its retry bound.
+fn taken(transitions: &[Transition], edge: &str) -> u32 {
+    let mut taken = 0;
+    for transition in transitions.iter().rev() {
+        let recovered = transition.recovery.as_ref();
+        if recovered.and_then(|r| r.exhausted.as_deref()) == Some(edge) {
+            break;
+        }
+        if transition.edge.as_deref() == Some(edge) {
+            taken += 1;
+        }
+    }
+    taken
+}
+
+fn undeclared(slug: &str, here: &Pair, trigger: Trigger) -> Refusal {
+    Refusal::new(
+        RefusalCode::ExplicitActionRequired,
+        format!(
+            "{} declares no {} recovery: {slug} stays as it was",
+            named(here),
+            trigger.as_str()
+        ),
+    )
 }
 
 fn position_of<'a>(definition: &'a Definition, pair: &Pair) -> Option<&'a Position> {
@@ -166,3 +404,7 @@ fn named(pair: &Pair) -> String {
 #[cfg(test)]
 #[path = "recover_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "recover_attempt_tests.rs"]
+pub(crate) mod attempt_tests;

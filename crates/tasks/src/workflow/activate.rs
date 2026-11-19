@@ -12,7 +12,7 @@
 use super::{Custom, Grants, Mapping, TaskPosition, Transition, Validated, builtin};
 use std::collections::BTreeMap;
 use symphony_api::workflow::{
-    Completion, Definition, Dependency, Effect, LegacyStatus, Pair, Position, RecoveryAction,
+    Authority, Completion, Definition, Dependency, Edge, Effect, LegacyStatus, Pair, Position,
 };
 use symphony_plugin::execution::Principal;
 
@@ -38,10 +38,10 @@ impl Host {
 }
 
 /// The definition refused unless this host supports everything it needs: each capability it
-/// declares granted to someone, each adapter registered, and nothing this release cannot run yet.
-/// Guards wait on revision-bound guards; attempt-driven recovery, automatic edges and retry bounds
-/// wait on durable attempts; `accepted_output` dependencies and parent integration on their own
-/// follow-ups. Each refusal says which, so the project knows what it asked for.
+/// declares granted to someone, each adapter registered, every automatic edge one the board can
+/// take on an attempt's failure ([`automatic`]), and nothing this release cannot run yet. Guards
+/// wait on revision-bound guards; `accepted_output` dependencies and parent integration on their
+/// own follow-ups. Each refusal says which, so the project knows what it asked for.
 pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {
     let d = definition.definition();
     let granted = host.grants.supported();
@@ -58,35 +58,21 @@ pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {
             guard.id
         ));
     }
-    let attempts = "needs durable attempts (tools/workflow-attempt-integration)";
     for position in &d.positions {
         let at = named(&position.at);
         if let Some(why) = unsupported_dependency(position.dependencies) {
             return Err(format!("unsupported dependency at {at}: {why}"));
         }
-        if let Some(recovery) = &position.recovery {
-            for (name, action) in [
-                ("attempt_failure", &recovery.attempt_failure),
-                (
-                    "cancellation_acknowledged",
-                    &recovery.cancellation_acknowledged,
-                ),
-            ] {
-                if moves(action) {
-                    return Err(format!("unsupported recovery at {at}: {name} {attempts}"));
-                }
-            }
-        }
     }
     for edge in &d.edges {
         let id = &edge.id;
         if edge.automatic {
+            automatic(d, edge, host).map_err(|why| format!("unsupported edge {id}: {why}"))?;
+        } else if edge.retry.is_some() {
             return Err(format!(
-                "unsupported edge {id}: an automatic edge {attempts}"
+                "unsupported edge {id}: a retry bound on an edge a caller takes; the board counts \
+                 the takes of an automatic edge alone"
             ));
-        }
-        if edge.retry.is_some() {
-            return Err(format!("unsupported edge {id}: a retry bound {attempts}"));
         }
         if let Some(why) = unsupported_dependency(edge.dependencies) {
             return Err(format!("unsupported edge {id}: a dependency on {why}"));
@@ -118,9 +104,48 @@ fn unsupported_dependency(dependency: Dependency) -> Option<&'static str> {
     }
 }
 
-/// Whether a recovery action moves the task: anything but a manual one with nowhere to go.
-fn moves(action: &RecoveryAction) -> bool {
-    !action.manual || action.target.is_some()
+/// Why the board could not take `edge`, an automatic edge of `d`, on an attempt's failure at its
+/// source pair (docs/WORKFLOW.md, "Attempts"): another automatic edge leaves that pair, so the
+/// board could not choose; it asks inputs, which the board has none of to give; it gives a role,
+/// which only an agent session holds; or none of its authorities is a capability `host` grants
+/// the board's recovery service, which takes it.
+fn automatic(d: &Definition, edge: &Edge, host: &Host) -> Result<(), String> {
+    if let Some(other) =
+        (d.edges.iter()).find(|e| e.automatic && e.from == edge.from && e.id != edge.id)
+    {
+        return Err(format!(
+            "an automatic edge, as is {} from {}: the board takes one on an attempt's failure \
+             there, and could not choose",
+            other.id,
+            named(&edge.from)
+        ));
+    }
+    if !edge.inputs.is_empty() {
+        return Err(
+            "an automatic edge asks for inputs, which the board has none of to give".into(),
+        );
+    }
+    if (edge.effects.iter()).any(|e| matches!(e, Effect::AcquireRole { .. })) {
+        return Err(
+            "an automatic edge gives a role, which only an agent session takes; the board \
+             takes an automatic edge"
+                .into(),
+        );
+    }
+    let service = super::board_service("recovery");
+    let authorized = edge.authority.iter().any(|authority| match authority {
+        Authority::ProjectCapability { capability }
+        | Authority::SystemCapability { capability } => host.grants.holds(&service, capability),
+        Authority::TaskRole { .. } => false,
+    });
+    if !authorized {
+        return Err(
+            "an automatic edge no authority of which this host grants the board's recovery \
+             service, which takes it (grant it `recovery`, and name that capability)"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 fn named(pair: &Pair) -> String {
@@ -128,8 +153,9 @@ fn named(pair: &Pair) -> String {
 }
 
 /// A task as activation reads it: its row's version, its status, where a workflow holds it, the
-/// status a blocked task came from, and the roles held on it, each with whether its holder is
-/// alive enough to hold it ([`crate::Health::holds`]).
+/// status a blocked task came from, the roles held on it, each with whether its holder is alive
+/// enough to hold it ([`crate::Health::holds`]), and its execution attempts whose runtime may
+/// still be alive ([`crate::Store::live_attempts`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Standing {
     pub slug: String,
@@ -138,6 +164,15 @@ pub struct Standing {
     pub position: Option<TaskPosition>,
     pub blocked_from: Option<String>,
     pub roles: Vec<(String, String, bool)>,
+    pub attempts: Vec<Live>,
+}
+
+/// A live execution attempt of a task, as activation reads it: its id, and whether a cancel was
+/// asked of it, which invalidates it: from then on no result of it counts or moves its task.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Live {
+    pub attempt: String,
+    pub cancelled: bool,
 }
 
 /// What an activation writes: each task moved, by its transition, from the version and workflow
@@ -206,17 +241,8 @@ pub fn plan(
         let status = projection(destination.legacy);
         let changes =
             task.position.is_none() || from != to || resume != resume_from || status != task.status;
-        if (changes || source.staffing != destination.staffing)
-            && let Some((handle, role, _)) = task
-                .roles
-                .iter()
-                .find(|(_, role, holds)| *holds && (role == "executor" || role == "reviewer"))
-        {
-            return Err(format!(
-                "{slug} is held by {handle} as its {role}, and activation would move it or \
-                 change its staffing; a live holder stands in for a live attempt, which drains \
-                 first (release it, or let its work finish)"
-            ));
+        if changes || source.staffing != destination.staffing {
+            drained(task)?;
         }
         if !changes {
             plan.kept.push((slug.clone(), task.version));
@@ -248,6 +274,33 @@ pub fn plan(
         });
     }
     Ok(plan)
+}
+
+/// Refused while `task`, which activation would move or restaff, runs work that has not drained:
+/// an execution attempt no cancel was asked of, which activation never rebinds to another
+/// position (let it end, or cancel it), or a live executor or reviewer, whose local session is no
+/// attempt the board sees until local launches are recorded as attempts
+/// (tools/local-provider-attempts).
+fn drained(task: &Standing) -> Result<(), String> {
+    let slug = &task.slug;
+    if let Some(live) = task.attempts.iter().find(|a| !a.cancelled) {
+        return Err(format!(
+            "{slug} runs execution attempt {}, and activation would move it or change its \
+             staffing; an attempt drains first (let it end, or cancel it), and is never \
+             rebound to another position",
+            live.attempt
+        ));
+    }
+    if let Some((handle, role, _)) = (task.roles.iter())
+        .find(|(_, role, holds)| *holds && (role == "executor" || role == "reviewer"))
+    {
+        return Err(format!(
+            "{slug} is held by {handle} as its {role}, and activation would move it or change \
+             its staffing; a live holder's session drains first (release it, or let its work \
+             finish), as it is no attempt the board sees yet"
+        ));
+    }
+    Ok(())
 }
 
 /// The active workflow as a write that reopens a task with no position reads it: its definition,
@@ -292,6 +345,7 @@ impl Placing {
             position: None,
             blocked_from: None,
             roles: task.roles.to_vec(),
+            attempts: Vec::new(),
         };
         let (from, _) = legacy_standing(&standing)?;
         let source = super::builtin::position_at(&from).ok_or_else(|| {

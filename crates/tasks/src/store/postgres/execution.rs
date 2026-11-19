@@ -71,8 +71,9 @@ BEGIN
     END IF;
     INSERT INTO execution_attempt (id, doc) VALUES ({ATTEMPT_ID}, jsonb_build_object(
         'attempt', v -> 'attempt', 'task', v -> 'task', 'configuration', v -> 'configuration', 'created', now_,
-        'identity', v -> 'row' -> 'identity', 'state', v -> 'row' -> 'state', 'revision', 1, 'open', true,
-        'live', true, 'due', now_, 'epoch', 0, 'facts', jsonb_array_length(v -> 'facts')));
+        'identity', v -> 'row' -> 'identity', 'state', v -> 'row' -> 'state', 'workflow', v -> 'row' -> 'workflow',
+        'revision', 1, 'open', true, 'live', true, 'due', now_, 'epoch', 0,
+        'facts', jsonb_array_length(v -> 'facts')));
     FOR fact_ IN SELECT value FROM jsonb_array_elements(v -> 'facts') LOOP
         INSERT INTO execution_fact (id, doc) VALUES (jsonb_build_array(v -> 'attempt', fact_ -> 'seq'),
             jsonb_build_object('attempt', v -> 'attempt', 'seq', fact_ -> 'seq', 'at', now_, 'fact', fact_ -> 'fact'));

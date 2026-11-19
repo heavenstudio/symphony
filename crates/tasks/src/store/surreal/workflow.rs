@@ -18,6 +18,10 @@ LET $task = (SELECT fields._board.workflow AS w FROM ONLY type::record('task', $
 IF $task = NONE { THROW string::concat('refused: no task ', $slug); };
 RETURN $task.w ?? NULL;";
 
+/// Every transition recorded of the task `$slug`, in the order of its record's id.
+pub(in crate::store) const EVENTS: &str =
+    "RETURN SELECT VALUE body FROM workflow:['event', $slug, NONE]..['event', $slug, ..];";
+
 /// The transition `$transition` of the task `$slug`, recorded, and the task put at `$position`
 /// with the status it projects to, in one write, from the workflow revision `$expected` (0 for a
 /// task no workflow held): refused as stale from any other, and the record made once, so of two
@@ -35,15 +39,18 @@ UPDATE type::record('task', $slug) SET status = $transition.status, fields._boar
     updated = $transition.at, version += 1 RETURN NONE;
 RETURN NONE;";
 
-/// What an activation plans from, in one read: the active generation, and each task a workflow
+/// What an activation plans from, in one read: the active generation, each task a workflow
 /// holds or the board's writers keep open, with its row's version, status, position and blocked
-/// source.
+/// source, and each execution attempt whose runtime may still be alive, with its task and the
+/// cancellation asked of it.
 pub(in crate::store) const STANDINGS: &str = "
 RETURN {
     active: (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL,
     tasks: (SELECT slug, version, status, fields._board.workflow ?? NULL AS position,
         fields._board.blocked.from ?? NULL AS blocked_from FROM task
         WHERE status NOT IN ['done', 'cancelled'] OR fields._board.workflow != NONE ORDER BY slug),
+    attempts: (SELECT attempt, task, created, state.cancellation AS cancellation
+        FROM execution_attempt WHERE live = true ORDER BY created, attempt),
 };";
 
 /// An activation, whole: refused as stale unless the active generation is still `$expected` and

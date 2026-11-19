@@ -23,6 +23,13 @@ END IF;
     )
 }
 
+pub(in crate::store) fn events() -> Pg<'static> {
+    Pg::read(
+        "coalesce((SELECT jsonb_agg(body ORDER BY (body ->> 'revision')::bigint) FROM workflow
+            WHERE kind = 'event' AND body ->> 'slug' = v ->> 'slug'), '[]'::jsonb)",
+    )
+}
+
 #[cfg(test)]
 pub(in crate::store) fn record() -> Pg<'static> {
     Pg::script(
@@ -59,7 +66,12 @@ pub(in crate::store) fn standings() -> Pg<'static> {
         'position', fields #> '{_board,workflow}',
         'blocked_from', fields #> '{_board,blocked,from}') ORDER BY slug)
         FROM task WHERE status NOT IN ('done', 'cancelled') OR fields #> '{_board,workflow}' IS NOT NULL),
-        '[]'::jsonb))",
+        '[]'::jsonb),
+    'attempts', coalesce((SELECT jsonb_agg(jsonb_build_object(
+        'attempt', doc -> 'attempt', 'task', doc -> 'task', 'created', doc -> 'created',
+        'cancellation', doc #> '{state,cancellation}')
+        ORDER BY (doc ->> 'created')::bigint, doc ->> 'attempt' COLLATE \"C\")
+        FROM execution_attempt WHERE (doc ->> 'live')::boolean), '[]'::jsonb))",
     )
 }
 

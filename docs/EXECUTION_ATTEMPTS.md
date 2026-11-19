@@ -28,7 +28,10 @@ of it is another attempt. The state keeps each dimension apart: dispatch (pendin
 unknown, running, paused, held, terminal, with how it ended), cancellation, collection, cleanup, the
 bound resource and its generation, the conversation, the operation owed, and the evidence
 references the provider reported. `Store::live_attempts` names a task's attempts whose runtime may
-still be alive, held ones included: what a workflow change waits on.
+still be alive, held ones included: what a workflow's activation waits on, unless a cancel was
+asked of each ([WORKFLOW](WORKFLOW.md#activation-and-mappings)). Beside them the row keeps, never in
+the identity, where a custom workflow held the task when the attempt was admitted (its pair and
+workflow revision), the one place its ending may move the task from.
 
 ## Admission
 
@@ -37,6 +40,18 @@ reservation in one transaction. A request key admits the same attempt however of
 and refuses a different request under the same key; a lane holds one live attempt; a full
 capacity scope refuses with the attempts that hold it. The start it owes is recorded, with its
 key, before anything is sent. A task the board does not hold, or a closed one, takes no attempt.
+
+## Under a workflow
+
+A coordinator proposes each attempt it ends to the workflow that holds its task, as the board's
+recovery service of its host's grants (`Host::local` unless `Coordinator::with_workflow` names
+another): after its own write that ends an attempt, by an answer or a cancel, it calls
+`Store::observe_attempt`, which a host may call again for an attempt whose worker died first. A
+failure takes the automatic edge out of the task's pair within its retry bound, or the position's
+`attempt_failure` action, and a cancel that took its `cancellation_acknowledged` action; a
+success, a stop or a supersession moves nothing, nor an ending from where the task no longer
+stands, which stays on the attempt ([WORKFLOW](WORKFLOW.md#attempts)). A refusal of the proposal
+never fails the coordinator's call: the ending is recorded either way.
 
 ## The worker
 
@@ -112,5 +127,7 @@ This is the board's half alone; full provider integration is not complete.
 `crates/tasks/tests/store/execution.rs` runs the coordinator on each database against a
 deterministic provider (`tests/store/execution/fake.rs`) that scripts lost responses, outages,
 crashes before and after the provider acted, refusals, conflicts and calls that race a second
-worker or a cancel. `execution/rules_tests.rs` holds the transitions without a database, and
+worker or a cancel; `tests/store/execution/workflow.rs` runs it under a custom workflow
+(`attempts.toml`), from activation's drain to a retry bound run out. `execution/rules_tests.rs`
+holds the transitions without a database, `workflow/recover_attempt_tests.rs` the proposals, and
 `tests/consumer_api.rs` the shapes a host calls.

@@ -100,6 +100,7 @@ fn standing(slug: &str, status: &str) -> Standing {
         position: None,
         blocked_from: None,
         roles: Vec::new(),
+        attempts: Vec::new(),
     }
 }
 
@@ -132,25 +133,20 @@ fn the_local_host_supports_a_definition_of_its_own_capabilities_and_nothing_more
 
 #[test]
 fn a_definition_needing_what_this_release_cannot_run_is_unsupported() {
-    let refused = |from: &str, to: &str| {
-        let text = TWO.replacen(from, to, 1);
-        let definition = written(&text).unwrap().0.unwrap();
-        supported(&definition, &Host::local()).unwrap_err()
-    };
-    assert!(
-        refused(
+    // An attempt's ending is the board's recovery service's to answer (`Store::observe_attempt`).
+    for (from, to) in [
+        (
             "attempt_failure = { manual = true, slot = \"retain\"",
-            "attempt_failure = { target = { phase = \"build\", state = \"available\" }, manual = false, slot = \"release\""
-        )
-        .starts_with("unsupported recovery at build/working: attempt_failure needs durable attempts")
-    );
-    assert!(
-        refused(
+            "attempt_failure = { target = { phase = \"build\", state = \"available\" }, manual = false, slot = \"release\"",
+        ),
+        (
             "cancellation_acknowledged = { manual = true, slot = \"retain\"",
-            "cancellation_acknowledged = { target = { phase = \"build\", state = \"available\" }, manual = false, slot = \"release\""
-        )
-        .contains("cancellation_acknowledged needs durable attempts")
-    );
+            "cancellation_acknowledged = { target = { phase = \"build\", state = \"available\" }, manual = false, slot = \"release\"",
+        ),
+    ] {
+        let definition = written(&TWO.replacen(from, to, 1)).unwrap().0.unwrap();
+        assert_eq!(supported(&definition, &Host::local()), Ok(()), "{to}");
+    }
     let accepted_output = TWO.replacen(
         "dependencies = \"none\", unsuccessful_dependency = \"block\", accepts_work = true, terminal = false, legacy = \"ready\"",
         "dependencies = \"accepted_output\", unsuccessful_dependency = \"block\", accepts_work = true, terminal = false, legacy = \"ready\"",
@@ -183,32 +179,8 @@ fn a_definition_needing_what_this_release_cannot_run_is_unsupported() {
 }
 
 #[test]
-fn automatic_edges_and_parent_integration_are_unsupported() {
+fn parent_integration_and_adapters_are_unsupported() {
     let mut definition = custom(TWO).definition.definition().clone();
-    definition.edges[0].automatic = true;
-    definition.edges[0].human_wait = false;
-    let automatic = Validated::new(definition.clone()).unwrap();
-    assert!(
-        supported(&automatic, &Host::local())
-            .unwrap_err()
-            .starts_with("unsupported edge accept: an automatic edge needs durable attempts")
-    );
-    definition.edges[0].automatic = false;
-    definition.edges[0].human_wait = true;
-    definition.edges[0].retry = Some(symphony_api::workflow::RetryBound {
-        maximum: 2,
-        exhausted: Pair {
-            phase: "build".into(),
-            state: "working".into(),
-        },
-    });
-    let retried = Validated::new(definition.clone()).unwrap();
-    assert!(
-        supported(&retried, &Host::local())
-            .unwrap_err()
-            .starts_with("unsupported edge accept: a retry bound needs durable attempts")
-    );
-    definition.edges[0].retry = None;
     definition.edges[0].effects.push(Effect::ParentIntegration);
     let integrating = Validated::new(definition.clone());
     if let Ok(integrating) = integrating {
@@ -268,6 +240,166 @@ fn automatic_edges_and_parent_integration_are_unsupported() {
         supported(&output, &Host::local())
             .unwrap_err()
             .starts_with("unsupported edge accept: a dependency on accepted_output")
+    );
+}
+
+fn rework(d: &mut Definition) -> &mut Edge {
+    d.edges.iter_mut().find(|e| e.id == "rework").unwrap()
+}
+
+#[test]
+fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
+    use crate::workflow::recover::attempt_tests::attempts;
+    let base = custom(&attempts(false)).definition.definition().clone();
+    let supports = |change: &dyn Fn(&mut Definition)| {
+        let mut definition = base.clone();
+        change(&mut definition);
+        supported(&Validated::new(definition).unwrap(), &Host::local())
+    };
+    assert_eq!(supports(&|_| {}), Ok(()));
+    // Not a capability the host grants the board's recovery service.
+    assert_eq!(
+        supports(&|d| {
+            rework(d).authority = vec![Authority::ProjectCapability {
+                capability: "owner".into(),
+            }];
+        }),
+        Err(
+            "unsupported edge rework: an automatic edge no authority of which this host grants \
+             the board's recovery service, which takes it (grant it `recovery`, and name that \
+             capability)"
+                .into()
+        )
+    );
+    let mut owner_only = Host::local();
+    owner_only.grants = Grants::none()
+        .grant("owner", crate::workflow::local_owner())
+        .grant("recovery", crate::workflow::local_owner());
+    assert!(
+        supported(&Validated::new(base.clone()).unwrap(), &owner_only)
+            .unwrap_err()
+            .starts_with("unsupported edge rework: an automatic edge no authority")
+    );
+    // Nothing the board cannot give.
+    assert_eq!(
+        supports(&|d| rework(d).inputs = vec!["reason".into()]),
+        Err(
+            "unsupported edge rework: an automatic edge asks for inputs, which the board has \
+             none of to give"
+                .into()
+        )
+    );
+    assert!(
+        supports(&|d| {
+            rework(d).effects.push(Effect::AcquireRole {
+                role: symphony_api::workflow::Role::Executor,
+            });
+        })
+        .unwrap_err()
+        .starts_with("unsupported edge rework: an automatic edge gives a role")
+    );
+    // One automatic edge out of a pair, so the board never chooses.
+    let twice = supports(&|d| {
+        let mut again = rework(d).clone();
+        again.id = "again".into();
+        again.operation = symphony_api::workflow::Operation::Advance;
+        again.retry = None;
+        d.edges.push(again);
+    });
+    assert_eq!(
+        twice,
+        Err(
+            "unsupported edge again: an automatic edge, as is rework from verify/checking: the \
+             board takes one on an attempt's failure there, and could not choose"
+                .into()
+        )
+    );
+    // The board counts only its own takes.
+    let bounded = supports(&|d| {
+        let unstick = d.edges.iter_mut().find(|e| e.id == "unstick").unwrap();
+        unstick.retry = Some(symphony_api::workflow::RetryBound {
+            maximum: 2,
+            exhausted: pair("verify", "stuck"),
+        });
+    });
+    assert_eq!(
+        bounded,
+        Err(
+            "unsupported edge unstick: a retry bound on an edge a caller takes; the board counts \
+             the takes of an automatic edge alone"
+                .into()
+        )
+    );
+}
+
+#[test]
+fn a_live_attempt_keeps_its_task_from_moving_until_it_ends_or_is_cancelled() {
+    let two = custom(&format!("{TWO}{MAPPED}"));
+    let mut working = standing("sim/working", "in_progress");
+    working.attempts = vec![
+        Live {
+            attempt: "aa11".into(),
+            cancelled: true,
+        },
+        Live {
+            attempt: "bb22".into(),
+            cancelled: false,
+        },
+    ];
+    assert_eq!(
+        planned(&two, None, &[working.clone()]),
+        Err(
+            "sim/working runs execution attempt bb22, and activation would move it or change its \
+             staffing; an attempt drains first (let it end, or cancel it), and is never rebound \
+             to another position"
+                .into()
+        )
+    );
+    // Cancelled, no result of it counts: the task moves, and the attempt keeps its ending.
+    working.attempts[1].cancelled = true;
+    assert!(planned(&two, None, &[working.clone()]).is_ok());
+    // Drained, nothing holds the task.
+    working.attempts.clear();
+    assert!(planned(&two, None, &[working]).is_ok());
+}
+
+#[test]
+fn a_task_activation_keeps_where_it_stands_keeps_its_live_attempt() {
+    let two = custom(&format!("{TWO}{MAPPED}"));
+    let mut working = standing("sim/working", "in_progress");
+    working.position = Some(TaskPosition {
+        phase: "build".into(),
+        state: "working".into(),
+        resume: None,
+        generation: 1,
+        revision: 4,
+        digest: two.revision.digest.clone(),
+        manual: None,
+    });
+    working.roles = vec![("amber".into(), "executor".into(), true)];
+    working.attempts = vec![Live {
+        attempt: "bb22".into(),
+        cancelled: false,
+    }];
+    let definition = two.definition.definition();
+    let placed = plan(&two, Some(definition), &[working.clone()], 2, &by(), 60.0).unwrap();
+    assert_eq!(
+        placed.kept,
+        vec![("sim/working".to_string(), working.version)]
+    );
+    assert!(placed.moved.is_empty());
+    // Restaffed in place, it is moved under the attempt, and refused.
+    let mut restaffed = definition.clone();
+    position_mut(&mut restaffed, &pair("build", "working")).staffing =
+        Some(symphony_api::workflow::Role::Reviewer);
+    let restaffed = Custom {
+        definition: Validated::new(restaffed).unwrap(),
+        ..custom(&format!("{TWO}{MAPPED}"))
+    };
+    assert!(
+        plan(&restaffed, Some(definition), &[working], 2, &by(), 60.0)
+            .unwrap_err()
+            .starts_with("sim/working runs execution attempt bb22")
     );
 }
 
@@ -419,8 +551,8 @@ fn a_live_holder_keeps_its_task_from_moving_until_its_work_drains() {
         planned(&two, None, &[working.clone()]),
         Err(
             "sim/working is held by amber as its executor, and activation would move it or \
-             change its staffing; a live holder stands in for a live attempt, which drains \
-             first (release it, or let its work finish)"
+             change its staffing; a live holder's session drains first (release it, or let its \
+             work finish), as it is no attempt the board sees yet"
                 .into()
         )
     );

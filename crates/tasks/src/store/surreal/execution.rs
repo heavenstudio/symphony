@@ -2,8 +2,9 @@
 //! own (`time::millis(time::now())`), never a caller's clock: two workers on skewed machines read
 //! one lease alike.
 
-/// An attempt admitted: `$row`'s identity and state written as attempt `$attempt` of `$task` under
-/// `$configuration`, with its first facts `$facts` (each `{seq, fact}`), the request fence
+/// An attempt admitted: `$row`'s identity and state, and the workflow position its task stood at
+/// (`$row.workflow`, none where no workflow holds it), written as attempt `$attempt` of `$task`
+/// under `$configuration`, with its first facts `$facts` (each `{seq, fact}`), the request fence
 /// `$request` (with `$digest`), the lane fence `['lane', $task, $lane]` and, under `$capacity`
 /// (`{scope, limit}`), a reservation, all in one transaction. A retry or a resume names its
 /// `$predecessor` and, unless it was followed already, `$follow`: the predecessor's write as its
@@ -44,7 +45,7 @@ pub(in crate::store) const ADMIT: &str = "LET $now = time::millis(time::now());
                      };
                      CREATE type::record('execution_attempt', $attempt) CONTENT {
                          attempt: $attempt, task: $task, configuration: $configuration, created: $now,
-                         identity: $row.identity, state: $row.state,
+                         identity: $row.identity, state: $row.state, workflow: $row.workflow ?? NULL,
                          revision: 1, open: true, live: true, due: $now, epoch: 0, facts: array::len($facts)
                      } RETURN NONE;
                      FOR $fact IN $facts {

@@ -29,6 +29,7 @@ mod record;
 mod rules;
 
 pub use coordinator::Coordinator;
+pub(crate) use record::Row;
 pub use record::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Continuation, Dispatch, Ending,
     Fact, Identity, Lease, Pending, Relation, State,

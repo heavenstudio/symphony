@@ -261,6 +261,11 @@ pub(crate) struct Row {
     pub lease: Option<Lease>,
     pub epoch: u64,
     pub facts: i64,
+    /// Where the workflow held its task when it was admitted, none where no workflow held it: the
+    /// position its ending is proposed from, and only while its task still stands there
+    /// (`crate::Store::observe_attempt`).
+    #[serde(default)]
+    pub workflow: Option<crate::workflow::TaskPosition>,
 }
 
 impl Row {

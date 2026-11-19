@@ -130,6 +130,19 @@ impl Store {
         host: &Host,
         request: &OperationRequest,
     ) -> Result<OperationResult, Error> {
+        self.apply(principal, host, request, None)
+    }
+
+    /// [`Store::apply_operation`], or, with what it `answered`, the automatic edge the board
+    /// takes on an execution attempt's ending (`Store::observe_attempt`), admitted by the same
+    /// checks and written by the same write.
+    fn apply(
+        &self,
+        principal: &Principal,
+        host: &Host,
+        request: &OperationRequest,
+        answered: Option<&crate::workflow::Recovered>,
+    ) -> Result<OperationResult, Error> {
         let board = self.database().database();
         if request.project != board {
             return Err(Error::Refused(
@@ -163,8 +176,19 @@ impl Store {
             }
             let context = context(&decided);
             let at = self.now();
-            let admitted = admit::admit(context, &decided.facts, principal, host, request, at)
-                .map_err(refusal)?;
+            let admitted = match answered {
+                None => admit::admit(context, &decided.facts, principal, host, request, at),
+                Some(answered) => admit::admit_observed(
+                    context,
+                    &decided.facts,
+                    principal,
+                    host,
+                    request,
+                    answered,
+                    at,
+                ),
+            }
+            .map_err(refusal)?;
             let transition = &admitted.transition;
             let status = transition.status.clone();
             let taking = Taking {
@@ -522,17 +546,22 @@ fn sender(principal: &Principal) -> String {
     }
 }
 
-/// The transition's line on its task's thread.
+/// The transition's line on its task's thread, naming the attempt whose failure the board took it
+/// on, for an automatic edge.
 fn said(transition: &Transition) -> String {
     let named = |p: &symphony_api::workflow::Pair| format!("{}/{}", p.phase, p.state);
-    format!(
+    let mut line = format!(
         "took {} ({}): {} → {}, workflow revision {}",
         transition.edge.as_deref().unwrap_or("an edge"),
         transition.id,
         transition.from.as_ref().map_or_else(String::new, named),
         named(&transition.to),
         transition.revision
-    )
+    );
+    if let Some(attempt) = (transition.recovery.as_ref()).and_then(|r| r.attempt.as_deref()) {
+        line.push_str(&format!(", on the failure of attempt {attempt}"));
+    }
+    line
 }
 
 fn refusal(refusal: Refusal) -> Failure {
@@ -546,6 +575,7 @@ fn stopped(failure: Failure) -> Error {
     }
 }
 
+mod observation;
 mod recovery;
 pub(in crate::store) use recovery::Released;
 

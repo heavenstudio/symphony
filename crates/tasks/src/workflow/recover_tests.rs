@@ -129,6 +129,8 @@ fn a_released_or_lost_executor_moves_its_task_to_the_declared_target_on_the_reco
                     holder: "amber".into(),
                     role: "executor".into(),
                     manual: false,
+                    attempt: None,
+                    exhausted: None,
                 }),
                 at: 7.0,
             }
@@ -175,6 +177,8 @@ fn a_lost_reviewer_stays_for_a_person_keeping_its_role_and_letting_reservations_
         holder: "birch".into(),
         role: "reviewer".into(),
         manual: true,
+        attempt: None,
+        exhausted: None,
     };
     assert_eq!(transition.recovery, Some(manual.clone()));
     assert_eq!(transition.position().manual, Some(manual));
