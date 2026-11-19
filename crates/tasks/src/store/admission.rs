@@ -54,6 +54,8 @@ struct Read {
     present: bool,
 }
 
+/// The task admission decides on; `accepted` is the accepted output its last transition left
+/// (`body.accepted` of the event at its workflow revision), as for each [`Found`].
 #[derive(Deserialize)]
 struct TaskRead {
     slug: String,
@@ -61,6 +63,7 @@ struct TaskRead {
     status: String,
     created_by: String,
     position: Option<TaskPosition>,
+    accepted: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -75,6 +78,16 @@ struct Found {
     version: i64,
     status: String,
     position: Option<TaskPosition>,
+    accepted: Option<String>,
+}
+
+/// The accepted outputs of a task a custom workflow holds (docs/WORKFLOW.md, "Accepted outputs"):
+/// its own standing, and, where an edge leaving its pair depends on `accepted_output`, each task
+/// it depends on with the output standing for it, which a request taking that edge names.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Outputs {
+    pub own: Option<String>,
+    pub takes: Vec<(String, Option<String>)>,
 }
 
 /// One read's decision context: the workflow active and its definition, and the task's facts.
@@ -115,6 +128,40 @@ impl Store {
             let decided = self.decided(slug, principal, None)?;
             let context = context(&decided);
             admit::next_actions(context, &decided.facts, principal, host).map_err(refusal)
+        })
+    }
+
+    /// `slug`'s accepted outputs ([`Outputs`]), read as admission reads them; refused as
+    /// [`Store::workflow_actions`] is.
+    pub fn accepted_outputs(&self, slug: &str) -> Result<Outputs, Error> {
+        self.retrying(|| {
+            let decided = self.decided(slug, &crate::workflow::board_service("reader"), None)?;
+            let context = context(&decided);
+            let at = decided.facts.position.as_ref().map(TaskPosition::at);
+            let own = Prerequisite {
+                slug: slug.to_string(),
+                found: Some((decided.task.status.clone(), decided.facts.position.clone())),
+                accepted: decided.facts.accepted.clone(),
+            };
+            let takes = (context.definition.edges.iter()).any(|e| {
+                Some(&e.from) == at.as_ref()
+                    && e.dependencies == symphony_api::workflow::Dependency::AcceptedOutput
+            });
+            let mut outputs = Outputs {
+                own: admit::standing(context, &own).map(str::to_string),
+                takes: Vec::new(),
+            };
+            if takes {
+                outputs.takes = (decided.facts.dependencies.iter())
+                    .map(|p| {
+                        (
+                            p.slug.clone(),
+                            admit::standing(context, p).map(str::to_string),
+                        )
+                    })
+                    .collect();
+            }
+            Ok(outputs)
         })
     }
 
@@ -308,6 +355,7 @@ impl Store {
             effects: Vec::new(),
             key: None,
             recovery: None,
+            accepted: None,
             at: self.now(),
         }))
     }
@@ -363,15 +411,18 @@ impl Store {
             position: task.position.clone(),
             roles,
             dependencies: (dependencies.iter())
-                .map(|d| Prerequisite {
-                    slug: d.clone(),
-                    found: (read.found.iter())
-                        .find(|f| f.slug == *d)
-                        .map(|f| (f.status.clone(), f.position.clone())),
+                .map(|d| {
+                    let found = (read.found.iter()).find(|f| f.slug == *d);
+                    Prerequisite {
+                        slug: d.clone(),
+                        found: found.map(|f| (f.status.clone(), f.position.clone())),
+                        accepted: found.and_then(|f| f.accepted.clone()),
+                    }
                 })
                 .collect(),
             held,
             present: read.present,
+            accepted: task.accepted.clone(),
         };
         Ok(Decided {
             active,
@@ -565,3 +616,7 @@ pub(in crate::store) use recovery::Released;
 #[cfg(test)]
 #[path = "admission_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "admission/accepted_tests.rs"]
+mod accepted_tests;

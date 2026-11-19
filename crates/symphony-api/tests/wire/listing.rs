@@ -5,9 +5,9 @@
 use serde_json::{Value, json};
 use symphony_api::{Change, Delta, ProjectList};
 
-/// Every field the app reads, by its place in `projects.json` written back from its type: a field
-/// renamed or moved in the types fails here, whatever the fixture says.
-const PINNED: [&str; 16] = [
+/// Every field the app or a release's refresh reads, by its place in `projects.json` written back
+/// from its type: a field renamed or moved in the types fails here, whatever the fixture says.
+const PINNED: [&str; 17] = [
     "/installation",
     "/pin",
     "/projects/0/id",
@@ -24,6 +24,7 @@ const PINNED: [&str; 16] = [
     "/projects/0/asks/verdicts/owner/verdict",
     "/projects/0/asks/verdicts/owner/reviewer",
     "/projects/0/asks/verdicts/owner/at",
+    "/projects/0/writes",
 ];
 
 #[test]
@@ -45,10 +46,26 @@ fn every_field_the_app_reads_is_where_it_reads_it_and_says_none_as_null() {
     // A refused project still names every field, each null, so the app reads none rather than an
     // older server.
     let refused = &written["projects"][2];
-    for field in ["unwell", "version", "waiting", "next", "asks"] {
+    for field in ["unwell", "version", "waiting", "next", "asks", "writes"] {
         assert_eq!(refused.get(field), Some(&Value::Null), "{field}: {refused}");
     }
     assert!(refused["refused"].is_string());
+}
+
+#[test]
+fn whether_the_server_writes_a_board_is_said_and_a_server_built_before_it_said_reads_as_none() {
+    let (written, _) = super::round_trip::<ProjectList>("projects.json");
+    let writes = |at: usize| written["projects"][at]["writes"].clone();
+    assert_eq!(
+        [writes(0), writes(1), writes(2)],
+        [json!(true), json!(false), Value::Null]
+    );
+    let mut older = written.clone();
+    for project in older["projects"].as_array_mut().unwrap() {
+        project.as_object_mut().unwrap().remove("writes");
+    }
+    let read: ProjectList = serde_json::from_value(older).unwrap();
+    assert!(read.projects.iter().all(|project| project.writes.is_none()));
 }
 
 #[test]

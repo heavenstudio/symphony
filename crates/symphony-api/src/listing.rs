@@ -2,8 +2,9 @@
 //! each server it follows (docs/analysis/desktop-client.md), and the task board's asks a project's
 //! feed carries as they change ([`TaskAsks`], the feed's [`crate::Change::TaskAsks`]).
 //!
-//! The app reads only the fields the fixture test pins (`tests/wire/listing.rs`): they are added to
-//! and never renamed. Everything else may change with any release.
+//! The app, and a release's refresh, read only the fields the fixture test pins
+//! (`tests/wire/listing.rs`): they are added to and never renamed. Everything else may change with
+//! any release.
 
 use std::collections::BTreeMap;
 
@@ -50,6 +51,14 @@ pub struct ListedProject {
     /// What its task board asks of each person, at `version`; none when it has no task board or
     /// the board is not read yet.
     pub asks: Option<TaskAsks>,
+    /// Whether this server writes its board, as its last read of the board found it: true while
+    /// that read found the board at a schema this build writes; false while this build only reads
+    /// it (the board is a schema ahead) or refuses it (behind this build, or more than one schema
+    /// ahead). None while it keeps no board, its board is not read yet or its last read failed for
+    /// another reason, while it is refused, and from a server built before it said
+    /// (docs/RELEASES.md, "An update": a release's refresh reads it).
+    #[serde(default)]
+    pub writes: Option<bool>,
 }
 
 /// A card as the project list names it.

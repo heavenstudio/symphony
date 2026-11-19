@@ -11,17 +11,21 @@
 //! every page says that too. None of it reads the board. While the project's settings do not load,
 //! every page says so and why, as the project is served with the defaults ([`Hub::tell_project`]).
 //! While the board is at a schema ahead of this build's, which it reads and never writes, every
-//! page says so ([`Hub::read_ahead`]); while this project holds the machine's server on a
+//! page says so, naming the page of its update's task while the machine's ledger holds that update
+//! open with one ([`Hub::read_ahead`]); while this project holds the machine's server on a
 //! project's build, the one server tells its pages so ([`Hub::tell_machine`]).
 //!
 //! The project picker and `/api/projects` read one judgement of the board ([`Hub::standing`]): red
 //! while the pages say it is unwell, amber while it is slow over the hour or work waits to start
 //! that no live orchestrator staffs, green otherwise, with the line saying why ([`Standing`]).
+//! `/api/projects` says too whether this server writes the board ([`Hub::writes`]).
 
 use super::Hub;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::PoisonError;
+use symphony::machine::Registry;
+use symphony::machine::updates::{Ledger, Task};
 use symphony_board::board_health::disk::{self, Low};
 use symphony_board::board_health::{Report, SLOW_MS};
 
@@ -208,20 +212,105 @@ impl Hub {
 
     /// The board's schema when it is ahead of this build's, read on `store` once a tick: the hub
     /// then reads it and writes nothing to it, as the schema rule refuses a reader's every write
-    /// on it ([`symphony_board::Store`]), and every page says so, until it is not. A read that
-    /// fails keeps what the last one found.
+    /// on it ([`symphony_board::Store`]), and every page says so, until it is not, naming the task
+    /// of the board's update while the machine's ledger holds one open ([`Hub::ahead_notice`]). The
+    /// notice is sent again only when its words change. A read that fails keeps what the last one
+    /// found.
     pub(crate) fn read_ahead(&self, store: &symphony_board::Store) -> Option<i64> {
-        let found = store.board_version();
-        let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
-        let Ok(found) = found else {
+        let Ok(found) = store.board_version() else {
+            let notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
             return notices.ahead.0;
         };
         let ahead = found.filter(|found| *found > symphony_board::SCHEMA);
-        if notices.ahead.0 != ahead {
-            notices.ahead = (ahead, ahead.map(read_only).unwrap_or_default());
+        let said = ahead
+            .map(|schema| self.ahead_notice(schema))
+            .unwrap_or_default();
+        let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+        if notices.ahead.0 != ahead || notices.ahead.1 != said {
+            notices.ahead = (ahead, said);
             self.server_notice.send_replace(notices.said());
         }
         ahead
+    }
+
+    /// What every page says of this project's board at `schema`, ahead of this build's
+    /// ([`read_only`]), with the page of its update's task while the machine's ledger holds the
+    /// board's update to `schema` open with a task not closed: one read of the ledger, and today's
+    /// words alone while it cannot be read.
+    fn ahead_notice(&self, schema: i64) -> String {
+        let ledger = self.machine.as_deref().map(Ledger::read);
+        let task = (ledger.and_then(Result::ok))
+            .and_then(|ledger| ledger.open(&self.project_id(), schema).cloned())
+            .and_then(|update| update.task)
+            .filter(|task| !task.closed)
+            .and_then(|task| self.task_pages()(&task));
+        read_only(schema, task.as_deref())
+    }
+
+    /// The project's id as the machine's updates name it: the one under which the one server
+    /// serves it, else its project file's.
+    pub(crate) fn project_id(&self) -> String {
+        match self.base.get().and_then(|base| base.strip_prefix('/')) {
+            Some(id) if !id.is_empty() => id.to_string(),
+            _ => symphony::project::Project::of(&self.root).id.clone(),
+        }
+    }
+
+    /// Where this server serves a task's page, the machine's registry read once for every task
+    /// asked of: `/<project>/task/<slug>` under the machine's one server, while its project is one
+    /// the registry holds (an unregistered Symphony's own board is the label `this repository`,
+    /// which names no page); `/task/<slug>` on a server of its own, only while the task is on its
+    /// own project's board, and none for another's. None too for a path a page would not link, or
+    /// that a space would cut ([`symphony_api::app_path`]).
+    pub(crate) fn task_pages(&self) -> impl Fn(&Task) -> Option<String> + use<> {
+        let one = self.base.get().is_some_and(|base| !base.is_empty());
+        let registered: Vec<String> = (self.machine.as_deref())
+            .filter(|_| one)
+            .and_then(|machine| Registry::read(machine).ok())
+            .map(|registry| {
+                registry
+                    .projects
+                    .into_iter()
+                    .map(|entry| entry.id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let own = self.project_id();
+        move |task: &Task| {
+            let path = if one {
+                registered
+                    .contains(&task.project)
+                    .then(|| format!("/{}/task/{}", task.project, task.slug))?
+            } else if task.project == own {
+                format!("/task/{}", task.slug)
+            } else {
+                return None;
+            };
+            (symphony_api::app_path(&path) && !path.contains(char::is_whitespace)).then_some(path)
+        }
+    }
+
+    /// Where the server serves this project's pages, `base` (the hub's `base`): given once, as the
+    /// hub starts; a second giving is ignored.
+    pub(crate) fn serve_at(&self, base: &str) {
+        let _ = self.base.set(base.to_string());
+    }
+
+    /// Whether this server writes the project's board, as `/api/projects` says it
+    /// ([`symphony_api::ListedProject::writes`]), from what the hub holds and never a board read:
+    /// true while its last read found the board at a schema this build writes (read, and not
+    /// ahead: [`Hub::read_ahead`]), false while it only reads it, a schema ahead, or its last reach
+    /// was refused by the schema rule ([`symphony_board::board_health::refused_by_schema`]). None
+    /// while it has no board, has not read it yet, or its last reach failed otherwise.
+    pub(crate) fn writes(&self) -> Option<bool> {
+        match self.tasks_read() {
+            Ok(_) => {
+                let notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+                Some(notices.ahead.0.is_none())
+            }
+            Err(why) if symphony_board::board_health::refused_by_schema(&why) => Some(false),
+            Err(_) => None,
+        }
     }
 
     /// What the pages say of this project's board now: nothing while it is well.
@@ -366,14 +455,29 @@ pub(crate) fn unstaffed(tasks: &symphony_api::Tasks) -> Option<&'static str> {
 
 /// What a page says of a board at `schema`, ahead of this build's, which it reads and never writes:
 /// and what that does to the owner's words, which are saved in the documents while the asks and the
-/// chat they open wait in the journal ([`symphony::callbacks`]).
-pub(crate) fn read_only(schema: i64) -> String {
-    format!(
+/// chat they open wait in the journal ([`symphony::callbacks`]). `task`, the page of the task filed
+/// for the board's update when one failed, is named last, alone, so a page can link it.
+pub(crate) fn read_only(schema: i64, task: Option<&str>) -> String {
+    let said = format!(
         "The task board is at schema {schema}, ahead of this Symphony's {}: it is read, and nothing \
          is written to it from here, until a Symphony at schema {schema} serves it. A verdict or a \
          message saved now is kept, and reaches no agent until then.",
         symphony_board::SCHEMA
-    )
+    );
+    match task {
+        Some(task) => format!("{said} Its update's task: {task}"),
+        None => said,
+    }
+}
+
+/// The machine folder whose ledger of schema updates the hub reads (the hub's `machine`):
+/// none where it cannot be found, and in the library's own tests, which give one where they read
+/// it, so none reads this machine's.
+pub(crate) fn machine_folder() -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    symphony::machine::dir().ok()
 }
 
 /// What a page says of a project whose settings do not load, `why` the load's words.

@@ -57,6 +57,7 @@ pub mod report_page;
 pub mod reports;
 mod runs;
 pub mod runs_rollup;
+mod schema_updates;
 mod task_diff;
 mod task_queries;
 mod task_stage;
@@ -75,6 +76,9 @@ pub use runs::{
     RunsPage, Suite, TRIGGERS, fold, run_day, run_name,
 };
 pub use runs_rollup::{RUNS_DAY_SCHEMA, RUNS_ROLLUP, RunsDay};
+pub use schema_updates::{
+    SCHEMA_UPDATES_PATH, SCHEMA_UPDATES_SHOWN, SchemaUpdate, SchemaUpdates, UpdateState, UpdateTime,
+};
 pub use task_diff::{
     TASK_DIFF_FILE_PATH, TASK_DIFF_PATH, TaskDiff, TaskDiffFile, TaskDiffPatch, TaskDiffSource,
 };

@@ -1005,7 +1005,7 @@ fn misses(f: &Fixture) {
     let said = unknown.json()["error"].as_str().unwrap().to_string();
     assert!(
         said.starts_with("no status \"nope\": a listing selects one of backlog, concept,")
-            && said.ends_with("or signoff, build, test"),
+            && said.ends_with(", signoff, build, test, or in view=waiting phase:PHASE"),
         "{said}"
     );
     f.get("/api/task-board?status=review").status(200);

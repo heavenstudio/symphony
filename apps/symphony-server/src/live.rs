@@ -230,6 +230,14 @@ pub(crate) struct Hub {
     recording_gate: OnceLock<Arc<symphony_board::recording::Gate>>,
     /// What `server_notice` says, by where it comes from ([`health::Notices`]).
     notices: Mutex<health::Notices>,
+    /// Where the server serves this project's pages, `/<id>` under the machine's one server, empty
+    /// for a server of its own at `/` ([`crate::front::Shared`]'s `base`): given as the hub starts
+    /// ([`Hub::serve_at`]), and empty until then.
+    base: OnceLock<String>,
+    /// The machine folder, whose ledger of schema updates the read-only notice and the schema
+    /// updates' route read ([`symphony::machine::updates`]): the machine's, none where it cannot be
+    /// found and in the library's tests, which read no machine's unless they give one.
+    pub(crate) machine: Option<PathBuf>,
     /// What the pages say of a replay of the board's store's log while the worker's last reach of
     /// the board was refused for one ([`symphony_board::server::replaying_in`]).
     replaying: Mutex<Option<String>>,
@@ -424,6 +432,8 @@ impl Hub {
             runs_index: crate::api::runs::Index::default(),
             recording_gate: OnceLock::new(),
             notices: Mutex::new(health::Notices::of(root)),
+            base: OnceLock::new(),
+            machine: health::machine_folder(),
             replaying: Mutex::new(None),
             clock: Box::new(symphony_board::sweep::trigger::now),
             asks: Mutex::new(asks::AskWatch::default()),

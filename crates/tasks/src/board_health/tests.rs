@@ -180,6 +180,35 @@ fn a_board_not_made_or_with_no_store_nor_surrealdb_is_absent_and_any_other_failu
 }
 
 #[test]
+fn a_reader_refused_a_board_behind_it_or_two_ahead_is_refused_by_schema_and_nothing_else_is() {
+    use crate::schema::{Access, Opened, VERSION, decide};
+    let program = crate::Program::named("tasks", "/repo/.target/bin/tasks");
+    let opened = |found, access| decide(found, VERSION, access, Some("demo"), &program);
+    let refused = |found| match opened(found, Access::Read) {
+        Opened::Refused(why) => why,
+        other => panic!("{other:?}"),
+    };
+    for error in [refused(Some(VERSION - 1)), refused(Some(VERSION + 2))] {
+        assert!(refused_by_schema(&error), "{error}");
+        let wrapped = format!("no pass, the board could not be reached: {error}");
+        assert!(refused_by_schema(&wrapped), "its wrapper keeps its words");
+    }
+    assert_eq!(opened(Some(VERSION + 1), Access::Read), Opened::Ahead);
+    let Opened::Refused(writer) = opened(Some(VERSION + 1), Access::Write) else {
+        panic!("a writer refuses a board ahead of it");
+    };
+    for error in [
+        refused(None),
+        writer,
+        "connection refused".to_string(),
+        SLOW.to_string(),
+        String::new(),
+    ] {
+        assert!(!refused_by_schema(&error), "{error}");
+    }
+}
+
+#[test]
 fn an_error_is_kept_on_one_line_and_a_long_one_cut_to_its_first_and_last_characters() {
     assert_eq!(
         shortened("  the board did not answer\n"),

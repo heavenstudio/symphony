@@ -759,10 +759,12 @@ fn listing(projects: &Projects, served: &[Served]) -> Response {
 }
 
 /// `project` as [`listing`] lists it: its refusal alone while refused, else what its hub holds,
-/// the version of its main page's feed read with that page's counts and with its task asks, and
-/// the line the project list draws under it while its board is not well ([`Hub::standing`]).
+/// the version of its main page's feed read with that page's counts and with its task asks, the
+/// line the project list draws under it while its board is not well ([`Hub::standing`]), and
+/// whether this server writes its board ([`Hub::writes`]).
 ///
 /// [`Hub::standing`]: crate::live::Hub::standing
+/// [`Hub::writes`]: crate::live::Hub::writes
 fn listed(project: &Served) -> symphony_api::ListedProject {
     let id = &project.entry.id;
     let mut listed = symphony_api::ListedProject {
@@ -774,6 +776,7 @@ fn listed(project: &Served) -> symphony_api::ListedProject {
         waiting: None,
         next: None,
         asks: None,
+        writes: None,
     };
     let Some(hub) = project
         .shared
@@ -784,6 +787,7 @@ fn listed(project: &Served) -> symphony_api::ListedProject {
         return listed;
     };
     listed.unwell = hub.standing().unwell();
+    listed.writes = hub.writes();
     // A writer's panic leaves at worst a page between two of its regions' updates, as the list's.
     let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
     if let Some(page) = pages.get("") {

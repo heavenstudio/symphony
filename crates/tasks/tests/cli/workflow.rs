@@ -228,3 +228,118 @@ fn a_session_recovers_a_lost_holders_task_which_pull_and_next_offer_to_no_claim(
     assert!(!pulled.contains("sim/jump"), "{pulled}");
     assert!(c.ok(&birch, &["next"]).starts_with("nothing to take"));
 }
+
+#[test]
+fn a_session_reads_the_accepted_output_a_claim_takes_and_names_it_to_take_the_edge() {
+    let c = Case::new();
+    let amber = c.register("worker");
+    let text = FLOW.replacen(
+        "inputs = [], dependencies = \"none\"",
+        "inputs = [], dependencies = \"accepted_output\"",
+        1,
+    );
+    let definition = written(&text).unwrap().0.unwrap();
+    let revision = (definition.revision(Source {
+        commit: "1".repeat(40),
+        project_blob: "2".repeat(40),
+    }))
+    .unwrap();
+    let custom = Custom {
+        definition,
+        revision,
+        mappings: Vec::new(),
+    };
+    c.store()
+        .activate_workflow(&custom, &Host::local())
+        .unwrap();
+    c.ok(&amber, &["create", "sim/up", "Upstream"]);
+    c.ok(
+        &amber,
+        &["create", "sim/down", "Downstream", "--depends", "sim/up"],
+    );
+    assert_eq!(
+        c.ok(&amber, &["workflow", "actions", "sim/down"]),
+        "sim/down at build/available, workflow revision 1 (generation 1)\n  claim → build/working  \
+         Claim, by its executor  (not now: dependency)\n  takes sim/up's accepted output: none \
+         stands\n"
+    );
+    c.ok(
+        &amber,
+        &["workflow", "apply", "sim/up", "claim", "--revision", "1"],
+    );
+    c.ok(
+        &amber,
+        &["workflow", "apply", "sim/up", "submit", "--revision", "2"],
+    );
+    // The owner accepts it from the Symphony, as the local owner.
+    let owner = symphony_board::workflow::local_owner();
+    let snapshot = (c.store().workflow_actions("sim/up", &owner, &Host::local()))
+        .unwrap()
+        .snapshot;
+    let accept = symphony_api::workflow::OperationRequest {
+        project: c.store().database().database().to_string(),
+        task: "sim/up".into(),
+        edge: "accept".into(),
+        expected: snapshot,
+        input_revisions: Default::default(),
+        idempotency_key: "owner-accept".into(),
+        inputs: Default::default(),
+    };
+    let accepted = c.store().apply_operation(&owner, &Host::local(), &accept);
+    assert_eq!(accepted.unwrap().transition, "sim/up@4");
+    assert_eq!(
+        c.ok(&amber, &["workflow", "actions", "sim/up"]),
+        "sim/up at verify/accepted, workflow revision 4 (generation 1)\n  no edge leaves it\n  its \
+         accepted output: sim/up@4\n"
+    );
+    assert_eq!(
+        c.ok(&amber, &["workflow", "actions", "sim/down"]),
+        "sim/down at build/available, workflow revision 1 (generation 1)\n  claim → build/working  \
+         Claim, by its executor\n  takes sim/up's accepted output sim/up@4 (--accept \
+         sim/up=sim/up@4)\n"
+    );
+    let apply = |extra: &[&str]| {
+        let mut args = vec!["workflow", "apply", "sim/down", "claim", "--revision", "1"];
+        args.extend_from_slice(extra);
+        c.run_as(&amber, &args, "")
+    };
+    for (extra, refused) in [
+        (
+            &[][..],
+            "✖ explicit_action_required: edge claim takes the accepted output of sim/up: name the \
+             one it takes, sim/up = sim/up@4",
+        ),
+        (
+            &["--accept", "sim/up=sim/up@3"][..],
+            "✖ stale_input: sim/down takes sim/up@3 of sim/up, whose accepted output standing is \
+             sim/up@4",
+        ),
+        (
+            &["--accept", "sim/up"][..],
+            "✖ --accept is SLUG=OUTPUT, not \"sim/up\"",
+        ),
+    ] {
+        let ran = apply(extra);
+        assert_eq!(ran.code, 1, "{}", ran.out);
+        assert!(ran.err.starts_with(refused), "{}", ran.err);
+    }
+    let took = apply(&["--accept", "sim/up=sim/up@4"]);
+    assert_eq!(took.code, 0, "{}", took.err);
+    assert!(
+        took.out.starts_with("took claim (sim/down@2)\n"),
+        "{}",
+        took.out
+    );
+    // The same command again answers the first result, the output it named included; another
+    // output under its key is another request, and refused.
+    assert_eq!(apply(&["--accept", "sim/up=sim/up@4"]).out, took.out);
+    let other = apply(&["--accept", "sim/up=sim/up@9"]);
+    assert_eq!(other.code, 1, "{}", other.out);
+    assert!(
+        other.err.starts_with(
+            "✖ explicit_action_required: the key sim/down@1:claim was used for another request"
+        ),
+        "{}",
+        other.err
+    );
+}

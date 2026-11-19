@@ -190,7 +190,7 @@ fn closed(status: &str) -> bool {
 /// [`LEGACY_SERIES`], so it is updated and closed as it would have been, never left open beside a
 /// new one; else the first of its generations in [`SERIES`] that is open (true) or not on the board
 /// (false), a closed one passed over.
-fn generation(board: &dyn Reds, key: &str) -> Result<(String, bool), String> {
+pub(crate) fn generation(board: &dyn Reds, key: &str) -> Result<(String, bool), String> {
     let (old, open) = first(board, LEGACY_SERIES, key)?;
     if open {
         return Ok((old, true));
