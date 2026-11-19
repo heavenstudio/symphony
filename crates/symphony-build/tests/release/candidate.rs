@@ -327,7 +327,7 @@ fn a_reds_land_by_its_needed_stamps_alone_advances_it_to_the_tip_they_stood_on()
     let merge = land(&fixture, RED, true);
     let needed = symphony_board::land::needs::Needed {
         stamps: vec!["tests".into()],
-        needs: None,
+        ..Default::default()
     };
     let line = format!(
         "landed {RED} on main at {}{}",
