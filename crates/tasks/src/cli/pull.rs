@@ -129,6 +129,12 @@ pub struct Said {
     pub counts: BTreeMap<String, String>,
     pub entries: BTreeSet<(String, String)>,
     pub liveness_unknown: Vec<String>,
+    /// Each session with no terminal it listed idle, and the beat it rested since, as text (its
+    /// last tool call, else when it connected): what keeps that entry told while the session
+    /// rests on that beat, though a dispatcher that does not list it forgot the entry
+    /// (`State::recall_idle` in the store). Older dispatchers keep it with the record.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub idle: BTreeMap<String, String>,
 }
 
 /// One look at the board.
@@ -290,6 +296,7 @@ impl Digest {
                 .collect_map(),
             entries: self.entries(),
             liveness_unknown: self.liveness_unknown.clone(),
+            idle: BTreeMap::new(),
         }
     }
 
@@ -654,8 +661,10 @@ pub(crate) fn viewed(
 /// however quiet the board says they are. Orchestrators and the chat are never idle rows, nor is a
 /// session the recipient is told went quiet (`told`, the sessions its look follows and their
 /// health): the view calls one with no terminal idle once its board health is, and its STALE, LOST
-/// or LIVENESS UNKNOWN line says it. The dispatch, the legacy monitor and `tasks pull` all read
-/// idleness here, so they agree.
+/// or LIVENESS UNKNOWN line says it. No such line is said of a session whose listener answers
+/// (`confirmed`), whose health moves with each round of the sweep: it is listed whatever its
+/// health, so its entry stays while it rests and is said once. The dispatch, the legacy monitor
+/// and `tasks pull` all read idleness here, so they agree.
 pub(crate) fn idle_and_busy(
     view: Option<&crate::cli::agents::View>,
     told: &BTreeMap<String, Health>,
@@ -666,7 +675,7 @@ pub(crate) fn idle_and_busy(
             busy.push(a.handle.clone());
         } else if a.state == "idle"
             && !matches!(a.kind.as_str(), "orchestrator" | "chat")
-            && !told.get(&a.handle).is_some_and(|health| health.quiet())
+            && (a.confirmed || !told.get(&a.handle).is_some_and(|health| health.quiet()))
         {
             idle.push(a.handle.clone());
         }

@@ -90,13 +90,22 @@ COMMAND's, so every descriptor (a jobserver's included), the signal mask and the
 signals the caller ignores reach it as they would without the recorder, and whatever
 ends that process, `SIGKILL` included, ends COMMAND; only `SIGPIPE` starts at its
 default, as a shell's command does. Before it does, it forks its recorder, detached in
-a session of its own with none of the caller's streams open, which watches that
+a session of its own with none of the caller's streams open and out of its folder,
+at the root, which watches that
 process through a kqueue (its exec, its exit and its status) and writes the record;
 COMMAND waits at most 1 s to hear that the recorder watches it, and runs unrecorded
 otherwise. Elsewhere `tasks run` runs COMMAND as its child and waits for it: a
 hang-up, interrupt, quit or terminate signal it receives, unless the caller ignores
 it, reaches COMMAND, and it ends by the signal that ended COMMAND; there a `SIGKILL`
 of `tasks run` leaves COMMAND running, and the signal mask is not passed on.
+
+That recorder outlives COMMAND for as long as the record takes to write, the board's
+answer included, and is never a process working in COMMAND's checkout: it writes nothing
+there, and names what it reads there by COMMAND's working directory, as it names a
+`TASKS_WORK` that is no whole path. So what asks which processes work in a checkout (the
+release run's look after each check, which stops a run on one
+([RELEASES](RELEASES.md)); the worktree sweep; a land) counts COMMAND and what it started,
+and no recorder, whatever the machine's load makes of the time it takes.
 
 It prints nothing of its own except for a command line it cannot read (status 2,
 with its usage) or a command that cannot start (127 or 126, as a shell says them).
@@ -154,9 +163,10 @@ largest, in the three that ask a board that never answers (`ASKED`) and the one 
 (`LOCK_SCALE`); the script's (`record_script.rs`) take 20 on one that refuses, with a probe's
 wait of 120 s but in the case of that deadline. The server's test of what its machine panel
 reads takes the scale 20 on its board's scratch database
-(`apps/symphony-server/src/live/machine_work/tests`). The browser test of the board's Build and
-Test columns (`apps/symphony-web-tests/tests/browser/run_records.rs`) takes both, the scale and
-the probe's 120 s, on its scratch board, which every run of the test inherits. Each
+(`apps/symphony-server/src/live/machine_work/tests`). The release run's test
+(`crates/symphony-build/tests/release/recorder.rs`) and the browser test of the board's Build and
+Test columns (`apps/symphony-web-tests/tests/browser/run_records.rs`) take both, the scale and the
+probe's 120 s, on their scratch boards, which every check and run of theirs inherits. Each
 waits for a record on its condition, with a backstop on the wall only a stall reaches (the
 browser test's are the Chrome driver's waits, which keep the same rule). What the scale and
 the long probe would hide, a recorder grown slow, two checks turn red at half the real bound:

@@ -265,6 +265,54 @@ match ([the analysis](analysis/consumer-contract.md#two-references-two-copies)).
 landing moves its Git pin; the machine refresh never does
 ([the refresh](#the-refresh)).
 
+## A GitHub Release
+
+A green release publishes a GitHub Release for its tag only on the project's word, which is two
+settings, as a delivery by pull request has two: `[releases] github` in `symphony.toml`, the
+command the run asks, and `releases = "publish"` in the GitHub adapter's own settings, without
+which that command answers `refused` and asks GitHub nothing ([GITHUB](GITHUB.md#publishing-a-release)).
+This repository's `symphony.toml` names no command. While none is named the run starts no
+program for it, says nothing of it, and keeps and records nothing of it: its output, its record
+and `--status` are what they are without the step
+(`crates/symphony-build/src/release/github.rs`).
+
+- **The command.** `github = ["symphony-github", "release"]` names the GitHub adapter, which no
+  package here builds with: the run starts it as a program in the main checkout, `COMMAND…
+  --request FILE`, within five minutes, and reads one line of JSON. Any program that answers the
+  same way serves, as the tests' stand-in does.
+- **What is asked.** The release's name, the commit it tags, whether it is the newest release
+  tagged here, which alone is marked the latest, and its body: the release's own section of the
+  notes, exactly what `just symphony-cli release-notes BEFORE NAME` prints for it
+  ([its notes](#its-notes)), from the release before it, or from none for the first. Nothing is
+  uploaded: no binary, archive or other asset.
+- **When.** Once the release's tag is pushed and after the crates.io step, before
+  [the refresh](#the-refresh): the run's own release, and before it each release an earlier ask
+  left pending, oldest first. `--refresh` asks the same for the newest release here. A red run
+  and a release candidate tag nothing, so nothing is asked for them, and a run or a refresh
+  under `--no-push` asks nothing (`not published: --no-push publishes nothing`).
+- **Once.** The adapter looks for the release by its tag before it makes one and reads the tag at
+  GitHub before it asks, so asking twice makes none twice, an ask cut short is asked again, and
+  no tag is made, moved or re-created there. A release found is left as it is, and none is ever
+  edited or deleted.
+- **Pending.** A release the command did not publish, because GitHub gave no answer, the answer
+  was lost, the command refused or it could not be run, is `pending`, with why. The release
+  stands, its tag pushed and its result green, and the run's exit is what it was without the
+  step. The next ask publishes it: `just release --refresh`, an orchestrator's retry once the
+  cause is put right, the next release's run, or `just release --github`.
+- **What is kept.** `github.json` in the record folder (`.git/symphony/release/`) holds what each
+  release was last answered: `published`, `found` (there already) or `pending`, with the
+  release's page or why, when and which run asked. `github/` beside it holds, for each release,
+  the last request and what the command answered. One publication runs at a time
+  (`github.lock`): a second asks nothing and says so.
+- **By hand.** `just release --github [NAME…]` asks for each release named, or for every release
+  tagged here, oldest first, and runs no check, tags and pushes nothing and records no run: how
+  the releases tagged before the project named a command are published, once, and a retry of
+  one pending. It ends 0 when each is published or there already, 1 when one is left pending,
+  and is refused while the project names no command or names a release not tagged here.
+
+Its tests ask a stand-in for the adapter (`crates/symphony-build/tests/release/github.rs`); the
+adapter's own ask a GitHub repository held in memory. Neither reaches GitHub.
+
 ## The release run
 
 `just release` (`symphony-build release`, `crates/symphony-build/src/release.rs`) cuts the
@@ -326,7 +374,11 @@ project is given and neither the library nor the shipped `symphony` compiles
    process found is listed again for up to 5 s, and counts only if it is still there, so one on
    its way out is not counted. This look sees a process only while it works in the checkout or
    holds a file there open. One that moved elsewhere (a daemon that changed to `/`) and writes
-   into the checkout by path is not seen.
+   into the checkout by path is not seen. The board's recorder of a check, which goes on writing
+   its record after the check ended, is by design none it counts: it works at the root and
+   writes nothing in the checkout
+   ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so the time a loaded machine
+   takes over a record never stops a run.
 3. **The full verification** runs there: `just verify`, which is lint, the real client check, the
    size budgets ([CHECKS](CHECKS.md#size-budgets)), the docs audit, the crates check
    ([the packages](#packages-on-cratesio)) and every test target of the workspace, the board's
@@ -532,8 +584,9 @@ project is given and neither the library nor the shipped `symphony` compiles
    fails keeps the tag here and is the red `run`; a later run on that same commit fails the same
    way, naming the push that delivers it, and `--status` names each release here that the last run
    found missing from the remote. No run pushes an older tag. A pushed release then publishes its
-   packages on crates.io while the project says so ([above](#packages-on-cratesio)), and refreshes
-   the machine ([below](#the-refresh)).
+   packages on crates.io while the project says so ([above](#packages-on-cratesio)), asks for its
+   GitHub Release while the project names a command for it ([above](#a-github-release)), and
+   refreshes the machine ([below](#the-refresh)).
 
 **Its time.** A run has ten hours (`--timeout SECONDS`, at most 24 hours: a killed run's check
 holds later runs off for its run's time). A check still running then is stopped (its
@@ -1256,7 +1309,10 @@ and a start while nothing holds the switch, is the owner's word, and so is point
 on that machine ([the way back](#the-way-back)); a release's server that already serves follows
 each `current` the refresh points. Turning `[releases] publish` on is the owner's word, the first publication's
 ([the packages](#packages-on-cratesio)); once it is on, `just release --refresh` after a failed
-upload's cause is put right is an orchestrator's act as well.
+upload's cause is put right is an orchestrator's act as well. Naming a command in `[releases]
+github`, and which repository the adapter's settings name, are the owner's word; once one is
+named, `just release --refresh` and `just release --github` for a release left pending are an
+orchestrator's acts, and `just release --github` for the releases tagged before is the owner's.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
 retries are an orchestrator's acts as well: `just release --rerun`, once every red of it is
 answered and no landing has started its rerun (a red answered outside this repository, say), and
@@ -1280,6 +1336,9 @@ ended, how and when, its red runs, and whether the run of main's tip its drop ma
 its checks; `none held`, or `off` while a bound is 0. Then it
 prints the cadence, the landings since what it counts from and what the next run waits for, the
 last publication on crates.io with each line it said ([the packages](#packages-on-cratesio)),
+once a GitHub Release was asked for, how many are published and pending, each pending one with
+why and the newest published (`GitHub releases: 2 published, 1 pending`,
+[a GitHub Release](#a-github-release)),
 the last refresh, with each line it said and each step red or its project's to finish, and last
 where the machine's server stands ([the switch](#the-switch)): the release `current` names, or
 the releases installed while it names none, whether the machine's server runs it, and, while a
@@ -1388,8 +1447,10 @@ since, and what is left of the old is this (`crates/symphony-build/src/release.r
 
 The release run never tags a commit that is not on `origin/main`, that does not descend from the
 newest release or that a check found red, never moves or deletes a tag, and pushes nothing but its
-new tag: never the branch `release-candidate`, which it moves only from the commit it set it to
-and never while a worktree has it checked out. It resets and cleans no checkout but its own,
+new tag. It asks for a GitHub Release only of a release tagged here and only of the command the
+project names, uploads nothing to one, and edits and deletes none. It never pushes the branch
+`release-candidate`, which it moves only from the commit it set it to and never while a worktree
+has it checked out. It resets and cleans no checkout but its own,
 removes no folder it did not make, builds and tests nothing of a consuming project's, and itself
 writes nothing to a consuming project's checkout. Its install writes in the machine folder only a
 release's own new folder under `releases/`, never one already there, and the `current` link, and

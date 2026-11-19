@@ -121,18 +121,27 @@ fn a_quiet_child_whose_listener_answers_is_lost_at_each_wake_only_when_the_dispa
     let night = Night::new(backend, None);
     night.sweep();
     assert_eq!(night.dispatch(), Vec::<String>::new());
-    // Swept first at every wake, it is not quiet: nothing is said, night after night.
-    for _ in 0..4 {
+    // Swept first at every wake, it is not quiet: neither STALE nor LOST is said, night after
+    // night. With no terminal and no tool call since it connected, it is at rest: idle, once.
+    for wake in 0..4 {
         night.sleep();
         night.sweep();
         assert_eq!(night.f.health("child"), Health::Live);
-        assert_eq!(night.dispatch(), Vec::<String>::new());
+        let idle = ["PULL idle=1 (was 0)".to_string(), "idle child".to_string()];
+        assert_eq!(night.dispatch(), if wake == 0 { &idle[..] } else { &[] });
     }
     // Dispatched first, every wake reads the sleep as its silence and says it lost again, and
     // the sweep after it says it is back: one quiet episode, a LOST at each wake.
     for wake in 0..3 {
         night.sleep();
-        assert_eq!(night.dispatch(), if wake == 0 { LOST } else { LOST_AGAIN });
+        // The first also takes back the idle row the nights before said.
+        let lost_from_idle = [
+            LOST[0],
+            "PULL executing=0 (was 1) in_progress_orphaned=1 (was 0) idle=0 (was 1)",
+            LOST[2],
+            "resolved idle child",
+        ];
+        assert_eq!(night.dispatch(), if wake == 0 { &lost_from_idle[..] } else { &LOST_AGAIN[..] });
         // Its return is no new work: nothing is said of it.
         night.sweep();
         assert_eq!(night.dispatch(), Vec::<String>::new());
