@@ -155,6 +155,62 @@ fn a_journal_with_nothing_but_a_line_cut_short_holds_nothing() {
 }
 
 #[test]
+fn a_last_line_cut_inside_a_character_is_left_out_like_any_cut_short() {
+    let dir = dir("journal-cut-in-a-character");
+    let store = Store::open(&dir).unwrap();
+    store.journal(&entry("one", Event::Ack)).unwrap();
+    let mut whole = entry("café", Event::Intent);
+    whole.target = "naïve/ünïcode".into();
+    let line = serde_json::to_string(&whole).unwrap();
+    let inside = line.find('é').unwrap() + 1;
+    assert!(
+        !line.is_char_boundary(inside),
+        "the cut ends inside a character"
+    );
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(dir.join("journal.jsonl"))
+        .unwrap();
+    file.write_all(&line.as_bytes()[..inside]).unwrap();
+    assert!(
+        fs::read_to_string(dir.join("journal.jsonl")).is_err(),
+        "not text whole"
+    );
+    let entries = store.entries().unwrap();
+    let ops: Vec<&str> = entries.iter().map(|e| e.op.as_str()).collect();
+    assert_eq!(ops, ["one"]);
+
+    // Cut away before the next, which reads back whole, its characters too.
+    store.journal(&whole).unwrap();
+    let entries = store.entries().unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[1], whole);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_whole_line_that_is_not_text_is_a_refusal_naming_it() {
+    let dir = dir("journal-not-text");
+    let store = Store::open(&dir).unwrap();
+    store.journal(&entry("one", Event::Ack)).unwrap();
+    let line = serde_json::to_string(&entry("é", Event::Intent)).unwrap();
+    let at = line.find('é').unwrap();
+    let mut bytes = line.into_bytes();
+    bytes[at + 1] = 0xff;
+    bytes.push(b'\n');
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(dir.join("journal.jsonl"))
+        .unwrap();
+    file.write_all(&bytes).unwrap();
+    store.journal(&entry("three", Event::Intent)).unwrap();
+    let refused = store.entries().unwrap_err();
+    assert!(refused.contains("journal.jsonl"), "{refused}");
+    assert!(refused.contains("line 2 does not read"), "{refused}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_damaged_line_before_the_last_is_a_refusal_naming_it() {
     let dir = dir("journal-damaged");
     let store = Store::open(&dir).unwrap();
