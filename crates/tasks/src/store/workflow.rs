@@ -120,6 +120,17 @@ pub struct Transition {
     pub at: f64,
 }
 
+/// Of a recorded [`Transition`], what the pipeline alarm reads: the status it put its task at, and
+/// when. Decoding no more keeps the workflow's own types out of what reads it alone: `agent-send`
+/// composes an orchestrator's PULL, and with it the alarm, as it delivers (tools/size-budget.toml).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Moved {
+    pub slug: String,
+    pub revision: u64,
+    pub status: String,
+    pub at: f64,
+}
+
 impl Transition {
     /// The identity of the transition that made `revision` of `slug`.
     pub fn id_of(slug: &str, revision: u64) -> String {
@@ -420,9 +431,9 @@ impl Store {
     }
 
     /// The transitions recorded for each of `tasks`, a slug with the workflow revision its
-    /// position stands at, each task's oldest first: every one from its first revision, each read
-    /// by its id, never a scan of the record.
-    pub fn transitions(&self, tasks: &[(&str, u64)]) -> Result<Vec<Transition>, Error> {
+    /// position stands at, each task's oldest first, as the pipeline alarm reads them ([`Moved`]):
+    /// every one from its first revision, each read by its id, never a scan of the record.
+    pub fn transitions(&self, tasks: &[(&str, u64)]) -> Result<Vec<Moved>, Error> {
         let ids: Vec<Value> = (tasks.iter())
             .flat_map(|(slug, revision)| (1..=*revision).map(move |r| json!(["event", slug, r])))
             .collect();
@@ -430,7 +441,7 @@ impl Store {
             return Ok(Vec::new());
         }
         let vars = json!({ "ids": ids });
-        let mut read: Vec<Transition> =
+        let mut read: Vec<Moved> =
             self.retrying(|| self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone()))?;
         read.sort_by(|a, b| (&a.slug, a.revision).cmp(&(&b.slug, b.revision)));
         Ok(read)

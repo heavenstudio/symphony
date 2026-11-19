@@ -579,28 +579,11 @@ pub(super) fn waits_line(sid: i64, ts: f64, text: &str) -> Line {
 }
 
 /// Revision `revision` of `slug`, made at `at`, putting it where it projects to `status`.
-fn transition(slug: &str, revision: u64, status: &str, at: f64) -> crate::workflow::Transition {
-    use symphony_api::workflow::Pair;
-    crate::workflow::Transition {
-        id: crate::workflow::Transition::id_of(slug, revision),
+fn transition(slug: &str, revision: u64, status: &str, at: f64) -> crate::workflow::Moved {
+    crate::workflow::Moved {
         slug: slug.into(),
         revision,
-        generation: 1,
-        digest: "d".into(),
-        edge: (revision > 1).then(|| "an-edge".into()),
-        operation: None,
-        activation: None,
-        from: None,
-        to: Pair {
-            phase: "build".into(),
-            state: format!("at-{revision}"),
-        },
-        resume: None,
         status: status.into(),
-        principal: crate::workflow::agent_session("amber"),
-        effects: Vec::new(),
-        key: None,
-        recovery: None,
         at,
     }
 }

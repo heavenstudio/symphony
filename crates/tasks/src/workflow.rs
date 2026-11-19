@@ -20,7 +20,7 @@ pub mod recover;
 mod validate;
 pub use crate::store::admission::{Receipt, Settled};
 pub use crate::store::workflow::{
-    Active, Followed, Recorded, Recovered, TaskPosition, Transition, Trigger,
+    Active, Followed, Moved, Recorded, Recovered, TaskPosition, Transition, Trigger,
 };
 pub use activate::Host;
 pub use builtin::{builtin, legacy_pair};

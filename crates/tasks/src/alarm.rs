@@ -140,7 +140,7 @@ fn status_word(text: &str) -> Option<&str> {
 /// was, for those made at `since` or later. A task's first transition, which places it, and one
 /// that keeps its status say nothing. So the alarm reads a held task's record, never its line on
 /// the thread or a state's name.
-pub fn transition_lines(transitions: &[crate::workflow::Transition], since: f64) -> Vec<Line> {
+pub fn transition_lines(transitions: &[crate::workflow::Moved], since: f64) -> Vec<Line> {
     (transitions.windows(2))
         .filter(|pair| pair[0].slug == pair[1].slug && pair[1].at >= since)
         .filter(|pair| pair[0].status != pair[1].status)
@@ -151,7 +151,9 @@ pub fn transition_lines(transitions: &[crate::workflow::Transition], since: f64)
             kind: "system".into(),
             text: format!(
                 "workflow{MOVED}{}{ARROW}{} ({})",
-                pair[0].status, pair[1].status, pair[1].id
+                pair[0].status,
+                pair[1].status,
+                crate::workflow::Transition::id_of(&pair[1].slug, pair[1].revision)
             ),
         })
         .collect()
