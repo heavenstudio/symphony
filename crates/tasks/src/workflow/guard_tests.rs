@@ -413,6 +413,13 @@ fn an_authority_not_committed_not_observed_or_in_conflict_fails_closed() {
             .message
             .contains("no authority the active workflow commits")
     );
+    let unattested = case.check(&[]).unwrap_err();
+    assert!(
+        unattested
+            .message
+            .contains("commits no authority for approvals"),
+        "{unattested}"
+    );
     let missing = Case::new().check(&[]).unwrap_err();
     assert_eq!(missing.code, RefusalCode::GuardUnavailable);
     assert!(
@@ -604,6 +611,12 @@ fn an_observation_verifies_only_by_its_own_context_and_key() {
         Ok(observed.clone())
     );
     assert!(verified_observation(&attester(8), &signed).is_err());
+    let other = Observation {
+        contract: 2,
+        ..observed.clone()
+    };
+    let contract = verified_observation(&committed, &sign_observation(7, &other)).unwrap_err();
+    assert!(contract.contains("contract 2"), "{contract}");
     let as_attestation = self::signed(7, false, &signed.payload);
     assert!(verified_observation(&committed, &as_attestation).is_err());
     assert_eq!(claimed_adapter(&signed), Ok("approvals".into()));
@@ -624,6 +637,18 @@ fn a_committed_key_reads_only_as_ed25519_and_lowercase_hex_of_a_point() {
     let mut odd = attester(7);
     odd.key.push('0');
     assert!(odd.verifying_key().unwrap_err().contains("32 bytes"));
+    // About half of all 32 bytes name no point of the curve: the first such y is refused.
+    let off_curve = (2u8..)
+        .map(|y| {
+            let mut bytes = [0u8; 32];
+            bytes[0] = y;
+            bytes
+        })
+        .find(|bytes| VerifyingKey::from_bytes(bytes).is_err())
+        .unwrap();
+    let mut pointless = attester(7);
+    pointless.key = format!("ed25519:{}", hex(&off_curve));
+    assert!((pointless.verifying_key().unwrap_err()).contains("is no Ed25519 key"));
 }
 
 #[test]

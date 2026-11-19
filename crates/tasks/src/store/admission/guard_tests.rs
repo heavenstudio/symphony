@@ -526,6 +526,31 @@ fn a_changed_key_is_a_new_activation_and_the_old_keys_word_stops() {
 }
 
 #[test]
+fn a_transition_admitted_under_an_older_activation_is_not_dispatched_under_a_newer_one() {
+    for backend in BACKENDS {
+        let f = awaiting(backend);
+        observe(&f.store, 3, None).unwrap();
+        let request = accept(&f, "accept");
+        applied(&f.store, &request, &[attested(&f, "sim/a", 3)]).unwrap();
+        assert_eq!(
+            f.store.revalidate_dispatch("sim/a", 4, &[]).unwrap().len(),
+            1
+        );
+        let rotated = from_another_commit(guarded_two(8));
+        assert!(matches!(
+            f.store.activate_workflow(&rotated, &Host::local()).unwrap(),
+            Followed::Activated(_)
+        ));
+        let stale = refused(f.store.revalidate_dispatch("sim/a", 4, &[]));
+        assert!(
+            stale.starts_with("stale_activation:")
+                && stale.contains("admitted under generation 1, and generation 2 is active"),
+            "{backend:?}: {stale}"
+        );
+    }
+}
+
+#[test]
 fn a_copy_carries_admissions_and_leaves_the_authorities_state_behind() {
     for backend in BACKENDS {
         let f = awaiting(backend);

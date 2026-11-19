@@ -211,12 +211,9 @@ fn observe(store: &Store, c: &mut Context) -> Result<(), Stop> {
         Observing::Conflicted(a) => ("in conflict at", a),
     };
     if c.parsed.flag("json") {
-        c.say(
-            &serde_json::to_string_pretty(&serde_json::json!({
-                "observed": what, "authority": accepted,
-            }))
-            .expect("an accepted state serializes"),
-        );
+        c.say(&pretty(
+            &serde_json::json!({"observed": what, "authority": accepted}),
+        ));
         return Ok(());
     }
     c.say(&format!(

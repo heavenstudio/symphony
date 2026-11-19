@@ -381,6 +381,12 @@ mod guarded {
             c.ok(&amber, &["workflow", "observe", &observed]),
             "approvals: already at generation 3 of e1 (s3)\n"
         );
+        let json: serde_json::Value =
+            serde_json::from_str(&c.ok(&amber, &["workflow", "observe", &observed, "--json"]))
+                .unwrap();
+        assert_eq!(json["observed"], "already at");
+        assert_eq!(json["authority"]["generation"], 3);
+        assert_eq!(json["authority"]["state"], "s3");
         let forged = file("forged.json", &observation(8, 4));
         let refused = c.run_as(&amber, &["workflow", "observe", &forged], "");
         assert!(refused.err.contains("committed key"), "{}", refused.err);
