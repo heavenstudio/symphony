@@ -121,6 +121,106 @@ fn edge(id: &str, from: Pair, to: Pair, operation: Operation, effects: Vec<Effec
     }
 }
 
+/// The statuses whose position a role holder holds at a `held` pair of its own.
+const HELD: [&str; 3] = ["concept", "design", "review"];
+
+/// The position of built-in v1 at `status`, the `index`th of [`STATUSES`].
+fn status_position(index: usize, status: &str) -> Position {
+    Position {
+        at: at(status),
+        staffing: match status {
+            "concept" | "design" | "ready" | "in_progress" => Some(Role::Executor),
+            "review" => Some(Role::Reviewer),
+            _ => None,
+        },
+        slot: if ["in_progress", "review"].contains(&status) {
+            Slot::Retain
+        } else {
+            Slot::Release
+        },
+        dependencies: Dependency::Done,
+        unsuccessful_dependency: UnsuccessfulDependency::Cancel,
+        accepts_work: !["done", "blocked", "cancelled"].contains(&status),
+        terminal: status == "cancelled",
+        legacy: [
+            LegacyStatus::Backlog,
+            LegacyStatus::Concept,
+            LegacyStatus::Design,
+            LegacyStatus::Ready,
+            LegacyStatus::InProgress,
+            LegacyStatus::Review,
+            LegacyStatus::Done,
+            LegacyStatus::Blocked,
+            LegacyStatus::Cancelled,
+        ][index],
+        outcome: (status == "cancelled").then_some(Outcome::Cancellation),
+        satisfies_dependencies: status == "done",
+        completion: Completion::None,
+        recovery: (status != "cancelled")
+            .then(|| recovery((status == "in_progress").then(|| at("ready")))),
+    }
+}
+
+/// Where built-in v1 closes a task its landing completed.
+fn closed() -> Pair {
+    Pair {
+        phase: "done".into(),
+        state: "completed".into(),
+    }
+}
+
+fn closed_position() -> Position {
+    Position {
+        at: closed(),
+        staffing: None,
+        slot: Slot::Release,
+        dependencies: Dependency::None,
+        unsuccessful_dependency: UnsuccessfulDependency::Block,
+        accepts_work: false,
+        terminal: true,
+        legacy: LegacyStatus::Done,
+        outcome: Some(Outcome::Success),
+        satisfies_dependencies: true,
+        completion: Completion::None,
+        recovery: None,
+    }
+}
+
+fn held_pair(status: &str) -> Pair {
+    Pair {
+        phase: status.into(),
+        state: "held".into(),
+    }
+}
+
+/// The position of `status` held by its role holder: the status's own, at its `held` pair, which
+/// recovers to the status's own pair.
+fn held_position(status: &str) -> Position {
+    let index = (STATUSES.iter())
+        .position(|known| *known == status)
+        .expect("a held status is a status");
+    Position {
+        at: held_pair(status),
+        recovery: Some(recovery(Some(at(status)))),
+        ..status_position(index, status)
+    }
+}
+
+/// The position built-in v1 declares at `pair`, built alone, or none for a pair it does not
+/// declare: what a reopening reads of the pair a task leaves, without building the whole of
+/// [`builtin`], which declares the same positions by the same functions.
+pub(crate) fn position_at(pair: &Pair) -> Option<Position> {
+    if *pair == closed() {
+        return Some(closed_position());
+    }
+    let index = STATUSES.iter().position(|status| *status == pair.phase)?;
+    let status = STATUSES[index];
+    if *pair == at(status) {
+        return Some(status_position(index, status));
+    }
+    (pair.state == "held" && HELD.contains(&status)).then(|| held_position(status))
+}
+
 /// A fresh copy of immutable built-in v1, in the same format as custom candidates. It records
 /// the default's legacy status projection and predicates without replacing any current writer.
 pub fn builtin() -> Definition {
@@ -165,39 +265,7 @@ pub fn builtin() -> Definition {
         }],
     };
     for (index, status) in STATUSES.iter().enumerate() {
-        d.positions.push(Position {
-            at: at(status),
-            staffing: match *status {
-                "concept" | "design" | "ready" | "in_progress" => Some(Role::Executor),
-                "review" => Some(Role::Reviewer),
-                _ => None,
-            },
-            slot: if ["in_progress", "review"].contains(status) {
-                Slot::Retain
-            } else {
-                Slot::Release
-            },
-            dependencies: Dependency::Done,
-            unsuccessful_dependency: UnsuccessfulDependency::Cancel,
-            accepts_work: !["done", "blocked", "cancelled"].contains(status),
-            terminal: *status == "cancelled",
-            legacy: [
-                LegacyStatus::Backlog,
-                LegacyStatus::Concept,
-                LegacyStatus::Design,
-                LegacyStatus::Ready,
-                LegacyStatus::InProgress,
-                LegacyStatus::Review,
-                LegacyStatus::Done,
-                LegacyStatus::Blocked,
-                LegacyStatus::Cancelled,
-            ][index],
-            outcome: (*status == "cancelled").then_some(Outcome::Cancellation),
-            satisfies_dependencies: *status == "done",
-            completion: Completion::None,
-            recovery: (*status != "cancelled")
-                .then(|| recovery((*status == "in_progress").then(|| at("ready")))),
-        });
+        d.positions.push(status_position(index, status));
         for target in MOVES[index] {
             let (operation, effects) = match *target {
                 "cancelled" => (
@@ -223,38 +291,11 @@ pub fn builtin() -> Definition {
             d.edges.push(e);
         }
     }
-    let closed = Pair {
-        phase: "done".into(),
-        state: "completed".into(),
-    };
-    d.positions.push(Position {
-        at: closed.clone(),
-        staffing: None,
-        slot: Slot::Release,
-        dependencies: Dependency::None,
-        unsuccessful_dependency: UnsuccessfulDependency::Block,
-        accepts_work: false,
-        terminal: true,
-        legacy: LegacyStatus::Done,
-        outcome: Some(Outcome::Success),
-        satisfies_dependencies: true,
-        completion: Completion::None,
-        recovery: None,
-    });
-    for status in ["concept", "design", "review"] {
-        let held = Pair {
-            phase: status.into(),
-            state: "held".into(),
-        };
-        let mut p = d
-            .positions
-            .iter()
-            .find(|p| p.at == at(status))
-            .expect("built-in position")
-            .clone();
-        p.at = held.clone();
-        p.recovery = Some(recovery(Some(at(status))));
-        d.positions.push(p);
+    let closed = closed();
+    d.positions.push(closed_position());
+    for status in HELD {
+        let held = held_pair(status);
+        d.positions.push(held_position(status));
         let role = if status == "review" {
             Role::Reviewer
         } else {
