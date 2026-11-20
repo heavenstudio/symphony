@@ -38,6 +38,32 @@ pub(crate) fn guarded() -> Custom {
     custom(&guarded_text(7))
 }
 
+/// `text`, a workflow with no guard, with its edge `edge` guarded by `approved`, which the
+/// `approvals` authority attests by the key of seed 7, in the project `sim`.
+pub(crate) fn guarding_edge(text: &str, edge: &str) -> String {
+    let start = text
+        .find(&format!("{{ id = \"{edge}\","))
+        .expect("the edge");
+    let end = start + text[start..].find('\n').expect("its line ends");
+    let line = text[start..end].replacen("guards = []", "guards = [\"approved\"]", 1);
+    assert!(
+        line.contains("guards = [\"approved\"]"),
+        "{edge} is guarded"
+    );
+    let text = format!("{}{line}{}", &text[..start], &text[end..])
+        .replacen("adapters = []", "adapters = [\"approvals\"]", 1)
+        .replacen(
+            "guards = []",
+            "guards = [{ id = \"approved\", adapter = \"approvals\" }]",
+            1,
+        );
+    format!(
+        "{text}\n[project]\nid = \"sim\"\n\n[[workflow_authorities]]\nadapter = \"approvals\"\n\
+         issuer = \"ledger\"\ncontract = 1\nkey = \"{}\"\n",
+        attester(7).key
+    )
+}
+
 pub(crate) fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }

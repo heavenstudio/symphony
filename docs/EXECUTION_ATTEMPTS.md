@@ -27,9 +27,13 @@ capabilities negotiated then, who asked and under which policy revision, the req
 runtime epoch and the capacity scope, and the predecessor a retry or a resume follows. Changing any
 of it is another attempt. The state keeps each dimension apart: dispatch (pending, starting,
 unknown, running, paused, held, terminal, with how it ended), cancellation, collection, cleanup, the
-bound resource and its generation, the conversation, the operation owed, and the evidence
-references the provider reported. `Store::live_attempts` names a task's attempts whose runtime may
-still be alive, held ones included: what a workflow change waits on.
+bound resource and its generation, the resume that resource was handed to, the conversation, the
+operation owed, and the evidence references the provider reported. `Store::live_attempts` names a
+task's attempts whose runtime may still be alive, held ones included: what a workflow's activation
+waits on, unless a cancel was asked of each ([WORKFLOW](WORKFLOW.md#activation-and-mappings)).
+Beside them the row keeps, never in the identity, where a custom workflow held the task when the
+attempt was admitted (its pair and workflow revision), the one place its ending may move the task
+from.
 
 ## Admission
 
@@ -39,14 +43,33 @@ and refuses a different request under the same key; a lane holds one live attemp
 capacity scope refuses with the attempts that hold it. The start it owes is recorded, with its
 key, before anything is sent. A task the board does not hold, or a closed one, takes no attempt.
 
+## Under a workflow
+
+A coordinator proposes each attempt it ends to the workflow that holds its task, as the board's
+recovery service of its host's grants (`Host::local` unless `Coordinator::with_workflow` names
+another): after its own write that ends an attempt, by an answer or a cancel, it calls
+`Store::observe_attempt`, which a host may call again for an attempt whose worker died first. A
+failure takes the automatic edge out of the task's pair within its retry bound, or the position's
+`attempt_failure` action, and a cancel that took its `cancellation_acknowledged` action; a
+success, a stop or a supersession moves nothing, nor an ending from where the task no longer
+stands, which stays on the attempt ([WORKFLOW](WORKFLOW.md#attempts)). A refusal of the proposal
+never fails the coordinator's call: the ending is recorded either way. A local terminal is
+proposed the same way ([local terminals](#local-terminals)): a close, cleanup or the idle sweep
+ends it stopped, which moves nothing; a start hc refuses is a failure and a launch's or restore's
+rollback a cancel that took, each from where the task stood when the launch admitted it. A
+reviewer's launch takes its claim edge first. An executor claims only once its session starts,
+after its attempt was admitted, so from its claim on that attempt's endings are from a pair the
+task has left and move nothing; a lost holder's recovery answers for it instead.
+
 ## The worker
 
 `Coordinator::step` acts for one attempt under a lease the database's clock times, each lease the
 next epoch, and `run_due` steps the attempts due under its configuration: a pass the host calls,
-starting no thread and no scheduler of its own. Before an operation is sent, the step records it
-as sent; the answer is written only while that lease holds, else kept as a stale fact that
-changes nothing. An operation's key is a function of its project, board, configuration, attempt,
-kind and sequence alone, so a repeat sends the same key.
+starting no thread and no scheduler of its own. Before an operation is sent, the step records it as
+sent, and before one is reconciled it records the reconcile the same way, so the facts name every
+call a worker made, under which epoch; the answer is written only while that lease holds, else kept
+as a stale fact that changes nothing. An operation's key is a function of its project, board,
+configuration, attempt, kind and sequence alone, so a repeat sends the same key.
 
 An answer that settles nothing (lost contact, a deadline, an invalid reply) never fails the
 attempt and never starts another: the operation is reconciled by its key, after a backoff that
@@ -58,10 +81,14 @@ A worker that dies leaves its lease to run out, and the attempt is due again the
 
 ## Controls
 
-A cancel bars every result of the attempt from the moment it is written. One asked before
-anything was sent ends the attempt at once; one asked while the start is in flight is sent once
-the start's resource is known; one the provider refuses leaves the cancellation unconfirmed. A
-stop asks the bound resource to pause or terminate, in a mode its provider offers; a cancel asked
+A cancel bars every result of the attempt from the moment it is written. One asked while its
+start or resume has not reached the provider, never sent or answered by an authoritative absence,
+ends the attempt at once with nothing provisioned, whatever its dispatch; one asked while the
+start is in flight is sent once the start's resource is known; one the provider refuses leaves
+the cancellation unconfirmed. A held attempt does no I/O, so a cancel of it bars its results and
+sends nothing: it stays held, in its lane and its capacity place, until a person's retry
+supersedes it. A stop asks the bound resource to pause or terminate, in a mode its provider
+offers, and is refused for a held attempt, which waits for a person; a cancel asked
 while a stop is in flight is sent once the stop is answered, whether it was taken or refused,
 and only a cancel, or the terminate that stands in for one on a provider that cannot cancel,
 settles it. A resume admits another attempt continuing a paused or ended one, from a checkpoint
@@ -70,7 +97,11 @@ it; a retry admits a new execution after a held or ended one, and is a person's 
 naming the evidence that the predecessor was found or isolated. Either is admitted in the same
 transaction that links the two and ends a still-live predecessor superseded, its capacity place
 handed to the new attempt, so following an attempt never needs a free place and is never half
-done. `external_link` resolves a view for its caller, never kept.
+done. A resume that reuses its predecessor's resource at a new generation takes that resource's
+cleanup in the same transaction: from then on the predecessor no longer counts it as open and
+its cleanup is refused while the resume holds the resource or may still take it, and a resume of
+a resource whose cleanup has begun is refused, on a new resource alone. `external_link` resolves
+a view for its caller, never kept.
 
 ## Evidence and what may count
 
@@ -79,7 +110,9 @@ project's storage collected. An artifact is kept only when the attempt's current
 generation and runtime epoch made it; any other is a stale fact alone. Its name is a relative path
 that leads nowhere above the manifest; the same artifact reported again changes nothing, and
 another under the same name is refused. Cleanup begins once the attempt has ended and its
-collection has, under a key a late report of an earlier cleanup cannot match.
+collection has, under a key a late report of an earlier cleanup cannot match. A resource handed
+to a resume is that resume's to clean; one the resume ended without taking (refused, or
+cancelled before it was sent) is its predecessor's again, whose cleanup then takes it back.
 
 `Coordinator::eligibility` says whether an attempt's result may be put forward as the task's
 evidence, and every reason it may not: it holds its lane, it succeeded, no cancel was asked, its
@@ -158,6 +191,9 @@ This is the board's half alone; full provider integration is not complete.
 `crates/tasks/tests/launch/attempts.rs` runs the local provider against `fake-hc`.
 `crates/tasks/tests/store/execution.rs` runs the coordinator on each database against a
 deterministic provider (`tests/store/execution/fake.rs`) that scripts lost responses, outages,
-crashes before and after the provider acted, refusals, conflicts and calls that race a second
-worker or a cancel. `execution/rules_tests.rs` holds the transitions without a database, and
+crashes before and after the provider acted, refusals, conflicts and calls that race a second worker
+or a cancel, and races admissions from stores of their own for one request key, one lane and the
+last place of a capacity scope; `tests/store/execution/workflow.rs` runs it under a custom workflow
+(`attempts.toml`), from activation's drain to a retry bound run out. `execution/rules_tests.rs`
+holds the transitions without a database, `workflow/recover_attempt_tests.rs` the proposals, and
 `tests/consumer_api.rs` the shapes a host calls.

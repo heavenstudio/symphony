@@ -7,7 +7,7 @@ use symphony_board::workflow::{Custom, Host, written};
 use symphony_board::{NewLaunch, NewSession, NewTask};
 
 /// Work built (available, then worked by its executor), then accepted by the owner.
-const FLOW: &str = r#"
+pub(crate) const FLOW: &str = r#"
 [workflow]
 format = 1
 initial = { phase = "build", state = "available" }

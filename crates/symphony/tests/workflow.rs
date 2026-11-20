@@ -1310,6 +1310,14 @@ fn the_project_file_reads_its_workflow_as_the_board_does_and_names_what_it_refus
         typed.starts_with("symphony.toml: workflow: invalid type"),
         "{typed}"
     );
+    // The values the file's one reading left: a datetime is a table to the board's reader there
+    // too, which no field of the workflow takes.
+    let dated =
+        parse(&CUSTOM.replace("label = \"Build\"", "label = 1979-05-27T07:32:00Z")).unwrap_err();
+    assert!(
+        dated.starts_with("symphony.toml: workflow: invalid type: map, expected a string"),
+        "{dated}"
+    );
     assert!(
         parse("workflow = 1\n")
             .unwrap_err()

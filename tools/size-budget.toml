@@ -95,7 +95,22 @@ symphony = 12_880_000
 # as the board's pages saved nothing until a release could follow main; the cuts are
 # perf/board-derived-readers-size's and a follow-up's. Measured 7,786,176; the line is that plus
 # 4%, rounded down to 10,000. Independent review is required.
-tasks = 8_090_000
+# tools/local-provider-attempts (f8843364d) took tasks past that line alone: 7,786,176 at
+# 450674b6c, 8,265,760 with it (+479,584), the same on main at 9704dead1
+# (tests/main-red-size-check-tasks-2). Nothing in tasks called the execution coordinator before:
+# crate::execution was in the library and dead-stripped. hc as a provider of attempts
+# (launch::attempts) makes launch, restore, close, cleanup and reap call it, so the coordinator
+# links into tasks for the first time; it is no second copy. By the two link maps: the derived
+# serde of the attempt record and the kit's execution types (174,044, of which 128,912 decodes
+# from serde_json::Value), the coordinator (92,132, of which 53,652 is the store's fenced write
+# instantiated once for each coordinator closure), launch::attempts (31,840), the record, keys,
+# rules and evidence (27,396), the kit's types' clone, drop, validation and channels (21,596) and
+# the store's attempt operations on both backends (12,552), with unwind and constant data in
+# proportion. Raised before any cut, as no release is green until it is; the cuts (one fenced
+# write for every closure, readers by field of the attempt record) are
+# perf/board-derived-readers-size's. Measured 8,265,760; the line is that plus 4%, rounded down
+# to 10,000. Independent review is required.
+tasks = 8_590_000
 # The board's operations on tasks a workflow holds (tools/workflow-operations) add 264,656 bytes to
 # agent-send: 3,087,168 at the runtime's d7e3b719d, 3,351,824 with them. agent-send delivers what
 # it sends itself (send_agent, then the recipient's dispatch), and that dispatch composes an

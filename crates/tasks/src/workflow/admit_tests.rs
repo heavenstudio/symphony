@@ -770,6 +770,118 @@ fn a_guarded_edge_is_admitted_with_its_attestation_and_says_which_guard_it_met()
     );
 }
 
+#[test]
+fn an_automatic_edge_is_the_boards_to_take_on_an_attempts_ending_never_a_callers() {
+    let custom = custom(&crate::workflow::recover::attempt_tests::attempts(false));
+    let facts = at(&custom, "verify", "checking");
+    let service = board_service("recovery");
+    let answered = Recovered {
+        trigger: crate::workflow::Trigger::AttemptFailure,
+        holder: "ab12".into(),
+        role: "checker".into(),
+        manual: false,
+    };
+    let observed = |edge: &str| {
+        let request = request(&custom, &facts, edge);
+        admit_observed(
+            context(&custom),
+            &facts,
+            &service,
+            &Host::local(),
+            &request,
+            &answered,
+            70.0,
+        )
+    };
+    let taken = observed("rework").unwrap();
+    assert_eq!(
+        (
+            &taken.transition.edge,
+            &taken.transition.to,
+            &taken.transition.principal
+        ),
+        (
+            &Some("rework".to_string()),
+            &pair("build", "available"),
+            &service
+        )
+    );
+    assert_eq!(taken.transition.recovery, Some(answered.clone()));
+    // Nor does the board take an edge a caller takes, its authority granted or not.
+    let accept = observed("accept").unwrap_err();
+    assert_eq!(
+        (accept.code, accept.message.as_str()),
+        (
+            RefusalCode::UnsupportedWriter,
+            "edge accept is a caller's to take: the board takes only an automatic edge"
+        )
+    );
+    // The owner, or the service itself, asking as a caller is refused the automatic edge.
+    for caller in [local_owner(), service.clone()] {
+        let refused = taking(&custom, &facts, &caller, "rework").unwrap_err();
+        assert_eq!(
+            (refused.code, refused.message.as_str()),
+            (
+                RefusalCode::UnsupportedWriter,
+                "edge rework is automatic: the board takes it, never a caller"
+            )
+        );
+    }
+    let rework = (custom.definition.definition().edges.iter())
+        .find(|e| e.id == "rework")
+        .unwrap();
+    let previewed = blockers(
+        context(&custom),
+        &facts,
+        &local_owner(),
+        &Host::local(),
+        rework,
+        None,
+        None,
+    );
+    assert!(
+        previewed
+            .iter()
+            .any(|r| r.message == "edge rework is automatic: the board takes it, never a caller"),
+        "{previewed:?}"
+    );
+}
+
+#[test]
+fn the_board_takes_no_guarded_edge_on_an_attempts_ending() {
+    use crate::workflow::guard::tests::guarding_edge;
+    let text = guarding_edge(
+        &crate::workflow::recover::attempt_tests::attempts(false),
+        "rework",
+    );
+    let custom = custom(&text);
+    let facts = at(&custom, "verify", "checking");
+    let answered = Recovered {
+        trigger: crate::workflow::Trigger::AttemptFailure,
+        holder: "ab12".into(),
+        role: "checker".into(),
+        manual: false,
+    };
+    let refused = admit_observed(
+        context(&custom),
+        &facts,
+        &board_service("recovery"),
+        &Host::local(),
+        &request(&custom, &facts, "rework"),
+        &answered,
+        70.0,
+    )
+    .unwrap_err();
+    assert_eq!(
+        (refused.code, refused.message.as_str()),
+        (
+            RefusalCode::GuardUnavailable,
+            "edge rework is guarded by approved: it is taken with an attestation from the \
+             project's authority"
+        )
+    );
+}
+
 fn with_outputs() -> Custom {
     custom(&outputs())
 }

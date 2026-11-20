@@ -18,7 +18,7 @@
 //! request names ([`standing`]).
 
 use super::guard::{self, Binding, Checked, Guarding};
-use super::{Host, TaskPosition, Transition};
+use super::{Host, Recovered, TaskPosition, Transition};
 use crate::Held;
 use std::fmt;
 use symphony_api::workflow::{
@@ -124,6 +124,36 @@ pub fn admit(
     guarding: &Guarding<'_>,
     at: f64,
 ) -> Result<Admitted, Refusal> {
+    let taker = Taker::Caller(Some(guarding));
+    admitting(context, facts, principal, host, request, taker, at)
+}
+
+/// `request`, an automatic edge the board takes on the attempt ending `answered` records,
+/// admitted for `principal`, the board's service, as [`admit`] admits a caller's: by the same
+/// checks, but that the edge must be automatic, which no caller takes, and it brings no
+/// attestation, so a guard refuses it. Its transition records what it answered.
+pub fn admit_observed(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    host: &Host,
+    request: &OperationRequest,
+    answered: &Recovered,
+    at: f64,
+) -> Result<Admitted, Refusal> {
+    let taker = Taker::Board(answered);
+    admitting(context, facts, principal, host, request, taker, at)
+}
+
+fn admitting(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    host: &Host,
+    request: &OperationRequest,
+    taker: Taker<'_>,
+    at: f64,
+) -> Result<Admitted, Refusal> {
     let position = held(facts)?;
     let expected = &request.expected;
     if expected.workflow.digest != context.revision.digest {
@@ -180,21 +210,17 @@ pub fn admit(
             ),
         ));
     }
-    if let Some(refusal) = blockers(
-        context,
-        facts,
-        principal,
-        host,
-        edge,
-        Some(request),
-        Some(guarding),
-    )
-    .into_iter()
-    .next()
+    if let Some(refusal) = blocking(context, facts, principal, host, edge, Some(request), taker)
+        .into_iter()
+        .next()
     {
         return Err(refusal);
     }
-    let guards = met(context, facts, principal, edge, request, guarding)?;
+    // `blocking` refused a guarded edge no attestations came with.
+    let guards = match taker {
+        Taker::Caller(Some(guarding)) => met(context, facts, principal, edge, request, guarding)?,
+        _ => Vec::new(),
+    };
     let handle = agent(principal);
     let mut add = Vec::new();
     let mut drop = Vec::new();
@@ -253,7 +279,10 @@ pub fn admit(
             principal: principal.clone(),
             effects: edge.effects.clone(),
             key: Some(request.idempotency_key.clone()),
-            recovery: None,
+            recovery: match taker {
+                Taker::Board(answered) => Some(answered.clone()),
+                Taker::Caller(_) => None,
+            },
             accepted,
             at,
         },
@@ -350,13 +379,41 @@ pub fn blockers(
     request: Option<&OperationRequest>,
     guarding: Option<&Guarding<'_>>,
 ) -> Vec<Refusal> {
+    let taker = Taker::Caller(guarding);
+    blocking(context, facts, principal, host, edge, request, taker)
+}
+
+/// Who takes an edge: a caller, by its request, with the attestations its guards are decided on
+/// (none for a preview); or the board, on the attempt ending it answers, with none.
+#[derive(Clone, Copy)]
+enum Taker<'t> {
+    Caller(Option<&'t Guarding<'t>>),
+    Board(&'t Recovered),
+}
+
+/// [`blockers`], for an edge `taker` takes: a caller never takes an automatic edge, and the board
+/// takes nothing else.
+fn blocking(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    host: &Host,
+    edge: &Edge,
+    request: Option<&OperationRequest>,
+    taker: Taker<'_>,
+) -> Vec<Refusal> {
     let mut found = Vec::new();
     let id = &edge.id;
-    if edge.automatic {
-        found.push(Refusal::new(
+    match taker {
+        Taker::Caller(_) if edge.automatic => found.push(Refusal::new(
             RefusalCode::UnsupportedWriter,
             format!("edge {id} is automatic: the board takes it, never a caller"),
-        ));
+        )),
+        Taker::Board(_) if !edge.automatic => found.push(Refusal::new(
+            RefusalCode::UnsupportedWriter,
+            format!("edge {id} is a caller's to take: the board takes only an automatic edge"),
+        )),
+        _ => {}
     }
     for effect in &edge.effects {
         let needs = match effect {
@@ -380,8 +437,8 @@ pub fn blockers(
         ));
     }
     if !edge.guards.is_empty() {
-        let checked = match (request, guarding) {
-            (Some(request), Some(guarding)) => {
+        let checked = match (request, taker) {
+            (Some(request), Taker::Caller(Some(guarding))) => {
                 met(context, facts, principal, edge, request, guarding).err()
             }
             _ => guard::needs_attestation(edge),

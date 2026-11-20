@@ -219,7 +219,7 @@ impl Store {
         host: &Host,
         request: &OperationRequest,
     ) -> Result<OperationResult, Error> {
-        self.apply_attested(principal, host, request, &[])
+        self.apply(principal, host, request, &[], None)
     }
 
     /// [`Store::apply_operation`], each guard of the edge met by one of `attestations`: signed by
@@ -234,6 +234,20 @@ impl Store {
         host: &Host,
         request: &OperationRequest,
         attestations: &[Signed],
+    ) -> Result<OperationResult, Error> {
+        self.apply(principal, host, request, attestations, None)
+    }
+
+    /// [`Store::apply_attested`], or, with what it `answered`, the automatic edge the board
+    /// takes on an execution attempt's ending (`Store::observe_attempt`), admitted by the same
+    /// checks, with no attestation, and written by the same write.
+    fn apply(
+        &self,
+        principal: &Principal,
+        host: &Host,
+        request: &OperationRequest,
+        attestations: &[Signed],
+        answered: Option<&crate::workflow::Recovered>,
     ) -> Result<OperationResult, Error> {
         let board = self.database().database();
         if request.project != board {
@@ -269,15 +283,26 @@ impl Store {
             let context = context(&decided);
             let at = self.now();
             let guarding = guarding(&decided, attestations);
-            let admitted = admit::admit(
-                context,
-                &decided.facts,
-                principal,
-                host,
-                request,
-                &guarding,
-                at,
-            )
+            let admitted = match answered {
+                None => admit::admit(
+                    context,
+                    &decided.facts,
+                    principal,
+                    host,
+                    request,
+                    &guarding,
+                    at,
+                ),
+                Some(answered) => admit::admit_observed(
+                    context,
+                    &decided.facts,
+                    principal,
+                    host,
+                    request,
+                    answered,
+                    at,
+                ),
+            }
             .map_err(refusal)?;
             // A caller's word never prepares or finalizes: the edge's adapter takes it.
             if let Some(adapter) = crate::workflow::effect::external(&admitted.transition.effects) {
@@ -679,17 +704,24 @@ fn sender(principal: &Principal) -> String {
     }
 }
 
-/// The transition's line on its task's thread.
+/// The transition's line on its task's thread, naming the attempt whose failure the board took it
+/// on, for an automatic edge.
 fn said(transition: &Transition) -> String {
     let named = |p: &symphony_api::workflow::Pair| format!("{}/{}", p.phase, p.state);
-    format!(
+    let mut line = format!(
         "took {} ({}): {} → {}, workflow revision {}",
         transition.edge.as_deref().unwrap_or("an edge"),
         transition.id,
         transition.from.as_ref().map_or_else(String::new, named),
         named(&transition.to),
         transition.revision
-    )
+    );
+    // The board's take answering an attempt records what it recovered, keyed by the attempt.
+    let key = (transition.recovery.as_ref()).and(transition.key.as_deref());
+    if let Some(attempt) = key.and_then(|k| k.strip_prefix("attempt/")) {
+        line.push_str(&format!(", on the failure of attempt {attempt}"));
+    }
+    line
 }
 
 /// The variables of `sql::APPLY` for `admitted`, and its receipt: one builder for every write
@@ -839,6 +871,7 @@ fn stopped(failure: Failure) -> Error {
 
 mod effects;
 pub use effects::{Finalized, Reviewed};
+mod observation;
 mod operations;
 mod recovery;
 pub use operations::Settled;

@@ -716,8 +716,8 @@ pub fn guarded_into<'d>(definition: &'d Definition, pair: &Pair) -> Option<&'d [
 
 /// Refused where a task could reach a pair a guarded edge enters by a route that lacks that
 /// edge's guards: another edge entering it under other guards or none, the initial pair a new
-/// task is filed at, or a recovery that moves a task there from another position. A graph never
-/// offers a second way to the same acceptance.
+/// task is filed at, a recovery that moves a task there from another position, or a retry bound
+/// that sends it there once exhausted. A graph never offers a second way to the same acceptance.
 pub fn coverage(definition: &Definition) -> Result<(), String> {
     for position in &definition.positions {
         let pair = &position.at;
@@ -772,6 +772,20 @@ pub fn coverage(definition: &Definition) -> Result<(), String> {
                     ));
                 }
             }
+        }
+        // An exhausted retry bound sends the task to its pair as a recovery, no edge taken.
+        let exhausting = (definition.edges.iter()).find(|e| {
+            e.from != *pair && (e.retry.as_ref()).is_some_and(|retry| retry.exhausted == *pair)
+        });
+        if let Some(edge) = exhausting {
+            return Err(format!(
+                "unguarded route: the retry bound of edge {} sends a task to {} once exhausted, \
+                 which edge {} enters under {}",
+                edge.id,
+                named(pair),
+                guarding.id,
+                listed(guards)
+            ));
         }
     }
     Ok(())
