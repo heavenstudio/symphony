@@ -6,10 +6,11 @@
 //! What the server lends a round (its clock, its bounded run of a command, its boards) is
 //! [`Machine`] here; the server's own clock driving a round is the server's test.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
+use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
@@ -72,19 +73,7 @@ impl Held {
             &fixture,
             &[("alpha", &alpha, &[]), ("symphony", &fixture.main, &[])],
         );
-        let folder = machine(&fixture).join("releases").join(RELEASE);
-        fs::create_dir_all(&folder).unwrap();
-        fs::write(
-            folder.join("manifest.json"),
-            json!({
-                "release": RELEASE, "commit": "0123456", "schema": SCHEMA,
-                "protocol": {"major": 0, "minor": 3}, "tasks_api": {"major": 2, "minor": 2},
-                "pin": 1, "client": "client/x", "artifacts": [],
-            })
-            .to_string(),
-        )
-        .unwrap();
-        executable(&folder.join("bin/symphony-server"), "#!/bin/sh\n");
+        installed(&machine(&fixture), RELEASE, SCHEMA);
         Held::release_tasks(&fixture, None);
         std::os::unix::fs::symlink(
             Path::new("releases").join(RELEASE),
@@ -210,6 +199,9 @@ impl Held {
             env: self.fixture.env.clone(),
             late: Cell::new(false),
             refuse: Cell::new(false),
+            unloaded: Cell::new(false),
+            told: Rc::default(),
+            through: RefCell::default(),
         }
     }
 
@@ -252,16 +244,63 @@ impl Held {
     }
 }
 
+/// The release `name`, serving `schema`, installed in the machine folder `machine` as its install
+/// leaves it, its `tasks` a stand-in: its folder.
+fn installed(machine: &Path, name: &str, schema: i64) -> PathBuf {
+    let folder = machine.join("releases").join(name);
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(
+        folder.join("manifest.json"),
+        json!({
+            "release": name, "commit": "0123456", "schema": schema,
+            "protocol": {"major": 0, "minor": 3}, "tasks_api": {"major": 2, "minor": 2},
+            "pin": 1, "client": "client/x", "artifacts": [],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    executable(&folder.join("bin/symphony-server"), "#!/bin/sh\n");
+    executable(&folder.join("bin/tasks"), "#!/bin/sh\nexit 9\n");
+    folder
+}
+
+/// A project's own board as a round tells it: each call, said, in `told`.
+struct Theirs(Rc<RefCell<Vec<String>>>);
+
+impl TaskBoard for Theirs {
+    fn register(&self) -> Result<String, String> {
+        Ok("filer-1".into())
+    }
+    fn leave(&self, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn status(&self, _: &str) -> Result<Option<String>, String> {
+        Ok(Some("ready".into()))
+    }
+    fn say(&self, slug: &str, _: &str, text: &str) -> Result<(), String> {
+        self.0.borrow_mut().push(format!("say {slug}: {text}"));
+        Ok(())
+    }
+    fn close(&self, slug: &str, _: &str, why: &str) -> Result<(), String> {
+        self.0.borrow_mut().push(format!("close {slug}: {why}"));
+        Ok(())
+    }
+}
+
 /// The machine's server as a round needs it: each command run to its end in the machine's own
 /// environment (its folder, its SurrealDB), or, `late`, out of time as its sweep's bound ends one;
-/// its word that it writes the board a read of it made now; and the Symphony's board, or,
-/// `refuse`, one that cannot be reached.
+/// its word that it writes the board a read of it made now, or, `unloaded`, none yet; the
+/// Symphony's board, or, `refuse`, one that cannot be reached; and a project's own, each call
+/// through it in `told` and the release binary it was reached by in `through`.
 struct Machine {
     root: PathBuf,
     machine: PathBuf,
     env: Vec<(String, String)>,
     late: Cell<bool>,
     refuse: Cell<bool>,
+    unloaded: Cell<bool>,
+    told: Rc<RefCell<Vec<String>>>,
+    through: RefCell<Vec<PathBuf>>,
 }
 
 impl Host for Machine {
@@ -280,6 +319,9 @@ impl Host for Machine {
     }
 
     fn writes(&self, schema: i64) -> Result<(), String> {
+        if self.unloaded.get() {
+            return Err("this server has not loaded the project".into());
+        }
         held::writes(&self.root, schema)
     }
 
@@ -292,8 +334,13 @@ impl Host for Machine {
         Box::new(CliBoard::with_command(vec![cli], &self.env, main))
     }
 
-    fn theirs(&self, _: &Path, _: &Path) -> Box<dyn TaskBoard> {
-        unreachable!("the update's task is on the Symphony's board")
+    fn theirs(&self, root: &Path, tasks: &Path) -> Box<dyn TaskBoard> {
+        assert_eq!(
+            root, self.root,
+            "a project's board is asked in its checkout"
+        );
+        self.through.borrow_mut().push(tasks.to_path_buf());
+        Box::new(Theirs(Rc::clone(&self.told)))
     }
 }
 
@@ -683,4 +730,87 @@ fn a_release_run_waits_for_a_round_under_way_and_holds_the_machines_lock_to_its_
     );
     // The next round moves the board.
     assert!(held.round(&host)[0].contains("its board moved from schema"));
+}
+
+#[test]
+fn a_task_on_the_projects_own_board_is_told_by_the_release_writing_its_schema_and_an_unwritten_board_waits()
+ {
+    let held = Held::new();
+    let host = held.host();
+    let machine = machine(&held.fixture);
+    // The update's task is on alpha's own board, which a release installed before writes at BEHIND.
+    let older = installed(&machine, "release-2026-11-12", BEHIND);
+    let mut ledger = Ledger::read(&machine).unwrap();
+    ledger.updates[0].task = Some(Task {
+        project: "alpha".into(),
+        ours: false,
+        slug: held.slug.clone(),
+        closed: false,
+    });
+    ledger.write(&machine).unwrap();
+    // What holds it changes: heard on alpha's board, through that release's own `tasks`.
+    let other = held.fixture.root.join("beta-build/agent-send");
+    executable(&other, "#!/bin/sh\n");
+    wrote(&held.client, "agent-send", &other, BEHIND, 30.0);
+    let said = held.round(&host);
+    assert!(
+        said[0].ends_with(&format!("; heard on {}", held.slug)),
+        "{said:#?}"
+    );
+    assert_eq!(*host.through.borrow(), [older.join("bin/tasks")]);
+    assert!(
+        host.told.borrow()[0].starts_with(&format!(
+            "say {}: Failure 2 of alpha@{SCHEMA} (the machine's server, {RELEASE}, at its round): ",
+            held.slug
+        )),
+        "{:#?}",
+        host.told.borrow()
+    );
+    // Both builds gone: moved, and the server has not loaded the project yet, so it waits.
+    fs::remove_file(&held.held).unwrap();
+    fs::remove_file(&other).unwrap();
+    host.unloaded.set(true);
+    let said = held.round(&host);
+    assert_eq!(said.len(), 2, "{said:#?}");
+    assert!(said[0].contains("its board moved from schema"), "{said:#?}");
+    assert_eq!(
+        said[1],
+        format!(
+            "alpha@{SCHEMA}: its board is at schema {SCHEMA}, and the machine's server does not \
+             write it yet (this server has not loaded the project): its next round looks again"
+        )
+    );
+    let waiting = held.ledger();
+    assert!(waiting.reached.is_some() && waiting.served.is_none() && waiting.open());
+    assert_eq!(
+        host.told.borrow().len(),
+        1,
+        "nothing closed, nothing more said"
+    );
+    // Loaded: served, its task closed on alpha's board through the release that writes it now.
+    host.unloaded.set(false);
+    let said = held.round(&host);
+    assert!(
+        said[0].contains("served: the machine's server writes the board"),
+        "{said:#?}"
+    );
+    assert_eq!(
+        said[1],
+        format!("alpha@{SCHEMA}: closed {} on alpha's board", held.slug)
+    );
+    assert_eq!(
+        host.through.borrow().last(),
+        Some(&machine.join("releases").join(RELEASE).join("bin/tasks"))
+    );
+    let told = host.told.borrow();
+    assert!(
+        told[1].starts_with(&format!(
+            "close {}: alpha@{SCHEMA}: it is served",
+            held.slug
+        )),
+        "{told:#?}"
+    );
+    let served = held.ledger();
+    assert_eq!(served.reached, waiting.reached, "reached once");
+    assert!(served.task.unwrap().closed);
 }

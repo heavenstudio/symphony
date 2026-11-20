@@ -62,3 +62,52 @@ fn a_project_not_loaded_here_is_never_said_to_be_written() {
         "the server's clock reads the wall's time"
     );
 }
+
+#[test]
+fn a_server_that_is_no_installed_release_tries_nothing_again() {
+    let tree = crate::testing::Tree::new();
+    assert!(Retrying::of_this_server(&tree.path("machine")).is_none());
+}
+
+#[test]
+fn a_projects_board_is_asked_in_its_checkout_by_the_release_binary_without_the_symphonys_board() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = crate::testing::Tree::new();
+    let shared = shared(&tree);
+    let host = Server {
+        shared: &shared,
+        clock: &MachineClock,
+    };
+    let root = tree.path("alpha");
+    let tasks = tree.path("releases/release-2026-11-12/bin/tasks");
+    std::fs::create_dir_all(tasks.parent().unwrap()).unwrap();
+    std::fs::write(
+        &tasks,
+        "#!/bin/sh\ncat > asked\npwd > where\nenv > env\n\
+         echo '{\"ok\": {\"slug\": \"tests/x\", \"status\": \"ready\"}}'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&tasks, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let board = host.theirs(&root, &tasks);
+    assert_eq!(board.status("tests/x"), Ok(Some("ready".to_string())));
+    let read = |name: &str| std::fs::read_to_string(root.join(name)).unwrap();
+    assert!(
+        read("asked").contains("\"method\":\"get\""),
+        "{}",
+        read("asked")
+    );
+    assert_eq!(
+        std::path::Path::new(read("where").trim())
+            .canonicalize()
+            .unwrap(),
+        root.canonicalize().unwrap()
+    );
+    let env = read("env");
+    let names: Vec<&str> = (symphony::machine::moving::UNSET.iter().copied())
+        .chain(symphony_board::sys::GIT_VARS.iter().copied())
+        .collect();
+    for line in env.lines() {
+        let name = line.split('=').next().unwrap_or_default();
+        assert!(!names.contains(&name), "{name} reached the project's board");
+    }
+}

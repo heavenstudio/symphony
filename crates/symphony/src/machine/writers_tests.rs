@@ -267,3 +267,18 @@ fn a_judgement_read_later_says_the_same_steadily_while_the_same_writers_hold() {
     );
     assert_eq!(steady("x, last seen never"), "x, last seen never");
 }
+
+#[test]
+fn a_board_from_before_the_writer_record_is_its_projects_own_migrates_to_bring_up() {
+    let said = before_the_record(17, Path::new("/work/alpha"));
+    assert_eq!(
+        said,
+        format!(
+            "its board is at schema 17, from before the board recorded who writes it (schema {}), \
+             so it is never moved here: `cd /work/alpha && just tasks migrate`, its own, brings it \
+             up",
+            symphony_board::WRITERS_SINCE
+        )
+    );
+    assert_eq!(steady(&said), said, "it names no writer's time");
+}
