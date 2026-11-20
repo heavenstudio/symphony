@@ -484,6 +484,16 @@ machine's time on runs. The Agents page says a held task's place where it says a
 status, by the definition's names, which it reads through the board's workflow chunk only once a
 task it lists has a place.
 
+**Reports.** On a board that runs a custom workflow, the hourly roll-up's one read says so, and it
+then reads each task of its window's recorded transitions too (`Store::report_places`), each named
+as the timeline names it; each hour of the day files then carries `workflow`: the task-hours
+top-level tasks and subtasks, apart, spent in each phase and in each state, under the label the
+move was made under, time at a position that projects to done or cancelled left out
+([the day files](analysis/reports-and-monitoring.md#the-day-files)). A board that runs none asks
+nothing more and writes the files it wrote before. `/api/reports` sums a period's top-level hours
+by ID and label (`ReportBucket::workflow`), and Reports draws them after Flow, time by phase and
+time by state in two charts, only while a period of the window records them.
+
 ## Definition format 1
 
 IDs begin with a lowercase ASCII letter and contain only lowercase ASCII letters, digits,

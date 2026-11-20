@@ -2220,6 +2220,25 @@ fn report_bucket(start: f64) -> api::ReportBucket {
             unanswered: 1,
             ..BucketHealth::default()
         }),
+        workflow: Some(api::reports::PlacedHours {
+            phases: vec![
+                spent("build", "Build", 30.5),
+                spent("verify", "Verify", 6.0),
+            ],
+            states: vec![
+                spent("working", "Working", 30.5),
+                spent("awaiting", "Awaiting", 6.0),
+            ],
+        }),
+    }
+}
+
+/// The task-hours spent in the phase or state `id`, named `label`.
+fn spent(id: &str, label: &str, hours: f64) -> api::reports::Spent {
+    api::reports::Spent {
+        id: id.into(),
+        label: label.into(),
+        hours,
     }
 }
 

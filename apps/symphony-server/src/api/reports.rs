@@ -26,7 +26,9 @@ use symphony_api::report_page::{
     BucketAgents, BucketFlow, BucketHealth, BucketVerdicts, BucketWaits, Grain, REPORTS_FILE_BYTES,
     REPORTS_READ_BYTES, ReportBucket, ReportMark, ReportsPage,
 };
-use symphony_api::reports::{ByStatus, DecisionCounts, GitCounts, ReportDay, Spread};
+use symphony_api::reports::{
+    ByStatus, DecisionCounts, GitCounts, PlacedHours, ReportDay, Spent, Spread,
+};
 use symphony_api::{HealthHour, report_file, run_day};
 
 mod kept;
@@ -416,6 +418,22 @@ struct Sums {
     red_fix: Vec<f64>,
     agents: Vec<AgentHour>,
     health: Option<BucketHealth>,
+    /// Where a custom workflow's top-level tasks spent its hours that record it.
+    workflow: Option<PlacedHours>,
+}
+
+/// `from`'s task-hours added to `into`'s, each under its ID and label, a new one after those kept:
+/// the hours come ordered by ID and label, so a period's stay so but for a label first met later.
+fn add_spent(into: &mut Vec<Spent>, from: &[Spent]) {
+    for spent in from {
+        match into
+            .iter_mut()
+            .find(|kept| kept.id == spent.id && kept.label == spent.label)
+        {
+            Some(kept) => kept.hours += spent.hours,
+            None => into.push(spent.clone()),
+        }
+    }
 }
 
 /// `from`'s figures added to `into`'s, status by status.
@@ -466,6 +484,11 @@ impl Sums {
             kept.added += git.added;
             kept.removed += git.removed;
             kept.reverts += git.reverts;
+        }
+        if let Some(placed) = &hour.workflow {
+            let kept = self.workflow.get_or_insert_default();
+            add_spent(&mut kept.phases, &placed.top.phases);
+            add_spent(&mut kept.states, &placed.top.states);
         }
         let waits = &hour.waits;
         for (kept, ended) in self.waits.iter_mut().zip([
@@ -536,6 +559,7 @@ impl Sums {
             red_fix: spread(self.red_fix),
             agents: agents(&self.agents),
             health: self.health,
+            workflow: self.workflow,
         }
     }
 }

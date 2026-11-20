@@ -3902,6 +3902,16 @@
             "slowest_ms": null,
             "writes": 0,
             "write_p90_ms": null
+          },
+          "workflow": {
+            "phases": [
+              { "id": "build", "label": "Build", "hours": 30.5 },
+              { "id": "verify", "label": "Verify", "hours": 6.0 }
+            ],
+            "states": [
+              { "id": "working", "label": "Working", "hours": 30.5 },
+              { "id": "awaiting", "label": "Awaiting", "hours": 6.0 }
+            ]
           }
         }
       ],

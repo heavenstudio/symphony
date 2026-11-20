@@ -349,6 +349,11 @@ once and is landed as a document's part is (the shell's `land`, once a navigatio
 load's charts, which come after the shell looked for it, land too, until the reader chooses a
 window: a first answer that drew no chart (nothing recorded, a failed read) started no landing,
 and the window chosen after it lands none (`lands`, `NearViewport`).
+A project whose board runs a custom workflow gets a Workflow section after Flow
+(`workflowSection`): time by phase and time by state, two charts of the same hours, a series for
+each phase or state under each label its hours were spent under (its ID after it where two share
+a label), the four largest and Other past five; drawn only while a period of the window records a
+workflow, so a board that runs none draws the page it did.
 `src/chart.tsx` draws each chart by hand, with no charting library: bars as boxes over a column
 a period, lines as one SVG whose strokes keep their width, both on one axis with its unit; a
 period no file recorded is hatched and its line broken, never a zero. Each entry of a chart's
