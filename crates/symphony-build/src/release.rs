@@ -68,7 +68,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use checks::{Ran, Step, Within};
-use git::{commit, git, git_until, is_ancestor, short};
+use git::{commit, fetch_line, git, git_until, is_ancestor, short};
 use group::Bound;
 use place::{Place, normal};
 use record::{Checking, Run, Running, local};
@@ -581,11 +581,7 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
 fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<PathBuf>, String> {
     let until = Bound::until(Instant::now() + DRIVER_BUILD);
     let mut place = place::place(&repo.root, &repo.main, &repo.common, &options.worktree)?;
-    let tracking = format!("refs/remotes/{}/{}", options.remote, options.branch);
-    let refspec = format!("+refs/heads/{}:{tracking}", options.branch);
-    let fetch = ["fetch", "--quiet", "--no-tags", &options.remote, &refspec];
-    git_until(&repo.root, &fetch, until)?;
-    let tip = commit(&repo.root, &tracking)?;
+    let tip = fetch_line(&repo.root, &options.remote, &options.branch, until)?;
     place.checkout(&repo.root, &repo.common, &tip, until, options.now)?;
     let launcher = place.checkout.join("tools/rs-bin.sh");
     if !launcher.is_file() {
@@ -1087,6 +1083,9 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         check: None,
     };
     let _ = record::hold(&folder, &running);
+    // The machine's updates lock, after the run's own and held to its end: the machine's server
+    // tries no held update again while a run of any kind holds the release's lock.
+    let _updates = machine_lock(out);
     span::awake();
     // A run that ended without recording itself (killed, or the machine stopped) is recorded first,
     // so its logs stay with it and `--status` names it.
@@ -1331,10 +1330,7 @@ fn turn(
     *held = candidate::read(folder).map_err(Stop::Error)?;
     let (remote, branch) = (options.remote.as_str(), options.branch.as_str());
     if let Some(open) = held.as_mut().filter(|held| held.open()) {
-        let tracking = format!("refs/remotes/{remote}/{branch}");
-        let refspec = format!("+refs/heads/{branch}:{tracking}");
-        let fetch = ["fetch", "--quiet", "--no-tags", remote, &refspec];
-        git_until(&repo.root, &fetch, until).map_err(Stop::Error)?;
+        fetch_line(&repo.root, remote, branch, until).map_err(Stop::Error)?;
         note(out, &settle_held(repo, remote, branch, open, options.now));
         candidate::write(folder, open).map_err(Stop::Error)?;
     }
@@ -1677,6 +1673,42 @@ fn said(board: &record::Board, out: &mut dyn Write, err: &mut dyn Write) -> i32 
     }
 }
 
+/// The machine's updates lock (`symphony::machine::updates::LOCK`), taken once the run holds its
+/// own and has said so, and held until the run ends, so the machine's server never tries a held
+/// update again ([`symphony::machine::held`]) while a release run, an out-of-cycle release or a
+/// refresh runs: waited for while a retry under way holds it, every command of which has its
+/// bound. None when the machine folder cannot be named or is not there, which no refresh reaches
+/// either and where no server tries anything, or its lock cannot be taken, said to `out`.
+fn machine_lock(out: &mut dyn Write) -> Option<symphony::machine::updates::Lock> {
+    use symphony::machine::updates;
+    // No machine folder, no server there to try an update: nothing to wait for, and none is made.
+    let machine = symphony::machine::dir()
+        .ok()
+        .filter(|machine| machine.is_dir())?;
+    let taken = match updates::try_lock(&machine) {
+        Ok(Some(lock)) => Ok(lock),
+        Ok(None) => {
+            let _ = writeln!(
+                out,
+                "release: the machine's server is trying a held update again under {}: this run \
+                 waits for it",
+                machine.join(updates::LOCK).display()
+            );
+            updates::lock(&machine)
+        }
+        Err(why) => Err(why),
+    };
+    taken
+        .map_err(|why| {
+            let _ = writeln!(
+                out,
+                "release: the machine's updates lock could not be taken, and this run goes on \
+                 without it: {why}"
+            );
+        })
+        .ok()
+}
+
 /// A run refused because another process holds the lock: its exit code. Only a run holds it, and
 /// says so in `running.json`; one that holds it well past its own time is stuck. A lock held with no
 /// living run saying so is held by a process no run knows of. Either is recorded and reported as the
@@ -1954,21 +1986,8 @@ fn night(
     let mut place =
         place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(placed)?;
     let remote = options.remote.as_str();
-    let tracking = format!("refs/remotes/{remote}/{}", options.branch);
-    git_until(
-        &repo.root,
-        &[
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            remote,
-            &format!("+refs/heads/{}:{tracking}", options.branch),
-        ],
-        until,
-    )
-    .map_err(Stop::Error)?;
+    let tip = fetch_line(&repo.root, remote, &options.branch, until).map_err(Stop::Error)?;
     let main_line = format!("{remote}/{}", options.branch);
-    let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
     let delivered = receipts::Receipts::read(&repo.root);
     let mut candidate = match (&options.out_of_cycle, held) {
         (_, Some(held)) => {
@@ -2472,20 +2491,7 @@ fn moved_on(
     candidate: &str,
     until: Bound<'_>,
 ) -> Result<Option<String>, Stop> {
-    let tracking = format!("refs/remotes/{remote}/{branch}");
-    git_until(
-        &repo.root,
-        &[
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            remote,
-            &format!("+refs/heads/{branch}:{tracking}"),
-        ],
-        until,
-    )
-    .map_err(Stop::Error)?;
-    let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
+    let tip = fetch_line(&repo.root, remote, branch, until).map_err(Stop::Error)?;
     let on = tip != candidate && is_ancestor(&repo.root, candidate, &tip).map_err(Stop::Error)?;
     Ok(on.then_some(tip))
 }

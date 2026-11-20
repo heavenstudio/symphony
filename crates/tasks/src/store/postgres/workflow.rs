@@ -6,6 +6,15 @@ pub(in crate::store) fn active() -> Pg<'static> {
     Pg::read("(SELECT body FROM workflow WHERE id = '[\"active\"]'::jsonb)")
 }
 
+/// Twin of `super::super::surreal::workflow::ACTIVE_SOURCE`.
+pub(in crate::store) fn active_source() -> Pg<'static> {
+    Pg::read(
+        "(SELECT jsonb_build_object('active', a.body, 'revision', d.body -> 'revision')
+    FROM workflow a LEFT JOIN workflow d ON d.id = jsonb_build_array('definition', a.body ->> 'digest')
+    WHERE a.id = '[\"active\"]'::jsonb)",
+    )
+}
+
 pub(in crate::store) fn definition() -> Pg<'static> {
     Pg::read(
         "(SELECT body FROM workflow WHERE id = jsonb_build_array('definition', v ->> 'digest'))",
@@ -59,7 +68,11 @@ pub(in crate::store) fn standings() -> Pg<'static> {
         'position', fields #> '{_board,workflow}',
         'blocked_from', fields #> '{_board,blocked,from}',
         'accepted', (SELECT w.body -> 'accepted' FROM workflow w
-            WHERE w.id = jsonb_build_array('event', task.slug, task.fields #> '{_board,workflow,revision}')))
+            WHERE w.id = jsonb_build_array('event', task.slug, task.fields #> '{_board,workflow,revision}')),
+        'attempts', coalesce((SELECT jsonb_agg(a.doc -> 'attempt'
+            ORDER BY (a.doc ->> 'created')::bigint, a.doc ->> 'attempt' COLLATE \"C\")
+            FROM execution_attempt a WHERE a.doc ->> 'task' = task.slug AND (a.doc ->> 'live')::boolean
+                AND coalesce(a.doc #>> '{state,cancellation}', 'none') = 'none'), '[]'::jsonb))
         ORDER BY slug)
         FROM task WHERE status NOT IN ('done', 'cancelled') OR fields #> '{_board,workflow}' IS NOT NULL),
         '[]'::jsonb))",
@@ -74,12 +87,22 @@ pub(in crate::store) fn activate() -> Pg<'static> {
 DECLARE
     active_ jsonb;
     t_ jsonb;
+    stale_ text;
     at_ double precision := (v ->> 'at')::double precision;
 BEGIN
     SELECT body INTO active_ FROM workflow WHERE id = '[\"active\"]'::jsonb FOR UPDATE;
     IF coalesce((active_ ->> 'generation')::bigint, 0) <> (v ->> 'expected')::bigint THEN
         RAISE EXCEPTION '%', 'refused: stale_workflow: the active generation is '
             || coalesce(active_ ->> 'generation', '0') || ', not ' || (v ->> 'expected');
+    END IF;
+    PERFORM 1 FROM session WHERE handle IN (SELECT s ->> 'handle' FROM jsonb_array_elements(v -> 'seen') AS s)
+        FOR SHARE;
+    SELECT s ->> 'handle' INTO stale_ FROM jsonb_array_elements(v -> 'seen') AS s
+        WHERE NOT EXISTS (SELECT 1 FROM session WHERE handle = s ->> 'handle'
+            AND last_seen = (s ->> 'last_seen')::double precision)
+        LIMIT 1;
+    IF stale_ IS NOT NULL THEN
+        RAISE EXCEPTION '%', 'refused: stale_task: ' || stale_ || ' was seen while its workflow activated';
     END IF;
     FOR t_ IN SELECT value FROM jsonb_array_elements(v -> 'kept') LOOP
         UPDATE task SET version = version + 1
@@ -103,6 +126,13 @@ BEGIN
             updated = at_, version = version + 1
             WHERE slug = t_ ->> 'slug';
     END LOOP;
+    SELECT slug INTO stale_ FROM task
+        WHERE (status NOT IN ('done', 'cancelled') OR fields #> '{_board,workflow}' IS NOT NULL)
+            AND slug NOT IN (SELECT p ->> 'slug' FROM jsonb_array_elements((v -> 'kept') || (v -> 'moved')) AS p)
+        ORDER BY slug LIMIT 1;
+    IF stale_ IS NOT NULL THEN
+        RAISE EXCEPTION '%', 'refused: stale_task: ' || stale_ || ' was filed or reopened while its workflow activated';
+    END IF;
     INSERT INTO workflow (id, kind, body, at) VALUES (
         jsonb_build_array('definition', v ->> 'digest'), 'definition', v -> 'definition', at_)
         ON CONFLICT (id) DO NOTHING;

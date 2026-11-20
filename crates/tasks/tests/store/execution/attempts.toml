@@ -1,0 +1,58 @@
+# A task is built (available, then worked by a held executor), then checked by an attempt with no
+# holder: a failed check goes back to build by the automatic edge `rework`, at most twice before its
+# bound sends the task to `verify/stuck` for a person; the owner accepts a check. An executor's failed
+# attempt takes the action the test names in place of its placeholder
+# (crates/tasks/src/workflow/recover_attempt_tests.rs, `attempts`); an acknowledged cancel stays for a person while building, and goes back to available
+# while checking.
+[workflow]
+format = 1
+initial = { phase = "build", state = "available" }
+task_kinds = ["task"]
+phases = [
+  { id = "build", label = "Build", order = 0, phone_order = 0, column = true },
+  { id = "verify", label = "Verify", order = 1, phone_order = 1, column = true },
+]
+states = [
+  { id = "available", label = "Available" }, { id = "working", label = "Working" },
+  { id = "checking", label = "Checking" }, { id = "stuck", label = "Stuck" },
+  { id = "accepted", label = "Accepted" },
+]
+capabilities = ["owner", "recovery"]
+adapters = []
+guards = []
+positions = [
+  { at = { phase = "build", state = "available" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = true, terminal = false, legacy = "ready", satisfies_dependencies = false, completion = "none" },
+  { at = { phase = "build", state = "working" }, staffing = "executor", slot = "acquire", dependencies = "none", unsuccessful_dependency = "block", accepts_work = true, terminal = false, legacy = "in_progress", satisfies_dependencies = false, completion = "none", recovery = { release = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = false }, lost_holder = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = false }, attempt_failure = @FAILURE@, cancellation_acknowledged = { manual = true, slot = "retain", release_role = false, release_reservation = false } } },
+  { at = { phase = "verify", state = "checking" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = false, legacy = "review", satisfies_dependencies = false, completion = "none", recovery = { release = { manual = true, slot = "retain", release_role = false, release_reservation = false }, lost_holder = { manual = true, slot = "retain", release_role = false, release_reservation = false }, attempt_failure = { manual = true, slot = "retain", release_role = false, release_reservation = false }, cancellation_acknowledged = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = false, release_reservation = false } } },
+  { at = { phase = "verify", state = "stuck" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = false, legacy = "blocked", satisfies_dependencies = false, completion = "none", recovery = { release = { manual = true, slot = "retain", release_role = false, release_reservation = false }, lost_holder = { manual = true, slot = "retain", release_role = false, release_reservation = false }, attempt_failure = { manual = true, slot = "retain", release_role = false, release_reservation = false }, cancellation_acknowledged = { manual = true, slot = "retain", release_role = false, release_reservation = false } } },
+  { at = { phase = "verify", state = "accepted" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = true, legacy = "done", outcome = "success", satisfies_dependencies = true, completion = "covered_close" },
+]
+edges = [
+  { id = "claim", label = "Claim", from = { phase = "build", state = "available" }, to = { phase = "build", state = "working" }, operation = "claim", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "acquire_role", role = "executor" }, { kind = "slot", policy = "acquire" }], automatic = false, human_wait = false },
+  { id = "submit", label = "Submit", from = { phase = "build", state = "working" }, to = { phase = "verify", state = "checking" }, operation = "request_review", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "release_role", role = "executor" }, { kind = "slot", policy = "release" }], automatic = false, human_wait = false },
+  { id = "rework", label = "Rework", from = { phase = "verify", state = "checking" }, to = { phase = "build", state = "available" }, operation = "retry", authority = [{ kind = "system_capability", capability = "recovery" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "slot", policy = "release" }], automatic = true, retry = { maximum = 2, exhausted = { phase = "verify", state = "stuck" } }, human_wait = false },
+  { id = "accept", label = "Accept", from = { phase = "verify", state = "checking" }, to = { phase = "verify", state = "accepted" }, operation = "close_covered", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "outcome", outcome = "success", satisfies_dependencies = true }, { kind = "slot", policy = "release" }], automatic = false, human_wait = true },
+  { id = "unstick", label = "Unstick", from = { phase = "verify", state = "stuck" }, to = { phase = "build", state = "available" }, operation = "advance", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "slot", policy = "release" }], automatic = false, human_wait = false },
+]
+
+[[workflow_mappings]]
+from = { phase = "backlog", state = "available" }
+to = { phase = "build", state = "available" }
+[[workflow_mappings]]
+from = { phase = "concept", state = "available" }
+to = { phase = "build", state = "available" }
+[[workflow_mappings]]
+from = { phase = "design", state = "available" }
+to = { phase = "build", state = "available" }
+[[workflow_mappings]]
+from = { phase = "ready", state = "available" }
+to = { phase = "build", state = "available" }
+[[workflow_mappings]]
+from = { phase = "in_progress", state = "working" }
+to = { phase = "build", state = "working" }
+[[workflow_mappings]]
+from = { phase = "blocked", state = "waiting" }
+to = { phase = "verify", state = "stuck" }
+[[workflow_mappings]]
+from = { phase = "review", state = "awaiting_review" }
+to = { phase = "verify", state = "checking" }

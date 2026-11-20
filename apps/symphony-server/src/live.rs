@@ -282,6 +282,9 @@ pub(crate) struct Hub {
     /// The project's plugins' answers of a task's gates, kept by its branch's tip
     /// ([`symphony::gates::Kept`]): what the task page's gates read, and any other reader here.
     pub(crate) gates: symphony::gates::Kept,
+    /// The execution providers this server holds, the installed ones or a test's: a task's
+    /// attempts are resumed and viewed through them (`crate::attempts`).
+    pub(crate) providers: crate::execution::Providers,
 }
 
 /// What the hub keeps of its last scan of the branches: their own cards, when they began to be
@@ -456,6 +459,7 @@ impl Hub {
             }),
             going: Mutex::new(std::collections::HashSet::new()),
             gates: symphony::gates::Kept::default(),
+            providers: crate::execution::Providers::installed(),
         }
     }
 
@@ -2651,6 +2655,9 @@ mod postpone_tests;
 
 #[cfg(test)]
 mod chat_tests;
+
+#[cfg(test)]
+mod compatible_ahead_tests;
 
 #[cfg(test)]
 mod backstop_tests;

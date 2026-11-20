@@ -41,25 +41,36 @@ pub struct TaskPosition {
     pub manual: Option<Recovered>,
 }
 
-/// The exit of a holder a recovery answered (`Store::recover_holder`): an agent's own release of
-/// its role, or a holder lost, by the position's configured action (docs/WORKFLOW.md, "Recovery").
+/// What a recovery answered (docs/WORKFLOW.md, "Recovery"): a holder's exit
+/// (`Store::recover_holder`), an agent's own release of its role or a holder lost, or an execution
+/// attempt's ending (`Store::observe_attempt`), each by the position's configured action; or the
+/// automatic edge the board took on an attempt's failure. A transition answering an attempt is
+/// keyed `attempt/ID` ([`Transition::key`]), which names the attempt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recovered {
     pub trigger: Trigger,
+    /// The holder that exited; for an attempt, the handle it ran as, or the attempt where it ran
+    /// as none.
     pub holder: String,
-    /// The role of the position's staffing the holder held there.
+    /// The role of the position's staffing the holder held there; for an attempt, the role it ran
+    /// as.
     pub role: String,
     /// Whether the action asks a person to recover the task by hand.
     pub manual: bool,
 }
 
-/// What a recovery answers: the position's `release` action, or its `lost_holder` one.
+/// What a recovery answers: the position's `release` action, its `lost_holder` one, or, on an
+/// execution attempt's ending, its `attempt_failure` or `cancellation_acknowledged` one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Trigger {
     Release,
     LostHolder,
+    /// An attempt that ended failed or rejected, no cancel asked of it.
+    AttemptFailure,
+    /// An attempt whose cancel is known to have taken: it ended after one was asked.
+    CancellationAcknowledged,
 }
 
 impl Trigger {
@@ -68,6 +79,8 @@ impl Trigger {
         match self {
             Trigger::Release => "release",
             Trigger::LostHolder => "lost_holder",
+            Trigger::AttemptFailure => "attempt_failure",
+            Trigger::CancellationAcknowledged => "cancellation_acknowledged",
         }
     }
 }
@@ -106,6 +119,8 @@ impl TaskPosition {
                     trigger: match recovered.get("trigger")?.as_str()? {
                         "release" => Trigger::Release,
                         "lost_holder" => Trigger::LostHolder,
+                        "attempt_failure" => Trigger::AttemptFailure,
+                        "cancellation_acknowledged" => Trigger::CancellationAcknowledged,
                         _ => return None,
                     },
                     holder: text(recovered, "holder")?,
@@ -163,7 +178,8 @@ pub struct Transition {
     pub principal: Principal,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<Effect>,
-    /// The idempotency key of the request that made it.
+    /// The idempotency key of the request that made it: `attempt/ID` for the board's answer to
+    /// execution attempt ID's ending, by an edge or a recovery, which answers it once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// The holder's exit it answered, for a recovery's move or stay.
@@ -264,6 +280,9 @@ struct Read {
     position: Option<TaskPosition>,
     blocked_from: Option<String>,
     accepted: Option<String>,
+    /// Its live execution attempts no cancel was asked of, oldest first.
+    #[serde(default)]
+    attempts: Vec<String>,
 }
 
 impl Store {
@@ -297,7 +316,9 @@ impl Store {
     /// the mappings it applied. Unchanged when its digest is active already. Refused whole, the
     /// previous generation left active and nothing written, when the host does not support it
     /// ([`crate::workflow::activate::supported`]) or a task cannot be placed; planned again when
-    /// the board changed between the read and the write, or another activation won.
+    /// the board changed between the read and the write (a task it read, an executor or reviewer
+    /// it read as lost beating, a task filed or reopened that it did not plan), or another
+    /// activation won.
     pub fn activate_workflow(
         &self,
         custom: &crate::workflow::Custom,
@@ -308,8 +329,11 @@ impl Store {
         // What each write opening asks first, in one small read: is it the active one already. A
         // commit that changed something else names another revision of the same workflow, which
         // stays active as it was: only a commit that changes the workflow activates.
-        if let Some(active) = self.workflow_active()?
-            && self.activated_as(&active, custom)?
+        // The active generation and the revision its definition was recorded with.
+        let mut body: Value =
+            self.retrying(|| self.read(both(sql::ACTIVE_SOURCE, pg::active_source()), json!({})))?;
+        if let Some(active) = decoded::<Active>(body["active"].take(), "active workflow")?
+            && self.activated_as(&active, &body["revision"], custom)?
         {
             return Ok(Followed::Unchanged(active));
         }
@@ -321,7 +345,7 @@ impl Store {
             let read: Standings =
                 self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
             if let Some(active) = &read.active
-                && self.activated_as(active, custom)?
+                && self.activated_as(active, &Value::Null, custom)?
             {
                 return Ok(Followed::Unchanged(active.clone()));
             }
@@ -339,6 +363,17 @@ impl Store {
                 ),
             };
             let board = self.board()?;
+            // Each executor or reviewer the plan reads as no longer holding its role, fenced on its
+            // session as read: one that beats before the write makes it stale, and the next plan
+            // reads it live.
+            let read_slug = |slug: &str| read.tasks.iter().any(|t| t.slug == slug);
+            let seen: Vec<Value> = (board.tasks.iter())
+                .flat_map(|t| t.roles.iter().map(move |r| (t, r)))
+                .filter(|(_, r)| matches!(r.role.as_str(), "executor" | "reviewer"))
+                .filter(|(t, r)| !r.health.holds() && read_slug(&t.slug))
+                .filter_map(|(_, r)| board.sessions.iter().find(|s| s.row.handle == r.handle))
+                .map(|s| json!({"handle": s.row.handle, "last_seen": s.row.last_seen}))
+                .collect();
             let tasks: Vec<activate::Standing> = (read.tasks.into_iter())
                 .map(|task| {
                     let roles = (board.tasks.iter())
@@ -356,6 +391,7 @@ impl Store {
                         position: task.position,
                         blocked_from: task.blocked_from,
                         roles,
+                        attempts: task.attempts,
                         accepted: task.accepted,
                     }
                 })
@@ -396,6 +432,7 @@ impl Store {
                 },
                 "moved": moved,
                 "kept": kept,
+                "seen": seen,
                 "at": at,
             });
             match self.retrying(|| {
@@ -425,15 +462,23 @@ impl Store {
         decoded(body, "active workflow")
     }
 
-    /// Whether `active` is `custom` already: its revision, or a definition and mappings that are
-    /// `custom`'s, recorded from another commit. The digest names the commit as well as the
-    /// workflow, so the definition and the mappings are read only where the digests differ.
+    /// Whether `active` is `custom` already: its revision, the project file it was read from in
+    /// the same format (`recorded`, its definition's revision as recorded, null where it was not
+    /// read), or a definition and mappings that are `custom`'s, recorded from another commit. The
+    /// digest names the commit as well as the workflow, and the file holds the mappings as well as
+    /// the definition, so the definition and the mappings are read only where the file's bytes
+    /// differ.
     fn activated_as(
         &self,
         active: &Active,
+        recorded: &Value,
         custom: &crate::workflow::Custom,
     ) -> Result<bool, Error> {
-        if active.digest == custom.revision.digest {
+        let theirs = &custom.revision;
+        if active.digest == theirs.digest
+            || (recorded["format"] == theirs.format
+                && recorded["source"]["project_blob"] == theirs.source.project_blob.as_str())
+        {
             return Ok(true);
         }
         let Some(recorded) = self.workflow_definition(&active.digest)? else {

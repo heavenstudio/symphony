@@ -63,10 +63,6 @@ fn the_panel_collapse_chevron_is_centered_on_phone_and_desktop_and_keeps_its_act
     }
 }
 
-fn popup_ready(page: &mut crate::Chrome) {
-    assert!(page.wait_for("(() => {const list=document.querySelector('[role=listbox][data-state=open][data-positioned=true]');return list && list.getAnimations().every(animation=>animation.playState==='finished');})()", SHOWN));
-}
-
 fn all_options_visible(page: &mut crate::Chrome) {
     assert_eq!(page.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].every(option=>{const r=option.getBoundingClientRect();return r.width>0 && r.height>0 && r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight && document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('[role=option]')===option;})"), json!(true), "every option must be inside the viewport and clickable: {}", page.eval("[...document.querySelectorAll('[role=listbox],[role=option]')].map(e=>({text:e.textContent,box:e.getBoundingClientRect().toJSON()}))"));
 }
@@ -430,9 +426,9 @@ fn an_assistive_technologys_activation_of_an_option_chooses_it() {
     );
 }
 
-#[test]
-fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize() {
-    let site = site();
+/// The task's page with forty recipients, `recipient-00` to `recipient-39`, beside the four every
+/// task has: a list taller than any window.
+fn forty_recipients(site: &Site) {
     let mut data = look_parity::responses().remove("/api/task-page").unwrap();
     let role = data["task"]["roles"][0].clone();
     data["task"]["roles"] = json!(
@@ -445,6 +441,12 @@ fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize
             .collect::<Vec<_>>()
     );
     site.set_json("/api/task-page", &data);
+}
+
+#[test]
+fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize() {
+    let site = site();
+    forty_recipients(&site);
     let Some(mut page) = chrome() else { return };
     page.call(
         "Emulation.setDeviceMetricsOverride",
@@ -487,6 +489,33 @@ fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize
     assert!(page.wait_for("document.activeElement.textContent.trim()==='recipient-39' && document.activeElement.getBoundingClientRect().bottom<=innerHeight", SHOWN));
     key(&mut page, "Enter", "Enter", 13);
     assert!(page.wait_for("document.querySelector('#task-send button[aria-haspopup=listbox]').textContent.trim()==='recipient-39' && document.querySelector('[role=listbox]')===null", SHOWN));
+}
+
+#[test]
+fn an_open_list_keeps_where_the_reader_scrolled_it_while_the_page_scrolls() {
+    let site = site();
+    forty_recipients(&site);
+    let Some(mut page) = chrome() else { return };
+    page.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
+    );
+    recipient_at_bottom(&mut page, &site);
+    page.eval("document.querySelector('main').style.paddingBottom='100vh'");
+    // The reader scrolls the list itself, as a wheel or a finger does, and the list keeps the
+    // focus: no option is brought into view for it.
+    assert_eq!(
+        page.eval("(() => {const list=document.querySelector('[role=listbox]');list.scrollTop=200;return [list.scrollTop, document.activeElement===list];})()"),
+        json!([200, true])
+    );
+    // The page scrolls under it, and the list follows its trigger, placed again each time.
+    recipient_follows_background_scroll(&mut page, false);
+    assert_eq!(
+        page.eval("document.querySelector('[role=listbox]').scrollTop"),
+        json!(200),
+        "the list's options stay where the reader scrolled them: {}",
+        recipient_geometry(&mut page)
+    );
 }
 
 fn select_ax(page: &mut crate::Chrome) -> serde_json::Value {

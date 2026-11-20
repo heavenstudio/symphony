@@ -3,7 +3,8 @@
 //! eligibility are `evidence.rs`'s.
 
 use super::keys;
-use super::record::{Ending, Fact, Identity, Lease, Pending, Relation, Row, State};
+use super::reader::Reader;
+use super::record::{Fact, Identity, Lease, Pending, Relation, Row, State};
 use super::rules::{self, Applied, Bounds, Next};
 use super::{
     Act, Admission, Attempt, Continuation, Grant, Pacing, Recorded, Refusal, Stepped, Worked,
@@ -12,12 +13,11 @@ use crate::store::Store;
 use crate::store::execution::{Admission as Admitted, Claim, Commit, Decision, Write};
 use crate::{Error, stages};
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use symphony_plugin::execution::{
     Adapter, AttemptRef, Authorization, Call, ConversationId, ExternalLink, MAX_CALL_MS, Operation,
-    OperationIdentity, Outcome, PrincipalKind, Profile, Request, ResumeFrom, Scope, StopMode,
-    invoke,
+    OperationIdentity, Outcome, PrincipalKind, Profile, Request, ResumeFrom, ResumeMode, Scope,
+    StopMode, invoke,
 };
 
 /// The board's execution attempts under one provider configuration: what a host admits, controls
@@ -36,6 +36,8 @@ pub struct Coordinator<'a> {
     pacing: Pacing,
     /// The capacity scope each attempt it admits reserves a place in, and its size.
     capacity: Option<(String, u32)>,
+    /// The workflow host whose policy an attempt's ending is proposed under.
+    host: crate::workflow::Host,
 }
 
 /// An attempt about to be admitted.
@@ -102,6 +104,7 @@ impl<'a> Coordinator<'a> {
             owner,
             pacing: Pacing::default(),
             capacity: None,
+            host: crate::workflow::Host::local(),
         })
     }
 
@@ -134,8 +137,27 @@ impl<'a> Coordinator<'a> {
         self
     }
 
+    /// The same coordinator, proposing each attempt's ending to the workflow under `host`'s
+    /// policy ([`Store::observe_attempt`]) rather than the local host's
+    /// ([`crate::workflow::Host::local`]).
+    #[must_use]
+    pub fn with_workflow(mut self, host: crate::workflow::Host) -> Coordinator<'a> {
+        self.host = host;
+        self
+    }
+
     pub fn profile(&self) -> &Profile {
         &self.profile
+    }
+
+    /// Attempt `id`'s ending proposed to the workflow that holds its task, once one of this
+    /// coordinator's own writes ended it: what the board refuses (its task moved since, no action
+    /// answers it) stays on the attempt, and moves nothing.
+    fn observe(&self, id: &str) -> Result<(), Refusal> {
+        match self.store.observe_attempt(id, &self.host) {
+            Ok(_) | Err(Error::Refused(_)) => Ok(()),
+            Err(error) => Err(Refusal::Board(error)),
+        }
     }
 
     fn bounds(&self) -> Bounds {
@@ -196,9 +218,10 @@ impl<'a> Coordinator<'a> {
             Some(successor) => self.followed_by(request_key, successor)?,
             None => false,
         };
+        let reuses = continuation.mode == ResumeMode::ReuseWithNewGeneration;
         let (binding, quiescent) = match (repeat, &before.state.resource, before.state.quiescent) {
             (true, Some(binding), Some(quiescent)) => (binding.clone(), quiescent),
-            _ => rules::resumable(&before.state).map_err(Refusal::Invalid)?,
+            _ => rules::resumable(&before.state, reuses).map_err(Refusal::Invalid)?,
         };
         let previous = self.reference(&before)?;
         let mut resume = ResumeFrom::new(
@@ -330,6 +353,12 @@ impl<'a> Coordinator<'a> {
                 entry.task, task.status
             )));
         }
+        // Where the workflow holds the task now, its pair and revision alone: the position the
+        // attempt's ending is proposed from, and only while the task stands there.
+        let workflow = (task.fields.get("_board"))
+            .and_then(|board| board.get("workflow"))
+            .filter(|position| !position.is_null())
+            .map(|p| json!({"phase": p["phase"], "state": p["state"], "revision": p["revision"]}));
         let scope = &self.profile.scope;
         let principal = grant.principal().clone();
         let digest = keys::digest(&json!({
@@ -340,6 +369,13 @@ impl<'a> Coordinator<'a> {
         }));
         let (_, hex) = keys::new_attempt();
         let kind = entry.first.operation();
+        let reuses = matches!(
+            entry.first,
+            Request::Resume {
+                mode: ResumeMode::ReuseWithNewGeneration,
+                ..
+            }
+        );
         let key = keys::operation(
             &scope.project,
             &scope.board,
@@ -405,14 +441,14 @@ impl<'a> Coordinator<'a> {
             "task": entry.task,
             "lane": entry.lane,
             "configuration": self.profile.configuration,
-            "row": {"identity": identity, "state": state},
+            "row": {"identity": identity, "state": state, "workflow": workflow},
             "facts": facts.iter().zip(1..).map(|(fact, seq)| json!({"seq": seq, "fact": fact})).collect::<Vec<_>>(),
             "request": entry.request_key,
             "digest": digest,
             "predecessor": predecessor,
             "capacity": self.capacity.as_ref().map(|(scope, limit)| json!({"scope": scope, "limit": limit})),
         });
-        let follow = |row: &Value| followed(row, &hex, relation.unwrap_or(Relation::Retry));
+        let follow = |row: &Value| followed(row, &hex, relation.unwrap_or(Relation::Retry), reuses);
         match self
             .store
             .execution_admit(vars, predecessor.as_deref(), follow)?
@@ -446,23 +482,32 @@ impl<'a> Coordinator<'a> {
     }
 
     /// Ask attempt `id` to cease. From the moment it is written no result of it is eligible; an
-    /// attempt nothing was sent for ends cancelled at once, with nothing provisioned. Asking again
-    /// changes nothing.
+    /// attempt whose start never reached the provider ends cancelled at once, with nothing
+    /// provisioned. Asking again changes nothing.
     pub fn cancel(&self, grant: &Grant, id: &str) -> Result<Attempt, Refusal> {
         let row = self.row(id)?;
         grant.allows(&self.profile.scope, Some(&row.task), Act::Cancel)?;
-        self.store.execution_update(id, |value| {
+        let (committed, ended) = self.store.execution_update(id, |value| {
             let row = Row::of(value)?;
             let first = u64::try_from(row.facts + 1).unwrap_or(0);
             Ok(match rules::cancel(&row.state, grant.principal(), first) {
-                None => Decision::Nothing(()),
-                Some(applied) => Decision::write(written(&applied, None, false), ()),
+                None => Decision::Nothing(false),
+                Some(applied) => {
+                    let ended = !applied.state.live();
+                    Decision::write(written(&applied, None, false), ended)
+                }
             })
         })?;
+        // A cancel of an attempt that had ended, or that nothing was sent for, is known to have
+        // taken at once: acknowledged where the workflow holds its task.
+        if ended && matches!(committed, Some(Commit::Committed { .. })) {
+            self.observe(id)?;
+        }
         self.view(id)
     }
 
-    /// Ask attempt `id`'s bound resource to stop in `mode`, which its provider must offer.
+    /// Ask attempt `id`'s bound resource to stop in `mode`, which its provider must offer: never a
+    /// held attempt's, which waits for a person.
     pub fn stop(&self, grant: &Grant, id: &str, mode: StopMode) -> Result<Attempt, Refusal> {
         let row = self.row(id)?;
         grant.allows(&self.profile.scope, Some(&row.task), Act::Stop)?;
@@ -523,51 +568,18 @@ impl<'a> Coordinator<'a> {
 
     /// Attempt `id`.
     pub fn attempt(&self, grant: &Grant, id: &str) -> Result<Attempt, Refusal> {
-        let row = self.row(id)?;
-        grant.allows(&self.profile.scope, Some(&row.task), Act::Read)?;
-        self.view_of(row)
+        self.reader().attempt(grant, id)
     }
 
     /// Every attempt of `task`, oldest first: its history, each retry and resume linked to the
     /// attempt before it.
     pub fn history(&self, grant: &Grant, task: &str) -> Result<Vec<Attempt>, Refusal> {
-        grant.allows(&self.profile.scope, Some(task), Act::Read)?;
-        let mut lanes: HashMap<String, Option<String>> = HashMap::new();
-        let mut attempts = Vec::new();
-        for value in self.store.execution_of_task(task)? {
-            let row = Row::of(&value)?;
-            self.same_board(&row)?;
-            let lane = &row.identity.lane;
-            if !lanes.contains_key(lane) {
-                let current = self.lane_holder(task, lane)?;
-                lanes.insert(lane.clone(), current);
-            }
-            let current = lanes[lane].as_deref() == Some(row.attempt.as_str());
-            attempts.push(attempt_of(row, current));
-        }
-        Ok(attempts)
+        self.reader().history(grant, task)
     }
 
     /// Attempt `id`'s facts, in the order they were appended.
     pub fn facts(&self, grant: &Grant, id: &str) -> Result<Vec<Recorded>, Refusal> {
-        let row = self.row(id)?;
-        grant.allows(&self.profile.scope, Some(&row.task), Act::Read)?;
-        self.store
-            .execution_facts(id)?
-            .into_iter()
-            .map(|value| {
-                let fact = serde_json::from_value(value["fact"].clone()).map_err(|e| {
-                    Refusal::Board(Error::Db(format!(
-                        "an execution fact not in the board's shape: {e}"
-                    )))
-                })?;
-                Ok(Recorded {
-                    seq: value["seq"].as_u64().unwrap_or(0),
-                    at: value["at"].as_i64().unwrap_or(0),
-                    fact,
-                })
-            })
-            .collect()
+        self.reader().facts(grant, id)
     }
 
     /// The attempts whose work is due, up to `limit`, each stepped: what the host's worker loop
@@ -644,7 +656,18 @@ impl<'a> Coordinator<'a> {
                     applied.due_in = Some(lease_ms);
                     Decision::write(written(&applied, Some(&fence), false), plan)
                 }
-                Next::Reconcile(_) | Next::Observe(_) => Decision::Nothing(plan),
+                Next::Reconcile(pending) => {
+                    let mut applied = Applied::from_state(row.state.clone());
+                    applied.facts.push(Fact::Sent {
+                        sequence: pending.sequence,
+                        worker: worker.clone(),
+                        epoch: lease.epoch,
+                        reconcile: true,
+                    });
+                    applied.due_in = Some(lease_ms);
+                    Decision::write(written(&applied, Some(&fence), false), plan)
+                }
+                Next::Observe(_) => Decision::Nothing(plan),
             };
             Ok(decision)
         })?;
@@ -776,7 +799,7 @@ impl<'a> Coordinator<'a> {
             epoch: lease.epoch,
             stale,
         };
-        let (committed, ()) = self.store.execution_update(id, |value| {
+        let (committed, ended) = self.store.execution_update(id, |value| {
             let row = Row::of(value)?;
             let answer = u64::try_from(row.facts + 1).unwrap_or(0);
             // Still the operation it owes: a reply to any other is no longer its to act on.
@@ -793,7 +816,7 @@ impl<'a> Coordinator<'a> {
                 let mut applied = Applied::from_state(row.state.clone());
                 applied.facts.push(fact(true));
                 applied.due_in = Some(0);
-                return Ok(Decision::write(written(&applied, Some(fence), true), ()));
+                return Ok(Decision::write(written(&applied, Some(fence), true), false));
             };
             let applied = rules::apply(
                 &row.identity,
@@ -804,14 +827,25 @@ impl<'a> Coordinator<'a> {
                 answer,
                 &bounds,
             );
+            let ended = row.state.live() && !applied.state.live();
             let mut recorded = Applied::from_state(applied.state.clone());
             recorded.facts = [vec![fact(false)], applied.facts].concat();
             recorded.release = applied.release;
             recorded.due_in = applied.due_in;
-            Ok(Decision::write(written(&recorded, Some(fence), true), ()))
+            Ok(Decision::write(
+                written(&recorded, Some(fence), true),
+                ended,
+            ))
         })?;
         match committed {
-            Some(Commit::Committed { .. }) | None => Ok(Worked::Answered { operation, outcome }),
+            Some(Commit::Committed { .. }) | None => {
+                // The answer that ended it, written under the worker's lease: proposed to the
+                // workflow, which moves its task only while the task stands where it was.
+                if ended {
+                    self.observe(id)?;
+                }
+                Ok(Worked::Answered { operation, outcome })
+            }
             Some(Commit::Fenced { .. }) => {
                 self.store.execution_update(id, |_| {
                     let write = Write {
@@ -860,26 +894,18 @@ impl<'a> Coordinator<'a> {
         )
     }
 
+    /// Its board's attempts, read with no provider.
+    fn reader(&self) -> Reader<'a> {
+        Reader::new(self.store, self.profile.scope.clone())
+    }
+
     /// Attempt `id`'s row, if it is this board's.
     pub(super) fn row(&self, id: &str) -> Result<Row, Refusal> {
-        if keys::parse(id).is_none() {
-            return Err(Refusal::Unknown(id.to_string()));
-        }
-        let value = self
-            .store
-            .execution_attempt(id)?
-            .ok_or_else(|| Refusal::Unknown(id.to_string()))?;
-        let row = Row::of(&value)?;
-        self.same_board(&row)?;
-        Ok(row)
+        self.reader().row(id)
     }
 
     fn same_board(&self, row: &Row) -> Result<(), Refusal> {
-        let scope = &self.profile.scope;
-        if row.identity.project != scope.project || row.identity.board != scope.board {
-            return Err(Refusal::Scope);
-        }
-        Ok(())
+        self.reader().same_board(row)
     }
 
     /// Refused unless `row` runs under this coordinator's configuration: a resource means
@@ -902,37 +928,15 @@ impl<'a> Coordinator<'a> {
         ))
     }
 
-    /// The attempt that holds lane `lane` of `task`, if any.
-    pub(super) fn lane_holder(&self, task: &str, lane: &str) -> Result<Option<String>, Refusal> {
-        let fence = self.store.execution_fence(json!(["lane", task, lane]))?;
-        Ok(fence.and_then(|fence| fence["attempt"].as_str().map(str::to_string)))
-    }
-
     /// Attempt `id` as a reader sees it.
     pub(super) fn view(&self, id: &str) -> Result<Attempt, Refusal> {
-        let row = self.row(id)?;
-        self.view_of(row)
-    }
-
-    fn view_of(&self, row: Row) -> Result<Attempt, Refusal> {
-        let current = self.lane_holder(&row.task, &row.identity.lane)?.as_deref()
-            == Some(row.attempt.as_str());
-        Ok(attempt_of(row, current))
+        let reader = self.reader();
+        let row = reader.row(id)?;
+        reader.view_of(row)
     }
 
     pub(super) fn store(&self) -> &Store {
         self.store
-    }
-}
-
-fn attempt_of(row: Row, current: bool) -> Attempt {
-    Attempt {
-        id: row.attempt,
-        created: row.created,
-        identity: row.identity,
-        state: row.state,
-        revision: row.revision,
-        current,
     }
 }
 
@@ -952,36 +956,20 @@ pub(super) fn to_value(value: &impl serde::Serialize) -> Value {
     serde_json::to_value(value).expect("an execution record serializes")
 }
 
-/// `applied` as a write, under the lease `fence` when the worker writes it.
-/// The write that has the attempt in `row` followed by `by`: linked, and ended superseded if it
-/// was still live (held or paused), its reservation given back for admission to hand to `by`; none
-/// once it was followed. Made in `by`'s admission ([`Store::execution_admit`]).
-fn followed(row: &Value, by: &str, relation: Relation) -> Result<Option<Write>, Error> {
+/// The write that has the attempt in `row` followed by `by`, as [`rules::followed`] decides,
+/// made in `by`'s admission ([`Store::execution_admit`]); none once it was followed.
+fn followed(
+    row: &Value,
+    by: &str,
+    relation: Relation,
+    reuses: bool,
+) -> Result<Option<Write>, Error> {
     let row = Row::of(row)?;
-    if row.state.successor.is_some() {
-        return Ok(None);
-    }
-    let mut applied = Applied::from_state(row.state.clone());
-    applied.state.successor = Some(by.to_string());
-    applied.facts.push(Fact::Followed {
-        by: by.to_string(),
-        relation,
-    });
-    if applied.state.live() {
-        let state = &mut applied.state;
-        state.dispatch = super::record::Dispatch::Terminal;
-        state.ending = Some(Ending::Superseded);
-        state.pending = None;
-        state.cancel = None;
-        state.stop = None;
-        applied.release = state.reserved.take();
-        applied.facts.push(Fact::Ended {
-            ending: Ending::Superseded,
-        });
-    }
-    Ok(Some(written(&applied, None, false)))
+    let applied = rules::followed(&row.state, by, relation, reuses).map_err(Error::Refused)?;
+    Ok(applied.map(|applied| written(&applied, None, false)))
 }
 
+/// `applied` as a write, under the lease `fence` when the worker writes it.
 pub(super) fn written(applied: &Applied, fence: Option<&Value>, release_lease: bool) -> Write {
     let state = &applied.state;
     Write {

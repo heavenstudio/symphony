@@ -202,7 +202,7 @@ fn a_board_ahead_of_this_build_is_read_with_nothing_written_and_said_on_every_pa
         Store::opening(client(), Box::new(|| NOW), Box::new(|_| false), HOST, how).unwrap()
     };
     let current = opened(&Opening::read());
-    assert_eq!(hub.read_ahead(&current), None);
+    assert_eq!(hub.read_only_ahead(&current), None);
     assert!(
         !notices.has_changed().unwrap(),
         "a current board says nothing"

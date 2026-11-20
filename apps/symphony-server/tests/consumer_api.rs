@@ -40,3 +40,16 @@ fn hosted_admission_is_additive_and_explicit() {
     ) -> Result<axum::Router, hosted::Refusal>;
     let _: HostedRouter = hosted::router;
 }
+
+#[test]
+fn execution_providers_install_beside_the_plugins_by_configuration() {
+    use std::sync::Arc;
+    use symphony_board::execution::{Adapter, Capabilities};
+    use symphony_server::execution::{self, Provider};
+    type WithProviders =
+        fn(&'static [&'static dyn symphony_plugin::Plugin], Vec<Provider>, &[String]) -> i32;
+    let _: WithProviders = binary::run_with_providers;
+    let _: fn(&str, Capabilities, Arc<dyn Adapter>) -> Provider = Provider::new;
+    let _: fn(Provider, &str, u32) -> Provider = Provider::with_capacity;
+    let _: fn(Vec<Provider>) -> Result<(), String> = execution::install;
+}

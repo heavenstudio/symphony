@@ -1251,12 +1251,13 @@ fn session_maintenance(
     home: Option<&Path>,
     clock: impl Clock,
 ) -> Option<std::thread::JoinHandle<()>> {
-    home?;
+    let home = home?;
     Some(maintenance_worker(
         Arc::clone(shared),
         Duration::from_secs_f64(REAP_SECONDS),
         SWEEP_TIMEOUT,
         clock,
+        crate::held::Retrying::of_this_server(home),
     ))
 }
 
@@ -1275,6 +1276,18 @@ impl Stamp {
             mono: Instant::now(),
             wall: SystemTime::now(),
         }
+    }
+
+    /// The wall clock's time, in seconds since the epoch.
+    pub(crate) fn wall_seconds(self) -> f64 {
+        self.wall
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0.0, |since| since.as_secs_f64())
+    }
+
+    /// Both clocks, as a command's deadline reads them ([`sys::output_while`]).
+    pub(crate) fn both(self) -> (Instant, SystemTime) {
+        (self.mono, self.wall)
     }
 
     /// Wall time since `earlier`; zero if the wall clock was set back.
@@ -1353,14 +1366,17 @@ fn board_build_on(root: &Path, beyond: &symphony_board::builds::Beyond) -> Resul
 
 /// A round every `interval`, whose reap child is ended after `timeout`, both measured on `clock`,
 /// in the checkout of the project `shared` serves: its board, its build of `tasks`, its `reap.json`
-/// and its health record. Between two it waits on `clock` until the next is due, the board found
-/// or lost, or the stop; a round due waits while the project has no board ([`has_board`]). No
-/// wait is longer than [`AFTER_A_SLEEP`].
+/// and its health record. Before its reap, a round tries the project's held update again when
+/// `retrying` names this server's machine folder and release ([`crate::held`]), each command of
+/// that within `timeout` too. Between two it waits on `clock` until the next is due, the board
+/// found or lost, or the stop; a round due waits while the project has no board ([`has_board`]).
+/// No wait is longer than [`AFTER_A_SLEEP`].
 pub(crate) fn maintenance_worker(
     shared: Arc<Shared>,
     interval: Duration,
     timeout: Duration,
     clock: impl Clock,
+    retrying: Option<crate::held::Retrying>,
 ) -> std::thread::JoinHandle<()> {
     worker(SWEEP_WORKER, move || {
         let wakes = Wakes::new();
@@ -1397,6 +1413,12 @@ pub(crate) fn maintenance_worker(
             }
             last = Some(now);
             board_waited = false;
+            // A held update first: a board moved now is swept in this same round.
+            if let Some(retrying) = &retrying {
+                for line in crate::held::round(&shared, retrying, timeout, &clock) {
+                    eprintln!("· held update{of}: {line}");
+                }
+            }
             // The board's nonblocking reap lock admits one sweeper across all servers.
             // Log before waiting on output: a hung child must still leave its actual start time.
             eprintln!("· idle-session sweep{of} started");

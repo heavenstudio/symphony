@@ -72,6 +72,7 @@ mod shot;
 mod site;
 mod skeleton;
 mod tabs;
+mod task_attempts;
 mod task_diff;
 mod task_gates;
 mod timeline;

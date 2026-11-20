@@ -9,13 +9,16 @@
 //! interpreter or proxy is used.
 
 mod api;
+mod attempts;
 mod backstop;
 pub mod binary;
 pub mod cli;
 mod client;
+pub mod execution;
 mod file_body;
 pub mod front;
 pub mod gate;
+mod held;
 pub mod home;
 pub mod host;
 pub mod hosted;

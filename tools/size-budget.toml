@@ -36,7 +36,20 @@ client = 2_360_000
 # is the runtime the owner's route and the project file's check run, which no reduction removes
 # without removing a part of it. Measured 16,766,943; the line is that plus 4%, rounded down to
 # 10,000. Independent review is required.
-symphony-server = 17_430_000
+# A task's execution attempts on its page (tools/attempt-history-presentation) add 314,288 bytes to
+# the server less its client: 17,180,462 on main at 25666e08d, 17,494,750 with them, each built as
+# `just size-check` builds the four binaries. By the two link maps: the history's reading of the
+# attempt records (the board's records 85,432, the plugin's execution types 75,820, serde 26,307),
+# cancel and stop through the coordinator with their store writes (the coordinator 19,908, the
+# store's execution 11,324, its updates and transaction about 24,500), and the routes (the server's
+# attempts 23,304, the read arm about 28,600, the wire types 6,068), with unwind and constant data
+# in proportion. Taken back first, 99,280 bytes (6bbfff922): a resume and a view are linked only by
+# a binary that installs a provider. The same cut of cancel and stop, prototyped, takes back 99,232
+# more, but drops what the task's design keeps, a remote attempt's cancel and stop recorded for its
+# provider's worker by a server that does not hold the provider; what is left is the history read,
+# which no reduction removes short of a lighter record type in the board. Measured 17,494,750 at
+# 2876f8465; the line is that plus 4%, rounded down to 10,000. Independent review is required.
+symphony-server = 18_190_000
 # Scratch PostgreSQL startup (+33,104 bytes) and main's release-notes/retired-key paths
 # (+33,056) each fit the former symphony line alone; together they weigh 11,914,192.
 # The combined line is that size plus 4%, rounded down to 10,000; independent review is required.
@@ -95,7 +108,22 @@ symphony = 12_880_000
 # as the board's pages saved nothing until a release could follow main; the cuts are
 # perf/board-derived-readers-size's and a follow-up's. Measured 7,786,176; the line is that plus
 # 4%, rounded down to 10,000. Independent review is required.
-tasks = 8_090_000
+# tools/local-provider-attempts (f8843364d) took tasks past that line alone: 7,786,176 at
+# 450674b6c, 8,265,760 with it (+479,584), the same on main at 9704dead1
+# (tests/main-red-size-check-tasks-2). Nothing in tasks called the execution coordinator before:
+# crate::execution was in the library and dead-stripped. hc as a provider of attempts
+# (launch::attempts) makes launch, restore, close, cleanup and reap call it, so the coordinator
+# links into tasks for the first time; it is no second copy. By the two link maps: the derived
+# serde of the attempt record and the kit's execution types (174,044, of which 128,912 decodes
+# from serde_json::Value), the coordinator (92,132, of which 53,652 is the store's fenced write
+# instantiated once for each coordinator closure), launch::attempts (31,840), the record, keys,
+# rules and evidence (27,396), the kit's types' clone, drop, validation and channels (21,596) and
+# the store's attempt operations on both backends (12,552), with unwind and constant data in
+# proportion. Raised before any cut, as no release is green until it is; the cuts (one fenced
+# write for every closure, readers by field of the attempt record) are
+# perf/board-derived-readers-size's. Measured 8,265,760; the line is that plus 4%, rounded down
+# to 10,000. Independent review is required.
+tasks = 8_590_000
 # The board's operations on tasks a workflow holds (tools/workflow-operations) add 264,656 bytes to
 # agent-send: 3,087,168 at the runtime's d7e3b719d, 3,351,824 with them. agent-send delivers what
 # it sends itself (send_agent, then the recipient's dispatch), and that dispatch composes an

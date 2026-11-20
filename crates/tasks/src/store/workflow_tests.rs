@@ -43,6 +43,10 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
             "manual",
             json!({"trigger": "release", "holder": "a", "role": "reviewer", "manual": false}),
         ),
+        with(
+            "manual",
+            json!({"trigger": "attempt_failure", "holder": "ab12", "role": "checker", "manual": true}),
+        ),
         // Each refused as its decoder refuses it.
         without("digest"),
         without("generation"),
@@ -69,6 +73,10 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
             json!({"trigger": "release", "holder": "a", "role": "r", "manual": true, "x": 1}),
         ),
         with("manual", json!("lost_holder")),
+        with(
+            "manual",
+            json!({"trigger": "cancellation_acknowledged", "holder": "a", "role": "r", "manual": true, "attempt": "a"}),
+        ),
         json!(["build", "working"]),
         Value::Null,
     ];
@@ -78,7 +86,7 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
         assert_eq!(TaskPosition::of(&case), decoded, "{case}");
         read += usize::from(decoded.is_some());
     }
-    assert_eq!(read, 6, "the cases the decoder reads");
+    assert_eq!(read, 7, "the cases the decoder reads");
     let position = TaskPosition::of(&full).unwrap();
     assert_eq!(
         (position.at(), position.revision),
@@ -107,9 +115,18 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
 /// records is never read as no position.
 #[test]
 fn every_position_the_types_hold_is_read_by_field_as_it_is_written() {
-    let triggers = [Trigger::Release, Trigger::LostHolder].map(|trigger| match trigger {
+    let triggers = [
+        Trigger::Release,
+        Trigger::LostHolder,
+        Trigger::AttemptFailure,
+        Trigger::CancellationAcknowledged,
+    ]
+    .map(|trigger| match trigger {
         // A trigger the enum gains stops compiling here: list it above as well.
-        Trigger::Release | Trigger::LostHolder => trigger,
+        Trigger::Release
+        | Trigger::LostHolder
+        | Trigger::AttemptFailure
+        | Trigger::CancellationAcknowledged => trigger,
     });
     for trigger in triggers {
         let position = TaskPosition {
@@ -580,14 +597,17 @@ fn schema_24_keeps_every_row_fences_the_writer_before_it_and_its_readers_read_a_
 }
 
 #[test]
-fn a_board_made_at_22_or_23_migrates_to_24_with_its_rows_and_one_at_24_opens_as_it_is() {
+fn a_board_made_at_22_or_23_migrates_to_this_builds_schema_with_its_rows_and_opens_there_as_it_is()
+{
     use crate::store_fixture::{HOST, NOW};
     use crate::{NewTask, Opening, Schema};
     // What an older build's board lacks of this build's definitions: schema 24's workflow
-    // records and their fence on tasks, and below 23 the execution attempts' tables as well.
+    // records and their fence on tasks (on PostgreSQL its triggers' functions too), and below 23
+    // the execution attempts' tables as well.
     const NO_WORKFLOW: (&str, &str) = (
         "REMOVE EVENT workflow_position ON task; REMOVE TABLE workflow;",
-        "DROP TRIGGER task_workflow ON task; DROP TABLE workflow;",
+        "DROP TRIGGER task_workflow ON task; DROP TABLE workflow; \
+         DROP FUNCTION board_workflow_position(); DROP FUNCTION board_workflow_history();",
     );
     const NO_EXECUTION: (&str, &str) = (
         "REMOVE TABLE execution_attempt; REMOVE TABLE execution_fact; \
@@ -651,7 +671,11 @@ fn a_board_made_at_22_or_23_migrates_to_24_with_its_rows_and_one_at_24_opens_as_
             );
 
             let current = open(Opening::write());
-            assert_eq!(version(&current), Some(24), "{backend:?} from {older}");
+            assert_eq!(
+                version(&current),
+                Some(crate::schema::VERSION),
+                "{backend:?} from {older}"
+            );
             assert_eq!(
                 current.get("sim/jump").unwrap(),
                 task,
@@ -686,11 +710,11 @@ fn a_board_made_at_22_or_23_migrates_to_24_with_its_rows_and_one_at_24_opens_as_
             let late = old.create(&NewTask::new("sim/late", "Late", "owner"));
             assert!(matches!(late, Err(Error::Refused(_))), "{late:?}");
 
-            // At 24 it opens as it is, with the one read.
+            // At this build's schema it opens as it is, with the one read.
             let again = open(Opening::write());
             assert_eq!(again.database().requests(), 1, "{backend:?} from {older}");
             assert_eq!(again.get("sim/jump").unwrap().status, "in_progress");
-            assert_eq!(version(&again), Some(24));
+            assert_eq!(version(&again), Some(crate::schema::VERSION));
         }
     }
 }

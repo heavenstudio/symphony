@@ -5,12 +5,21 @@
 pub(in crate::store) const ACTIVE: &str =
     "RETURN (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL;";
 
-/// The definition recorded under `$digest`, or NULL.
+/// The active generation and the revision its definition was recorded with, or NULL on a board
+/// that never activated a custom workflow: what a write's opening compares the committed file with.
+pub(in crate::store) const ACTIVE_SOURCE: &str = "
+LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
+RETURN IF $active = NONE { NULL } ELSE { {
+    active: $active,
+    revision: (SELECT VALUE body.revision FROM ONLY type::record('workflow', ['definition', $active.digest])) ?? NULL,
+} };";
+
 /// The transitions `$ids` name (`['event', SLUG, REVISION]`), each read by its id, in their order:
 /// none for an id with no record.
 pub(in crate::store) const TRANSITIONS: &str =
     "SELECT VALUE body FROM $ids.map(|$i| type::record('workflow', $i));";
 
+/// The definition recorded under `$digest`, or NULL.
 pub(in crate::store) const DEFINITION: &str = "RETURN (SELECT VALUE body FROM ONLY type::record('workflow', ['definition', $digest])) ?? NULL;";
 
 /// The mappings activation `$generation` recorded, or NULL.
@@ -40,27 +49,40 @@ UPDATE type::record('task', $slug) SET status = $transition.status, fields._boar
     updated = $transition.at, version += 1 RETURN NONE;
 RETURN NONE;";
 
-/// What an activation plans from, in one read: the active generation, and each task a workflow
+/// What an activation plans from, in one read: the active generation, each task a workflow
 /// holds or the board's writers keep open, with its row's version, status, position, blocked
-/// source and the accepted output its last transition left (the event at its workflow revision).
+/// source, the accepted output its last transition left (the event at its workflow revision), and
+/// its execution attempts whose runtime may still be alive and that no cancel was asked of, oldest
+/// first.
 pub(in crate::store) const STANDINGS: &str = "
 RETURN {
     active: (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL,
     tasks: (SELECT slug, version, status, fields._board.workflow ?? NULL AS position,
         fields._board.blocked.from ?? NULL AS blocked_from,
-        type::record('workflow', ['event', slug, fields._board.workflow.revision ?? 0]).body.accepted ?? NULL AS accepted
+        type::record('workflow', ['event', slug, fields._board.workflow.revision ?? 0]).body.accepted ?? NULL AS accepted,
+        (SELECT VALUE attempt FROM execution_attempt WHERE task = $parent.slug AND live = true
+            AND (state.cancellation ?? 'none') = 'none' ORDER BY created, attempt) AS attempts
         FROM task WHERE status NOT IN ['done', 'cancelled'] OR fields._board.workflow != NONE ORDER BY slug),
 };";
 
-/// An activation, whole: refused as stale unless the active generation is still `$expected` and
-/// every task it read is still at its version (and workflow revision); then each kept task
-/// written at its version, each moved one recorded and moved, the definition recorded once under
-/// its digest, the activation recorded, the board's marker moved (a board read carries the
-/// generation, and a relabel moves no task) and the active generation moved to it.
+/// An activation, whole: refused as stale unless the active generation is still `$expected`,
+/// every task it read is still at its version (and workflow revision) and each holder it read as
+/// lost is still unseen (`$seen`); then each kept task written at its version, each moved one
+/// recorded and moved, refused as stale where a task the read would select is neither kept nor
+/// moved (one filed or reopened since the read, at the old generation's pair or at none), the
+/// definition recorded once under its digest, the activation recorded, the board's marker moved (a
+/// board read carries the generation, and a relabel moves no task) and the active generation moved
+/// to it. Each task the read selected is kept or moved, and stays selected, so a count over theirs
+/// is the whole check, and the task is named only where it refuses.
 pub(in crate::store) const ACTIVATE: &str = "
 LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
 IF ($active.generation ?? 0) != $expected {
     THROW string::concat('refused: stale_workflow: the active generation is ', <string>($active.generation ?? 0), ', not ', <string>$expected);
+};
+FOR $s IN $seen {
+    IF (SELECT VALUE last_seen FROM ONLY type::record('session', $s.handle)) != $s.last_seen {
+        THROW string::concat('refused: stale_task: ', $s.handle, ' was seen while its workflow activated');
+    };
 };
 FOR $t IN $kept {
     IF (SELECT VALUE version FROM ONLY type::record('task', $t.slug)) != $t.version {
@@ -77,6 +99,13 @@ FOR $m IN $moved {
         CONTENT { kind: 'event', body: $m.transition, at: $at } RETURN NONE;
     UPDATE type::record('task', $m.slug) SET status = $m.transition.status,
         fields._board.workflow = $m.position, updated = $at, version += 1 RETURN NONE;
+};
+LET $standing = (SELECT VALUE slug FROM task
+    WHERE status NOT IN ['done', 'cancelled'] OR fields._board.workflow != NONE);
+IF array::len($standing) > array::len($kept) + array::len($moved) {
+    LET $planned = array::concat($kept.map(|$t| $t.slug), $moved.map(|$m| $m.slug));
+    LET $unplanned = array::sort(array::complement($standing, $planned));
+    THROW string::concat('refused: stale_task: ', $unplanned[0], ' was filed or reopened while its workflow activated');
 };
 IF (SELECT VALUE kind FROM ONLY type::record('workflow', ['definition', $digest])) = NONE {
     CREATE type::record('workflow', ['definition', $digest])

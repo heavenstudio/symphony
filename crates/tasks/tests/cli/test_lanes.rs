@@ -286,13 +286,6 @@ impl Lanes {
             .iter()
             .find(|(name, _)| *name == "SYMPHONY_TEST_LANE_LOGS")
             .map_or_else(|| self.logs(), |(_, path)| PathBuf::from(path));
-        let mut child = self
-            .command(&[], &vars)
-            .process_group(0)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
         let held = || {
             (fs::read_dir(&self.stand).unwrap())
                 .filter(|entry| {
@@ -300,16 +293,34 @@ impl Lanes {
                 })
                 .count()
         };
-        test_time::until_true(
+        self.signalled(
+            signal,
+            &vars,
             "every lane held and its streamed output reached the live log",
-            test_time::backstop(Duration::from_secs(120)),
             || {
                 held() == LANES
                     && fs::read_to_string(logs.join("nextest.log"))
                         .is_ok_and(|text| text.starts_with("running "))
             },
         )
-        .unwrap();
+    }
+    /// A run with `vars` in a process group of its own, `signal` sent to the whole group once
+    /// `ready` (`what`) holds: what it did.
+    fn signalled(
+        &self,
+        signal: libc::c_int,
+        vars: &[(&str, &str)],
+        what: &str,
+        ready: impl FnMut() -> bool,
+    ) -> Output {
+        let mut child = self
+            .command(&[], vars)
+            .process_group(0)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        test_time::until_true(what, test_time::backstop(Duration::from_secs(120)), ready).unwrap();
         let group = i32::try_from(child.id()).unwrap();
         // SAFETY: kill reads nothing of ours; a pid below 0 names the group the child leads.
         assert_eq!(unsafe { libc::kill(-group, signal) }, 0);
@@ -1584,4 +1595,49 @@ fn every_binarys_copy_is_its_build_before_a_batch_starts_so_no_cargo_call_remove
         "{uplifts}"
     );
     assert_eq!(said(&two_copy), ["kept"; 10], "{uplifts}");
+}
+
+#[test]
+fn an_interrupt_while_the_binaries_are_linked_starts_no_lane() {
+    let lanes = Lanes::new("nextest-link-interrupt");
+    let debug = lanes.root.join(".target/debug");
+    executable(&debug.join("deps/tool_one-ffffffffffffffff"), "tool one");
+    let copy = debug.join("tool-one");
+    executable(&copy, "tool one");
+    let mut metadata: serde_json::Value = serde_json::from_str(METADATA).unwrap();
+    metadata["rust-build-meta"]["non-test-binaries"] = serde_json::json!({
+        "first-package": [{"name": "tool-one", "kind": "bin-exe", "path": "debug/tool-one"}]
+    });
+    fs::write(lanes.stand.join("metadata.json"), metadata.to_string()).unwrap();
+    // The linking alone compares a copy with its build: a comparison that holds until the signal.
+    let comparing = lanes.stand.join("comparing");
+    assert!(
+        output(Command::of("mkfifo").arg(&comparing))
+            .unwrap()
+            .status
+            .success()
+    );
+    executable(
+        &lanes.stand.join("bin/cmp"),
+        "#!/bin/sh\nexec 3<>\"$STAND/comparing\"\n: >\"$STAND/comparing.held\"\nread -r held <&3\nexit 1\n",
+    );
+    let done = lanes.signalled(
+        libc::SIGINT,
+        &[],
+        "the linking held in its comparison",
+        || lanes.stand.join("comparing.held").exists(),
+    );
+    assert_eq!(done.status.code(), Some(130), "{done:?}");
+    assert!(!lanes.stand.join("started").exists(), "{done:?}");
+    let said = String::from_utf8(done.stdout).unwrap();
+    assert!(!said.contains("test-lanes: lanes run at most"), "{said}");
+    assert!(!said.contains("test-lanes: ended"), "{said}");
+    // The serial steps ran before it, and are listed as they ended; no batch is.
+    assert_eq!(
+        listed(&lanes),
+        [("build".to_string(), 0), ("fixture".to_string(), 0)]
+    );
+    // The comparison cut short left the copy as Cargo made it, and no link half made.
+    assert_eq!(fs::read_to_string(&copy).unwrap(), "tool one");
+    assert!(!debug.join("tool-one.test-lanes").exists());
 }

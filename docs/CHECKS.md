@@ -114,6 +114,60 @@ schema move, a call a consumer-API guard stopped holding, or a key the settings 
 no more, each without its entry, and for a trailer that reads as no entry; a reviewer reads the
 rest, and that an entry says what a project does, not what the change was.
 
+## A schema step that keeps the Symphony writing
+
+A schema step that only adds tables of its own, with their fields, indexes and events, and
+definitions of the database's own changes nothing the Symphony one schema behind writes. Such a
+step may be declared to keep that Symphony writing: its version is listed in `schema::COMPATIBLE`
+(`crates/tasks/src/schema.rs`) with one line saying why, and nothing is listed by default. Its
+migration then writes, beside the version and in the same transaction on both engines, the oldest
+schema whose Symphony may write the board (`meta:schema`'s `writable_from`): the version before
+for a listed step, its own version otherwise. The schema guard reads that record in each write, on
+both engines. A store the Symphony's reader opened (`symphony::taskview::connect`: the server, its
+page saves and the `symphony` commands that reach the board through it) writes a board one schema
+ahead only while the record names its schema or an older one. Every other case is refused, as for
+a step not listed ([TASKS](TASKS.md#who-writes-a-board)):
+
+- a record that is missing or of any other shape;
+- a board two schemas ahead;
+- a writer's store (`tasks`, `agent-send`, `tasks-copy`, a project's own program);
+- a whole-board copy's staging;
+- a recovery's rebind.
+
+The declaration is checked where the database shows it. Each schema's definitions are committed,
+one file per engine (`crates/tasks/tests/store/catalogue/ENGINE-VERSION.txt`):
+
+- on SurrealDB, every table, field, index and event, and the database's analyzers, functions and
+  parameters;
+- on PostgreSQL, every column, constraint, index and trigger, and the functions in the board's
+  schema.
+
+The store test (`just test-rs -p symphony-board --test store catalogue`) holds a fresh board of
+this build to its version's files, and holds a declared version to the files of the version
+before. A line of a table that was there before fails it, whether added, removed or changed, and
+so does a database-wide line removed or changed; the failure names the table. A step that changes
+the schema writes its own files by running that command with `TASKS_CATALOGUE=write`, and commits
+them. The files of earlier versions are never rewritten.
+
+What no catalogue shows is the reviewer's to read. A step that does any of the following is not
+declared:
+
+- it adds a rule held in code alone that forbids what the Symphony one behind would still write
+  to a table that was there before (a status move, a field's value, a cancel): that Symphony's
+  writes skip the rule until a release at the step's schema is current, and what they wrote
+  meanwhile stays, to be put right by a fix;
+- it rewrites rows, or gives a field that was there before a new meaning, which the Symphony one
+  behind would read or write with the old one;
+- it adds a table the Symphony one behind is expected to write, which that Symphony knows nothing
+  of.
+
+A declared step is a schema move all the same. The release run started at once after it
+([RELEASES](RELEASES.md#the-cadence)) and the hold of a second schema step until a release serving
+the first is current both stand, and its landing owes the `board` consumer note. The declaration
+helps only a Symphony that reads the record, which means a release that carries this mechanism
+and is `current`. An older release refuses every write one schema ahead, whatever the record
+says.
+
 ## Evidence by kind of change
 
 - **A pure function** (a parser, a formatter, a state transition): unit tests of its edge cases
@@ -267,7 +321,8 @@ audit on main after the land's round files it within minutes
      any of them matches;
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
-4. `just lint-rs` (which runs `just client-lint`), and, when `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
+4. `just lint-rs` (which runs `just client-lint` and the board tests' raw-statement fence,
+   `crates/tasks/tests/raw_fence.rs`), and, when `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
    pictures, its distribution never committed.
 5. Main is merged once, when the work is complete, and the targets steps 1 to 3 pick run again
    at the new tip, before review, as main may have changed what the branch's code meets
@@ -505,11 +560,12 @@ publishes one client before scheduling, so no browser case builds or relinks whi
 run. Every test receives the build's binaries through `SYMPHONY_TEST_TASKS_BINARY` and
 `SYMPHONY_TEST_BINARIES`; a caller's values win. Each Cargo call keeps the workspace build's
 feature graph and its build-script/proc-macro debug info, so no concurrent batch relinks anything.
-Cargo still makes each binary's copy in the target folder again at every call, removing it first,
-so before scheduling the runner makes each copy the build lists a hard link to the file it copies,
-which every later call leaves in place: a batch that starts never leaves another's test without
-the binary it runs. Every server, store and browser still takes its own folder and a port the
-system picks.
+On macOS Cargo still makes each binary's copy in the target folder again at every call, removing
+it first; elsewhere it hard-links the binary to its build, copying only where it cannot link, and
+a later call leaves a link in place. So before scheduling the runner makes each copy the build
+lists a hard link to the file it copies, which every later call leaves in place: a batch that
+starts never leaves another's test without the binary it runs. Every server, store and browser
+still takes its own folder and a port the system picks.
 
 Nextest and the Cargo batches keep live logs in `tests-lanes/` beside the step's log
 (`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), with the binary metadata beside
