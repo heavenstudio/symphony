@@ -134,8 +134,9 @@ RETURN NONE;";
 /// each moved one's transition recorded and the task given its status and blocked record, its
 /// position retired with its last revision kept (`workflow_retired`); refused as stale where a
 /// task the read would select is neither kept nor moved (one filed or reopened since, which would
-/// keep a position with no workflow active), as an activation is; and the active generation
-/// deleted: none is active after it.
+/// keep a position with no workflow active), as an activation is, by its slug: a closed task the
+/// return moves leaves the selection, so a count would let one task it did not plan pass beside
+/// it; and the active generation deleted: none is active after it.
 pub(in crate::store) const RETURN_DEFAULT: &str = "
 LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
 IF ($active.generation ?? 0) != $expected {
@@ -167,9 +168,9 @@ FOR $m IN $moved {
 };
 LET $standing = (SELECT VALUE slug FROM task
     WHERE status NOT IN ['done', 'cancelled'] OR fields._board.workflow != NONE);
-IF array::len($standing) > array::len($kept) + array::len($moved) {
-    LET $planned = array::concat($kept.map(|$t| $t.slug), $moved.map(|$m| $m.slug));
-    LET $unplanned = array::sort(array::complement($standing, $planned));
+LET $unplanned = array::sort(array::complement($standing,
+    array::concat($kept.map(|$t| $t.slug), $moved.map(|$m| $m.slug))));
+IF array::len($unplanned) > 0 {
     THROW string::concat('refused: stale_task: ', $unplanned[0], ' was filed or reopened while its workflow returned');
 };
 DELETE workflow:['active'] RETURN NONE;

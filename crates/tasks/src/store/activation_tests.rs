@@ -1264,10 +1264,51 @@ fn the_return_write_is_refused_as_stale_after_another_write() {
             "stale_task: gone was seen while its workflow returned",
             "{backend:?}"
         );
-        let mut unplanned = empty;
+        let mut unplanned = empty.clone();
         unplanned["expected"] = json!(1);
         assert_eq!(
             refused(back(unplanned)),
+            "stale_task: sim/backlog was filed or reopened while its workflow returned",
+            "{backend:?}"
+        );
+        assert_eq!(f.store.dump().unwrap(), before, "{backend:?}");
+
+        // A task the workflow closed is selected while it holds a position and leaves the
+        // selection as the return moves it to done: beside it, one task the plan left out is
+        // still refused, whatever the counts.
+        owner_takes(&f, "sim/review", "accept");
+        assert_eq!(status(&f, "sim/review"), "done", "{backend:?}");
+        let before = f.store.dump().unwrap();
+        let version = |slug: &str| {
+            (f.store.raw().row("task", slug).field("version"))
+                .unwrap()
+                .as_i64()
+                .unwrap()
+        };
+        let revision = (f.store.workflow_position("sim/review").unwrap())
+            .unwrap()
+            .revision;
+        let mut closing = empty;
+        closing["expected"] = json!(1);
+        closing["kept"] = ([
+            "sim/blocked",
+            "sim/concept",
+            "sim/design",
+            "sim/in_progress",
+            "sim/ready",
+        ]
+        .iter())
+        .map(|slug| json!({"slug": slug, "version": version(slug)}))
+        .collect();
+        closing["moved"] = json!([{
+            "slug": "sim/review", "version": version("sim/review"), "expected": revision,
+            "transition": {
+                "slug": "sim/review", "revision": revision + 1, "status": "done", "activation": 3,
+            },
+            "retired": {"revision": revision + 1, "generation": 3},
+        }]);
+        assert_eq!(
+            refused(back(closing)),
             "stale_task: sim/backlog was filed or reopened while its workflow returned",
             "{backend:?}"
         );
