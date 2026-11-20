@@ -137,7 +137,11 @@ pub fn said(writer: &Writer, now: f64) -> String {
 
 /// What a judgement says of a board at schema `live` that the writers `behind`, never none, hold
 /// below `release`'s schema `target`, with those it did not count (`gone`), read at `now`: what
-/// its project finishes.
+/// its project finishes, and that the Symphony moves the board then. A refresh and the machine's
+/// server say it alike, so a round compares its words with a refresh's ([`steady`]); which of them
+/// moves it is theirs to say, as a refresh may leave `current` where no server tries the board,
+/// and the project whose board it is reads it on its update's task, so it names no command that
+/// project lacks.
 pub fn holding(
     live: i64,
     behind: &[Writer],
@@ -149,7 +153,7 @@ pub fn holding(
     format!(
         "its board stays at schema {live}: {} seen there in the last week {} behind {release}'s \
          schema {target}: {}; rebuild each at schema {target} and run it once, which records it, \
-         then an orchestrator's `just release --refresh` moves it{}",
+         then the Symphony moves it{}",
         match behind.len() {
             1 => "a writer".to_string(),
             n => format!("{n} writers"),
