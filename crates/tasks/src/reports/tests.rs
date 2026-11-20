@@ -181,6 +181,7 @@ fn board() -> ReportRead {
         ),
     );
     ReportRead {
+        places: None,
         tasks: vec![old, release, a, b, c, main_red, review],
     }
 }
@@ -365,6 +366,7 @@ fn a_read_at_midnight_has_its_first_hour_and_counts_nothing_yet() {
 #[test]
 fn a_landing_with_no_approve_before_it_is_a_landing_and_no_wait() {
     let read = ReportRead {
+        places: None,
         tasks: vec![task(
             "sim/x",
             1.0,
@@ -385,6 +387,7 @@ fn a_landing_with_no_approve_before_it_is_a_landing_and_no_wait() {
 #[test]
 fn an_executor_that_left_resumes_by_the_next_claim_and_its_release_is_not_resuming() {
     let read = ReportRead {
+        places: None,
         tasks: vec![task(
             "sim/y",
             0.0,
@@ -419,6 +422,7 @@ fn an_executor_that_left_resumes_by_the_next_claim_and_its_release_is_not_resumi
 #[test]
 fn a_review_with_no_reviewer_by_its_end_is_no_wait_and_a_reopened_task_enters_review_again() {
     let read = ReportRead {
+        places: None,
         tasks: vec![task(
             "sim/z",
             0.0,
@@ -480,6 +484,7 @@ fn a_re_review_whose_reviewer_kept_the_role_waits_only_for_a_join_or_a_review_cl
     review.parent = Some("sim/claimed".into());
     review.instruction = true;
     let read = ReportRead {
+        places: None,
         tasks: vec![
             kept(
                 "sim/post",
@@ -584,6 +589,7 @@ fn a_task_done_counts_once_at_its_last_close_and_one_cancelled_or_reopened_since
     );
     slice.parent = Some("sim/again".into());
     let read = ReportRead {
+        places: None,
         tasks: vec![next, cancelled, reopened, again, slice],
     };
     let today = day("sim", D, at(10.0), at(10.0), &read);
@@ -687,6 +693,7 @@ fn the_folder_is_the_one_named_else_beside_the_board_and_none_for_a_named_server
 #[test]
 fn a_task_approved_the_day_before_and_landed_after_midnight_lands_today_with_its_wait() {
     let read = ReportRead {
+        places: None,
         tasks: vec![task(
             "sim/late",
             -5.0,
@@ -734,7 +741,10 @@ fn the_longest_in_their_status_are_the_ten_oldest_by_since_then_slug_whatever_th
             )
         })
         .collect();
-    let read = ReportRead { tasks };
+    let read = ReportRead {
+        tasks,
+        places: None,
+    };
     let day = day("sim", D, at(9.0), at(9.0), &read);
     let longest: Vec<(&str, f64)> = day
         .top
