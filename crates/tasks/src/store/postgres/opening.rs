@@ -13,6 +13,18 @@ END IF;",
     None,
 );
 
+/// The board's record of its schema, its version and `writable_from` (read from the row as JSON,
+/// so a `meta` with no such column reads as none), or none before its tables are made.
+pub(in crate::store) const BOARD_STANDING: Pg<'static> = Pg::Script(
+    std::borrow::Cow::Borrowed(
+        "IF to_regclass('meta') IS NOT NULL THEN
+    board_answer := (SELECT jsonb_build_object('version', m.version,
+        'writable_from', to_jsonb(m) -> 'writable_from') FROM meta m WHERE m.id = '\"schema\"');
+END IF;",
+    ),
+    None,
+);
+
 /// How many tables, views, sequences and functions the database's own schema holds: what an
 /// empty database a board may be made in has none of.
 const FOREIGN: &str =
@@ -32,7 +44,8 @@ const MIGRATING: i64 = 0x0053_594d_504d_4947; // "SYMPMIG"
 
 /// A migration's one transaction, read committed so each statement reads what committed before it:
 /// the migrations' lock taken, then stale unless the board is still at `was`, then `steps`, and the
-/// board's record of `version`. A migration another finished while this one waited for the lock
+/// board's record of `version` with the oldest schema whose Symphony may write it, `writable_from`
+/// ([`crate::Schema::writable_from`]). A migration another finished while this one waited for the lock
 /// finds the board moved, and is read again as stale. The board's table is looked for in the
 /// catalogue as this statement reads it, never by `to_regclass`: a session that read no board
 /// before it waited keeps that answer in its catalogue cache, and would take the board another
@@ -44,6 +57,7 @@ pub(in crate::store) fn migration(
     steps: &str,
     was: Option<i64>,
     version: i64,
+    writable_from: i64,
     empty: Option<&str>,
 ) -> String {
     let alone = match (was, empty) {
@@ -74,8 +88,8 @@ BEGIN
 END
 $migration$;
 {steps}
-INSERT INTO meta (id, version) VALUES ('\"schema\"', {version})
-    ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version;
+INSERT INTO meta (id, version, writable_from) VALUES ('\"schema\"', {version}, {writable_from})
+    ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, writable_from = EXCLUDED.writable_from;
 COMMIT;"
     )
 }
@@ -84,22 +98,30 @@ COMMIT;"
 mod tests {
     #[test]
     fn a_migration_names_the_version_it_moves_from_and_to_as_numbers_alone() {
-        let made = super::migration("CREATE TABLE t ();", None, 19, None);
+        let made = super::migration("CREATE TABLE t ();", None, 19, 19, None);
         assert!(!made.contains("pg_proc"), "{made}");
         assert!(made.contains("IS DISTINCT FROM NULL THEN"), "{made}");
-        assert!(made.contains("VALUES ('\"schema\"', 19)"), "{made}");
-        let moved = super::migration("", Some(19), 20, Some("another's"));
+        assert!(made.contains("VALUES ('\"schema\"', 19, 19)"), "{made}");
+        let moved = super::migration("", Some(19), 20, 19, Some("another's"));
         assert!(
             !moved.contains("pg_proc"),
             "a board there is moved: {moved}"
         );
         assert!(moved.contains("IS DISTINCT FROM 19 THEN"), "{moved}");
+        // The record of the oldest schema whose Symphony may write it goes with the version.
+        assert!(
+            moved.contains(
+                "VALUES ('\"schema\"', 20, 19)\n    ON CONFLICT (id) DO UPDATE SET version = \
+                 EXCLUDED.version, writable_from = EXCLUDED.writable_from;\nCOMMIT;"
+            ),
+            "{moved}"
+        );
         assert!(moved.starts_with("BEGIN ISOLATION LEVEL READ COMMITTED;"));
         assert!(moved.ends_with("COMMIT;"));
         assert!(!moved.contains("to_regclass"), "{moved}");
         // A board made where nothing of another's may be: judged after the board was looked
         // for, in the same block, and refused in the words given, quoted as SQL takes them.
-        let alone = super::migration("CREATE TABLE t ();", None, 19, Some("another's, 100%"));
+        let alone = super::migration("CREATE TABLE t ();", None, 19, 19, Some("another's, 100%"));
         let (stale, foreign) = (
             alone.find("RAISE EXCEPTION 'stale'").unwrap(),
             alone.find("FROM pg_proc").unwrap(),

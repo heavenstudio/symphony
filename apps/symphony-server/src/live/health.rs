@@ -10,9 +10,11 @@
 //! project has less free than `SYMPHONY_LOW_DISK_GB` ([`symphony_board::board_health::disk`]),
 //! every page says that too. None of it reads the board. While the project's settings do not load,
 //! every page says so and why, as the project is served with the defaults ([`Hub::tell_project`]).
-//! While the board is at a schema ahead of this build's, which it reads and never writes, every
+//! While the board is at a schema ahead of this build's that it reads and may not write, every
 //! page says so, naming the page of its update's task while the machine's ledger holds that update
-//! open with one ([`Hub::read_ahead`]); while this project holds the machine's server on a
+//! open with one ([`Hub::read_only_ahead`]); one ahead whose step keeps this build writing
+//! ([`symphony_board::schema::COMPATIBLE`]) it writes as its own, and the pages say nothing of the
+//! schema. While this project holds the machine's server on a
 //! project's build, the one server tells its pages so ([`Hub::tell_machine`]).
 //!
 //! The project picker and `/api/projects` read one judgement of the board ([`Hub::standing`]): red
@@ -42,8 +44,8 @@ pub(crate) struct Notices {
     disk: String,
     /// What the machine's server is to this project ([`Hub::tell_machine`]).
     machine: String,
-    /// The board's schema while it is ahead of this build's, and what the pages say of it
-    /// ([`Hub::read_ahead`]).
+    /// The board's schema while it is ahead of this build's and read only, and what the pages say
+    /// of it ([`Hub::read_only_ahead`]).
     ahead: (Option<i64>, String),
     /// The project file and its local settings file as the hub last found them ([`stamps`]): an
     /// edit to either renders main's documents again, whether the settings still load or not
@@ -210,18 +212,21 @@ impl Hub {
         }
     }
 
-    /// The board's schema when it is ahead of this build's, read on `store` once a tick: the hub
-    /// then reads it and writes nothing to it, as the schema rule refuses a reader's every write
-    /// on it ([`symphony_board::Store`]), and every page says so, until it is not, naming the task
-    /// of the board's update while the machine's ledger holds one open ([`Hub::ahead_notice`]). The
-    /// notice is sent again only when its words change. A read that fails keeps what the last one
-    /// found.
-    pub(crate) fn read_ahead(&self, store: &symphony_board::Store) -> Option<i64> {
-        let Ok(found) = store.board_version() else {
+    /// The board's schema when it is ahead of this build's and `store`'s writes may not take it,
+    /// read on `store` once a tick: the hub then reads it and writes nothing to it, as the schema
+    /// guard would refuse each write ([`symphony_board::Store::board_standing`]), and every page
+    /// says so, until it is not, naming the task of the board's update while the machine's ledger
+    /// holds one open ([`Hub::ahead_notice`]). A board one ahead whose record lets the store write
+    /// it ([`symphony_board::schema::COMPATIBLE`]) is none: the hub writes it as its own, and the
+    /// guard reads the record again in each write. The notice is sent again only when its words
+    /// change. A read that fails keeps what the last one found.
+    pub(crate) fn read_only_ahead(&self, store: &symphony_board::Store) -> Option<i64> {
+        let Ok(found) = store.board_standing() else {
             let notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
             return notices.ahead.0;
         };
-        let ahead = found.filter(|found| *found > symphony_board::SCHEMA);
+        let ahead =
+            (found.version).filter(|version| *version > symphony_board::SCHEMA && !found.writes);
         let said = ahead
             .map(|schema| self.ahead_notice(schema))
             .unwrap_or_default();
@@ -298,10 +303,11 @@ impl Hub {
 
     /// Whether this server writes the project's board, as `/api/projects` says it
     /// ([`symphony_api::ListedProject::writes`]), from what the hub holds and never a board read:
-    /// true while its last read found the board at a schema this build writes (read, and not
-    /// ahead: [`Hub::read_ahead`]), false while it only reads it, a schema ahead, or its last reach
-    /// was refused by the schema rule ([`symphony_board::board_health::refused_by_schema`]). None
-    /// while it has no board, has not read it yet, or its last reach failed otherwise.
+    /// true while its last read found the board at a schema this build writes (its own, or one
+    /// ahead whose step keeps it writing: [`Hub::read_only_ahead`]), false while it only reads it, a
+    /// schema ahead, or its last reach was refused by the schema rule
+    /// ([`symphony_board::board_health::refused_by_schema`]). None while it has no board, has not
+    /// read it yet, or its last reach failed otherwise.
     pub(crate) fn writes(&self) -> Option<bool> {
         match self.tasks_read() {
             Ok(_) => {
@@ -453,10 +459,10 @@ pub(crate) fn unstaffed(tasks: &symphony_api::Tasks) -> Option<&'static str> {
     })
 }
 
-/// What a page says of a board at `schema`, ahead of this build's, which it reads and never writes:
-/// and what that does to the owner's words, which are saved in the documents while the asks and the
-/// chat they open wait in the journal ([`symphony::callbacks`]). `task`, the page of the task filed
-/// for the board's update when one failed, is named last, alone, so a page can link it.
+/// What a page says of a board at `schema`, ahead of this build's, which it reads and may not
+/// write: and what that does to the owner's words, which are saved in the documents while the asks
+/// and the chat they open wait in the journal ([`symphony::callbacks`]). `task`, the page of the
+/// task filed for the board's update when one failed, is named last, alone, so a page can link it.
 pub(crate) fn read_only(schema: i64, task: Option<&str>) -> String {
     let said = format!(
         "The task board is at schema {schema}, ahead of this Symphony's {}: it is read, and nothing \
