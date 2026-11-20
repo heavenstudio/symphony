@@ -62,7 +62,10 @@
 //! this one no longer does: the board it moved, when, and a hash of every row the move left. The
 //! table stays defined, so a board that holds the record keeps it and every board keeps its shape.
 //!
-//! `meta:schema` names the version defined, so opening a board already in this shape writes nothing.
+//! `meta:schema` names the version defined, so opening a board already in this shape writes nothing,
+//! and from schema 25 `writable_from`, the oldest schema whose Symphony may write the board
+//! ([`Schema::writable_from`]), written in the migration's one transaction beside the version. A
+//! board moved by a build before schema 25 has none, which lets no older Symphony write it.
 //!
 //! `recovery:board` names the board's recovery generation, from schema 22: a text the database
 //! makes, replaced in the transaction of every copy of the whole board and by a rebind
@@ -98,6 +101,11 @@
 //! forward or makes one: a board behind it, or none, it refuses before it reads, naming `just tasks`.
 //! Every write transaction starts with the [`guard`], so a store opened before a newer build migrated
 //! stops at its next write.
+//!
+//! One exception, for the Symphony alone ([`COMPATIBLE`]): a store opened to read, by the rule
+//! ([`Access::Read`]), writes a board one schema ahead of its own whose `writable_from` names its
+//! schema or an older one, which the guard reads in each write's own transaction. Every store
+//! opened to write, a store taken unchecked and every whole-board copy keep the rule above.
 
 use crate::store::Program;
 
@@ -105,8 +113,35 @@ use crate::store::Program;
 /// `DEFINE` once, and its `IF NOT EXISTS` adds what is new but leaves every definition already there
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. Protocol changes can require a wider version step and retirement of old read tokens:
-/// an already-open store does not repeat its opening check.
-pub const VERSION: i64 = 24;
+/// an already-open store does not repeat its opening check. A version listed in [`COMPATIBLE`]
+/// says its step keeps a Symphony one schema behind writing.
+pub const VERSION: i64 = 25;
+
+/// The schema versions whose step keeps a Symphony one schema behind writing the board, each with
+/// one line saying why: what the step added, and why no rule in code that writes a table older than
+/// it must now follow anything new. A version not listed does not, which is every step's default,
+/// so a schema bump that writes nothing here keeps the older Symphony read-only on the board it
+/// moved, until a release at its schema serves it.
+///
+/// A step is listed only when it changes no table that existed before it, on either engine: no
+/// field, column, index, event, trigger, function or assertion added to or changed on one. The
+/// store's catalogue test holds a listed version to that on the database (`tests/store/catalogue.rs`,
+/// over the committed definitions of each version); what it cannot see, a rule held in code that
+/// the older Symphony's writes would skip, is its reviewer's to read against the line
+/// ([CHECKS](../../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). The schema
+/// that brought this list and the record it writes ([`WRITABLE_FROM_SINCE`]) changed `meta` and is
+/// not listed.
+pub const COMPATIBLE: &[(i64, &str)] = &[];
+
+/// The schema whose step brought `meta:schema`'s `writable_from`: a Symphony below it never reads
+/// the record, and refuses every write on a board ahead of it whatever the record says.
+pub const WRITABLE_FROM_SINCE: i64 = 25;
+const _: () = assert!(WRITABLE_FROM_SINCE <= VERSION);
+
+/// Whether `version`'s step keeps a Symphony one schema behind writing ([`COMPATIBLE`]).
+pub fn keeps_writes(version: i64) -> bool {
+    COMPATIBLE.iter().any(|(listed, _)| *listed == version)
+}
 
 /// Structural mutations plus all committed session changes, including deletions and re-creations.
 /// The separate structural record keeps the retired legacy scalar outside this identity.
@@ -123,6 +158,8 @@ pub struct Schema {
     /// On PostgreSQL, what the steps add to this build's tables, which every migration there
     /// makes first: nothing for this build's own schema.
     postgres: String,
+    /// Whether its own step keeps a Symphony one schema behind writing ([`COMPATIBLE`]).
+    keeps: bool,
 }
 
 impl Schema {
@@ -132,6 +169,7 @@ impl Schema {
             version: VERSION,
             after: String::new(),
             postgres: String::new(),
+            keeps: keeps_writes(VERSION),
         }
     }
 
@@ -139,13 +177,22 @@ impl Schema {
         self.version
     }
 
+    /// The oldest schema whose Symphony may write a board this schema's build moved: the version
+    /// before when its step keeps that Symphony writing ([`COMPATIBLE`]), its own otherwise. A
+    /// migration writes it beside the version (`meta:schema`'s `writable_from`).
+    pub fn writable_from(&self) -> i64 {
+        self.version - i64::from(self.keeps)
+    }
+
     /// The schema one version on, `surreal` run after this one's steps on SurrealDB and
-    /// `postgres` after them on PostgreSQL: a newer build's.
+    /// `postgres` after them on PostgreSQL: a newer build's, whose step says nothing of the
+    /// Symphony one behind, so keeps it read-only ([`Schema::keeping_writes`]).
     pub fn then_each(&self, surreal: &str, postgres: &str) -> Schema {
         Schema {
             version: self.version + 1,
             after: format!("{}\n{surreal}", self.after),
             postgres: format!("{}\n{postgres}", self.postgres),
+            keeps: false,
         }
     }
 
@@ -155,10 +202,21 @@ impl Schema {
         self.then_each(step, "")
     }
 
-    /// The schema one version back, by the same steps: an older build's, as far as the rule goes.
+    /// This schema, its step declared to keep a Symphony one schema behind writing: a newer
+    /// build whose version [`COMPATIBLE`] lists.
+    pub fn keeping_writes(self) -> Schema {
+        Schema {
+            keeps: true,
+            ..self
+        }
+    }
+
+    /// The schema one version back, by the same steps: an older build's, as far as the rule goes,
+    /// whose step declares nothing.
     pub fn before(&self) -> Schema {
         Schema {
             version: self.version - 1,
+            keeps: false,
             ..self.clone()
         }
     }
@@ -182,7 +240,8 @@ pub enum Access {
     Write,
     /// Reads, of a board at the store's own version or one ahead, and never moves or makes one: a
     /// board behind it, or not made yet, is refused. Its writes still meet the [`guard`], so one
-    /// version behind it writes nothing.
+    /// version behind it writes only a board whose `writable_from` names its version or an older
+    /// one ([`COMPATIBLE`]); a whole-board copy it never writes there. The Symphony's opening.
     Read,
 }
 
@@ -289,19 +348,43 @@ impl Refusal {
 }
 
 /// The statements every write transaction starts with: it throws the refusal (`$board_schema_*`,
-/// [`guard_vars`]) unless the board is at this store's version, before the write's own statements.
-pub(crate) const GUARD: &str = "LET $board_schema_found = (SELECT VALUE version FROM ONLY meta:schema);
-IF $board_schema_found != $board_schema { THROW string::concat($board_schema_before, <string> $board_schema_found, $board_schema_after) };";
+/// [`guard_vars`]) unless the board is at this store's version, or, for a write that may
+/// (`$board_schema_ahead`), one version ahead with a `writable_from` that is a number no greater
+/// than this store's version ([`writes`]), before the write's own statements. `NONE` sorts below
+/// every number, so the record is held to be an integer before it is compared.
+pub(crate) const GUARD: &str = "LET $board_schema_meta = (SELECT version, writable_from FROM ONLY meta:schema);
+LET $board_schema_found = $board_schema_meta.version;
+LET $board_schema_from = $board_schema_meta.writable_from;
+IF $board_schema_found != $board_schema AND !($board_schema_ahead = true AND $board_schema_found = $board_schema + 1 AND type::is_int($board_schema_from) AND $board_schema_from <= $board_schema) { THROW string::concat($board_schema_before, <string> $board_schema_found, $board_schema_after) };";
 
-/// [`GUARD`]'s variables, for a store of version `own` refusing in `refusal`'s words: added to a
-/// write's own (`vars`, an object, or nothing).
-pub(crate) fn guard_vars(vars: &mut serde_json::Value, own: i64, refusal: &Refusal, refused: &str) {
+/// [`GUARD`]'s variables, for a store of version `own` refusing in `refusal`'s words, which takes a
+/// board one ahead whose record lets it when `ahead`: added to a write's own (`vars`, an object, or
+/// nothing).
+pub(crate) fn guard_vars(
+    vars: &mut serde_json::Value,
+    own: i64,
+    ahead: bool,
+    refusal: &Refusal,
+    refused: &str,
+) {
     if !vars.is_object() {
         *vars = serde_json::json!({});
     }
     vars["board_schema"] = own.into();
+    vars["board_schema_ahead"] = ahead.into();
     vars["board_schema_before"] = format!("{refused}{}", refusal.before).into();
     vars["board_schema_after"] = refusal.after.clone().into();
+}
+
+/// Whether a write of a store of version `own` passes the [`GUARD`] on a board at `found` (none:
+/// no record) whose `writable_from` is `from` as the database gave it, `ahead` saying whether the
+/// write may take a board one ahead: the guard's rule, for a reader that asks before it writes
+/// ([`crate::Store::board_standing`]). Anything but an integer in `from` lets nothing through.
+pub fn writes(found: Option<i64>, from: &serde_json::Value, own: i64, ahead: bool) -> bool {
+    found == Some(own)
+        || (ahead
+            && found.is_some_and(|found| Some(found) == own.checked_add(1))
+            && from.as_i64().is_some_and(|from| from <= own))
 }
 
 /// The statements that change a database: a transaction holding one is a write.
@@ -467,6 +550,8 @@ DEFINE FIELD IF NOT EXISTS rows ON moved TYPE string;
 
 DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS version ON meta TYPE int;
+-- Schema 25: the oldest schema whose Symphony may write the board, which a migration writes.
+DEFINE FIELD IF NOT EXISTS writable_from ON meta TYPE option<int>;
 
 DEFINE TABLE IF NOT EXISTS writer SCHEMALESS;
 

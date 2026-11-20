@@ -267,14 +267,15 @@ on_both! {
         assert!(matches!(answered(next.step(&attempt.id)).1, Outcome::Absent { .. }));
         started(&next, &attempt.id);
         assert_eq!(fake.resources(), 1);
-        let epochs: Vec<u64> = (facts(&next, &attempt.id).iter())
+        let epochs: Vec<(u64, bool)> = (facts(&next, &attempt.id).iter())
             .filter_map(|fact| match fact {
-                Fact::Sent { epoch, .. } => Some(*epoch),
+                Fact::Sent { epoch, reconcile, .. } => Some((*epoch, *reconcile)),
                 _ => None,
             })
             .collect();
-        // Each lease taken is the next epoch: the dead worker's, the reconcile's, the resend's.
-        assert_eq!(epochs, [1, 3]);
+        // Each lease taken is the next epoch: the dead worker's, the reconcile's, the resend's,
+        // each call recorded before it was made.
+        assert_eq!(epochs, [(1, false), (2, true), (3, false)]);
     }
 
     fn a_worker_that_dies_after_the_provider_acted_finds_what_it_made(backend: Backend) {
@@ -1070,5 +1071,302 @@ on_both! {
         let after = read(&c, &retry.id).state;
         assert_eq!(after.successor, None);
         assert_eq!(kinds(&c, &retry.id), facts, "nothing written to the predecessor");
+    }
+}
+
+/// Attempt `id`, started on its resource, paused by the stop it was asked: the resource.
+fn paused_on(c: &Coordinator, id: &str) -> String {
+    let resource = started(c, id);
+    c.stop(&owner_grant(), id, StopMode::Pause).unwrap();
+    answered(c.step(id));
+    answered(c.step(id));
+    assert_eq!(read(c, id).state.dispatch, Dispatch::Paused);
+    resource
+}
+
+/// A resume of the attempt paused on `resource`, on that resource at a new generation.
+fn reusing(resource: &str) -> Continuation {
+    Continuation {
+        checkpoint: None,
+        conversation: Some(format!("conversation-of-{resource}")),
+        mode: ResumeMode::ReuseWithNewGeneration,
+    }
+}
+
+/// Attempt `id`'s collection gathered, with nothing in it.
+fn collected(c: &Coordinator, id: &str) {
+    c.begin_collection(&owner_grant(), id).unwrap();
+    c.end_collection(
+        &owner_grant(),
+        id,
+        Collection::None,
+        Some("it wrote nothing"),
+    )
+    .unwrap();
+}
+
+/// What `admissions` answer, each sent from a store of its own on `f`'s board at the same moment,
+/// under capacity scope `capacity` when one is named.
+fn racing(
+    f: &Fixture,
+    fake: &Fake,
+    admissions: Vec<Admission>,
+    capacity: Option<(&str, u32)>,
+) -> Vec<Result<Attempt, Refusal>> {
+    let stores: Vec<_> = admissions.iter().map(|_| f.other()).collect();
+    let barrier = std::sync::Barrier::new(admissions.len());
+    std::thread::scope(|scope| {
+        let racers: Vec<_> = (stores.iter().zip(admissions))
+            .map(|(store, admission)| {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let mut c = Coordinator::new(store, profile(), fake, worker()).unwrap();
+                    if let Some((scope, limit)) = capacity {
+                        c = c.with_capacity(scope, limit);
+                    }
+                    barrier.wait();
+                    c.admit(&owner_grant(), admission)
+                })
+            })
+            .collect();
+        racers
+            .into_iter()
+            .map(|racer| racer.join().unwrap())
+            .collect()
+    })
+}
+
+/// The one attempt `answers` admitted, every other refused as `refused` says of it.
+fn one_admitted(
+    answers: Vec<Result<Attempt, Refusal>>,
+    refused: impl Fn(&Refusal, &Attempt) -> bool,
+) -> Attempt {
+    let (admitted, others): (Vec<_>, Vec<_>) = answers.into_iter().partition(Result::is_ok);
+    assert_eq!(
+        admitted.len(),
+        1,
+        "exactly one is admitted: {admitted:?} {others:?}"
+    );
+    let admitted = admitted.into_iter().next().unwrap().unwrap();
+    for other in others {
+        let refusal = other.unwrap_err();
+        assert!(refused(&refusal, &admitted), "{refusal:?}");
+    }
+    admitted
+}
+
+const RACERS: usize = 6;
+
+on_both! {
+    fn a_cancel_after_an_authoritative_absence_ends_it_with_nothing_provisioned(backend: Backend) {
+        let f = board(backend);
+        let fake = Fake::default();
+        let c = coordinator(&f, &fake).with_capacity("pool", 1);
+        let attempt = admit(&c, "k1");
+        let id = attempt.id.as_str();
+        fake.script([Fault::Down]);
+        assert!(is_unknown(&answered(c.step(id)).1));
+        assert!(matches!(answered(c.step(id)).1, Outcome::Absent { .. }));
+        assert_eq!(read(&c, id).state.dispatch, Dispatch::Unknown);
+
+        let cancelled = c.cancel(&owner_grant(), id).unwrap().state;
+        assert_eq!((cancelled.dispatch, cancelled.ending), (Dispatch::Terminal, Some(Ending::Cancelled)));
+        assert_eq!(cancelled.cancellation, Cancellation::Confirmed);
+        assert_eq!(c.step(id), Ok(Worked::Waited));
+        assert_eq!(fake.calls(), [Operation::Reconcile], "the start is never sent again");
+        assert_eq!(fake.resources(), 0);
+        assert!(reserved(&f, "pool").is_empty(), "its place was given back");
+        assert!(f.store.live_attempts(TASK).unwrap().is_empty());
+        // The reconcile is recorded before it is made, as a send is.
+        assert_eq!(
+            kinds(&c, id),
+            ["admitted", "intent", "sent", "answer", "sent", "answer", "asked", "ended"]
+        );
+        let sent: Vec<bool> = (facts(&c, id).iter())
+            .filter_map(|fact| match fact {
+                Fact::Sent { reconcile, .. } => Some(*reconcile),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent, [false, true]);
+    }
+
+    fn a_resume_that_reuses_the_resource_takes_its_cleanup_from_its_predecessor(backend: Backend) {
+        let f = board(backend);
+        let fake = Fake::default();
+        let c = coordinator(&f, &fake);
+        let grant = owner_grant();
+        let paused = admit(&c, "k1");
+        let resource = paused_on(&c, &paused.id);
+        let resumed = c.resume(&grant, &paused.id, reusing(&resource), None).unwrap();
+        let before = read(&c, &paused.id).state;
+        assert_eq!(before.resource_handed_to.as_deref(), Some(resumed.id.as_str()));
+        assert_eq!(before.resource.as_ref().map(|bound| bound.id.as_str()), Some(resource.as_str()));
+        assert!(!before.open(), "its resource's cleanup is the resume's");
+        collected(&c, &paused.id);
+        let refused = |c: &Coordinator| {
+            matches!(
+                c.begin_cleanup(&grant, &paused.id),
+                Err(Refusal::Invalid(why)) if why.contains(&format!("handed to attempt {}", resumed.id))
+            )
+        };
+        assert!(refused(&c), "the resume may still take it");
+
+        // The resume takes it at a new generation, then ends and cleans it as its own.
+        let (operation, _) = answered(c.step(&resumed.id));
+        assert_eq!(operation, Operation::Resume);
+        let bound = read(&c, &resumed.id).state.resource.unwrap();
+        assert_eq!((bound.id.as_str(), bound.generation.as_str()), (resource.as_str(), "g1+"));
+        assert!(refused(&c), "the resume holds it");
+        fake.runtime(&resource, RuntimeState::Succeeded);
+        answered(c.step(&resumed.id));
+        assert_eq!(read(&c, &resumed.id).state.ending, Some(Ending::Succeeded));
+        collected(&c, &resumed.id);
+        let key = c.begin_cleanup(&grant, &resumed.id).expect("the resume cleans it");
+        c.end_cleanup(&grant, &resumed.id, &key, Cleanup::Complete, Some("deleted")).unwrap();
+        assert!(refused(&c), "cleaned by the resume, never by its predecessor");
+        assert!(!read(&c, &paused.id).state.open());
+        assert!(!read(&c, &resumed.id).state.open());
+    }
+
+    fn a_resume_that_never_takes_the_resource_leaves_its_cleanup_to_its_predecessor(backend: Backend) {
+        let f = board(backend);
+        let fake = Fake::default();
+        let c = coordinator(&f, &fake);
+        let grant = owner_grant();
+        // One resume is cancelled before it was sent, the other refused by the provider.
+        for (task, cancelled) in [(TASK, true), (OTHER_TASK, false)] {
+            let paused = c.admit(&grant, asked(task)).unwrap();
+            let resource = paused_on(&c, &paused.id);
+            let resumed = c.resume(&grant, &paused.id, reusing(&resource), None).unwrap();
+            if cancelled {
+                c.cancel(&grant, &resumed.id).unwrap();
+            } else {
+                fake.script([Fault::Refuse("no capacity to resume")]);
+                answered(c.step(&resumed.id));
+            }
+            let ended = read(&c, &resumed.id).state;
+            let ending = if cancelled { Ending::Cancelled } else { Ending::Rejected };
+            assert_eq!((ended.ending, ended.resource), (Some(ending), None));
+
+            collected(&c, &paused.id);
+            let key = c.begin_cleanup(&grant, &paused.id).expect("its own to clean again");
+            let before = read(&c, &paused.id).state;
+            assert_eq!(before.resource_handed_to, None);
+            assert!(before.open(), "owed until it is cleaned");
+            let cleaned = c.end_cleanup(&grant, &paused.id, &key, Cleanup::Complete, None).unwrap();
+            assert!(!cleaned.state.open());
+        }
+        assert_eq!(fake.resources(), 2, "neither resume made anything");
+    }
+
+    fn a_resource_whose_cleanup_has_begun_is_resumed_only_on_a_new_one(backend: Backend) {
+        let f = board(backend);
+        let fake = Fake::default();
+        let c = coordinator(&f, &fake);
+        let grant = owner_grant();
+        let stopped = admit(&c, "k1");
+        let id = stopped.id.as_str();
+        let resource = started(&c, id);
+        c.stop(&grant, id, StopMode::Terminate).unwrap();
+        answered(c.step(id));
+        answered(c.step(id));
+        assert_eq!(read(&c, id).state.ending, Some(Ending::Stopped));
+        collected(&c, id);
+        c.begin_cleanup(&grant, id).unwrap();
+        let facts = kinds(&c, id);
+        assert!(matches!(
+            c.resume(&grant, id, reusing(&resource), None),
+            Err(Refusal::Invalid(why)) if why.contains("cleanup has begun")
+        ));
+        assert_eq!(kinds(&c, id), facts, "nothing written to it");
+        let fresh = Continuation { mode: ResumeMode::NewResource, ..reusing(&resource) };
+        let resumed = c.resume(&grant, id, fresh, None).expect("resumed on a new resource");
+        assert_eq!(read(&c, id).state.successor.as_deref(), Some(resumed.id.as_str()));
+        assert_eq!(read(&c, id).state.resource_handed_to, None);
+    }
+
+    fn a_held_attempt_refuses_a_stop_and_a_cancel_of_it_waits_for_a_person(backend: Backend) {
+        let f = board(backend);
+        let fake = Fake::default();
+        let mut pacing = Pacing::default();
+        pacing.unknowns = 1;
+        let c = coordinator(&f, &fake).with_pacing(pacing).unwrap().with_capacity("pool", 1);
+        let grant = owner_grant();
+        let held = admit(&c, "k1");
+        let id = held.id.as_str();
+        started(&c, id);
+        fake.script([Fault::Down, Fault::Down]);
+        assert!(is_unknown(&answered(c.step(id)).1));
+        assert!(is_unknown(&answered(c.step(id)).1));
+        let state = read(&c, id).state;
+        assert_eq!(state.dispatch, Dispatch::Held);
+        assert!(state.resource.is_some());
+
+        for mode in [StopMode::Pause, StopMode::Terminate] {
+            assert!(matches!(
+                c.stop(&grant, id, mode),
+                Err(Refusal::Invalid(why)) if why.contains("held for a person")
+            ));
+        }
+        let cancelled = c.cancel(&grant, id).unwrap().state;
+        assert_eq!((cancelled.dispatch, cancelled.cancellation), (Dispatch::Held, Cancellation::Requested));
+        let calls = fake.calls();
+        assert_eq!(c.step(id), Ok(Worked::Waited));
+        assert_eq!(fake.calls(), calls, "nothing is sent for a held attempt");
+        assert_eq!(f.store.live_attempts(TASK).unwrap(), std::slice::from_ref(&held.id));
+        assert_eq!(
+            c.admit(&grant, asked(OTHER_TASK)),
+            Err(Refusal::Full(vec![held.id.clone()])),
+            "it keeps its place"
+        );
+        assert!(!c.eligibility(&grant, id, "r1").unwrap().eligible);
+
+        let retry = c.retry(&grant, id, "the provider's console shows it gone", None).unwrap();
+        let superseded = read(&c, id).state;
+        assert_eq!(superseded.ending, Some(Ending::Superseded));
+        assert_eq!(superseded.cancel, None);
+        assert_eq!(reserved(&f, "pool"), std::slice::from_ref(&retry.id));
+    }
+
+    fn concurrent_admissions_admit_one_per_request_key_lane_and_capacity_place(backend: Backend) {
+        let f = board(backend);
+        f.task("sim/fly");
+        let fake = Fake::default();
+
+        // One request key: every racer is answered with the one attempt it admitted.
+        let same = (0..RACERS).map(|_| asked(TASK).request_key("k1")).collect();
+        let answers = racing(&f, &fake, same, None);
+        let ids: Vec<String> = answers.into_iter().map(|answer| answer.expect("admitted").id).collect();
+        assert!(ids.iter().all(|id| *id == ids[0]), "{ids:?}");
+        assert_eq!(f.store.live_attempts(TASK).unwrap(), std::slice::from_ref(&ids[0]));
+
+        // One lane: one admitted, every other busy with it.
+        let lane = (0..RACERS).map(|n| asked(OTHER_TASK).request_key(&format!("lane-{n}"))).collect();
+        let held = one_admitted(racing(&f, &fake, lane, None), |refusal, admitted| {
+            *refusal == Refusal::Busy(Some(admitted.id.clone()))
+        });
+        assert_eq!(f.store.live_attempts(OTHER_TASK).unwrap(), std::slice::from_ref(&held.id));
+
+        // One capacity scope with one place left: one admitted, every other full.
+        let c = coordinator(&f, &fake).with_capacity("pool", 2);
+        let first = c.admit(&owner_grant(), Admission::new("sim/fly", "first", "executor", input("r1"))).unwrap();
+        let places = (0..RACERS)
+            .map(|n| Admission::new("sim/fly", &format!("lane-{n}"), "executor", input("r1")))
+            .collect();
+        let last = one_admitted(racing(&f, &fake, places, Some(("pool", 2))), |refusal, admitted| {
+            let Refusal::Full(full) = refusal else { return false };
+            let mut full = full.clone();
+            full.sort();
+            let mut expected = vec![first.id.clone(), admitted.id.clone()];
+            expected.sort();
+            full == expected
+        });
+        let mut holders = reserved(&f, "pool");
+        holders.sort();
+        let mut expected = vec![first.id.clone(), last.id.clone()];
+        expected.sort();
+        assert_eq!(holders, expected, "no place reserved twice");
+        assert_eq!(f.store.live_attempts("sim/fly").unwrap().len(), 2);
     }
 }

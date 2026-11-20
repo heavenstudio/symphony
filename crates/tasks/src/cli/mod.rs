@@ -622,15 +622,7 @@ fn reach_board(
         None => Ok(()),
     };
     if let Some(addr) = env.var("TASKS_SERVER") {
-        if let Some(socket) = addr.strip_prefix("postgresql:")
-            && (!Path::new(socket).is_absolute()
-                || socket.contains('\0')
-                || socket.starts_with("//"))
-        {
-            return Err(format!(
-                "TASKS_SERVER={addr:?} must name an absolute PostgreSQL socket folder as postgresql:/path"
-            ));
-        }
+        socket_named(addr, "TASKS_SERVER=")?;
         let live = crate::live::named_server(addr, db, cwd, machine(env).as_deref());
         guard(&live)?;
         return Ok(Reached {
@@ -683,6 +675,31 @@ fn reach_board(
         project: Some(project.id),
         live,
     })
+}
+
+/// `addr`, when it names a PostgreSQL server (`postgresql:`), names its socket's folder by an
+/// absolute path: refused otherwise, `what` saying where the address was given.
+fn socket_named(addr: &str, what: &str) -> Result<(), String> {
+    match addr.strip_prefix("postgresql:") {
+        Some(socket)
+            if !Path::new(socket).is_absolute()
+                || socket.contains('\0')
+                || socket.starts_with("//") =>
+        {
+            Err(format!(
+                "{what}{addr:?} must name an absolute PostgreSQL socket folder as postgresql:/path"
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The database `db` on the server at `addr`, SurrealDB's `HOST:PORT` or PostgreSQL's
+/// `postgresql:/SOCKET`, which `what` names in a refusal: what a program handed a server's
+/// address opens its store on.
+pub(crate) fn database_at(addr: &str, db: &str, what: &str) -> Result<crate::Database, String> {
+    socket_named(addr, &format!("{what} "))?;
+    Ok(named_database(Client::new(addr, NAMESPACE, db)))
 }
 
 /// A named scratch server can be a PostgreSQL socket folder. Repository discovery still

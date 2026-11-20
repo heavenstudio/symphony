@@ -1,7 +1,8 @@
 //! An attempt's rules, decided in the process on the state a write read: what its worker does
 //! next ([`next`]), what an answer makes of it ([`apply`]), and what a cancel or a stop asked for
-//! does ([`cancel`], [`stop`]). Nothing here reads the store or a clock: `now` is the database's,
-//! as the worker's claim read it.
+//! does ([`cancel`], [`stop`]), and what a resume or a retry that follows it makes of it
+//! ([`followed`]). Nothing here reads the store or a clock: `now` is the database's, as the
+//! worker's claim read it.
 //!
 //! The answers that settle nothing (lost contact, a deadline, a provider that does not know yet)
 //! never fail an attempt and never start another: the operation is reconciled by its key, with a
@@ -10,7 +11,8 @@
 
 use super::keys;
 use super::record::{
-    Asked, Binding, Cancellation, Dispatch, Ending, Fact, Identity, Pending, State,
+    Asked, Binding, Cancellation, Cleanup, Dispatch, Ending, Fact, Identity, Pending, Relation,
+    State,
 };
 use symphony_plugin::execution::{
     AttemptRef, Operation, Outcome, Principal, Receipt, Rejection, Request, Resource, ResourceId,
@@ -507,14 +509,18 @@ pub(crate) fn cancel(state: &State, initiator: &Principal, fact: u64) -> Option<
         cancel: true,
         mode: None,
     });
-    let unsent_start = state.pending.as_ref().is_some_and(|pending| {
-        !pending.sent && matches!(pending.kind, Operation::Start | Operation::Resume)
-    });
+    // Its start or resume is owed unsent and nothing is bound: it was never sent, or the provider
+    // answered with an authoritative absence that it never reached it and never will under its
+    // key. Either way nothing was provisioned, whatever the dispatch says.
+    let unsent_start = state.resource.is_none()
+        && state.pending.as_ref().is_some_and(|pending| {
+            !pending.sent && matches!(pending.kind, Operation::Start | Operation::Resume)
+        });
     match state.dispatch {
         // It ended already: confirmed at once, and no result of it is eligible from now on.
         Dispatch::Terminal => applied.state.cancellation = Cancellation::Confirmed,
-        // Nothing was sent: it ends here, with nothing provisioned.
-        Dispatch::Pending if unsent_start => {
+        // Nothing reached the provider: it ends here, with nothing provisioned.
+        _ if unsent_start => {
             applied.state.cancellation = Cancellation::Requested;
             applied.state.pending = None;
             return Some(ended(applied, Ending::Cancelled, fact));
@@ -541,6 +547,12 @@ pub(crate) fn stop(
     if state.dispatch == Dispatch::Terminal {
         return Err("it has ended".into());
     }
+    // Its worker sends nothing for it until a person settles it, so a stop would never be sent.
+    if state.dispatch == Dispatch::Held {
+        return Err(
+            "it is held for a person: a retry settles it, and a cancel bars its results".into(),
+        );
+    }
     if state.resource.is_none() {
         return Err("no resource is bound to it yet: cancel it instead".into());
     }
@@ -564,10 +576,14 @@ pub(crate) fn stop(
 
 /// The binding and the fact of quiescence a resume continues from, or why `state` cannot be
 /// resumed: it must be known paused or ended, owe nothing, and have no cancel whose outcome is
-/// still uncertain.
-pub(crate) fn resumable(state: &State) -> Result<(Binding, u64), String> {
+/// still uncertain. A resume that `reuses` its resource at a new generation needs the resource
+/// not yet cleaned.
+pub(crate) fn resumable(state: &State, reuses: bool) -> Result<(Binding, u64), String> {
     if let Some(successor) = &state.successor {
         return Err(format!("attempt {successor} followed it already"));
+    }
+    if reuses {
+        reusable(state)?;
     }
     if state.pending.is_some() || state.stop.is_some() || state.cancel.is_some() {
         return Err("an operation of it is not settled yet".into());
@@ -590,6 +606,59 @@ pub(crate) fn resumable(state: &State) -> Result<(Binding, u64), String> {
         return Err("it is not known to be paused or ended with a resource".into());
     };
     Ok((binding.clone(), quiescent))
+}
+
+/// Why `state`'s resource cannot be reused by a resume: its cleanup has begun, so it is being
+/// cleaned, or was.
+fn reusable(state: &State) -> Result<(), String> {
+    if state.cleanup == Cleanup::NotDue {
+        return Ok(());
+    }
+    Err(format!(
+        "its resource's cleanup has begun ({:?}): resume it on a new resource",
+        state.cleanup
+    ))
+}
+
+/// What attempt `state` becomes in the admission of attempt `by`, which follows it as
+/// `relation`: linked, and ended superseded if it was still live (held or paused), its
+/// reservation given back for admission to hand to `by`; none once it was followed. A resume
+/// that `reuses` its resource at a new generation takes the resource's cleanup with it, and is
+/// refused once that cleanup has begun.
+pub(crate) fn followed(
+    state: &State,
+    by: &str,
+    relation: Relation,
+    reuses: bool,
+) -> Result<Option<Applied>, String> {
+    if state.successor.is_some() {
+        return Ok(None);
+    }
+    if reuses {
+        reusable(state)?;
+    }
+    let mut applied = Applied::from_state(state.clone());
+    applied.state.successor = Some(by.to_string());
+    if reuses {
+        applied.state.resource_handed_to = Some(by.to_string());
+    }
+    applied.facts.push(Fact::Followed {
+        by: by.to_string(),
+        relation,
+    });
+    if applied.state.live() {
+        let next = &mut applied.state;
+        next.dispatch = Dispatch::Terminal;
+        next.ending = Some(Ending::Superseded);
+        next.pending = None;
+        next.cancel = None;
+        next.stop = None;
+        applied.release = next.reserved.take();
+        applied.facts.push(Fact::Ended {
+            ending: Ending::Superseded,
+        });
+    }
+    Ok(Some(applied))
 }
 
 /// An operation's name in a reason.

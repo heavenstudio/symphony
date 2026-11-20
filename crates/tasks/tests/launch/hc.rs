@@ -221,6 +221,10 @@ impl Hc for Brief<'_> {
         self.0.board()
     }
 
+    fn project(&self) -> String {
+        self.0.project()
+    }
+
     fn ending(&self) -> Duration {
         Duration::from_millis(200)
     }

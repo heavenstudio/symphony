@@ -796,7 +796,9 @@ What holds on every page, and each page's contract where its section above names
   its line keeps its end, the ellipsis between its two parts (`ends`, `src/boardwait.tsx`), so
   cards that differ only at the end are told apart, and each card's one button
   (`.card-more`, `aria-expanded`) opens it in place to the whole of its title, slug, wait and
-  reason, by key or touch, reading nothing. A positive authoritative `review_rounds`
+  reason, by key or touch, reading nothing. Closed, each of those lines folds every run of white
+  space in it, a line break among them, to one space (`fold`), so a reason written on two lines
+  stays on its one line in the card's box; opened, each is drawn as written. A positive authoritative `review_rounds`
   adds one `1 review` / `N reviews` mark before the title, on open and finished cards; zero or
   unavailable summaries show no mark. Live fields update known counts; a full replacement clears
   an unavailable summary. No task detail read or subtask count supplies the mark.
