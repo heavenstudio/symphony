@@ -22,7 +22,7 @@
 //! creation. The write is journaled before it is made, and no token is in an argument, a URL, the
 //! journal, the state or a line said here.
 
-use crate::config::Releases;
+use crate::config::{Releases, Role};
 use crate::deliver::{self, Host, Lost, Stopped, refused, unavailable};
 use crate::reconcile::{Context, Outcome};
 use crate::state::{Entry, Event, Released, State, Store};
@@ -274,7 +274,7 @@ fn answer(ctx: &Context<'_>, request: &Value) -> Value {
         Ok(state) => state.unwrap_or_default(),
         Err(why) => return unavailable(why),
     };
-    let transport = match deliver::connect(ctx, config.token_file.as_deref(), "token_file") {
+    let transport = match deliver::connect(ctx, &config, Role::Landing) {
         Ok(transport) => transport,
         Err(stopped) => return stopped,
     };

@@ -340,6 +340,73 @@ fn the_committed_reader_refuses_a_missing_branch_and_a_file_that_is_not_regular_
     );
 }
 
+/// The file is found among the entries of the commit's top tree, whatever sorts beside it, an
+/// executable one read as a regular file, on either of git's object formats.
+#[test]
+fn the_committed_reader_finds_the_file_among_its_neighbours_on_either_object_format() {
+    for format in ["sha1", "sha256"] {
+        let repo = Scratch::new(&format!("neighbours-{format}"));
+        fs::remove_dir_all(repo.0.join(".git")).unwrap();
+        repo.git(&["init", "-q", "-b", "main", "--object-format", format]);
+        // Entries named like it before and after it, and its own name lower in the tree.
+        for (path, text) in [
+            ("a", "a"),
+            ("symphony.tom", "x"),
+            ("symphony.toml.d/symphony.toml", "[workflow\n"),
+            ("sub/symphony.toml", "[workflow\n"),
+            ("z", "z"),
+        ] {
+            let path = repo.0.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        repo.commit("no file at the top");
+        assert_eq!(committed(&repo.0, "main").unwrap().custom, None, "{format}");
+
+        fs::write(repo.0.join(FILE), format!("{CUSTOM}{MAPPED}")).unwrap();
+        repo.commit("custom");
+        let read = committed(&repo.0, "main").unwrap();
+        let custom = read.custom.unwrap();
+        assert_eq!(custom.definition, candidate(CUSTOM).unwrap(), "{format}");
+        let blob = crate::sys::output(
+            crate::sys::git()
+                .arg("-C")
+                .arg(&repo.0)
+                .args(["rev-parse", &format!("HEAD:{FILE}")]),
+        )
+        .unwrap();
+        let blob = String::from_utf8(blob.stdout).unwrap();
+        assert_eq!(custom.revision.source.project_blob, blob.trim());
+        assert_eq!(read.commit, repo.head());
+
+        // Executable, it is a regular file still.
+        repo.git(&["update-index", "--chmod=+x", FILE]);
+        repo.git(&["commit", "-q", "-m", "executable"]);
+        let executable = committed(&repo.0, "main").unwrap().custom.unwrap();
+        assert_eq!(executable.definition, custom.definition, "{format}");
+    }
+}
+
+/// A submodule's commit where the file stands is no regular file either.
+#[test]
+fn the_committed_reader_refuses_a_submodule_at_the_files_name() {
+    let repo = Scratch::new("gitlink");
+    repo.commit("empty");
+    let commit = repo.head();
+    repo.git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        &format!("160000,{commit},{FILE}"),
+    ]);
+    repo.git(&["commit", "-q", "-m", "a submodule"]);
+    let gitlink = committed(&repo.0, "main").unwrap_err();
+    assert_eq!(
+        gitlink,
+        "workflow committed on main: symphony.toml must be a regular file, not mode 160000 commit"
+    );
+}
+
 #[test]
 fn the_file_is_read_through_json_and_refuses_what_a_reading_from_toml_refuses() {
     let custom = candidate(CUSTOM).unwrap();

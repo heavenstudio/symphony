@@ -1883,6 +1883,8 @@ impl Landing<'_> {
             if let Some(done) = self.resumed() {
                 return done;
             }
+            // A slug is delivered once: one with a receipt of another delivery is refused here.
+            self.repeated()?;
             // A pull request a run before bound, read before anything is judged: one merged or
             // closed since is settled, and one whose evidence no longer stands is told so.
             if let Some(done) = self.bound_before() {

@@ -132,7 +132,10 @@ tests unchanged and green at its tip, and one that changes a test, a check, a bu
 needs a fresh reviewer's approve as well. A red run holds its commit as the release candidate, so the release is that commit and
 its reds' fixes alone however fast main moves ([RELEASES](docs/RELEASES.md#the-release-candidate)):
 its red's fix starts at the local branch `release-candidate`, never at main, merges that branch
-again before review and never merges main before its land, and commits the client its own
+again before review (but where a pull request delivers the land and the candidate advanced to a
+delivered head, which no delivery merges: there it never merges `release-candidate`, and one not
+yet published or approved is rebased onto it instead) and never merges main before its land,
+and commits the client its own
 sources make when it changes what the client is built from; its task's text says so. Its own land
 moves the candidate, and the land that answers the last red starts the candidate's rerun. A red
 whose fix landed with another red's task is closed as covered by that landing, which answers it
