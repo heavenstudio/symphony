@@ -525,7 +525,8 @@ is a closed disclosure, last so it moves nothing that loads (above the thread it
 thread's region, which mounts as it comes into view, off the first screen it began on): its
 heading is all a first visit draws, and opening it asks for its part from
 `/api/task-tokens` (`src/task-live.ts`'s `tokensPart`, read again on a change of the task) and
-imports its chunk (`src/task-tokens.tsx`, its style `src/task-tokens.css`), which guards the
+imports its chunk (`src/task-tokens.tsx`, its style `src/task-tokens.css` inline, put in the page
+as it first draws, as the timeline's is: the build links no chunk's own sheet), which guards the
 answer as it draws it: the total with its kinds, the tables by role and by review round, the
 models no price was found for, and _No tokens recorded for this task._ where there are none, with
 no table. As the timeline's, the chunk imports nothing of the kind's own (the part, the store, the
@@ -740,10 +741,10 @@ What holds on every page, and each page's contract where its section above names
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,776 bytes, `/tasks` 126,033 (the cards'
-  costs' read among them), `/agents` 116,029, `/queue` 108,656, `/reports` 115,228, `/runs`
-  111,694, `/docs/` 139,479, a document 141,164 and a task's page 143,549, and a return that finds
-  what it kept unchanged 3,228, 3,787, 3,559, 3,493, 1,755, 2,217, 1,803, 1,977 and 3,621. A first
+  each page's requests) a first visit to `/` takes 112,777 bytes, `/tasks` 126,063 (the cards'
+  costs' read among them), `/agents` 116,029, `/queue` 108,658, `/reports` 115,252, `/runs`
+  111,695, `/docs/` 139,474, a document 141,159 and a task's page 143,439, and a return that finds
+  what it kept unchanged 3,229, 3,785, 3,558, 3,494, 1,754, 2,217, 1,801, 1,975 and 3,619. A first
   visit to a kind is its entry and its
   sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
   the others (the board's feed and keep; the card and the task readers of the board and the agents
@@ -756,7 +757,7 @@ What holds on every page, and each page's contract where its section above names
   as prefetches, so the budget counts them outside the first visit, with the warmed modules
   (`prefetched_bytes`). Once a page has its data and is idle, the shell warms the chat's files
   (its entry, the chunks it imports and its sheets the page has not) and then the menus' (the
-  same of theirs): 29,695 bytes outside home's first visit, and neither the chat's first open nor
+  same of theirs): 29,689 bytes outside home's first visit, and neither the chat's first open nor
   the menus' transfers anything more. Later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Parts, PartsContext, type Shown } from "./parts";
 import { type TaskEvent, tokensPart } from "./task-live";
 import { TokensBody } from "./task-page";
-import { readTaskTokens, roundName, TaskTokensPanel, TokenFigures } from "./task-tokens";
+import { putStyle, readTaskTokens, roundName, TaskTokensPanel, TokenFigures } from "./task-tokens";
 import { CASES, reply, until } from "./testing";
 import type { TaskTokens } from "./wire";
 
@@ -18,6 +18,28 @@ afterEach(() => vi.unstubAllGlobals());
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
 describe("a task's tokens", () => {
+  it("put their style in the page once, before the project's theme", () => {
+    type Made = { tag: string; id: string; textContent: unknown };
+    const theme: Made = { tag: "style", id: "", textContent: "theme" };
+    const head: Made[] = [theme];
+    vi.stubGlobal("document", {
+      getElementById: (id: string) => head.find((element) => element.id === id) ?? null,
+      createElement: (tag: string): Made => ({ tag, id: "", textContent: null }),
+      head: {
+        querySelector: (selector: string) => (selector === "[data-symphony-theme]" ? theme : null),
+        insertBefore: (element: Made, before: Made | null) =>
+          head.splice(before === null ? head.length : head.indexOf(before), 0, element),
+      },
+    });
+    putStyle();
+    putStyle();
+    expect(head).toHaveLength(2);
+    expect(head[0]).toMatchObject({ tag: "style", id: "task-tokens-style" });
+    expect(head[1]).toBe(theme);
+    // Its text is the sheet's, which Vitest empties.
+    expect(typeof head[0]?.textContent).toBe("string");
+  });
+
   it("are read as the route writes them, and none that serde would refuse", () => {
     expect(TOKENS.by_role.map((role) => role.role)).toEqual(["executor", "reviewer"]);
     expect(NONE.by_role).toEqual([]);

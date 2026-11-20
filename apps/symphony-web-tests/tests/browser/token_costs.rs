@@ -59,6 +59,11 @@ fn a_tasks_tokens_are_read_and_their_chunk_loaded_only_once_opened_on_desktop_an
                 .count()
         };
         assert_eq!(asked(&site), 0, "{width}: read before it was opened");
+        assert_eq!(
+            page.eval("document.getElementById('task-tokens-style') === null"),
+            json!(true),
+            "{width}: the tokens' sheet came with the first visit"
+        );
         page.eval("document.querySelector('details.task-tokens > summary').click()");
         assert!(
             page.wait_for(
@@ -75,6 +80,22 @@ fn a_tasks_tokens_are_read_and_their_chunk_loaded_only_once_opened_on_desktop_an
             "{said}"
         );
         assert!(said.contains("round 1"), "{said}");
+        // The chunk's sheet is in the page and drawn by: a row's name at the body's weight and
+        // level with its figures, right-aligned and never wrapped, where the shared table's own
+        // rules say none of it; and the whole table in its box, with no scroll across it.
+        let drawn = page.eval(
+            "(() => { const name = getComputedStyle(document.querySelector('.task-tokens-body tbody th'));
+                const figure = getComputedStyle(document.querySelector('.task-tokens-body tbody td'));
+                const table = document.querySelector('.task-tokens-body table');
+                return {sheets: document.querySelectorAll('#task-tokens-style').length, weight: name.fontWeight,
+                    level: name.verticalAlign, align: figure.textAlign, wrap: figure.whiteSpace,
+                    whole: table.scrollWidth <= table.clientWidth}; })()",
+        );
+        assert_eq!(
+            drawn,
+            json!({"sheets": 1, "weight": "400", "level": "top", "align": "right", "wrap": "nowrap", "whole": true}),
+            "{width}: the tokens' sheet is not drawn by"
+        );
         let reads: Vec<String> = (site.targets().into_iter())
             .filter(|path| path.starts_with(TASK_TOKENS_PATH))
             .collect();
