@@ -267,6 +267,21 @@ pub(crate) struct Row {
     pub lease: Option<Lease>,
     pub epoch: u64,
     pub facts: i64,
+    /// Where the workflow held its task when it was admitted, none where no workflow held it: the
+    /// position its ending is proposed from, and only while its task still stands there
+    /// (`crate::Store::observe_attempt`).
+    #[serde(default)]
+    pub workflow: Option<Pin>,
+}
+
+/// The pair and revision of the workflow position an attempt's task stood at when it was
+/// admitted: all its ending's proposal is fenced on, and no more of the position, so a position
+/// that gains a field never refuses the read of an attempt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Pin {
+    pub phase: String,
+    pub state: String,
+    pub revision: u64,
 }
 
 impl Row {

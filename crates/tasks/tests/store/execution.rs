@@ -6,6 +6,7 @@
 //! grants the host alone makes.
 
 mod fake;
+mod workflow;
 
 use crate::common::{Backend, Fixture, Seed};
 use fake::{Fake, Fault, Meanwhile, capabilities};

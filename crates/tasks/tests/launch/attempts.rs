@@ -18,6 +18,7 @@ use symphony_board::launch::attempts::{CONFIGURATION, profile};
 use symphony_board::launch::hc::Hc;
 use symphony_board::launch::screen::ON_SCREEN;
 use symphony_board::launch::{Ask, Started, restore};
+use symphony_board::workflow::Trigger;
 use symphony_plugin::execution::{
     Authorization, Call, Capabilities, ContentRef, Input, Observation, Operation, Outcome,
     Principal, PrincipalKind, Profile, Receipt, Request, Resource, ResourceId, RuntimeState,
@@ -1034,4 +1035,91 @@ fn an_attempt_started_from_a_linked_worktree_is_read_under_the_main_checkouts_sc
             (&main.project, &main.board)
         );
     }
+}
+
+/// The execution tests' workflow (`tests/store/execution/attempts.toml`) active on `w`'s board,
+/// sim/jump placed at build/available, where any ending of an attempt waits on a person: the
+/// local terminals proposed to it as every attempt is.
+fn under_workflow(w: &World) {
+    const STAY: &str =
+        r#"{ manual = true, slot = "retain", release_role = false, release_reservation = false }"#;
+    let text = include_str!("../store/execution/attempts.toml")
+        .replace("@FAILURE@", STAY)
+        .replace(
+            r#"legacy = "ready", satisfies_dependencies = false, completion = "none" }"#,
+            &format!(
+                r#"legacy = "ready", satisfies_dependencies = false, completion = "none", recovery = {{ release = {STAY}, lost_holder = {STAY}, attempt_failure = {STAY}, cancellation_acknowledged = {STAY} }} }}"#
+            ),
+        );
+    let (definition, mappings) = symphony_board::workflow::written(&text).unwrap();
+    let definition = definition.unwrap();
+    let revision = (definition.revision(symphony_api::workflow::Source {
+        commit: "1".repeat(40),
+        project_blob: "2".repeat(40),
+    }))
+    .unwrap();
+    let custom = symphony_board::workflow::Custom {
+        definition,
+        revision,
+        mappings,
+    };
+    let host = symphony_board::workflow::Host::local();
+    w.store().activate_workflow(&custom, &host).unwrap();
+    let placed = w.store().workflow_position("sim/jump").unwrap().unwrap();
+    assert_eq!(
+        (placed.phase.as_str(), placed.state.as_str()),
+        ("build", "available")
+    );
+}
+
+/// Where the workflow holds sim/jump: its pair, its revision and the trigger it waits on a person
+/// for, if it does; and its last transition's key.
+fn held(w: &World) -> (String, u64, Option<Trigger>, Option<String>) {
+    let at = w.store().workflow_position("sim/jump").unwrap().unwrap();
+    let last = w.store().workflow_transitions("sim/jump").unwrap().pop();
+    (
+        format!("{}/{}", at.phase, at.state),
+        at.revision,
+        at.manual.map(|m| m.trigger),
+        last.and_then(|t| t.key),
+    )
+}
+
+#[test]
+fn under_a_custom_workflow_a_refused_run_or_a_rollback_is_proposed_from_where_the_launch_admitted_it()
+ {
+    // A run hc refuses is a failure of the attempt, answered by the position's action.
+    let mut w = World::new();
+    under_workflow(&w);
+    let (_, placed, _, _) = held(&w);
+    w.set("FAKE_HC_FAIL", "run");
+    refused(w.try_launch(&w.ask("sim/jump")));
+    let attempt = only(&w);
+    assert_eq!(attempt.state.ending, Some(Ending::Rejected));
+    assert_eq!(
+        held(&w),
+        (
+            "build/available".into(),
+            placed + 1,
+            Some(Trigger::AttemptFailure),
+            Some(format!("attempt/{}", attempt.id))
+        )
+    );
+
+    // A launch rolled back cancels its attempt, a cancel that took.
+    let mut w = World::new();
+    under_workflow(&w);
+    w.set("FAKE_HC_DEAF", "1");
+    refused(w.try_launch(&w.ask("sim/jump")));
+    let attempt = only(&w);
+    assert_eq!(attempt.state.cancellation, Cancellation::Confirmed);
+    assert_eq!(
+        held(&w),
+        (
+            "build/available".into(),
+            placed + 1,
+            Some(Trigger::CancellationAcknowledged),
+            Some(format!("attempt/{}", attempt.id))
+        )
+    );
 }
