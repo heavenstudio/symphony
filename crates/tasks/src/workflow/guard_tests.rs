@@ -1134,3 +1134,24 @@ fn the_entry_into_a_pair_is_found_past_every_transition_that_stayed_in_it() {
         Some(4)
     );
 }
+
+#[test]
+fn a_resume_walked_back_to_anything_but_a_block_from_the_pair_finds_no_entry() {
+    let (awaiting, approved, blocked, landing) = (
+        pair("verify", "awaiting"),
+        pair("deliver", "approved"),
+        pair("build", "blocked"),
+        pair("deliver", "landing"),
+    );
+    // Approved, prepared, sent back, moved to the blocked pair by an edge that saves nothing, and
+    // resumed at approved: what left approved before the resume is the prepare, not a block.
+    let history = [
+        moved(4, Some(awaiting.clone()), approved.clone(), Vec::new()),
+        moved(5, Some(approved.clone()), landing.clone(), Vec::new()),
+        moved(6, Some(landing.clone()), awaiting.clone(), Vec::new()),
+        moved(7, Some(awaiting), blocked.clone(), Vec::new()),
+        moved(8, Some(blocked), approved.clone(), vec![Effect::ClearBlock]),
+        moved(9, Some(approved.clone()), landing, Vec::new()),
+    ];
+    assert_eq!(entry(&history, 9, &approved), None);
+}

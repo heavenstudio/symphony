@@ -780,43 +780,11 @@ fn reported(f: &Fixture, generation: u64, previous: Option<u64>) {
     f.store.observe_authority(&signed).unwrap();
 }
 
-/// [`guarded_landing`] where a task stays in its approved pair: its block and resume taken from
-/// the approved pair and back to it, and a reviewer staffing it, whose release keeps the task there.
+/// [`guarded_landing`] where a task stays in its approved pair
+/// ([`crate::workflow::effect::tests::guarded_landing_with_stays_text`]).
 fn guarded_landing_with_stays() -> crate::workflow::Custom {
-    use crate::workflow::effect::tests::guarded_landing_text;
-    let text = guarded_landing_text(DEFAULT_LAND, 7);
-    let at = "  { at = { phase = \"deliver\", state = \"approved\" },";
-    let start = text.find(at).expect("the approved position");
-    let end = start + text[start..].find('\n').expect("its line ends");
-    let stay =
-        "{ manual = true, slot = \"retain\", release_role = true, release_reservation = false }";
-    let wait =
-        "{ manual = true, slot = \"retain\", release_role = false, release_reservation = false }";
-    let staffed = format!(
-        "{at} staffing = \"reviewer\", slot = \"release\", dependencies = \"none\", \
-         unsuccessful_dependency = \"block\", accepts_work = false, terminal = false, legacy = \
-         \"done\", satisfies_dependencies = false, completion = \"none\", recovery = {{ release = \
-         {stay}, lost_holder = {stay}, attempt_failure = {wait}, cancellation_acknowledged = {wait} }} }},"
-    );
-    let text = format!("{}{staffed}{}", &text[..start], &text[end..]);
-    let (available, approved) = (
-        "{ phase = \"build\", state = \"available\" }",
-        "{ phase = \"deliver\", state = \"approved\" }",
-    );
-    let (block, resume) = (
-        format!("{{ id = \"block\", label = \"Block\", from = {available},"),
-        format!("state = \"blocked\" }}, to = {available}, operation = \"resume\","),
-    );
-    assert!(
-        text.contains(&block) && text.contains(&resume),
-        "the block and its resume"
-    );
-    let text = (text.replacen(&block, &block.replace(available, approved), 1)).replacen(
-        &resume,
-        &resume.replace(available, approved),
-        1,
-    );
-    crate::workflow::activate::tests::custom(&text)
+    use crate::workflow::effect::tests::guarded_landing_with_stays_text;
+    crate::workflow::activate::tests::custom(&guarded_landing_with_stays_text())
 }
 
 /// [`approved`] on [`guarded_landing`]: birch's approve taken with the authority's pass, met at
@@ -972,4 +940,46 @@ fn a_dispatch_rechecks_the_approve_past_a_block_or_a_release_that_stayed_in_its_
             }
         }
     }
+}
+
+#[test]
+fn a_task_brought_to_the_blocked_pair_by_another_edge_is_never_resumed_past_the_guard() {
+    use crate::workflow::effect::tests::guarded_landing_with_stays_text;
+    // An edge from verify/awaiting to the blocked pair, which saves no resume.
+    let park = "  { id = \"park\", label = \"Park\", from = { phase = \"verify\", state = \
+                \"awaiting\" }, to = { phase = \"build\", state = \"blocked\" }, operation = \
+                \"advance\", authority = [{ kind = \"project_capability\", capability = \"owner\" \
+                }], inputs = [], dependencies = \"none\", guards = [], effects = [{ kind = \
+                \"slot\", policy = \"release\" }], automatic = false, human_wait = false },\n";
+    let block = "  { id = \"block\",";
+    let text = guarded_landing_with_stays_text().replacen(block, &format!("{park}{block}"), 1);
+    let custom = crate::workflow::activate::tests::custom(&text);
+    let owner = crate::workflow::local_owner();
+    for backend in BACKENDS {
+        // Approved under the guard at 4, prepared at 5, sent back at 6, parked at 7.
+        let f = approved_under_guard_on(backend, &custom);
+        let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
+        let intent = prepared(&f, &fake);
+        take(&f.store, SLUG, &orch(), "send_back").unwrap();
+        take(&f.store, SLUG, &owner, "park").unwrap();
+        assert_eq!(position(&f), (pair("build", "blocked"), 7), "{backend:?}");
+        // The resume would stand it at approved past the guard: refused, and it stays.
+        let why = refused(take(&f.store, SLUG, &owner, "resume"));
+        assert!(
+            why.ends_with(
+                "edge resume resumes sim/a at deliver/approved, which only edges guarded by \
+                 approved enter, and no block saved it there"
+            ),
+            "{backend:?}: {why}"
+        );
+        assert_eq!(position(&f), (pair("build", "blocked"), 7), "{backend:?}");
+        // Nor is the land's first intent sent: the task left the pair it was prepared from.
+        let stale = refused(f.store.dispatch_effect(&fake, SLUG, intent.revision));
+        assert!(stale.contains("is withdrawn"), "{backend:?}: {stale}");
+        assert_eq!(intent_at(&f, intent.revision).stage, Stage::Withdrawn);
+    }
+}
+
+fn intent_at(f: &Fixture, revision: u64) -> Intent {
+    f.store.effect_intent(SLUG, revision).unwrap().unwrap()
 }

@@ -547,8 +547,10 @@ pub fn check(
 /// `before`, of its recorded `transitions` (oldest first): going back past each that stayed in
 /// `pair` (an edge or a recovery from it to it, an activation that kept it there) and each resume
 /// into it with everything back to the block that left it, to the transition that entered it from
-/// another pair. None where the record says the task stood elsewhere just before `before`, or holds
-/// no such transition: what is not found is never taken as met.
+/// another pair. None where the record says the task stood elsewhere just before `before`, where
+/// what a resume walks back to is not a block from `pair` (admission resumes a task at a guarded
+/// pair only where its block saved it), or where it holds no such transition: what is not found is
+/// never taken as met.
 pub fn entry(transitions: &[super::Transition], before: u64, pair: &Pair) -> Option<u64> {
     // While walking back through a block: the resume returns to the pair its block left, so the
     // block is the latest transition before it that left `pair`.
@@ -556,7 +558,14 @@ pub fn entry(transitions: &[super::Transition], before: u64, pair: &Pair) -> Opt
     for t in (transitions.iter().rev()).skip_while(|t| t.revision >= before) {
         let from = t.from.as_ref().unwrap_or(&t.to);
         if blocked {
-            blocked = !(from == pair && t.to != *pair);
+            if from == pair && t.to != *pair {
+                // What left the pair must be the block the resume undid, or the record is not one
+                // admission lets stand: none is found.
+                if !(t.effects.iter()).any(|e| matches!(e, Effect::Block { .. })) {
+                    return None;
+                }
+                blocked = false;
+            }
         } else if t.to != *pair {
             return None;
         } else if t.effects.contains(&Effect::ClearBlock) {
@@ -724,7 +733,8 @@ pub fn digest(payload: &str) -> String {
 }
 
 /// The edges that enter `pair` from another: every edge to it but one leaving it already and a
-/// resume, which clearing a block returns only to the pair its block saved (`admit::blockers`).
+/// resume, which admission lets return a task to a pair a guarded edge enters only where its block
+/// saved that very pair (`admit::blockers`), so a resume is never a way in past the guard.
 fn entering<'a>(definition: &'a Definition, pair: &Pair) -> impl Iterator<Item = &'a Edge> {
     (definition.edges.iter()).filter(move |e| {
         e.to == *pair && e.from != *pair && !e.effects.contains(&Effect::ClearBlock)

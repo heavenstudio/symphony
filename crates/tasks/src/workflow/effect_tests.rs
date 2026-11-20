@@ -22,6 +22,44 @@ pub(crate) fn guarded_landing(adapter: &str, seed: u8) -> Custom {
     custom(&guarded_landing_text(adapter, seed))
 }
 
+/// [`guarded_landing_text`] where a task stays in its approved pair: its block and resume taken
+/// from the approved pair and back to it, and a reviewer staffing it, whose release keeps the task
+/// there.
+pub(crate) fn guarded_landing_with_stays_text() -> String {
+    let text = guarded_landing_text(DEFAULT_LAND, 7);
+    let at = "  { at = { phase = \"deliver\", state = \"approved\" },";
+    let start = text.find(at).expect("the approved position");
+    let end = start + text[start..].find('\n').expect("its line ends");
+    let stay =
+        "{ manual = true, slot = \"retain\", release_role = true, release_reservation = false }";
+    let wait =
+        "{ manual = true, slot = \"retain\", release_role = false, release_reservation = false }";
+    let staffed = format!(
+        "{at} staffing = \"reviewer\", slot = \"release\", dependencies = \"none\", \
+         unsuccessful_dependency = \"block\", accepts_work = false, terminal = false, legacy = \
+         \"done\", satisfies_dependencies = false, completion = \"none\", recovery = {{ release = \
+         {stay}, lost_holder = {stay}, attempt_failure = {wait}, cancellation_acknowledged = {wait} }} }},"
+    );
+    let text = format!("{}{staffed}{}", &text[..start], &text[end..]);
+    let (available, approved) = (
+        "{ phase = \"build\", state = \"available\" }",
+        "{ phase = \"deliver\", state = \"approved\" }",
+    );
+    let (block, resume) = (
+        format!("{{ id = \"block\", label = \"Block\", from = {available},"),
+        format!("state = \"blocked\" }}, to = {available}, operation = \"resume\","),
+    );
+    assert!(
+        text.contains(&block) && text.contains(&resume),
+        "the block and its resume"
+    );
+    (text.replacen(&block, &block.replace(available, approved), 1)).replacen(
+        &resume,
+        &resume.replace(available, approved),
+        1,
+    )
+}
+
 /// [`guarded_landing`]'s text.
 pub(crate) fn guarded_landing_text(adapter: &str, seed: u8) -> String {
     let approve = "inputs = [\"head\"], dependencies = \"none\", guards = []";

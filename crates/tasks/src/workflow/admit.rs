@@ -475,8 +475,9 @@ fn blocking(
         found.push(refusal);
     }
     let position = facts.position.as_ref();
+    let saved = position.and_then(|p| p.resume.as_ref());
     if edge.effects.contains(&Effect::ClearBlock)
-        && let Some(resume) = position.and_then(|p| p.resume.as_ref())
+        && let Some(resume) = saved
         && *resume != edge.to
     {
         found.push(Refusal::new(
@@ -486,6 +487,24 @@ fn blocking(
                 facts.slug,
                 named(&edge.to),
                 named(resume)
+            ),
+        ));
+    }
+    // A resume returns a task to a guarded pair only where its block saved that very pair: one
+    // that came to the blocked pair by any other edge, or an activation, saved none, and would
+    // stand there past the guard (`guard::coverage` counts no resume as a route in).
+    if edge.effects.contains(&Effect::ClearBlock)
+        && saved.is_none()
+        && let Some(guards) = guard::guarded_into(context.definition, &edge.to)
+    {
+        found.push(Refusal::new(
+            RefusalCode::ExplicitActionRequired,
+            format!(
+                "edge {id} resumes {} at {}, which only edges guarded by {} enter, and no block \
+                 saved it there",
+                facts.slug,
+                named(&edge.to),
+                guards.join(", ")
             ),
         ));
     }

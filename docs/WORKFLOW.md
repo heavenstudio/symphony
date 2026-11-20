@@ -141,8 +141,9 @@ does not register (`unsupported_adapter`); a guard its attestations do not meet 
 guard the edge does not carry); a
 human wait taken by anyone but a person (`human_wait`); a principal meeting none of the edge's
 authorities (`unauthorized`); an input the edge does not declare (`unknown_id`), one it declares
-and the request lacks, an `acquire_role` taken by anyone but an agent, or a resume to a pair other
-than the one its block saved (`explicit_action_required`); on an edge no guard binds, an input
+and the request lacks, an `acquire_role` taken by anyone but an agent, a resume to a pair other
+than the one its block saved, or, where its block saved none, to a pair a guarded edge enters
+(`explicit_action_required`); on an edge no guard binds, an input
 revision naming anything but the accepted output of a task it depends on, for an edge depending on
 `accepted_output`, as the board records no other (`stale_input`); a dependency predicate not met
 (`dependency`), and for `accepted_output` an output the request does not name
@@ -387,9 +388,13 @@ authority in conflict refuses.
 
 A route never goes around a guard. An activation is refused where a pair a guarded edge enters is
 reached without its guards: by another edge into it under other guards or none, as the initial
-pair, or as a recovery's target from another position (a move within a pair and a block's resume
-are no route in); and an activation's placement, its mappings or a reopening never puts a task at
-a pair only guarded edges enter, unless it stood there already under the same guards.
+pair, as a recovery's target from another position, or as the pair an exhausted retry bound sends
+a task to (a move within a pair and a block's resume are no route in); and an activation's
+placement, its mappings or a reopening never puts a task at a pair only guarded edges enter, unless
+it stood there already under the same guards. A resume is no route in because admission returns a
+task to a pair a guarded edge enters only where its block saved that very pair: a task that came to
+the blocked pair by any other edge, or by an activation, saved none, and its resume there is
+refused (`explicit_action_required`), so it reaches that pair by a guarded edge or not at all.
 
 The board keeps each authority's accepted state across activations, so a new key goes on from
 the state the old one left. A whole-board copy or restore leaves the accepted states behind: its

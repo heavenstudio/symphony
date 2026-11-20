@@ -882,6 +882,47 @@ fn the_board_takes_no_guarded_edge_on_an_attempts_ending() {
     );
 }
 
+#[test]
+fn a_resume_returns_a_task_to_a_guarded_pair_only_where_its_block_saved_it() {
+    use crate::workflow::effect::tests::{guarded_landing_with_stays_text, landing};
+    let custom = custom(&guarded_landing_with_stays_text());
+    let owner = local_owner();
+    let host = Host::local();
+    let resuming = |custom: &Custom, facts: &Facts| {
+        let request = request(custom, facts, "resume");
+        admit(
+            context(custom),
+            facts,
+            &owner,
+            &host,
+            &request,
+            &unguarded(),
+            1.0,
+        )
+    };
+    // Nothing saved (the task came to the blocked pair by another edge, or an activation): the
+    // resume would put it at approved past the approve's guard.
+    let unsaved = at(&custom, "build", "blocked");
+    let refused = resuming(&custom, &unsaved).unwrap_err();
+    assert_eq!(
+        (refused.code, refused.message.as_str()),
+        (
+            RefusalCode::ExplicitActionRequired,
+            "edge resume resumes sim/a at deliver/approved, which only edges guarded by approved \
+             enter, and no block saved it there"
+        )
+    );
+    // Its block saved approved: the resume returns it there.
+    let mut saved = unsaved.clone();
+    saved.position.as_mut().unwrap().resume = Some(pair("deliver", "approved"));
+    let resumed = resuming(&custom, &saved).unwrap();
+    assert_eq!(resumed.transition.to, pair("deliver", "approved"));
+    // A pair no guarded edge enters takes a resume with nothing saved, as before.
+    let plain = landing(crate::workflow::effect::DEFAULT_LAND);
+    let unguarded_resume = resuming(&plain, &at(&plain, "build", "blocked")).unwrap();
+    assert_eq!(unguarded_resume.transition.to, pair("build", "available"));
+}
+
 fn with_outputs() -> Custom {
     custom(&outputs())
 }
