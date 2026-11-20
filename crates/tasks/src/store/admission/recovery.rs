@@ -17,7 +17,7 @@ use super::{
 };
 use crate::store::statement::both;
 use crate::workflow::recover::{self as plan, Recovery};
-use crate::workflow::{Trigger, board_service};
+use crate::workflow::{Recovered, Trigger, board_service};
 use serde_json::json;
 use symphony_api::workflow::Pair;
 
@@ -292,18 +292,9 @@ pub(super) fn said(recovery: &Recovery, holder: &str) -> String {
         .recovery
         .as_ref()
         .expect("a recovery's transition says what it recovered");
-    let exit = match recovered.trigger {
-        Trigger::Release => "released",
-        Trigger::LostHolder => "lost",
-        Trigger::AttemptFailure => "failed",
-        Trigger::CancellationAcknowledged => "ended cancelled",
-    };
-    let role = &recovered.role;
-    // An attempt no session holds is named by its id alone, its holder.
     let what = match (transition.key.as_deref()).and_then(|k| k.strip_prefix("attempt/")) {
-        Some(attempt) if attempt == recovered.holder => format!("{role} attempt {attempt} {exit}"),
-        Some(attempt) => format!("attempt {attempt} of {}'s {role} {exit}", recovered.holder),
-        None => format!("{holder}'s {role} {exit}"),
+        Some(attempt) => ended(recovered, attempt),
+        None => format!("{holder}'s {} {}", recovered.role, exit(recovered.trigger)),
     };
     let from = transition.from.as_ref().unwrap_or(&transition.to);
     let went = if *from == transition.to {
@@ -325,6 +316,26 @@ pub(super) fn said(recovery: &Recovery, holder: &str) -> String {
         ));
     }
     line
+}
+
+/// Attempt `attempt`'s ending, as `recovered` records it: an attempt no session holds is named by
+/// its id alone, its holder.
+pub(super) fn ended(recovered: &Recovered, attempt: &str) -> String {
+    let (role, exit) = (&recovered.role, exit(recovered.trigger));
+    if attempt == recovered.holder {
+        format!("{role} attempt {attempt} {exit}")
+    } else {
+        format!("attempt {attempt} of {}'s {role} {exit}", recovered.holder)
+    }
+}
+
+fn exit(trigger: Trigger) -> &'static str {
+    match trigger {
+        Trigger::Release => "released",
+        Trigger::LostHolder => "lost",
+        Trigger::AttemptFailure => "failed",
+        Trigger::CancellationAcknowledged => "ended cancelled",
+    }
 }
 
 fn named(pair: &Pair) -> String {

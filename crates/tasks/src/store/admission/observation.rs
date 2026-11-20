@@ -8,8 +8,14 @@
 //! the attempt was admitted, which the attempt's row keeps: a task moved, reassigned or cancelled
 //! since keeps its place, and the ending stays on its attempt. An attempt's ending is answered once:
 //! the transition that answers it names it, and a second observation answers that transition.
+//!
+//! A failure is never left unanswered by a refusal that may pass. An automatic edge admission
+//! refuses the board's take of (a dependency not yet met, a slot full) gives way to the position's
+//! `attempt_failure` action, decided again as if no automatic edge left the pair; and a failure
+//! nothing can answer (that action refused too, or none declared) is said on its task's thread
+//! once, under its key, which is then its answer: a later observation writes nothing.
 
-use super::recovery::{applied, said};
+use super::recovery::{applied, ended, said};
 use super::{Decided, Error, Failure, Host, Refusal, RefusalCode, Store, Taking, context, refusal};
 use crate::execution::{Cancellation, Ending, Row};
 use crate::workflow::recover::{self as plan, Observation, Proposal, Recovery};
@@ -23,6 +29,8 @@ use symphony_plugin::execution::Principal;
 enum Next {
     /// The transition that answers the attempt's ending, written now or before.
     Answered(Transition),
+    /// No transition answers it: its thread said once that nothing could.
+    Said,
     /// The automatic edge to take through admission, by this request, answering this.
     Take {
         request: OperationRequest,
@@ -30,17 +38,26 @@ enum Next {
     },
 }
 
+/// The board's take of automatic edge `edge` that admission refused, `why`, for a reason that may
+/// pass.
+struct Refused {
+    edge: String,
+    why: String,
+}
+
 impl Store {
     /// Execution attempt `attempt`'s ending proposed to the workflow that holds its task, as the
     /// board's recovery service, which `host` must grant `recovery`: a failure (it ended failed or
     /// rejected, no cancel asked) takes the automatic edge leaving the task's pair within its
-    /// retry bound, or the position's `attempt_failure` action; a cancel known to have taken, the
-    /// position's `cancellation_acknowledged` action. Answers the transition that answers it,
-    /// written now or by an earlier observation of the same ending, and none where its ending
-    /// proposes nothing: it is still live, it succeeded, stopped or was superseded, a later attempt
-    /// holds its lane, or no workflow held its task when it was admitted. Refused, nothing written,
-    /// where its task moved since it was admitted (`stale_task`) or its position declares no action
-    /// for it: its ending stays on the attempt.
+    /// retry bound, or, past it or where admission refuses the take, the position's
+    /// `attempt_failure` action; a cancel known to have taken, the position's
+    /// `cancellation_acknowledged` action. Answers the transition that answers it, written now or
+    /// by an earlier observation of the same ending, and none where no transition does: its ending
+    /// proposes nothing (it is still live, it succeeded, stopped or was superseded, a later attempt
+    /// holds its lane, or no workflow held its task when it was admitted), or it is a failure
+    /// nothing could answer, which its thread says once. Refused, nothing written, where its task
+    /// moved since it was admitted (`stale_task`) or no workflow holds it now, and where its
+    /// position declares no action for a cancel.
     ///
     /// The coordinator calls it after each of its own writes that ends an attempt; a host calls it
     /// again for an attempt whose worker died before it did, as often as it likes.
@@ -64,59 +81,125 @@ impl Store {
             ));
         }
         let slug = row.task.as_str();
-        let next = self.retrying(|| {
-            let transitions = self.workflow_transitions(slug).map_err(Failure::Stop)?;
-            if let Some(answered) = answering(&transitions, attempt) {
-                return Ok(Next::Answered(answered.clone()));
-            }
-            let decided = self.decided(slug, &principal, None)?;
-            let at = self.now();
-            let proposal = plan::observed(
-                context(&decided),
-                &decided.facts,
-                &observation,
-                &transitions,
-                &principal,
-                at,
-            )
-            .map_err(refusal)?;
-            match proposal {
-                Proposal::Edge { edge, answered } => Ok(Next::Take {
-                    request: OperationRequest {
-                        project: self.database().database().into(),
-                        task: slug.into(),
-                        edge,
-                        expected: PositionSnapshot {
-                            workflow: decided.recorded.revision.clone(),
-                            activation_generation: decided.active.generation,
-                            task_revision: observation.revision,
-                            at: observation.at.clone(),
-                        },
-                        input_revisions: BTreeMap::new(),
-                        idempotency_key: format!("attempt/{attempt}"),
-                        inputs: BTreeMap::new(),
-                    },
-                    answered,
-                }),
-                Proposal::Recovery {
-                    recovery,
-                    exhausted,
-                } => {
-                    self.recovered(&decided, &recovery, exhausted.as_deref(), &principal, at)?;
-                    let transition = recovery.transition.expect("an ending's recovery moves");
-                    Ok(Next::Answered(transition))
-                }
-            }
-        })?;
-        match next {
-            Next::Answered(transition) => Ok(Some(transition)),
-            Next::Take { request, answered } => {
-                // Admission decides again on its own read, fenced on the task's revision, and a
-                // repeat of the request answers what the first wrote.
-                self.apply(&principal, host, &request, Some(&answered))?;
+        let decide = |refused: Option<&Refused>| {
+            self.retrying(|| self.next(slug, &observation, &principal, refused))
+        };
+        let (request, answered) = match decide(None) {
+            Ok(Next::Take { request, answered }) => (request, answered),
+            decided => return self.answer(slug, &observation, None, decided),
+        };
+        // Admission decides again on its own read, fenced on the task's revision, and a repeat of
+        // the request answers what the first wrote.
+        let why = match self.apply(&principal, host, &request, Some(&answered)) {
+            Ok(_) => {
                 let transitions = self.workflow_transitions(slug)?;
-                Ok(answering(&transitions, attempt).cloned())
+                return Ok(answering(&transitions, attempt).cloned());
             }
+            Err(Error::Refused(why)) if may_pass(&why) => why,
+            Err(error) => return Err(error),
+        };
+        let refused = Refused {
+            edge: request.edge,
+            why,
+        };
+        let decided = decide(Some(&refused));
+        self.answer(slug, &observation, Some(&refused), decided)
+    }
+
+    /// What `observation`'s ending of `slug` is answered by on the board's read, as `principal`:
+    /// the transition that answered it, the line that said nothing could, the automatic edge to
+    /// take, or a recovery, written now. With `refused`, the board's take of the automatic edge
+    /// admission refused, it is answered as if no automatic edge left the pair, and the line says
+    /// why.
+    fn next(
+        &self,
+        slug: &str,
+        observation: &Observation,
+        principal: &Principal,
+        refused: Option<&Refused>,
+    ) -> Result<Next, Failure> {
+        let attempt = &observation.attempt;
+        let transitions = self.workflow_transitions(slug).map_err(Failure::Stop)?;
+        if let Some(answered) = answering(&transitions, attempt) {
+            return Ok(Next::Answered(answered.clone()));
+        }
+        if self.keyed(slug, &key(attempt))? {
+            return Ok(Next::Said);
+        }
+        let decided = self.decided(slug, principal, None)?;
+        let at = self.now();
+        let proposal = plan::observed(
+            context(&decided),
+            &decided.facts,
+            observation,
+            &transitions,
+            refused.is_some(),
+            principal,
+            at,
+        )
+        .map_err(refusal)?;
+        match proposal {
+            Proposal::Edge { edge, answered } => Ok(Next::Take {
+                request: OperationRequest {
+                    project: self.database().database().into(),
+                    task: slug.into(),
+                    edge,
+                    expected: PositionSnapshot {
+                        workflow: decided.recorded.revision.clone(),
+                        activation_generation: decided.active.generation,
+                        task_revision: observation.revision,
+                        at: observation.at.clone(),
+                    },
+                    input_revisions: BTreeMap::new(),
+                    idempotency_key: key(attempt),
+                    inputs: BTreeMap::new(),
+                },
+                answered,
+            }),
+            Proposal::Recovery {
+                recovery,
+                exhausted,
+            } => {
+                let why = match (exhausted, refused) {
+                    (Some(edge), _) => Some(format!("{edge}'s retry bound is exhausted")),
+                    (None, Some(Refused { edge, why })) => {
+                        Some(format!("the board could not take {edge}: {why}"))
+                    }
+                    (None, None) => None,
+                };
+                self.recovered(&decided, &recovery, why.as_deref(), principal, at)?;
+                let transition = recovery.transition.expect("an ending's recovery moves");
+                Ok(Next::Answered(transition))
+            }
+        }
+    }
+
+    /// What `observe_attempt` answers for `observation`'s ending of `slug`, once `decided`: a
+    /// failure refused for a reason that may pass (after the board's take was `refused`, if it
+    /// was) is said on the thread, once, and answers none.
+    fn answer(
+        &self,
+        slug: &str,
+        observation: &Observation,
+        refused: Option<&Refused>,
+        decided: Result<Next, Error>,
+    ) -> Result<Option<Transition>, Error> {
+        match decided {
+            Ok(Next::Answered(transition)) => Ok(Some(transition)),
+            Ok(Next::Said) => Ok(None),
+            Ok(Next::Take { .. }) => {
+                unreachable!("a take admission refused is not proposed again")
+            }
+            Err(Error::Refused(why))
+                if observation.trigger == Trigger::AttemptFailure && may_pass(&why) =>
+            {
+                let line = unanswered(slug, observation, refused, &why);
+                let sender = sender(&board_service("recovery"));
+                let attempt = key(&observation.attempt);
+                self.retrying(|| self.record_once(slug, &sender, &line, &attempt))?;
+                Ok(None)
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -155,12 +238,13 @@ impl Store {
     }
 
     /// `recovery` written as the board's recovery service on what `decided` read, fenced on the
-    /// active workflow, the task's version and each role it lets go.
+    /// active workflow, the task's version and each role it lets go; its line ends with `why` the
+    /// board took no automatic edge, where it says.
     fn recovered(
         &self,
         decided: &Decided,
         recovery: &Recovery,
-        exhausted: Option<&str>,
+        why: Option<&str>,
         principal: &Principal,
         at: f64,
     ) -> Result<(), Failure> {
@@ -200,9 +284,9 @@ impl Store {
             "transition": transition,
             "position": transition.position(),
             "moved": transition.status != decided.task.status,
-            "sender": format!("{}/{}", principal.issuer, principal.subject),
-            "said": match exhausted {
-                Some(edge) => format!("{}; {edge}'s retry bound is exhausted", said(recovery, "")),
+            "sender": sender(principal),
+            "said": match why {
+                Some(why) => format!("{}; {why}", said(recovery, "")),
                 None => said(recovery, ""),
             },
             "now": at,
@@ -213,8 +297,62 @@ impl Store {
     }
 }
 
+/// The key of every answer to attempt `attempt`'s ending: its transition's, or its thread line's
+/// where nothing could answer it.
+fn key(attempt: &str) -> String {
+    format!("attempt/{attempt}")
+}
+
 /// The transition that answered `attempt`'s ending, if one did.
 fn answering<'a>(transitions: &'a [Transition], attempt: &str) -> Option<&'a Transition> {
-    let key = format!("attempt/{attempt}");
+    let key = key(attempt);
     (transitions.iter()).find(|t| t.recovery.is_some() && t.key.as_deref() == Some(key.as_str()))
 }
+
+/// Whether `why`, a refusal of what answers an attempt's ending, may pass: a refusal's, by its
+/// code, but a pin gone stale (the task, its workflow or its activation moved since the attempt
+/// was admitted) or a task no workflow holds, which nothing answers however long it waits.
+fn may_pass(why: &str) -> bool {
+    let code =
+        (why.split_once(": ")).and_then(|(code, _)| serde_json::from_value(json!(code)).ok());
+    !matches!(
+        code,
+        None | Some(
+            RefusalCode::StaleTask
+                | RefusalCode::StaleWorkflow
+                | RefusalCode::StaleActivation
+                | RefusalCode::UnknownId
+        )
+    )
+}
+
+/// The thread's line for `observation`'s failure of `slug` that nothing could answer, `why`:
+/// after admission `refused` the board's take of its automatic edge, where it did.
+fn unanswered(
+    slug: &str,
+    observation: &Observation,
+    refused: Option<&Refused>,
+    why: &str,
+) -> String {
+    let what = ended(&observation.recovered(), &observation.attempt);
+    let why = match refused {
+        Some(refused) => format!(
+            "the board could not take {} ({}), nor its position's attempt_failure action ({why})",
+            refused.edge, refused.why
+        ),
+        None => why.to_string(),
+    };
+    format!(
+        "the board's recovery: {what}, and nothing answers it: {why}; a person does \
+         (`just tasks workflow actions {slug}`)"
+    )
+}
+
+/// Who the thread names as the board's service `principal`.
+fn sender(principal: &Principal) -> String {
+    format!("{}/{}", principal.issuer, principal.subject)
+}
+
+#[cfg(test)]
+#[path = "observation_tests.rs"]
+mod tests;

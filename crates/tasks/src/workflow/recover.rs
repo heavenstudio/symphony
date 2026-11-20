@@ -10,10 +10,10 @@
 //! orchestrator's role is the board's coordination, never a workflow's.
 //!
 //! An execution attempt's ending is answered the same way ([`observed`]): its failure by the
-//! automatic edge leaving the task's pair, while that edge's retry bound lasts, else by the
-//! position's `attempt_failure` action; an acknowledged cancel by its `cancellation_acknowledged`
-//! action. Only from where the task stood when the attempt was admitted: a task moved since is
-//! another's work, and the ending stays on its attempt.
+//! automatic edge leaving the task's pair, while that edge's retry bound lasts and admission takes
+//! it, else by the position's `attempt_failure` action; an acknowledged cancel by its
+//! `cancellation_acknowledged` action. Only from where the task stood when the attempt was
+//! admitted: a task moved since is another's work, and the ending stays on its attempt.
 
 use super::admit::{Context, Facts, Refusal, word};
 use super::{Recovered, TaskPosition, Transition, Trigger};
@@ -226,6 +226,20 @@ pub struct Observation {
     pub at: Pair,
 }
 
+impl Observation {
+    /// What a transition answering this ending records it recovered: its trigger, and the handle
+    /// the attempt ran as, or the attempt itself where it ran as none, in its role; no person's
+    /// wait yet, which the action answering it decides.
+    pub fn recovered(&self) -> Recovered {
+        Recovered {
+            trigger: self.trigger,
+            holder: self.handle.clone().unwrap_or_else(|| self.attempt.clone()),
+            role: self.role.clone(),
+            manual: false,
+        }
+    }
+}
+
 /// What an attempt's ending proposes: the automatic edge the board takes through admission,
 /// recording what it answered, or a recovery written as a holder's is, keyed `attempt/ID`, with
 /// the automatic edge whose retry bound it exhausted, if it did.
@@ -249,8 +263,9 @@ pub enum Proposal {
 ///
 /// A failure takes the automatic edge leaving the pair while the board has taken it fewer times
 /// than its retry bound since the task last stood at the bound's `exhausted` pair; past it, the
-/// position's `attempt_failure` action, sent to that pair to wait on a person. With no automatic edge, a
-/// failure is the position's `attempt_failure` action, and an acknowledged cancel its
+/// position's `attempt_failure` action, sent to that pair to wait on a person. With no automatic
+/// edge, or one admission `refused` the board's take of (a dependency not yet met, a slot full),
+/// a failure is the position's `attempt_failure` action, and an acknowledged cancel its
 /// `cancellation_acknowledged` one. An action releases the position's staffed role, whoever
 /// holds it, and every reservation, as it says.
 pub fn observed(
@@ -258,6 +273,7 @@ pub fn observed(
     facts: &Facts,
     observation: &Observation,
     transitions: &[Transition],
+    refused: bool,
     principal: &Principal,
     at: f64,
 ) -> Result<Proposal, Refusal> {
@@ -292,12 +308,7 @@ pub fn observed(
             ),
         )
     })?;
-    let mut answered = Recovered {
-        trigger: observation.trigger,
-        holder: observation.handle.clone().unwrap_or_else(|| id.clone()),
-        role: observation.role.clone(),
-        manual: false,
-    };
+    let mut answered = observation.recovered();
     let mut exhausted = None;
     let actions = declared.recovery.as_ref();
     let action = match observation.trigger {
@@ -334,12 +345,14 @@ pub fn observed(
                             })
                         }
                     }
-                    _ => {
+                    _ if !refused => {
                         return Ok(Proposal::Edge {
                             edge: edge.id.clone(),
                             answered,
                         });
                     }
+                    // Admission refused the board's take: answered as if no edge left the pair.
+                    _ => failure.ok_or_else(|| undeclared(slug, &here, observation.trigger))?,
                 },
                 None => failure.ok_or_else(|| undeclared(slug, &here, observation.trigger))?,
             }

@@ -333,6 +333,15 @@ again, as often as it likes, for an attempt whose worker died first.
   exit is answered ([recovery](#recovery)), the attempt's session its holder. At the bound its
   target is the bound's `exhausted` pair, where it waits on a person; a position that declares no
   recovery goes there keeping its slot and letting nothing go.
+- Admission may refuse the board's take for a reason that can pass: a dependency of the edge not
+  yet met, a slot full where the edge takes one, any condition that holds only some of the time.
+  The failure is then answered as if no automatic edge left the pair, by the position's
+  `attempt_failure` action, whose line says the edge was refused and why; a manual action leaves
+  the task waiting on a person under `attempt_failure`. That answer is no take of the board's, so
+  it spends nothing of the bound.
+- A failure nothing can answer (its position declares no `attempt_failure` action, or that
+  action is refused too) is said on its task's thread by the recovery service, once, under the
+  key `attempt/ID`: the line names the attempt and every refusal, and it is the failure's answer.
 - An attempt whose cancel took (its cancellation confirmed) is answered by the position's
   `cancellation_acknowledged` action, whatever its provider reported after: no result of a
   cancelled attempt is eligible.
@@ -342,12 +351,16 @@ again, as often as it likes, for an attempt whose worker died first.
 The proposal is decided on the task, the active workflow and the transitions recorded, and
 written as an operation or a recovery is, fenced on the task's version, which every transition
 moves, so a decision another write overtook is made again. An ending from a pair or
-workflow revision the task has left (it moved, was reassigned, or activation placed it elsewhere)
-is refused as `stale_task`, and one whose position declares no action for it as
-`explicit_action_required`: either stays on its attempt and moves nothing. The transition records
-what it recovered (`Transition::recovery`) under the key `attempt/ID`, an edge's and a recovery's
-alike, and an ending is answered once: a repeat answers the transition keyed by its attempt. Its
-line on the thread names the attempt and, where it ran out, the bound.
+workflow revision the task has left (it moved, was reassigned, or activation placed it elsewhere,
+whether the decision or admission's take finds it) is refused as `stale_task`, and one of a task
+no workflow holds as `unknown_id`: neither waits to pass, so either stays on its attempt, moves
+nothing and is said nowhere. So does a cancel whose position declares no action for it, refused
+as `explicit_action_required`. The transition records what it recovered
+(`Transition::recovery`) under the key `attempt/ID`, an edge's and a recovery's alike, and an
+ending is answered once: a repeat answers the transition keyed by its attempt, or, for a failure
+its thread said nothing could answer, writes nothing, even once the edge or the action could be
+taken. Its line on the thread names the attempt and, where it ran out, the bound or, where the
+take was refused, the refusal.
 
 ## Operations
 
