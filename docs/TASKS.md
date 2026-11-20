@@ -1358,10 +1358,11 @@ reads with their JSON types, so a change that would break one fails its own task
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
 task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
 review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes. The current API is 2.5: minor 5 added `attempts`, `{"slug": S}`, a task's
+keep their shapes. The current API is 2.6: minor 5 added `attempts`, `{"slug": S}`, a task's
 execution attempts as `symphony_api::TaskAttempts`, read as the board's own service under the
 project the call runs in, refused from outside a project's checkout
-([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md#on-a-tasks-page)).
+([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md#on-a-tasks-page)); minor 6 added what a guarded edge is
+taken with ([below](#a-task-a-custom-workflow-holds)).
 
 ### What a program outside the board keeps
 
@@ -1442,6 +1443,15 @@ active. Each answer is a type of `symphony_api::workflow`.
 - **`workflow_apply`**, `{"handle": H, "request": OperationRequest}`: one typed operation admitted
   for session `H`, which must be on the board and not have left, never for a principal the request
   names; its answer is the `OperationResult`, and its refusal names its code.
+
+Minor 6 adds what a guarded edge is taken with ([WORKFLOW](WORKFLOW.md#guards)):
+
+- **`workflow_apply`** takes `"attestations": [Signed]` beside its request, the project
+  authority's signed word for each guard of the edge; without it a guarded edge is refused
+  `guard_unavailable`.
+- **`workflow_observe`**, `{"signed": Signed}`: an authority's signed observation of its state,
+  which the board accepts only from the state it accepted before; its answer is `{"observed":
+  "accepted" | "unchanged" | "conflicted", "authority": …}`.
 
 ## The agents API
 

@@ -25,6 +25,7 @@
 mod coordinator;
 mod evidence;
 mod keys;
+mod objects;
 mod reader;
 mod record;
 mod rules;

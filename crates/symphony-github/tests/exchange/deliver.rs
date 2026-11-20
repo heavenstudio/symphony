@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use symphony_github::credential::Secret;
 use symphony_github::deliver::{self, Remote};
 use symphony_github::reconcile::Context;
@@ -87,6 +88,8 @@ pub(crate) struct Delivery {
     pub(crate) starts: bool,
     /// The program that signs a GitHub App's JWT.
     pub(crate) openssl: &'static str,
+    /// Each rest its runs asked for between two reads, none of which waited.
+    pub(crate) rested: RefCell<Vec<Duration>>,
 }
 
 fn settings(checks: &std::path::Path, policy: &std::path::Path, more: &str) -> String {
@@ -139,6 +142,7 @@ impl Delivery {
             connect,
             starts: false,
             openssl: "openssl",
+            rested: RefCell::default(),
         }
     }
 
@@ -174,6 +178,7 @@ impl Delivery {
             now: self.rig.now.get(),
             repository: vec![self.rig.dir.0.join("repository")],
             openssl: self.openssl,
+            rest: &|wait| self.rested.borrow_mut().push(wait),
         };
         let mut out = Vec::new();
         let _alone = (!self.starts).then(crate::no_start);
@@ -443,6 +448,77 @@ fn a_lost_answer_is_looked_for_before_anything_is_made_again() {
         "{journal:?}"
     );
     d.assert_no_token();
+}
+
+#[test]
+fn checks_github_lists_a_little_late_are_read_again_and_never_written_again() {
+    // Listed from the second read after the writes, and from the last one the bound allows.
+    for late in 1..=deliver::READ_BACK.len() {
+        let d = Delivery::new("deliver-late", "");
+        d.rig.github.list_late(late);
+        let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+        assert_eq!(
+            answer["state"], "published",
+            "listed late by {late}: {answer}"
+        );
+        assert_eq!(*d.rested.borrow(), deliver::READ_BACK[..late]);
+        assert_eq!(
+            d.rig.github.listings(HEAD),
+            late + 2,
+            "the read before the writes, and one after each rest and before the first"
+        );
+        let writes = d.writes();
+        assert_eq!(
+            writes.len(),
+            6,
+            "a pull request and five checks: {writes:?}"
+        );
+        assert_eq!(d.rig.github.checks(HEAD).len(), 5);
+    }
+}
+
+#[test]
+fn a_check_not_listed_within_the_bound_stops_unavailable_and_is_not_written_again() {
+    let d = Delivery::new("deliver-unlisted", "");
+    let bound = deliver::READ_BACK.len() + 1;
+    d.rig.github.list_late(bound);
+    let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+    assert_eq!(
+        answer,
+        json!({
+            "state": "unavailable",
+            "why": format!(
+                "the check symphony/assessment does not read back on {HEAD} as App {APP} wrote \
+                 it, read again for 15 s"
+            ),
+        })
+    );
+    assert_eq!(*d.rested.borrow(), deliver::READ_BACK);
+    assert_eq!(d.rig.github.listings(HEAD), 1 + bound);
+    let writes = d.writes();
+    assert_eq!(writes.len(), 6, "each written once: {writes:?}");
+    // The next run reads them standing and writes nothing.
+    assert_eq!(
+        d.publish(&snapshot(HEAD, "met", "r1"))["state"],
+        "published"
+    );
+    assert_eq!(d.writes(), writes);
+    assert_eq!(d.rested.borrow().len(), deliver::READ_BACK.len());
+    d.assert_no_token();
+}
+
+#[test]
+fn a_rewritten_check_is_read_again_while_github_still_lists_what_it_said_before() {
+    let d = Delivery::new("deliver-rewritten-late", "");
+    d.publish(&snapshot(HEAD, "met", "r1"));
+    let before = d.writes().len();
+    d.rig.github.list_late(2);
+    let answer = d.publish(&snapshot(HEAD, "missing", "r2"));
+    assert_eq!(answer["state"], "published", "{answer}");
+    assert_eq!(*d.rested.borrow(), deliver::READ_BACK[..2]);
+    let rewritten = d.writes().split_off(before);
+    assert_eq!(rewritten.len(), 5, "each rewritten once: {rewritten:?}");
+    assert!(names(&d.rig.github.checks(HEAD)).contains(&("symphony/eligible", "failure")));
 }
 
 #[test]

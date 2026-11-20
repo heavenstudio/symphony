@@ -7,8 +7,9 @@
 //! The principal is the host's, never the request's: the request fences intention (the snapshot
 //! the caller saw, its key, its inputs), and a principal holds a capability only through the
 //! host's grants ([`super::Grants`]). A task role is held on this task alone, a reviewer is fresh
-//! (`Held::unfresh`), and every check this release cannot make refuses: a guard, an adapter, an
-//! input revision that names no accepted output, a dependency on a landing.
+//! (`Held::unfresh`), a guard is met only by an attestation the board verifies now
+//! ([`super::guard`]), and every check this release cannot make refuses: an adapter, an input
+//! revision that names no accepted output and that no guard binds, a dependency on a landing.
 //!
 //! An accepted output (docs/WORKFLOW.md, "Accepted outputs") is the id of the transition whose
 //! edge moved a task to a position that satisfies its dependants from one that does not; it stands
@@ -16,6 +17,7 @@
 //! `accepted_output` is taken only on the output standing for each task it depends on, which its
 //! request names ([`standing`]).
 
+use super::guard::{self, Binding, Checked, Guarding};
 use super::{Host, Recovered, TaskPosition, Transition};
 use crate::Held;
 use std::fmt;
@@ -87,14 +89,16 @@ pub struct Prerequisite {
     pub accepted: Option<String>,
 }
 
-/// What an admitted operation writes: its transition, the role rows it adds and drops, and
-/// whether it takes a task slot under the cap.
+/// What an admitted operation writes: its transition, the role rows it adds and drops, whether
+/// it takes a task slot under the cap, and each guard it met, by the attestation and the
+/// authority's accepted state the write fences on.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Admitted {
     pub transition: Transition,
     pub add: Vec<(String, String)>,
     pub drop: Vec<(String, String)>,
     pub acquires: bool,
+    pub guards: Vec<Checked>,
 }
 
 /// The snapshot a caller fences its next request on.
@@ -109,23 +113,25 @@ pub fn snapshot(context: Context, position: &TaskPosition) -> PositionSnapshot {
 
 /// `request` admitted for `principal` on what `facts` read, at `at`, or refused with the first
 /// thing that stops it: a task no workflow holds, a stale workflow, generation or task, an edge
-/// unknown or not leaving the task's pair, then [`blockers`]. Capacity is the store's to decide,
-/// in the write ([`Admitted::acquires`]).
+/// unknown or not leaving the task's pair, then [`blockers`], its guards decided on `guarding`.
+/// Capacity is the store's to decide, in the write ([`Admitted::acquires`]).
 pub fn admit(
     context: Context,
     facts: &Facts,
     principal: &Principal,
     host: &Host,
     request: &OperationRequest,
+    guarding: &Guarding<'_>,
     at: f64,
 ) -> Result<Admitted, Refusal> {
-    admitting(context, facts, principal, host, request, None, at)
+    let taker = Taker::Caller(Some(guarding));
+    admitting(context, facts, principal, host, request, taker, at)
 }
 
 /// `request`, an automatic edge the board takes on the attempt ending `answered` records,
 /// admitted for `principal`, the board's service, as [`admit`] admits a caller's: by the same
-/// checks, but that the edge must be automatic, which no caller takes. Its transition records what
-/// it answered.
+/// checks, but that the edge must be automatic, which no caller takes, and it brings no
+/// attestation, so a guard refuses it. Its transition records what it answered.
 pub fn admit_observed(
     context: Context,
     facts: &Facts,
@@ -135,7 +141,8 @@ pub fn admit_observed(
     answered: &Recovered,
     at: f64,
 ) -> Result<Admitted, Refusal> {
-    admitting(context, facts, principal, host, request, Some(answered), at)
+    let taker = Taker::Board(answered);
+    admitting(context, facts, principal, host, request, taker, at)
 }
 
 fn admitting(
@@ -144,7 +151,7 @@ fn admitting(
     principal: &Principal,
     host: &Host,
     request: &OperationRequest,
-    answered: Option<&Recovered>,
+    taker: Taker<'_>,
     at: f64,
 ) -> Result<Admitted, Refusal> {
     let position = held(facts)?;
@@ -203,16 +210,17 @@ fn admitting(
             ),
         ));
     }
-    let taker = match answered {
-        None => Taker::Caller,
-        Some(_) => Taker::Board,
-    };
     if let Some(refusal) = blocking(context, facts, principal, host, edge, Some(request), taker)
         .into_iter()
         .next()
     {
         return Err(refusal);
     }
+    // `blocking` refused a guarded edge no attestations came with.
+    let guards = match taker {
+        Taker::Caller(Some(guarding)) => met(context, facts, principal, edge, request, guarding)?,
+        _ => Vec::new(),
+    };
     let handle = agent(principal);
     let mut add = Vec::new();
     let mut drop = Vec::new();
@@ -271,7 +279,10 @@ fn admitting(
             principal: principal.clone(),
             effects: edge.effects.clone(),
             key: Some(request.idempotency_key.clone()),
-            recovery: answered.cloned(),
+            recovery: match taker {
+                Taker::Board(answered) => Some(answered.clone()),
+                Taker::Caller(_) => None,
+            },
             accepted,
             at,
         },
@@ -282,7 +293,35 @@ fn admitting(
                 policy: Slot::Acquire,
             }
         }),
+        guards,
     })
+}
+
+/// `edge`'s guards met by `guarding`'s attestations, each covering `request` taken by `principal`
+/// from where `facts` stands under the active workflow, in the project the activation recorded
+/// (`guarding`), never the one the request names ([`guard::check`]).
+fn met(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    edge: &Edge,
+    request: &OperationRequest,
+    guarding: &Guarding<'_>,
+) -> Result<Vec<Checked>, Refusal> {
+    let position = held(facts)?;
+    let from = position.at();
+    let binding = Binding {
+        project: guarding.project,
+        task: &facts.slug,
+        edge: &edge.id,
+        workflow: &context.revision.digest,
+        activation_generation: context.generation,
+        task_revision: position.revision,
+        at: &from,
+        input_revisions: &request.input_revisions,
+        principal,
+    };
+    guard::check(context.definition, edge, &binding, guarding)
 }
 
 /// The edges leaving the task's pair, each with what stops `principal` taking it now: a preview,
@@ -301,7 +340,7 @@ pub fn next_actions(
         .filter(|e| e.from == position.at() && !e.automatic)
         .map(|edge| {
             let mut unavailable: Vec<RefusalCode> =
-                blockers(context, facts, principal, host, edge, None)
+                blockers(context, facts, principal, host, edge, None, None)
                     .into_iter()
                     .map(|r| r.code)
                     .collect();
@@ -327,7 +366,8 @@ pub fn next_actions(
 }
 
 /// Everything that stops `principal` taking `edge` from where the task stands, in the order a
-/// refusal names them: what this release cannot run (an adapter, a guard), a human wait, the
+/// refusal names them: what this release cannot run (an adapter), a guard not met by the
+/// attestations `guarding` gives (any guard, for a preview, which gives none), a human wait, the
 /// authority, the inputs `request` gives (none for a preview), the dependencies, and a resume
 /// to a pair other than the one the block saved.
 pub fn blockers(
@@ -337,23 +377,18 @@ pub fn blockers(
     host: &Host,
     edge: &Edge,
     request: Option<&OperationRequest>,
+    guarding: Option<&Guarding<'_>>,
 ) -> Vec<Refusal> {
-    blocking(
-        context,
-        facts,
-        principal,
-        host,
-        edge,
-        request,
-        Taker::Caller,
-    )
+    let taker = Taker::Caller(guarding);
+    blocking(context, facts, principal, host, edge, request, taker)
 }
 
-/// Who takes an edge: a caller, by its request, or the board, on an attempt's ending.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Taker {
-    Caller,
-    Board,
+/// Who takes an edge: a caller, by its request, with the attestations its guards are decided on
+/// (none for a preview); or the board, on the attempt ending it answers, with none.
+#[derive(Clone, Copy)]
+enum Taker<'t> {
+    Caller(Option<&'t Guarding<'t>>),
+    Board(&'t Recovered),
 }
 
 /// [`blockers`], for an edge `taker` takes: a caller never takes an automatic edge, and the board
@@ -365,16 +400,16 @@ fn blocking(
     host: &Host,
     edge: &Edge,
     request: Option<&OperationRequest>,
-    taker: Taker,
+    taker: Taker<'_>,
 ) -> Vec<Refusal> {
     let mut found = Vec::new();
     let id = &edge.id;
     match taker {
-        Taker::Caller if edge.automatic => found.push(Refusal::new(
+        Taker::Caller(_) if edge.automatic => found.push(Refusal::new(
             RefusalCode::UnsupportedWriter,
             format!("edge {id} is automatic: the board takes it, never a caller"),
         )),
-        Taker::Board if !edge.automatic => found.push(Refusal::new(
+        Taker::Board(_) if !edge.automatic => found.push(Refusal::new(
             RefusalCode::UnsupportedWriter,
             format!("edge {id} is a caller's to take: the board takes only an automatic edge"),
         )),
@@ -401,11 +436,14 @@ fn blocking(
             format!("edge {id} needs {needs}"),
         ));
     }
-    if let Some(guard) = edge.guards.first() {
-        found.push(Refusal::new(
-            RefusalCode::GuardUnavailable,
-            format!("edge {id} is guarded by {guard}, which no receipt answers here yet"),
-        ));
+    if !edge.guards.is_empty() {
+        let checked = match (request, taker) {
+            (Some(request), Taker::Caller(Some(guarding))) => {
+                met(context, facts, principal, edge, request, guarding).err()
+            }
+            _ => guard::needs_attestation(edge),
+        };
+        found.extend(checked);
     }
     if edge.human_wait && principal.kind != PrincipalKind::Human {
         found.push(Refusal::new(
@@ -437,8 +475,9 @@ fn blocking(
         found.push(refusal);
     }
     let position = facts.position.as_ref();
+    let saved = position.and_then(|p| p.resume.as_ref());
     if edge.effects.contains(&Effect::ClearBlock)
-        && let Some(resume) = position.and_then(|p| p.resume.as_ref())
+        && let Some(resume) = saved
         && *resume != edge.to
     {
         found.push(Refusal::new(
@@ -448,6 +487,24 @@ fn blocking(
                 facts.slug,
                 named(&edge.to),
                 named(resume)
+            ),
+        ));
+    }
+    // A resume returns a task to a guarded pair only where its block saved that very pair: one
+    // that came to the blocked pair by any other edge, or an activation, saved none, and would
+    // stand there past the guard (`guard::coverage` counts no resume as a route in).
+    if edge.effects.contains(&Effect::ClearBlock)
+        && saved.is_none()
+        && let Some(guards) = guard::guarded_into(context.definition, &edge.to)
+    {
+        found.push(Refusal::new(
+            RefusalCode::ExplicitActionRequired,
+            format!(
+                "edge {id} resumes {} at {}, which only edges guarded by {} enter, and no block \
+                 saved it there",
+                facts.slug,
+                named(&edge.to),
+                guards.join(", ")
             ),
         ));
     }
@@ -556,8 +613,9 @@ fn fresh(facts: &Facts, handle: &str, role: Role) -> Result<(), String> {
 
 /// The request's inputs against the edge's: each one it declares given, none it does not, and no
 /// input revision but the accepted output of a task this one depends on, named for an edge that
-/// depends on accepted outputs ([`dependencies`] checks each is the one standing): the board
-/// records no revision of anything else, so none is current.
+/// depends on accepted outputs ([`dependencies`] checks each is the one standing), or any on a
+/// guarded edge, whose attestations bind the input revisions it is taken on ([`guard::check`]):
+/// the board records no revision of anything else, so none is current.
 fn inputs(edge: &Edge, facts: &Facts, request: &OperationRequest) -> Vec<Refusal> {
     let mut found = Vec::new();
     for given in request.inputs.keys() {
@@ -580,7 +638,9 @@ fn inputs(edge: &Edge, facts: &Facts, request: &OperationRequest) -> Vec<Refusal
         edge.dependencies == Dependency::AcceptedOutput
             && (facts.dependencies.iter()).any(|p| p.slug == name)
     };
-    if let Some(name) = (request.input_revisions.keys()).find(|name| !accepts(name)) {
+    if edge.guards.is_empty()
+        && let Some(name) = (request.input_revisions.keys()).find(|name| !accepts(name))
+    {
         found.push(Refusal::new(
             RefusalCode::StaleInput,
             format!(

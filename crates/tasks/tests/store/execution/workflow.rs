@@ -35,6 +35,8 @@ fn attempts(failure: &str) -> Custom {
         definition,
         revision,
         mappings,
+        authorities: Vec::new(),
+        project: None,
     }
 }
 

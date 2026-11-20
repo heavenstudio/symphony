@@ -340,7 +340,7 @@ fn version_answers_this_builds_api_and_schema_without_the_board() {
     env.vars.insert("TASKS_SERVER".into(), "127.0.0.1:1".into());
     assert_eq!(
         answer(&env, json!({"method": "version"})),
-        json!({"ok": {"api": {"major": 2, "minor": 5},
+        json!({"ok": {"api": {"major": 2, "minor": 6},
             "schema": symphony_board::schema::VERSION}})
     );
     let said = answer(&env, json!({"method": "version", "args": {"major": 2}}));

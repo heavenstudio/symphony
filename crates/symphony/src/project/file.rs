@@ -43,6 +43,9 @@ pub(super) struct File {
     /// Where tasks at pairs a newly committed workflow removed go when it activates, read as
     /// `workflow` is.
     pub(super) workflow_mappings: Option<toml::Value>,
+    /// The approval authorities whose signed word meets the workflow's guards, each the public
+    /// half of a key the project holds (docs/WORKFLOW.md, "Guards"), read as `workflow` is.
+    pub(super) workflow_authorities: Option<toml::Value>,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
     pub(super) unknown: Unknown,
