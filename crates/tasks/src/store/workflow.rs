@@ -316,7 +316,9 @@ impl Store {
     /// the mappings it applied. Unchanged when its digest is active already. Refused whole, the
     /// previous generation left active and nothing written, when the host does not support it
     /// ([`crate::workflow::activate::supported`]) or a task cannot be placed; planned again when
-    /// the board changed between the read and the write, or another activation won.
+    /// the board changed between the read and the write (a task it read, an executor or reviewer
+    /// it read as lost beating, a task filed or reopened that it did not plan), or another
+    /// activation won.
     pub fn activate_workflow(
         &self,
         custom: &crate::workflow::Custom,
@@ -327,8 +329,11 @@ impl Store {
         // What each write opening asks first, in one small read: is it the active one already. A
         // commit that changed something else names another revision of the same workflow, which
         // stays active as it was: only a commit that changes the workflow activates.
-        if let Some(active) = self.workflow_active()?
-            && self.activated_as(&active, custom)?
+        // The active generation and the revision its definition was recorded with.
+        let mut body: Value =
+            self.retrying(|| self.read(both(sql::ACTIVE_SOURCE, pg::active_source()), json!({})))?;
+        if let Some(active) = decoded::<Active>(body["active"].take(), "active workflow")?
+            && self.activated_as(&active, &body["revision"], custom)?
         {
             return Ok(Followed::Unchanged(active));
         }
@@ -340,7 +345,7 @@ impl Store {
             let read: Standings =
                 self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
             if let Some(active) = &read.active
-                && self.activated_as(active, custom)?
+                && self.activated_as(active, &Value::Null, custom)?
             {
                 return Ok(Followed::Unchanged(active.clone()));
             }
@@ -358,6 +363,17 @@ impl Store {
                 ),
             };
             let board = self.board()?;
+            // Each executor or reviewer the plan reads as no longer holding its role, fenced on its
+            // session as read: one that beats before the write makes it stale, and the next plan
+            // reads it live.
+            let read_slug = |slug: &str| read.tasks.iter().any(|t| t.slug == slug);
+            let seen: Vec<Value> = (board.tasks.iter())
+                .flat_map(|t| t.roles.iter().map(move |r| (t, r)))
+                .filter(|(_, r)| matches!(r.role.as_str(), "executor" | "reviewer"))
+                .filter(|(t, r)| !r.health.holds() && read_slug(&t.slug))
+                .filter_map(|(_, r)| board.sessions.iter().find(|s| s.row.handle == r.handle))
+                .map(|s| json!({"handle": s.row.handle, "last_seen": s.row.last_seen}))
+                .collect();
             let tasks: Vec<activate::Standing> = (read.tasks.into_iter())
                 .map(|task| {
                     let roles = (board.tasks.iter())
@@ -416,6 +432,7 @@ impl Store {
                 },
                 "moved": moved,
                 "kept": kept,
+                "seen": seen,
                 "at": at,
             });
             match self.retrying(|| {
@@ -445,15 +462,23 @@ impl Store {
         decoded(body, "active workflow")
     }
 
-    /// Whether `active` is `custom` already: its revision, or a definition and mappings that are
-    /// `custom`'s, recorded from another commit. The digest names the commit as well as the
-    /// workflow, so the definition and the mappings are read only where the digests differ.
+    /// Whether `active` is `custom` already: its revision, the project file it was read from in
+    /// the same format (`recorded`, its definition's revision as recorded, null where it was not
+    /// read), or a definition and mappings that are `custom`'s, recorded from another commit. The
+    /// digest names the commit as well as the workflow, and the file holds the mappings as well as
+    /// the definition, so the definition and the mappings are read only where the file's bytes
+    /// differ.
     fn activated_as(
         &self,
         active: &Active,
+        recorded: &Value,
         custom: &crate::workflow::Custom,
     ) -> Result<bool, Error> {
-        if active.digest == custom.revision.digest {
+        let theirs = &custom.revision;
+        if active.digest == theirs.digest
+            || (recorded["format"] == theirs.format
+                && recorded["source"]["project_blob"] == theirs.source.project_blob.as_str())
+        {
             return Ok(true);
         }
         let Some(recorded) = self.workflow_definition(&active.digest)? else {

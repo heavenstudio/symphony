@@ -58,11 +58,18 @@ Every command that opens a project's live board to write follows the workflow it
 branch commits (`workflow::follow`, `Store::follow_committed`), but `agent-send`, whose message
 moves no task and whose program links none of the workflow: a project that commits no
 `[workflow]` on a board that never activated one reads the branch tip and writes nothing, and a
-repository without that branch commits nothing. A committed definition, or mappings, other than
-the active one's is activated, in one transaction fenced on the active generation and on the
-version of every task it reads (`Store::activate_workflow`); a commit that changes neither, any
-landing of other files, leaves the active generation, every task's version and every record as
-they were, and the active revision names the commit that activated it. It records the definition under its digest,
+repository without that branch commits nothing. The commit is read with its top tree and the
+file in one more read of git, and the board's one read of its active generation answers the
+project file that generation was activated from: a commit of that file's bytes, in the same
+format, is the active workflow, and no other record is read to say so. A committed definition,
+or mappings, other than the active one's is activated, in one transaction fenced on the active
+generation, on the version of every task it reads and on the session of each executor or
+reviewer it reads as lost, and refused as stale where a task it would read, open or placed, is
+one it did not plan when it writes, filed or reopened since its read at the old generation's pair
+or at none: a lost holder that beats meanwhile, or that task, is read again by the next plan
+(`Store::activate_workflow`). A commit that changes neither, any landing of other files, leaves
+the active generation, every task's version and every record as they were, and the active
+revision names the commit that activated it. It records the definition under its digest,
 places every task a workflow holds and every open task the board's writers keep, records each
 move as a transition by the board's activation service and the activation with the mappings it
 applied, and moves the active generation to it. A task whose pair, resume pair and status stay
@@ -281,9 +288,11 @@ action, never by a target the board invents (`symphony_board::workflow::recover`
 an admitted operation is, by the board's recovery service, which the host must grant `recovery`
 (`Host::local` does). Three exits come there: an agent's own `just tasks release` of its role
 (the position's `release` action), a session's `just tasks leave` (its `lost_holder` action, for
-each task it staffs), and `just tasks workflow recover SLUG HOLDER`, which any session on the
-board may ask for a holder whose session is lost or left (`Store::recover_holder`, its
-`lost_holder` action); a live, stale or unswept holder lets go of its own.
+each task it staffs; a session that left already holds only what a manual action kept for a
+person, and its leave is refused as any write of a session that left, before any recovery), and
+`just tasks workflow recover SLUG HOLDER`, which any session on the board may ask for a holder
+whose session is lost or left (`Store::recover_holder`, its `lost_holder` action); a live, stale
+or unswept holder lets go of its own.
 
 The action reads the role the position staffs. A role the position does not staff (an executor's
 left after its work went to review, a reservation) goes alone, and the position stays as it

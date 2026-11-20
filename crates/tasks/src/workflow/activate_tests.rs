@@ -66,16 +66,21 @@ to = { phase = "verify", state = "awaiting" }
 "#;
 
 const COMMIT: &str = "1111111111111111111111111111111111111111";
-const BLOB: &str = "2222222222222222222222222222222222222222";
 
-/// `text` as committed, its revision from a fixed commit.
+/// `text` as committed, its revision from a fixed commit and a file whose id is its bytes' own, as
+/// git's is (here their SHA-256, as a repository of that object format names it): a text is its
+/// blob, and another text another blob.
 pub(crate) fn custom(text: &str) -> Custom {
+    use sha2::{Digest, Sha256};
     let (definition, mappings) = written(text).unwrap();
     let definition = definition.expect("a [workflow]");
+    let blob = (Sha256::digest(text.as_bytes()).iter())
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     let revision = definition
         .revision(Source {
             commit: COMMIT.into(),
-            project_blob: BLOB.into(),
+            project_blob: blob,
         })
         .unwrap();
     Custom {

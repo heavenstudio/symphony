@@ -602,10 +602,12 @@ fn a_board_made_at_22_or_23_migrates_to_this_builds_schema_with_its_rows_and_ope
     use crate::store_fixture::{HOST, NOW};
     use crate::{NewTask, Opening, Schema};
     // What an older build's board lacks of this build's definitions: schema 24's workflow
-    // records and their fence on tasks, and below 23 the execution attempts' tables as well.
+    // records and their fence on tasks (on PostgreSQL its triggers' functions too), and below 23
+    // the execution attempts' tables as well.
     const NO_WORKFLOW: (&str, &str) = (
         "REMOVE EVENT workflow_position ON task; REMOVE TABLE workflow;",
-        "DROP TRIGGER task_workflow ON task; DROP TABLE workflow;",
+        "DROP TRIGGER task_workflow ON task; DROP TABLE workflow; \
+         DROP FUNCTION board_workflow_position(); DROP FUNCTION board_workflow_history();",
     );
     const NO_EXECUTION: (&str, &str) = (
         "REMOVE TABLE execution_attempt; REMOVE TABLE execution_fact; \

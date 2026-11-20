@@ -134,3 +134,127 @@ fn a_wait_is_said_in_hours_and_minutes_or_minutes_and_seconds() {
         "a round up carries into the hour"
     );
 }
+
+/// A board whose task `slug` stands at `status` (none: no such task), or whose read is refused,
+/// recording each call.
+struct Standing {
+    status: Result<Option<String>, String>,
+    calls: std::cell::RefCell<Vec<String>>,
+}
+
+impl Standing {
+    fn at(status: Result<Option<&str>, &str>) -> Standing {
+        Standing {
+            status: status
+                .map(|s| s.map(str::to_string))
+                .map_err(str::to_string),
+            calls: std::cell::RefCell::default(),
+        }
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls.borrow().clone()
+    }
+}
+
+impl TaskBoard for Standing {
+    fn register(&self) -> Result<String, String> {
+        self.calls.borrow_mut().push("register".into());
+        Ok("filer-1".into())
+    }
+    fn leave(&self, handle: &str) -> Result<(), String> {
+        self.calls.borrow_mut().push(format!("leave {handle}"));
+        Ok(())
+    }
+    fn status(&self, slug: &str) -> Result<Option<String>, String> {
+        self.calls.borrow_mut().push(format!("status {slug}"));
+        self.status.clone()
+    }
+    fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String> {
+        self.calls
+            .borrow_mut()
+            .push(format!("say {slug} by {by}: {text}"));
+        Ok(())
+    }
+    fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String> {
+        self.calls
+            .borrow_mut()
+            .push(format!("close {slug} by {by}: {why}"));
+        Ok(())
+    }
+}
+
+#[test]
+fn a_task_is_closed_once_while_it_is_an_open_red_and_its_session_always_leaves() {
+    let open = Standing::at(Ok(Some("ready")));
+    assert_eq!(close_task(&open, "tests/x", "served"), Ok(()));
+    assert_eq!(
+        open.calls(),
+        [
+            "register",
+            "status tests/x",
+            "close tests/x by filer-1: served",
+            "leave filer-1"
+        ]
+    );
+    // Closed already, or gone: left as it is, which is done.
+    for standing in [Standing::at(Ok(Some("cancelled"))), Standing::at(Ok(None))] {
+        assert_eq!(close_task(&standing, "tests/x", "served"), Ok(()));
+        assert_eq!(
+            standing.calls(),
+            ["register", "status tests/x", "leave filer-1"]
+        );
+    }
+    // A board whose read is refused: not closed, said so, and the session still leaves.
+    let refused = Standing::at(Err("the board did not answer"));
+    assert_eq!(
+        close_task(&refused, "tests/x", "served"),
+        Err("the board did not answer".to_string())
+    );
+    assert_eq!(
+        refused.calls(),
+        ["register", "status tests/x", "leave filer-1"]
+    );
+}
+
+#[test]
+fn a_post_is_made_by_a_session_of_its_own_which_leaves() {
+    let board = Standing::at(Ok(Some("ready")));
+    assert_eq!(post(&board, "tests/x", "Failure 2 of alpha@20"), Ok(()));
+    assert_eq!(
+        board.calls(),
+        [
+            "register",
+            "say tests/x by filer-1: Failure 2 of alpha@20",
+            "leave filer-1"
+        ]
+    );
+}
+
+#[test]
+fn the_machines_updates_lock_is_one_holder_at_a_time_and_never_makes_the_folder() {
+    let tree = Tree::new();
+    let machine = tree.path("machine");
+    assert!(lock(&machine).is_err() && try_lock(&machine).is_err());
+    assert!(!machine.exists(), "no lock makes the machine folder");
+    std::fs::create_dir_all(&machine).unwrap();
+    let held = try_lock(&machine).unwrap().expect("free");
+    assert!(try_lock(&machine).unwrap().is_none(), "held");
+    // A second holder waits for the first: its wait ends with the first's drop.
+    let (sent, taken) = std::sync::mpsc::channel();
+    let waiting = {
+        let machine = machine.clone();
+        std::thread::spawn(move || {
+            let lock = lock(&machine).unwrap();
+            sent.send(()).unwrap();
+            drop(lock);
+        })
+    };
+    assert!(taken.try_recv().is_err(), "never taken while it is held");
+    drop(held);
+    taken
+        .recv_timeout(test_time::backstop(std::time::Duration::from_secs(30)))
+        .expect("the waiting holder took the lock once it was let go");
+    waiting.join().unwrap();
+    assert!(try_lock(&machine).unwrap().is_some(), "free again");
+}

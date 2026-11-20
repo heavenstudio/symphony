@@ -23,13 +23,27 @@
 //! that can act, and the entry keeps which board and slug ([`Task`]). Each later failure posts on
 //! that same task, and the refresh that completes the update closes it. A first-time success files
 //! nothing.
+//!
+//! **Its lock.** The machine's server tries a held update again on its own ([`super::held`]), so
+//! two processes write the ledger and move boards: a release run (every kind, a refresh's
+//! included) and that server. A release run takes [`LOCK`] in the machine folder right after its
+//! own run lock and holds it until it lets go of that one, waiting while a retry holds it
+//! ([`lock`]); the retry only tries it, and does nothing while anything holds it ([`try_lock`]).
+//! The retry never takes the run's own lock, so no order of the two waits on the other.
 
+use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+use crate::taskcli::CliBoard;
 
 /// The ledger, in the machine folder.
 pub const FILE: &str = "updates.json";
+/// The lock a release run and the machine server's retry of a held update take, in the machine
+/// folder.
+pub const LOCK: &str = "updates.lock";
 /// The ledger's format: a later build that writes one it cannot read refuses it, never loses it.
 pub const VERSION: u32 = 1;
 /// The series an update's task is filed in: the release run's reds
@@ -247,6 +261,240 @@ impl Ledger {
 /// The ledger's path in the machine folder `machine`.
 pub fn path(machine: &Path) -> PathBuf {
     machine.join(FILE)
+}
+
+/// The machine's updates lock, held: let go as it drops, as its file closes. A child forked while
+/// it is held keeps no copy past its exec, as the file is opened close-on-exec.
+#[derive(Debug)]
+pub struct Lock {
+    file: File,
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+/// The lock's file in the machine folder `machine`, open: the folder is never made here.
+fn lock_file(machine: &Path) -> Result<File, String> {
+    let path = machine.join(LOCK);
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|e| crate::text::os_error(&e, &path))
+}
+
+/// The machine's updates lock in `machine`, taken: waited for while another process holds it, as
+/// a release run waits for a retry under way, whose every command has its bound.
+///
+/// # Errors
+///
+/// When its file cannot be opened or locked.
+pub fn lock(machine: &Path) -> Result<Lock, String> {
+    let file = lock_file(machine)?;
+    file.lock()
+        .map_err(|e| crate::text::os_error(&e, &machine.join(LOCK)))?;
+    Ok(Lock { file })
+}
+
+/// The machine's updates lock in `machine`, taken without waiting: none while another holds it.
+///
+/// # Errors
+///
+/// When its file cannot be opened, or the attempt fails otherwise.
+pub fn try_lock(machine: &Path) -> Result<Option<Lock>, String> {
+    let file = lock_file(machine)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(Lock { file })),
+        Err(TryLockError::WouldBlock) => Ok(None),
+        Err(TryLockError::Error(e)) => Err(crate::text::os_error(&e, &machine.join(LOCK))),
+    }
+}
+
+/// What an update's times say: how long it took, and how much of it after a release serving it,
+/// as a sentence ending in a space; nothing until both ends are known.
+pub fn took(update: &Update) -> String {
+    match (update.total(), update.after_available()) {
+        (Some(total), Some(after)) => format!(
+            "It took {} from the board reaching schema {} to the server writing it, {} of it after \
+             a release serving it was installed. ",
+            said(total),
+            update.schema,
+            said(after)
+        ),
+        (Some(total), None) => format!("It took {}. ", said(total)),
+        _ => String::new(),
+    }
+}
+
+/// When the board in the git common dir `common` reached `schema`, as its own record says: the
+/// first store that saw it there wrote `schema-seen.log` then ([`symphony_board::live::seen`]);
+/// none when the record says another schema, or there is none.
+pub fn seen_at(common: &Path, schema: i64) -> Option<Stamp> {
+    let record = symphony_board::live::seen::read(common)?;
+    (record.version == schema).then(|| Stamp {
+        at: record.at,
+        source: "schema-seen.log: the first store that saw the board at this schema; the move was \
+                 then or just before"
+            .into(),
+    })
+}
+
+/// When the release `name` was installed in the machine folder `machine`: its manifest's time,
+/// which its install writes last.
+pub fn installed_at(machine: &Path, name: &str) -> Option<f64> {
+    let manifest = super::release::folder(machine, name).join(super::release::MANIFEST);
+    let modified = std::fs::metadata(manifest)
+        .and_then(|meta| meta.modified())
+        .ok()?;
+    let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some(since.as_secs_f64())
+}
+
+/// Every release installed whole in the machine folder `machine`.
+pub fn every_installed(machine: &Path) -> Vec<super::release::Manifest> {
+    let Ok(entries) = std::fs::read_dir(machine.join(super::release::RELEASES)) else {
+        return Vec::new();
+    };
+    (entries.filter_map(Result::ok))
+        .filter_map(|entry| {
+            let name = entry.file_name().to_str()?.to_string();
+            super::release::installed(machine, &name).ok().flatten()
+        })
+        .collect()
+}
+
+/// The board binary that writes a board at `schema`: the `tasks` of the release `current` names
+/// when it serves that schema, else of the release installed last that does.
+pub fn writer_of(machine: &Path, schema: i64) -> Option<PathBuf> {
+    let current = super::release::current_installed(machine).filter(|m| m.serves.schema == schema);
+    let name = current.map(|m| m.release).or_else(|| {
+        (every_installed(machine).into_iter())
+            .filter(|manifest| manifest.serves.schema == schema)
+            .map(|manifest| {
+                let at = installed_at(machine, &manifest.release).unwrap_or(0.0);
+                (manifest.release, at)
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(name, _)| name)
+    })?;
+    let tasks = super::release::binary(machine, &name, "tasks");
+    tasks.is_file().then_some(tasks)
+}
+
+/// The board an update's task is on, as far as its ledger tells it: a session that posts and
+/// closes, and the task's status.
+pub trait TaskBoard {
+    /// A session of kind filer: its handle.
+    ///
+    /// # Errors
+    ///
+    /// When the board refuses it or cannot be reached.
+    fn register(&self) -> Result<String, String>;
+    /// # Errors
+    ///
+    /// When the board refuses it or cannot be reached.
+    fn leave(&self, handle: &str) -> Result<(), String>;
+    /// The status of the task `slug`, none when the board has no such task.
+    ///
+    /// # Errors
+    ///
+    /// When the board cannot be read.
+    fn status(&self, slug: &str) -> Result<Option<String>, String>;
+    /// # Errors
+    ///
+    /// When the board refuses it or cannot be reached.
+    fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String>;
+    /// Close `slug` with `why` on its thread.
+    ///
+    /// # Errors
+    ///
+    /// When the board refuses it or cannot be reached.
+    fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String>;
+}
+
+impl TaskBoard for CliBoard {
+    fn register(&self) -> Result<String, String> {
+        let session = self
+            .call(
+                "register",
+                &json!({"kind": symphony_board::red::FILER, "model": "release"}),
+            )
+            .map_err(|e| e.0)?;
+        session["handle"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| format!("the board registered no handle: {session}"))
+    }
+
+    fn leave(&self, handle: &str) -> Result<(), String> {
+        self.call("leave", &json!({"handle": handle}))
+            .map(|_| ())
+            .map_err(|e| e.0)
+    }
+
+    fn status(&self, slug: &str) -> Result<Option<String>, String> {
+        match self.call("get", &json!({"slug": slug})) {
+            Ok(task) => Ok(task["status"].as_str().map(str::to_string)),
+            Err(refused) if refused.0.starts_with("no task ") => Ok(None),
+            Err(error) => Err(error.0),
+        }
+    }
+
+    fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String> {
+        self.call("say", &json!({"slug": slug, "sender": by, "text": text}))
+            .map(|_| ())
+            .map_err(|e| e.0)
+    }
+
+    /// The filer takes the reviewer role first: work started, or held by an executor, is moved
+    /// only by a session holding a role on it, and a task has one orchestrator.
+    fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String> {
+        let _ = self.call(
+            "take_role",
+            &json!({"slug": slug, "handle": by, "role": "reviewer"}),
+        );
+        self.say(slug, by, why)?;
+        self.call(
+            "move",
+            &json!({"slug": slug, "status": "cancelled", "handle": by}),
+        )
+        .map(|_| ())
+        .map_err(|e| e.0)
+    }
+}
+
+/// The task `slug` closed on `board` with `words`, as a session of its own, when it is still an
+/// open red; one closed already, or gone, is left as it is.
+///
+/// # Errors
+///
+/// When the board refuses a step or cannot be reached: the task may be still open.
+pub fn close_task(board: &dyn TaskBoard, slug: &str, words: &str) -> Result<(), String> {
+    let filer = board.register()?;
+    let closed = match board.status(slug) {
+        Ok(Some(status)) if symphony_board::red::open(&status) => board.close(slug, &filer, words),
+        Ok(_) => Ok(()),
+        Err(why) => Err(why),
+    };
+    let _ = board.leave(&filer);
+    closed
+}
+
+/// A post on the task `slug` on `board`, as a session of its own.
+///
+/// # Errors
+///
+/// When the board refuses it or cannot be reached.
+pub fn post(board: &dyn TaskBoard, slug: &str, text: &str) -> Result<(), String> {
+    let filer = board.register()?;
+    let said = board.say(slug, &filer, text);
+    let _ = board.leave(&filer);
+    said
 }
 
 /// `seconds` as the owner reads a wait: `4 h 46 min`, `3 min 10 s`, `40 s`; to the second under an

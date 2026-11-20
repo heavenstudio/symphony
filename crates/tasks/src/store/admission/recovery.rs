@@ -100,7 +100,9 @@ impl Store {
 
     /// `Store::leave`'s first step: each task a custom workflow holds on which `handle` holds a
     /// role but the orchestrator's, recovered by its position's `lost_holder` action, before the
-    /// leave lets go of the rest. Nothing to read on a board with no workflow active.
+    /// leave lets go of the rest. Nothing to read on a board with no workflow active. A session
+    /// that left already holds only what a manual recovery kept for a person, and leaves no
+    /// more: refused as every write refuses a session that left, before any recovery.
     pub(in crate::store) fn recover_leaving(&self, handle: &str) -> Result<(), Error> {
         if self.workflow_active()?.is_none() {
             return Ok(());
@@ -111,6 +113,9 @@ impl Store {
                 json!({"actor": handle}),
             )
         })?;
+        if !slugs.is_empty() && self.session(handle)?.row.left_at.is_some() {
+            return Err(Error::Refused(crate::store::left_actor(handle)));
+        }
         let host = Host::local();
         for slug in slugs {
             self.recover_exit(&slug, handle, None, Exit::Leaving, handle, &host)?;

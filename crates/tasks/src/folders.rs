@@ -15,6 +15,9 @@ pub const SURREAL: &str = "symphony/surreal";
 pub const SERVER: &str = "symphony/server";
 /// The recorded runs' day files and their logs.
 pub const RUNS: &str = "symphony/runs";
+/// The release run's records, logs and lock (`just release`, in the Symphony's own repository
+/// alone): a checkout whose repository keeps it is the Symphony's.
+pub const RELEASE: &str = "symphony/release";
 /// What a program that exchanges the board's tasks with another system keeps between its runs
 /// (its mappings, its journal), a folder for each such program ([`integration`]). Nothing here
 /// makes, reads or sweeps it: the program does.
@@ -49,7 +52,7 @@ mod tests {
 
     #[test]
     fn every_folder_is_its_own_in_the_one_folder_of_symphonys() {
-        let all = [TASKS, SURREAL, SERVER, RUNS, INTEGRATIONS];
+        let all = [TASKS, SURREAL, SERVER, RUNS, RELEASE, INTEGRATIONS];
         for folder in all {
             let (top, name) = folder.split_once('/').expect("a folder under symphony/");
             assert_eq!(top, "symphony", "{folder}");
