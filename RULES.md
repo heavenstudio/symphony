@@ -200,15 +200,17 @@ bounds a wait for an event, a clock's tick, or a check for an event its watcher 
 goes through one named helper: in Rust `test_time::wait::until` for a test's wait,
 `backstop::debounce` for a server's watcher and its `Backstop`'s check each `PERIOD` (10 s), which
 reads what an event dropped under load would have said (`apps/symphony-server/src/backstop.rs`),
-the board store's retry (`crates/tasks/src/store/mod.rs`) and `reload/retry.rs`'s `backoff`; in the
-React client `src/timing.ts`'s `retryWait` (the next of a `Backoff`'s waits), `Debounce` (whose
-rests take each other's place), `deadline` and `tick` (to the next minute), with `Backoff` and
-`tryAgain` (`src/state.ts`), and in its unit tests `src/testing.ts`'s `until` for a condition and
-`turn()` for a turn of the event loop. A deadline on the wait itself (`recv_timeout`,
-`Condvar::wait_timeout`, `park_timeout`, `tokio::time::timeout`, a socket's read timeout) is the
-event's own bound and needs no helper, unless nothing else ends it but a stop, which makes it a
-sleep the lint cannot see and a reviewer refuses: a server's loop is woken by a message from its
-stop, as from everything else it waits for (`backstop::Waker`).
+the board store's retry (`crates/tasks/src/store/mod.rs`), `reload/retry.rs`'s `backoff` and
+the GitHub program's `deliver::rest` between two reads of the checks it wrote
+(`crates/symphony-github/src/deliver.rs`); in the React client `src/timing.ts`'s `retryWait` (the
+next of a `Backoff`'s waits), `Debounce` (whose rests take each other's place), `deadline` and
+`tick` (to the next minute), with `Backoff` and `tryAgain` (`src/state.ts`), and in its unit
+tests `src/testing.ts`'s `until` for a condition and `turn()` for a turn of the event loop. A
+deadline on the wait itself (`recv_timeout`, `Condvar::wait_timeout`, `park_timeout`,
+`tokio::time::timeout`, a socket's read timeout) is the event's own bound and needs no helper,
+unless nothing else ends it but a stop, which makes it a sleep the lint cannot see and a reviewer
+refuses: a server's loop is woken by a message from its stop, as from everything else it waits for
+(`backstop::Waker`).
 
 `just lint-rs` refuses a new one with a line naming this rule: clippy's `disallowed-methods`
 (`clippy.toml`, which `crates/tasks/clippy.toml` starts with) for `std::thread::sleep`, tokio's

@@ -1,6 +1,7 @@
 //! A GitHub repository held in memory, answering the calls the exchange makes as GitHub does:
 //! the repository, its issues listed by update and paged, one issue, its creation and edit, and
-//! its comments, for a delivery its pull requests, their merge and a commit's checks, and for a
+//! its comments, for a delivery its pull requests, their merge and a commit's checks (listed a
+//! little after they are written where a test says so), and for a
 //! release its tag and the release of that tag. A test
 //! may protect its default branch by rulesets, which it then answers the rules of and holds a
 //! merge to, as GitHub does. A test
@@ -41,6 +42,11 @@ struct Inner {
     branches: BTreeMap<String, String>,
     pulls: Vec<Value>,
     checks: Vec<Value>,
+    /// The listings of a head's checks a check written is left out of ([`Fake::list_late`]).
+    late: usize,
+    /// The checks written and not listed yet, by number: the listings of their head they are
+    /// still left out of, and the check listed in their place meanwhile, none for a new one.
+    unlisted: BTreeMap<i64, (usize, Option<Value>)>,
     /// The GitHub App the request being answered is made as; 0 is a person's token.
     acting: i64,
     /// The number the next pull request or check is given.
@@ -93,6 +99,8 @@ impl Fake {
             branches: BTreeMap::new(),
             pulls: Vec::new(),
             checks: Vec::new(),
+            late: 0,
+            unlisted: BTreeMap::new(),
             acting: 0,
             reader: None,
             asked_as: Vec::new(),
@@ -356,6 +364,25 @@ impl Fake {
                 )
             })
             .collect()
+    }
+
+    /// From now on each check written is left out of the next `listings` listings of its head's
+    /// checks, the one it rewrote listed in its place meanwhile, as GitHub lists a check a little
+    /// after it takes it.
+    pub(crate) fn list_late(&self, listings: usize) {
+        self.inner().late = listings;
+    }
+
+    /// The listings of `head`'s checks asked for.
+    pub(crate) fn listings(&self, head: &str) -> usize {
+        let inner = self.inner();
+        let listing = format!(
+            "/repos/{}/{}/commits/{head}/check-runs",
+            inner.owner, inner.name
+        );
+        (inner.asked.iter())
+            .filter(|(method, path, _)| method == "GET" && path.starts_with(&listing))
+            .count()
     }
 
     /// A check another App wrote on `head`.
@@ -645,10 +672,17 @@ impl Inner {
                 )
             }
             ("GET", ["commits", head, "check-runs"]) => {
-                let runs: Vec<Value> = (self.checks.iter())
-                    .filter(|run| run["head_sha"] == json!(head))
-                    .cloned()
-                    .collect();
+                let mut runs = Vec::new();
+                for run in (self.checks.iter()).filter(|run| run["head_sha"] == json!(head)) {
+                    let id = run["id"].as_i64().unwrap_or_default();
+                    match self.unlisted.get_mut(&id) {
+                        Some((left, before)) if *left > 0 => {
+                            *left -= 1;
+                            runs.extend(before.clone());
+                        }
+                        _ => runs.push(run.clone()),
+                    }
+                }
                 answer(200, &json!({"total_count": runs.len(), "check_runs": runs}))
             }
             ("POST", ["check-runs"]) | ("PATCH", ["check-runs", _]) => self.written(parts, sent),
@@ -819,13 +853,24 @@ impl Inner {
                 return answer(404, &json!({"message": "Not Found"}));
             };
             run["id"] = old["id"].clone();
-            *old = run.clone();
+            let before = std::mem::replace(old, run.clone());
+            self.unlist(&run, Some(before));
             return answer(200, &run);
         }
         self.made += 1;
         run["id"] = json!(800 + self.made);
         self.checks.push(run.clone());
+        self.unlist(&run, None);
         answer(201, &run)
+    }
+
+    /// `run`, just written, left out of the next listings [`Fake::list_late`] says, `before`
+    /// (what it rewrote) listed in its place.
+    fn unlist(&mut self, run: &Value, before: Option<Value>) {
+        if self.late > 0 {
+            let id = run["id"].as_i64().unwrap_or_default();
+            self.unlisted.insert(id, (self.late, before));
+        }
     }
 
     fn find(&self, number: &str) -> Option<Value> {
