@@ -20,12 +20,13 @@ immutable built-in v1 definition.
 The selected activation contract is automatic activation of a valid committed definition when
 the board reads it, with complete mappings and prerequisites required, as decided by
 [the activation card](DECISIONS.md#configurable-workflow-activation). The board activates
-([below](#activation-and-mappings)), admits each operation ([admission](#admission)) and keeps
-its records behind fences on every writer ([records](#records-on-the-board)). A candidate's
+([below](#activation-and-mappings)), admits each operation ([admission](#admission)), answers a
+holder's exit ([recovery](#recovery)) and an execution attempt's ending ([attempts](#attempts)),
+and keeps its records behind fences on every writer ([records](#records-on-the-board)). A candidate's
 validation or a host prerequisite check is not activation. The
 [graph design](analysis/configurable-delivery-workflow.md) describes the remaining system:
-configured staffing, PULL, recovery and attempts (`tools/workflow-operations`,
-`tools/workflow-attempt-integration`), the app's reading of phases and actions
+configured staffing and PULL (`tools/workflow-operations`), local sessions as attempts
+(`tools/local-provider-attempts`), the app's reading of phases and actions
 (`app/workflow-actions`) and guards each have a task of their own; artifact policy receipts and
 execution attempts retain their separate ownership. A dependency on an accepted output is admitted
 here ([accepted outputs](#accepted-outputs)).
@@ -84,13 +85,27 @@ generation, which moves no task whose pair it still declares.
 
 The whole activation is refused, nothing written and the previous workflow left active, and the
 command says why on stderr and runs on: a capability, adapter or guard the host does not support
-(every guard, until revision-bound guards); recovery on attempt failure or cancellation
-acknowledgement that moves work, automatic edges and retry bounds, which need durable attempts;
+(every guard, until revision-bound guards); an automatic edge that another automatic edge leaves
+its pair beside, that asks for inputs, gives a role or prepares or finalizes an effect (which
+admission refuses every taker, the board among them), whose retry bound is exhausted to a pair
+on a cycle through it (reached from where it goes and reaching where it leaves, by any edge or a
+recovery action's target, its source's own `attempt_failure` action aside, which the bound
+replaces): the count of its takes restarts there, so a lap that passes it would never run the
+bound out; or that no authority of
+which the host grants the board's recovery service, which alone takes it ([attempts](#attempts));
+a retry bound on an edge a caller takes, as the board counts only its own takes;
 `landed` dependencies and parent integration; a prepare or finalize of an
 adapter the host does not register; a
 pair or resume pair neither declared nor mapped; a mapping onto a position recording an outcome, satisfied dependants or a completion its
-source lacks; and a task whose live executor or reviewer it would move or restaff. A live holder
-stands in for a live attempt until durable attempts are read here. A file that drops `[workflow]`
+source lacks; a task it would record a transition for (a move, or an output it supersedes where
+it stays) or restaff while it has a live execution attempt no cancel was asked of
+(`Store::live_attempts`), as that attempt's ending would be pinned to a revision the task no
+longer stands at; and a task it would move or restaff while a live executor or reviewer holds it,
+whose session may be no attempt: one launched before local terminals were attempts
+([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md#local-terminals)), or not by the board's launcher. An
+attempt is never rebound to another position: it drains
+(let it end) or is invalidated (cancel it, after which no result of it is eligible), and a task
+activation keeps where it stands keeps its attempts. A file that drops `[workflow]`
 after an activation is refused as well: returning to the board's own writers is not supported
 yet, and rolling back is a forward activation of another committed definition with mappings.
 
@@ -108,9 +123,10 @@ Admission reads the active workflow, the task, its role rows, the tasks it depen
 key's receipt in one read, then refuses, by its code, in this order: a request naming another
 project than the board's, or a task no workflow holds (`unknown_id`); a request whose digest, generation, workflow revision or pair is not the task's now
 (`stale_workflow`, `stale_activation`, `stale_task`); an edge the definition does not declare, or
-one that leaves another pair (`unknown_id`); an automatic edge (`unsupported_writer`); a parent
-integration, or a prepare or finalize of an adapter the host does not register
-(`unsupported_adapter`);
+one that leaves another pair (`unknown_id`); an automatic edge, which the board's recovery service
+alone takes on an attempt's failure ([attempts](#attempts)), and, for that service, any other
+(`unsupported_writer`); a parent integration, or a prepare or finalize of an adapter the host
+does not register (`unsupported_adapter`);
 any guard (`guard_unavailable`); a human wait taken by anyone but a person (`human_wait`); a
 principal meeting none of the edge's authorities (`unauthorized`); an input the edge does not
 declare (`unknown_id`), one it declares and the request lacks, an `acquire_role` taken by anyone
@@ -139,9 +155,10 @@ no claim: the write drops it, fenced on that session's beat as it was read. Anyt
 is refused as stale, never replayed on where another left the task. The write records the
 transition and its receipt, drops and adds the role rows its effects name, puts the task at its
 pair and projected status, settles its hold when its status moves, and posts `took EDGE
-(SLUG@REVISION): FROM → TO` on its thread, then `HANDLE joined as ROLE` for each role the edge
-gives, as the board's own join says it, so every reader of who held the task's roles (a fresh
-reviewer's rule among them) reads it there. It answers the transition's id, its effects and the
+(SLUG@REVISION): FROM → TO, workflow revision N` on its thread, naming the attempt whose failure
+it answered for an automatic edge, then `HANDLE joined as ROLE` for each role the edge gives, as
+the board's own join says it, so every reader of who held the task's roles (a fresh reviewer's
+rule among them) reads it there. It answers the transition's id, its effects and the
 principal's next actions. A key is its principal's: a request repeating it answers the first
 result when it is the same request, and is refused when it is another; `tasks workflow apply`
 sends the receipt's request again when its command is repeated.
@@ -294,9 +311,43 @@ and, for a lost holder, the holder's session as it was read: a holder that beats
 an edge first, wins, and the recovery decides again from where it left the task. The orchestrator
 role is never a workflow's: a release or leave of it is the board's own. The board recovers a
 lost holder by itself as well, wherever it gives open work an orchestrator
-([Operations](#operations)); attempt
-failure and cancellation acknowledgement wait on durable attempts
-(`tools/workflow-attempt-integration`).
+([Operations](#operations)), and an execution attempt's ending
+by its own proposal ([Attempts](#attempts)).
+
+## Attempts
+
+An execution attempt ([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md)) admitted for a task a custom
+workflow holds keeps on its row where the task stood then: its pair and workflow revision. Its
+ending is proposed to the workflow by the board's recovery service, which the host must grant
+`recovery` (`Store::observe_attempt`, `symphony_board::workflow::recover::observed`): the
+coordinator proposes it after its own write that ends the attempt, and a host may propose it
+again, as often as it likes, for an attempt whose worker died first.
+
+- An attempt that ended failed or rejected with no cancel asked of it is an attempt failure. The
+  automatic edge leaving the task's pair is taken through the one [admission](#admission), as the
+  recovery service under the key `attempt/ID`, while its retry bound allows: the board's own takes
+  of it, each answering an attempt, are counted since the task last stood at the bound's
+  `exhausted` pair, whoever brought it there (the bound, a person or an activation), and a
+  caller's take of an edge of that id under an earlier definition counts nothing. At the bound,
+  or with no automatic edge, the position's `attempt_failure` action answers it as a holder's
+  exit is answered ([recovery](#recovery)), the attempt's session its holder. At the bound its
+  target is the bound's `exhausted` pair, where it waits on a person; a position that declares no
+  recovery goes there keeping its slot and letting nothing go.
+- An attempt whose cancel took (its cancellation confirmed) is answered by the position's
+  `cancellation_acknowledged` action, whatever its provider reported after: no result of a
+  cancelled attempt is eligible.
+- A success, a stop or a supersession proposes nothing, nor does an attempt a later one replaced
+  in its lane or that has a successor, nor one admitted before a workflow held its task.
+
+The proposal is decided on the task, the active workflow and the transitions recorded, and
+written as an operation or a recovery is, fenced on the task's version, which every transition
+moves, so a decision another write overtook is made again. An ending from a pair or
+workflow revision the task has left (it moved, was reassigned, or activation placed it elsewhere)
+is refused as `stale_task`, and one whose position declares no action for it as
+`explicit_action_required`: either stays on its attempt and moves nothing. The transition records
+what it recovered (`Transition::recovery`) under the key `attempt/ID`, an edge's and a recovery's
+alike, and an ending is answered once: a repeat answers the transition keyed by its attempt. Its
+line on the thread names the attempt and, where it ran out, the bound.
 
 ## Operations
 

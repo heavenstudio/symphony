@@ -1,5 +1,9 @@
 //! The tests' side of the seam: a test reads and sets a board's rows through `Store::raw`, and
 //! only the files listed here still hand the client a statement of their own, each for its reason.
+//!
+//! A target of its own, which reads text and starts nothing, so `just lint-rs` runs it: a branch
+//! that touches one board target's tests runs that target and the lint, and the fence judges the
+//! files of every target, whichever one changed.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -28,7 +32,7 @@ const SCRATCH: &str = "a scratch table of its own";
 const AS_WRITTEN: &str = "a row written as the fixture cannot";
 
 /// Every test file that still sends a statement, by its path under the package.
-const STILL_SENDS: [(&str, &str); 51] = [
+const STILL_SENDS: [(&str, &str); 52] = [
     ("tests/cli/attach.rs", ENGINE),
     ("tests/cli/launch_rollback.rs", ENGINE),
     ("tests/cli/main_only/writers.rs", AS_WRITTEN),
@@ -52,6 +56,7 @@ const STILL_SENDS: [(&str, &str); 51] = [
     ("tests/server/hold.rs", SCRATCH),
     ("tests/server/left_replay.rs", SCRATCH),
     ("tests/server/moving.rs", ENGINE),
+    ("tests/server/postgres.rs", ENGINE),
     ("tests/server/reclaim.rs", ENGINE),
     ("tests/store/asks.rs", ENGINE),
     ("tests/store/bindings.rs", ENGINE),
@@ -97,9 +102,9 @@ fn walk(dir: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-/// The test files that hand the client a statement, this fence and the fixture's tests aside.
-fn senders() -> Vec<String> {
-    let package = Path::new(env!("CARGO_MANIFEST_DIR"));
+/// The test files under `package` that hand the client a statement, by their path under it, this
+/// fence aside.
+fn senders(package: &Path) -> Vec<String> {
     let mut files = Vec::new();
     walk(&package.join("tests"), &mut files);
     walk(&package.join("examples"), &mut files);
@@ -113,7 +118,7 @@ fn senders() -> Vec<String> {
             let under = path.strip_prefix(package).unwrap();
             under.to_string_lossy().replace('\\', "/")
         })
-        .filter(|path| path != "tests/store/raw_fence.rs")
+        .filter(|path| path != "tests/raw_fence.rs")
         .collect()
 }
 
@@ -121,7 +126,7 @@ fn senders() -> Vec<String> {
 fn only_the_listed_tests_send_a_statement_of_their_own() {
     let listed: BTreeMap<&str, &str> = STILL_SENDS.into_iter().collect();
     assert_eq!(listed.len(), STILL_SENDS.len(), "a file is listed twice");
-    let senders = senders();
+    let senders = senders(Path::new(env!("CARGO_MANIFEST_DIR")));
     let unlisted: Vec<&String> = (senders.iter())
         .filter(|path| !listed.contains_key(path.as_str()))
         .collect();
@@ -137,4 +142,43 @@ fn only_the_listed_tests_send_a_statement_of_their_own() {
         stale.is_empty(),
         "these no longer send a statement, so leave the list: {stale:?}"
     );
+}
+
+/// The fence reads every folder of `tests/` and `examples/`, at any depth: a file of the server's
+/// target that sends a statement is found though no store test changed, each way of sending is
+/// found, and a file that sends none, a file that is not Rust and this fence's own are not.
+#[test]
+fn a_sender_is_found_in_any_target_whichever_way_it_sends() {
+    let package = Path::new(env!("CARGO_TARGET_TMPDIR")).join("raw_fence_package");
+    if package.exists() {
+        fs::remove_dir_all(&package).unwrap();
+    }
+    let files = [
+        ("tests/server/new.rs", "client.simple(\"SELECT 1\");"),
+        ("tests/store/quiet.rs", "store.raw().row(\"task\", id);"),
+        ("tests/cli/deep/nested.rs", "db.query(\"INFO FOR DB\");"),
+        ("tests/launch/define.rs", "db.define_then(text, next);"),
+        ("tests/perf/retried.rs", "let write = RawWrite::new(text);"),
+        ("tests/sweep/step.rs", "plan.push(Step::bare(text));"),
+        ("tests/sweep/notes.txt", "client.simple(\"not Rust\");"),
+        ("examples/demo.rs", "db.query(\"SELECT 1\");"),
+        ("tests/raw_fence.rs", "client.simple(\"this fence's own\");"),
+    ];
+    for (path, text) in files {
+        let path = package.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    assert_eq!(
+        senders(&package),
+        [
+            "tests/cli/deep/nested.rs",
+            "tests/launch/define.rs",
+            "tests/perf/retried.rs",
+            "tests/server/new.rs",
+            "tests/sweep/step.rs",
+            "examples/demo.rs",
+        ]
+    );
+    fs::remove_dir_all(&package).unwrap();
 }

@@ -16,7 +16,7 @@
 //! `accepted_output` is taken only on the output standing for each task it depends on, which its
 //! request names ([`standing`]).
 
-use super::{Host, TaskPosition, Transition};
+use super::{Host, Recovered, TaskPosition, Transition};
 use crate::Held;
 use std::fmt;
 use symphony_api::workflow::{
@@ -119,6 +119,34 @@ pub fn admit(
     request: &OperationRequest,
     at: f64,
 ) -> Result<Admitted, Refusal> {
+    admitting(context, facts, principal, host, request, None, at)
+}
+
+/// `request`, an automatic edge the board takes on the attempt ending `answered` records,
+/// admitted for `principal`, the board's service, as [`admit`] admits a caller's: by the same
+/// checks, but that the edge must be automatic, which no caller takes. Its transition records what
+/// it answered.
+pub fn admit_observed(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    host: &Host,
+    request: &OperationRequest,
+    answered: &Recovered,
+    at: f64,
+) -> Result<Admitted, Refusal> {
+    admitting(context, facts, principal, host, request, Some(answered), at)
+}
+
+fn admitting(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    host: &Host,
+    request: &OperationRequest,
+    answered: Option<&Recovered>,
+    at: f64,
+) -> Result<Admitted, Refusal> {
     let position = held(facts)?;
     let expected = &request.expected;
     if expected.workflow.digest != context.revision.digest {
@@ -175,7 +203,11 @@ pub fn admit(
             ),
         ));
     }
-    if let Some(refusal) = blockers(context, facts, principal, host, edge, Some(request))
+    let taker = match answered {
+        None => Taker::Caller,
+        Some(_) => Taker::Board,
+    };
+    if let Some(refusal) = blocking(context, facts, principal, host, edge, Some(request), taker)
         .into_iter()
         .next()
     {
@@ -239,7 +271,7 @@ pub fn admit(
             principal: principal.clone(),
             effects: edge.effects.clone(),
             key: Some(request.idempotency_key.clone()),
-            recovery: None,
+            recovery: answered.cloned(),
             accepted,
             at,
         },
@@ -306,13 +338,47 @@ pub fn blockers(
     edge: &Edge,
     request: Option<&OperationRequest>,
 ) -> Vec<Refusal> {
+    blocking(
+        context,
+        facts,
+        principal,
+        host,
+        edge,
+        request,
+        Taker::Caller,
+    )
+}
+
+/// Who takes an edge: a caller, by its request, or the board, on an attempt's ending.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Taker {
+    Caller,
+    Board,
+}
+
+/// [`blockers`], for an edge `taker` takes: a caller never takes an automatic edge, and the board
+/// takes nothing else.
+fn blocking(
+    context: Context,
+    facts: &Facts,
+    principal: &Principal,
+    host: &Host,
+    edge: &Edge,
+    request: Option<&OperationRequest>,
+    taker: Taker,
+) -> Vec<Refusal> {
     let mut found = Vec::new();
     let id = &edge.id;
-    if edge.automatic {
-        found.push(Refusal::new(
+    match taker {
+        Taker::Caller if edge.automatic => found.push(Refusal::new(
             RefusalCode::UnsupportedWriter,
             format!("edge {id} is automatic: the board takes it, never a caller"),
-        ));
+        )),
+        Taker::Board if !edge.automatic => found.push(Refusal::new(
+            RefusalCode::UnsupportedWriter,
+            format!("edge {id} is a caller's to take: the board takes only an automatic edge"),
+        )),
+        _ => {}
     }
     for effect in &edge.effects {
         let needs = match effect {

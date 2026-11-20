@@ -43,6 +43,10 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
             "manual",
             json!({"trigger": "release", "holder": "a", "role": "reviewer", "manual": false}),
         ),
+        with(
+            "manual",
+            json!({"trigger": "attempt_failure", "holder": "ab12", "role": "checker", "manual": true}),
+        ),
         // Each refused as its decoder refuses it.
         without("digest"),
         without("generation"),
@@ -69,6 +73,10 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
             json!({"trigger": "release", "holder": "a", "role": "r", "manual": true, "x": 1}),
         ),
         with("manual", json!("lost_holder")),
+        with(
+            "manual",
+            json!({"trigger": "cancellation_acknowledged", "holder": "a", "role": "r", "manual": true, "attempt": "a"}),
+        ),
         json!(["build", "working"]),
         Value::Null,
     ];
@@ -78,7 +86,7 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
         assert_eq!(TaskPosition::of(&case), decoded, "{case}");
         read += usize::from(decoded.is_some());
     }
-    assert_eq!(read, 6, "the cases the decoder reads");
+    assert_eq!(read, 7, "the cases the decoder reads");
     let position = TaskPosition::of(&full).unwrap();
     assert_eq!(
         (position.at(), position.revision),
@@ -107,9 +115,18 @@ fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
 /// records is never read as no position.
 #[test]
 fn every_position_the_types_hold_is_read_by_field_as_it_is_written() {
-    let triggers = [Trigger::Release, Trigger::LostHolder].map(|trigger| match trigger {
+    let triggers = [
+        Trigger::Release,
+        Trigger::LostHolder,
+        Trigger::AttemptFailure,
+        Trigger::CancellationAcknowledged,
+    ]
+    .map(|trigger| match trigger {
         // A trigger the enum gains stops compiling here: list it above as well.
-        Trigger::Release | Trigger::LostHolder => trigger,
+        Trigger::Release
+        | Trigger::LostHolder
+        | Trigger::AttemptFailure
+        | Trigger::CancellationAcknowledged => trigger,
     });
     for trigger in triggers {
         let position = TaskPosition {

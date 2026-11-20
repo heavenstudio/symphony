@@ -32,6 +32,7 @@ mod view;
 
 pub use coordinator::Coordinator;
 pub use reader::Reader;
+pub(crate) use record::Row;
 pub use record::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Continuation, Dispatch, Ending,
     Fact, Identity, Lease, Pending, Relation, State,

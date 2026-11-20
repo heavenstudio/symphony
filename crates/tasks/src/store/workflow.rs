@@ -41,25 +41,36 @@ pub struct TaskPosition {
     pub manual: Option<Recovered>,
 }
 
-/// The exit of a holder a recovery answered (`Store::recover_holder`): an agent's own release of
-/// its role, or a holder lost, by the position's configured action (docs/WORKFLOW.md, "Recovery").
+/// What a recovery answered (docs/WORKFLOW.md, "Recovery"): a holder's exit
+/// (`Store::recover_holder`), an agent's own release of its role or a holder lost, or an execution
+/// attempt's ending (`Store::observe_attempt`), each by the position's configured action; or the
+/// automatic edge the board took on an attempt's failure. A transition answering an attempt is
+/// keyed `attempt/ID` ([`Transition::key`]), which names the attempt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recovered {
     pub trigger: Trigger,
+    /// The holder that exited; for an attempt, the handle it ran as, or the attempt where it ran
+    /// as none.
     pub holder: String,
-    /// The role of the position's staffing the holder held there.
+    /// The role of the position's staffing the holder held there; for an attempt, the role it ran
+    /// as.
     pub role: String,
     /// Whether the action asks a person to recover the task by hand.
     pub manual: bool,
 }
 
-/// What a recovery answers: the position's `release` action, or its `lost_holder` one.
+/// What a recovery answers: the position's `release` action, its `lost_holder` one, or, on an
+/// execution attempt's ending, its `attempt_failure` or `cancellation_acknowledged` one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Trigger {
     Release,
     LostHolder,
+    /// An attempt that ended failed or rejected, no cancel asked of it.
+    AttemptFailure,
+    /// An attempt whose cancel is known to have taken: it ended after one was asked.
+    CancellationAcknowledged,
 }
 
 impl Trigger {
@@ -68,6 +79,8 @@ impl Trigger {
         match self {
             Trigger::Release => "release",
             Trigger::LostHolder => "lost_holder",
+            Trigger::AttemptFailure => "attempt_failure",
+            Trigger::CancellationAcknowledged => "cancellation_acknowledged",
         }
     }
 }
@@ -106,6 +119,8 @@ impl TaskPosition {
                     trigger: match recovered.get("trigger")?.as_str()? {
                         "release" => Trigger::Release,
                         "lost_holder" => Trigger::LostHolder,
+                        "attempt_failure" => Trigger::AttemptFailure,
+                        "cancellation_acknowledged" => Trigger::CancellationAcknowledged,
                         _ => return None,
                     },
                     holder: text(recovered, "holder")?,
@@ -163,7 +178,8 @@ pub struct Transition {
     pub principal: Principal,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<Effect>,
-    /// The idempotency key of the request that made it.
+    /// The idempotency key of the request that made it: `attempt/ID` for the board's answer to
+    /// execution attempt ID's ending, by an edge or a recovery, which answers it once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// The holder's exit it answered, for a recovery's move or stay.
@@ -264,6 +280,9 @@ struct Read {
     position: Option<TaskPosition>,
     blocked_from: Option<String>,
     accepted: Option<String>,
+    /// Its live execution attempts no cancel was asked of, oldest first.
+    #[serde(default)]
+    attempts: Vec<String>,
 }
 
 impl Store {
@@ -372,6 +391,7 @@ impl Store {
                         position: task.position,
                         blocked_from: task.blocked_from,
                         roles,
+                        attempts: task.attempts,
                         accepted: task.accepted,
                     }
                 })

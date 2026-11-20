@@ -36,6 +36,8 @@ pub struct Coordinator<'a> {
     pacing: Pacing,
     /// The capacity scope each attempt it admits reserves a place in, and its size.
     capacity: Option<(String, u32)>,
+    /// The workflow host whose policy an attempt's ending is proposed under.
+    host: crate::workflow::Host,
 }
 
 /// An attempt about to be admitted.
@@ -102,6 +104,7 @@ impl<'a> Coordinator<'a> {
             owner,
             pacing: Pacing::default(),
             capacity: None,
+            host: crate::workflow::Host::local(),
         })
     }
 
@@ -134,8 +137,27 @@ impl<'a> Coordinator<'a> {
         self
     }
 
+    /// The same coordinator, proposing each attempt's ending to the workflow under `host`'s
+    /// policy ([`Store::observe_attempt`]) rather than the local host's
+    /// ([`crate::workflow::Host::local`]).
+    #[must_use]
+    pub fn with_workflow(mut self, host: crate::workflow::Host) -> Coordinator<'a> {
+        self.host = host;
+        self
+    }
+
     pub fn profile(&self) -> &Profile {
         &self.profile
+    }
+
+    /// Attempt `id`'s ending proposed to the workflow that holds its task, once one of this
+    /// coordinator's own writes ended it: what the board refuses (its task moved since, no action
+    /// answers it) stays on the attempt, and moves nothing.
+    fn observe(&self, id: &str) -> Result<(), Refusal> {
+        match self.store.observe_attempt(id, &self.host) {
+            Ok(_) | Err(Error::Refused(_)) => Ok(()),
+            Err(error) => Err(Refusal::Board(error)),
+        }
     }
 
     fn bounds(&self) -> Bounds {
@@ -331,6 +353,12 @@ impl<'a> Coordinator<'a> {
                 entry.task, task.status
             )));
         }
+        // Where the workflow holds the task now, its pair and revision alone: the position the
+        // attempt's ending is proposed from, and only while the task stands there.
+        let workflow = (task.fields.get("_board"))
+            .and_then(|board| board.get("workflow"))
+            .filter(|position| !position.is_null())
+            .map(|p| json!({"phase": p["phase"], "state": p["state"], "revision": p["revision"]}));
         let scope = &self.profile.scope;
         let principal = grant.principal().clone();
         let digest = keys::digest(&json!({
@@ -413,7 +441,7 @@ impl<'a> Coordinator<'a> {
             "task": entry.task,
             "lane": entry.lane,
             "configuration": self.profile.configuration,
-            "row": {"identity": identity, "state": state},
+            "row": {"identity": identity, "state": state, "workflow": workflow},
             "facts": facts.iter().zip(1..).map(|(fact, seq)| json!({"seq": seq, "fact": fact})).collect::<Vec<_>>(),
             "request": entry.request_key,
             "digest": digest,
@@ -459,14 +487,22 @@ impl<'a> Coordinator<'a> {
     pub fn cancel(&self, grant: &Grant, id: &str) -> Result<Attempt, Refusal> {
         let row = self.row(id)?;
         grant.allows(&self.profile.scope, Some(&row.task), Act::Cancel)?;
-        self.store.execution_update(id, |value| {
+        let (committed, ended) = self.store.execution_update(id, |value| {
             let row = Row::of(value)?;
             let first = u64::try_from(row.facts + 1).unwrap_or(0);
             Ok(match rules::cancel(&row.state, grant.principal(), first) {
-                None => Decision::Nothing(()),
-                Some(applied) => Decision::write(written(&applied, None, false), ()),
+                None => Decision::Nothing(false),
+                Some(applied) => {
+                    let ended = !applied.state.live();
+                    Decision::write(written(&applied, None, false), ended)
+                }
             })
         })?;
+        // A cancel of an attempt that had ended, or that nothing was sent for, is known to have
+        // taken at once: acknowledged where the workflow holds its task.
+        if ended && matches!(committed, Some(Commit::Committed { .. })) {
+            self.observe(id)?;
+        }
         self.view(id)
     }
 
@@ -763,7 +799,7 @@ impl<'a> Coordinator<'a> {
             epoch: lease.epoch,
             stale,
         };
-        let (committed, ()) = self.store.execution_update(id, |value| {
+        let (committed, ended) = self.store.execution_update(id, |value| {
             let row = Row::of(value)?;
             let answer = u64::try_from(row.facts + 1).unwrap_or(0);
             // Still the operation it owes: a reply to any other is no longer its to act on.
@@ -780,7 +816,7 @@ impl<'a> Coordinator<'a> {
                 let mut applied = Applied::from_state(row.state.clone());
                 applied.facts.push(fact(true));
                 applied.due_in = Some(0);
-                return Ok(Decision::write(written(&applied, Some(fence), true), ()));
+                return Ok(Decision::write(written(&applied, Some(fence), true), false));
             };
             let applied = rules::apply(
                 &row.identity,
@@ -791,14 +827,25 @@ impl<'a> Coordinator<'a> {
                 answer,
                 &bounds,
             );
+            let ended = row.state.live() && !applied.state.live();
             let mut recorded = Applied::from_state(applied.state.clone());
             recorded.facts = [vec![fact(false)], applied.facts].concat();
             recorded.release = applied.release;
             recorded.due_in = applied.due_in;
-            Ok(Decision::write(written(&recorded, Some(fence), true), ()))
+            Ok(Decision::write(
+                written(&recorded, Some(fence), true),
+                ended,
+            ))
         })?;
         match committed {
-            Some(Commit::Committed { .. }) | None => Ok(Worked::Answered { operation, outcome }),
+            Some(Commit::Committed { .. }) | None => {
+                // The answer that ended it, written under the worker's lease: proposed to the
+                // workflow, which moves its task only while the task stands where it was.
+                if ended {
+                    self.observe(id)?;
+                }
+                Ok(Worked::Answered { operation, outcome })
+            }
             Some(Commit::Fenced { .. }) => {
                 self.store.execution_update(id, |_| {
                     let write = Write {

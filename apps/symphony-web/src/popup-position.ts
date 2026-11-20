@@ -64,11 +64,14 @@ export function reveal(popup: HTMLElement): void {
 }
 
 /** The popup `popupId` placed beside the trigger `triggerId`, marked with the side it opened on,
- * then marked positioned. */
+ * then marked positioned, its options scrolled where they were. */
 export function position(triggerId: string, popupId: string): void {
   const trigger = document.getElementById(triggerId);
   const popup = document.getElementById(popupId);
   if (!trigger || !popup) return;
+  // Measured as tall as its options, the list scrolls nowhere, which takes its scroll back to its
+  // top: a page that scrolls while it is open would move its options under the reader's pointer.
+  const scrolled = popup.scrollTop;
   const viewport = bounds();
   const box = trigger.getBoundingClientRect();
   const anchor: Rect = [box.left, box.top, box.width, box.height];
@@ -102,6 +105,7 @@ export function position(triggerId: string, popupId: string): void {
   // room: it is wider by that much, so no option wraps beside the bar.
   const bar = popup.offsetWidth - popup.clientWidth;
   if (bar > 0) place([content[0] + bar, content[1]]);
+  popup.scrollTop = scrolled;
   popup.setAttribute("data-positioned", "true");
   reveal(popup);
 }
