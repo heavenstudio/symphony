@@ -213,6 +213,12 @@ impl Store {
         self.retrying(|| self.read(both(sql::OF_TASK, pg::of_task()), json!({"task": slug})))
     }
 
+    /// How many execution attempts task `slug` has had, ended ones included: whether its page has a
+    /// history of them to show. A task has few, so its rows are read and counted.
+    pub fn attempt_count(&self, slug: &str) -> Result<usize, Error> {
+        self.execution_of_task(slug).map(|rows| rows.len())
+    }
+
     /// The attempts of task `slug` whose runtime may still be alive (dispatched and not known to
     /// have ended, or held for a person to settle), oldest first: what a workflow change waits on
     /// before it moves the task.

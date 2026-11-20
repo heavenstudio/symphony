@@ -42,15 +42,21 @@ pub(super) fn board_filters(page: &mut super::Chrome) {
     ));
 }
 
+/// The open select popup, positioned and done animating in: its options are drawn where they rest.
+pub(super) fn popup_ready(page: &mut super::Chrome) {
+    assert!(page.wait_for("(() => {const list=document.querySelector('[role=listbox][data-state=open][data-positioned=true]');return list && list.getAnimations().every(animation=>animation.playState==='finished');})()", SHOWN));
+}
+
+/// The option `text` chosen in the select `selector` with a mouse's press, and the trigger showing
+/// it once its popup has closed.
 pub(super) fn choose(page: &mut super::Chrome, selector: &str, text: &str) {
     page.eval(&format!(
         "document.querySelector({}).click()",
         json!(selector)
     ));
-    assert!(page.wait_for(
-        "document.querySelector('[role=listbox] [role=option]') !== null",
-        SHOWN
-    ));
+    // Aimed once the list is placed and done growing in: an option aimed at while the list still
+    // grows, or before it is placed, is no longer where the press lands.
+    popup_ready(page);
     // A list taller than the window scrolls: bring the option into the list's view first,
     // as a reader scrolls to it, and click where it is drawn.
     let point = page.eval(&format!("(() => {{const option=[...document.querySelectorAll('[role=listbox] [role=option]')].find(option=>option.textContent.trim()==={});option.scrollIntoView({{block:'nearest'}});const box=option.getBoundingClientRect();return {{x:box.x+box.width/2,y:box.y+box.height/2}}}})()", json!(text)));
@@ -60,13 +66,19 @@ pub(super) fn choose(page: &mut super::Chrome, selector: &str, text: &str) {
             json!({"type":kind,"x":point["x"],"y":point["y"],"button":"left","clickCount":1}),
         );
     }
-    assert!(page.wait_for(
-        &format!(
-            "document.querySelector({}).getAttribute('aria-expanded') === 'false'",
-            json!(selector)
+    // The press chose that option, and no other: the closed trigger shows it.
+    let trigger = format!("document.querySelector({})", json!(selector));
+    assert!(
+        page.wait_for(
+            &format!(
+                "{trigger}.getAttribute('aria-expanded') === 'false' && {trigger}.textContent.trim() === {}",
+                json!(text)
+            ),
+            SHOWN
         ),
-        SHOWN
-    ));
+        "the press at {point} chose {text}, which the trigger shows: {}",
+        page.eval(&format!("{trigger}.textContent.trim()"))
+    );
 }
 
 pub(super) fn open_panel(page: &mut super::Chrome) {

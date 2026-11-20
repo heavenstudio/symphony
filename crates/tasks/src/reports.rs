@@ -10,13 +10,19 @@
 //! order written ([`ReportTask::lines`]). A status held at an instant is the one in force just
 //! before it, so an hour's `held` holds the tasks its `entered` and the hours before it brought in.
 //! A line's time is its own, never before its task was made.
+//!
+//! On a board that runs a custom workflow the read carries each task's recorded workflow
+//! transitions too ([`ReportRead::places`]), and each hour then says where its tasks spent it, by
+//! phase and by state ([`placed`]): from those records alone, never from the thread's lines, and
+//! apart from the statuses' task-hours. A board that runs none writes the file it always wrote.
 
 use crate::cli::Env;
 use crate::stages::{self, CLAIMED, CLOSED, Facts, Hold, Line, RELEASED, Segment, Stages};
-use crate::{ReportRead, ReportTask, red};
+use crate::{ReportPlace, ReportRead, ReportTask, red};
 use std::path::{Path, PathBuf};
 use symphony_api::reports::{
-    ByStatus, DayFlow, Flow, Red, ReportDay, ReportHour, Round, Sitting, Spread, Wait, Waits,
+    ByStatus, DayFlow, Flow, Placed, PlacedHours, Red, ReportDay, ReportHour, Round, Sitting,
+    Spent, Spread, Wait, Waits,
 };
 
 pub const HOUR: f64 = 3_600.0;
@@ -55,6 +61,10 @@ pub fn day(project: &str, start: f64, until: f64, now: f64, read: &ReportRead) -
             start: from,
             top: flow(&replayed, true, from, to, now),
             subtasks: flow(&replayed, false, from, to, now),
+            workflow: read.places.as_ref().map(|places| Placed {
+                top: placed(&read.tasks, places, true, from, to, now),
+                subtasks: placed(&read.tasks, places, false, from, to, now),
+            }),
             ..ReportHour::default()
         });
     }
@@ -359,6 +369,57 @@ fn flow(replayed: &[Replayed], top: bool, from: f64, to: f64, now: f64) -> Flow 
     flow
 }
 
+/// The task-hours the top-level tasks of `tasks` (`top`), or its subtasks, spent from `from` to
+/// `to` at each place of `places`, a list for each task in their order, by phase and by state: a
+/// place held from its move to the task's next one, the last up to `now`, and none counted while
+/// it projects to a closed status, as [`flow`] counts no closed stretch. Each task's time counts
+/// once in its phase and once in its state, under the label its move recorded.
+fn placed(
+    tasks: &[ReportTask],
+    places: &[Vec<ReportPlace>],
+    top: bool,
+    from: f64,
+    to: f64,
+    now: f64,
+) -> PlacedHours {
+    let mut hours = PlacedHours::default();
+    for (task, places) in tasks.iter().zip(places) {
+        if task.parent.is_none() != top {
+            continue;
+        }
+        for (index, place) in places.iter().enumerate() {
+            if CLOSED.contains(&place.status.as_str()) {
+                continue;
+            }
+            let until = places.get(index + 1).map_or(now, |next| next.from);
+            let spent = overlap(place.from, until, from, to);
+            if spent > 0.0 {
+                spend(&mut hours.phases, &place.phase, &place.phase_label, spent);
+                spend(&mut hours.states, &place.state, &place.state_label, spent);
+            }
+        }
+    }
+    hours
+}
+
+/// `seconds` more under `id` and `label` in `spent`, kept in order of ID and then label: a list
+/// searched rather than a map, which would cost the server's binary its own tree code
+/// (docs/CHECKS.md, size budgets).
+fn spend(spent: &mut Vec<Spent>, id: &str, label: &str, seconds: f64) {
+    let at = spent.partition_point(|kept| (kept.id.as_str(), kept.label.as_str()) < (id, label));
+    match spent.get_mut(at) {
+        Some(kept) if kept.id == id && kept.label == label => kept.hours += seconds / HOUR,
+        _ => spent.insert(
+            at,
+            Spent {
+                id: id.into(),
+                label: label.into(),
+                hours: seconds / HOUR,
+            },
+        ),
+    }
+}
+
 /// The median and p90 of `values`, as a day file keeps a spread; none of none.
 pub(crate) fn spread(values: Vec<f64>) -> Option<Spread> {
     stages::stats::spread(values).map(|s| Spread {
@@ -499,3 +560,6 @@ mod json;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod placed_tests;
