@@ -26,8 +26,36 @@ use super::tags::Release;
 
 /// The file in the runs' folder that keeps what each release was last answered.
 pub(crate) const LEDGER: &str = "github.json";
-/// The lock of one publication at a time, beside it.
+/// The lock of one publication at a time, beside it ([`Publishing`]).
 const LOCK: &str = "github.lock";
+
+/// The publication's lock in a runs' folder, taken: released when it goes. Its descriptor is
+/// close-on-fork where the system has the flag, so no child another thread forks while it is held
+/// copies it. Its drop unlocks it before it closes, which releases the lock for every copy of the
+/// descriptor. A close alone releases it only with the last copy, so a child forked elsewhere,
+/// between its fork and its exec, would hold it past this drop.
+pub(crate) struct Publishing(File);
+
+impl Publishing {
+    /// The lock in `folder`, made when missing and taken without waiting: none while another
+    /// publication holds it, or when it cannot be opened.
+    pub(crate) fn take(folder: &Path) -> Option<Publishing> {
+        fs::create_dir_all(folder).ok()?;
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).write(true);
+        let file = process_cwd::close_on_fork(&mut options)
+            .open(folder.join(LOCK))
+            .ok()?;
+        file.try_lock().ok()?;
+        Some(Publishing(file))
+    }
+}
+
+impl Drop for Publishing {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
 /// The folder beside them that keeps, for each release, the last request made for it and what
 /// the command answered (`NAME.request.json`, `NAME.answer.log`).
 const LOGS: &str = "github";
@@ -241,21 +269,14 @@ impl Asking<'_> {
         wanted: &[String],
         releases: &[(Release, String)],
     ) -> Vec<(bool, String)> {
-        let locked = fs::create_dir_all(self.folder).and_then(|()| {
-            (OpenOptions::new().create(true).truncate(false).write(true))
-                .open(self.folder.join(LOCK))
-        });
-        let lock = match locked.map(|file| file.try_lock().map(|()| file)) {
-            Ok(Ok(file)) => file,
-            _ => {
-                return vec![(
-                    false,
-                    format!(
-                        "another publication holds {}: nothing is asked; {AGAIN}",
-                        self.folder.join(LOCK).display()
-                    ),
-                )];
-            }
+        let Some(lock) = Publishing::take(self.folder) else {
+            return vec![(
+                false,
+                format!(
+                    "another publication holds {}: nothing is asked; {AGAIN}",
+                    self.folder.join(LOCK).display()
+                ),
+            )];
         };
         let mut ledger = Ledger::read(self.folder);
         let mut lines = Vec::new();
@@ -293,7 +314,7 @@ impl Asking<'_> {
                 lines.push((false, format!("the ledger was not kept: {why}")));
             }
         }
-        drop::<File>(lock);
+        drop::<Publishing>(lock);
         lines
     }
 }

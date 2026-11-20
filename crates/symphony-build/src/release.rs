@@ -68,7 +68,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use checks::{Ran, Step, Within};
-use git::{commit, git, git_until, is_ancestor, short};
+use git::{commit, fetch_line, git, git_until, is_ancestor, short};
 use group::Bound;
 use place::{Place, normal};
 use record::{Checking, Run, Running, local};
@@ -581,11 +581,7 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
 fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<PathBuf>, String> {
     let until = Bound::until(Instant::now() + DRIVER_BUILD);
     let mut place = place::place(&repo.root, &repo.main, &repo.common, &options.worktree)?;
-    let tracking = format!("refs/remotes/{}/{}", options.remote, options.branch);
-    let refspec = format!("+refs/heads/{}:{tracking}", options.branch);
-    let fetch = ["fetch", "--quiet", "--no-tags", &options.remote, &refspec];
-    git_until(&repo.root, &fetch, until)?;
-    let tip = commit(&repo.root, &tracking)?;
+    let tip = fetch_line(&repo.root, &options.remote, &options.branch, until)?;
     place.checkout(&repo.root, &repo.common, &tip, until, options.now)?;
     let launcher = place.checkout.join("tools/rs-bin.sh");
     if !launcher.is_file() {
@@ -1334,10 +1330,7 @@ fn turn(
     *held = candidate::read(folder).map_err(Stop::Error)?;
     let (remote, branch) = (options.remote.as_str(), options.branch.as_str());
     if let Some(open) = held.as_mut().filter(|held| held.open()) {
-        let tracking = format!("refs/remotes/{remote}/{branch}");
-        let refspec = format!("+refs/heads/{branch}:{tracking}");
-        let fetch = ["fetch", "--quiet", "--no-tags", remote, &refspec];
-        git_until(&repo.root, &fetch, until).map_err(Stop::Error)?;
+        fetch_line(&repo.root, remote, branch, until).map_err(Stop::Error)?;
         note(out, &settle_held(repo, remote, branch, open, options.now));
         candidate::write(folder, open).map_err(Stop::Error)?;
     }
@@ -1993,21 +1986,8 @@ fn night(
     let mut place =
         place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(placed)?;
     let remote = options.remote.as_str();
-    let tracking = format!("refs/remotes/{remote}/{}", options.branch);
-    git_until(
-        &repo.root,
-        &[
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            remote,
-            &format!("+refs/heads/{}:{tracking}", options.branch),
-        ],
-        until,
-    )
-    .map_err(Stop::Error)?;
+    let tip = fetch_line(&repo.root, remote, &options.branch, until).map_err(Stop::Error)?;
     let main_line = format!("{remote}/{}", options.branch);
-    let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
     let delivered = receipts::Receipts::read(&repo.root);
     let mut candidate = match (&options.out_of_cycle, held) {
         (_, Some(held)) => {
@@ -2511,20 +2491,7 @@ fn moved_on(
     candidate: &str,
     until: Bound<'_>,
 ) -> Result<Option<String>, Stop> {
-    let tracking = format!("refs/remotes/{remote}/{branch}");
-    git_until(
-        &repo.root,
-        &[
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            remote,
-            &format!("+refs/heads/{branch}:{tracking}"),
-        ],
-        until,
-    )
-    .map_err(Stop::Error)?;
-    let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
+    let tip = fetch_line(&repo.root, remote, branch, until).map_err(Stop::Error)?;
     let on = tip != candidate && is_ancestor(&repo.root, candidate, &tip).map_err(Stop::Error)?;
     Ok(on.then_some(tip))
 }

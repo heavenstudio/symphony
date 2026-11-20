@@ -325,8 +325,11 @@ project is given and neither the library nor the shipped `symphony` compiles
 
 1. **The candidate.** It fetches `origin/main` (`--remote` and `--branch` name another remote and
    main line), the commit a project can fetch, and takes its tip; while a release candidate is
-   held it takes that one's tip instead, or runs nothing ([below](#the-release-candidate)). A tip
-   that is a release already is not checked again. A tip that does not descend from the newest
+   held it takes that one's tip instead, or runs nothing ([below](#the-release-candidate)). A
+   land's or the regenerator's push in the main checkout records what it pushed in the same
+   `origin/main`, and git refuses a fetch whose ref moved after the fetch read it, so such a
+   fetch is run again to learn where `origin` is now. A fetch that fails with the ref where it
+   was stops the run, as below. A tip that is a release already is not checked again. A tip that does not descend from the newest
    release is neither checked nor tagged: a release only moves forward, so a main that went back
    stops the run.
    When the candidate is the main checkout's main too, the run asks the regenerator a land
