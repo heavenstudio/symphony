@@ -5,6 +5,64 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### People and sign-in
+
+- [ ] **owner-with-several-people** — Once several people can be on a board, the rules that say "the owner" need to say who that is: whose approve is the owner stamp, and who decides a card. A: one owner for a project, as now; other people join as members who read, comment, ask and file tasks, and never decide. B: owner is a role a few named people hold; any one of them decides, and their line says who. C: owners by area; each card or task names who decides it. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the owner becomes]]
+  [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`, from your ask: "an admin/user system so that multiple users could be on the board by leveraging some IdP (which itself would likely be a plugin too)". A concept: nothing is built by this card.
+
+    **Base (today).** There is one owner and no person. Every browser the server admits writes as `owner`: this Mac, your phone, and equally any other machine in the tailnet. Nobody's name is on a line.
+
+    **A** keeps every rule word for word. A member's lines carry their name; yours need none.
+
+    **B.** A line reads `owner ana · approved`. A later word from any holder overrides an earlier one, as your own later word does today, and both stay in the card's history. "Waiting on you" is one queue for the holders, and each keeps their own Later. A project with one holder is A.
+
+    **C** needs an area on every card, a rule for a card with none, and a queue for each person.
+
+    **Not offered:** an approval that needs several people (two of three). A workflow guard already is that, from the project's own ledger.
+
+    **Why B.** It is A for a project that wants A, and a second decider can be added later without changing the rules again. Its cost over A is the name on your lines and the rule for two holders who disagree. Nothing asks for C yet, and it can be added over B as a way of sorting B's one queue.
+
+    **Under every option** a machine with nobody else named changes in nothing: the person at it is the owner of every project it serves.
+
+    **Earlier verdicts checked.**
+    - **revision-bound-project-guards** (B) keeps approvals by several people in a project's own ledger, which is why none is offered here. It does not say who the owner of a card is.
+    - **needed-stamps** makes the owner stamp "the owner's approve naming the tip", with one owner. It does not say whose approve that is once there are several.
+    - **hosted-ingress-boundary** (B) passes a verified visitor and their permissions to the server's handlers. It names no role.
+
+    None of them decides this.
+- [ ] **people-kept-where** — With several people, the Symphony must keep a list of who they are and what each may do, and someone must be able to change it. Where it is kept decides who that someone is. A: in the project's `symphony.toml`, committed; a change is a landing. B: with the server and in no repository (the machine folder here, a hosted board's protected store); an admin changes it from a People page. C: in the identity provider; its groups are read as roles. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where people are kept]]
+  [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
+
+    **Base (today).** No person is recorded anywhere. The nearest things are the server's list of projects, in the machine folder, and a workflow authority's public key, in the project file.
+
+    **A.** The list is reviewed, in git's history, and the same on every machine. But each person's sign-in name (an email) is committed, in a repository that may be public. Whoever can land a change to the file can make themselves an owner. Adding a person is a landing.
+
+    **B.** A clone holds nobody's sign-in: a document carries only the short name chosen for a person (`ana`). Each change is kept in a log of its own, since git no longer keeps it. Each server has its own list. With no list, the person at the machine is its admin and the owner of every project, as today.
+
+    **C.** The Symphony keeps no list. But which group means which role must still be written down under A or B, each provider says groups its own way, and Tailscale, the first provider proposed, gives a login and no group.
+
+    **Why B.** Who may enter is asked before any project is opened, so it is the server's to keep, and one server serves many projects. C can come later as one more way to fill B's list.
+
+    **Earlier verdicts checked.** **hosted-ingress-boundary** (B) has the hosted adapter pass permissions to the handlers, and its analysis says trust settings never come from a document a visitor can edit. That is the reasoning behind B here, and it was said of a hosted board alone: it does not decide where a machine's server, or the product, keeps people. **revision-bound-project-guards** (B) commits a project's authority key in its file. That is a key that checks a signature, not a list of people. Neither decides this.
+- [ ] **identity-provider-plug** — You expected the identity provider to be a plugin. It should be replaceable, and it cannot be a project's plugin: a project's plugins are named in `symphony.toml`, so whoever lands a change to that file would choose who everyone is. The choice is how a provider is added. A: it is part of the server, chosen where the server is started; the Symphony ships two (Tailscale's login for a machine, a signing proxy's header for a hosted board), and draws no sign-in page. B: a provider is a program of its own that the server's settings name, as a process plugin is; anyone writes one. C: the Symphony signs people in itself, with Google or GitHub. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a provider plugs in]]
+  [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
+
+    **Base (today).** This Mac's server asks Tailscale whether an address is a machine of the tailnet. Tailscale's answer also says whose machine it is, and that part is not read. For a hosted board there is a place in the server's code where a host says who a visitor is, and no provider is shipped for it.
+
+    **What the server would trust, under every option.** Where a request came from (this machine is its own person), and a provider's verified word. Never a name in a request, a header an unverified hop set, an email's domain or a handle someone claims.
+
+    **A.** The provider signed the person in before the request arrived, so the Symphony keeps no password, no secret and no session. Your phone keeps working with nothing set up: a tailnet machine under this Mac's login is you. A host with another need writes its own in Rust, as it can today.
+
+    **B.** A provider in any language, replaced without a new server. It adds a contract the Symphony must keep stable across releases, on the path every request takes, and a second process that holds secrets.
+
+    **C** needs no proxy in front of a hosted board. It is the most code: a sign-in page, a secret, session cookies, sign-out, all of it the kind where a mistake is a break-in.
+
+    **Why A.** It covers the two places a Symphony runs today. B's contract is A's seam with a process boundary added, so nothing built for A is lost when a third provider is in fact needed.
+
+    **Earlier verdicts checked.** **hosted-ingress-boundary** (B) put the hosted checks in an adapter inside the server, against a separate gateway. It does not say whether the Symphony ships providers, opens the adapter to other programs or signs people in itself. **desktop-client** (A) left a hosted server's login to a later card, which is this one. **consumer-contract-versioning** (B) keeps a project's code outside the library; under A and B a host's own provider stays the host's. None decides this.
+
 ## Auto-approved: spot-check
 
 ### Releases

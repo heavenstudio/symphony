@@ -67,6 +67,8 @@ The [decision register](DECISIONS.md) holds Symphony's product and engineering d
 card each; [Analysis](analysis/) holds their proposals and evidence. An approved design can
 still await implementation; its approval alone does not make it current app behavior.
 
+- [Users and identity](analysis/users-and-identity.md) — a concept: several people on a board,
+  what the owner becomes, where people are kept and how an identity provider plugs in.
 - [Durable project artifacts](analysis/remote-artifact-store.md) — a proposed optional storage
   boundary for working evidence, Git revisions and recovery on a fresh application disk.
 - [A project's task workflow](analysis/project-workflow.md) — the proposed project-defined
