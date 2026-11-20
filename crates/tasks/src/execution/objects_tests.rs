@@ -304,6 +304,7 @@ fn every_other_refusal_says_what_from_value_says() {
         json!("res"),
         "invalid type: string \"res\", expected struct Binding",
     );
+    same::<Binding>(json!(null), "invalid type: null, expected struct Binding");
     same::<Option<Binding>>(
         json!(true),
         "invalid type: boolean `true`, expected struct Binding",
@@ -436,5 +437,8 @@ fn the_shapes_no_row_holds_read_as_from_value_reads_them() {
     }
     for value in [json!(null), json!(1), json!({"a": 1})] {
         agree::<Option<Option<u8>>>(value);
+    }
+    for value in [json!({"a": 1}), json!({"a": "s"}), json!(null)] {
+        agree::<std::collections::HashMap<String, u8>>(value);
     }
 }
