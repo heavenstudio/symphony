@@ -80,7 +80,6 @@ fn taken_apart(answer: &Value) -> Option<ReportRead> {
     {
         merge(&mut read.usage, tokens_of(row, false)?);
     }
-    read.usage.sort_by(|a, b| key(a).cmp(&key(b)));
     let under = answer.get("under").and_then(Value::as_array);
     for row in answer
         .get("spent")
@@ -95,17 +94,15 @@ fn taken_apart(answer: &Value) -> Option<ReportRead> {
         });
         let sum = tokens_of(row, true)?;
         let slug = parent.unwrap_or(slug);
-        match read
-            .spent
-            .iter_mut()
-            .find(|(of, kept)| *of == slug && key(kept) == key(&sum))
-        {
-            Some((_, kept)) => add(kept, &sum),
-            None => read.spent.push((slug, sum)),
+        // Kept in order as it is made, as `merge` keeps `usage`.
+        let at = (read.spent).binary_search_by(|(of, kept)| {
+            (of.as_str(), key(kept)).cmp(&(slug.as_str(), key(&sum)))
+        });
+        match at {
+            Ok(at) => add(&mut read.spent[at].1, &sum),
+            Err(at) => read.spent.insert(at, (slug, sum)),
         }
     }
-    read.spent
-        .sort_by(|a, b| (&a.0, key(&a.1)).cmp(&(&b.0, key(&b.1))));
     for (task, thread) in tasks.iter().zip(threads) {
         let mut lines = Vec::new();
         for line in thread.as_array()? {
@@ -145,11 +142,13 @@ fn add(to: &mut TokenSum, sum: &TokenSum) {
     to.calls += sum.calls;
 }
 
-/// `sum` added to the one of `sums` of its key, or put there.
+/// `sum` added to the one of `sums` of its key, or put in its place: `sums` is kept in the order
+/// of their keys as it is made, which links no sort into the binaries (docs/CHECKS.md, size
+/// budgets).
 fn merge(sums: &mut Vec<TokenSum>, sum: TokenSum) {
-    match sums.iter_mut().find(|kept| key(kept) == key(&sum)) {
-        Some(kept) => add(kept, &sum),
-        None => sums.push(sum),
+    match sums.binary_search_by(|kept| key(kept).cmp(&key(&sum))) {
+        Ok(at) => add(&mut sums[at], &sum),
+        Err(at) => sums.insert(at, sum),
     }
 }
 

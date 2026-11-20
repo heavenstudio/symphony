@@ -13,6 +13,7 @@
 
 use super::HOUR;
 use crate::usage::{Prices, Spend, Tokens};
+use std::cmp::Reverse;
 use symphony_api::reports::{Landed, ReportDay, TokenSum};
 
 /// How many of the dearest landed tasks a reader names.
@@ -40,23 +41,24 @@ pub fn by_role<'a>(
     sums: impl IntoIterator<Item = &'a TokenSum>,
     prices: &Prices,
 ) -> Vec<(String, Spend)> {
+    let rank = |role: &str| {
+        (crate::usage::ROLE_ORDER.iter())
+            .position(|known| *known == role)
+            .unwrap_or(crate::usage::ROLE_ORDER.len())
+    };
+    // Kept in that order as it is made, which links no sort into the binaries.
     let mut roles: Vec<(String, Spend)> = Vec::new();
     for sum in sums {
         let spent = spend(sum, prices);
         if spent.tokens == Tokens::default() {
             continue;
         }
-        match roles.iter_mut().find(|(role, _)| *role == sum.role) {
-            Some((_, kept)) => kept.add(&spent),
-            None => roles.push((sum.role.clone(), spent)),
+        let place = (rank(&sum.role), sum.role.as_str());
+        match roles.binary_search_by(|(role, _)| (rank(role), role.as_str()).cmp(&place)) {
+            Ok(at) => roles[at].1.add(&spent),
+            Err(at) => roles.insert(at, (sum.role.clone(), spent)),
         }
     }
-    let rank = |role: &str| {
-        (crate::usage::ROLE_ORDER.iter())
-            .position(|known| *known == role)
-            .unwrap_or(crate::usage::ROLE_ORDER.len())
-    };
-    roles.sort_by(|a, b| (rank(&a.0), &a.0).cmp(&(rank(&b.0), &b.0)));
     roles
 }
 
@@ -112,9 +114,13 @@ pub fn landed_costs<'a>(
             continue;
         }
         costs.again += usize::from(after);
-        costs.tasks.push((task.slug.clone(), task.at, all));
+        // Put in its place, the dearest first, then by slug, which links no sort.
+        let place = (Reverse(all.cost.total()), task.slug.as_str());
+        let at = (costs.tasks.iter())
+            .position(|(slug, _, kept)| (Reverse(kept.cost.total()), slug.as_str()) > place)
+            .unwrap_or(costs.tasks.len());
+        costs.tasks.insert(at, (task.slug.clone(), task.at, all));
     }
-    (costs.tasks).sort_by(|a, b| (b.2.cost.total(), &a.0).cmp(&(a.2.cost.total(), &b.0)));
     // A task none of whose tokens had a price has no figure to rank.
     let priced: Vec<u128> = (costs.tasks.iter())
         .map(|(_, _, spend)| &spend.cost)
@@ -341,6 +347,26 @@ mod tests {
         let mut empty = sum("worker", "m", 0);
         empty.calls = 0;
         assert!(by_role(&[empty], &prices()).is_empty());
+        // Roles the tally names none of come after its own, by name, whatever order they came in.
+        let odd = [
+            sum("zed", "m", 1),
+            sum("orchestrator", "m", 1),
+            sum("able", "m", 1),
+            sum("executor", "m", 1),
+            sum("zed", "m", 1),
+        ];
+        let named: Vec<(String, u64)> = (by_role(&odd, &prices()).into_iter())
+            .map(|(role, spend)| (role, spend.tokens.input))
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("executor".to_string(), 1),
+                ("orchestrator".to_string(), 1),
+                ("able".to_string(), 1),
+                ("zed".to_string(), 2),
+            ]
+        );
     }
 
     #[test]
@@ -386,6 +412,17 @@ mod tests {
         assert_eq!(even.median, Some(5_500_000_000_000));
         let none = landed_costs(&files[1..2], &prices());
         assert_eq!((none.median, none.without, none.tasks.len()), (None, 1, 0));
+        // Tasks of one cost go by slug, whatever order the files name them in.
+        let tied = [
+            landed("t/b", 1.0, &[("executor", 1, "m", 2)]),
+            landed("t/c", 2.0, &[("executor", 1, "m", 5)]),
+            landed("t/a", 3.0, &[("executor", 1, "m", 2)]),
+            landed("t/d", 4.0, &[("executor", 1, "m", 2)]),
+        ];
+        let order: Vec<String> = (landed_costs(&tied, &prices()).tasks.into_iter())
+            .map(|(slug, _, _)| slug)
+            .collect();
+        assert_eq!(order, ["t/c", "t/a", "t/b", "t/d"]);
     }
 
     #[test]
