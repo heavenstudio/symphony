@@ -1120,11 +1120,7 @@ fn a_resource_whose_cleanup_has_begun_is_resumed_only_on_a_new_one() {
     let stopped = observe(&running(), observed_as(RuntimeState::Terminated)).state;
     assert_eq!(stopped.ending, Some(Ending::Stopped));
     assert!(resumable(&stopped, true).is_ok());
-    for cleanup in [
-        Cleanup::Running,
-        Cleanup::Complete,
-        Cleanup::Failed,
-    ] {
+    for cleanup in [Cleanup::Running, Cleanup::Complete, Cleanup::Failed] {
         // As its cleanup's begin writes it.
         let cleaning = State {
             cleanup,
