@@ -114,6 +114,60 @@ schema move, a call a consumer-API guard stopped holding, or a key the settings 
 no more, each without its entry, and for a trailer that reads as no entry; a reviewer reads the
 rest, and that an entry says what a project does, not what the change was.
 
+## A schema step that keeps the Symphony writing
+
+A schema step that only adds tables of its own, with their fields, indexes and events, and
+definitions of the database's own changes nothing the Symphony one schema behind writes. Such a
+step may be declared to keep that Symphony writing: its version is listed in `schema::COMPATIBLE`
+(`crates/tasks/src/schema.rs`) with one line saying why, and nothing is listed by default. Its
+migration then writes, beside the version and in the same transaction on both engines, the oldest
+schema whose Symphony may write the board (`meta:schema`'s `writable_from`): the version before
+for a listed step, its own version otherwise. The schema guard reads that record in each write, on
+both engines. A store the Symphony's reader opened (`symphony::taskview::connect`: the server, its
+page saves and the `symphony` commands that reach the board through it) writes a board one schema
+ahead only while the record names its schema or an older one. Every other case is refused, as for
+a step not listed ([TASKS](TASKS.md#who-writes-a-board)):
+
+- a record that is missing or of any other shape;
+- a board two schemas ahead;
+- a writer's store (`tasks`, `agent-send`, `tasks-copy`, a project's own program);
+- a whole-board copy's staging;
+- a recovery's rebind.
+
+The declaration is checked where the database shows it. Each schema's definitions are committed,
+one file per engine (`crates/tasks/tests/store/catalogue/ENGINE-VERSION.txt`):
+
+- on SurrealDB, every table, field, index and event, and the database's analyzers, functions and
+  parameters;
+- on PostgreSQL, every column, constraint, index and trigger, and the functions in the board's
+  schema.
+
+The store test (`just test-rs -p symphony-board --test store catalogue`) holds a fresh board of
+this build to its version's files, and holds a declared version to the files of the version
+before. A line of a table that was there before fails it, whether added, removed or changed, and
+so does a database-wide line removed or changed; the failure names the table. A step that changes
+the schema writes its own files by running that command with `TASKS_CATALOGUE=write`, and commits
+them. The files of earlier versions are never rewritten.
+
+What no catalogue shows is the reviewer's to read. A step that does any of the following is not
+declared:
+
+- it adds a rule held in code alone that forbids what the Symphony one behind would still write
+  to a table that was there before (a status move, a field's value, a cancel): that Symphony's
+  writes skip the rule until a release at the step's schema is current, and what they wrote
+  meanwhile stays, to be put right by a fix;
+- it rewrites rows, or gives a field that was there before a new meaning, which the Symphony one
+  behind would read or write with the old one;
+- it adds a table the Symphony one behind is expected to write, which that Symphony knows nothing
+  of.
+
+A declared step is a schema move all the same. The release run started at once after it
+([RELEASES](RELEASES.md#the-cadence)) and the hold of a second schema step until a release serving
+the first is current both stand, and its landing owes the `board` consumer note. The declaration
+helps only a Symphony that reads the record, which means a release that carries this mechanism
+and is `current`. An older release refuses every write one schema ahead, whatever the record
+says.
+
 ## Evidence by kind of change
 
 - **A pure function** (a parser, a formatter, a state transition): unit tests of its edge cases
@@ -371,8 +425,11 @@ fix whose orchestrator lands only a fix changing no test or check (RULES.md
 rerun each failure alone (each failed test, else the step's own command, a test run's a target at a
 time), the load when it ended and the commits since the last green run
 (`git log --oneline LAST_GREEN..TIP`), and the next green run closes it; a run that
-stops short of deciding is the red `tests/release-red-run`. A test red on load is answered by its
-discard ([time in tests](#time-in-tests)). A run red in a check holds its commit
+stops short of deciding is the red `tests/release-red-run`. Before it files a red, the run reruns
+each failed test alone, one at a time, over the same build (below): one that fails again is red,
+its task saying it failed twice, and one that passes alone is no red, and has one p1 task of its
+run's ([RELEASES](RELEASES.md#the-release-run), step 5). A test red on load all the same is
+answered by its discard ([time in tests](#time-in-tests)). A run red in a check holds its commit
 as the release candidate while its reds' own tasks fix it on the branch `release-candidate`, then
 reruns what was red and what the fixes changed, and releases that commit and its fixes alone
 ([RELEASES](RELEASES.md#the-release-candidate)). It is the one place every test runs
@@ -502,11 +559,12 @@ publishes one client before scheduling, so no browser case builds or relinks whi
 run. Every test receives the build's binaries through `SYMPHONY_TEST_TASKS_BINARY` and
 `SYMPHONY_TEST_BINARIES`; a caller's values win. Each Cargo call keeps the workspace build's
 feature graph and its build-script/proc-macro debug info, so no concurrent batch relinks anything.
-Cargo still makes each binary's copy in the target folder again at every call, removing it first,
-so before scheduling the runner makes each copy the build lists a hard link to the file it copies,
-which every later call leaves in place: a batch that starts never leaves another's test without
-the binary it runs. Every server, store and browser still takes its own folder and a port the
-system picks.
+On macOS Cargo still makes each binary's copy in the target folder again at every call, removing
+it first; elsewhere it hard-links the binary to its build, copying only where it cannot link, and
+a later call leaves a link in place. So before scheduling the runner makes each copy the build
+lists a hard link to the file it copies, which every later call leaves in place: a batch that
+starts never leaves another's test without the binary it runs. Every server, store and browser
+still takes its own folder and a port the system picks.
 
 Nextest and the Cargo batches keep live logs in `tests-lanes/` beside the step's log
 (`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), with the binary metadata beside
@@ -521,6 +579,20 @@ at once (at least one); each batch's output follows whole in the step's log once
 Signals reach the foreground batches, which are waited for before the runner exits, and a forced
 stop leaves their live output at the named paths. Native failures retain Cargo's target lists;
 nextest failures retain their own events. A batch is green only on an explicit exit status of zero.
+
+**A failure rerun alone.** The runner names the folder of its lanes' logs first (`test-lanes:
+logs in FOLDER`), keeps there the client its tests ran against beside the binary metadata, and
+says last that it ran every lane it was asked for (`test-lanes: ended: every lane asked for ran`),
+a line a run cut short never reaches. `tools/test-lanes.sh --alone FOLDER ARGS` reruns one
+failure of that run alone over its build, ARGS as a red's rerun line names it (`-p PACKAGE --test
+TARGET -- NAME --exact`, a target with no name for one rerun whole, `--workspace` and a kind for a
+lane's own line). A test, or a target whole, runs by nextest from the folder's `binaries.json`, by
+the filterset of its package, kind, binary and name, with no retry, `--no-tests fail` and the
+release profile's timeouts; a doctest, or the ignored runner fixture, by Cargo as its lane runs
+it; a lane's own line, or a shared-fixture target whole, as that lane alone, its logs in
+`FOLDER/alone`. Nothing is built again, and it exits as the rerun did. The release run reruns each
+failure of a red tests step this way, at most 12, before it files a red
+([RELEASES](RELEASES.md#the-release-run), step 5).
 
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
@@ -564,12 +636,20 @@ test. No such recipe exists yet, so nothing is `#[ignore]`d for a quiet machine;
 lets go so waits in the release run until that recipe lands, and is then listed below with its
 promise and the owner's word.
 
-**A test red on load in the release run is discarded.** A rerun neither fails nor passes on the
-machine's load, so a test that fails a release run, or the release candidate's rerun, because of
-load (it passes alone, or its failure is a wall-clock bound, a sleep-ordered step or a timeout
-under load) is answered by its red's own fix removing it from the tree, with one line on the red's
-thread naming the test, the evidence it is load (its runs alone and the failing line) and what it
-proved. This rule is the owner's approval: no card is put to them to discard it. If what it
+**A test that fails in the release run and passes alone is no red.** The run reruns each failed
+test alone, one at a time, in the same checkout and over the same build, up to 12: one that passes
+alone holds no release, and the run files one p1 task for all such tests of it, outside the red
+series, which finds why, then fixes the code or the runner, rewrites the test on a condition, a
+count, CPU time or an injected clock, or discards it with one line on its thread; one that fails
+again is red, its task saying it failed twice ([RELEASES](RELEASES.md#the-release-run), step 5).
+A retry of nextest's never counts as a pass, and no timeout or budget is widened for a rerun.
+
+**A test red on load in the release run all the same is discarded.** A rerun neither fails nor
+passes on the machine's load, so a red test that failed alone too, or was not rerun, because of
+load (its failure is a wall-clock bound, a sleep-ordered step or a timeout under load), in a
+release run or the release candidate's rerun, is answered by its red's own fix removing it from
+the tree, with one line on the red's thread naming the test, the evidence it is load (its runs
+alone and the failing line) and what it proved. This rule is the owner's approval: no card is put to them to discard it. If what it
 proved matters, a follow-up task may bring it back written on a condition, a count, CPU time or an
 injected clock; the release does not wait for that. No rerun is spent on it, no rewrite of it is waited for, and
 nobody lowers the machine's load to help a run pass: an orchestrator holds no other work back to

@@ -126,6 +126,16 @@ export function ends(text: string): [string, string] {
   return at < 0 ? [text, ""] : [text.slice(0, at), text.slice(at)];
 }
 
+/**
+ * `text` on one line, as a closed card draws it: each run of white space, a line break or a tab
+ * among it, is one space. A card's lines keep their spaces as written (`white-space: pre`), so the
+ * end a cut line keeps shows its leading space, and a reason written on two lines would draw on
+ * two and be clipped by the card's fixed box.
+ */
+export function fold(text: string): string {
+  return text.replace(/\s+/gu, " ");
+}
+
 /** A line of text that keeps its end when cut: the ellipsis falls between its two parts. */
 export function Ends({ text }: { text: string }) {
   const [head, tail] = ends(text);
@@ -138,8 +148,9 @@ export function Ends({ text }: { text: string }) {
 }
 
 /**
- * A task's card on the waiting board. Closed, it keeps its fixed box (`ROW`, board.tsx); its one
- * button opens it in place, by key or touch, to the whole of its title, slug, wait and reason.
+ * A task's card on the waiting board. Closed, it keeps its fixed box (`ROW`, board.tsx), each of
+ * its lines folded onto one (`fold`); its one button opens it in place, by key or touch, to the
+ * whole of its title, slug, wait and reason, each as written.
  */
 export function WaitCard({ task, now }: { task: Task; now: number }) {
   useEffect(markTasksReady);
@@ -162,6 +173,7 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
       ? `${line.why} ${line.who}`.trim()
       : (line?.why ?? "");
   const why = stale && !reason.includes("(stale)") ? `${reason} (stale)` : reason;
+  const shown = (text: string) => <Ends text={open ? text : fold(text)} />;
   return (
     <div
       className={`taskcard waiting-card p${task.priority} k-${kind}${blocked(task) ? " is-blocked" : ""}`}
@@ -184,9 +196,7 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
         {task.title}
       </a>
       <div className="waiting-slug">
-        <code>
-          <Ends text={task.slug} />
-        </code>
+        <code>{shown(task.slug)}</code>
         {cost !== undefined && (
           <span className="card-cost" title={cost.title}>
             {cost.said}
@@ -205,13 +215,11 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
       </div>
       <div className="task-wait">
         <span className="on" title={waitLabel(task)}>
-          <Ends
-            text={finished ? (task.status === "done" ? "Done" : "Cancelled") : waitLabel(task)}
-          />
+          {shown(finished ? (task.status === "done" ? "Done" : "Cancelled") : waitLabel(task))}
         </span>
         <span className={old ? "age old" : "age"}>{waitAge(since, now)}</span>
         <span className="why" title={why}>
-          <Ends text={why} />
+          {shown(why)}
         </span>
       </div>
     </div>

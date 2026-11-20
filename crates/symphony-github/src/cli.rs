@@ -1,15 +1,18 @@
 //! `symphony-github COMMAND`: the adapter's whole surface, each command an operator's own act.
 //!
-//! `status` reads what is kept and the committed settings and writes nothing anywhere.
+//! `status` reads what is kept and the committed settings and writes nothing anywhere, and
+//! `tokens` says of each token file whether its token is current, never the token.
 //! `publish`, `resolve` and `drop` write only the adapter's own folder, and `resolve` and `drop`
 //! make none where nothing is kept. `preview` reads GitHub when the adapter is turned on and
 //! writes nothing there or on the board; turned off, it reads nothing there, and neither it nor
 //! `reconcile` makes the folder. `reconcile` is the one command that writes either, and only the
 //! preview it is handed. `deliver` is the land's, not an operator's: it answers one verb of a
-//! delivery by pull request ([`crate::deliver`]).
+//! delivery by pull request ([`crate::deliver`]). `release` is the release run's: a GitHub
+//! Release for a tag it pushed ([`crate::release`]).
 
-use crate::config::PullRequests;
+use crate::config::{PullRequests, Releases, Role};
 use crate::github::{clean_body, clean_title};
+use crate::mint::{self, Held};
 use crate::plan;
 use crate::reconcile::{self, Context, Outcome};
 use crate::state::{Draft, Entry, Event, Flag, Origin, Side, State, Store};
@@ -40,9 +43,13 @@ project's default branch commits symphony-github.toml with enabled = true.
                                       published anew
   deliver VERB --request FILE         answer a land delivered by a pull request, which runs it
                                       (`[land] delivery`): publish, merge, result or landed
+  release --request FILE              answer the release run with a GitHub Release for a tag it
+                                      pushed (`[releases] github`); edits and deletes none
   preflight [--branch BASE]           read the protection of BASE (the default branch) as a
                                       delivery does before it writes, and say what is missing;
-                                      writes nothing anywhere
+                                      writes nothing anywhere but a token it makes
+  tokens                              whether each token is current and when it expires, never
+                                      the token; reads no remote and writes nothing
 
 --tasks PROGRAM names the board's program, else the `tasks` beside this one or on PATH.
 ";
@@ -125,6 +132,15 @@ fn status(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
                     PullRequests::Publish => " (a land's delivery: `deliver`)",
                 }
             );
+            let _ = writeln!(
+                out,
+                "releases: {}{}",
+                config.releases.word(),
+                match config.releases {
+                    Releases::Off => "",
+                    Releases::Publish => " (a release run's GitHub Release: `release`)",
+                }
+            );
             if let Some(file) = &config.token_file {
                 let _ = writeln!(out, "token file: {}", file.display());
             }
@@ -137,6 +153,60 @@ fn status(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
         }
     }
     kept(ctx, out)
+}
+
+/// `tokens`: for each token file the committed settings name, whether its token is current and
+/// when it expires, or what makes one; never the token. It exits 0 unless a file is refused.
+fn tokens(ctx: &Context<'_>, out: &mut dyn Write) -> i32 {
+    let config = match ctx.source.load() {
+        Ok(loaded) => loaded.config,
+        Err(why) => {
+            let _ = writeln!(out, "turned off: its settings do not read: {why}");
+            return 1;
+        }
+    };
+    let mut code = 0;
+    for role in Role::ALL {
+        let Some(file) = config.file_of(role) else {
+            continue;
+        };
+        let next = |id: i64, what: &str| format!("App {id} makes {what} at its next use");
+        let said = match (
+            mint::standing(ctx, &config, role, file),
+            config.app_of(role),
+        ) {
+            (Err(why), _) => {
+                code = 1;
+                format!("refused: {why}")
+            }
+            (Ok(_), None) => "kept by hand: when it expires is not known here".to_string(),
+            (Ok(Held::Unknown), Some(app)) => format!(
+                "holds no expiry this program wrote; {}",
+                next(app.id, "another")
+            ),
+            (Ok(Held::Absent), Some(app)) => format!("absent; {}", next(app.id, "one")),
+            (Ok(Held::Token { expires, .. }), Some(app)) => {
+                let left = expires.at - ctx.now;
+                if left > mint::MARGIN {
+                    format!("current until {} (in {} min)", expires.text, left / 60)
+                } else if left > 0 {
+                    format!(
+                        "expires at {} (in {} min); {}",
+                        expires.text,
+                        left / 60,
+                        next(app.id, "another")
+                    )
+                } else {
+                    format!("expired at {}; {}", expires.text, next(app.id, "another"))
+                }
+            }
+        };
+        let _ = writeln!(out, "{} {}: {said}", role.file_key(), file.display());
+    }
+    if code == 0 && Role::ALL.iter().all(|role| config.file_of(*role).is_none()) {
+        let _ = writeln!(out, "the committed settings name no token file");
+    }
+    code
 }
 
 /// What `status` says of the state folder, reading it and nothing else.
@@ -185,6 +255,9 @@ fn kept(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
             "  {slug} is delivered by #{} {}{landed}",
             pull.number, pull.url
         );
+    }
+    for (tag, released) in &state.releases {
+        let _ = writeln!(out, "  {tag} is published as {}", released.url);
     }
     for (slug, mapping) in &state.mappings {
         let flag = mapping
@@ -306,6 +379,9 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
     let Some(mapping) = state.mappings.get_mut(slug) else {
         return Err(format!("{slug} is mapped to no issue"));
     };
+    // A preview read before the side was kept is never applied after it, so it goes before
+    // anything is written: a stop between the two leaves no preview, never an old one.
+    store.drop_preview()?;
     if matches!(mapping.flag, Some(Flag::Suspended(_))) {
         // Taken up again for the task the slug names now, under the board's generation now,
         // with digests neither side has: the side kept decides what the next preview writes.
@@ -318,7 +394,6 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
     }
     state.resolutions.insert(slug.clone(), side);
     store.save(&state)?;
-    store.drop_preview()?;
     let _ = writeln!(
         out,
         "{slug}: the {} side is kept. Nothing was written yet: preview, then reconcile.",
@@ -333,9 +408,9 @@ fn resolve(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
 
 /// `drop SLUG`: the task's mapping is dropped and its issue kept as not the task's, so no
 /// preview maps the two again or takes that issue for the task's publication; a curated text
-/// stays, and the next preview publishes it anew. It writes only the adapter's own folder, as an
-/// act of its own in the journal: its intent holding the mapping it drops, then its
-/// acknowledgment.
+/// stays, and the next preview publishes it anew. It writes only the adapter's own folder: the
+/// preview waiting is dropped first, then the drop is an act of its own in the journal, its
+/// intent holding the mapping it drops, then its acknowledgment.
 fn drop_mapping(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
     let [slug] = args else {
         return Err("drop takes one SLUG".into());
@@ -362,13 +437,16 @@ fn drop_mapping(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outc
         by: String::new(),
         result,
     };
+    // A preview read before the drop would adopt the mapping again, or push the curated text
+    // into the issue dropped, so it goes before anything is written: a stop between the writes
+    // leaves no preview, never an old one.
+    store.drop_preview()?;
     store.journal(&entry(Event::Intent, Value::Null))?;
     state.mappings.remove(slug);
     state.resolutions.remove(slug);
     (state.dropped.entry(slug.clone()).or_default()).insert(mapping.issue_id);
     store.save(&state)?;
     store.journal(&entry(Event::Ack, json!({"dropped": mapping.issue_id})))?;
-    store.drop_preview()?;
     let _ = writeln!(
         out,
         "{slug} is no longer mapped to issue #{} ({}), which is kept as not this task's. Nothing \
@@ -426,6 +504,11 @@ fn command(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
             let remote = crate::deliver::Git { main: main.clone() };
             crate::deliver::run(ctx, &remote, verb, std::path::Path::new(&file), out)
         }
+        "release" => {
+            let file = need(&mut rest, "--request")?;
+            none_left(&rest)?;
+            crate::release::run(ctx, std::path::Path::new(&file), out)
+        }
         "preflight" => {
             let named = option(&mut rest, "--branch")?;
             none_left(&rest)?;
@@ -438,6 +521,10 @@ fn command(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
                 )?,
             };
             crate::deliver::preflight(ctx, &base, out)
+        }
+        "tokens" => {
+            none_left(&rest)?;
+            Ok(tokens(ctx, out))
         }
         other => Err(format!("no command {other:?}\n{USAGE}")),
     }

@@ -18,7 +18,9 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
   `Pin N` line, each saying whether it changed since the release before (`Board schema 17,
   changed since release-2026-11-12.2 (16 then).`, `Pin 1, unchanged since …`), then the checks it
   passed, what it publishes on crates.io while the project publishes
-  ([the packages](#packages-on-cratesio)), what a project does to take it ([its notes](#its-notes)),
+  ([the packages](#packages-on-cratesio)), each test that failed in its run and passed rerun alone,
+  with both results and the load at each ([step 5](#the-release-run)), what a project does to take
+  it ([its notes](#its-notes)),
   and the commits on main's first-parent line since that release. The first release says so instead. The schema is `VERSION` in
   `crates/tasks/src/schema.rs` and the pin `PIN` in `crates/symphony/src/machine.rs`, read at the
   tagged commit.
@@ -265,6 +267,54 @@ match ([the analysis](analysis/consumer-contract.md#two-references-two-copies)).
 landing moves its Git pin; the machine refresh never does
 ([the refresh](#the-refresh)).
 
+## A GitHub Release
+
+A green release publishes a GitHub Release for its tag only on the project's word, which is two
+settings, as a delivery by pull request has two: `[releases] github` in `symphony.toml`, the
+command the run asks, and `releases = "publish"` in the GitHub adapter's own settings, without
+which that command answers `refused` and asks GitHub nothing ([GITHUB](GITHUB.md#publishing-a-release)).
+This repository's `symphony.toml` names no command. While none is named the run starts no
+program for it, says nothing of it, and keeps and records nothing of it: its output, its record
+and `--status` are what they are without the step
+(`crates/symphony-build/src/release/github.rs`).
+
+- **The command.** `github = ["symphony-github", "release"]` names the GitHub adapter, which no
+  package here builds with: the run starts it as a program in the main checkout, `COMMAND…
+  --request FILE`, within five minutes, and reads one line of JSON. Any program that answers the
+  same way serves, as the tests' stand-in does.
+- **What is asked.** The release's name, the commit it tags, whether it is the newest release
+  tagged here, which alone is marked the latest, and its body: the release's own section of the
+  notes, exactly what `just symphony-cli release-notes BEFORE NAME` prints for it
+  ([its notes](#its-notes)), from the release before it, or from none for the first. Nothing is
+  uploaded: no binary, archive or other asset.
+- **When.** Once the release's tag is pushed and after the crates.io step, before
+  [the refresh](#the-refresh): the run's own release, and before it each release an earlier ask
+  left pending, oldest first. `--refresh` asks the same for the newest release here. A red run
+  and a release candidate tag nothing, so nothing is asked for them, and a run or a refresh
+  under `--no-push` asks nothing (`not published: --no-push publishes nothing`).
+- **Once.** The adapter looks for the release by its tag before it makes one and reads the tag at
+  GitHub before it asks, so asking twice makes none twice, an ask cut short is asked again, and
+  no tag is made, moved or re-created there. A release found is left as it is, and none is ever
+  edited or deleted.
+- **Pending.** A release the command did not publish, because GitHub gave no answer, the answer
+  was lost, the command refused or it could not be run, is `pending`, with why. The release
+  stands, its tag pushed and its result green, and the run's exit is what it was without the
+  step. The next ask publishes it: `just release --refresh`, an orchestrator's retry once the
+  cause is put right, the next release's run, or `just release --github`.
+- **What is kept.** `github.json` in the record folder (`.git/symphony/release/`) holds what each
+  release was last answered: `published`, `found` (there already) or `pending`, with the
+  release's page or why, when and which run asked. `github/` beside it holds, for each release,
+  the last request and what the command answered. One publication runs at a time
+  (`github.lock`): a second asks nothing and says so.
+- **By hand.** `just release --github [NAME…]` asks for each release named, or for every release
+  tagged here, oldest first, and runs no check, tags and pushes nothing and records no run: how
+  the releases tagged before the project named a command are published, once, and a retry of
+  one pending. It ends 0 when each is published or there already, 1 when one is left pending,
+  and is refused while the project names no command or names a release not tagged here.
+
+Its tests ask a stand-in for the adapter (`crates/symphony-build/tests/release/github.rs`); the
+adapter's own ask a GitHub repository held in memory. Neither reaches GitHub.
+
 ## The release run
 
 `just release` (`symphony-build release`, `crates/symphony-build/src/release.rs`) cuts the
@@ -492,18 +542,53 @@ project is given and neither the library nor the shipped `symphony` compiles
      last recipe its log says failed other than `verify` and a private one (`_NAME`), its tests'
      a target at a time, else says its last lines name the step. Any other check's is its own
      command;
+   - what came of the run's own reruns of its failures alone (below): each with how it ended, its
+     time, the load it ended under and its log, one that failed again saying the test failed twice,
+     or why the run reran none;
    - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`), and the same
      range on a line of its own by the two commits' full names, `between: LAST_GREEN..TIP`
      (`symphony_board::red::BETWEEN`), from which the Reports roll-up lists the landings the red
      may trace back to ([the day files](analysis/reports-and-monitoring.md#the-day-files)). With
      no green run on record the range starts at the release before; with neither there is none.
 
-   **A test red on load** is discarded: a rerun neither fails nor passes on the machine's load
-   (RULES.md `tests/no-test-fails-on-load`). A test that fails a run, or the release candidate's
-   rerun, because of load (it passes alone, or its failure is a wall-clock bound, a sleep-ordered
-   step or a timeout under load) is removed from the tree in its red's own fix, with one line on
-   the red's thread naming the test, the evidence it is load (its runs alone and the failing line)
-   and what it proved. That rule is the approval: no card is put to the owner to discard it. If
+   **Each failure rerun alone.** Before it files a red, the run reruns alone each failure of a red
+   run of the tests' lanes (a step `tools/test-lanes.sh` ran, step 3), one at a time, in the same
+   checkout and over the same build (`crates/symphony-build/src/release/alone.rs`): `tools/test-lanes.sh
+   --alone FOLDER ARGS`, FOLDER the folder of that run's lanes' logs, which the runner names first
+   (`test-lanes: logs in FOLDER`) and where it keeps the list of the test binaries it built and the
+   client the tests ran against, and ARGS the failure as its red's rerun lines name it, a test
+   (`-p PACKAGE --test TARGET -- NAME --exact`) or a target whole when its log named no failed test
+   in it. That runs the one test or target of the lanes' own build, nothing built again, with no
+   retry: a retry of nextest's is never counted as a pass ([CHECKS](CHECKS.md#the-release-run)).
+   Each rerun has a log of its own (`logs/ID/KEY.alone/N.log`) and the load it ended under, and
+   runs within the run's time, one the time leaves out red without starting; once they ended the
+   run looks at its checkout again (step 3), and reruns followed by a failed look judge nothing.
+   - **Fails again alone:** red, as before, its task saying each rerun as above and that the test
+     failed twice.
+   - **Passes alone:** no red. A step whose every failure passed alone is green, and so is a check
+     red only by such steps; the record keeps both results and the load at each, and the release's
+     message says them. For all such tests of the run, whatever else it found, the run files one
+     task at p1, `tests/passed-alone-ID`, outside the red series and unmarked: it names each test
+     with its run in company and its run alone, each with how it ended, its load and its log, and
+     asks for why to be found, then for the code or the runner to be fixed, the test rewritten on a
+     condition, a count, CPU time or an injected clock ([CHECKS](CHECKS.md#time-in-tests)), or the
+     test discarded with one line on its thread. It holds no release and takes no red's place.
+   - **None rerun:** more than 12 failures are a break, not load: red, with none rerun. So is a run
+     whose runner did not say it ran every lane it was asked for to its end (`test-lanes: ended:
+     every lane asked for ran`), named no folder, ended without a status of its own or found files
+     of its build gone (above), or that has a red lane naming no failed test or target: what failed
+     there may be more than its tests. Its red says why none was rerun.
+
+   The run never reruns the whole suite, and nothing waits on its reruns: agents work on as they
+   do.
+
+   **A test red on load** all the same is discarded: a rerun neither fails nor passes on the
+   machine's load (RULES.md `tests/no-test-fails-on-load`). A test the run reran alone that passed
+   is no red (above), and is found, fixed, rewritten or discarded by its own task. A red test that
+   failed alone too, or was not rerun, whose failure is still a wall-clock bound, a sleep-ordered
+   step or a timeout under load, is removed from the tree in its red's own fix, with one line on the
+   red's thread naming the test, the evidence it is load (its runs alone and the failing line) and
+   what it proved. That rule is the approval: no card is put to the owner to discard it. If
    what it proved matters, a follow-up task may bring it back written on a condition, a count, CPU
    time or an injected clock; the release does not wait for that. No rerun is spent on it, no
    rewrite of it is waited for, and nobody lowers the machine's load to help a run pass: an
@@ -536,8 +621,9 @@ project is given and neither the library nor the shipped `symphony` compiles
    fails keeps the tag here and is the red `run`; a later run on that same commit fails the same
    way, naming the push that delivers it, and `--status` names each release here that the last run
    found missing from the remote. No run pushes an older tag. A pushed release then publishes its
-   packages on crates.io while the project says so ([above](#packages-on-cratesio)), and refreshes
-   the machine ([below](#the-refresh)).
+   packages on crates.io while the project says so ([above](#packages-on-cratesio)), asks for its
+   GitHub Release while the project names a command for it ([above](#a-github-release)), and
+   refreshes the machine ([below](#the-refresh)).
 
 **Its time.** A run has ten hours (`--timeout SECONDS`, at most 24 hours: a killed run's check
 holds later runs off for its run's time). A check still running then is stopped (its
@@ -617,16 +703,18 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   read, or of a newer version, stops the run as the red `run` and is left as it is.
 - **A red's fix** is the red's own task, whose text says so. Its branch, named for its slug,
   starts at `release-candidate`, never at main; it merges `release-candidate` again before review,
-  as that branch moves when another red's fix lands, and never merges main before its land
+  as that branch moves when another red's fix lands (but on a line a pull request delivers to,
+  once the candidate advanced to a delivered head: below), and never merges main before its land
   ([CHECKS](CHECKS.md#after-main-moves)). When the fix changes what the client is
   built from it commits the distribution its own sources make (`just client-update`), the one kind
   of branch that commits it, since no regenerator builds the candidate; the land keeps main's side
   of it ([TASKS](TASKS.md#the-default-landing)). Its approve, where it needs review, names the
   full tip it read, and it lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
   landing (`just tasks done SLUG NOTE --covered-by OTHER`), never landed. A fix made outside this
-  repository (a consumer's) answers its red by the task cancelled, saying where. A test red on load
-  is discarded by its red's fix ([step 5](#the-release-run)): the candidate's rerun runs without
-  it, and no rerun is spent to see it pass.
+  repository (a consumer's) answers its red by the task cancelled, saying where. The candidate's
+  rerun reruns its failures alone as any run does ([step 5](#the-release-run)): a test that fails
+  there in company and passes alone is no red, and a round red only in such tests releases. A test
+  red on load all the same is discarded by its red's fix: the candidate's rerun runs without it.
 - **The advance.** The land's `--due` (`[board] on_land`) settles the candidate first, under the
   run's lock: a landing whose slug is a red's task in the record moves it to the newest commit an
   approve on that task named, or its landing's line says its needed stamps stood on where it
@@ -671,14 +759,16 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   forces, and neither is main or a release's tag. Its land then answers no advance, as it does
   not descend from the candidate's tip, and drops the candidate, so main's tip, which holds
   both squashes, is what is run. Fixing a candidate's reds one after the other, each started at
-  the candidate as the one before left it, keeps it. One limit is the receipts' own: a task has
-  one receipt, so a slug delivered a second time replaces it; the count then misses the first
-  squash, and a release tagged on the first head is held by nothing, which a person judges until
-  [[task:tools/github-delivery-receipt-history]] keeps each delivery's receipt: a repeated
-  delivery of one task is not supported here. The entries a delivered landing said
-  ([its notes](#its-notes)) are read from the head its receipt kept, as the squash carries none,
-  and a release tagged on a delivered head stays in the notes of every release after it by the
-  same reading. A fix that changes what
+  the candidate as the one before left it, keeps it. A slug has one receipt and one retained
+  head, and neither is ever replaced: a second delivery of a slug is refused by its land, by
+  name, before anything is published
+  ([TASKS](TASKS.md#a-slug-is-delivered-once)), so the count never loses a squash and
+  a release tagged on a delivered head stays held by the receipt that delivered it. The entries
+  a delivered landing said ([its notes](#its-notes)) are read from the head its receipt kept, as
+  the squash carries none, less the commits of each head delivered onto the line before it: a
+  fix started where an earlier fix left the candidate holds that fix's commits, which that
+  one's squash said, so a candidate dropped after two advances says each entry once. A release
+  tagged on a delivered head stays in the notes of every release after it by the same reading. A fix that changes what
   the client is built from is not delivered so yet: a delivery refuses a head that changes a
   generator's outputs, and the candidate's fix must commit them, so that fix waits for the
   delivery of generated outputs and its red stays open, or the candidate is dropped.
@@ -766,7 +856,9 @@ of another environment and are run again.
 
 The candidate is dropped, and a run of main's tip is due at once, whatever the count, when:
 
-- as many reruns as `[releases] candidate_reruns` allows (3) came back red;
+- as many reruns as `[releases] candidate_reruns` allows (3) came back red, a rerun counted only
+  when something in it failed alone too, or was not rerun alone: one red only in tests that passed
+  alone is green ([step 5](#the-release-run)) and releases;
 - it was first judged `[releases] candidate_hours` (24) hours ago;
 - a red's task landed with no approved commit that passes the advance, as when its executor merged
   main before any approve;
@@ -882,7 +974,10 @@ the hour, and its green release refreshes the server and its projects
   whatever the count ([the owner's A](DECISIONS.md#schema-landing-then-release), 2026-11-19).
   Main's build moves this repository's board at its first command after the landing
   ([TASKS](TASKS.md#where-it-lives)), and the machine's server, a release's, then writes nothing
-  to it until a release at the new schema serves it ([the switch](#the-switch)). The run starts
+  to it until a release at the new schema serves it ([the switch](#the-switch)), unless the step is
+  declared to keep the Symphony writing and that server's release reads the record the declaration
+  writes ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). A declared step
+  changes nothing below: the run still starts at once, and a second step still waits. The run starts
   now rather than at the count's, and nothing else is shortened: a red one is held as the release
   candidate as any run is ([the release candidate](#the-release-candidate)), and `current` then
   moves under the refresh's rule on writers as for any release ([the refresh](#the-refresh)).
@@ -999,8 +1094,9 @@ Once a release's tag is pushed, the run does this, in order:
   had, its snapshot kept; each after it stays where it was (`ID: its board can move from schema N
   to M, and stays at N while the move of ID's board failed`). Until the retry gets through, a
   moved board is ahead of the release `current` names (none, before the first): one schema ahead,
-  that release's server reads it and writes nothing to it, saying so on its pages, and two ahead it
-  refuses it ([the switch](#the-switch)); that release's `tasks` and `agent-send` refuse it
+  that release's server reads it and writes nothing to it, saying so on its pages, unless the step
+  keeps it writing ([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)), and two
+  ahead it refuses it ([the switch](#the-switch)); that release's `tasks` and `agent-send` refuse it
   either way, naming themselves as the program to rebuild ([who writes a
   board](TASKS.md#who-writes-a-board)). The retry, `just release --refresh` once the failure's
   cause is fixed, judges every board again: one moved already is at the release's schema, with
@@ -1214,8 +1310,10 @@ A running project's build keeps serving until a stop and a start make the releas
 which is the owner's word for the shared server ([AGENTS](../AGENTS.md)). No start replaces a
 release's server. A board one schema ahead of the release (main's build moved it first) is read
 by its server, which writes nothing to it and says so on every page until a release at that schema
-serves it; a board two ahead, or a project at a newer pin, is refused until `current` names a
-release that serves it.
+serves it. The exception is a step declared to keep the Symphony writing, which a release from
+schema 25 on writes through
+([CHECKS](CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). A board two ahead, or a
+project at a newer pin, is refused until `current` names a release that serves it.
 
 ### The way back
 
@@ -1260,7 +1358,10 @@ and a start while nothing holds the switch, is the owner's word, and so is point
 on that machine ([the way back](#the-way-back)); a release's server that already serves follows
 each `current` the refresh points. Turning `[releases] publish` on is the owner's word, the first publication's
 ([the packages](#packages-on-cratesio)); once it is on, `just release --refresh` after a failed
-upload's cause is put right is an orchestrator's act as well.
+upload's cause is put right is an orchestrator's act as well. Naming a command in `[releases]
+github`, and which repository the adapter's settings name, are the owner's word; once one is
+named, `just release --refresh` and `just release --github` for a release left pending are an
+orchestrator's acts, and `just release --github` for the releases tagged before is the owner's.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
 retries are an orchestrator's acts as well: `just release --rerun`, once every red of it is
 answered and no landing has started its rerun (a red answered outside this repository, say), and
@@ -1284,6 +1385,9 @@ ended, how and when, its red runs, and whether the run of main's tip its drop ma
 its checks; `none held`, or `off` while a bound is 0. Then it
 prints the cadence, the landings since what it counts from and what the next run waits for, the
 last publication on crates.io with each line it said ([the packages](#packages-on-cratesio)),
+once a GitHub Release was asked for, how many are published and pending, each pending one with
+why and the newest published (`GitHub releases: 2 published, 1 pending`,
+[a GitHub Release](#a-github-release)),
 the last refresh, with each line it said and each step red or its project's to finish, and last
 where the machine's server stands ([the switch](#the-switch)): the release `current` names, or
 the releases installed while it names none, whether the machine's server runs it, and, while a
@@ -1392,8 +1496,10 @@ since, and what is left of the old is this (`crates/symphony-build/src/release.r
 
 The release run never tags a commit that is not on `origin/main`, that does not descend from the
 newest release or that a check found red, never moves or deletes a tag, and pushes nothing but its
-new tag: never the branch `release-candidate`, which it moves only from the commit it set it to
-and never while a worktree has it checked out. It resets and cleans no checkout but its own,
+new tag. It asks for a GitHub Release only of a release tagged here and only of the command the
+project names, uploads nothing to one, and edits and deletes none. It never pushes the branch
+`release-candidate`, which it moves only from the commit it set it to and never while a worktree
+has it checked out. It resets and cleans no checkout but its own,
 removes no folder it did not make, builds and tests nothing of a consuming project's, and itself
 writes nothing to a consuming project's checkout. Its install writes in the machine folder only a
 release's own new folder under `releases/`, never one already there, and the `current` link, and

@@ -12,11 +12,13 @@ mod common;
 #[allow(dead_code)]
 mod board;
 
+mod alone;
 mod cadence;
 mod candidate;
 mod carried;
 mod consumers;
 mod delivered;
+mod github;
 mod install;
 mod places;
 mod publish;

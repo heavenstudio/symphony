@@ -60,6 +60,17 @@
 //!    the merge of the two, and U in its history. Anything else (an import squashed, a task
 //!    merged by a merge commit) is held and closes nothing. A [`Receipt`] is kept for good, and
 //!    the head stays reachable under [`RETAINED`], as a squash leaves it in no history.
+//!
+//!    A slug is delivered once. Its receipt and its retained head are what the release run
+//!    counts, holds a release by and reads its notes from, so neither is ever replaced. A landed
+//!    task moves no further on the board, so what reaches a second delivery is the slug filed
+//!    again as another task: its land is refused by name before anything is published
+//!    ([`Landing::repeated`]) where the slug's receipt is of another head, or of the head its
+//!    branch is at with no word of this task's own that it landed it, and so is one whose
+//!    receipt file does not read as its own. A merge a run before asked
+//!    for, found beside a receipt of another delivery or a retained head that is another
+//!    commit, is held for a person ([`Landing::prove`]); the same delivery proved again keeps
+//!    the receipt it has.
 //! 5. **Reconciled**: a clean main checkout whose default branch the remote's descends from is
 //!    fast-forwarded. A dirty or diverged one is left as it is: landed remotely, reconciliation
 //!    pending, and the next run tries again.
@@ -273,6 +284,35 @@ impl Receipt {
     pub fn read(folder: &Path, slug: &str) -> Option<Receipt> {
         let text = fs::read_to_string(Receipt::path(folder, slug)).ok()?;
         (serde_json::from_str::<Receipt>(&text).ok()).filter(|receipt| receipt.slug == slug)
+    }
+
+    /// The receipt kept for `slug` in `folder`, none where no file is kept for it: what a land
+    /// reads before it would write one, as [`Receipt::read`] says none for a file it cannot read.
+    ///
+    /// # Errors
+    ///
+    /// A file is kept there that does not read as the receipt of `slug`, named with why: what a
+    /// delivery proved is never written over.
+    pub fn held(folder: &Path, slug: &str) -> Result<Option<Receipt>, String> {
+        let path = Receipt::path(folder, slug);
+        let unread = |why: String| {
+            format!(
+                "the receipt kept for {slug}, {}, does not read as its own ({why}): what a \
+                 delivery proved is never written over, and a person judges the file",
+                path.display()
+            )
+        };
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(unread(error.to_string())),
+        };
+        let receipt: Receipt =
+            serde_json::from_str(&text).map_err(|error| unread(error.to_string()))?;
+        if receipt.slug != slug {
+            return Err(unread(format!("it names {}", receipt.slug)));
+        }
+        Ok(Some(receipt))
     }
 }
 
@@ -527,6 +567,62 @@ impl Landing<'_> {
         ))
     }
 
+    /// Refuse a second delivery of this slug, before anything is asked of the host. A landed
+    /// task moves no further on the board, so a second delivery is the slug filed again as
+    /// another task (a board made again over a repository that keeps its receipts), whose branch
+    /// may be at another head or at the very head delivered before. Refused where the slug's
+    /// kept receipt is of another head than its branch is at; where it is of that head and is
+    /// not this task's own delivery ([`Landing::own`]); and where the file kept for it does not
+    /// read as its receipt. Nothing where it has none, or where it is this task's own, which a
+    /// land run again answers as it did.
+    pub(super) fn repeated(&self) -> Result<(), Stop> {
+        let slug = self.slug;
+        let then = "What it still needs goes in a new task, whose slug is its own: nothing was \
+                    published or merged, and the receipt is as it was";
+        let refused = |line: String| self.refuse(Refusal::to(line, "@orchestrator", then.into()));
+        let earlier = Receipt::held(&self.folder, slug).map_err(refused)?;
+        let (Some(earlier), Some(tip)) = (earlier, rev(&self.main, &format!("refs/heads/{slug}")))
+        else {
+            return Ok(());
+        };
+        let now = if earlier.head != tip {
+            format!("its branch is now at {}", short(&tip))
+        } else if self.own(&earlier)? {
+            return Ok(());
+        } else {
+            "its branch is at that head again, as a task that never landed it".to_string()
+        };
+        Err(refused(format!(
+            "{slug} was delivered already as {} from {} by pull request #{} of {}, and {now}: a \
+             slug is delivered once, its receipt and the head kept under {RETAINED}{slug} never \
+             replaced",
+            short(&earlier.squash),
+            short(&earlier.head),
+            earlier.pull,
+            earlier.name,
+        )))
+    }
+
+    /// Whether `receipt`, kept for this slug of the head its branch is at, is this task's own
+    /// delivery: its thread has the landed line naming the receipt's squash (a land run again
+    /// after it closed), or the journal kept for the slug is of that head, bound to the receipt's
+    /// pull request (a run cut between the receipt and the journal's next stage). A task id is no
+    /// such word: a board made again numbers its tasks again.
+    fn own(&self, receipt: &Receipt) -> Result<bool, Stop> {
+        let slug = self.slug;
+        let landed = landed_line(slug, &self.settings.default_branch, &receipt.squash);
+        if (self.store.thread(slug)?.iter()).any(|post| post.text.starts_with(&landed)) {
+            return Ok(true);
+        }
+        let journal = Journal::read(&self.folder, slug);
+        Ok(journal.is_some_and(|journal| {
+            journal.head == receipt.head
+                && (journal.binding.as_ref()).is_some_and(|binding| {
+                    binding.repository == receipt.repository && binding.pull == receipt.pull
+                })
+        }))
+    }
+
     /// The pull request a run before bound this task to, read before the land judges anything:
     /// none with no such binding, or with one still open whose evidence stands.
     ///
@@ -567,7 +663,7 @@ impl Landing<'_> {
         match said {
             "open" => {
                 if let Some(snapshot) = snapshot.filter(|snapshot| !snapshot.eligible) {
-                    self.withdraw(slug, &journal, &binding, &tip, &snapshot);
+                    let _ = self.withdraw(slug, &journal, &binding, &tip, &snapshot);
                 }
                 None
             }
@@ -605,7 +701,8 @@ impl Landing<'_> {
 
     /// Publish `snapshot`, which is not eligible, to the pull request `binding`: the head the
     /// branch is at now and checks that fail, the one the host requires first. What the land
-    /// refuses with follows; a publication that fails is said and changes none of it.
+    /// refuses with follows; a publication that fails is said and changes none of it, and its
+    /// reason is the error.
     fn withdraw(
         &mut self,
         slug: &str,
@@ -613,37 +710,29 @@ impl Landing<'_> {
         binding: &Binding,
         tip: &str,
         snapshot: &Snapshot,
-    ) -> bool {
+    ) -> Result<(), String> {
         let request = json!({
             "verb": "publish", "slug": slug, "by": self.actor, "head": tip,
             "branch": self.settings.default_branch, "title": journal.title,
             "body": journal.body, "snapshot": snapshot,
         });
-        let asked = self.ask("publish", &delivering(request, journal));
-        let told = matches!(&asked, Ok(answer) if state(answer).0 == "published");
-        let said = match asked {
-            Ok(_) if told => format!(
-                "land {slug}: its evidence does not stand at {}, and pull request #{} of {} says \
-                 so now",
-                short(tip),
-                binding.pull,
-                binding.name
-            ),
-            Ok(answer) => format!(
-                "land {slug}: its evidence does not stand at {}, and pull request #{} was not \
-                 told ({}): its checks may still say it does",
-                short(tip),
-                binding.pull,
-                state(&answer).1
+        let told = match self.ask("publish", &delivering(request, journal)) {
+            Ok(answer) if state(&answer).0 == "published" => Ok(()),
+            Ok(answer) => Err(state(&answer).1.to_string()),
+            Err(why) => Err(why),
+        };
+        let stands = format!("land {slug}: its evidence does not stand at {}", short(tip));
+        self.say(&match &told {
+            Ok(()) => format!(
+                "{stands}, and pull request #{} of {} says so now",
+                binding.pull, binding.name
             ),
             Err(why) => format!(
-                "land {slug}: its evidence does not stand at {}, and pull request #{} was not \
-                 told ({why}): its checks may still say it does",
-                short(tip),
+                "{stands}, and pull request #{} was not told ({why}): its checks may still say it \
+                 does",
                 binding.pull
             ),
-        };
-        self.say(&said);
+        });
         told
     }
 
@@ -654,7 +743,7 @@ impl Landing<'_> {
     /// # Errors
     ///
     /// The pull request could not be read or told, or the task's evidence still reads as
-    /// standing: its checks may still pass.
+    /// standing, its status said: its checks may still pass.
     pub(super) fn retract(&mut self, slug: &str) -> Result<(), String> {
         let Some(journal) = Journal::read(&self.folder, slug) else {
             return Ok(());
@@ -667,19 +756,24 @@ impl Landing<'_> {
             "repository": binding.repository, "pull": binding.pull,
         });
         let result = self.ask("result", &request)?;
-        let (said, why) = state(&result);
-        if said == "closed" || said == "merged" {
-            return Ok(());
+        match state(&result) {
+            ("closed" | "merged", _) => return Ok(()),
+            ("open", _) => {}
+            (_, why) => return Err(why.to_string()),
         }
-        let told = said == "open" && {
-            let task = self.store.get(slug).map_err(|error| error.to_string())?;
-            let thread = self.store.thread(slug).map_err(|error| error.to_string())?;
-            let tip = &journal.head;
-            let snapshot =
-                evidence::snapshot(self.store, self.env, &self.main, &task, &thread, tip)?;
-            !snapshot.eligible && self.withdraw(slug, &journal, &binding, tip, &snapshot)
-        };
-        if told { Ok(()) } else { Err(why.to_string()) }
+        let task = self.store.get(slug).map_err(|error| error.to_string())?;
+        let thread = self.store.thread(slug).map_err(|error| error.to_string())?;
+        let tip = &journal.head;
+        let snapshot = evidence::snapshot(self.store, self.env, &self.main, &task, &thread, tip)?;
+        // A task named before it was cancelled, and not cancelled yet, may still read as standing.
+        if snapshot.eligible {
+            return Err(format!(
+                "{slug} is {} and its evidence stands at {}",
+                task.status,
+                short(tip)
+            ));
+        }
+        self.withdraw(slug, &journal, &binding, tip, &snapshot)
     }
 
     /// Deliver the task's `tip`, found ready as `judged`, by its pull request.
@@ -820,9 +914,9 @@ impl Landing<'_> {
             let now = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
             let again = (self.committed(&now)).and_then(|()| {
                 self.generated(&now, tip).unwrap_or_else(|| {
-                    Err(Refusal::here(
-                        "no longer what the regenerator delivers: no merge asked".into(),
-                    ))
+                    Err(Refusal::here(format!(
+                        "{slug} is no longer what the regenerator delivers: no merge asked"
+                    )))
                 })
             });
             again.map_err(|refusal| self.refuse(refusal))?;
@@ -1348,7 +1442,9 @@ impl Landing<'_> {
 
     /// Prove the commit `squash` the host made, by git alone: fetched, on the remote default
     /// branch, of one parent, and its tree the merge of that parent and the head. The receipt is
-    /// kept and the head retained once it is.
+    /// kept and the head retained once it is, and neither over another: a receipt of another
+    /// delivery of the slug, one that does not read, or a retained head that is another commit
+    /// holds this one for a person, and the receipt of this same delivery is kept as it is.
     fn prove(
         &self,
         journal: &Journal,
@@ -1451,6 +1547,29 @@ impl Landing<'_> {
             }),
             None => None,
         };
+        let retained = format!("{RETAINED}{}", journal.slug);
+        let earlier = Receipt::held(&self.folder, &journal.slug).map_err(Unproved::Held)?;
+        if let Some(earlier) = &earlier
+            && (earlier.head != journal.head || earlier.squash != commit)
+        {
+            return Err(Unproved::Held(format!(
+                "{} was delivered already as {} from {}, and {REMOTE}/{default} holds {} of {} \
+                 as well: its receipt and the head kept under {retained} are not replaced",
+                journal.slug,
+                short(&earlier.squash),
+                short(&earlier.head),
+                short(&commit),
+                short(&journal.head)
+            )));
+        }
+        if let Some(other) = rev(&self.main, &retained).filter(|kept| *kept != journal.head) {
+            return Err(Unproved::Held(format!(
+                "{retained} keeps {}, not the head {} that {} is of: it is not moved",
+                short(&other),
+                short(&journal.head),
+                short(&commit)
+            )));
+        }
         let receipt = Receipt {
             slug: journal.slug.clone(),
             task: self
@@ -1472,8 +1591,11 @@ impl Landing<'_> {
             import,
         };
         // The head first: a squash leaves it in no history, and the receipt names it.
-        let retained = format!("{RETAINED}{}", journal.slug);
         run_git(&self.main, &["update-ref", &retained, &journal.head]).map_err(Unproved::Later)?;
+        // This delivery's receipt, kept by a run cut short after it: as it was written.
+        if let Some(earlier) = earlier {
+            return Ok(earlier);
+        }
         kept(&Receipt::path(&self.folder, &journal.slug), &receipt).map_err(Unproved::Later)?;
         Ok(receipt)
     }
@@ -1548,10 +1670,7 @@ impl Landing<'_> {
             journal.stage = Stage::Reconciled;
             journal.write(&self.folder).map_err(here)?;
         }
-        let landed = format!(
-            "landed {slug} on {default} at {}",
-            &squash[..squash.len().min(12)]
-        );
+        let landed = landed_line(slug, &default, &squash);
         let how = match &journal.import {
             Some(import) => format!(
                 "merged from {}, an import of {},",
@@ -1622,6 +1741,15 @@ impl Landing<'_> {
         Journal::drop_in(&self.folder, slug);
         Ok(line)
     }
+}
+
+/// How the landed line of `slug`, delivered to `default` as `squash`, starts: what a land that
+/// closed its task wrote, and what a land run again reads.
+fn landed_line(slug: &str, default: &str, squash: &str) -> String {
+    format!(
+        "landed {slug} on {default} at {}",
+        &squash[..squash.len().min(12)]
+    )
 }
 
 /// Why a commit the host named is not proved.

@@ -1,4 +1,5 @@
-# `symphony-github`: the optional exchange of selected tasks with GitHub issues (docs/GITHUB.md),
+# `symphony-github`: the optional exchange of selected tasks with GitHub issues, with a land's
+# delivery by pull request and a release's GitHub Release (docs/GITHUB.md),
 # a program of its own that reaches the board through `tasks api` alone and GitHub through `curl`.
 # Never published and never shipped: no project is given it, and neither the library every project
 # links, the board nor the server compiles any of it, so a project that never writes
@@ -20,6 +21,8 @@ serde_json.workspace = true
 toml.workspace = true
 # The digests a preview, a synchronized version and an operation are named by.
 sha2.workspace = true
+# The base64url of a GitHub App's JSON Web Token, whose signature `openssl` makes (src/mint.rs).
+data-encoding = "2"
 
 [dev-dependencies]
 # The scratch board its exchange tests run on, reached as the program reaches it: `tasks api`.

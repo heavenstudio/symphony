@@ -86,7 +86,31 @@ symphony = 12_880_000
 # left is the runtime tasks runs, which no reduction removes without removing a part of it.
 # Measured 7,438,784; the line is that plus 4%, rounded down to 10,000. Independent review is
 # required.
-tasks = 7_730_000
+# The landings of 2026-11-19 took tasks past that line together, each within it alone
+# (tests/main-red-size-check-tasks): 7,703,376 at tools/workflow-operations' tip 202dc30cd,
+# 7,769,568 on main at b1cd26809 (+66,192, chiefly tools/task-gate-decisions: the gate decisions,
+# the store's record of them, the gate command and the land's reading of a raise and a waiver),
+# 7,786,096 at e00700b13 (+16,528, tools/idle-without-a-pane and
+# tools/generated-delivery-review-follow-ups) and 7,786,176 at 450674b6c. Raised before any cut,
+# as the board's pages saved nothing until a release could follow main; the cuts are
+# perf/board-derived-readers-size's and a follow-up's. Measured 7,786,176; the line is that plus
+# 4%, rounded down to 10,000. Independent review is required.
+# tools/local-provider-attempts (f8843364d) took tasks past that line alone: 7,786,176 at
+# 450674b6c, 8,265,760 with it (+479,584), the same on main at 9704dead1
+# (tests/main-red-size-check-tasks-2). Nothing in tasks called the execution coordinator before:
+# crate::execution was in the library and dead-stripped. hc as a provider of attempts
+# (launch::attempts) makes launch, restore, close, cleanup and reap call it, so the coordinator
+# links into tasks for the first time; it is no second copy. By the two link maps: the derived
+# serde of the attempt record and the kit's execution types (174,044, of which 128,912 decodes
+# from serde_json::Value), the coordinator (92,132, of which 53,652 is the store's fenced write
+# instantiated once for each coordinator closure), launch::attempts (31,840), the record, keys,
+# rules and evidence (27,396), the kit's types' clone, drop, validation and channels (21,596) and
+# the store's attempt operations on both backends (12,552), with unwind and constant data in
+# proportion. Raised before any cut, as no release is green until it is; the cuts (one fenced
+# write for every closure, readers by field of the attempt record) are
+# perf/board-derived-readers-size's. Measured 8,265,760; the line is that plus 4%, rounded down
+# to 10,000. Independent review is required.
+tasks = 8_590_000
 # The board's operations on tasks a workflow holds (tools/workflow-operations) add 264,656 bytes to
 # agent-send: 3,087,168 at the runtime's d7e3b719d, 3,351,824 with them. agent-send delivers what
 # it sends itself (send_agent, then the recipient's dispatch), and that dispatch composes an

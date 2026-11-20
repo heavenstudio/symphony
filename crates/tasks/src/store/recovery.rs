@@ -297,8 +297,15 @@ impl Store {
                 "the board's recovery authority could not be revoked ({why}): nothing was changed"
             ))
         })?;
-        let generation: String =
-            self.retrying(|| self.transact(both(sql::REBIND, pg::rebind()), json!({})))?;
+        // Held to this store's own schema, as a copy is: a rebind is never a reader's ordinary
+        // write on a board one schema ahead ([`crate::schema::COMPATIBLE`]).
+        let generation: String = self.retrying(|| {
+            self.run_transaction(
+                both(sql::REBIND, pg::rebind()),
+                json!({}),
+                super::transaction::Run::Own,
+            )
+        })?;
         publish(authority.as_ref(), &generation)?;
         Ok(generation)
     }

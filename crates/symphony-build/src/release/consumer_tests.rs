@@ -1088,3 +1088,52 @@ fn a_release_on_a_delivered_head_stays_in_the_notes_and_is_the_one_before_the_ne
         ["release-2026-11-17"]
     );
 }
+
+#[test]
+fn a_head_started_at_another_delivered_head_says_that_ones_entries_once() {
+    let tree = Tree::new();
+    let repo = Scratch::new(&tree);
+    let first = repo.git(&["rev-parse", "HEAD"]);
+    repo.release("release-2026-11-17");
+    // A release candidate held at the first commit advances twice, each fix started where the
+    // one before left it and delivered by a squash, then is dropped: no release is tagged on
+    // either head, so neither is the commit the next release's entries are read beyond.
+    let one = deliver(
+        &repo,
+        "tests/one",
+        &first,
+        "Fix one\n\nConsumer-Note: board: the first fix moves a row",
+    );
+    let two = deliver(
+        &repo,
+        "tests/two",
+        &one.head,
+        "Fix two\n\nConsumer-Note: settings: the second fix reads `two`",
+    );
+    let after_two = repo.git(&["rev-parse", "HEAD"]);
+    assert_eq!(after_two, two.squash);
+    let both = [
+        entry("board: the first fix moves a row"),
+        entry("settings: the second fix reads `two`"),
+    ];
+    let history_at = |name: &str, tip: &str| {
+        history(&repo.root, &through(&repo.root, name, tip).unwrap()).unwrap()
+    };
+    assert_eq!(
+        history_at("release-2026-11-18", &after_two)[1].entries,
+        both
+    );
+    // Released between the two squashes instead, on main: the second's release says its own
+    // entry alone, as the first's is in the release before it.
+    repo.git(&[
+        "tag",
+        "-a",
+        "release-2026-11-18",
+        "-m",
+        "release-2026-11-18",
+        &one.squash,
+    ]);
+    let history = history_at("release-2026-11-19", &after_two);
+    assert_eq!(history[1].entries, both[..1]);
+    assert_eq!(history[2].entries, both[1..]);
+}
