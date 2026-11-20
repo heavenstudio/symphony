@@ -52,9 +52,9 @@ pub struct ListedProject {
     /// the board is not read yet.
     pub asks: Option<TaskAsks>,
     /// Whether this server writes its board, as its last read of the board found it: true while
-    /// that read found the board at a schema this build writes; false while this build only reads
-    /// it (the board is a schema ahead) or refuses it (behind this build, or more than one schema
-    /// ahead). None while it keeps no board, its board is not read yet or its last read failed for
+    /// that read found the board at a schema this build writes (its own, or one ahead whose step is
+    /// declared to keep it writing); false while this build only reads it (the board is a schema
+    /// ahead whose step is not) or refuses it (behind this build, or more than one schema ahead). None while it keeps no board, its board is not read yet or its last read failed for
     /// another reason, while it is refused, and from a server built before it said
     /// (docs/RELEASES.md, "An update": a release's refresh reads it).
     #[serde(default)]
