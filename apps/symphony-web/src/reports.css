@@ -212,6 +212,39 @@
   }
 }
 
+/* Under the charts of tokens: the window's all told, the landed tasks' costs and what every
+   dollar is. A slug too long for its line wraps, never widening the page on a phone. */
+.reports-spend {
+  min-width: 0;
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}
+.reports-spend p {
+  margin: 0 0 var(--sp-2);
+}
+.reports-spend h3 {
+  margin: var(--sp-3) 0 var(--sp-2);
+  font-size: var(--fs-md, 1rem);
+}
+.reports-dearest {
+  margin: 0 0 var(--sp-2);
+  padding-left: 2.5ch;
+}
+.reports-landed-task {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--sp-2);
+  justify-content: space-between;
+}
+.reports-landed-task > span {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.reports-note {
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+}
+
 /* A chart: its caption, legend and readout over its plot, the plot's periods as columns. */
 .chart,
 .ghost-chart {

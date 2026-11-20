@@ -49,7 +49,9 @@
 //!    project file must be the one committed here; a head that changes a generator's outputs and
 //!    is not what the regenerator made ([`Landing::generated`]), or merges a commit the remote
 //!    default does not hold and is not an import of the upstream (another history, which a
-//!    squash would flatten), is refused.
+//!    squash would flatten), is refused. A release candidate's fix ([`CANDIDATE`]) is told to
+//!    keep its outputs and deliver a merge of the default branch that keeps the default branch's
+//!    ([`Landing::outputs`]).
 //! 2. **Eligible**: published, and the snapshot read again: one of another revision is published
 //!    again, never merged.
 //! 3. **Merge requested**: written before the request. From here no run merges locally, whatever
@@ -105,6 +107,19 @@ pub const GENERATED: &str = "generated";
 pub const IMPORT: &str = "import";
 /// Where the upstream's default branch is fetched to in the main checkout, read for an import.
 pub const UPSTREAM: &str = "refs/symphony/upstream";
+/// The local branch that names the release candidate's tip while the release run holds one
+/// (RELEASES, the release candidate), where a fix of one of its reds starts.
+pub const CANDIDATE: &str = "release-candidate";
+
+/// Where a head stands to the release candidate ([`Landing::candidate`]).
+enum Candidate {
+    /// A fix of it: the head holds its tip, at this commit, and beyond it only its own commits.
+    Fix(String),
+    /// One is held, at this commit, and the head does not hold it.
+    Behind(String),
+    /// None is held, or the head holds what the remote default branch holds beyond it.
+    None,
+}
 
 /// `[land] delivery` as the main checkout `main` has it committed at its head: the command, or
 /// nothing where the land merges here. Its shape is [`super::Settings::parse`]'s to refuse.
@@ -1024,7 +1039,11 @@ impl Landing<'_> {
         Ok(())
     }
 
-    /// Refuse a head that changes a generator's outputs, which no hosted merge puts back.
+    /// Refuse a head that changes a generator's outputs, which no hosted merge puts back. What the
+    /// refusal asks for is told by where the head stands to the release candidate
+    /// ([`Landing::candidate`]): a fix of it keeps the outputs its own sources make, which the
+    /// candidate takes, and delivers a merge of the default branch that keeps the default
+    /// branch's instead (RELEASES, a red's fix); any other head puts them back.
     fn outputs(&self, base: &str, tip: &str) -> Result<(), Refusal> {
         let (slug, default) = (self.slug, &self.settings.default_branch);
         let range = format!("{base}...{tip}");
@@ -1033,34 +1052,85 @@ impl Landing<'_> {
             .filter(|file| (self.settings.generators.iter()).any(|g| owns(&g.outputs, file)))
             .map(String::as_str)
             .collect();
-        if !generated.is_empty() {
-            return Err(Refusal::to(
-                format!(
-                    "{slug} changes {} generated {} ({}), which a pull request would deliver as \
-                     the branch built {}",
-                    generated.len(),
-                    if generated.len() == 1 {
-                        "path"
-                    } else {
-                        "paths"
-                    },
-                    generated
-                        .iter()
-                        .take(super::NAMED_PATHS)
-                        .copied()
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    if generated.len() == 1 { "it" } else { "them" },
-                ),
-                "@executor",
-                format!(
-                    "Put them back as {default} has them on the branch (`git checkout \
-                     {REMOTE}/{default} -- PATH`, committed), then have the new head assessed and \
-                     stamped"
-                ),
-            ));
+        if generated.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let line = format!(
+            "{slug} changes {} generated {} ({}), which a pull request would deliver as the \
+             branch built {}",
+            generated.len(),
+            if generated.len() == 1 {
+                "path"
+            } else {
+                "paths"
+            },
+            generated
+                .iter()
+                .take(super::NAMED_PATHS)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", "),
+            if generated.len() == 1 { "it" } else { "them" },
+        );
+        let back = format!(
+            "Put them back as {default} has them on the branch (`git checkout \
+             {REMOTE}/{default} -- PATH`, committed), then have the new head assessed and stamped"
+        );
+        let next = match self.candidate(base, tip)? {
+            Candidate::Fix(at) => {
+                let outputs: Vec<&str> = (self.settings.generators.iter())
+                    .map(|g| g.outputs.as_str())
+                    .filter(|output| generated.iter().any(|file| owns(output, file)))
+                    .collect();
+                format!(
+                    "{slug} starts at {CANDIDATE} ({}), a fix of the release candidate, which \
+                     takes the outputs its own sources make: keep {} as it is, approved by a \
+                     fresh reviewer naming it whatever its assessment needs, as the candidate \
+                     takes only a commit an approve names and a land with none drops it. Then \
+                     merge {REMOTE}/{default} into the branch once, keeping {default}'s side of \
+                     every generated path (`git restore --source={REMOTE}/{default} --staged \
+                     --worktree -- {}` before the merge's commit), and have that head assessed, \
+                     tested and approved: it is delivered, and the candidate advances to the \
+                     commit approved before the merge",
+                    short(&at),
+                    short(tip),
+                    outputs.join(" ")
+                )
+            }
+            Candidate::Behind(at) => format!(
+                "{back}. A fix of the release candidate starts at {CANDIDATE}, now at {}, which \
+                 this head does not hold: rebased there while nothing approved it, its land says \
+                 how its outputs are delivered; approved already, it lands as any task and its \
+                 land drops the candidate",
+                short(&at)
+            ),
+            Candidate::None => back,
+        };
+        Err(Refusal::to(line, "@executor", next))
+    }
+
+    /// Where `tip` stands to the release candidate, as the branch [`CANDIDATE`] names its tip in
+    /// the main checkout while the release run holds one: a fix of it holds that tip and, beyond
+    /// it, only commits of its own, none the remote default branch holds at `base`.
+    fn candidate(&self, base: &str, tip: &str) -> Result<Candidate, Refusal> {
+        let Some(at) = rev(&self.main, &format!("refs/heads/{CANDIDATE}")) else {
+            return Ok(Candidate::None);
+        };
+        if !ancestor(&self.main, &at, tip) {
+            return Ok(Candidate::Behind(at));
+        }
+        let beyond = |not: &[&str]| -> Result<String, Refusal> {
+            let not_at = format!("^{at}");
+            let args = [&["rev-list", "--count", tip, &not_at][..], not].concat();
+            Ok(run_git(&self.main, &args)?)
+        };
+        let own = beyond(&[])?;
+        let fix = own != "0" && own == beyond(&[&format!("^{base}")])?;
+        Ok(if fix {
+            Candidate::Fix(at)
+        } else {
+            Candidate::None
+        })
     }
 
     /// The upstream's branch fetched now from `upstream`'s address to [`UPSTREAM`]: its tip. A head

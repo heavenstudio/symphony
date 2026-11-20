@@ -177,6 +177,22 @@ pub(in crate::store) fn unread(keyed: bool) -> String {
     )
 }
 
+/// `$said`, a record line `$sender` puts on `$slug`'s thread, to no one, made once per `$key`
+/// ([`once`]).
+pub(in crate::store) static RECORD_ONCE: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "{}\nRETURN NONE;",
+        once(
+            &logged("$slug", "$sender", "'system'", "$said", "NONE"),
+            None
+        )
+    )
+});
+
+/// Whether a line was made under `$key` on `$slug`'s thread ([`once`]).
+pub(in crate::store) const KEYED: &str =
+    "RETURN record::exists(type::record('delivery_key', [$slug, $key]));";
+
 /// `$actor` has read the messages `$ids` at `$now`: a delivery for each it has none of.
 pub(in crate::store) fn ack() -> String {
     format!(

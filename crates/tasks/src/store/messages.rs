@@ -6,8 +6,8 @@ use super::statement::both;
 use super::surreal::messages as sql;
 use super::work::{OWNER, ROLES, Tree, above, no_task};
 use super::{
-    Error, Message, NativePresence, REFUSED, Store, message, native_bounds, native_health, refused,
-    repr,
+    Error, Failure, Message, NativePresence, REFUSED, Store, message, native_bounds, native_health,
+    refused, repr,
 };
 use crate::health::{self, Health};
 use crate::maps::Collect as _;
@@ -246,6 +246,31 @@ impl Store {
             _ => {}
         }
         Ok(message(row))
+    }
+
+    /// `said`, a record line `sender` puts on `slug`'s thread, to no one, once per `key`: a later
+    /// one under the key writes nothing ([`Store::say_keyed`]'s `delivery_key:[slug, key]`, read
+    /// and written in the line's transaction). Within a caller's retry.
+    pub(super) fn record_once(
+        &self,
+        slug: &str,
+        sender: &str,
+        said: &str,
+        key: &str,
+    ) -> Result<(), Failure> {
+        let vars = json!({
+            "slug": slug, "sender": sender, "said": said, "key": key, "now": (self.clock)(),
+        });
+        let body = both(sql::RECORD_ONCE.as_str(), pg::record_once());
+        self.transact::<Value>(body, vars).map(|_| ())
+    }
+
+    /// Whether a line was made under `key` on `slug`'s thread ([`Store::record_once`],
+    /// [`Store::say_keyed`]). Within a caller's retry.
+    pub(super) fn keyed(&self, slug: &str, key: &str) -> Result<bool, Failure> {
+        let vars = json!({"slug": slug, "key": key});
+        let keyed: Value = self.read(both(sql::KEYED, pg::keyed()), vars)?;
+        Ok(keyed == Value::Bool(true))
     }
 
     /// `what` (a post or a changes verdict to `slug`'s executor, or to `only` when that handle
