@@ -97,7 +97,6 @@ mod pull_acknowledgements;
 mod pushes;
 mod quiet_callbacks;
 mod raw;
-mod raw_fence;
 mod realistic;
 mod recovery;
 mod red;

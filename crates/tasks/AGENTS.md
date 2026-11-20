@@ -337,7 +337,8 @@ but through `store/transaction.rs`, the store's one sender, `store/raw.rs`, whic
 own statements, and `store/database.rs`, which makes a board's database. A new statement goes
 there; a test that needs a row no command writes, or reads one, asks `Store::raw` by table, id and
 equal fields and writes no statement of its own, and one that must (the engine itself is its
-subject) is in the list `tests/store/raw_fence.rs` holds. A store test written once for both
+subject) is in the list `tests/raw_fence.rs` holds, a target of its own that `just lint-rs` runs, so
+a branch that touches any board target's tests meets it. A store test written once for both
 databases is `on_both!`'s (`tests/store/main.rs`), each run on the binary's own scratch server of
 each (`tests/store/common.rs`'s `Backend`).
 
