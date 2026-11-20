@@ -364,13 +364,19 @@ answers its first result and admits nothing again.
 
 An effect that cannot be taken back is checked again right before it. An external effect's
 dispatch (`Store::dispatch_effect`, which the default landing and a project's landing call before
-they merge) reads the admission of the transition that brought the task into the pair its prepare
-left, the prepare being the only transition since, and refuses unless each guard it met still
-stands: its authority still committed with the key that verifies the attestation it recorded, and
-the board still accepting the very state it was met at, not in conflict. A decision revoked since
-moves that state, so the intent is withdrawn and nothing is merged. The attestation's own time was
-held when it was admitted: a land comes whenever it runs, and the authority's state is its current
-word. A transition no guard admitted dispatches on its position and bindings alone.
+they merge), when its prepare left a pair the active workflow's guarded edges enter, finds the
+transition that last entered that pair: it goes back from the prepare past each transition that
+stayed in the pair (an edge or a recovery from it to it, such as a holder's release that keeps the
+task there, an activation that kept it there, and a block from it with everything up to its resume
+back) to the one that entered it from another pair (`guard::entry`). That transition's admission
+must have met each guard the pair's edges carry, and each must still stand: its authority still
+committed with the key that verifies the attestation it recorded, and the board still accepting
+the very state it was met at, not in conflict. A decision revoked since moves that state, so the
+intent is withdrawn and nothing is merged; so is one whose record holds no such transition, or no
+admission of it, as nothing is dispatched on a guard no record says was met. The attestation's own
+time was held when it was admitted: a land comes whenever it runs, and the authority's state is its
+current word. A prepare that leaves a pair no guarded edge enters dispatches on its position and
+bindings alone.
 
 `Store::revalidate_dispatch(SLUG, REVISION, FRESH)` is the stricter check, for a caller that holds
 the guarded transition itself: it refuses unless the task still stands where that transition left

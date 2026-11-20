@@ -19,6 +19,11 @@ pub(crate) fn landing(adapter: &str) -> Custom {
 /// the key of `seed`, in the project `sim`: the land's prepare leaves the pair that guard brings
 /// the task into.
 pub(crate) fn guarded_landing(adapter: &str, seed: u8) -> Custom {
+    custom(&guarded_landing_text(adapter, seed))
+}
+
+/// [`guarded_landing`]'s text.
+pub(crate) fn guarded_landing_text(adapter: &str, seed: u8) -> String {
     let approve = "inputs = [\"head\"], dependencies = \"none\", guards = []";
     let text = format!("{LANDING}{MAPPED}")
         .replace(DEFAULT_LAND, adapter)
@@ -36,11 +41,11 @@ pub(crate) fn guarded_landing(adapter: &str, seed: u8) -> Custom {
         1,
     );
     assert_ne!(guarded, text, "the fixture guards approve");
-    custom(&format!(
+    format!(
         "{guarded}\n[project]\nid = \"sim\"\n\n[[workflow_authorities]]\nadapter = \"approvals\"\n\
          issuer = \"ledger\"\ncontract = 1\nkey = \"{}\"\n",
         crate::workflow::guard::tests::attester(seed).key
-    ))
+    )
 }
 
 pub(crate) fn bindings(head: &str) -> Bindings {

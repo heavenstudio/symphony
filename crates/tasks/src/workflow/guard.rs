@@ -543,6 +543,31 @@ pub fn check(
     Ok(checked)
 }
 
+/// The revision of the transition that last brought a task into `pair` before its transition
+/// `before`, of its recorded `transitions` (oldest first): going back past each that stayed in
+/// `pair` (an edge or a recovery from it to it, an activation that kept it there) and each resume
+/// into it with everything back to the block that left it, to the transition that entered it from
+/// another pair. None where the record says the task stood elsewhere just before `before`, or holds
+/// no such transition: what is not found is never taken as met.
+pub fn entry(transitions: &[super::Transition], before: u64, pair: &Pair) -> Option<u64> {
+    // While walking back through a block: the resume returns to the pair its block left, so the
+    // block is the latest transition before it that left `pair`.
+    let mut blocked = false;
+    for t in (transitions.iter().rev()).skip_while(|t| t.revision >= before) {
+        let from = t.from.as_ref().unwrap_or(&t.to);
+        if blocked {
+            blocked = !(from == pair && t.to != *pair);
+        } else if t.to != *pair {
+            return None;
+        } else if t.effects.contains(&Effect::ClearBlock) {
+            blocked = true;
+        } else if from != pair {
+            return Some(t.revision);
+        }
+    }
+    None
+}
+
 /// Why the guards an admission met (`met`) no longer stand for an effect that cannot be taken
 /// back, none while they do; what a dispatch asks right before one (`Store::dispatch_effect`).
 /// Each guard's authority is still the one the active activation commits (`attesters`), its

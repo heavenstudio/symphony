@@ -1034,3 +1034,103 @@ fn a_guard_met_stands_for_a_dispatch_only_at_the_state_and_key_it_was_met_by() {
     // No guard met: nothing to stand.
     assert_eq!(unstanding(&[], &[], &[]), None);
 }
+
+/// `sim/a`'s transition `revision` from `from` (none for a recovery that stays) to `to`, by `edge`.
+fn moved(
+    revision: u64,
+    from: Option<Pair>,
+    to: Pair,
+    effects: Vec<Effect>,
+) -> super::super::Transition {
+    super::super::Transition {
+        id: super::super::Transition::id_of("sim/a", revision),
+        slug: "sim/a".into(),
+        revision,
+        generation: 1,
+        digest: "d".into(),
+        edge: None,
+        operation: None,
+        activation: None,
+        from,
+        to,
+        resume: None,
+        status: "review".into(),
+        principal: local_owner(),
+        effects,
+        key: None,
+        recovery: None,
+        accepted: None,
+        at: 1.0,
+    }
+}
+
+#[test]
+fn the_entry_into_a_pair_is_found_past_every_transition_that_stayed_in_it() {
+    let (awaiting, approved, blocked, landing) = (
+        pair("verify", "awaiting"),
+        pair("deliver", "approved"),
+        pair("build", "blocked"),
+        pair("deliver", "landing"),
+    );
+    let block = vec![Effect::Block { save_resume: true }];
+    let resume = vec![Effect::ClearBlock];
+    let approve = moved(4, Some(awaiting.clone()), approved.clone(), Vec::new());
+    let prepare = |revision| {
+        moved(
+            revision,
+            Some(approved.clone()),
+            landing.clone(),
+            Vec::new(),
+        )
+    };
+    // Straight from the approve to the prepare.
+    let straight = [approve.clone(), prepare(5)];
+    assert_eq!(entry(&straight, 5, &approved), Some(4));
+    // A self-edge and a recovery that stays, recorded with no `from`.
+    let stays = [
+        approve.clone(),
+        moved(5, Some(approved.clone()), approved.clone(), Vec::new()),
+        moved(6, None, approved.clone(), Vec::new()),
+        prepare(7),
+    ];
+    assert_eq!(entry(&stays, 7, &approved), Some(4));
+    // A block from the pair, a stay while blocked, and the resume back.
+    let held = [
+        approve.clone(),
+        moved(5, Some(approved.clone()), blocked.clone(), block.clone()),
+        moved(6, None, blocked.clone(), Vec::new()),
+        moved(7, Some(blocked.clone()), approved.clone(), resume.clone()),
+        prepare(8),
+    ];
+    assert_eq!(entry(&held, 8, &approved), Some(4));
+    // The latest entry is the one that counts: approved, sent back, approved again.
+    let twice = [
+        approve.clone(),
+        moved(5, Some(approved.clone()), awaiting.clone(), Vec::new()),
+        moved(6, Some(awaiting.clone()), approved.clone(), Vec::new()),
+        prepare(7),
+    ];
+    assert_eq!(entry(&twice, 7, &approved), Some(6));
+    // A record that has the task elsewhere just before, or no entry at all, finds none.
+    let elsewhere = [
+        approve.clone(),
+        moved(5, Some(approved.clone()), awaiting.clone(), Vec::new()),
+        prepare(6),
+    ];
+    assert_eq!(entry(&elsewhere, 6, &approved), None);
+    assert_eq!(entry(&[prepare(1)], 1, &approved), None);
+    let unended = [
+        moved(3, Some(blocked.clone()), approved.clone(), resume),
+        prepare(4),
+    ];
+    assert_eq!(
+        entry(&unended, 4, &approved),
+        None,
+        "a resume with no block before it"
+    );
+    // Transitions at or after `before` are not read.
+    assert_eq!(
+        entry(&[approve, prepare(5), prepare(6)], 5, &approved),
+        Some(4)
+    );
+}

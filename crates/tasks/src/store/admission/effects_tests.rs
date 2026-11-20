@@ -780,14 +780,60 @@ fn reported(f: &Fixture, generation: u64, previous: Option<u64>) {
     f.store.observe_authority(&signed).unwrap();
 }
 
+/// [`guarded_landing`] where a task stays in its approved pair: its block and resume taken from
+/// the approved pair and back to it, and a reviewer staffing it, whose release keeps the task there.
+fn guarded_landing_with_stays() -> crate::workflow::Custom {
+    use crate::workflow::effect::tests::guarded_landing_text;
+    let text = guarded_landing_text(DEFAULT_LAND, 7);
+    let at = "  { at = { phase = \"deliver\", state = \"approved\" },";
+    let start = text.find(at).expect("the approved position");
+    let end = start + text[start..].find('\n').expect("its line ends");
+    let stay =
+        "{ manual = true, slot = \"retain\", release_role = true, release_reservation = false }";
+    let wait =
+        "{ manual = true, slot = \"retain\", release_role = false, release_reservation = false }";
+    let staffed = format!(
+        "{at} staffing = \"reviewer\", slot = \"release\", dependencies = \"none\", \
+         unsuccessful_dependency = \"block\", accepts_work = false, terminal = false, legacy = \
+         \"done\", satisfies_dependencies = false, completion = \"none\", recovery = {{ release = \
+         {stay}, lost_holder = {stay}, attempt_failure = {wait}, cancellation_acknowledged = {wait} }} }},"
+    );
+    let text = format!("{}{staffed}{}", &text[..start], &text[end..]);
+    let (available, approved) = (
+        "{ phase = \"build\", state = \"available\" }",
+        "{ phase = \"deliver\", state = \"approved\" }",
+    );
+    let (block, resume) = (
+        format!("{{ id = \"block\", label = \"Block\", from = {available},"),
+        format!("state = \"blocked\" }}, to = {available}, operation = \"resume\","),
+    );
+    assert!(
+        text.contains(&block) && text.contains(&resume),
+        "the block and its resume"
+    );
+    let text = (text.replacen(&block, &block.replace(available, approved), 1)).replacen(
+        &resume,
+        &resume.replace(available, approved),
+        1,
+    );
+    crate::workflow::activate::tests::custom(&text)
+}
+
 /// [`approved`] on [`guarded_landing`]: birch's approve taken with the authority's pass, met at
 /// generation 3 of e1, and recorded as an admission.
 fn approved_under_guard(backend: crate::store_fixture::Backend) -> Fixture {
     use crate::workflow::effect::tests::guarded_landing;
+    approved_under_guard_on(backend, &guarded_landing(DEFAULT_LAND, 7))
+}
+
+/// [`approved_under_guard`] on `custom`.
+fn approved_under_guard_on(
+    backend: crate::store_fixture::Backend,
+    custom: &crate::workflow::Custom,
+) -> Fixture {
     use crate::workflow::guard::tests::{passing, sign_attestation};
     use crate::workflow::guard::{MAX_VALIDITY, attestee};
-    let custom = guarded_landing(DEFAULT_LAND, 7);
-    let f = board(backend, &custom);
+    let f = board(backend, custom);
     let amber = agent_session("amber");
     take(&f.store, SLUG, &amber, "claim").unwrap();
     take(&f.store, SLUG, &amber, "submit").unwrap();
@@ -813,7 +859,7 @@ fn approved_under_guard(backend: crate::store_fixture::Backend) -> Fixture {
         principal: attestee(&birch),
         issued_at: issued,
         expires_at: issued + MAX_VALIDITY,
-        ..passing(&custom)
+        ..passing(custom)
     };
     let given = [sign_attestation(7, &attestation)];
     (f.store)
@@ -858,6 +904,72 @@ fn a_decision_revoked_between_the_guarded_approve_and_the_land_withdraws_its_dis
             // Withdrawn for good: a dispatch again sends nothing under it.
             let again = refused(f.store.dispatch_effect(&fake, SLUG, 5));
             assert!(again.contains("is withdrawn"), "{backend:?}: {again}");
+        }
+    }
+}
+
+#[test]
+fn a_dispatch_rechecks_the_approve_past_a_block_or_a_release_that_stayed_in_its_pair() {
+    let custom = guarded_landing_with_stays();
+    let owner = crate::workflow::local_owner();
+    // What happens in the approved pair between the approve and the land's prepare.
+    let held = |f: &Fixture| {
+        take(&f.store, SLUG, &owner, "block").unwrap();
+        take(&f.store, SLUG, &owner, "resume").unwrap();
+    };
+    let released = |f: &Fixture| {
+        f.store.release(SLUG, "birch", Some("reviewer")).unwrap();
+    };
+    // Each with the transitions it records in the pair.
+    type Stay<'a> = (&'a str, &'a dyn Fn(&Fixture), u64);
+    let stays: [Stay; 2] = [("block and resume", &held, 2), ("release", &released, 1)];
+    for backend in BACKENDS {
+        for (what, stay, moves) in stays {
+            for revoked in [false, true] {
+                let f = approved_under_guard_on(backend, &custom);
+                stay(&f);
+                assert_eq!(
+                    position(&f),
+                    (pair("deliver", "approved"), 4 + moves),
+                    "{backend:?} {what}: stayed in the approved pair"
+                );
+                assert!(
+                    f.store
+                        .workflow_admission(SLUG, 4 + moves)
+                        .unwrap()
+                        .is_none()
+                );
+                if revoked {
+                    reported(&f, 4, Some(3));
+                }
+                let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
+                let intent = prepared(&f, &fake);
+                assert_eq!(intent.revision, 5 + moves);
+                let dispatched = f.store.dispatch_effect(&fake, SLUG, intent.revision);
+                let stage = (f
+                    .store
+                    .effect_intent(SLUG, intent.revision)
+                    .unwrap()
+                    .unwrap())
+                .stage;
+                if !revoked {
+                    assert_eq!(
+                        dispatched.unwrap().stage,
+                        Stage::Dispatched,
+                        "{backend:?} {what}"
+                    );
+                    continue;
+                }
+                let why = refused(dispatched);
+                assert!(
+                    why.contains(
+                        "approvals decided again since approved was met at generation 3 \
+                         of e1: a later decision stands"
+                    ),
+                    "{backend:?} {what}: {why}"
+                );
+                assert_eq!(stage, Stage::Withdrawn, "{backend:?} {what}");
+            }
         }
     }
 }

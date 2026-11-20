@@ -157,22 +157,61 @@ impl Store {
             .map_err(|e| Error::Db(format!("an admission not in the board's shape: {e}")))
     }
 
-    /// Why the guards that brought `slug` into the pair its effect was prepared from, by the
-    /// prepare at its transition `revision`, no longer stand ([`guard::unstanding`]), none while
-    /// they do or where no guard admitted that transition: the admission of the transition before
-    /// the prepare, while the prepare is the only transition since, which the dispatch's own
-    /// check of the task's revision holds (`Store::dispatch_effect`).
+    /// Why the guards that brought `slug` into the pair its transition `revision` (an external
+    /// effect's prepare) left no longer stand for that effect's dispatch, none where they stand or
+    /// where the active workflow guards no edge into that pair. The transition that brought it
+    /// there is the last that entered the pair, found by going back past those that stayed in it
+    /// ([`guard::entry`]): its admission must have met each guard the pair's edges carry, and each
+    /// must stand ([`guard::unstanding`]). A transition not found, or found with no admission or
+    /// short of a guard, is a reason too, so nothing is dispatched on a guard no record says was
+    /// met.
     pub(in crate::store) fn prepared_from_unguarded(
         &self,
         slug: &str,
         revision: u64,
     ) -> Result<Option<String>, Error> {
-        let Some(before) = revision.checked_sub(1) else {
+        // With none active, the dispatch's own check withdraws the intent.
+        let Some(active) = self.workflow_active()? else {
             return Ok(None);
         };
-        let Some(admission) = self.workflow_admission(slug, before)? else {
+        let recorded = self.workflow_definition(&active.digest)?.ok_or_else(|| {
+            Error::Db(format!(
+                "the active workflow's definition {} is not recorded",
+                active.digest
+            ))
+        })?;
+        let transitions = self.workflow_transitions(slug)?;
+        let left = (transitions.iter())
+            .find(|t| t.revision == revision)
+            .and_then(|t| t.from.clone());
+        let Some(left) = left else {
+            return Ok(Some(format!(
+                "{slug} records no move at revision {revision} for its effect to leave from"
+            )));
+        };
+        let Some(guards) = guard::guarded_into(&recorded.definition, &left) else {
             return Ok(None);
         };
+        let pair = format!("{}/{}", left.phase, left.state);
+        let Some(entered) = guard::entry(&transitions, revision, &left) else {
+            return Ok(Some(format!(
+                "{slug}'s record holds no transition that brought it into {pair} under {}",
+                guards.join(", ")
+            )));
+        };
+        let Some(admission) = self.workflow_admission(slug, entered)? else {
+            return Ok(Some(format!(
+                "{slug} entered {pair} at revision {entered} with no admission of {}",
+                guards.join(", ")
+            )));
+        };
+        let unmet = (guards.iter()).find(|g| !admission.guards.iter().any(|c| c.guard == **g));
+        if let Some(unmet) = unmet {
+            return Ok(Some(format!(
+                "{slug} entered {pair} at revision {entered} without meeting {unmet}, which its \
+                 edges carry now"
+            )));
+        }
         let now = self.workflow_authorities()?;
         Ok(guard::unstanding(
             &admission.guards,
