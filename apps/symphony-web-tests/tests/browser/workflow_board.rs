@@ -13,7 +13,7 @@
 //! (`apps/symphony-server/src/live/workflow_tests.rs`). With `SYMPHONY_WORKFLOW_SHOTS` naming a
 //! folder, the flow saves its pictures there.
 
-use super::{SHOWN, chrome::Chrome, common, dist, look_parity, site::Site};
+use super::{SHOWN, assets::module, chrome::Chrome, common, dist, look_parity, site::Site};
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_api::TASK_TIMELINE_PATH;
@@ -331,15 +331,17 @@ fn the_board_draws_the_workflows_phases_as_columns_and_tabs_and_filters_by_a_sta
     ));
 }
 
-/// The build's file of the workflow's chunk (`flow.tsx`), as the page asks for it.
+/// The file of the workflow's chunk (`flow.tsx`) the board this build serves imports, as the page
+/// asks for it: the build's folder keeps its earlier builds' chunks beside its own.
 fn flow_chunk() -> String {
-    let assets = dist().join("assets");
-    let file = std::fs::read_dir(&assets)
-        .expect("the build's assets")
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .find(|name| name.starts_with("flow-") && name.ends_with(".js"))
-        .expect("the workflow's chunk in the build");
-    format!("/assets/{file}")
+    let board = module(dist(), "board").script;
+    let script = std::fs::read_to_string(dist().join(board.trim_start_matches('/')))
+        .expect("the board's script");
+    let start = script
+        .find("flow-")
+        .expect("the board imports the workflow's chunk");
+    let end = start + script[start..].find(".js").expect("its name") + 3;
+    format!("/assets/{}", &script[start..end])
 }
 
 #[test]

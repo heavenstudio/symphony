@@ -59,14 +59,16 @@ fn custom() -> Custom {
     committed(TWO, '1')
 }
 
-/// The workflow `text` writes, as committed at a commit of `digit`s.
+/// The workflow `text` writes, as committed at a commit of `digit`s in a project file of its own:
+/// another text is another file, and the board takes a revision from the active one's file as the
+/// active workflow, whatever it says.
 fn committed(text: &str, digit: char) -> Custom {
     let (definition, mappings) = written(text).unwrap();
     let definition = definition.unwrap();
     let revision = definition
         .revision(Source {
             commit: digit.to_string().repeat(40),
-            project_blob: "2".repeat(40),
+            project_blob: digit.to_string().repeat(40),
         })
         .unwrap();
     Custom {
