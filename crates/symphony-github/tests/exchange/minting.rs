@@ -786,9 +786,13 @@ fn two_runs_at_once_leave_one_valid_token_and_no_torn_file() {
             "{kept} is one of {made:?}"
         );
         assert!(apps.tokens().iter().any(|(made, _)| made == token));
+        // Settings that publish nothing ask for metadata alone.
         assert_eq!(
             rest,
-            format!("expires_at {}\npermissions {ASKED}\n", clock(now + 3_600))
+            format!(
+                "expires_at {}\npermissions metadata=read\n",
+                clock(now + 3_600)
+            )
         );
         let beside = std::fs::read_dir(file.parent().unwrap()).unwrap().count();
         assert_eq!(beside, 1, "no file left half made beside it");
