@@ -146,10 +146,13 @@ fn only_the_listed_tests_send_a_statement_of_their_own() {
 
 /// The fence reads every folder of `tests/` and `examples/`, at any depth: a file of the server's
 /// target that sends a statement is found though no store test changed, each way of sending is
-/// found, and a file that sends none, a file that is not Rust and this fence's own are not.
+/// found, and a file that sends none, a file that is not Rust and this fence's own are not. The
+/// package is a folder of this process's own, as `just lint-rs` and a board `just test-rs` in one
+/// worktree run this target at once.
 #[test]
 fn a_sender_is_found_in_any_target_whichever_way_it_sends() {
-    let package = Path::new(env!("CARGO_TARGET_TMPDIR")).join("raw_fence_package");
+    let package = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("raw_fence_package-{}", std::process::id()));
     if package.exists() {
         fs::remove_dir_all(&package).unwrap();
     }
