@@ -423,15 +423,27 @@ $board$"
 }
 
 /// The statement every write starts with: it raises the refusal (`board_schema_*`,
-/// [`crate::schema::guard_vars`]) unless the board is at this store's version. The shared row
-/// lock meets a migration's version update, including from an older repeatable-read snapshot.
+/// [`crate::schema::guard_vars`]) unless the board is at this store's version, or, for a write
+/// that may (`board_schema_ahead`), one version ahead with a `writable_from` that is a number no
+/// greater than this store's version ([`crate::schema::writes`]). The record is read from the row
+/// as JSON, so a board whose `meta` has no such column yet (one a build before it made) reads as
+/// none. The shared row lock meets a migration's version update, including from an older
+/// repeatable-read snapshot.
 pub(in crate::store) const GUARD: &str = "DO $guard$
 DECLARE
     v jsonb := current_setting('board.vars')::jsonb;
+    own_ bigint := (v ->> 'board_schema')::bigint;
     found_ bigint;
+    from_ jsonb;
 BEGIN
-    SELECT version INTO found_ FROM meta WHERE id = '\"schema\"' FOR SHARE;
-    IF found_ IS DISTINCT FROM (v ->> 'board_schema')::bigint THEN
+    SELECT m.version, to_jsonb(m) -> 'writable_from' INTO found_, from_
+        FROM meta m WHERE m.id = '\"schema\"' FOR SHARE;
+    IF found_ IS DISTINCT FROM own_ AND NOT (
+        coalesce(v -> 'board_schema_ahead' = 'true'::jsonb, false)
+        AND found_ IS NOT DISTINCT FROM own_ + 1
+        AND CASE WHEN jsonb_typeof(from_) = 'number' AND (from_ #>> '{}') ~ '^-?[0-9]+$'
+            THEN (from_ #>> '{}')::numeric <= own_ ELSE false END
+    ) THEN
         RAISE EXCEPTION '%', (v ->> 'board_schema_before') || coalesce(found_::text, 'NONE')
             || (v ->> 'board_schema_after');
     END IF;

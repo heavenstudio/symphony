@@ -2655,6 +2655,9 @@ mod postpone_tests;
 mod chat_tests;
 
 #[cfg(test)]
+mod compatible_ahead_tests;
+
+#[cfg(test)]
 mod backstop_tests;
 
 #[cfg(test)]
