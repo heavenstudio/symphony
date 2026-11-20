@@ -4,7 +4,7 @@
 //! default branch commits it, and refuse one it does not, naming what it needs.
 
 use symphony_api::workflow::{Revision, Source};
-use symphony_board::workflow::written;
+use symphony_board::workflow::written_from;
 pub use symphony_board::workflow::{Mapping, Validated, builtin, candidate, prerequisites};
 
 /// Read the project file from an actual commit in a repository root, never from its index or
@@ -46,10 +46,15 @@ pub fn committed(root: &std::path::Path, reference: &str) -> Result<(Validated, 
 /// needs (`symphony_board::workflow::activate::supported`): a capability its grants name, and
 /// nothing this release cannot run yet. Refused as `unsupported_activation`, naming what, so the
 /// project learns before its default branch commits a workflow the board would not activate. The
-/// file `text` is read by the board's own reader ([`written`]), as the board reads it when the
-/// branch commits it: a field it refuses is named, without TOML's line.
-pub(super) fn require_supported(text: &str) -> Result<(), String> {
-    let (definition, _) = written(text).map_err(|why| format!("{}: {why}", super::FILE))?;
+/// file's `workflow` and `workflow_mappings`, as its one TOML reading left them, are read by the
+/// board's own reader ([`written_from`]), as the board reads them when the branch commits the
+/// file: a field it refuses is named, without TOML's line.
+pub(super) fn require_supported(
+    workflow: Option<toml::Value>,
+    mappings: Option<toml::Value>,
+) -> Result<(), String> {
+    let (definition, _) =
+        written_from(workflow, mappings).map_err(|why| format!("{}: {why}", super::FILE))?;
     if let Some(validated) = definition {
         let host = symphony_board::workflow::Host::local();
         return symphony_board::workflow::activate::supported(&validated, &host)

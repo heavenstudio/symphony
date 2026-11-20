@@ -36,9 +36,9 @@ pub(super) struct File {
     pub(super) limits: FileLimits,
     pub(super) stamps: FileStamps,
     /// The delivery workflow, read by the board's reader of the file
-    /// ([`symphony_board::workflow::written`], `super::workflow::require_supported`), which reads
-    /// it as it reads its own rows: kept here as written, so the Symphony links one reader of the
-    /// workflow and none for TOML.
+    /// ([`symphony_board::workflow::written_from`], `super::workflow::require_supported`), which
+    /// reads it as it reads its own rows: kept here as this one reading of the file left it, so the
+    /// Symphony reads the file once and links one reader of the workflow and none for TOML.
     pub(super) workflow: Option<toml::Value>,
     /// Where tasks at pairs a newly committed workflow removed go when it activates, read as
     /// `workflow` is.
