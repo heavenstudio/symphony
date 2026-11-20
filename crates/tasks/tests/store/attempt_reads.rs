@@ -10,7 +10,7 @@ use symphony_board::execution::{
 };
 use symphony_plugin::execution::{
     Authorization, Call, Capabilities, ContentRef, Input, Operation, Outcome, Principal,
-    PrincipalKind, Profile, Scope, Unknown,
+    PrincipalKind, Profile, ResumeMode, Scope, Unknown,
 };
 
 const TASK: &str = "sim/jump";
@@ -108,7 +108,9 @@ on_both! {
         );
         assert_eq!(retried.dispatch, "pending");
         assert_eq!(retried.controls, symphony_api::AttemptControls::default());
-        assert!(history[0].resumable().is_err(), "nothing was ever bound to it");
+        for mode in [ResumeMode::NewResource, ResumeMode::ReuseWithNewGeneration] {
+            assert!(history[0].resumable(mode).is_err(), "nothing was ever bound to it");
+        }
         // The reader and the coordinator read the same.
         assert_eq!(c.history(&all, TASK).unwrap(), history);
         assert_eq!(reader.attempt(&read, &second.id).unwrap(), history[1]);

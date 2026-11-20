@@ -4,7 +4,7 @@
 
 use super::keys;
 use super::reader::Reader;
-use super::record::{Ending, Fact, Identity, Lease, Pending, Relation, Row, State};
+use super::record::{Fact, Identity, Lease, Pending, Relation, Row, State};
 use super::rules::{self, Applied, Bounds, Next};
 use super::{
     Act, Admission, Attempt, Continuation, Grant, Pacing, Recorded, Refusal, Stepped, Worked,
@@ -16,8 +16,8 @@ use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use symphony_plugin::execution::{
     Adapter, AttemptRef, Authorization, Call, ConversationId, ExternalLink, MAX_CALL_MS, Operation,
-    OperationIdentity, Outcome, PrincipalKind, Profile, Request, ResumeFrom, Scope, StopMode,
-    invoke,
+    OperationIdentity, Outcome, PrincipalKind, Profile, Request, ResumeFrom, ResumeMode, Scope,
+    StopMode, invoke,
 };
 
 /// The board's execution attempts under one provider configuration: what a host admits, controls
@@ -196,9 +196,10 @@ impl<'a> Coordinator<'a> {
             Some(successor) => self.followed_by(request_key, successor)?,
             None => false,
         };
+        let reuses = continuation.mode == ResumeMode::ReuseWithNewGeneration;
         let (binding, quiescent) = match (repeat, &before.state.resource, before.state.quiescent) {
             (true, Some(binding), Some(quiescent)) => (binding.clone(), quiescent),
-            _ => rules::resumable(&before.state).map_err(Refusal::Invalid)?,
+            _ => rules::resumable(&before.state, reuses).map_err(Refusal::Invalid)?,
         };
         let previous = self.reference(&before)?;
         let mut resume = ResumeFrom::new(
@@ -340,6 +341,13 @@ impl<'a> Coordinator<'a> {
         }));
         let (_, hex) = keys::new_attempt();
         let kind = entry.first.operation();
+        let reuses = matches!(
+            entry.first,
+            Request::Resume {
+                mode: ResumeMode::ReuseWithNewGeneration,
+                ..
+            }
+        );
         let key = keys::operation(
             &scope.project,
             &scope.board,
@@ -412,7 +420,7 @@ impl<'a> Coordinator<'a> {
             "predecessor": predecessor,
             "capacity": self.capacity.as_ref().map(|(scope, limit)| json!({"scope": scope, "limit": limit})),
         });
-        let follow = |row: &Value| followed(row, &hex, relation.unwrap_or(Relation::Retry));
+        let follow = |row: &Value| followed(row, &hex, relation.unwrap_or(Relation::Retry), reuses);
         match self
             .store
             .execution_admit(vars, predecessor.as_deref(), follow)?
@@ -446,8 +454,8 @@ impl<'a> Coordinator<'a> {
     }
 
     /// Ask attempt `id` to cease. From the moment it is written no result of it is eligible; an
-    /// attempt nothing was sent for ends cancelled at once, with nothing provisioned. Asking again
-    /// changes nothing.
+    /// attempt whose start never reached the provider ends cancelled at once, with nothing
+    /// provisioned. Asking again changes nothing.
     pub fn cancel(&self, grant: &Grant, id: &str) -> Result<Attempt, Refusal> {
         let row = self.row(id)?;
         grant.allows(&self.profile.scope, Some(&row.task), Act::Cancel)?;
@@ -462,7 +470,8 @@ impl<'a> Coordinator<'a> {
         self.view(id)
     }
 
-    /// Ask attempt `id`'s bound resource to stop in `mode`, which its provider must offer.
+    /// Ask attempt `id`'s bound resource to stop in `mode`, which its provider must offer: never a
+    /// held attempt's, which waits for a person.
     pub fn stop(&self, grant: &Grant, id: &str, mode: StopMode) -> Result<Attempt, Refusal> {
         let row = self.row(id)?;
         grant.allows(&self.profile.scope, Some(&row.task), Act::Stop)?;
@@ -611,7 +620,18 @@ impl<'a> Coordinator<'a> {
                     applied.due_in = Some(lease_ms);
                     Decision::write(written(&applied, Some(&fence), false), plan)
                 }
-                Next::Reconcile(_) | Next::Observe(_) => Decision::Nothing(plan),
+                Next::Reconcile(pending) => {
+                    let mut applied = Applied::from_state(row.state.clone());
+                    applied.facts.push(Fact::Sent {
+                        sequence: pending.sequence,
+                        worker: worker.clone(),
+                        epoch: lease.epoch,
+                        reconcile: true,
+                    });
+                    applied.due_in = Some(lease_ms);
+                    Decision::write(written(&applied, Some(&fence), false), plan)
+                }
+                Next::Observe(_) => Decision::Nothing(plan),
             };
             Ok(decision)
         })?;
@@ -889,36 +909,20 @@ pub(super) fn to_value(value: &impl serde::Serialize) -> Value {
     serde_json::to_value(value).expect("an execution record serializes")
 }
 
-/// `applied` as a write, under the lease `fence` when the worker writes it.
-/// The write that has the attempt in `row` followed by `by`: linked, and ended superseded if it
-/// was still live (held or paused), its reservation given back for admission to hand to `by`; none
-/// once it was followed. Made in `by`'s admission ([`Store::execution_admit`]).
-fn followed(row: &Value, by: &str, relation: Relation) -> Result<Option<Write>, Error> {
+/// The write that has the attempt in `row` followed by `by`, as [`rules::followed`] decides,
+/// made in `by`'s admission ([`Store::execution_admit`]); none once it was followed.
+fn followed(
+    row: &Value,
+    by: &str,
+    relation: Relation,
+    reuses: bool,
+) -> Result<Option<Write>, Error> {
     let row = Row::of(row)?;
-    if row.state.successor.is_some() {
-        return Ok(None);
-    }
-    let mut applied = Applied::from_state(row.state.clone());
-    applied.state.successor = Some(by.to_string());
-    applied.facts.push(Fact::Followed {
-        by: by.to_string(),
-        relation,
-    });
-    if applied.state.live() {
-        let state = &mut applied.state;
-        state.dispatch = super::record::Dispatch::Terminal;
-        state.ending = Some(Ending::Superseded);
-        state.pending = None;
-        state.cancel = None;
-        state.stop = None;
-        applied.release = state.reserved.take();
-        applied.facts.push(Fact::Ended {
-            ending: Ending::Superseded,
-        });
-    }
-    Ok(Some(written(&applied, None, false)))
+    let applied = rules::followed(&row.state, by, relation, reuses).map_err(Error::Refused)?;
+    Ok(applied.map(|applied| written(&applied, None, false)))
 }
 
+/// `applied` as a write, under the lease `fence` when the worker writes it.
 pub(super) fn written(applied: &Applied, fence: Option<&Value>, release_lease: bool) -> Write {
     let state = &applied.state;
     Write {

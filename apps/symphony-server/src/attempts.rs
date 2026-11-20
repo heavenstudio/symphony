@@ -31,8 +31,8 @@ use symphony_api::{AttemptControl, AttemptControls, AttemptLink, AttemptViewAsk,
 use symphony_board::Store;
 use symphony_board::execution::{
     Act, Adapter, Attempt, Continuation, Coordinator, ExternalLink, Grant, Operation, Outcome,
-    Principal, PrincipalKind, Profile, Reader, Refusal, Scope, board_scope, resume_mode,
-    resume_word, stop_mode, stop_word,
+    Principal, PrincipalKind, Profile, Reader, Refusal, ResumeMode, Scope, board_scope,
+    resume_mode, resume_word, stop_mode, stop_word,
 };
 use symphony_plugin::execution::{Authorization, Call, Unknown};
 
@@ -155,9 +155,10 @@ pub(crate) fn controls(attempt: &Attempt, providers: &Providers) -> AttemptContr
     } else {
         Vec::new()
     };
-    let resumable =
-        attempt.resumable().is_ok() && (state.conversation.is_some() || state.checkpoint.is_some());
-    let viewable = state.resource.is_some() && pinned.external_view;
+    // A resume on a new resource asks least of it; each mode is offered while it may take it, so
+    // a reuse goes once its resource's cleanup has begun.
+    let continues = state.conversation.is_some() || state.checkpoint.is_some();
+    let resumable = continues && attempt.resumable(ResumeMode::NewResource).is_ok();
     let resume = match provider {
         Some(provider) if resumable => {
             let offered = provider.capabilities();
@@ -165,6 +166,7 @@ pub(crate) fn controls(attempt: &Attempt, providers: &Providers) -> AttemptContr
                 offered
                     .resume_modes
                     .iter()
+                    .filter(|m| attempt.resumable(**m).is_ok())
                     .map(|m| resume_word(*m).into())
                     .collect()
             } else {
@@ -173,6 +175,7 @@ pub(crate) fn controls(attempt: &Attempt, providers: &Providers) -> AttemptContr
         }
         _ => Vec::new(),
     };
+    let viewable = state.resource.is_some() && pinned.external_view;
     AttemptControls {
         cancel,
         stop,

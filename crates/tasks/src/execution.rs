@@ -281,11 +281,12 @@ pub struct Attempt {
 }
 
 impl Attempt {
-    /// Whether a resume may continue it now, and why not: it must be known paused or ended with
-    /// its resource bound, owe nothing, have no cancel whose outcome is uncertain and no successor.
+    /// Whether a resume in `mode` may continue it now, and why not: it must be known paused or
+    /// ended with its resource bound, owe nothing, have no cancel whose outcome is uncertain and no
+    /// successor, and a resume that reuses its resource needs that resource's cleanup not begun.
     /// [`Coordinator::resume`] decides again on the row it writes.
-    pub fn resumable(&self) -> Result<(), String> {
-        rules::resumable(&self.state).map(|_| ())
+    pub fn resumable(&self, mode: ResumeMode) -> Result<(), String> {
+        rules::resumable(&self.state, mode == ResumeMode::ReuseWithNewGeneration).map(|_| ())
     }
 }
 
