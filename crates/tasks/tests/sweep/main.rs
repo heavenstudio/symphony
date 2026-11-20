@@ -20,6 +20,7 @@ mod causes;
 mod clean_cache;
 mod clean_races;
 mod cli;
+mod delivered;
 mod finished;
 mod kept;
 mod land;

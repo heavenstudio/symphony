@@ -298,7 +298,7 @@ pub(crate) struct Held {
 
 /// The release run's folder in the git common dir `common`.
 pub(crate) fn folder(common: &Path) -> PathBuf {
-    common.join("symphony").join("release")
+    common.join(symphony_board::folders::RELEASE)
 }
 
 /// The run's lock, open: the folder the run records in, where it is, and whether it was taken.

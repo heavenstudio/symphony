@@ -66,7 +66,7 @@ pub(super) fn refreshing() -> (Fixture, String) {
 }
 
 /// `text` at `path`, executable.
-fn executable(path: &Path, text: &str) {
+pub(super) fn executable(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
@@ -130,7 +130,7 @@ pub(super) fn builder(fixture: &Fixture, schema: i64) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn machine(fixture: &Fixture) -> PathBuf {
+pub(super) fn machine(fixture: &Fixture) -> PathBuf {
     fixture.root.join("machine")
 }
 
@@ -143,7 +143,7 @@ fn current(fixture: &Fixture) -> Option<String> {
 
 /// The machine folder's registry: `projects`, each with the plugins it names, as its own file
 /// names them.
-fn registered(fixture: &Fixture, projects: &[(&str, &Path, &[&str])]) {
+pub(super) fn registered(fixture: &Fixture, projects: &[(&str, &Path, &[&str])]) {
     let entry = |(id, root, plugins): &(&str, &Path, &[&str])| Entry {
         id: (*id).into(),
         name: (*id).into(),
@@ -162,7 +162,7 @@ fn registered(fixture: &Fixture, projects: &[(&str, &Path, &[&str])]) {
 
 /// A project `id` in the fixture's folder, a git checkout whose lock pins the Symphony, its file
 /// naming `plugins`: its checkout.
-fn a_project(fixture: &Fixture, id: &str, plugins: &[&str]) -> PathBuf {
+pub(super) fn a_project(fixture: &Fixture, id: &str, plugins: &[&str]) -> PathBuf {
     let crates: Vec<String> = plugins.iter().map(|name| format!("\"{name}\"")).collect();
     let file = format!(
         "[project]\nid = \"{id}\"\n\n[plugins]\ncrates = [{}]\n",
@@ -191,7 +191,7 @@ fn untouched(root: &Path) -> (String, String, String, Vec<(PathBuf, Vec<u8>)>) {
 /// A project's board whose SurrealDB server its test started, stopped when the test ends, however
 /// it ends: cleanly, through [`Home::stop`], so no later run's `lsof` reads it and none lives until
 /// the binary exits. A stop that fails fails the test, unless it is failing already.
-struct Board(Home);
+pub(super) struct Board(Home);
 
 impl Board {
     /// The board in the project `project`'s common dir, its server started.
@@ -227,7 +227,7 @@ impl Drop for Board {
 /// The project's board, its server started on the data in its common dir, made by the build of
 /// schema `schema` with a task on it, its one writer this test on the host `this-host`: its board,
 /// which stops that server when it is dropped, the server that runs it and a client of it.
-fn board_at(project: &Path, schema: i64) -> (Board, Running, Client) {
+pub(super) fn board_at(project: &Path, schema: i64) -> (Board, Running, Client) {
     let (board, running) = Board::started(project);
     let client = Client::new(&running.addr, "sf", "tasks");
     older_board(Client::new(&running.addr, "sf", "tasks"), schema, NOW)
@@ -255,7 +255,7 @@ fn writes(client: &Client, program: &str, path: &Path, schema: i64) {
 }
 
 /// [`writes`], its line seen `ago` seconds before now.
-fn wrote(client: &Client, program: &str, path: &Path, schema: i64, ago: f64) {
+pub(super) fn wrote(client: &Client, program: &str, path: &Path, schema: i64, ago: f64) {
     let host = symphony_board::sys::hostname();
     let path = path.to_string_lossy().into_owned();
     let seen = std::time::SystemTime::now()

@@ -319,8 +319,10 @@ fn entries_of(root: &Path, revs: &[&str]) -> Result<Vec<(String, String)>, Strin
 /// The entries the lands a pull request delivered between `before` and `commit` said: a squash
 /// keeps no trailer of the commits it squashed, so each squash among the commits of
 /// `before..commit` that one of `receipts` names, and git bears out, is read from the head that
-/// receipt kept, the commits that head holds beyond the squash's parent and beyond `before`
-/// (which a release on a delivered head said already). Oldest squash first.
+/// receipt kept, the commits that head holds beyond the squash's parent, beyond `before` (which
+/// a release on a delivered head said already) and beyond each head delivered onto the line
+/// before it ([`Receipts::landed_before`]): a head started at another delivered head holds that
+/// one's commits, which its own squash said, and no entry is said twice. Oldest squash first.
 fn delivered(
     root: &Path,
     receipts: &Receipts,
@@ -342,8 +344,14 @@ fn delivered(
         if !Receipts::proved(root, receipt) {
             continue;
         }
-        let (parent, past) = (format!("^{}", receipt.parent), format!("^{before}"));
-        found.extend(entries_of(root, &[&receipt.head, &parent, &past])?);
+        let mut revs = vec![
+            receipt.head.clone(),
+            format!("^{}", receipt.parent),
+            format!("^{before}"),
+        ];
+        revs.extend((receipts.landed_before(root, receipt).iter()).map(|head| format!("^{head}")));
+        let revs: Vec<&str> = revs.iter().map(String::as_str).collect();
+        found.extend(entries_of(root, &revs)?);
     }
     Ok(found)
 }
