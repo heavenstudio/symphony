@@ -384,13 +384,17 @@ function wide(view) {
     const ax = x(sel.at), y0 = rails[sel.fromLane], y1 = rails[sel.toLane];
     const dir = y1 > y0 ? 1 : -1;
     const tip = y1, base = y1 - dir * 9;
-    arrow = `<svg class="arrows" width="${W}" height="${H}" style="color:var(--foreground)">
+    // Both ends on one lane: no arrow, the tick ringed; an arrow always joins two lanes.
+    if (sel.fromLane === sel.toLane) arrow = `<svg class="arrows" width="${W}" height="${H}" style="color:var(--foreground)">
+      <circle cx="${ax}" cy="${y0}" r="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <circle cx="${ax}" cy="${y0}" r="4.5" fill="currentColor" stroke="var(--card)" stroke-width="1.5"/></svg>`;
+    else arrow = `<svg class="arrows" width="${W}" height="${H}" style="color:var(--foreground)">
       <line x1="${ax}" y1="${y0}" x2="${ax}" y2="${base}" stroke="var(--card)" stroke-width="6"/>
       <line x1="${ax}" y1="${y0}" x2="${ax}" y2="${base}" stroke="currentColor" stroke-width="2"/>
       <path d="M${ax - 5} ${base} L${ax} ${tip} L${ax + 5} ${base} Z" fill="currentColor" stroke="var(--card)" stroke-width="1"/>
       <circle cx="${ax}" cy="${y0}" r="4.5" fill="currentColor" stroke="var(--card)" stroke-width="1.5"/>
       <circle cx="${ax}" cy="${y1}" r="3" fill="var(--card)" stroke="currentColor" stroke-width="1.5"/></svg>`;
-    chip = `<span class="guide" style="left:${152 + ax}px;top:20px;height:${Math.min(y0, y1) - 20}px"></span><span class="chip" style="left:${152 + ax}px;top:-1px;transform:translateX(${ax > W - 330 ? "-100%" : "-12px"})">#${sel.id} · ${esc(sel.sender)} → ${esc(sel.recipient ?? "Everyone on task")} · ${clock(sel.at)}${sel.kind === "verdict" ? " · verdict" : ""}</span>`;
+    chip = `<span class="guide" style="left:${152 + ax}px;top:20px;height:${Math.min(y0, y1) - (sel.fromLane === sel.toLane ? 28 : 20)}px"></span><span class="chip" style="left:${152 + ax}px;top:-1px;transform:translateX(${ax > W - 330 ? "-100%" : "-12px"})">#${sel.id} · ${esc(sel.sender)} → ${esc(sel.recipient ?? "Everyone on task")} · ${clock(sel.at)}${sel.kind === "verdict" ? " · verdict" : ""}</span>`;
   }
   const hours = `<div class="hours">${ticks.map((t) => `<span class="hour" style="left:${t.x}px"></span>`).join("")}</div>`;
   html += `<div class="lanes" style="height:auto">${hours}${lanesHtml}${laneHtml.join("")}${over}${arrow}${chip}</div>`;

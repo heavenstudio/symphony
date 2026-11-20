@@ -58,9 +58,21 @@ which needs none of this proposal. Measured in the page:
   replaces the mark's own `translateX(-50%)` while the button is down, so the mark jumps 12 px to
   the right. Here it ends 16.4 px from its arrow.
 
-The class of cause is an overlay that recomputes from style constants the geometry of the
-elements it joins, instead of measuring them, plus a page-wide rule that overwrites a
-positioned control's `transform`. Two things would keep it from coming back. The arrow reads
+The repair moves the marks and the arrow alone. Two more come from the same causes and are left
+to this proposal:
+
+- **The hour lines** are a layer of their own on the same 9rem start, so they sit up to 8 px
+  left of their tick labels and of the times the bars are drawn at.
+- **A phone's message rows** are buttons and take the controls' minimum height, so their words
+  sit about 16 px below their diamond and time (in the Show all picture above).
+
+A message whose sender and recipient fall on the same lane, such as a post from outside to
+everyone on the task, draws a 12 px stub downwards today. What it should draw is a choice, made
+below.
+
+The class of cause is a layer that recomputes from style constants the geometry of the
+elements it lines up with, instead of sharing their box or measuring them, plus a page-wide
+rule that overwrites a positioned control's `transform`. Two things would keep it from coming back. The arrow reads
 the boxes of its two endpoints, so any change to a mark or a lane moves it too. A mark is placed
 with `left` and a margin, or the `translate` property, so a press's `transform` composes with its
 placement instead of replacing it. A browser check that selects a mark, then presses and holds
@@ -168,6 +180,17 @@ above, with a dashed guide down to the arrow. Its text and the link to its threa
 below the lanes, as now. The arrow's ends are the two marks' measured centres, so the drift and
 offset measured above cannot recur in this drawing.
 
+A message whose two ends fall on the same lane draws no arrow. Its tick takes the filled dot and
+a ring around it, and the hours line names both ends. An arrow then always means a message
+between two lanes, never a stub that points nowhere. Here a message from lunar-heron-49 to
+keen-swift-85, sent after the task closed, when neither held a role on it:
+
+![Proposed, a message on one lane selected](timeline-navigation/proposed-same-lane.webp)
+
+Every layer over the tracks (the hour lines, the not-kept hatch, a skipped stretch's band, the
+ticks and the arrow) is drawn from the tracks' own start and width, so none can begin a few
+pixels off the others, as today's hour lines do.
+
 ### Quiet stretches
 
 A stretch is **quiet** when, for at least an hour, the task's records hold nothing in it:
@@ -235,7 +258,9 @@ the brief and the thread near the top. The list gains the same readings:
   above the list.
 - **A quiet stretch** is a row of its own: "10 h 54 m quiet, 14:03 → 11-20 00:57", with the
   records that make it quiet. The list has no scale, so this row is there under A as well.
-- **A message** is one line of 28 px, its words in the muted colour, against about 50 px today.
+- **A message** is one line of 28 px, its time, diamond and words on one centred line in the
+  muted colour, against about 50 px today with its words 16 px below its diamond. The whole row
+  is its press area.
   A run's row carries its distinguishing words, its length and a red result on one line.
 
 The box shows four steps in place of one. The mockup's list of the same stages, runs, role holds
@@ -252,9 +277,10 @@ schema change, and each is tested at its own layout functions and drawn in a bro
 1. **Rows by overlap.** Drop the half-percent rule. Add bars with edges, the lane's counts, the
    not-kept hatch and the distinguishing words. The rows' tests cover overlap, back-to-back runs,
    a run still running, and a run queued long before it started.
-2. **Ticks on a line.** Ticks at the foot of each lane, the 22 px Board & others lane, and the
-   arrow between measured marks with its address on the hours line. This can follow the
-   alignment repair or absorb it.
+2. **Ticks on a line.** Ticks at the foot of each lane and the 22 px Board & others lane. The
+   arrow runs between measured marks, with its address on the hours line, and a message on one
+   lane gets a ring and no arrow. The hour lines are drawn from the tracks' own start. This
+   follows the alignment repair.
 3. **Zoom and move.** The view's window, the toolbar line, ⌘/Ctrl + scroll, Shift + scroll,
    pinch, the drag across the hours, the keys, the overview, and parts brought into view. The
    window's arithmetic is unit tested, and a browser test zooms, moves and returns.
@@ -262,8 +288,8 @@ schema change, and each is tested at its own layout functions and drawn in a bro
    its edges: open roles, a run running now, messages after closure, `runs_from`, a partial
    history, equal instants, a quiet tail on an open task, a stretch exactly an hour long. It
    draws the band, the switch and a band's click.
-5. **The phone's rows.** One-line message rows, the not-kept row, and the quiet row, which comes
-   with slice 4 under every option.
+5. **The phone's rows.** One-line message rows with their words level with their diamond, the
+   not-kept row, and the quiet row, which comes with slice 4 under every option.
 
 Slices 1 and 2 stand alone, and slice 4 needs slice 3. Under A, slice 4 is the phone's quiet row
 alone.
