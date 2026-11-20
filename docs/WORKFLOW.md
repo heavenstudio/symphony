@@ -125,11 +125,11 @@ the next generation's activation (`Store::return_to_default`, `activate::returni
 too, goes to the v1 pair it stands at where v1 declares that pair, else to its mapped one, and a
 task returning blocked maps the pair it resumes to the same way. In one transaction, fenced as
 any activation is, each task takes the status its v1 pair stands for and loses its position; a
-blocked one keeps the block record it carried from before the workflow (what it waits on and
-why), or takes one waiting on `parked` where it carried none, naming the status it came from;
-the move is recorded as a transition by the board's activation service, the activation is
-recorded as a return with the commit and the mappings it applied, and no generation is left
-active. The definitions,
+blocked one keeps the block record it carried (what it waits on and why) where it has stood
+blocked since that record was written, as a workflow's edges never write one, and otherwise
+takes one waiting on `parked`, naming the status it came from; the move is recorded as a
+transition by the board's activation service, the activation is recorded as a return with the
+commit and the mappings it applied, and no generation is left active. The definitions,
 activations, transitions and receipts recorded before it stay, and each task keeps the workflow
 revision its return made (`fields._board.workflow_retired`), which a later activation or
 reopening continues from. A concept, design or review pair is recorded as v1's

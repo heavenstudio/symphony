@@ -360,7 +360,8 @@ impl Store {
     /// with the commit and the mappings it applied, and no generation is left active, so every
     /// writer finds a board with no custom workflow. The definitions, activations and
     /// transitions before it stay. A task returning blocked keeps the block record it carried
-    /// (what it waits on and why), and takes one waiting on `parked` where it carried none.
+    /// (what it waits on and why) where it has stood blocked since that record was written, and
+    /// takes one waiting on `parked` where it carried none or left blocked since.
     /// Nothing on a board with none active. Refused whole, the active generation and every task
     /// left as they were, where a task cannot be placed; planned again when the board changed
     /// between the read and the write.
@@ -370,6 +371,7 @@ impl Store {
     ) -> Result<Followed, Error> {
         use crate::workflow::activate;
         let by = crate::workflow::board_service("activation");
+        let mut refusal = None;
         for _ in 0..PLANS {
             let Planned {
                 read,
@@ -383,8 +385,22 @@ impl Store {
             let old = self.active_definition(&active)?;
             let generation = active.generation + 1;
             let at = self.now();
-            let plan = activate::returning(&old, &committed.returning, &tasks, generation, &by, at)
-                .map_err(refused_workflow)?;
+            let plan = match activate::returning(
+                &old,
+                &committed.returning,
+                &tasks,
+                generation,
+                &by,
+                at,
+            ) {
+                Ok(plan) => plan,
+                Err(why) if self.moved_since(&tasks)? => {
+                    refusal = Some(why);
+                    continue;
+                }
+                Err(why) => return Err(refused_workflow(why)),
+            };
+            let blocks = self.standing_blocks(blocks, &plan)?;
             let moved: Vec<Value> = (plan.moved.iter())
                 .map(|m| {
                     let transition = &m.transition;
@@ -431,10 +447,15 @@ impl Store {
                 Err(other) => return Err(other),
             }
         }
-        Err(Error::Refused(format!(
-            "workflow: the board changed under each of {PLANS} plans of its return to its own \
-             writers; nothing was written, and the active workflow stays"
-        )))
+        Err(refusal.map_or_else(
+            || {
+                Error::Refused(format!(
+                    "workflow: the board changed under each of {PLANS} plans of its return to its \
+                     own writers; nothing was written, and the active workflow stays"
+                ))
+            },
+            refused_workflow,
+        ))
     }
 
     /// What an activation plans from: the active generation and the last one recorded, each
@@ -489,6 +510,53 @@ impl Store {
         })
     }
 
+    /// Whether the board moved on from the read `tasks` came from: a task's version moved, or one
+    /// was filed or reopened. Its tasks are read before their holders ([`Store::standings`]), so a
+    /// write between the two (a claim) shows a task as no write left it; a plan refused on that
+    /// read is planned again rather than refused, and its refusal is said only where every plan
+    /// was.
+    fn moved_since(&self, tasks: &[crate::workflow::activate::Standing]) -> Result<bool, Error> {
+        let now: Standings =
+            self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
+        Ok(now.tasks.len() != tasks.len()
+            || (now.tasks.iter().zip(tasks))
+                .any(|(now, then)| now.slug != then.slug || now.version != then.version))
+    }
+
+    /// Of `blocks`, the block records still standing on the tasks `plan` returns blocked: a record
+    /// the task has stood blocked under since it was written, every transition recorded at or
+    /// after its time leaving the task blocked. A workflow's edges never write the record, so one
+    /// a task carried out of blocked and back in by them says why it waited before, not now.
+    fn standing_blocks(
+        &self,
+        mut blocks: std::collections::BTreeMap<String, Value>,
+        plan: &crate::workflow::activate::Plan,
+    ) -> Result<std::collections::BTreeMap<String, Value>, Error> {
+        let returning: Vec<(&str, u64)> = (plan.moved.iter())
+            .filter(|m| m.transition.status == "blocked")
+            .filter(|m| blocks.contains_key(&m.transition.slug))
+            .map(|m| (m.transition.slug.as_str(), m.expected))
+            .collect();
+        blocks.retain(|slug, _| returning.iter().any(|(s, _)| s == slug));
+        let ids = (returning.iter())
+            .flat_map(|&(slug, revision)| (1..=revision).map(move |r| event(slug, r)))
+            .collect();
+        let read = self.events(ids)?;
+        for body in read.as_array().into_iter().flatten() {
+            let Some(slug) = body.get("slug").and_then(Value::as_str) else {
+                continue;
+            };
+            let since = |record: &Value| {
+                (record.get("at").and_then(Value::as_f64))
+                    .is_none_or(|written| body["at"].as_f64().is_none_or(|at| at >= written))
+            };
+            if body["status"] != "blocked" && blocks.get(slug).is_some_and(since) {
+                blocks.remove(slug);
+            }
+        }
+        Ok(blocks)
+    }
+
     /// The definition `active` names, which an activation recorded.
     fn active_definition(&self, active: &Active) -> Result<Definition, Error> {
         (self.workflow_definition(&active.digest)?)
@@ -532,6 +600,7 @@ impl Store {
             .and_then(|()| activate::bound(custom))
             .map_err(refused_workflow)?;
         let by = crate::workflow::board_service("activation");
+        let mut refusal = None;
         for _ in 0..PLANS {
             let Planned {
                 read, tasks, seen, ..
@@ -548,8 +617,14 @@ impl Store {
             // After a return none is active, and the generations go on from its own.
             let generation = read.last + 1;
             let at = self.now();
-            let plan = activate::plan(custom, old.as_ref(), &tasks, generation, &by, at)
-                .map_err(refused_workflow)?;
+            let plan = match activate::plan(custom, old.as_ref(), &tasks, generation, &by, at) {
+                Ok(plan) => plan,
+                Err(why) if self.moved_since(&tasks)? => {
+                    refusal = Some(why);
+                    continue;
+                }
+                Err(why) => return Err(refused_workflow(why)),
+            };
             let moved: Vec<Value> = (plan.moved.iter())
                 .map(|m| {
                     json!({
@@ -597,10 +672,15 @@ impl Store {
                 Err(other) => return Err(other),
             }
         }
-        Err(Error::Refused(format!(
-            "workflow: the board changed under each of {PLANS} plans of its activation; nothing \
-             was activated, and the previous workflow stays"
-        )))
+        Err(refusal.map_or_else(
+            || {
+                Error::Refused(format!(
+                    "workflow: the board changed under each of {PLANS} plans of its activation; \
+                     nothing was activated, and the previous workflow stays"
+                ))
+            },
+            refused_workflow,
+        ))
     }
 
     /// The active custom workflow, or none on a board that never activated one or returned to its
@@ -873,9 +953,9 @@ pub(crate) fn unplaced(slug: &str) -> String {
     )
 }
 
-/// The block record of a task returning blocked from `from`, at `at`: the one it `carried` from
-/// before the workflow, what it waits on, why and who blocked it kept, or one waiting on `parked`
-/// where it carried none the board reads; its source is the status the return gives it either way.
+/// The block record of a task returning blocked from `from`, at `at`: the one it `carried` that
+/// still stands ([`Store::standing_blocks`]), what it waits on, why and who blocked it kept, or one
+/// waiting on `parked` where none does; its source is the status the return gives it either way.
 fn blocked(carried: Option<&Value>, from: Option<String>, at: f64) -> crate::waits_on::Blocked {
     let kept = carried
         .and_then(|record| serde_json::from_value::<crate::waits_on::Blocked>(record.clone()).ok());
