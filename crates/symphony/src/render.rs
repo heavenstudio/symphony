@@ -212,13 +212,22 @@ impl Ctx<'_> {
         media::embed(&restored, self)
     }
 
-    /// [`Ctx::convert`] of a part of `text`: the blocks from the one holding byte `from`, as many as
-    /// `limit` bytes of `text` hold, each longer than `block` cut, from one parse of all of it
-    /// ([`markdown::convert_part`]). The text the converter is handed has the lines of `text`, so a
-    /// part begins at a line of both and is measured in `text`; a `[[…]]` written over lines is the
-    /// exception, which moves where the later parts begin in `text`, never what they hold.
+    /// An agent's post outside a document through the same path as a document's body, its
+    /// components and links drawn, with raw HTML shown as typed ([`markdown::convert_post`]).
+    pub(crate) fn convert_post(&self, text: &str) -> String {
+        let (linked, stash) = self.prepared(text, true);
+        let body = markdown::convert_post(&linked);
+        let restored = links::restore(body.trim_end_matches('\n'), &stash);
+        media::embed(&restored, self)
+    }
+
+    /// [`Ctx::convert_post`] of a part of `text`: the blocks from the one holding byte `from`, as
+    /// many as `limit` bytes of `text` hold, each longer than `block` cut, from one parse of all of
+    /// it ([`markdown::convert_part`]). The text the converter is handed has the lines of `text`, so
+    /// a part begins at a line of both and is measured in `text`; a `[[…]]` written over lines is
+    /// the exception, which moves where the later parts begin in `text`, never what they hold.
     fn convert_part(&self, text: &str, from: usize, limit: usize, block: usize) -> markdown::Part {
-        let (linked, stash) = self.prepared(text, false);
+        let (linked, stash) = self.prepared(text, true);
         let starts = markdown::line_starts(text);
         let at = |line: usize| starts.get(line).copied().unwrap_or(text.len());
         let mut part = markdown::convert_part(&linked, &at, text.len(), from, limit, block);
@@ -470,7 +479,9 @@ impl Render {
         history
     }
 
-    /// An agent's markdown answer outside a card (an ask's), rendered as a card's agent line is.
+    /// An agent's Markdown outside a document (an ask's answer, a task's post or brief): its
+    /// Markdown, components and links drawn as a document's, its raw HTML the words typed
+    /// (`Vec<String>`, `<TokensPart key=x>`), as in a card's agent line.
     pub fn reply(&self, text: &str, doc_path: &str) -> Fragment {
         self.reply_for(text, doc_path, false)
     }
@@ -511,6 +522,18 @@ impl Render {
     }
 
     fn reply_for(&self, text: &str, doc_path: &str, typed: bool) -> Fragment {
+        let mut ctx = self.ctx(doc_path);
+        ctx.typed = typed;
+        let html = cards::single_paragraph(ctx.convert_post(text));
+        Fragment {
+            html,
+            media: ctx.take_media(),
+        }
+    }
+
+    /// A document's own text on its own (a section an excerpt shows), rendered as the document
+    /// renders it, its raw HTML and components its own, a lone paragraph unwrapped as a reply's.
+    pub(crate) fn excerpt(&self, text: &str, doc_path: &str, typed: bool) -> Fragment {
         let mut ctx = self.ctx(doc_path);
         ctx.typed = typed;
         let html = cards::single_paragraph(ctx.convert(text));
