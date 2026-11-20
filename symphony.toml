@@ -22,19 +22,23 @@ assessor = "haiku"
 [verdicts]
 check = ["just", "symphony-cli", "docs-audit", "--check"]
 
-# A land is its merge, its move and its push alone (docs/TASKS.md, the default landing): it runs
-# no check (`check = false`; the docs audit is evidence at the tip, run on main's tip by the
-# regenerator after each round, and part of the release run's `just verify`) and no generator. What
-# the regenerator a land starts makes of main's newest tip
-# (`just tasks regenerate`): the client distribution the server embeds, rebuilt and committed only
-# when `just client-check` finds it differs from a fresh build, then checked again, and landed as
-# one commit. Its key (`keys`, beside the generators, where a Symphony older than keys leaves it out
-# and still reads this file) is the hash of the client's package
-# (tools/client-key.sh): a tip whose key and committed distribution passed before builds nothing. Its outputs are the paths it owns: a land
-# keeps main's side of them, so no branch's own distribution lands. The land pushes main to origin
-# as its last step (`push`, on by default), and so does the regenerator.
+# A land is delivered by a pull request on GitHub (docs/TASKS.md, a land delivered by a pull
+# request): `delivery` runs the GitHub program linked beside the main checkout's own `tasks`
+# (docs/GITHUB_SETUP.md; its settings are symphony-github.toml), which pushes the task's branch,
+# writes its evidence as checks and has GitHub squash it into main, which the main checkout then
+# follows. It runs no check of its own (`check = false`, which delivery requires; the docs audit is
+# evidence at the tip, run on main's tip by the regenerator after each round, and part of the
+# release run's `just verify`) and no generator. What the regenerator a land starts makes of
+# main's newest tip (`just tasks regenerate`): the client distribution the server embeds, rebuilt
+# only when `just client-check` finds it differs from a fresh build, then checked again, and filed
+# as a task of its own that the orchestrator lands. Its key (`keys`, beside the generators, where
+# a Symphony older than keys leaves it out and still reads this file) is the hash of the client's
+# package (tools/client-key.sh): a tip whose key and committed distribution passed before builds
+# nothing. Its outputs are the paths it owns: a land refuses a branch that changes them, so no
+# branch's own distribution lands.
 [land]
 check = false
+delivery = [".target/bin/symphony-github", "deliver"]
 generators = [
   { name = "the client distribution", outputs = "apps/symphony-server/client/public/", command = ["sh", "-c", "just client-check || { just client-update && just client-check; }"] },
 ]
