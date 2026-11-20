@@ -520,8 +520,10 @@ closes the old files and cancels their reads. Patches are scrollable and bounded
 the file list at 500 files and 256 KiB of Git output; every incomplete or unavailable read
 says why. This code belongs only to the task kind, so the board carries none of it.
 
-Under the changes, _Tokens and estimated cost_ (`TokensPart`, `src/task-page.tsx`) is a closed
-disclosure: its heading is all a first visit draws, and opening it asks for its part from
+Last, under the thread's composer, _Tokens and estimated cost_ (`TokensPart`, `src/task-page.tsx`)
+is a closed disclosure, last so it moves nothing that loads (above the thread it pushed the
+thread's region, which mounts as it comes into view, off the first screen it began on): its
+heading is all a first visit draws, and opening it asks for its part from
 `/api/task-tokens` (`src/task-live.ts`'s `tokensPart`, read again on a change of the task) and
 imports its chunk (`src/task-tokens.tsx`, its style `src/task-tokens.css`), which guards the
 answer as it draws it: the total with its kinds, the tables by role and by review round, the

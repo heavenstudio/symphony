@@ -967,7 +967,6 @@ export function TaskDetail({
       <NearViewport key={`diff-${slug}`} id={`changes-${slug}`} height={160}>
         <TaskDiffPanel scope={scope} slug={slug} />
       </NearViewport>
-      <TokensPart key={`tokens-${slug}`} scope={scope} slug={slug} />
       <h2>Thread</h2>
       {/* The thread and the composer under it wait under their ghost until the thread on the first
           screen is in, whatever the head and the brief do meanwhile. */}
@@ -1013,6 +1012,9 @@ export function TaskDetail({
           )}
         </NearViewport>
       </Settle>
+      {/* Last, under the composer: a line above the thread would push the thread's region, which
+          mounts as it comes into view, off the first screen of the pages it began on. */}
+      <TokensPart key={`tokens-${slug}`} scope={scope} slug={slug} />
     </article>
   );
 }

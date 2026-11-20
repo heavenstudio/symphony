@@ -3861,7 +3861,7 @@ its unit, so no number in it reads as a commit. A copy of the board carries the 
 The pages draw the same figures, each with the day its prices were read and as an estimate, never
 money spent ([What the tokens cost](#what-the-tokens-cost)):
 
-- **A task's page** has *Tokens and estimated cost* under its changes, closed until opened, which
+- **A task's page** has *Tokens and estimated cost* last, under its thread, closed until opened, which
   reads `/api/task-tokens?slug=SLUG` (`show --json`'s `tokens` without its `rows`) and draws the
   total with its kinds, a table by role and one by review round, and the models no price was found
   for; a task with none says *No tokens recorded for this task.* and draws no table.
