@@ -206,11 +206,7 @@ fn kept(real: &Path, key: &str) -> Result<Held, Stop> {
 /// # Errors
 ///
 /// The file is refused, as a run that uses it would refuse it.
-pub fn standing(
-    ctx: &Context<'_>,
-    config: &Config,
-    file: &Path,
-) -> Result<Held, String> {
+pub fn standing(ctx: &Context<'_>, config: &Config, file: &Path) -> Result<Held, String> {
     let folders: Vec<&Path> = ctx.repository.iter().map(PathBuf::as_path).collect();
     if config.app().is_none() {
         return credential::read(file, &folders).map(|_| Held::Unknown);
@@ -375,13 +371,7 @@ fn make(
     let key = TOKEN_FILE;
     let repository = (config.repository.as_ref())
         .ok_or_else(|| Stop::Refused("the settings name no repository".into()))?;
-    let jwt = jwt(
-        ctx.openssl,
-        app.id,
-        key_file,
-        ctx.now,
-        "key_file",
-    )?;
+    let jwt = jwt(ctx.openssl, app.id, key_file, ctx.now, "key_file")?;
     let jwt = Secret::new(&jwt).map_err(Stop::Refused)?;
     let transport = (ctx.connect)(jwt.clone()).map_err(Stop::Unavailable)?;
     let asked = permissions(config);

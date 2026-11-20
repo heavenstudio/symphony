@@ -56,9 +56,9 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A page's size, the largest GitHub serves.
-const PER_PAGE: usize = 100;
+pub(crate) const PER_PAGE: usize = 100;
 /// The pages of rules read before the listing is said to be more than is read.
-const MAX_PAGES: usize = 10;
+pub(crate) const MAX_PAGES: usize = 10;
 /// The merge methods GitHub has, as its rules name them.
 const METHODS: [(&str, &str); 3] = [
     ("squash", "allow_squash_merge"),
@@ -134,14 +134,24 @@ pub struct Policy {
 ///
 /// # Errors
 ///
-/// GitHub gave no answer to judge (`unavailable`).
-fn bypass(
+/// GitHub gave no answer to judge: `unavailable`, of `kind` `policy`, so a land tries again and
+/// evidence that blocks is still said.
+pub(crate) fn bypass(
     host: &Host<'_>,
     verified: Option<&Verified>,
     id: i64,
     wanted: &Wanted<'_>,
 ) -> Result<Bypass, Value> {
-    let (status, value) = host.get(&format!("/rulesets/{id}"))?;
+    let (status, value) = host
+        .get(&format!("/rulesets/{id}"))
+        .map_err(|mut stopped| {
+            stopped["kind"] = json!("policy");
+            stopped["why"] = json!(format!(
+                "ruleset {id} was not read with the App's token: {}",
+                stopped["why"].as_str().unwrap_or_default()
+            ));
+            stopped
+        })?;
     if status != 200 {
         return Ok(Bypass::Unknown(format!(
             "GitHub answered {status} to the App's token"
@@ -152,9 +162,7 @@ fn bypass(
     }
     let Some(verified) = verified.filter(|verified| verified.repository == wanted.repository)
     else {
-        return Ok(Bypass::Unknown(format!(
-            "it was never verified: {VERIFY}"
-        )));
+        return Ok(Bypass::Unknown(format!("it was never verified: {VERIFY}")));
     };
     let now = value["updated_at"].as_str().unwrap_or_default();
     match (instant(now), instant(&verified.updated_at)) {
@@ -197,6 +205,9 @@ pub fn instant(text: &str) -> Option<i64> {
     let (fraction, zone) = match rest.strip_prefix('.') {
         Some(rest) => {
             let digits = rest.find(|c: char| !c.is_ascii_digit())?;
+            if digits == 0 {
+                return None;
+            }
             (&rest[..digits], &rest[digits..])
         }
         None => ("", rest),
@@ -260,7 +271,7 @@ fn rules(host: &Host<'_>, base: &str) -> Result<Result<Vec<Value>, String>, Valu
         ))?;
         let Some(listed) = value.as_array().filter(|_| status == 200) else {
             return Ok(Err(format!(
-                "the rules of {base} are not readable with the merging token (GitHub answered \
+                "the rules of {base} are not readable with the App's token (GitHub answered \
                  {status})"
             )));
         };
@@ -286,7 +297,7 @@ pub(crate) fn check(
     let (status, repository) = host.get("")?;
     if status != 200 {
         let missing = [format!(
-            "the repository is not readable with the merging token (GitHub answered {status})"
+            "the repository is not readable with the App's token (GitHub answered {status})"
         )];
         return Err(refused(wanted, &missing));
     }
@@ -319,10 +330,25 @@ fn kind(rule: &Value) -> &str {
     rule["type"].as_str().unwrap_or_default()
 }
 
-/// What `repository`, the `rules` in effect and each ruleset's `bypasses` leave missing of what
-/// `wanted` asks: nothing where the policy holds.
+/// What `repository`, read with the App's token, the `rules` in effect and each ruleset's
+/// `bypasses` leave missing of what `wanted` asks: nothing where the policy holds.
 #[must_use]
 pub fn judge(
+    repository: &Value,
+    rules: &[Value],
+    bypasses: &BTreeMap<i64, Bypass>,
+    wanted: &Wanted<'_>,
+) -> Vec<String> {
+    let mut missing = Vec::new();
+    unadministered(repository, &mut missing);
+    missing.extend(judge_rules(repository, rules, bypasses, wanted));
+    missing
+}
+
+/// What [`judge`] finds missing but whether the token read with administers the repository: the
+/// judgement of a read made by someone who does ([`crate::rulesets`]).
+#[must_use]
+pub fn judge_rules(
     repository: &Value,
     rules: &[Value],
     bypasses: &BTreeMap<i64, Bypass>,
@@ -361,7 +387,7 @@ pub fn judge(
     };
     let checks: Vec<&Value> = named("required_status_checks").collect();
     let pinned: Vec<&Value> = (checks.iter().copied())
-        .filter(|rule| requires(rule, Some(wanted.checks_app)))
+        .filter(|rule| requires(rule, Some(wanted.app)))
         .collect();
     if !pinned.iter().any(firm) {
         missing.push(
@@ -369,10 +395,10 @@ pub fn judge(
                 format!(
                     "{ELIGIBLE} is required of {base} from another source than App {}: a status of \
                  that name by anyone else would pass it",
-                    wanted.checks_app
+                    wanted.app
                 )
             } else {
-                let what = format!("requires {ELIGIBLE} from App {}", wanted.checks_app);
+                let what = format!("requires {ELIGIBLE} from App {}", wanted.app);
                 unfirm(base, &what, &pinned, bypasses)
             },
         );
@@ -386,12 +412,7 @@ pub fn judge(
              delivery's one merge of {base} does not meet"
         ));
     }
-    updates(
-        &named("update").collect::<Vec<_>>(),
-        bypasses,
-        wanted,
-        &mut missing,
-    );
+    updates(&named("update").collect::<Vec<_>>(), wanted, &mut missing);
     if named("merge_queue").next().is_some() {
         missing.push(format!(
             "{base} merges through a merge queue, which this build delivers nothing through"
@@ -441,7 +462,7 @@ fn unfirm(base: &str, what: &str, found: &[&Value], bypasses: &BTreeMap<i64, Byp
 }
 
 /// A bypass actor, as a person reads it: remote text kept to plain characters.
-fn actor((kind, id, mode): &(String, Option<i64>, String)) -> String {
+pub(crate) fn actor((kind, id, mode): &(String, Option<i64>, String)) -> String {
     let plain = |text: &str| -> String {
         (text.chars())
             .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
@@ -472,77 +493,46 @@ fn identity(repository: &Value, wanted: &Wanted<'_>, missing: &mut Vec<String>) 
     if repository["archived"] != json!(false) {
         missing.push("the repository is archived, or does not say it is not".into());
     }
+}
+
+/// The App's token administers nothing: what merges must not be able to change the rules it is
+/// held to. Judged of a read with that token alone.
+fn unadministered(repository: &Value, missing: &mut Vec<String>) {
     match repository["permissions"]["admin"].as_bool() {
         Some(false) => {}
         Some(true) => missing.push(
-            "the merging token administers the repository: what merges must not be able to \
+            "the App's token administers the repository: what merges must not be able to \
              change the rules it is held to"
                 .into(),
         ),
         None => missing.push(
-            "whether the merging token administers the repository is not shown: the repository \
+            "whether the App's token administers the repository is not shown: the repository \
              does not say it does not"
                 .into(),
         ),
     }
-    if repository["allow_auto_merge"] != json!(false) {
-        missing.push(
-            "auto-merge is allowed, or the repository's merge settings are not shown to the \
-             merging token: a merge GitHub makes later by itself is not delivered through"
-                .into(),
-        );
-    }
 }
 
-/// Updates of the base restricted to the landing App: a rule restricts them whose ruleset's one
-/// bypass actor is that App.
-fn updates(
-    found: &[&Value],
-    bypasses: &BTreeMap<i64, Bypass>,
-    wanted: &Wanted<'_>,
-    missing: &mut Vec<String>,
-) {
-    let (base, app) = (wanted.base, wanted.landing_app);
-    let landing = |(kind, id, mode): &(String, Option<i64>, String)| {
-        kind == "Integration"
-            && *id == Some(app)
-            && ["always", "pull_request", "exempt"].contains(&mode.as_str())
-    };
-    let of = |rule: &&Value| rule["ruleset_id"].as_i64().and_then(|id| bypasses.get(&id));
-    let alone = found.iter().any(|rule| {
-        matches!(of(rule), Some(Bypass::Actors(actors)) if actors.len() == 1 && landing(&actors[0]))
-    });
-    if alone {
-        return;
-    }
-    if found.is_empty() {
-        missing.push(format!(
-            "no rule restricts updates of {base} to the landing App {app}: anyone who may write \
-             merges a pull request whose {ELIGIBLE} is green, its evidence withdrawn since or not"
-        ));
-        return;
-    }
-    let why: Vec<String> = found
-        .iter()
-        .map(|rule| match (rule["ruleset_id"].as_i64(), of(rule)) {
-            (Some(id), Some(Bypass::Actors(actors))) if actors.is_empty() => {
-                format!("ruleset {id} lets nobody through, the landing App neither")
-            }
-            (Some(id), Some(Bypass::Actors(actors))) => format!(
-                "ruleset {id} lets through {}",
-                actors.iter().map(actor).collect::<Vec<_>>().join(", ")
-            ),
-            (Some(id), Some(Bypass::Unknown(why))) => {
-                format!("who ruleset {id} lets through is not known ({why})")
-            }
-            _ => "one from no ruleset read".to_string(),
+/// No rule restricts updates of the base: whoever it lets through, a pull request whose check is
+/// green is then merged only past it, which GitHub's auto-merge does not do, and the check is what
+/// holds a merge to its evidence.
+fn updates(found: &[&Value], wanted: &Wanted<'_>, missing: &mut Vec<String>) {
+    let rulesets: BTreeSet<String> = (found.iter())
+        .map(|rule| {
+            rule["ruleset_id"].as_i64().map_or_else(
+                || "one from no ruleset named".into(),
+                |id| format!("ruleset {id}"),
+            )
         })
         .collect();
-    missing.push(format!(
-        "updates of {base} are not restricted to the landing App {app} alone (Integration {app}): \
-         {}",
-        why.join(", ")
-    ));
+    if !rulesets.is_empty() {
+        missing.push(format!(
+            "a rule restricts updates of {} ({}): a pull request whose {ELIGIBLE} is green \
+             merges only past it, and the check alone holds a merge to its evidence",
+            wanted.base,
+            rulesets.into_iter().collect::<Vec<_>>().join(", ")
+        ));
+    }
 }
 
 /// The merge methods the repository and the rules nobody bypasses permit, which must be the
@@ -558,7 +548,7 @@ fn methods(repository: &Value, pulls: &[&Value], wanted: &Wanted<'_>, missing: &
             Some(false) => {}
             None => {
                 missing.push(
-                    "the repository's merge methods are not shown to the merging token (GitHub \
+                    "the repository's merge methods are not shown to the App's token (GitHub \
                      shows them with contents: write)"
                         .into(),
                 );

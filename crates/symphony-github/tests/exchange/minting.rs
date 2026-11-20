@@ -806,6 +806,7 @@ fn two_runs_at_once_leave_one_valid_token_and_no_torn_file() {
                             now,
                             repository: vec![repository.clone()],
                             openssl: "openssl",
+                            gh: "gh",
                             rest: &|_| {},
                         };
                         starts.wait();

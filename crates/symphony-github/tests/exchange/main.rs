@@ -176,6 +176,19 @@ pub(crate) fn run(
     now: i64,
     repository: Vec<PathBuf>,
 ) -> Ran {
+    run_gh(args, board, source, connect, now, repository, "gh")
+}
+
+/// The same, with `gh` the gh CLI it runs.
+pub(crate) fn run_gh(
+    args: &[&str],
+    board: &dyn Board,
+    source: &dyn Source,
+    connect: &dyn Fn(Secret) -> Result<Box<dyn Transport>, String>,
+    now: i64,
+    repository: Vec<PathBuf>,
+    gh: &str,
+) -> Ran {
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
     let ctx = Context {
         source,
@@ -184,6 +197,7 @@ pub(crate) fn run(
         now,
         repository,
         openssl: "openssl",
+        gh,
         rest: &|_| {},
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());

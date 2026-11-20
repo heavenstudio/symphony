@@ -3,7 +3,7 @@
 //! address is that repository and not the one delivered to, and its history makes nothing private
 //! public; and everything else squashed as a task, whatever it asks.
 
-use crate::deliver::{APP, Delivery, HEAD, LANDING, SLUG, snapshot};
+use crate::deliver::{APP, Delivery, HEAD, SLUG, snapshot};
 use crate::github::Fault;
 use serde_json::{Value, json};
 
@@ -33,7 +33,7 @@ fn importing(name: &str) -> Delivery {
 /// The default branch's rule that nobody bypasses permitting `methods`, as protected otherwise.
 fn permits(d: &Delivery, methods: &[&str]) {
     let github = &d.rig.github;
-    github.protect(APP, LANDING);
+    github.protect(APP);
     github.set_ruleset(
         1,
         &json!({"rules": [
@@ -46,6 +46,7 @@ fn permits(d: &Delivery, methods: &[&str]) {
             {"type": "deletion"},
         ]}),
     );
+    d.verify().ok();
 }
 
 /// What `up/stream` says of itself from now.

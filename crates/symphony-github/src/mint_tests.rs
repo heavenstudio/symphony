@@ -151,32 +151,40 @@ fn a_token_is_current_only_past_the_margin() {
 }
 
 #[test]
-fn each_token_is_asked_for_the_least_its_calls_need() {
+fn the_token_is_asked_for_the_least_its_calls_need() {
     let base = "enabled = true\nrepository = \"o/n\"\ntoken_file = \"/s/t\"\n";
-    let publish = "pull_requests = \"publish\"\nchecks_token_file = \"/s/c\"\nchecks_app_id = 1\n\
-                   landing_app_id = 2\npolicy_token_file = \"/s/p\"\npolicy_app_id = 3\n";
-    let asked = |more: &str, role: Role| {
+    let publish = "pull_requests = \"publish\"\napp_id = 2\n";
+    let asked = |more: &str| {
         let config = parse(&format!("{base}{more}")).unwrap();
-        permissions(&config, role).into_iter().collect::<Vec<_>>()
+        permissions(&config).into_iter().collect::<Vec<_>>()
     };
-    assert_eq!(asked(publish, Role::Checks), [("checks", "write")]);
-    assert_eq!(asked(publish, Role::Policy), [("administration", "write")]);
+    // A delivery pushes, opens the pull request, writes its checks and merges: one App, and
+    // never the repository's administration.
     assert_eq!(
-        asked(publish, Role::Landing),
-        [("contents", "write"), ("pull_requests", "write")]
+        asked(publish),
+        [
+            ("checks", "write"),
+            ("contents", "write"),
+            ("pull_requests", "write")
+        ]
     );
     assert_eq!(
-        asked("releases = \"publish\"\n", Role::Landing),
+        asked("releases = \"publish\"\n"),
         [("contents", "write")],
         "a release's creation"
     );
     assert_eq!(
-        asked(&format!("{publish}releases = \"publish\"\n"), Role::Landing),
-        [("contents", "write"), ("pull_requests", "write")]
+        asked(&format!("{publish}releases = \"publish\"\n")),
+        [
+            ("checks", "write"),
+            ("contents", "write"),
+            ("pull_requests", "write")
+        ]
     );
     assert_eq!(
-        asked(&format!("{publish}close_issues = true\n"), Role::Landing),
+        asked(&format!("{publish}close_issues = true\n")),
         [
+            ("checks", "write"),
             ("contents", "write"),
             ("issues", "write"),
             ("pull_requests", "write")
@@ -188,10 +196,11 @@ fn each_token_is_asked_for_the_least_its_calls_need() {
         ("exchange", "write"),
     ] {
         let more = format!("issues = \"{issues}\"\nimport_labels = [\"a\"]\n");
-        assert_eq!(asked(&more, Role::Landing), [("issues", level)], "{issues}");
+        assert_eq!(asked(&more), [("issues", level)], "{issues}");
         assert_eq!(
-            asked(&format!("{more}{publish}"), Role::Landing),
+            asked(&format!("{more}{publish}")),
             [
+                ("checks", "write"),
                 ("contents", "write"),
                 ("issues", level),
                 ("pull_requests", "write")
@@ -202,26 +211,25 @@ fn each_token_is_asked_for_the_least_its_calls_need() {
     let config = parse(base).unwrap();
     assert_eq!(config.issues, Issues::Off);
     assert_eq!(
-        permissions(&config, Role::Landing)
-            .into_iter()
-            .collect::<Vec<_>>(),
+        permissions(&config).into_iter().collect::<Vec<_>>(),
         [("metadata", "read")],
         "never every permission the App holds"
     );
+    for more in ["", publish, "releases = \"publish\"\nclose_issues = true\n"] {
+        assert!(
+            !asked(more)
+                .iter()
+                .any(|(name, _)| *name == "administration"),
+            "{more}"
+        );
+    }
 }
 
 #[test]
 fn a_jwt_is_rs256_of_the_app_and_verifies_with_its_public_key() {
     let keys = keys();
     let now = 1_700_000_000;
-    let jwt = jwt(
-        "openssl",
-        1_000_001,
-        &keys.join("rsa.pem"),
-        now,
-        "landing_key_file",
-    )
-    .unwrap();
+    let jwt = jwt("openssl", 1_000_001, &keys.join("rsa.pem"), now, "key_file").unwrap();
     let parts: Vec<&str> = jwt.split('.').collect();
     assert_eq!(parts.len(), 3, "{jwt}");
     let read = |part: &str| -> Value {
@@ -259,7 +267,7 @@ fn a_jwt_is_rs256_of_the_app_and_verifies_with_its_public_key() {
 #[test]
 fn what_openssl_cannot_sign_with_is_refused_naming_what_to_fix() {
     let keys = keys();
-    let refused = |openssl: &str, key: &Path| match jwt(openssl, 1, key, 0, "checks_key_file") {
+    let refused = |openssl: &str, key: &Path| match jwt(openssl, 1, key, 0, "key_file") {
         Err(Stop::Refused(why)) => why,
         other => panic!("{other:?}"),
     };
@@ -273,7 +281,7 @@ fn what_openssl_cannot_sign_with_is_refused_naming_what_to_fix() {
     assert_eq!(
         refused("openssl", &ec),
         format!(
-            "checks_key_file {} is no RSA key of 2048 bits or more, which a GitHub App's key \
+            "key_file {} is no RSA key of 2048 bits or more, which a GitHub App's key \
              is; nothing was sent",
             ec.display()
         )
@@ -283,7 +291,7 @@ fn what_openssl_cannot_sign_with_is_refused_naming_what_to_fix() {
         assert_eq!(
             refused("openssl", &key),
             format!(
-                "openssl could not sign with checks_key_file {}: write the App's private key \
+                "openssl could not sign with key_file {}: write the App's private key \
                  there as GitHub gave it, a PEM file with no passphrase; nothing was sent",
                 key.display()
             )
@@ -307,9 +315,9 @@ fn a_file_the_program_keeps_is_placed_and_read_as_a_token_file_is() {
     );
     let inside = repository.join("token");
     assert_eq!(
-        place(&inside, &folders, "checks_token_file"),
+        place(&inside, &folders, "token_file"),
         named(&format!(
-            "checks_token_file {} is inside the repository; keep it outside",
+            "token_file {} is inside the repository; keep it outside",
             inside.display()
         ))
     );
@@ -357,13 +365,12 @@ fn a_key_file_is_held_as_a_token_file_is_and_is_never_the_token_file() {
     let key = dir.join("key.pem");
     private(&key, "a key\n");
     assert_eq!(
-        key_file(&app(key.clone()), &folders, Role::Policy, &token_file).unwrap(),
+        key_file(&app(key.clone()), &folders, &token_file).unwrap(),
         key
     );
     let refused = |key: &Path, token_file: &Path| match key_file(
         &app(key.to_path_buf()),
         &folders,
-        Role::Policy,
         token_file,
     ) {
         Err(Stop::Refused(why)) => why,
@@ -372,33 +379,29 @@ fn a_key_file_is_held_as_a_token_file_is_and_is_never_the_token_file() {
     let named = key.display();
     assert_eq!(
         refused(&key, &key),
-        format!(
-            "policy_key_file {named} is policy_token_file: a token made would be written over \
-             the key"
-        )
+        format!("key_file {named} is token_file: a token made would be written over the key")
     );
     fs::set_permissions(&key, fs::Permissions::from_mode(0o604)).unwrap();
     assert_eq!(
         refused(&key, &token_file),
-        format!("policy_key_file {named} is readable by others; chmod 600 it")
+        format!("key_file {named} is readable by others; chmod 600 it")
     );
     let inside = repository.join("key.pem");
     private(&inside, "a key\n");
     assert_eq!(
         refused(&inside, &token_file),
         format!(
-            "policy_key_file {} is inside the repository; keep it outside",
+            "key_file {} is inside the repository; keep it outside",
             inside.display()
         )
     );
     let missing = dir.join("missing.pem");
     assert!(
-        refused(&missing, &token_file)
-            .starts_with(&format!("policy_key_file {}: ", missing.display())),
+        refused(&missing, &token_file).starts_with(&format!("key_file {}: ", missing.display())),
     );
     assert_eq!(
         refused(&dir, &token_file),
-        format!("policy_key_file {} is not a file", dir.display())
+        format!("key_file {} is not a file", dir.display())
     );
     let _ = fs::remove_dir_all(&dir);
 }

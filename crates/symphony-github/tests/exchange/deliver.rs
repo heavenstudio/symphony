@@ -16,15 +16,9 @@ use symphony_github::reconcile::Context;
 use symphony_github::state::{Mapping, Origin};
 use symphony_github::transport::{Failure, Request, Response, Transport};
 
-/// The token of the GitHub App that writes the checks.
-pub(crate) const CHECKS: &str = "ghs_fixtureCHECKS0123456789abcdefSECRET";
-/// That App's number.
+/// The number of the one GitHub App, whose token the settings' `token_file` holds: it pushes,
+/// writes the checks and merges.
 pub(crate) const APP: i64 = 42;
-/// The number of the GitHub App that merges, whose token the settings' `token_file` holds.
-pub(crate) const LANDING: i64 = 43;
-/// The token of the GitHub App that reads who bypasses the rules, and that App's number.
-pub(crate) const POLICY: &str = "ghs_fixturePOLICY0123456789abcdefSECRET";
-pub(crate) const READER: i64 = 44;
 pub(crate) const SLUG: &str = "sim/jump";
 pub(crate) const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -92,42 +86,32 @@ pub(crate) struct Delivery {
     pub(crate) rested: RefCell<Vec<Duration>>,
 }
 
-fn settings(checks: &std::path::Path, policy: &std::path::Path, more: &str) -> String {
-    format!(
-        "pull_requests = \"publish\"\nchecks_token_file = \"{}\"\nchecks_app_id = {APP}\n\
-         landing_app_id = {LANDING}\npolicy_token_file = \"{}\"\npolicy_app_id = {READER}\n{more}",
-        checks.display(),
-        policy.display()
-    )
+fn settings(more: &str) -> String {
+    format!("pull_requests = \"publish\"\napp_id = {APP}\n{more}")
 }
 
 /// What makes a request as the App whose token it carries.
 fn connect(github: &Arc<Fake>) -> impl Fn(Secret) -> Result<Box<dyn Transport>, String> + use<> {
     let github = Arc::clone(github);
     move |token: Secret| -> Result<Box<dyn Transport>, String> {
-        let app = match token.expose() {
-            CHECKS => APP,
-            TOKEN => LANDING,
-            POLICY => READER,
-            _ => 0,
-        };
+        let app = if token.expose() == TOKEN { APP } else { 0 };
         Ok(Box::new(As(Arc::clone(&github), app)))
     }
 }
 
 impl Delivery {
-    /// A delivery to a repository protected as one needs it.
+    /// A delivery to a repository protected as one needs it, its rulesets verified.
     pub(crate) fn new(name: &str, more: &str) -> Delivery {
+        let delivery = Delivery::unverified(name, more);
+        delivery.verify().ok();
+        delivery
+    }
+
+    /// The same, its rulesets never verified.
+    pub(crate) fn unverified(name: &str, more: &str) -> Delivery {
         let rig = Rig::off(name);
-        rig.github.protect(APP, LANDING);
-        rig.github.shown_to(READER);
-        let checks = rig.dir.0.join("secret/checks");
-        let policy = rig.dir.0.join("secret/policy");
-        for (file, token) in [(&checks, CHECKS), (&policy, POLICY)] {
-            std::fs::write(file, format!("{token}\n")).unwrap();
-            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600)).unwrap();
-        }
-        rig.enable(&settings(&checks, &policy, more));
+        rig.github.protect(APP);
+        rig.enable(&settings(more));
         let remote = Pushes {
             url: "git@github.com:o/n.git".into(),
             github: Arc::clone(&rig.github),
@@ -146,12 +130,65 @@ impl Delivery {
         }
     }
 
-    pub(crate) fn checks_file(&self) -> PathBuf {
-        self.rig.dir.0.join("secret/checks")
+    /// A gh CLI whose `api PATH` answers what GitHub answers a person now, who administers the
+    /// repository: written again at each call, from the fake as it is then.
+    pub(crate) fn gh(&self) -> PathBuf {
+        let dir = self.rig.dir.0.join("gh");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut paths = vec![
+            "repos/o/n".to_string(),
+            "repos/o/n/rules/branches/main?per_page=100&page=1".to_string(),
+        ];
+        paths.extend(
+            (self.rig.github.ruleset_ids().iter()).map(|id| format!("repos/o/n/rulesets/{id}")),
+        );
+        let name = |path: &str| -> String {
+            path.chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect()
+        };
+        for path in &paths {
+            let read = self.rig.github.person_reads(&format!("/{path}"));
+            if read.status == 200 {
+                std::fs::write(dir.join(format!("{}.json", name(path))), &read.body).unwrap();
+            }
+        }
+        let gh = dir.join("gh");
+        std::fs::write(
+            &gh,
+            format!(
+                "#!/bin/sh\nf=\"{}/$(printf %s \"$4\" | tr -c 'A-Za-z0-9' '_').json\"\n\
+                 if [ \"$1 $2 $3\" != \"api -H Accept: application/vnd.github+json\" ]; then \
+                 echo \"gh: not a read: $*\" >&2; exit 2; fi\n\
+                 if [ -f \"$f\" ]; then cat \"$f\"; else echo 'gh: Not Found (HTTP 404)' >&2; exit 1; fi\n",
+                dir.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        gh
     }
 
-    pub(crate) fn policy_file(&self) -> PathBuf {
-        self.rig.dir.0.join("secret/policy")
+    /// `rulesets ARGS` run with [`Delivery::gh`].
+    pub(crate) fn rulesets(&self, args: &[&str]) -> crate::Ran {
+        let gh = self.gh();
+        let mut all = vec!["rulesets"];
+        all.extend_from_slice(args);
+        crate::run_gh(
+            &all,
+            &self.rig.board,
+            &self.rig.settings,
+            &self.connect,
+            self.rig.now.get(),
+            vec![self.rig.dir.0.join("repository")],
+            gh.to_str().unwrap(),
+        )
+    }
+
+    /// `rulesets --verify`, as who administers the repository runs it at setup.
+    pub(crate) fn verify(&self) -> crate::Ran {
+        self.rulesets(&["--verify"])
     }
 
     /// `symphony-github ARGS`, each request made as the App whose token it carries.
@@ -178,6 +215,7 @@ impl Delivery {
             now: self.rig.now.get(),
             repository: vec![self.rig.dir.0.join("repository")],
             openssl: self.openssl,
+            gh: "gh",
             rest: &|wait| self.rested.borrow_mut().push(wait),
         };
         let mut out = Vec::new();
@@ -225,9 +263,9 @@ impl Delivery {
             .collect()
     }
 
-    /// Neither token is in anything said, kept or asked for by its address.
+    /// The token is in nothing said, kept or asked for by its address.
     pub(crate) fn assert_no_token(&self) {
-        self.assert_none_of(&[TOKEN, CHECKS, POLICY]);
+        self.assert_none_of(&[TOKEN]);
     }
 
     /// None of `secrets` is in anything said, kept or asked for by its address.
@@ -575,9 +613,9 @@ fn only_the_named_apps_checks_count_and_no_other_token_writes_them() {
         .map(|(.., app)| app)
         .collect();
     assert_eq!(eligible, [99, APP]);
-    // The checks' token a person's: GitHub takes no check of it, and nothing says published.
+    // The token a person's: GitHub takes no check of it, and nothing says published.
     let d = Delivery::new("deliver-person", "");
-    std::fs::write(d.checks_file(), "ghp_aPersonsOtherToken\n").unwrap();
+    std::fs::write(&d.rig.token_file, "ghp_aPersonsOtherToken\n").unwrap();
     let answer = d.publish(&snapshot(HEAD, "met", "r1"));
     assert_eq!(answer["state"], "refused", "{answer}");
     assert!(
@@ -588,8 +626,8 @@ fn only_the_named_apps_checks_count_and_no_other_token_writes_them() {
         "{answer}"
     );
     assert_eq!(d.rig.github.checks(HEAD).len(), 0);
-    // A checks' token others can read is not read at all.
-    std::fs::set_permissions(d.checks_file(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    // A token others can read is not read at all.
+    std::fs::set_permissions(&d.rig.token_file, std::fs::Permissions::from_mode(0o644)).unwrap();
     let answer = d.publish(&snapshot(HEAD, "met", "r1"));
     assert!(
         answer["why"]

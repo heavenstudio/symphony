@@ -48,7 +48,11 @@ project's default branch commits symphony-github.toml with enabled = true.
   preflight [--branch BASE]           read the protection of BASE (the default branch) as a
                                       delivery does before it writes, and say what is missing;
                                       writes nothing anywhere but a token it makes
-  tokens                              whether each token is current and when it expires, never
+  rulesets [--verify] [--branch BASE] read the rulesets on BASE (the default branch) in full with
+                                      gh, signed in as someone who administers the repository,
+                                      and judge them; --verify keeps who bypasses each, which a
+                                      delivery takes while the ruleset is unchanged
+  tokens                              whether the token is current and when it expires, never
                                       the token; reads no remote and writes nothing
 
 --tasks PROGRAM names the board's program, else the `tasks` beside this one or on PATH.
@@ -170,40 +174,35 @@ fn tokens(ctx: &Context<'_>, out: &mut dyn Write) -> i32 {
         let _ = writeln!(out, "the committed settings name no token file");
         return code;
     };
-    {
-        let next = |id: i64, what: &str| format!("App {id} makes {what} at its next use");
-        let said = match (
-            mint::standing(ctx, &config, file),
-            config.app(),
-        ) {
-            (Err(why), _) => {
-                code = 1;
-                format!("refused: {why}")
+    let next = |id: i64, what: &str| format!("App {id} makes {what} at its next use");
+    let said = match (mint::standing(ctx, &config, file), config.app()) {
+        (Err(why), _) => {
+            code = 1;
+            format!("refused: {why}")
+        }
+        (Ok(_), None) => "kept by hand: when it expires is not known here".to_string(),
+        (Ok(Held::Unknown), Some(app)) => format!(
+            "holds no expiry this program wrote; {}",
+            next(app.id, "another")
+        ),
+        (Ok(Held::Absent), Some(app)) => format!("absent; {}", next(app.id, "one")),
+        (Ok(Held::Token { expires, .. }), Some(app)) => {
+            let left = expires.at - ctx.now;
+            if left > mint::MARGIN {
+                format!("current until {} (in {} min)", expires.text, left / 60)
+            } else if left > 0 {
+                format!(
+                    "expires at {} (in {} min); {}",
+                    expires.text,
+                    left / 60,
+                    next(app.id, "another")
+                )
+            } else {
+                format!("expired at {}; {}", expires.text, next(app.id, "another"))
             }
-            (Ok(_), None) => "kept by hand: when it expires is not known here".to_string(),
-            (Ok(Held::Unknown), Some(app)) => format!(
-                "holds no expiry this program wrote; {}",
-                next(app.id, "another")
-            ),
-            (Ok(Held::Absent), Some(app)) => format!("absent; {}", next(app.id, "one")),
-            (Ok(Held::Token { expires, .. }), Some(app)) => {
-                let left = expires.at - ctx.now;
-                if left > mint::MARGIN {
-                    format!("current until {} (in {} min)", expires.text, left / 60)
-                } else if left > 0 {
-                    format!(
-                        "expires at {} (in {} min); {}",
-                        expires.text,
-                        left / 60,
-                        next(app.id, "another")
-                    )
-                } else {
-                    format!("expired at {}; {}", expires.text, next(app.id, "another"))
-                }
-            }
-        };
-        let _ = writeln!(out, "{} {}: {said}", mint::TOKEN_FILE, file.display());
-    }
+        }
+    };
+    let _ = writeln!(out, "{} {}: {said}", mint::TOKEN_FILE, file.display());
     code
 }
 
@@ -519,6 +518,23 @@ fn command(ctx: &Context<'_>, args: &[String], out: &mut dyn Write) -> Outcome {
                 )?,
             };
             crate::deliver::preflight(ctx, &base, out)
+        }
+        "rulesets" => {
+            let verify = flag(&mut rest, "--verify");
+            let named = option(&mut rest, "--branch")?;
+            none_left(&rest)?;
+            let base = match named {
+                Some(base) => base,
+                None => crate::config::default_branch(
+                    ctx.repository
+                        .first()
+                        .ok_or("the project has no main checkout")?,
+                )?,
+            };
+            if !crate::deliver::plain(&base, "-._/") {
+                return Err(format!("no branch is named {base:?}"));
+            }
+            crate::rulesets::run(ctx, &base, verify, out)
         }
         "tokens" => {
             none_left(&rest)?;

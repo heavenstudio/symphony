@@ -45,6 +45,8 @@ pub struct Context<'a> {
     pub repository: Vec<PathBuf>,
     /// The program that signs a GitHub App's JSON Web Token ([`crate::mint`]): `openssl`.
     pub openssl: &'a str,
+    /// The gh CLI that reads the rulesets as who is signed in to it ([`crate::rulesets`]): `gh`.
+    pub gh: &'a str,
     /// What a delivery rests by between two reads of the checks it wrote, which GitHub lists a
     /// little after it takes them: [`crate::deliver::rest`], or a test's, which waits on nothing.
     pub rest: &'a dyn Fn(Duration),
