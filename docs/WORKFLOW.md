@@ -28,10 +28,10 @@ validation or a host prerequisite check is not activation. The
 [graph design](analysis/configurable-delivery-workflow.md) describes the remaining system:
 configured staffing, PULL, recovery and attempts (`tools/workflow-operations`,
 `tools/workflow-attempt-integration`), the app's reading of phases and actions
-(`app/workflow-actions`), landing adapters and accepted outputs each have a task of their own;
-a project's approval ledger stays its own, the board verifying only its signed word
-([guards](#guards)); artifact policy receipts and execution attempts retain their separate
-ownership.
+(`app/workflow-actions`) has a task of its own; a project's approval ledger stays its own, the
+board verifying only its signed word ([guards](#guards)); artifact policy receipts and execution
+attempts retain their separate ownership. A dependency on an accepted output is admitted here
+([accepted outputs](#accepted-outputs)).
 
 ## Activation and mappings
 
@@ -50,7 +50,9 @@ declaration mints nothing, and an unknown capability fails the prerequisites. A 
 `symphony_plugin::execution::Principal`, built by the host from what it authenticated (an agent
 session by its handle, the local owner, a board service), never read from a request. The local
 host's policy is fixed in code (`Host::local`): the local owner holds `owner`, the board's
-recovery service holds `recovery`, and no adapter is registered. A hosted board brings its own
+recovery service holds `recovery`, and the two landing adapters are registered: `default_land`,
+the default landing, and `project_land`, a project's own ([external effects](#external-effects)).
+A hosted board brings its own
 `Host`, built from the principals its ingress authenticated; nothing in a project file or a
 request extends it.
 
@@ -82,8 +84,8 @@ command says why on stderr and runs on: a capability or adapter the host does no
 guard with no approval authority committed for its adapter, or a pair a guarded edge enters that
 a route reaches without its guards ([guards](#guards)); recovery on attempt failure or cancellation
 acknowledgement that moves work, automatic edges and retry bounds, which need durable attempts;
-`accepted_output` and `landed` dependencies, parent integration, and an adapter's prepare or
-finalize, as no adapter runs here yet and a prepared intent never completes on a caller's word; a
+`landed` dependencies and parent integration; a prepare or finalize of an
+adapter the host does not register; a
 pair or resume pair neither declared nor mapped; a mapping onto a position recording an outcome, satisfied dependants or a completion its
 source lacks; a task it would place, or resume, at a pair only guarded edges enter, unless the task
 stood there already under the same guards; and a task whose live executor or reviewer it would
@@ -108,17 +110,20 @@ Admission reads the active workflow, the task, its role rows, the tasks it depen
 key's receipt in one read, then refuses, by its code, in this order: a request naming another
 project than the board's, or a task no workflow holds (`unknown_id`); a request whose digest, generation, workflow revision or pair is not the task's now
 (`stale_workflow`, `stale_activation`, `stale_task`); an edge the definition does not declare, or
-one that leaves another pair (`unknown_id`); an automatic edge (`unsupported_writer`); a prepare,
-finalize or parent integration, which no host-verified adapter runs yet (`unsupported_adapter`);
-a guard its attestations do not meet ([guards](#guards): `guard_unavailable`, or `unknown_id`
-for an attestation of a guard the edge does not carry); a human wait taken by anyone but a person (`human_wait`); a
-principal meeting none of the edge's authorities (`unauthorized`); an input the edge does not
-declare (`unknown_id`), one it declares and the request lacks, an `acquire_role` taken by anyone
-but an agent, or a resume to a pair other than the one its block saved
-(`explicit_action_required`); an input revision on an edge no guard binds, as the board records
-none (`stale_input`); a dependency predicate not met (`dependency`); and a start past the
-project's cap (`capacity`). Last come a guarded edge's attestations, each checked against the
-operation: one for another principal (`unauthorized`), one binding other input revisions
+one that leaves another pair (`unknown_id`); an automatic edge (`unsupported_writer`); a parent
+integration, or a prepare or finalize of an adapter the host does not register
+(`unsupported_adapter`); a guard its attestations do not meet ([guards](#guards):
+`guard_unavailable`, or `unknown_id` for an attestation of a guard the edge does not carry); a
+human wait taken by anyone but a person (`human_wait`); a principal meeting none of the edge's
+authorities (`unauthorized`); an input the edge does not declare (`unknown_id`), one it declares
+and the request lacks, an `acquire_role` taken by anyone but an agent, or a resume to a pair other
+than the one its block saved (`explicit_action_required`); on an edge no guard binds, an input
+revision naming anything but the accepted output of a task it depends on, for an edge depending on
+`accepted_output`, as the board records no other (`stale_input`); a dependency predicate not met
+(`dependency`), and for `accepted_output` an output the request does not name
+(`explicit_action_required`) or one other than the output standing (`stale_input`); and a start
+past the project's cap (`capacity`). Last come a guarded edge's attestations, each checked against
+the operation: one for another principal (`unauthorized`), one binding other input revisions
 (`stale_input`), and any other that fails (`guard_unavailable`).
 
 A task role is held on this task: a holder of its row, or, by an edge that takes the role, a
@@ -127,17 +132,23 @@ reviewer's role, by holding or taking it, is a fresh session's (RULES.md
 `workflow/reviewers-not-the-owner`): never one that executed the task or work under it, filed it,
 or orchestrates or orchestrated it, whatever the graph says. A capability is held only by a
 principal the host's grants name. A `done` dependency is met by a task the workflow holds at a
-position that satisfies its dependants, or one the board's writers keep in done; a dependency not
-on the board meets nothing.
+position that satisfies its dependants, or one the board's writers keep in done; an
+`accepted_output` dependency by the output standing for it, named
+([accepted outputs](#accepted-outputs)); a dependency not on the board meets nothing.
 
 The write is one transaction that checks again everything the decision read: the active
 generation and digest, the task's version, each dependency's version, each role relied on, no
-other holder or reservation of a role taken, the key unused, the agent on the board, the cap's
-counters, and the state the board accepted from each approval authority a guard was met at. Anything moved since reads and decides again, so a request the board moved past
+other holder or live reservation of a role taken, the key unused, the agent on the board, the
+cap's counters, and the state the board accepted from each approval authority a guard was met at.
+A reservation past its expiry, or held by a session lost or gone, stands against no claim: the
+write drops it, fenced on that session's beat as it was read. Anything moved since reads and decides again, so a request the board moved past
 is refused as stale, never replayed on where another left the task. The write records the
 transition and its receipt, drops and adds the role rows its effects name, records a guarded
-edge's admission, puts the task at its pair and projected status, settles its hold when its status moves, and posts `took EDGE
-(SLUG@REVISION): FROM → TO` on its thread. It answers the transition's id, its effects and the
+edge's admission, puts the task at its pair and projected status, settles its hold when its status
+moves, and posts `took EDGE
+(SLUG@REVISION): FROM → TO` on its thread, then `HANDLE joined as ROLE` for each role the edge
+gives, as the board's own join says it, so every reader of who held the task's roles (a fresh
+reviewer's rule among them) reads it there. It answers the transition's id, its effects and the
 principal's next actions. A key is its principal's: a request repeating it answers the first
 result when it is the same request, whatever attestations come with it, and is refused when it is
 another; `tasks workflow apply` sends the receipt's request again when its command is repeated.
@@ -151,15 +162,115 @@ recorded in the write that files it, and a filing that asks for another status i
 filing is written as the board's own first, so a board with no workflow files it in one write as
 before; that write refuses itself where a workflow is active, and the task is filed again at the
 initial pair.
-The board's own writers neither move nor staff a task the workflow holds: a move, claim,
-reservation, verdict, block, close or takeover of its executor, reviewer or reservation refuses
-as `explicit_action_required`, naming `just tasks workflow actions`, and a status written past
-them meets the database's fence with the same code; a release and a leave go by the position's
-recovery ([below](#recovery)). The orchestrator's role stays the board's coordination, which its
-writers keep. `just tasks next` and PULL offer no task a workflow holds to a claim, nor name one
-unstaffed, orphaned or unreviewed (a working one counts as executing), and the board's block of
-a dependant whose prerequisite was cancelled leaves one to its edges' dependency predicates.
-Staffing and the launcher do not read the workflow yet (`tools/workflow-operations`).
+The board's own writers neither move nor staff a task the workflow holds: a move, verdict,
+block, close, `Store::claim` (the api's claim) or takeover of its executor or reviewer refuses as
+`explicit_action_required`, naming `just tasks workflow actions`, and a status written past them
+meets the database's fence with the same code; a release and a leave go by the position's
+recovery ([below](#recovery)). The orchestrator's role and a reservation stay the board's
+coordination, which its writers keep: a launch reserves held work for the session it starts, and
+admission honours that reservation, and consumes it, when the session takes the edge. The
+board's block of a dependant whose prerequisite was cancelled leaves one to its edges' dependency
+predicates and its position's policy. `just tasks claim`, PULL, `next`, the launcher, staffing,
+the cap, the alarm and the sweeps read a held task by its position and edges
+([Operations](#operations)).
+
+## Accepted outputs
+
+A task's accepted output is the identity of the transition that accepted it, `SLUG@REVISION`:
+the one an edge records when it moves the task to a position that satisfies its dependants from
+one that does not (built-in v1's approve, covered close, subtask completion and land), or between
+two that do where none stands (a task filed at an initial pair that satisfies them, or one whose
+last transition was recorded before accepted outputs were). The board
+mints it, so it is never a caller's claim, and the transition record keeps it, never changed, as
+its `accepted`. It stands while the task stays at positions that satisfy dependants: every later
+transition there carries it, an edge's, an activation's mapping or a recovery's stay. A move to a
+position that does not satisfy them supersedes it (a reopen, a rework, an activation whose new
+definition no longer has the pair satisfy them, which records that as a transition that moves
+nothing), and none stands until an edge accepts the task's output again, under a new identity. A
+mapping or a recovery never accepts one, and a task the board's own writers keep, done before the
+activation or not, has none.
+
+An edge depending on `accepted_output` is taken only on the output standing for each task its task
+depends on, each named in the request's `input_revisions` under that task's slug: none standing is
+`dependency`, one not named is `explicit_action_required`, and one other than the output standing,
+superseded or never accepted, is `stale_input`, so a caller that read an output a supersession
+replaced never takes the new one unread. The receipt keeps the request, and with it the outputs it
+took. The write is fenced on each prerequisite's version (held `FOR SHARE` in PostgreSQL), so a
+supersession and an admission racing from one read let one of them win: a supersession written
+first makes the admission decide again and refuses it, and an admission written first took the
+output standing then. What a supersession does to a dependant already admitted or delivered is
+not this check's (`tools/workflow-revision-guards`). `just tasks workflow actions SLUG` prints the
+task's own output standing and, where an edge leaving its pair depends on accepted outputs, the
+one standing for each task it depends on, which `workflow apply … --accept SLUG=OUTPUT` names;
+`Store::accepted_outputs` reads the same, and the board's claim names the ones it reads there
+(`just tasks claim`, a launch, the staffing pass). PULL and the staffing pass find such an edge
+open by the outputs standing too ([Operations](#operations)).
+
+## External effects
+
+An edge whose effect is `prepare` or `finalize` changes something outside the board (a merge), and
+is taken only through its adapter's boundary (`symphony_board::workflow::effect`,
+`Store::prepare_effect`, `dispatch_effect`, `finalize_effect`), never by a plain operation: an
+operation naming one is refused as `explicit_action_required`, so a prepared effect never completes
+on a caller's word. The refusal names what takes the edge where a command of the board's does
+(`just land SLUG` for a landing's adapter, the default's or the project's own), and a task's next
+actions list the edge with that code for every principal, so `just tasks workflow actions` says it
+is taken by `just land SLUG`, never applied. The host registers each adapter by name (`Host::adapters`), and the adapter
+itself answers what its system holds (`effect::Adapter`): its bindings as they are now, and the
+result of an effect it reads back.
+
+- **Prepare** admits the prepare edge as any operation is admitted and, in the same write as its
+  transition, records the effect's intent (`['intent', SLUG, REVISION]`, the workflow revision the
+  prepare made, which is the operation's key from there on): the adapter, the request's
+  idempotency key and principal, the workflow generation and digest, and what the effect is bound
+  to: the project and task, the repository, the pull request where there is one, the exact head,
+  the revision of the landing policy, the revision of the evidence as read, and the destination.
+  The same key again answers the same intent, and with other bindings is refused.
+- **Dispatch** comes before anything is sent. The intent stands only while the task is still at
+  the revision the prepare made, under the generation that admitted it, with every binding the
+  adapter reads now equal to the one recorded. Otherwise it is withdrawn, for good, and the
+  dispatch refused as `stale_input` naming what moved, as a finalize that meets it withdrawn is: a task taken out of its prepared pair by
+  another edge cancels its reservation this way. An adapter then checks the real head once more
+  as it acts, by merging the bound commit itself and never a branch name.
+- **Finalize** takes the finalize edge only on a result the adapter read back from its system
+  for an intent that was dispatched: with none, it is refused, and no receipt a request carries is
+  believed. The result (the merge commit) is recorded on the intent and given as the edge's
+  `receipt` input where it declares one. Asked again, it answers what it recorded and takes no
+  second transition, so a process killed between the effect and this step is finished by the next
+  one that asks, under the same intent.
+
+An effect that happened is recorded whatever moved while it was in flight, as it was authorized,
+with the recovery it owes said to the orchestrator on the thread and kept on the intent
+(`recovery`). Where the landing policy or the evidence was another when the effect happened than
+when it was prepared, the finalize edge is still taken, since the task did land, and the record
+never says the policy now in force accepts it. Where the task left its prepared pair, the
+workflow was activated again or left the board, or the edge refuses its principal, the result is
+recorded and no edge is taken: a person recovers the task by its graph, and a later finalize by
+who may take the edge takes it.
+
+**The default landing** (`just land SLUG`, [TASKS](TASKS.md#the-default-landing)) is the adapter
+`default_land` (`symphony_board::land::adapter`). On a task a workflow holds it lands by the
+graph alone: it takes the `prepare_land` edge of `default_land` leaving the task's pair, and
+refuses, before anything is merged, a task at a pair no such edge leaves. The stamps the task
+needs are read at its tip by the board's readers, as for any land. Its review is read from the
+workflow: an approve edge writes no verdict message, so the approve standing is the task's last
+review transition, and the head it read is the `head` input of that transition's request, kept on
+its receipt (`Store::reviewed`); a tip that is not that head is refused before the prepare. The
+landing binds the repository's common folder, the branch's tip, the project file the default
+branch commits as the policy revision, a digest of the stamps needed and standing with that
+review as the evidence revision, and the default branch. After the merge it reads back its own
+record of it, a merge of the bound head the default branch holds, and finalizes with that commit.
+A land run again finishes an interrupted one from its intent, merging nothing twice. The evidence it reads back is judged by the stamp catalogue
+the merge's first parent commits, as the policy revision is: the main checkout's head holds the
+branch's own project file by then, and a branch that changes `[stamps]` owes no recovery for its
+own change. A managed
+task is not delivered by a pull request (`[land] delivery`) yet.
+
+**A project's own landing** takes the same three calls under the name `project_land`, with an
+`effect::Adapter` of its own that reads its repository and pull request: its `land` recipe decides
+its evidence and policy as before, and the board holds it to what it bound.
+
+A guarded landing edge stays refused until revision-bound guards.
 
 ## Guards
 
@@ -190,8 +301,9 @@ plain words:
   generation, the task's workflow revision and the pair it is taken from, the input revisions it
   covers, the principal (its kind, issuer and subject), its result (`pass`, `refuse` or
   `unknown`) with the ledger facts a pass rests on and the reasons for another, the epoch and
-  generation it was decided at, and its time: issued no more than 30 s ahead of the board's
-  clock, expiring at most 900 s after it was issued. The caller gives it with the operation.
+  generation it was decided at, and its time: issued no more than 30 s ahead of the clock of the
+  machine that decides, whatever clock a caller pins for the board (`TASKS_NOW`), expiring at most
+  900 s after it was issued, on that clock too. The caller gives it with the operation.
 
 The board accepts an observation only signed by the committed key, under the observation's own
 domain (a signature over an attestation's bytes is none), from an authority the active
@@ -262,23 +374,83 @@ action's target, which clears a block's resume pair, or stays, keeping it: eithe
 transition by the recovery service records the move or the stay with what it recovered (the
 trigger, the holder, its role) and the slot effect, and a manual action leaves the position marked
 until its next transition (`TaskPosition::manual`), its thread line saying it waits on a person.
-A move into work is counted under the project's cap as a start is.
+A move into a position whose slot policy holds a slot, from one that holds none, is counted under
+the project's cap as a start is ([Operations](#operations)).
 
 The write is fenced on the active workflow, the task's version, each role it relies on or drops
 and, for a lost holder, the holder's session as it was read: a holder that beats again, or takes
 an edge first, wins, and the recovery decides again from where it left the task. The orchestrator
-role is never a workflow's: a release or leave of it is the board's own. Nothing recovers a lost
-holder by itself yet, and attempt failure and cancellation acknowledgement wait on durable
-attempts (`tools/workflow-operations`, `tools/workflow-attempt-integration`).
+role is never a workflow's: a release or leave of it is the board's own. The board recovers a
+lost holder by itself as well, wherever it gives open work an orchestrator
+([Operations](#operations)); attempt
+failure and cancellation acknowledgement wait on durable attempts
+(`tools/workflow-attempt-integration`).
+
+## Operations
+
+The board's operational readers read a held task's declared position and the edges leaving it
+(`symphony_board::workflow::operate`), never a state's name or the status a position projects to;
+whether a principal may take an edge stays admission's question.
+
+- **Claims.** A claim is an edge leaving the task's pair that gives its taker a role
+  (`acquire_role`), whatever operation the definition names it; an automatic edge is the board's,
+  never a claim. `just tasks claim SLUG` takes the one claim edge that gives the executor's role,
+  at the revision it reads (`Store::claim_by_workflow`), naming, for an edge that depends on
+  `accepted_output`, the outputs it reads standing ([Accepted outputs](#accepted-outputs)), and is
+  refused as `explicit_action_required`, naming the edges, where none gives it or several open
+  ones do.
+- **PULL and `next`.** PULL lists a held task by its claims: an executor's claim nobody there holds,
+  its dependency predicate met (as admission judges it: `accepted_output` by the output standing for
+  each prerequisite at the revision the board read, which the workflow's read takes only where an
+  edge depends on one; `landed` never), is ready (red, once red work waited unstaffed) and a
+  reviewer's is unreviewed, a live reservation named beside it. A staffed role whose holders are all
+  lost or gone is orphaned, saying whether the board recovers it or a person does; a prerequisite
+  that ended without success (an outcome of cancellation or failure, or the board's cancelled)
+  blocks it, naming its position's `unsuccessful_dependency`; its staffed executor at work is
+  executing. `just tasks next` offers a held task whose executor's claim edge admission's preview
+  shows nothing stopping, unless another's live reservation stands on it, whatever status the
+  claim's position projects to: its read takes those statuses beside the pullable ones, and a task
+  no workflow holds only in a pullable one.
+- **Settling.** Wherever the board gives open work an orchestrator, it then settles what no
+  session asks for (`Store::settle_held`): before `tasks pull` lists anything, in an
+  orchestrator's monitor, in a look of `tasks wait`, in a write's detached dispatcher (`tasks
+  dispatch`) and on the server's clock, under its give's retry. Each staffed holder lost or gone
+  is recovered by its position's `lost_holder` action as the recovery service, once, a stay that
+  waits on a person recorded no second time; and a task with a prerequisite that ended without
+  success, at a position whose policy is `cancel`, takes the one cancel edge leaving its pair the
+  recovery service may take. `block` and `manual` move nothing. A move admission refuses is said
+  on stderr each time it is tried, and writes nothing. `agent-send` delivers what it sends through
+  the dispatcher's pass but neither gives nor settles, so it links none of admission's write.
+- **Launching and staffing.** A launch on a held task starts only a role an edge leaving its
+  position gives, refused before anything starts otherwise: its executor reserves the task and
+  claims the edge when it starts, and its reviewer takes the edge as the new session, through
+  admission, which judges it fresh; no reviewer joins beside another. The staffing pass starts
+  the role the open claim edges give, an executor's before a reviewer's, and a reused idle
+  reviewer takes its edge the same way.
+- **Slots.** A held task holds a task slot, the cap on an orchestrator's open work, while its
+  position's slot policy is `acquire` or `retain`, whatever status it projects to: a block that
+  retains keeps it, a reviewer's position that acquires counts as work, and a position that
+  releases frees it. A move into a position that holds one, from one that holds none, is a start
+  the cap refuses past it (`capacity`). The cap reads the active definition's positions in its own
+  transaction. A task slot is task WIP, never an execution attempt's capacity.
+- **Finished.** A held task is finished at a terminal position: the launcher, cleanup and the
+  worktree sweep read that, never a done-looking status, so approved work that projects to done
+  keeps its worktree until it is accepted, and an edge into a terminal position closes what was
+  launched on the task as `done` does.
+- **The pipeline alarm** counts a held task by its recorded transitions, each read by its id:
+  every one that changed the status its task projects to is a move from its predecessor's.
 
 ## Records on the board
 
 From board schema 24 a custom workflow's records are one `workflow` table in both stores, each a
 `kind` and a `body` under a compound id: the active generation (`['active']`), each definition by
 its digest, each activation by its generation, and each transition of a task by its slug and the
-workflow revision it made (`['event', SLUG, REVISION]`). From schema 26 it holds as well the state
-the board accepted from each approval authority (`['authority', ADAPTER]`) and each guarded
-edge's admission (`['admission', SLUG, REVISION]`) ([guards](#guards)). A task the workflow holds keeps its
+workflow revision it made (`['event', SLUG, REVISION]`), with the accepted output standing after it
+([accepted outputs](#accepted-outputs)), and each external effect's intent by the revision its
+prepare made (`['intent', SLUG, REVISION]`, which moves by its stages until its finalize edge is
+taken). From schema 26 it holds as well the state the board accepted from each approval authority
+(`['authority', ADAPTER]`) and each guarded edge's admission (`['admission', SLUG, REVISION]`)
+([guards](#guards)). A task the workflow holds keeps its
 position in `fields._board.workflow`: its pair, the pair a blocked task resumes to, the generation
 and digest it was last moved under, and its workflow revision, which only its own transitions move.
 The position, and the status it projects to, change only in the one write that records their
@@ -296,6 +468,61 @@ activation recorded for it. `Store::raw` refuses the table. A board with no cust
 none of these records, its export is the text it was, and every other write runs as before. The
 whole-board copy carries the records before the tasks, so a copy that lost them cannot restore a
 task the workflow holds, and leaves the authorities' accepted states behind ([guards](#guards)). A reader one schema behind keeps and ignores the position.
+
+## The app
+
+A board with no custom workflow draws as it always has: its listing names no workflow, and the
+client fetches none of what follows, so its seven columns, its phone's tabs and its Build and
+Test overlays are those of the board's own writers, and its first visit carries nothing more.
+
+**What the wire carries.** `GET /api/workflow` (`WORKFLOW_PATH`) answers `BoardWorkflow`: the
+board's project and its active `WorkflowRead` (definition, revision and generation), or none. A
+task the workflow holds carries `workflow`, its `TaskPlace`, on its page and in every listing:
+its phase and state IDs, the pair a blocked task resumes to, its workflow revision, and the
+recovery by hand it waits on (`manual`: whose `release` or `lost_holder` left it, in which role).
+A task the board's own writers keep carries none, and its wire is the text it was.
+`GET /api/workflow-actions?slug=SLUG` (`WORKFLOW_ACTIONS_PATH`) answers that task's
+`NextActions` for the local owner, a preview and never a permit; a hosted visitor is refused it,
+as the apply route refuses one.
+
+**The board.** The [waiting listing](TASKS.md#what-a-task-waits-on) puts a task the workflow holds
+in its phase's column, keyed `phase:ID` so a phase never takes a status's key or an overlay's,
+unless its machine work puts it in Build or Test; blocked, it stays in its phase, and
+`status=phase:ID` selects one there; every other listing counts and selects a held task by its
+status, as before. The waiting listing's `waiting` adds `workflow`, the active generation,
+absent on a board with none, and `states`, `[state, count]` for the open tasks the workflow
+holds, by state ID in its order, counted after search and window and before `wait`;
+`wait=state:ID` lists one state's open tasks across their phases, as a wait kind's are. The
+board loads the workflow's
+chunk (`apps/symphony-web/src/flow.tsx`) only once a listing names a generation, reads the
+definition, and reads it again when the generation moves. It draws the phases that are columns
+by their `order`, then Build and Test, then any status the board's own writers still hold a task
+in; on a phone, a tab for every phase by its `phone_order`; on a desk, a button for each phase
+that is no column, which opens it as a list as Backlog opens; and a chip for each state with
+open tasks, which chooses its facet. A card names its place by its phase's and state's labels.
+The phone tab the board keeps for a project is the phase's stable key, never its label, so a
+relabel keeps it, and a phase no longer drawn falls back to the first tab. The state facet
+chosen is the page's own and is not kept. A definition the board cannot draw leaves it as its
+own writers draw it.
+
+**The task page.** A task with a place loads the next-actions chunk
+(`apps/symphony-web/src/nextactions.tsx`). It says the place, the pair a blocked task resumes to
+and the recovery by hand it waits on, then each action by its label and destination, with the
+inputs it needs and, where it is unavailable now, why and whose it is (the authorities the edge
+names). Taking one posts its edge, the snapshot the actions named and a fresh idempotency key to
+`/api/workflow-apply`, the same key again only for the same request after an answer that never
+came. A refusal says its words; a `stale_*` one says the task moved since and offers to read its
+actions again, and they are read again whenever the task's revision moves.
+
+**The timeline and the Agents page.** A task's timeline (`/api/task-timeline`) carries `places`,
+one for each transition recorded for it (`Store::workflow_transitions`, a read of its own events'
+keys alone), each named by the definition its move was made under, with the status it projects
+to, who moved it and by which edge; a task no workflow held carries none. The page draws a Phase
+lane and a State lane under the stages, a row for each place on a phone, and the time spent in
+each phase and in each state in the heading: the clock's time there, told apart from the
+machine's time on runs. The Agents page says a held task's place where it says another task's
+status, by the definition's names, which it reads through the board's workflow chunk only once a
+task it lists has a place.
 
 ## Definition format 1
 
@@ -346,7 +573,8 @@ the board records them.
 Operations are `create`, `claim`, `release`, `advance`, `request_review`, `approve`, `changes`,
 `block`, `resume`, `retry`, `cancel`, `complete_subtask`, `close_covered`, `prepare_land`,
 `confirm_land`, `prepare_external`, `confirm_external`. Creation away from the initial position
-requires an explicit route. External operations use declared adapters; no operation executes
+requires an explicit route. External operations use declared adapters
+([external effects](#external-effects)); no operation executes
 project code while validating a definition.
 
 Effects are tagged by `kind` with these exact parameters:

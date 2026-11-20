@@ -100,6 +100,55 @@ skips = \"  \"
 }
 
 #[test]
+fn only_pictures_is_waivable_by_a_gate_decision_and_a_project_may_mark_it_not() {
+    let own = Catalogue::symphony();
+    let waivable: Vec<&str> = (own.stamps.iter())
+        .filter(|stamp| stamp.waivable)
+        .map(|stamp| stamp.name)
+        .collect();
+    assert_eq!(waivable, ["pictures"]);
+    assert_eq!(own.unwaivable("pictures"), None);
+    for never in crate::gates::NEVER {
+        let why = own.unwaivable(never).unwrap();
+        assert!(
+            why.starts_with(&format!("{never} is never waived: tests (a red")),
+            "{why}"
+        );
+        assert!(
+            why.ends_with("; the catalogue's waivable stamps are pictures"),
+            "{why}"
+        );
+    }
+    assert_eq!(
+        own.unwaivable("lint").unwrap(),
+        "the catalogue has no stamp \"lint\": its stamps are tests, review, pictures, owner \
+         (`just tasks stamps` lists them); a raise names a number in a file, PATH:NAME"
+    );
+    // A project's own catalogue keeps the Symphony's mark unless it writes one.
+    let kept = Catalogue::parse("[stamps.review]\n[stamps.pictures]\n").unwrap();
+    assert_eq!(kept.unwaivable("pictures"), None);
+    let strict =
+        Catalogue::parse("[stamps.review]\n[stamps.pictures]\nwaivable = false\n").unwrap();
+    assert_eq!(
+        strict.unwaivable("pictures").unwrap(),
+        "the catalogue does not mark pictures waivable ([stamps.pictures] waivable); the \
+         catalogue marks none waivable"
+    );
+    // tests, review and owner cannot be marked waivable, named with their lines.
+    assert_eq!(
+        Catalogue::parse("[stamps.tests]\nwaivable = true\n[stamps.owner]\nwaivable = true\n")
+            .unwrap_err(),
+        format!(
+            "symphony.toml: [stamps] marks waivable \"tests\" (line 2), \"owner\" (line 4), \
+             which no gate decision waives: {}",
+            crate::gates::NEVER_WHY
+        )
+    );
+    // Marked not waivable, they read as they are.
+    assert!(Catalogue::parse("[stamps.review]\nwaivable = false\n").is_ok());
+}
+
+#[test]
 fn a_stamp_the_symphony_has_no_reader_for_is_refused_by_name_and_line() {
     assert_eq!(
         Catalogue::parse("[stamps.review]\n\n[stamps.lint]\ndefault = true\n").unwrap_err(),
@@ -175,6 +224,7 @@ fn the_needs_are_read_from_the_boards_own_field_alone() {
         tip: Some("1a2b3c4d5e6f".into()),
         by: "able-otter".into(),
         why: "a store query and its test, no page or wire".into(),
+        import: None,
     };
     let fields = |plugin: &str, value: Value| {
         BTreeMap::from([(
@@ -209,6 +259,7 @@ fn the_threads_line_says_the_stamps_the_tip_read_what_it_needed_before_and_who()
         tip: Some("1a2b3c4d5e6f7a8b".into()),
         by: "able-otter".into(),
         why: "a store query and its test, no page or wire".into(),
+        import: None,
     };
     assert_eq!(
         needs.line(&strings(&["review"])),

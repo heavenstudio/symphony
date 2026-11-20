@@ -889,3 +889,71 @@ pub fn sweep_presence(store: &Store, state: PathBuf) {
     std::fs::remove_file(&sweep.state).unwrap();
     std::fs::remove_file(reap::lock_path(&sweep.state)).unwrap();
 }
+
+/// A custom workflow small enough for any test that needs a task one holds: claimed at
+/// `build/available` into `build/working`, which its executor staffs and whose lost holder the
+/// board recovers back to `build/available`; submitted to `verify/awaiting`; accepted by the owner
+/// at `verify/accepted`, terminal.
+pub const HELD_FLOW: &str = r#"
+[workflow]
+format = 1
+initial = { phase = "build", state = "available" }
+task_kinds = ["task"]
+phases = [
+  { id = "build", label = "Build", order = 0, phone_order = 0, column = true },
+  { id = "verify", label = "Verify", order = 1, phone_order = 1, column = true },
+]
+states = [
+  { id = "available", label = "Available" }, { id = "working", label = "Working" },
+  { id = "awaiting", label = "Awaiting" }, { id = "accepted", label = "Accepted" },
+]
+capabilities = ["owner"]
+adapters = []
+guards = []
+positions = [
+  { at = { phase = "build", state = "available" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = true, terminal = false, legacy = "ready", satisfies_dependencies = false, completion = "none" },
+  { at = { phase = "build", state = "working" }, staffing = "executor", slot = "acquire", dependencies = "none", unsuccessful_dependency = "block", accepts_work = true, terminal = false, legacy = "in_progress", satisfies_dependencies = false, completion = "none", recovery = { release = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = false }, lost_holder = { target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = false }, attempt_failure = { manual = true, slot = "retain", release_role = false, release_reservation = false }, cancellation_acknowledged = { manual = true, slot = "retain", release_role = false, release_reservation = false } } },
+  { at = { phase = "verify", state = "awaiting" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = false, legacy = "review", satisfies_dependencies = false, completion = "none" },
+  { at = { phase = "verify", state = "accepted" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = true, legacy = "done", outcome = "success", satisfies_dependencies = true, completion = "covered_close" },
+]
+edges = [
+  { id = "claim", label = "Claim", from = { phase = "build", state = "available" }, to = { phase = "build", state = "working" }, operation = "claim", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "acquire_role", role = "executor" }, { kind = "slot", policy = "acquire" }], automatic = false, human_wait = false },
+  { id = "submit", label = "Submit", from = { phase = "build", state = "working" }, to = { phase = "verify", state = "awaiting" }, operation = "request_review", authority = [{ kind = "task_role", role = "executor" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "slot", policy = "release" }], automatic = false, human_wait = false },
+  { id = "accept", label = "Accept", from = { phase = "verify", state = "awaiting" }, to = { phase = "verify", state = "accepted" }, operation = "close_covered", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "outcome", outcome = "success", satisfies_dependencies = true }, { kind = "slot", policy = "release" }], automatic = false, human_wait = true },
+]
+"#;
+
+/// [`HELD_FLOW`] as a commit's project file sets it, from fixed commits.
+pub fn held_flow() -> symphony_board::workflow::Custom {
+    let definition = (symphony_board::workflow::written(HELD_FLOW).unwrap().0).unwrap();
+    let revision = definition
+        .revision(symphony_api::workflow::Source {
+            commit: "1".repeat(40),
+            project_blob: "2".repeat(40),
+        })
+        .unwrap();
+    symphony_board::workflow::Custom {
+        definition,
+        revision,
+        mappings: Vec::new(),
+        authorities: Vec::new(),
+        project: None,
+    }
+}
+
+/// `edge` taken on `slug` by the agent session `handle`, at the revision it reads now.
+pub fn take_edge(store: &Store, slug: &str, handle: &str, edge: &str) {
+    use symphony_board::workflow::{Host, agent_session};
+    let (principal, host) = (agent_session(handle), Host::local());
+    let next = store.workflow_actions(slug, &principal, &host).unwrap();
+    let request = symphony_api::workflow::OperationRequest {
+        project: store.database().database().to_string(),
+        task: slug.into(),
+        edge: edge.into(),
+        input_revisions: Default::default(),
+        idempotency_key: format!("{slug}@{}:{edge}", next.snapshot.task_revision),
+        inputs: Default::default(),
+        expected: next.snapshot,
+    };
+    store.apply_operation(&principal, &host, &request).unwrap();
+}

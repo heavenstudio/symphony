@@ -58,6 +58,7 @@ fn observe(store: &Store, generation: u64, previous: Option<u64>) -> Result<Obse
 fn attestation(f: &Fixture, slug: &str, generation: u64) -> Attestation {
     let active = f.store.workflow_active().unwrap().unwrap();
     let position = f.store.workflow_position(slug).unwrap().unwrap();
+    let issued = crate::store::now() - 1.0;
     Attestation {
         task: slug.into(),
         workflow: active.digest,
@@ -65,8 +66,9 @@ fn attestation(f: &Fixture, slug: &str, generation: u64) -> Attestation {
         task_revision: position.revision,
         at: position.at(),
         generation,
-        issued_at: crate::store::now() - 1.0,
-        expires_at: crate::store::now() + 300.0,
+        issued_at: issued,
+        // As long as the board takes, so a loaded machine has all of it.
+        expires_at: issued + crate::workflow::guard::MAX_VALIDITY,
         ..passing(&guarded_two(7))
     }
 }

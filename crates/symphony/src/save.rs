@@ -39,8 +39,8 @@ pub const ROUTES: [&str; 14] = [
 /// The owner's operation on a task a custom workflow holds, through the board's one admission
 /// (`symphony_board::Store::apply_attested`): `{"slug": SLUG, "request": OperationRequest}`, with
 /// `"attestations": [Signed]` for a guarded edge, the principal the local owner, never one the
-/// payload names.
-pub const WORKFLOW_APPLY: &str = "/api/workflow-apply";
+/// payload names ([`symphony_api::workflow::WORKFLOW_APPLY_ROUTE`], which the pages post to).
+pub const WORKFLOW_APPLY: &str = symphony_api::workflow::WORKFLOW_APPLY_ROUTE;
 
 /// The routes that write to one task, named by the payload's `slug`.
 const TASK_ROUTES: [&str; 6] = [

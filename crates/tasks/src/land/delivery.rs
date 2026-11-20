@@ -11,8 +11,9 @@
 //!   or made, and the checks of the [`Snapshot`] it is handed written and read back. Answers
 //!   `published` with the repository's number and name, the pull request's number and address, and
 //!   the head the host holds.
-//! - `merge`: one request to squash that pull request at that head, and no other. Answers
-//!   `merged`, `refused` (with `kind`: `conflict`, `head`, `checks`, `permission`) or `unknown`.
+//! - `merge`: one request to merge that pull request at that head, and no other, by the method
+//!   the request names: `squash`, or `merge` for an import. Answers `merged`, `refused` (with
+//!   `kind`: `conflict`, `head`, `checks`, `permission`) or `unknown`.
 //! - `result`: the bound pull request as the host holds it: `open`, `merged` (with the commit) or
 //!   `closed`, its head, its base and its repository.
 //! - `landed`: told once the board closed the task, for what the program does then.
@@ -20,6 +21,20 @@
 //! Any verb may answer `refused` or `unavailable` with `why`. The program decides nothing: what a
 //! task needs, whether it stands and whether to ask for the merge are this land's, by
 //! [`evidence::snapshot`], the one reading `tasks api`'s `evidence` answers too.
+//!
+//! **Two operations.** A task's head is squashed into one commit ([`TASK`], and [`GENERATED`] for
+//! what the regenerator made). A head that imports the project's upstream is merged by a merge
+//! commit, which keeps the upstream's commit in the default branch's history ([`IMPORT`]), and
+//! only where three things agree ([`Landing::import`]): the project file names the upstream
+//! (`[land.upstream]`); the head's assessment, at that head, names the upstream commit **U** it
+//! imports ([`crate::stamps::Needs::import`]); and the history fetched now from the upstream says
+//! so: U on the upstream's branch and newer than the last import, merged on the head's own line,
+//! and every other commit the head adds its line's own or U's. Each publication and merge of an
+//! import tells the program the operation, the upstream and U ([`delivering`]), which pins the
+//! upstream at its host and answers its number ([`pinned`]). Where an upstream is named, a head
+//! that holds any of its commits and is not assessed as an import is refused, never squashed,
+//! and the upstream is fetched for every land to tell, so one that does not answer refuses a
+//! task's land as well. Neither operation falls back to the other, nor to a merge here.
 //!
 //! Before it judges anything a land reads the pull request a run before bound the task to
 //! ([`Landing::bound_before`]): one merged since is settled or held, never published to, and one
@@ -29,20 +44,22 @@
 //!
 //! The land keeps a [`Journal`] in the lands' folder, written before each step it names:
 //!
-//! 1. **Prepared**: the head, the snapshot's revision and the commit's title and body. The
-//!    remote default branch is fetched and its project file must be the one committed here; a
-//!    head that changes a generator's outputs and is not what the regenerator made
-//!    ([`Landing::generated`]), or merges a commit the remote default does not
-//!    hold (an import of another history, which a squash would flatten), is refused.
+//! 1. **Prepared**: the head, the operation (and for an import, what it imports), the snapshot's
+//!    revision and the commit's title and body. The remote default branch is fetched and its
+//!    project file must be the one committed here; a head that changes a generator's outputs and
+//!    is not what the regenerator made ([`Landing::generated`]), or merges a commit the remote
+//!    default does not hold and is not an import of the upstream (another history, which a
+//!    squash would flatten), is refused.
 //! 2. **Eligible**: published, and the snapshot read again: one of another revision is published
 //!    again, never merged.
 //! 3. **Merge requested**: written before the request. From here no run merges locally, whatever
 //!    the settings say by then: a run reads the bound pull request first ([`Landing::settle`]).
 //! 4. **Remote merged**: the commit **S** the host made is proved by git alone
 //!    ([`Landing::prove`]): on the fetched default branch, of one parent, its tree the merge of
-//!    that parent and the head. Anything else is held and closes nothing. A [`Receipt`] is kept
-//!    for good, and the head stays reachable under [`RETAINED`], as a squash leaves it in no
-//!    history.
+//!    that parent and the head; for an import, of two parents, the base then the head, its tree
+//!    the merge of the two, and U in its history. Anything else (an import squashed, a task
+//!    merged by a merge commit) is held and closes nothing. A [`Receipt`] is kept for good, and
+//!    the head stays reachable under [`RETAINED`], as a squash leaves it in no history.
 //! 5. **Reconciled**: a clean main checkout whose default branch the remote's descends from is
 //!    fast-forwarded. A dirty or diverged one is left as it is: landed remotely, reconciliation
 //!    pending, and the next run tries again.
@@ -72,6 +89,11 @@ pub const TASK: &str = "task";
 /// How what the regenerator made is delivered ([`super::regenerate::Pending`]): squashed as a
 /// task's head is, once it is the generators' outputs alone, made of what the default branch holds.
 pub const GENERATED: &str = "generated";
+/// How a head that imports the project's upstream ([`super::Upstream`]) is delivered: merged by a
+/// merge commit, which keeps the upstream's commit in the default branch's history ([`Import`]).
+pub const IMPORT: &str = "import";
+/// Where the upstream's default branch is fetched to in the main checkout, read for an import.
+pub const UPSTREAM: &str = "refs/symphony/upstream";
 
 /// `[land] delivery` as the main checkout `main` has it committed at its head: the command, or
 /// nothing where the land merges here. Its shape is [`super::Settings::parse`]'s to refuse.
@@ -167,6 +189,35 @@ pub struct Journal {
     pub squash: Option<String>,
     /// Why it is held for a person, when it is.
     pub held: Option<String>,
+    /// What an import imports; none for any other operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<Import>,
+}
+
+/// What an import delivers, as the land read it before it published, and what it proved after:
+/// the upstream it is of, the commit it imports and where the default branch stood against it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Import {
+    /// `[land.upstream] url`, as the land fetched it.
+    pub url: String,
+    /// `[land.upstream] branch`.
+    pub branch: String,
+    /// The whole upstream commit imported: the one the head's assessment names.
+    pub commit: String,
+    /// The upstream's branch as the land fetched it.
+    pub tip: String,
+    /// The last import: the merge base of the default branch and the upstream's branch before.
+    pub before: String,
+    /// The upstream's number at its host, as the host pinned it when it published; 0 before.
+    #[serde(default)]
+    pub repository: i64,
+    /// Every parent of the commit the host made, in order, once proved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<String>,
+    /// The merge base of that commit and the upstream's branch, once proved: the commit imported,
+    /// or a newer one of the upstream's.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub after: String,
 }
 
 impl Journal {
@@ -201,13 +252,17 @@ pub struct Receipt {
     pub pull: i64,
     pub head: String,
     pub base_observed: String,
-    /// The one parent of the squash: the base it was made on.
+    /// The one parent of the squash, or an import's first: the base it was made on.
     pub parent: String,
     pub squash: String,
     pub tree: String,
     /// The snapshot's revision the merge was asked under.
     pub revision: String,
     pub by: String,
+    /// For an import, what it imported and the commit's two parents, the base then the head:
+    /// [`Receipt::parent`] is the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import: Option<Import>,
 }
 
 impl Receipt {
@@ -258,6 +313,15 @@ pub(super) fn left(folder: &Path, slug: &str, default: &str) -> Result<(), Strin
 }
 
 impl Journal {
+    /// How the host is asked to merge it: an import by a merge commit, anything else squashed.
+    fn method(&self) -> &'static str {
+        if self.operation == IMPORT {
+            "merge"
+        } else {
+            "squash"
+        }
+    }
+
     /// Where it stands, in a few words.
     fn said(&self) -> String {
         let pull = (self.binding.as_ref()).map_or_else(String::new, |b| {
@@ -344,6 +408,47 @@ impl Landing<'_> {
             .filter(Value::is_object)
             .ok_or_else(|| format!("{said}: its answer is not a JSON object"))
     }
+}
+
+/// `request` saying what `journal` delivers: its operation, and an import's upstream and commit,
+/// which the program pins at its host before it pushes or merges anything.
+fn delivering(mut request: Value, journal: &Journal) -> Value {
+    request["operation"] = json!(journal.operation);
+    if let Some(import) = &journal.import {
+        request["upstream"] = json!({
+            "url": import.url, "branch": import.branch, "commit": import.commit,
+        });
+    }
+    request
+}
+
+/// The upstream commit `task`'s assessment names its head `tip` an import of: none where it names
+/// none, or where it read another commit than `tip`, which binds nothing.
+fn imported(task: &Task, tip: &str) -> Option<String> {
+    let needs = task.needs()?;
+    needs.import.filter(|_| needs.tip.as_deref() == Some(tip))
+}
+
+/// Whether `snapshot`'s assessment names the import `journal` delivers at its head, and nothing
+/// where it delivers none: what is published and merged is what was read. An import named at
+/// another head binds nothing at this one.
+fn agrees(snapshot: &Snapshot, journal: &Journal) -> bool {
+    let named = (snapshot.assessment.as_ref())
+        .filter(|read| read.tip.as_deref() == Some(journal.head.as_str()))
+        .and_then(|read| read.import.as_deref());
+    named == journal.import.as_ref().map(|import| import.commit.as_str())
+}
+
+/// The upstream's number the program pinned `import` to, from its `published` answer: an import
+/// is published only by a program that held the upstream it was told to its number at the host.
+fn pinned(answer: &Value, import: &Import) -> Result<i64, String> {
+    (answer["upstream"]["id"].as_i64().filter(|id| *id > 0)).ok_or_else(|| {
+        format!(
+            "the publication of the import of {} pins no upstream: the delivery command does not \
+             deliver imports; nothing merged",
+            short(&import.commit)
+        )
+    })
 }
 
 /// The `state` of an answer, and its `why`.
@@ -462,7 +567,7 @@ impl Landing<'_> {
         match said {
             "open" => {
                 if let Some(snapshot) = snapshot.filter(|snapshot| !snapshot.eligible) {
-                    self.withdraw(slug, &journal, &binding, &tip, &snapshot);
+                    let _ = self.withdraw(slug, &journal, &binding, &tip, &snapshot);
                 }
                 None
             }
@@ -500,7 +605,8 @@ impl Landing<'_> {
 
     /// Publish `snapshot`, which is not eligible, to the pull request `binding`: the head the
     /// branch is at now and checks that fail, the one the host requires first. What the land
-    /// refuses with follows; a publication that fails is said and changes none of it.
+    /// refuses with follows; a publication that fails is said and changes none of it, and its
+    /// reason is the error.
     fn withdraw(
         &mut self,
         slug: &str,
@@ -508,37 +614,29 @@ impl Landing<'_> {
         binding: &Binding,
         tip: &str,
         snapshot: &Snapshot,
-    ) -> bool {
+    ) -> Result<(), String> {
         let request = json!({
             "verb": "publish", "slug": slug, "by": self.actor, "head": tip,
             "branch": self.settings.default_branch, "title": journal.title,
             "body": journal.body, "snapshot": snapshot,
         });
-        let asked = self.ask("publish", &request);
-        let told = matches!(&asked, Ok(answer) if state(answer).0 == "published");
-        let said = match asked {
-            Ok(_) if told => format!(
-                "land {slug}: its evidence does not stand at {}, and pull request #{} of {} says \
-                 so now",
-                short(tip),
-                binding.pull,
-                binding.name
-            ),
-            Ok(answer) => format!(
-                "land {slug}: its evidence does not stand at {}, and pull request #{} was not \
-                 told ({}): its checks may still say it does",
-                short(tip),
-                binding.pull,
-                state(&answer).1
+        let told = match self.ask("publish", &delivering(request, journal)) {
+            Ok(answer) if state(&answer).0 == "published" => Ok(()),
+            Ok(answer) => Err(state(&answer).1.to_string()),
+            Err(why) => Err(why),
+        };
+        let stands = format!("land {slug}: its evidence does not stand at {}", short(tip));
+        self.say(&match &told {
+            Ok(()) => format!(
+                "{stands}, and pull request #{} of {} says so now",
+                binding.pull, binding.name
             ),
             Err(why) => format!(
-                "land {slug}: its evidence does not stand at {}, and pull request #{} was not \
-                 told ({why}): its checks may still say it does",
-                short(tip),
+                "{stands}, and pull request #{} was not told ({why}): its checks may still say it \
+                 does",
                 binding.pull
             ),
-        };
-        self.say(&said);
+        });
         told
     }
 
@@ -549,7 +647,7 @@ impl Landing<'_> {
     /// # Errors
     ///
     /// The pull request could not be read or told, or the task's evidence still reads as
-    /// standing: its checks may still pass.
+    /// standing, its status said: its checks may still pass.
     pub(super) fn retract(&mut self, slug: &str) -> Result<(), String> {
         let Some(journal) = Journal::read(&self.folder, slug) else {
             return Ok(());
@@ -562,19 +660,24 @@ impl Landing<'_> {
             "repository": binding.repository, "pull": binding.pull,
         });
         let result = self.ask("result", &request)?;
-        let (said, why) = state(&result);
-        if said == "closed" || said == "merged" {
-            return Ok(());
+        match state(&result) {
+            ("closed" | "merged", _) => return Ok(()),
+            ("open", _) => {}
+            (_, why) => return Err(why.to_string()),
         }
-        let told = said == "open" && {
-            let task = self.store.get(slug).map_err(|error| error.to_string())?;
-            let thread = self.store.thread(slug).map_err(|error| error.to_string())?;
-            let tip = &journal.head;
-            let snapshot =
-                evidence::snapshot(self.store, self.env, &self.main, &task, &thread, tip)?;
-            !snapshot.eligible && self.withdraw(slug, &journal, &binding, tip, &snapshot)
-        };
-        if told { Ok(()) } else { Err(why.to_string()) }
+        let task = self.store.get(slug).map_err(|error| error.to_string())?;
+        let thread = self.store.thread(slug).map_err(|error| error.to_string())?;
+        let tip = &journal.head;
+        let snapshot = evidence::snapshot(self.store, self.env, &self.main, &task, &thread, tip)?;
+        // A task named before it was cancelled, and not cancelled yet, may still read as standing.
+        if snapshot.eligible {
+            return Err(format!(
+                "{slug} is {} and its evidence stands at {}",
+                task.status,
+                short(tip)
+            ));
+        }
+        self.withdraw(slug, &journal, &binding, tip, &snapshot)
     }
 
     /// Deliver the task's `tip`, found ready as `judged`, by its pull request.
@@ -588,20 +691,50 @@ impl Landing<'_> {
         let default = self.settings.default_branch.clone();
         let base = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
         // The settings a head is judged by are the remote default branch's, whatever is delivered.
-        let operation = (self.committed(&base))
+        // An import is one only where the policy, the head's assessment and its history agree.
+        let (operation, import) = (self.committed(&base))
             .and_then(|()| match self.generated(&base, tip) {
-                Some(generated) => generated.map(|()| GENERATED),
-                None => self.admit(&base, tip).map(|()| TASK),
+                Some(generated) => generated.map(|()| (GENERATED, None)),
+                None => match imported(task, tip) {
+                    Some(commit) => (self.outputs(&base, tip))
+                        .and_then(|()| self.import(&base, tip, &commit))
+                        .map(|import| (IMPORT, Some(import))),
+                    None => self.admit(&base, tip).map(|()| (TASK, None)),
+                },
             })
             .map_err(|refusal| self.refuse(refusal))?;
         self.owner_lines(&base, tip)
             .map_err(|refusal| self.refuse(refusal))?;
         let mut snapshot = self.eligible(task, tip)?;
+        let changed = || {
+            Stop::Refused(format!(
+                "the assessment of {slug} changed what it says {} imports while it was \
+                 delivered: nothing merged; run the land again",
+                short(tip)
+            ))
+        };
         let (closes, stood): (&[&str], String) = match judged {
             Judged::Approved(_) => (&["done"], String::new()),
             Judged::Stamped(stood) => (&["review", "blocked", "done"], stood.clone()),
         };
         let earlier = Journal::read(&self.folder, slug).filter(|journal| journal.head == tip);
+        let (title, body) = match &import {
+            Some(import) => (
+                format!("Merge branch '{slug}'"),
+                format!(
+                    "Merged from {tip}, the head of {slug} its evidence stands on (revision {}): \
+                     an import of {} from {}.",
+                    snapshot.revision, import.commit, import.url
+                ),
+            ),
+            None => (
+                format!("{slug}: {}", task.title.lines().next().unwrap_or_default()),
+                format!(
+                    "Squashed from {tip}, the head of {slug} its evidence stands on (revision {}).",
+                    snapshot.revision
+                ),
+            ),
+        };
         let mut journal = Journal {
             slug: slug.into(),
             operation: operation.into(),
@@ -609,19 +742,20 @@ impl Landing<'_> {
             head: tip.into(),
             base_observed: base.clone(),
             revision: snapshot.revision.clone(),
-            title: format!("{slug}: {}", task.title.lines().next().unwrap_or_default()),
-            body: format!(
-                "Squashed from {tip}, the head of {slug} its evidence stands on (revision {}).",
-                snapshot.revision
-            ),
+            title,
+            body,
             by: self.actor.into(),
             closes: closes.iter().map(|s| (*s).to_string()).collect(),
             stood,
             binding: earlier.and_then(|journal| journal.binding),
             squash: None,
             held: None,
+            import,
         };
         let here = |line: String| Stop::Refused(line);
+        if !agrees(&snapshot, &journal) {
+            return Err(changed());
+        }
         journal.write(&self.folder).map_err(here)?;
         // Published under the snapshot read; one that changed meanwhile is published again.
         let mut published = false;
@@ -637,16 +771,23 @@ impl Landing<'_> {
                 "branch": default, "title": journal.title, "body": journal.body,
                 "snapshot": snapshot,
             });
-            let answer = (self.ask("publish", &request))
+            let answer = (self.ask("publish", &delivering(request, &journal)))
                 .map_err(|why| self.refuse(Refusal::here(format!("nothing merged: {why}"))))?;
             let binding = self
                 .bound(&answer, &journal, tip)
                 .map_err(|line| self.refuse(Refusal::here(line)))?;
+            if let Some(import) = &mut journal.import {
+                import.repository =
+                    pinned(&answer, import).map_err(|line| self.refuse(Refusal::here(line)))?;
+            }
             journal.binding = Some(binding);
             journal.revision = snapshot.revision.clone();
             journal.stage = Stage::Eligible;
             journal.write(&self.folder).map_err(here)?;
             let again = self.eligible(task, tip)?;
+            if !agrees(&again, &journal) {
+                return Err(changed());
+            }
             if again.revision == snapshot.revision {
                 published = true;
                 break;
@@ -677,9 +818,9 @@ impl Landing<'_> {
             let now = (self.fetched()).map_err(|line| self.refuse(Refusal::here(line)))?;
             let again = (self.committed(&now)).and_then(|()| {
                 self.generated(&now, tip).unwrap_or_else(|| {
-                    Err(Refusal::here(
-                        "no longer what the regenerator delivers: no merge asked".into(),
-                    ))
+                    Err(Refusal::here(format!(
+                        "{slug} is no longer what the regenerator delivers: no merge asked"
+                    )))
                 })
             });
             again.map_err(|refusal| self.refuse(refusal))?;
@@ -689,9 +830,10 @@ impl Landing<'_> {
         journal.write(&self.folder).map_err(here)?;
         self.post(
             &format!(
-                "land {slug}: asking {} to squash {tip} by pull request #{} ({}), its evidence at \
+                "land {slug}: asking {} to {} {tip} by pull request #{} ({}), its evidence at \
                  revision {}",
                 binding.name,
+                journal.method(),
                 binding.pull,
                 binding.url,
                 short(&journal.revision)
@@ -700,10 +842,10 @@ impl Landing<'_> {
         );
         let request = json!({
             "verb": "merge", "slug": slug, "by": self.actor, "head": tip,
-            "repository": binding.repository, "pull": binding.pull, "method": "squash",
+            "repository": binding.repository, "pull": binding.pull, "method": journal.method(),
             "title": journal.title, "body": journal.body,
         });
-        let asked = self.ask("merge", &request);
+        let asked = self.ask("merge", &delivering(request, &journal));
         self.settle(journal, Some(asked))
     }
 
@@ -723,9 +865,71 @@ impl Landing<'_> {
         Ok(())
     }
 
-    /// Refuse a head a squash must not deliver: one that changes a generator's outputs, which no
-    /// hosted merge puts back, and one that merges a commit the remote default does not hold.
+    /// Refuse a head a squash must not deliver: one that changes a generator's outputs
+    /// ([`Landing::outputs`]); where the project names an upstream, one that holds any of its
+    /// commits as fetched now ([`Landing::upstreamed`]), which only an import assessed as one
+    /// delivers ([`Landing::import`]); and one that merges a commit the remote default does not
+    /// hold.
     fn admit(&self, base: &str, tip: &str) -> Result<(), Refusal> {
+        let (slug, default) = (self.slug, &self.settings.default_branch);
+        self.outputs(base, tip)?;
+        if let Some(upstream) = &self.settings.upstream {
+            let fetched = self.upstreamed(upstream)?;
+            let theirs = |not: &[&str]| -> Result<Vec<String>, Refusal> {
+                let args = [&["rev-list", tip, "--not", base][..], not].concat();
+                Ok((run_git(&self.main, &args)?.lines().map(str::to_string)).collect())
+            };
+            let ours = theirs(&[&fetched])?;
+            if let Some(held) = (theirs(&[])?.into_iter()).find(|commit| !ours.contains(commit)) {
+                let newest = run_git(&self.main, &["merge-base", tip, &fetched])?;
+                return Err(Refusal::to(
+                    format!(
+                        "{slug}'s head {} holds {}, a commit of the upstream {} that \
+                         {REMOTE}/{default} does not hold: a task is squashed, which would deliver \
+                         its files and drop it from the history, and its assessment names no \
+                         import at this head",
+                        short(tip),
+                        short(&held),
+                        upstream.url
+                    ),
+                    "@orchestrator",
+                    format!(
+                        "If it is an import, its assessor names it at this head: `just tasks \
+                         needs {slug} STAMP… --tip {tip} --import {newest}`; if not, the branch \
+                         drops those commits. Nothing landed"
+                    ),
+                ));
+            }
+        }
+        let range = format!("{base}..{tip}");
+        let merges = run_git(&self.main, &["rev-list", "--merges", "--parents", &range])?;
+        for line in merges.lines() {
+            let commits: Vec<&str> = line.split(' ').collect();
+            let foreign =
+                (commits.iter().skip(2)).find(|parent| !ancestor(&self.main, parent, base));
+            if let Some(parent) = foreign {
+                return Err(Refusal::to(
+                    format!(
+                        "{slug}'s head {} merges {}, a commit {REMOTE}/{default} does not hold \
+                         ({}): a squash would deliver its files and drop it from the history",
+                        short(tip),
+                        short(parent),
+                        short(commits[0])
+                    ),
+                    "@orchestrator",
+                    format!(
+                        "An import of another history is delivered only from the upstream \
+                         {} names ([land.upstream]), assessed as one: nothing landed",
+                        super::MANIFEST
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuse a head that changes a generator's outputs, which no hosted merge puts back.
+    fn outputs(&self, base: &str, tip: &str) -> Result<(), Refusal> {
         let (slug, default) = (self.slug, &self.settings.default_branch);
         let range = format!("{base}...{tip}");
         let changed = super::git_z(&self.main, &["diff", "--name-only", "-z", &range])?;
@@ -760,29 +964,158 @@ impl Landing<'_> {
                 ),
             ));
         }
-        let range = format!("{base}..{tip}");
-        let merges = run_git(&self.main, &["rev-list", "--merges", "--parents", &range])?;
-        for line in merges.lines() {
-            let commits: Vec<&str> = line.split(' ').collect();
-            let foreign =
-                (commits.iter().skip(2)).find(|parent| !ancestor(&self.main, parent, base));
-            if let Some(parent) = foreign {
-                return Err(Refusal::to(
-                    format!(
-                        "{slug}'s head {} merges {}, a commit {REMOTE}/{default} does not hold \
-                         ({}): a squash would deliver its files and drop it from the history",
-                        short(tip),
-                        short(parent),
-                        short(commits[0])
-                    ),
-                    "@orchestrator",
-                    "An import of another history is not delivered as a task, and this build \
-                     delivers no import by pull request: nothing landed"
-                        .into(),
-                ));
-            }
-        }
         Ok(())
+    }
+
+    /// The upstream's branch fetched now from `upstream`'s address to [`UPSTREAM`]: its tip. A head
+    /// is judged by the upstream as it is now, a task's as well as an import's, never as it was
+    /// last fetched, so one that does not answer (the network, its host, credentials, an address
+    /// that moved) refuses every land here before anything is published, the line naming it.
+    fn upstreamed(&self, upstream: &super::Upstream) -> Result<String, Refusal> {
+        let default = &self.settings.default_branch;
+        let unfetched = |why: &str| {
+            Refusal::here(format!(
+                "the upstream {} was not fetched: {why}: every land reads it while {} on \
+                 {default} names it ([land.upstream]), a task's as well as an import's, so \
+                 nothing landed. Land again once it answers; an address that no longer answers is \
+                 corrected on {default} by the project's owner, as no land delivers it",
+                upstream.url,
+                super::MANIFEST
+            ))
+        };
+        let fetch = format!("+refs/heads/{}:{UPSTREAM}", upstream.branch);
+        let args = ["fetch", "--quiet", "--no-tags", &upstream.url, &fetch];
+        let done = self.remote_output(&args).map_err(|why| unfetched(&why))?;
+        if !done.status.success() {
+            let said = String::from_utf8_lossy(&done.stderr);
+            let said = (said.lines().map(str::trim)).find(|line| !line.is_empty());
+            return Err(unfetched(said.unwrap_or("git fetch failed")));
+        }
+        rev(&self.main, UPSTREAM)
+            .ok_or_else(|| Refusal::here(format!("{} has no {}", upstream.url, upstream.branch)))
+    }
+
+    /// The import of `commit` that `tip` is, held to the project's upstream and to the history it
+    /// fetched from there now: `commit` on the upstream's branch and newer than the last import
+    /// (the merge base of the default branch `base` and that branch), `tip` holding it and `base`
+    /// not, merged by a commit of `tip`'s own first-parent line, and every other commit `tip` adds
+    /// its own line's or the upstream's. A commit neither the branch's own nor the upstream's
+    /// refuses.
+    fn import(&self, base: &str, tip: &str, commit: &str) -> Result<Import, Refusal> {
+        let (slug, default) = (self.slug, &self.settings.default_branch);
+        let to = |line: String, then: &str| Refusal::to(line, "@orchestrator", then.into());
+        let Some(upstream) = &self.settings.upstream else {
+            return Err(to(
+                format!(
+                    "{slug}'s assessment names an import of {}, and {} on {default} names no \
+                     upstream ([land.upstream]): no import is delivered here",
+                    short(commit),
+                    super::MANIFEST
+                ),
+                "The project names its upstream in a landing of its own, or the assessment names \
+                 no import: nothing landed",
+            ));
+        };
+        let url = &upstream.url;
+        let fetched = self.upstreamed(upstream)?;
+        let holds = |commit: &str, tip: &str| ancestor(&self.main, commit, tip);
+        let then = "Its assessor names the upstream commit the head imports, or the branch is put \
+                    right: nothing landed";
+        if rev(&self.main, &format!("{commit}^{{commit}}")).as_deref() != Some(commit)
+            || !holds(commit, &fetched)
+        {
+            return Err(to(
+                format!(
+                    "{} is not on {url}'s {} as fetched now ({}): an import is of a commit the \
+                     upstream's default branch holds",
+                    short(commit),
+                    upstream.branch,
+                    short(&fetched)
+                ),
+                then,
+            ));
+        }
+        let Ok(before) = run_git(&self.main, &["merge-base", base, &fetched]) else {
+            return Err(to(
+                format!(
+                    "{default} and {url}'s {} share no commit: the default branch is seeded \
+                     again from the upstream's history by its owner before any import",
+                    upstream.branch
+                ),
+                "Nothing landed, and no history is merged without a common ancestor",
+            ));
+        };
+        if !holds(&before, commit) {
+            return Err(to(
+                format!(
+                    "{}, where {default} and {url}'s {} last met, is not an ancestor of {}: an \
+                     import is of an upstream commit newer than all {default} holds of it",
+                    short(&before),
+                    upstream.branch,
+                    short(commit)
+                ),
+                then,
+            ));
+        }
+        if holds(commit, base) {
+            return Err(to(
+                format!(
+                    "{REMOTE}/{default} holds {} already: nothing to import",
+                    short(commit)
+                ),
+                "The task is cancelled, or its assessor names a newer upstream commit",
+            ));
+        }
+        let line = run_git(
+            &self.main,
+            &[
+                "rev-list",
+                "--first-parent",
+                "--parents",
+                tip,
+                "--not",
+                base,
+            ],
+        )?;
+        let own: Vec<&str> = (line.lines()).filter_map(|l| l.split(' ').next()).collect();
+        let merges = (line.lines()).any(|l| l.split(' ').skip(2).any(|parent| parent == commit));
+        if !holds(commit, tip) || !merges {
+            return Err(to(
+                format!(
+                    "{slug}'s head {} merges {} on no commit of its own first-parent line: an \
+                     import is a merge of the upstream commit (`git merge --no-ff {}`) on its \
+                     branch, then any fixes",
+                    short(tip),
+                    short(commit),
+                    commit
+                ),
+                then,
+            ));
+        }
+        let others = run_git(&self.main, &["rev-list", tip, "--not", base, commit])?;
+        if let Some(foreign) = (others.lines()).find(|other| !own.contains(other)) {
+            return Err(to(
+                format!(
+                    "{slug}'s head {} holds {}, a commit neither of its own first-parent line \
+                     nor of {}'s history: an import delivers its branch's own commits and the \
+                     upstream's alone",
+                    short(tip),
+                    short(foreign),
+                    short(commit)
+                ),
+                then,
+            ));
+        }
+        Ok(Import {
+            url: url.clone(),
+            branch: upstream.branch.clone(),
+            commit: commit.into(),
+            tip: fetched,
+            before,
+            repository: 0,
+            parents: Vec::new(),
+            after: String::new(),
+        })
     }
 
     /// The task's evidence at `tip`, read now, refused unless it is eligible.
@@ -907,8 +1240,9 @@ impl Landing<'_> {
                 let (line, to, then) = match refused {
                     Some((kind, why)) => {
                         let line = format!(
-                            "{} refused to squash {slug} at {} by pull request #{}: {why}",
+                            "{} refused to {} {slug} at {} by pull request #{}: {why}",
                             binding.name,
+                            journal.method(),
                             short(&journal.head),
                             binding.pull
                         );
@@ -1033,13 +1367,43 @@ impl Landing<'_> {
         let listed = run_git(&self.main, &["rev-list", "--parents", "-n", "1", &commit])
             .map_err(Unproved::Later)?;
         let parents: Vec<&str> = listed.split(' ').skip(1).collect();
-        let [parent] = parents.as_slice() else {
-            return Err(Unproved::Held(format!(
-                "{} has {} parents: the head was merged by a merge commit, not squashed, so its \
-                 branch's commits are on {default}",
-                short(&commit),
-                parents.len()
-            )));
+        let import = journal
+            .import
+            .as_ref()
+            .filter(|_| journal.operation == IMPORT);
+        let parent = match (import, parents.as_slice()) {
+            (None, [parent]) => *parent,
+            (None, _) => {
+                return Err(Unproved::Held(format!(
+                    "{} has {} parents: the head was merged by a merge commit, not squashed, so \
+                     its branch's commits are on {default}",
+                    short(&commit),
+                    parents.len()
+                )));
+            }
+            (Some(_), [first, second]) if *second == journal.head => *first,
+            (Some(import), [_]) => {
+                return Err(Unproved::Held(format!(
+                    "{} has one parent: the import of {} was squashed, its files on {default} \
+                     without the upstream's commit in its history. A new import task of the same \
+                     commit, whose merge changes no file, restores it; this one does not land",
+                    short(&commit),
+                    import.commit
+                )));
+            }
+            (Some(_), _) => {
+                return Err(Unproved::Held(format!(
+                    "{} has the parents {}, not the base then the head {}: what landed is not the \
+                     import that was read",
+                    short(&commit),
+                    parents
+                        .iter()
+                        .map(|parent| short(parent))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    short(&journal.head)
+                )));
+            }
         };
         let merged = git(
             &self.main,
@@ -1069,6 +1433,22 @@ impl Landing<'_> {
                 short(parent)
             )));
         }
+        let import = match import {
+            Some(import) if !ancestor(&self.main, &import.commit, &commit) => {
+                return Err(Unproved::Held(format!(
+                    "{} does not hold {}, the upstream commit the import was read as",
+                    short(&commit),
+                    short(&import.commit)
+                )));
+            }
+            Some(import) => Some(Import {
+                parents: parents.iter().map(|parent| (*parent).to_string()).collect(),
+                after: run_git(&self.main, &["merge-base", &commit, &import.tip])
+                    .unwrap_or_default(),
+                ..import.clone()
+            }),
+            None => None,
+        };
         let receipt = Receipt {
             slug: journal.slug.clone(),
             task: self
@@ -1082,11 +1462,12 @@ impl Landing<'_> {
             pull: binding.pull,
             head: journal.head.clone(),
             base_observed: journal.base_observed.clone(),
-            parent: (*parent).to_string(),
+            parent: parent.to_string(),
             squash: commit,
             tree,
             revision: journal.revision.clone(),
             by: journal.by.clone(),
+            import,
         };
         // The head first: a squash leaves it in no history, and the receipt names it.
         let retained = format!("{RETAINED}{}", journal.slug);
@@ -1169,9 +1550,16 @@ impl Landing<'_> {
             "landed {slug} on {default} at {}",
             &squash[..squash.len().min(12)]
         );
+        let how = match &journal.import {
+            Some(import) => format!(
+                "merged from {}, an import of {},",
+                journal.head, import.commit
+            ),
+            None => format!("squashed from {}", journal.head),
+        };
         let line = format!(
-            "{landed}{}; squashed from {} by pull request #{} of {}",
-            journal.stood, journal.head, binding.pull, binding.name
+            "{landed}{}; {how} by pull request #{} of {}",
+            journal.stood, binding.pull, binding.name
         );
         if journal.stage == Stage::Reconciled {
             // Closed once: a run cut short after the board's write finds its line there.

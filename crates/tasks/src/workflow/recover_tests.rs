@@ -130,6 +130,7 @@ fn a_released_or_lost_executor_moves_its_task_to_the_declared_target_on_the_reco
                     role: "executor".into(),
                     manual: false,
                 }),
+                accepted: None,
                 at: 7.0,
             }
         );
@@ -286,4 +287,32 @@ fn a_task_at_a_pair_the_workflow_does_not_declare_is_stale() {
             .to_string(),
         "stale_workflow: sim/a is at verify/nowhere, which the active workflow does not declare"
     );
+}
+
+#[test]
+fn a_stay_keeps_the_accepted_output_standing_and_a_move_away_supersedes_it() {
+    let custom = custom(&staffed());
+    let mut definition = custom.definition.definition().clone();
+    (definition.positions.iter_mut())
+        .find(|p| p.at == pair("verify", "reviewing"))
+        .unwrap()
+        .satisfies_dependencies = true;
+    let context = Context {
+        definition: &definition,
+        revision: &custom.revision,
+        generation: 2,
+    };
+    let mut facts = at(&custom, "verify", "reviewing", &[("birch", "reviewer")]);
+    facts.accepted = Some("sim/a@3".into());
+    let service = board_service("recovery");
+    let after = |trigger| {
+        let recovery = recover(context, &facts, "birch", None, trigger, &service, 7.0).unwrap();
+        let transition = recovery.transition.unwrap();
+        (transition.to, transition.accepted)
+    };
+    assert_eq!(
+        after(Trigger::LostHolder),
+        (pair("verify", "reviewing"), Some("sim/a@3".into()))
+    );
+    assert_eq!(after(Trigger::Release), (pair("verify", "awaiting"), None));
 }

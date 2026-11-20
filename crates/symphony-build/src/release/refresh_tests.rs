@@ -27,7 +27,10 @@ fn a_writer_behind_holds_the_move_unless_it_is_a_release_of_this_machine_or_unse
     let now = 1_000_000.0;
     let day = 24.0 * 3600.0;
     let own = releases.join("release-1/bin/tasks");
-    let project = Path::new("/work/alpha/.target/release/tasks");
+    // A project's build still at its path, as it was when it last wrote.
+    let project = &tree.path("alpha/.target/release/tasks");
+    built(project, now, 10.0 * day);
+    built(&releases.join("release-1/tasks"), now, 10.0 * day);
     let lines = vec![
         writer("tasks", &own, &here, 18, now, 60.0),
         writer(
@@ -58,7 +61,12 @@ fn a_writer_behind_holds_the_move_unless_it_is_a_release_of_this_machine_or_unse
             8.0 * day,
         ),
     ];
-    let (mine, behind) = lagging(lines, 19, now, &tree.path("linked"));
+    let Lagging {
+        own: mine,
+        behind,
+        gone,
+    } = lagging(lines, 19, now, &tree.path("linked"));
+    assert_eq!(gone, [], "each program is where it wrote from");
     let paths = |writers: &[Writer]| -> Vec<(String, String)> {
         (writers.iter())
             .map(|w| (w.path.clone(), w.host.clone()))
@@ -98,13 +106,113 @@ fn a_writer_behind_holds_the_move_unless_it_is_a_release_of_this_machine_or_unse
     expected.sort_by(|a, b| (&a.1, &a.0).cmp(&(&b.1, &b.0)));
     assert_eq!(paths(&behind), expected);
     // A machine folder with no release installed has no release's own.
-    let (mine, behind) = lagging(
+    built(&own, now, 10.0 * day);
+    let found = lagging(
         vec![writer("tasks", &own, &here, 18, now, 60.0)],
         19,
         now,
         &tree.path("empty"),
     );
-    assert!(mine.is_empty() && behind.len() == 1);
+    assert!(found.own.is_empty() && found.behind.len() == 1 && found.gone.is_empty());
+}
+
+/// A file at `path` last written `ago` seconds before `now`.
+fn built(path: &Path, now: f64, ago: f64) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, "").unwrap();
+    let file = File::options().write(true).open(path).unwrap();
+    file.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs_f64(now - ago))
+        .unwrap();
+}
+
+#[test]
+fn a_writer_whose_program_is_gone_from_its_path_on_this_host_is_not_counted() {
+    let tree = Tree::new();
+    let here = symphony_board::sys::hostname();
+    let now = 1_000_000.0;
+    let hour = symphony_board::WRITERS_EVERY;
+    // Seen two hours ago: nothing there, nothing under a file, a build put there since the line's
+    // last possible write, one put there within its hour, and the build that wrote.
+    let seen = 2.0 * hour;
+    let missing = tree.path("bin/tasks-0a1b");
+    let under_a_file = tree.path("bin/kept/deeper/tasks");
+    built(&tree.path("bin/kept"), now, 10.0 * hour);
+    let rebuilt = tree.path("rs-bin/tasks");
+    built(&rebuilt, now, 60.0);
+    let within = tree.path("rs-bin/agent-send");
+    built(&within, now, seen - hour);
+    let standing = tree.path("rs-bin/gate");
+    built(&standing, now, 10.0 * hour);
+    let lines = vec![
+        writer("tasks-0a1b", &missing, &here, 18, now, seen),
+        writer("tasks", &under_a_file, &here, 18, now, seen),
+        writer("tasks", &rebuilt, &here, 18, now, seen),
+        writer("agent-send", &within, &here, 18, now, seen),
+        writer("gate", &standing, &here, 18, now, seen),
+        // Another host's paths are never looked at here, gone from this machine or not.
+        writer("tasks-0a1b", &missing, "another-host", 18, now, seen),
+        writer("tasks", &rebuilt, "another-host", 18, now, seen),
+    ];
+    let found = lagging(lines, 19, now, &tree.path("machine"));
+    let named = |writer: &Writer| (writer.path.clone(), writer.host.clone());
+    let path = |path: &Path| path.to_string_lossy().into_owned();
+    assert!(found.own.is_empty());
+    assert_eq!(
+        (found.gone.iter())
+            .map(|(writer, why)| (writer.path.clone(), *why))
+            .collect::<Vec<_>>(),
+        [
+            (path(&under_a_file), Gone::Missing),
+            (path(&rebuilt), Gone::Replaced),
+            (path(&missing), Gone::Missing),
+        ],
+        "by program, host and path"
+    );
+    assert_eq!(
+        found.behind.iter().map(named).collect::<Vec<_>>(),
+        [
+            (path(&within), here.clone()),
+            (path(&standing), here.clone()),
+            (path(&rebuilt), "another-host".to_string()),
+            (path(&missing), "another-host".to_string()),
+        ]
+    );
+    let said = not_counted(&found.gone);
+    assert!(
+        said.starts_with("; not counted, as its program is gone: tasks at schema 18 (")
+            && said.contains(&format!("{} on {here}, last seen ", path(&missing)))
+            && said.contains(" ago): nothing is at its path now; ")
+            && said.contains(
+                " ago): the file at its path was written after it last ran there, a build that \
+                 has not opened this board"
+            ),
+        "{said}"
+    );
+    assert_eq!(not_counted(&[]), "");
+}
+
+/// A path that cannot be read is not gone: the writer there still holds.
+#[test]
+fn a_path_that_cannot_be_read_still_holds() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = Tree::new();
+    let closed = tree.path("closed");
+    let path = closed.join("tasks");
+    built(&path, 1_000_000.0, 60.0);
+    fs::set_permissions(&closed, fs::Permissions::from_mode(0o000)).unwrap();
+    let line = writer("tasks", &path, "here", 18, 1_000_000.0, 7200.0);
+    // The superuser reads every folder: only where this one is barred does the case stand.
+    let barred = fs::metadata(&path).is_err();
+    let read = gone(&line);
+    fs::set_permissions(&closed, fs::Permissions::from_mode(0o755)).unwrap();
+    if barred {
+        assert_eq!(read, None);
+    }
+    // The line's hour is its own: a file written exactly at its end is not past it.
+    built(&path, 1_000_000.0, 3600.0);
+    assert_eq!(gone(&line), None);
+    built(&path, 1_000_000.0, 3599.0);
+    assert_eq!(gone(&line), Some(Gone::Replaced));
 }
 
 #[test]
@@ -136,22 +244,24 @@ fn what_holds_the_release_is_a_lagging_writer_or_the_refreshs_own_red_and_never_
     assert!(
         !Verdict::Move {
             live: 18,
-            leave: true
+            leave: true,
+            gone: String::new(),
         }
         .holds()
     );
 }
 
 #[test]
-fn a_release_at_currents_schema_or_behind_it_says_which_and_moves_no_board() {
+fn a_release_at_currents_schema_or_behind_it_says_which_and_moves_only_a_board_left_behind() {
     assert_eq!(
         no_move("release-2", 19, 19),
-        "release-2 serves board schema 19, as the release current names serves 19: no board moves"
+        "release-2 serves board schema 19, as the release current names serves 19: only a board \
+         left behind it moves"
     );
     assert_eq!(
         no_move("release-2", 18, 19),
-        "release-2 serves board schema 18, behind the release current names, which serves 19: no \
-         board moves, as none moves back"
+        "release-2 serves board schema 18, behind the release current names, which serves 19: none \
+         moves back, and only a board left behind 18 moves"
     );
 }
 
@@ -379,6 +489,8 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     let logs = dir.join("logs");
     fs::create_dir_all(&logs).unwrap();
     let against = Against {
+        run: "2026-11-20T1000-1",
+        main: &dir,
         // No repository: the SurrealDB a release pins cannot be read, and is not asked for.
         root: &dir,
         ours: &dir,
@@ -401,7 +513,7 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     store.raw().table("writer").delete().unwrap();
     let mut moving = judge(&entry, &common, schema + 1, &against);
     assert!(
-        matches!(&moving.verdict, Verdict::Move { live, leave: false } if *live == schema),
+        matches!(&moving.verdict, Verdict::Move { live, leave: false, .. } if *live == schema),
         "no writer behind, and no SurrealDB pin to wait on"
     );
     snapshot(&mut moving, &against).unwrap();

@@ -6,8 +6,7 @@ use super::hc::{self, Hc, Object, text, text_of};
 use super::procs::{self, busy_reason, named};
 use super::reap::NOT_REAPED_KINDS;
 use super::screen::{self, NotClosed};
-use super::{GONE, LaunchError, Processes, READY_STATES, gone};
-use crate::health::FINISHED;
+use super::{GONE, LaunchError, Processes, READY_STATES, attempts, gone};
 use crate::rows::TaskSessionRow;
 use crate::{Error, NewLaunch, Store, Task};
 use serde_json::{Value, json};
@@ -223,6 +222,7 @@ pub fn cleanup_as(
         let restore = restore_line(&s.slug, &s.handle);
         if !dry_run {
             store.close_task_session(&s.slug, &s.handle, GONE, &restore)?;
+            attempts::closed(store, hc, &s.handle, &s.pane, GONE)?;
         }
         result.push(Closure {
             pane: s.pane.clone(),
@@ -290,6 +290,9 @@ pub fn cleanup_as(
                 }) {
                     Ok(done) => closure.closed = done,
                     Err(kept) => closure = kept,
+                }
+                if let (true, Some(handle)) = (closure.closed, &closure.handle) {
+                    attempts::closed(store, hc, handle, &address, &closure.why)?;
                 }
             }
             result.push(closure);
@@ -392,6 +395,7 @@ pub fn cleanup_as(
             }
             if let Some(handle) = &handle {
                 record_closure(store, handle, &terminal, why)?;
+                attempts::closed(store, hc, handle, &address, why)?;
             }
         }
         result.push(closure);
@@ -453,9 +457,10 @@ fn held(store: &Store, handle: &str) -> Result<(Vec<Task>, Vec<Task>), Error> {
         .into_iter()
         .filter(|t| t.roles.iter().any(|r| r.handle == handle))
         .collect();
+    let operating = store.operating_for(&mine)?;
     let live = mine
         .iter()
-        .filter(|t| !FINISHED.contains(&t.status.as_str()))
+        .filter(|t| !crate::workflow::operate::finished(operating.as_ref(), t))
         .cloned()
         .collect();
     Ok((live, mine))
@@ -498,12 +503,13 @@ fn record_closure(store: &Store, handle: &str, terminal: &Object, why: &str) -> 
     Ok(())
 }
 
-/// `slug` became done or cancelled: close the terminals of the sessions launched on it or below it
-/// (an agent works a subtask, and closes it from its terminal). Never fails: it runs after a status
+/// `slug` finished ([`Store::finished`]: done or cancelled, or at a terminal position of the custom
+/// workflow that holds it): close the terminals of the sessions launched on it or below it (an
+/// agent works a subtask, and closes it from its terminal). Never fails: it runs after a status
 /// change that must stand. The lines to print; what went wrong is one of them.
 pub fn finish(store: &Store, hc: &dyn Hc, processes: &Processes, slug: &str) -> Vec<String> {
     let closures = || -> Result<Vec<Closure>, Error> {
-        if !FINISHED.contains(&store.get(slug)?.status.as_str()) {
+        if !store.finished(&store.get(slug)?)? {
             return Ok(Vec::new());
         }
         let mut slugs = vec![slug.to_string()];

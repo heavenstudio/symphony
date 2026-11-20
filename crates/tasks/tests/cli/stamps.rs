@@ -53,7 +53,12 @@ fn stamps_prints_the_symphonys_own_catalogue_unless_main_commits_its_own() {
         .collect();
     assert_eq!(
         named,
-        ["tests", "review (needed by default)", "pictures", "owner"]
+        [
+            "tests",
+            "review (needed by default)",
+            "pictures (waivable at one tip by a gate decision)",
+            "owner"
+        ]
     );
     assert_eq!(out.matches("\n  met: ").count(), 4, "{out}");
     assert_eq!(out.matches("\n  applies: ").count(), 4, "{out}");
@@ -116,6 +121,7 @@ fn stamps_of_a_task_says_its_needs_its_tip_and_the_check_paths_its_branch_change
         task(&c),
         [
             "NEEDS review: no assessment yet, so the catalogue's defaults",
+            "GATES none: no gate decision on the task",
             "TIP none: no branch tools/query, so an assessment reads the brief alone (no --tip)",
         ]
     );
@@ -128,6 +134,7 @@ fn stamps_of_a_task_says_its_needs_its_tip_and_the_check_paths_its_branch_change
         task(&c),
         [
             "NEEDS review: no assessment yet, so the catalogue's defaults".to_string(),
+            "GATES none: no gate decision on the task".into(),
             format!("TIP tools/query {tip}"),
             format!(
                 "CHECK PATHS {} changes what [land] check_paths names:",
@@ -207,6 +214,31 @@ fn needs_writes_an_assessment_its_tip_resolved_and_the_thread_says_it() {
         )),
         "{shown}"
     );
+    // An import, resolved to the whole upstream commit as the tip is.
+    let upstream = git_says(&root, &["rev-parse", "main"]);
+    assert_eq!(
+        c.ok(
+            &assessor,
+            &[
+                "needs",
+                "tools/query",
+                "review",
+                "tests",
+                "--tip",
+                &tip[..9],
+                "--import",
+                &upstream[..9],
+                "--why",
+                WHY
+            ],
+        ),
+        format!(
+            "tools/query needs tests, review at {}, an import of {upstream}\n",
+            &tip[..7]
+        )
+    );
+    let needs = c.store().get("tools/query").unwrap().needs().unwrap();
+    assert_eq!(needs.import.as_deref(), Some(upstream.as_str()));
     // None, with a reason, from the brief alone: no --tip.
     assert_eq!(
         c.ok(
@@ -260,6 +292,29 @@ fn needs_is_refused_to_the_tasks_own_sessions_and_on_what_it_cannot_take() {
             "✖ --tip nosuchcommit names no commit in {}\n",
             root.display()
         )
+    );
+    assert_eq!(
+        refused(
+            &assessor,
+            &[
+                "review",
+                "--tip",
+                "main",
+                "--import",
+                "nosuchcommit",
+                "--why",
+                WHY
+            ]
+        ),
+        format!(
+            "✖ --import nosuchcommit names no commit in {}\n",
+            root.display()
+        )
+    );
+    assert_eq!(
+        refused(&assessor, &["review", "--import", "main", "--why", WHY]),
+        "✖ an import is named at the head the assessment read (--tip TIP): it binds that head \
+         to the upstream commit it imports\n"
     );
     assert_eq!(c.store().get("tools/query").unwrap().needs(), None);
     // Outside a repository there is no catalogue a land holds the task to.

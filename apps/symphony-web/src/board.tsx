@@ -18,6 +18,7 @@ import {
 import { linkedSlug, linkedTask } from "./boardlink";
 import { focusedLink, focusedSlug, takeFocus, useKeptPlace } from "./boardplace";
 import {
+  NAMES,
   OrchestratorBanner,
   PHONE_STAGES,
   STAGE_KEY,
@@ -32,6 +33,7 @@ import {
   waitKind,
 } from "./boardwait";
 import { Button } from "./button";
+import type { Flow } from "./flow";
 import { href } from "./project";
 import { said } from "./request";
 import { useAnchor } from "./route";
@@ -479,7 +481,25 @@ export function TaskBoard({
   const [filters, setFilters] = useState<Filters>({ search: "", days: 1 });
   const { search, days } = filters;
   const [wait, setWait] = useState("");
-  const [selected, setSelected] = useState(() => savedStage(load(STAGE_KEY)));
+  // A custom workflow's lanes, tabs and strip, from a chunk of its own read once the listing says
+  // one is active, and again when its generation moves (`flow.tsx`).
+  const [flow, setFlow] = useState<Flow | null>(null);
+  const generation = waiting?.workflow;
+  useEffect(() => {
+    const reading = new AbortController();
+    if (generation)
+      void import("./flow")
+        .then((chunk) => chunk.readFlow(scope, reading.signal, NAMES, [STAGES, PHONE_STAGES]))
+        .then((read) => reading.signal.aborted || setFlow(read));
+    else setFlow(null);
+    return () => reading.abort();
+  }, [scope, generation]);
+  const [stages, tabs] = flow?.lanes(waiting) ?? [STAGES, PHONE_STAGES];
+  const name = (stage: string) => NAMES.get(stage) ?? statusLabel(stage);
+  // The phone's stage this device chose, kept as chosen, and the one shown: the first of the
+  // board's tabs when it names none of them.
+  const [selected, setSelected] = useState(() => load(STAGE_KEY) ?? "");
+  const tab = savedStage(selected, tabs);
   const [phone, setPhone] = useState(() => windowWidth() <= 760);
   const [opened, setOpened] = useState("");
   const [filtering, setFiltering] = useState(false);
@@ -516,19 +536,16 @@ export function TaskBoard({
   if (followed !== address && (slug === "" || linked !== null)) {
     setFollowed(address);
     if (linked !== null) {
-      if (PHONE_STAGES.includes(destination)) setSelected(destination);
+      if (tabs.includes(destination)) setSelected(destination);
       setOpened(
-        STAGES.includes(destination) || (phone && PHONE_STAGES.includes(destination))
-          ? ""
-          : destination,
+        stages.includes(destination) || (phone && tabs.includes(destination)) ? "" : destination,
       );
     }
   }
   const linkPage = useRef("");
   useEffect(() => {
     if (known !== undefined || destination === "" || wait !== "" || search !== "") return;
-    if (phone ? destination !== (opened || selected) : opened !== "" && opened !== destination)
-      return;
+    if (phone ? destination !== (opened || tab) : opened !== "" && opened !== destination) return;
     const rows = tasks.filter((task) => waitingStage(work, task, connected) === destination).length;
     const total = counts.find(([stage]) => stage === destination)?.[1] ?? 0;
     const key = `${address}:${destination}:${rows}`;
@@ -545,7 +562,7 @@ export function TaskBoard({
     connected,
     phone,
     opened,
-    selected,
+    tab,
     wait,
     search,
     days,
@@ -597,13 +614,13 @@ export function TaskBoard({
   const focusedTask = focused === null ? undefined : tasks.find((task) => task.slug === focused);
   if (focusedTask !== undefined) {
     const destination = waitingStage(work, focusedTask, connected);
-    if (phone && destination !== (opened || selected)) {
-      if (PHONE_STAGES.includes(destination)) {
+    if (phone && destination !== (opened || tab)) {
+      if (tabs.includes(destination)) {
         setSelected(destination);
         setOpened("");
       } else setOpened(destination);
     } else if (!phone) {
-      const next = STAGES.includes(destination) ? "" : destination;
+      const next = stages.includes(destination) ? "" : destination;
       if (opened !== next) setOpened(next);
     }
   }
@@ -649,7 +666,8 @@ export function TaskBoard({
             (task) =>
               (isTask(task) || search !== "") &&
               (wait === "" ||
-                (waitKind(task) === wait && !["done", "cancelled"].includes(task.status))),
+                ((waitKind(task) === wait || `state:${task.workflow?.state}` === wait) &&
+                  !["done", "cancelled"].includes(task.status))),
           )
           .sort(waitingOrder),
         (task) => (wait === "" ? waitingStage(work, task, connected) : "waiting"),
@@ -677,7 +695,11 @@ export function TaskBoard({
       onLoad={onLoad}
       refreshed={refreshed}
       meta={meta(status)}
-      label={status === "waiting" ? WAIT_LABELS[WAIT_KINDS.indexOf(wait)] : undefined}
+      label={
+        status === "waiting"
+          ? (WAIT_LABELS[WAIT_KINDS.indexOf(wait)] ?? NAMES.get(wait))
+          : NAMES.get(status)
+      }
       now={now}
       cancelled={count("cancelled")}
       onCancelled={toggleCancelled}
@@ -694,7 +716,7 @@ export function TaskBoard({
   const machine = work.machines.length > 0;
   // A phone's two rows of choices scroll across: each keeps its chosen one whole in view.
   const waits = useScrollRow(wait);
-  const tabs = useScrollRow(`${opened}:${selected}`);
+  const tabRow = useScrollRow(`${opened}:${tab}`);
   return (
     <div className="waiting-board">
       {slug !== "" && known === undefined && linkError !== "" && (
@@ -787,15 +809,15 @@ export function TaskBoard({
           </button>
         ))}
       </nav>
+      {flow?.strip({ waiting, wait, choose: chooseWait, open: setOpened, opened, phone })}
       {wait === "" && (
-        <nav ref={tabs} className="stage-tabs scroll-row" aria-label="Task stages">
-          {PHONE_STAGES.map((stage) => (
+        <nav ref={tabRow} className="stage-tabs scroll-row" aria-label="Task stages">
+          {tabs.map((stage) => (
             <button
               key={stage}
               type="button"
               aria-current={
-                (opened === "" && selected === stage) ||
-                (opened === "cancelled" && stage === "done")
+                (opened === "" && tab === stage) || (opened === "cancelled" && stage === "done")
                   ? "page"
                   : undefined
               }
@@ -805,7 +827,7 @@ export function TaskBoard({
                 setOpened("");
               }}
             >
-              {statusLabel(stage)} <i>{meta(stage)?.ordinary ?? count(stage)}</i>
+              {name(stage)} <i>{meta(stage)?.ordinary ?? count(stage)}</i>
               {(meta(stage)?.blocked ?? 0) > 0 && <b>+{meta(stage)?.blocked}</b>}
             </button>
           ))}
@@ -829,12 +851,12 @@ export function TaskBoard({
       )}
       {showingColumns && (
         <nav className="stage-jump" aria-label="Show a stage">
-          {STAGES.map((stage, at) => {
+          {stages.map((stage, at) => {
             const side = sides.split(",")[at] || "shown";
             return (
               <button key={stage} type="button" data-side={side} onClick={() => jump(stage)}>
                 {side === "before" && "‹ "}
-                {statusLabel(stage)}
+                {name(stage)}
                 {side === "after" && " ›"}
               </button>
             );
@@ -854,12 +876,12 @@ export function TaskBoard({
         {wait !== "" ? (
           column("waiting")
         ) : phone ? (
-          column(opened || selected)
+          column(opened || tab)
         ) : opened !== "" ? (
           column(opened)
         ) : (
           <div className="waiting-pipeline">
-            {STAGES.map((stage) => (
+            {stages.map((stage) => (
               <div className="stage-slot" key={stage}>
                 {column(stage)}
               </div>

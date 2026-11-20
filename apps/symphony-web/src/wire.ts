@@ -19,6 +19,7 @@ export const RUN_LOG_PATH = "/api/run-log";
 export const RUN_LOG_TAIL = 65536;
 export const RUN_LOG_MOST = 1048576;
 export const RUNS_DAYS = 14;
+export const SCHEMA_UPDATES_PATH = "/api/schema-updates";
 export const VERSION_HEADER = "symphony-version";
 export const VERDICT_TASKS = "verdicts/";
 export const UPLOAD_PATH = "/api/upload";
@@ -36,6 +37,9 @@ export const TIMELINE_HISTORY_LIMIT = 256;
 export const TIMELINE_HISTORY_SOURCES = 8;
 export const AGENT_FOCUS_PATH = "/api/agent-focus";
 export const AGENT_SCREEN_PATH = "/api/agent-screen";
+export const WORKFLOW_PATH = "/api/workflow";
+export const WORKFLOW_ACTIONS_PATH = "/api/workflow-actions";
+export const WORKFLOW_APPLY_ROUTE = "/api/workflow-apply";
 export const SYMPHONY_ROUTES = [
   "tasks",
   "task",
@@ -582,6 +586,102 @@ export type RunLog = {
   text: string;
 };
 
+export type SchemaUpdates = {
+  /**
+   * Every open update and the [`SCHEMA_UPDATES_SHOWN`] newest, newest first: the order the
+   * ledger was written in, turned round.
+   */
+  updates: Array<SchemaUpdate>;
+  /**
+   * Why the ledger could not be read, in a sentence naming it; none while it was read, or there
+   * is none yet.
+   */
+  unread: string | null;
+};
+
+export type SchemaUpdate = {
+  /**
+   * `ID@N`, `ID@N.G` from its second generation.
+   */
+  id: string;
+  /**
+   * The project whose board it is: its id on the machine's server.
+   */
+  project: string;
+  /**
+   * The schema its board reached.
+   */
+  schema: number;
+  /**
+   * Its generation: 1, then 2 for the board's next arrival at the same schema after it went back.
+   */
+  generation: number;
+  state: UpdateState;
+  /**
+   * When its board reached the schema, as far as a record says.
+   */
+  reached: UpdateTime | null;
+  /**
+   * When the first green release serving the schema was installed on the machine.
+   */
+  available: UpdateTime | null;
+  /**
+   * When the machine's server first wrote the board at the schema.
+   */
+  served: UpdateTime | null;
+  /**
+   * From reached to served, in seconds, once both are known.
+   */
+  total: number | null;
+  /**
+   * [`SchemaUpdate::total`] as the owner reads a wait: `4 h 46 min`, `3 min 10 s`, `40 s`.
+   */
+  total_said: string | null;
+  /**
+   * How much of the wait came after the release was installed, in seconds, once both are known.
+   */
+  after_available: number | null;
+  /**
+   * [`SchemaUpdate::after_available`] as the owner reads a wait.
+   */
+  after_available_said: string | null;
+  /**
+   * How many refreshes ended with it incomplete though a green release serving it was here.
+   */
+  failures: number;
+  /**
+   * What the last of them found; none while none failed.
+   */
+  failure: string | null;
+  /**
+   * The page of its task, filed at its first failure, on the server that answers: an app path
+   * (`/<project>/task/SLUG` under the machine's one server, while the project is registered);
+   * none while it has none, its board is an unregistered one's, or its task is another
+   * project's board's and the server serves its one project alone.
+   */
+  task: string | null;
+};
+
+export type UpdateState = "open" | "served" | "left";
+
+export type UpdateTime = {
+  /**
+   * Seconds since the epoch.
+   */
+  at: number;
+  /**
+   * Where it comes from, named as `release --status` names it, the record's words before their
+   * first colon: `schema-seen.log`, `release-2026-11-19's manifest, written by its install`,
+   * `the server's hand-off`, `this refresh's move`, or a refresh's own look.
+   */
+  source: string;
+  /**
+   * The record's words whole, its name first and then what it says of the time (`schema-seen.log:
+   * the first store that saw the board at this schema; …`), as the ledger holds them.
+   */
+  words: string;
+};
+
 export type TaskListing = {
   machine_work: MachineWork;
   tasks: Array<Task>;
@@ -618,6 +718,17 @@ export type WaitingBoard = {
    * Every column after the selected wait kind, including columns outside the requested page.
    */
   columns: Array<WaitingColumn>;
+  /**
+   * Open tasks a custom workflow holds by their coordination state's ID, ordered by ID, before
+   * the selected wait kind and state: empty, and left out, on a board with none.
+   */
+  states?: Array<[string, number]>;
+  /**
+   * The active custom workflow's activation generation: absent on a board whose own writers keep
+   * its tasks, so a page draws a workflow's phases and states only where one is active, and
+   * reads its definition again when it changes (docs/WORKFLOW.md, "The app").
+   */
+  workflow?: number | null;
 };
 
 export type WaitingColumn = {
@@ -663,6 +774,12 @@ export type Task = {
    * and its [`WaitsOn`] says no reason is recorded (docs/TASKS.md, what a task waits on).
    */
   from?: string | null;
+  /**
+   * Where a custom workflow holds it ([`workflow::TaskPlace`]): none for a task the board's own
+   * writers keep, every task of a board with no custom workflow among them, and from a server
+   * before it.
+   */
+  workflow?: WorkflowPlace | null;
 };
 
 export type WaitsOn = {
@@ -725,7 +842,23 @@ export type TaskFields = {
    * Present only when the status it was blocked from changes. Empty string clears it.
    */
   from?: string | null;
+  /**
+   * Present only when its place in a custom workflow changes; a place is never taken away.
+   */
+  workflow?: WorkflowPlace | null;
 };
+
+export type WorkflowPlace = {
+  phase: string;
+  state: string;
+  resume?: WorkflowPair | null;
+  revision: number;
+  manual?: WorkflowManualRecovery | null;
+};
+
+export type WorkflowManualRecovery = { trigger: string; holder: string; role: string };
+
+export type WorkflowPair = { phase: string; state: string };
 
 export type MachineWork = {
   freshness: WorkFreshness;
@@ -1330,6 +1463,224 @@ export type Upload = {
   markup: string;
 };
 
+export type BoardWorkflow = { project: string; workflow: WorkflowRead | null };
+
+export type WorkflowRead = {
+  definition: WorkflowDefinition;
+  revision: WorkflowRevision;
+  activation_generation: number;
+};
+
+export type WorkflowDefinition = {
+  format: number;
+  initial: WorkflowPair;
+  task_kinds: Array<string>;
+  phases: Array<WorkflowPhase>;
+  states: Array<WorkflowState>;
+  positions: Array<WorkflowPosition>;
+  edges: Array<WorkflowEdge>;
+  capabilities: Array<string>;
+  adapters: Array<string>;
+  guards: Array<WorkflowGuard>;
+};
+
+export type WorkflowPhase = {
+  id: string;
+  label: string;
+  order: number;
+  phone_order: number;
+  /**
+   * False for the default's off-pipeline backlog/blocked/cancelled groups.
+   */
+  column: boolean;
+};
+
+export type WorkflowState = { id: string; label: string };
+
+export type WorkflowPosition = {
+  at: WorkflowPair;
+  /**
+   * None is explicit in JSON; TOML omits it. Phase/state names never imply staffing.
+   */
+  staffing: WorkflowRole | null;
+  slot: WorkflowSlot;
+  dependencies: WorkflowDependency;
+  unsuccessful_dependency: WorkflowUnsuccessfulDependency;
+  accepts_work: boolean;
+  terminal: boolean;
+  legacy: WorkflowLegacyStatus;
+  outcome: WorkflowOutcome | null;
+  satisfies_dependencies: boolean;
+  completion: WorkflowCompletion;
+  recovery: WorkflowRecovery | null;
+};
+
+export type WorkflowRecovery = {
+  release: WorkflowRecoveryAction;
+  lost_holder: WorkflowRecoveryAction;
+  attempt_failure: WorkflowRecoveryAction;
+  cancellation_acknowledged: WorkflowRecoveryAction;
+};
+
+export type WorkflowRecoveryAction = {
+  /**
+   * None means stay; manual must then be true. No implicit move to ready.
+   */
+  target: WorkflowPair | null;
+  manual: boolean;
+  slot: WorkflowSlot;
+  release_role: boolean;
+  release_reservation: boolean;
+};
+
+export type WorkflowGuard = { id: string; adapter: string };
+
+export type WorkflowAuthority =
+  | { kind: "task_role"; role: WorkflowRole }
+  | { kind: "project_capability"; capability: string }
+  | { kind: "system_capability"; capability: string };
+
+export type WorkflowEffect =
+  | { kind: "acquire_role"; role: WorkflowRole }
+  | { kind: "release_role"; role: WorkflowRole }
+  | { kind: "slot"; policy: WorkflowSlot }
+  | { kind: "review"; approved: boolean }
+  | { kind: "block"; save_resume: boolean }
+  | { kind: "clear_block" }
+  | { kind: "outcome"; outcome: WorkflowOutcome; satisfies_dependencies: boolean }
+  | { kind: "parent_integration" }
+  | { kind: "prepare"; adapter: string }
+  | { kind: "finalize"; adapter: string };
+
+export type WorkflowRetryBound = { maximum: number; exhausted: WorkflowPair };
+
+export type WorkflowEdge = {
+  id: string;
+  label: string;
+  from: WorkflowPair;
+  to: WorkflowPair;
+  operation: WorkflowOperation;
+  /**
+   * A legacy alias resolves only when unique at a source pair.
+   */
+  alias: string | null;
+  authority: Array<WorkflowAuthority>;
+  inputs: Array<string>;
+  dependencies: WorkflowDependency;
+  guards: Array<string>;
+  effects: Array<WorkflowEffect>;
+  automatic: boolean;
+  retry: WorkflowRetryBound | null;
+  human_wait: boolean;
+};
+
+export type WorkflowRevision = { format: number; digest: string; source: WorkflowSource };
+
+export type WorkflowSource = { commit: string; project_blob: string };
+
+export type WorkflowPositionSnapshot = {
+  workflow: WorkflowRevision;
+  activation_generation: number;
+  task_revision: number;
+  at: WorkflowPair;
+};
+
+export type WorkflowInputValue =
+  | { kind: "text"; value: string }
+  | { kind: "revision"; value: string }
+  | { kind: "pair"; value: WorkflowPair }
+  | { kind: "flag"; value: boolean };
+
+export type WorkflowOperationRequest = {
+  project: string;
+  task: string;
+  edge: string;
+  expected: WorkflowPositionSnapshot;
+  input_revisions: { [key in string]: string };
+  idempotency_key: string;
+  inputs: { [key in string]: WorkflowInputValue };
+};
+
+export type WorkflowNextAction = {
+  edge: string;
+  operation: WorkflowOperation;
+  destination: WorkflowPair;
+  label: string;
+  responsible: Array<WorkflowAuthority>;
+  required_inputs: Array<string>;
+  unavailable: Array<WorkflowRefusalCode>;
+};
+
+export type WorkflowNextActions = {
+  snapshot: WorkflowPositionSnapshot;
+  actions: Array<WorkflowNextAction>;
+};
+
+export type WorkflowOperationResult = {
+  transition: string;
+  next: WorkflowNextActions;
+  effects: Array<WorkflowEffect>;
+};
+
+export type WorkflowRefusalCode =
+  | "stale_task"
+  | "stale_workflow"
+  | "stale_activation"
+  | "stale_input"
+  | "unknown_id"
+  | "removed_id"
+  | "unauthorized"
+  | "dependency"
+  | "capacity"
+  | "human_wait"
+  | "guard_unavailable"
+  | "unsupported_activation"
+  | "unsupported_writer"
+  | "unsupported_adapter"
+  | "explicit_action_required";
+
+export type WorkflowRole = "executor" | "reviewer" | "orchestrator";
+
+export type WorkflowSlot = "retain" | "acquire" | "release";
+
+export type WorkflowDependency = "none" | "done" | "landed" | "accepted_output";
+
+export type WorkflowUnsuccessfulDependency = "block" | "cancel" | "manual";
+
+export type WorkflowOutcome = "success" | "cancellation" | "failure";
+
+export type WorkflowCompletion = "none" | "landing" | "covered_close" | "parent_integration";
+
+export type WorkflowOperation =
+  | "create"
+  | "claim"
+  | "release"
+  | "advance"
+  | "request_review"
+  | "approve"
+  | "changes"
+  | "block"
+  | "resume"
+  | "retry"
+  | "cancel"
+  | "complete_subtask"
+  | "close_covered"
+  | "prepare_land"
+  | "confirm_land"
+  | "prepare_external"
+  | "confirm_external";
+
+export type WorkflowLegacyStatus =
+  | "backlog"
+  | "concept"
+  | "design"
+  | "ready"
+  | "in_progress"
+  | "review"
+  | "done"
+  | "blocked"
+  | "cancelled";
+
 export type TaskPage = {
   machine_work: MachineWork;
   task: Task;
@@ -1529,6 +1880,13 @@ export type TaskTimeline = {
    */
   gates: Array<GateLane>;
   /**
+   * Each place a custom workflow put the task at, oldest first, from its recorded transitions:
+   * each lasting until the next began, the last until the timeline's end. Time at a place is
+   * the clock's, never the machine's time on runs ([`Self::machine_seconds`]). Empty, and left
+   * out, for a task no workflow held, or whose transitions could not be read.
+   */
+  places?: Array<PlaceSpan>;
+  /**
    * Recorded roles and message addresses. Absent on servers without this projection; never
    * interpret absence, a partial source or a failed source as an empty history.
    */
@@ -1646,6 +2004,37 @@ export type GateSpan = {
   from: number;
   by?: string | null;
   detail: string;
+};
+
+export type PlaceSpan = {
+  /**
+   * Its phase's ID, then its label in the definition the move was made under: the ID where
+   * that definition is not recorded or does not name it.
+   */
+  phase: string;
+  phase_label: string;
+  /**
+   * Its coordination state's ID and label, named as its phase is.
+   */
+  state: string;
+  state_label: string;
+  /**
+   * The board status the place projects to, which a page colours it by, as it colours a
+   * status.
+   */
+  status: string;
+  /**
+   * When the task was put there.
+   */
+  from: number;
+  /**
+   * The edge that moved it there: none for a move an activation or a filing made.
+   */
+  edge?: string | null;
+  /**
+   * Who moved it: an agent session's handle, or the owner.
+   */
+  by: string;
 };
 
 export type History = {

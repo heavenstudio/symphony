@@ -217,6 +217,15 @@ pub fn with_marker(body: &str, marker: &str) -> String {
     format!("{}\n\n{MARKER_OPEN}{marker}{MARKER_CLOSE}", body.trim_end())
 }
 
+/// The longest curated body that is read back whole once published: with its marker's line, no
+/// longer than a read keeps of an issue's text ([`crate::github::BODY_CHARS`]). A longer one
+/// would be cut there, its marker with it, and never read as the text it was.
+#[must_use]
+pub fn longest_body() -> usize {
+    let marker_line = with_marker("", &"0".repeat(32)).chars().count();
+    crate::github::BODY_CHARS - marker_line
+}
+
 /// The last marker in `body`: what is before its line, the marker, and what is after.
 fn marked(body: &str) -> Option<(&str, &str, &str)> {
     let (before, after) = body.rsplit_once(MARKER_OPEN)?;
@@ -684,7 +693,13 @@ impl Planner<'_> {
                 .iter()
                 .find(|task| free(&task.slug) && marker_for(seen.repo.id, &task.slug) == marker);
             if let Some(task) = published {
-                if marked.get(marker).copied().unwrap_or(0) > 1 {
+                if seen.state.dropped_from(&task.slug, issue.id) {
+                    self.notices.push(format!(
+                        "issue #{} ({}) carries the marker of {}, which it was dropped from: not \
+                         mapped",
+                        issue.number, issue.url, task.slug
+                    ));
+                } else if marked.get(marker).copied().unwrap_or(0) > 1 {
                     self.adopted.insert(task.slug.clone());
                     self.notices.push(format!(
                         "{}: more than one issue carries its marker (#{} among them): none is \
@@ -727,6 +742,11 @@ impl Planner<'_> {
             if !free(&slug) {
                 self.notices.push(format!(
                     "{slug}: mapped to another issue than #{}: not touched",
+                    issue.number
+                ));
+            } else if seen.state.dropped_from(&slug, issue.id) {
+                self.notices.push(format!(
+                    "{slug}: issue #{} was dropped from it: not mapped again",
                     issue.number
                 ));
             } else if task.body.lines().any(|line| line == node_line(issue)) {
@@ -828,10 +848,19 @@ pub fn plan(seen: &Seen<'_>) -> (Vec<Action>, Vec<String>) {
         .iter()
         .map(|(slug, mapping)| (mapping.issue_id, slug.as_str()))
         .collect();
+    // An issue dropped from the task its marker names is no duplicate of that task's
+    // publication: an operator said it is not the task's.
+    let dropped: BTreeSet<(String, i64)> = (seen.state.dropped.iter())
+        .flat_map(|(slug, issues)| {
+            let marker = marker_for(seen.repo.id, slug);
+            issues.iter().map(move |id| (marker.clone(), *id))
+        })
+        .collect();
     let mut marked: BTreeMap<&str, usize> = BTreeMap::new();
     for issue in seen.issues {
         if !by_issue.contains_key(&issue.id)
             && let Some(marker) = find_marker(&issue.body)
+            && !dropped.contains(&(marker.to_string(), issue.id))
         {
             *marked.entry(marker).or_default() += 1;
         }

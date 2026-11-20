@@ -82,21 +82,39 @@ impl Chrome {
         self.0.eval(expression).asserted()
     }
 
-    /// Approach a lazy region's slot, then let its ordinary viewport observer mount it.
+    /// Approach a lazy region's slot as the reader does, then let its ordinary viewport observer
+    /// mount it. The reader's scroll starts with their own input (a wheel), which ends whatever
+    /// holds the page's place: the shell's hold of a row while the rows near it draw, and the
+    /// board's return to the place its history entry keeps once it draws again. A script's scroll
+    /// alone ends neither, and they put the page back where they hold it in the next frame, before
+    /// the observer looks, so the slot is never seen. Both waits are [`Chrome::until`] their
+    /// condition: the slot mounts in the frame its observer runs in, which a loaded machine's
+    /// renderer can hold back over many of the page's turns, so no count of them bounds it.
     pub fn reveal(&mut self, selector: &str) {
-        let selector = json!(selector);
-        assert!(
-            self.wait_for(
-                &format!("document.querySelector({selector}) !== null"),
-                super::SHOWN
-            ),
-            "no slot to reveal: {selector}"
+        let slot = format!("document.querySelector({})", json!(selector));
+        self.until(
+            &format!("a slot to reveal: {selector}"),
+            &format!("{slot} !== null"),
         );
         self.eval(&format!(
-            "document.querySelector({selector}).scrollIntoView({{block:'center',inline:'center'}})"
+            "dispatchEvent(new WheelEvent('wheel')); {slot}.scrollIntoView({{block:'center',inline:'center'}})"
         ));
-        assert!(self.wait_for(&format!("!document.querySelector({selector}).querySelector(':scope > .viewport-sentinel')"), super::SHOWN),
-            "the lazy slot never mounted: {selector}");
+        self.until(
+            &format!("the lazy slot mounted: {selector}"),
+            &format!("!{slot}.querySelector(':scope > .viewport-sentinel')"),
+        );
+    }
+
+    /// Wait until `expression` is `true` in the page: a wait on its condition, which only a stall
+    /// past [`super::STALL`] ends, failing with `what` and the load average then (RULES.md
+    /// `tests/no-test-fails-on-load`).
+    #[track_caller]
+    pub fn until(&mut self, what: &str, expression: &str) {
+        if let Err(stall) =
+            test_time::until_true(what, super::STALL, || self.eval(expression) == json!(true))
+        {
+            panic!("{stall}");
+        }
     }
 
     /// Wait until `expression` is truthy, bounded by browser CPU and completed polls.
@@ -134,6 +152,11 @@ impl Chrome {
     /// One DevTools command on another tab's `session` (`Target.attachToTarget`'s); its result.
     pub fn call_on(&mut self, session: &str, method: &str, params: Value) -> Value {
         self.0.call_on(session, method, params).asserted()
+    }
+
+    /// The viewport's pixels as a PNG.
+    pub fn screenshot(&mut self) -> Vec<u8> {
+        self.0.screenshot(json!({})).asserted()
     }
 
     /// Drain through a browser-scheduled observation marker.

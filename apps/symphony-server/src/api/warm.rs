@@ -29,6 +29,7 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
             shared.embedded_ui,
             shared.installed_ui,
         )?;
+        hub.serve_at(&shared.base);
         hub.gate_recorders(shared.recording.clone());
         hub.wake_at_board(shared.board_wakers.clone());
         // Saves kept for delivery by pull request are taken up again now and after each refresh.

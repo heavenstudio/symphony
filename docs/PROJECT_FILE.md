@@ -7,10 +7,7 @@ line where the project is loaded or linted (`just symphony-status --lint`), and 
 read, where the Symphony runs with the file as it is. A file that does not load is run as the plain
 project: the server serves the project with the defaults, and every page of it says so and why,
 until it loads. Three keys nothing acted on are gone (`[agents] transports`, `[board] export` and
-`[board] disposable`): a file that still writes one loads, the key ignored whatever it holds, and
-the load a server runs with, the lint and the settings check each say on stderr that it does
-nothing, by its line, failing nothing; the release after refuses it as any unknown key
-(`RETIRED` in `crates/symphony/src/project/file.rs`). The board reads its own keys (`[board]`'s
+`[board] disposable`), each refused as any unknown key is. The board reads its own keys (`[board]`'s
 commands and thresholds, `[limits]`, `[agents] launch`, `[agents.models]` and `[stamps]`) from the
 main checkout's copy, so a branch cannot change its own. A path is relative to the project's root
 and stays inside it, unless its key says otherwise.
@@ -317,6 +314,22 @@ What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASK
 | `keys` | none | a generator's name, then the command printing its key: a tip whose key passed before runs nothing |
 | `check_paths` | the list in [TASKS](TASKS.md#the-default-landing) | what holds the project's tests and checks, which a red's fix its orchestrator approves may not change |
 | `delivery` | none: the land merges and pushes here | the command that delivers a task by a hosted pull request in place of that merge and push, a list of words run as `COMMAND VERB --request FILE` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); it decides what lands, so a change of it is reviewed |
+| `upstream` | none: no import is delivered | `[land.upstream]`, the repository this one imports from, as below |
+
+## `[land.upstream]`
+
+The upstream a downstream project imports from ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)):
+where a land delivered by a pull request fetches it for every head, to judge whether the head
+imports it, and the one history such a head may bring in, merged by a merge commit rather than
+squashed ([TASKS](TASKS.md#an-import-delivered-by-a-pull-request)). An address that does not
+answer refuses every such land, a task's as well. With none, no import is delivered and a head
+holding another history is refused. Both keys are needed, and no other is read; it decides what
+lands, so a change of it is reviewed.
+
+| Key | What it sets |
+| --- | --- |
+| `url` | the upstream's address, as `git fetch` takes it; never one starting with `-` |
+| `branch` | the upstream's default branch, a plain branch name, which an import's commit must be on |
 
 ## `[[land.generators]]`
 
@@ -466,6 +479,7 @@ stands is its reader's, which no key sets. A key not listed here refuses the cat
 | `default` | `true` for `review`, `false` for the rest | whether a task no assessment has read needs it |
 | `applies` | the Symphony's own | where an assessor needs it, as `just tasks stamps` prints it |
 | `skips` | the Symphony's own | where an assessor leaves it out |
+| `waivable` | `true` for `pictures`, `false` for the rest | whether a gate decision may waive it for one tip ([TASKS](TASKS.md#gate-decisions)); `true` on `tests`, `review` or `owner` refuses the catalogue, as they are never waived |
 
 ## `[releases]`
 
@@ -477,5 +491,6 @@ other project runs.
 | `every_landings` | `20` | a release run starts once this many tasks have landed; `0` starts none |
 | `refresh` | `true` | whether a green release refreshes the machine |
 | `publish` | `false` | whether a green release, once pushed, publishes on crates.io each package whose version it lacks ([RELEASES](RELEASES.md#packages-on-cratesio)) |
+| `github` | none | the command a green release, once pushed, asks for its GitHub Release, run as `COMMAND… --request FILE`: `["symphony-github", "release"]` names the GitHub adapter's; with none, no program is run ([RELEASES](RELEASES.md#a-github-release)) |
 | `candidate_reruns` | `3` | the red reruns a release candidate takes before it is dropped |
 | `candidate_hours` | `24` | the hours a release candidate is held before it is dropped |

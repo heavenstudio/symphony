@@ -510,7 +510,7 @@ fn an_attestation_outside_its_time_is_refused() {
         a.expires_at = a.issued_at + 10.0;
     });
     assert!(
-        ahead.message.contains("ahead of the board's clock"),
+        ahead.message.contains("ahead of this machine's clock"),
         "{ahead}"
     );
     // Within the skew, and for exactly the longest validity, passes.

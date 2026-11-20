@@ -3,7 +3,7 @@
 //! answers its rules and rulesets and holds a merge to them as GitHub does. Each case starts
 //! from the protection a delivery needs and takes one thing from it.
 
-use crate::deliver::{APP, Delivery, HEAD, LANDING, SLUG, snapshot};
+use crate::deliver::{APP, Delivery, HEAD, LANDING, READER, SLUG, snapshot};
 use crate::github::Fault;
 use serde_json::{Value, json};
 
@@ -284,7 +284,7 @@ fn a_rule_someone_bypasses_or_whose_bypass_is_not_shown_holds_nobody() {
     assert_eq!(
         refused_unpublished(&d)[1],
         "the rule that blocks a force push holds not everyone on main: who bypasses ruleset 1 is \
-         not known (its bypass list is not shown to the merging token)"
+         not known (its bypass list is not shown to the policy token)"
     );
     // The update restriction: nobody through, others through beside the App, an App's mode
     // nobody knows, and a list not shown.
@@ -313,7 +313,7 @@ fn a_rule_someone_bypasses_or_whose_bypass_is_not_shown_holds_nobody() {
         ),
         (
             Value::Null,
-            "who ruleset 2 lets through is not known (its bypass list is not shown to the merging \
+            "who ruleset 2 lets through is not known (its bypass list is not shown to the policy \
              token)",
         ),
     ] {
@@ -380,7 +380,7 @@ fn the_rules_in_effect_are_judged_whole_an_organizations_among_them() {
     assert_eq!(missing.len(), 2, "{missing:?}");
     assert!(missing[1].ends_with(
         "requires symphony/eligible from App 42 holds not everyone on main: who bypasses ruleset 9 \
-         is not known (its bypass list is not shown to the merging token)"
+         is not known (its bypass list is not shown to the policy token)"
     ));
     // The same rule given by both: the repository's own, read and bypassed by nobody, holds.
     d.rig.github.ruleset(1, &json!([]), &firm_rules());
@@ -473,7 +473,7 @@ fn a_policy_github_does_not_show_is_refused_and_one_it_does_not_answer_is_unavai
             "/repos/o/n/rulesets/2",
             404,
             "refused",
-            "who ruleset 2 lets through is not known (GitHub answered 404)",
+            "who ruleset 2 lets through is not known (GitHub answered 404 to the policy token)",
         ),
     ] {
         let d = Delivery::new("protection-unavailable", "");
@@ -646,12 +646,13 @@ fn only_the_landing_app_merges_a_pull_request_whose_check_is_green() {
 #[test]
 fn preflight_says_what_a_delivery_would_find_and_writes_nothing() {
     let d = Delivery::new("protection-command", "");
-    let ran = d.rig.run(&["preflight"]);
+    let ran = d.run(&["preflight"]);
     assert_eq!(ran.code, 0, "{}{}", ran.out, ran.err);
     let lines: Vec<&str> = ran.out.lines().collect();
     assert_eq!(
         lines[0],
-        "o/n (id 77, bound to nothing here yet), main: checks from App 42, merged by App 43"
+        "o/n (id 77, bound to nothing here yet), main: checks from App 42, merged by App 43, bypass \
+         lists read by App 44"
     );
     assert!(
         lines[1].starts_with("holds: a delivery would go on (policy "),
@@ -666,7 +667,7 @@ fn preflight_says_what_a_delivery_would_find_and_writes_nothing() {
     d.rig
         .github
         .set_repository(&json!({"allow_auto_merge": true}));
-    let ran = d.rig.run(&["preflight", "--branch", "main"]);
+    let ran = d.run(&["preflight", "--branch", "main"]);
     assert_eq!(ran.code, 1);
     let lines: Vec<&str> = ran.out.lines().collect();
     assert_eq!(lines[1], "does not hold: a delivery would be refused");
@@ -674,7 +675,7 @@ fn preflight_says_what_a_delivery_would_find_and_writes_nothing() {
     assert!(lines[2].starts_with("  missing: auto-merge is allowed"));
     assert!(lines[3].starts_with("  missing: no rule restricts updates of main"));
     // Another branch than the default has no rule and is not the default.
-    let ran = d.rig.run(&["preflight", "--branch", "release/1"]);
+    let ran = d.run(&["preflight", "--branch", "release/1"]);
     assert_eq!(ran.code, 1);
     assert!(
         ran.out
@@ -689,14 +690,14 @@ fn preflight_says_what_a_delivery_would_find_and_writes_nothing() {
         &["preflight", "more"],
         &["preflight", "--branch"],
     ] {
-        assert_eq!(d.rig.run(args).code, 1);
+        assert_eq!(d.run(args).code, 1);
     }
     assert_eq!(d.rig.github.asked().len(), asked);
     // GitHub not answering is said, and is no pass.
     d.rig
         .github
         .fault("GET", "/repos/o/n", Fault::Status(500, Vec::new()));
-    let ran = d.rig.run(&["preflight"]);
+    let ran = d.run(&["preflight"]);
     assert_eq!(
         (ran.code, ran.out.as_str()),
         (1, "GitHub answered 500 to GET /repos/o/n\n")
@@ -708,7 +709,7 @@ fn preflight_says_what_a_delivery_would_find_and_writes_nothing() {
         .set_repository(&json!({"allow_auto_merge": false}));
     d.publish(&snapshot(HEAD, "met", "r1"));
     d.rig.github.replace_repository(78);
-    let ran = d.rig.run(&["preflight"]);
+    let ran = d.run(&["preflight"]);
     assert_eq!(ran.code, 1);
     assert!(
         ran.out.starts_with("o/n (id 77, as bound here), main"),
@@ -734,7 +735,7 @@ fn preflight_asks_nothing_where_the_settings_serve_no_delivery() {
             None => d.rig.settings.set(None),
             Some(more) => d.rig.enable(more),
         }
-        let ran = d.rig.run(&["preflight"]);
+        let ran = d.run(&["preflight"]);
         assert_eq!(ran.code, 1);
         assert!(ran.out.starts_with("turned off: "), "{}", ran.out);
     }
@@ -742,14 +743,14 @@ fn preflight_asks_nothing_where_the_settings_serve_no_delivery() {
     // A token file that does not hold as one must is said, and nothing is asked.
     let d = Delivery::new("protection-command-token", "");
     std::fs::remove_file(&d.rig.token_file).unwrap();
-    let ran = d.rig.run(&["preflight"]);
+    let ran = d.run(&["preflight"]);
     assert_eq!(ran.code, 1);
     assert!(ran.out.starts_with("token_file "), "{}", ran.out);
     assert_eq!(d.rig.github.asked().len(), 0);
     // A repository that no longer answers at its name is not readable, bound or not.
     let d = Delivery::new("protection-command-moved", "");
     d.rig.github.rename("n2");
-    let ran = d.rig.run(&["preflight"]);
+    let ran = d.run(&["preflight"]);
     assert_eq!(ran.code, 1);
     assert!(
         ran.out.ends_with(
@@ -759,4 +760,150 @@ fn preflight_asks_nothing_where_the_settings_serve_no_delivery() {
         "{}",
         ran.out
     );
+}
+
+#[test]
+fn who_bypasses_the_rules_is_read_with_the_policy_token_and_it_is_sent_with_nothing_else() {
+    let d = Delivery::new("protection-reader", "");
+    assert_eq!(
+        d.publish(&snapshot(HEAD, "met", "r1"))["state"],
+        "published"
+    );
+    assert_eq!(d.merge(100)["state"], "merged");
+    assert_eq!(d.result(100)["state"], "merged");
+    assert_eq!(d.run(&["preflight"]).code, 0);
+    // Over a whole delivery and a preflight, the policy App asked for the two rulesets and
+    // nothing else, and wrote nothing.
+    let asked = d.rig.github.asked_as(READER);
+    assert_eq!(asked.len(), 6, "{asked:?}");
+    for (method, path) in &asked {
+        assert_eq!(method, "GET");
+        assert!(
+            ["/repos/o/n/rulesets/1", "/repos/o/n/rulesets/2"].contains(&path.as_str()),
+            "{path}"
+        );
+    }
+    // Neither other App asked for a ruleset: the lists come from the policy token alone.
+    for app in [APP, LANDING] {
+        assert!(
+            (d.rig.github.asked_as(app).iter()).all(|(_, path)| !path.contains("/rulesets/")),
+            "App {app}"
+        );
+    }
+    d.assert_no_token();
+}
+
+#[test]
+fn a_policy_token_shown_no_list_or_not_there_delivers_nothing() {
+    // The landing token in the policy token's place is shown no list, as GitHub shows it none.
+    let d = Delivery::new("protection-reader-hidden", "");
+    std::fs::copy(&d.rig.token_file, d.policy_file()).unwrap();
+    let hidden = refused_unpublished(&d);
+    assert_eq!(hidden.len(), 5, "{hidden:?}");
+    for line in &hidden {
+        assert!(
+            line.ends_with("(its bypass list is not shown to the policy token)"),
+            "{line}"
+        );
+    }
+    let ran = d.run(&["preflight"]);
+    assert_eq!(ran.code, 1);
+    assert_eq!(ran.out.matches("  missing: ").count(), 5, "{}", ran.out);
+    // No policy token: refused as a policy that does not hold, with nothing asked of the
+    // rulesets, and said by the preflight before it reads anything.
+    let d = Delivery::new("protection-reader-absent", "");
+    std::fs::remove_file(d.policy_file()).unwrap();
+    let absent = refused_unpublished(&d);
+    assert_eq!(absent.len(), 1, "{absent:?}");
+    assert!(
+        absent[0].starts_with(
+            "who bypasses the rules of main cannot be read, policy_token_file not being usable: \
+             token_file "
+        ),
+        "{absent:?}"
+    );
+    assert_eq!(
+        d.rig.github.asked_as(READER),
+        Vec::<(String, String)>::new()
+    );
+    let ran = d.run(&["preflight"]);
+    assert_eq!(ran.code, 1);
+    assert!(ran.out.lines().last().unwrap().starts_with("token_file "));
+    // Evidence that blocks is still said where the policy token's file is gone; one GitHub
+    // does not answer is the next test's.
+    let d = Delivery::new("protection-reader-withdrawal", "");
+    assert_eq!(
+        d.publish(&snapshot(HEAD, "met", "r1"))["state"],
+        "published"
+    );
+    std::fs::remove_file(d.policy_file()).unwrap();
+    let answer = d.publish(&snapshot(HEAD, "missing", "r2"));
+    assert_eq!(answer["state"], "published", "{answer}");
+    assert!(
+        (d.rig.github.checks(HEAD).iter())
+            .any(|(name, conclusion, _)| name == "symphony/eligible" && conclusion == "failure"),
+        "{:?}",
+        d.rig.github.checks(HEAD)
+    );
+    // And a merge is refused there.
+    assert_eq!(missing(&d.merge(100)).len(), 1);
+    assert_eq!(d.rig.github.pulls()[0]["merged"], false);
+}
+
+#[test]
+fn a_policy_token_github_does_not_answer_stops_a_delivery_and_no_withdrawal() {
+    for (status, said) in [
+        (401, "GitHub refused the credential (401)"),
+        (429, "GitHub's rate limit"),
+        (500, "GitHub answered 500 to GET /repos/o/n/rulesets/1"),
+    ] {
+        let d = Delivery::new("protection-reader-unanswered", "");
+        assert_eq!(
+            d.publish(&snapshot(HEAD, "met", "r1"))["state"],
+            "published"
+        );
+        let unanswered = || {
+            (d.rig.github).fault(
+                "GET",
+                "/repos/o/n/rulesets/1",
+                Fault::Status(status, Vec::new()),
+            );
+        };
+        // Evidence that stands is not published past a policy nobody read, and the land is
+        // told to come back, in words that name the policy token and not the one that merges.
+        unanswered();
+        let moved = "c".repeat(40);
+        let answer = d.publish(&snapshot(&moved, "met", "r2"));
+        assert_eq!(
+            (&answer["state"], &answer["kind"]),
+            (&json!("unavailable"), &json!("policy")),
+            "{status}: {answer}"
+        );
+        let why = answer["why"].as_str().unwrap();
+        assert!(
+            why.starts_with(
+                "who bypasses ruleset 1 was not read with the policy token (policy_token_file): "
+            ) && why.contains(said),
+            "{why}"
+        );
+        assert_eq!(d.remote.pushed.borrow().len(), 1);
+        // Nor is a merge asked for.
+        unanswered();
+        let answer = d.merge(100);
+        assert_eq!(answer["state"], "unavailable", "{status}: {answer}");
+        assert_eq!(d.rig.github.pulls()[0]["merged"], false);
+        // Evidence that blocks is still said, by its checks: the green one does not outlive it.
+        unanswered();
+        let answer = d.publish(&snapshot(HEAD, "missing", "r3"));
+        assert_eq!(answer["state"], "published", "{status}: {answer}");
+        let eligible: Vec<String> = (d.rig.github.checks(HEAD).into_iter())
+            .filter(|(name, ..)| name == "symphony/eligible")
+            .map(|(_, conclusion, _)| conclusion)
+            .collect();
+        assert_eq!(eligible, ["failure"], "{status}");
+        // And GitHub holds the merge to it once the policy is read again.
+        assert_eq!(d.merge(100)["state"], "refused");
+        assert_eq!(d.rig.github.pulls()[0]["merged"], false);
+        d.assert_no_token();
+    }
 }

@@ -10,15 +10,15 @@ use symphony_board::cli::machine_work::recorded::{self, FOLDER_VAR, Phase, Recor
 use symphony_board::stamps::{Catalogue, Needs};
 
 /// A task's people, with the session that assesses it: none of the others, nor its filer.
-struct Staff {
-    orch: String,
-    exe: String,
-    assessor: String,
+pub(super) struct Staff {
+    pub(super) orch: String,
+    pub(super) exe: String,
+    pub(super) assessor: String,
 }
 
 /// `slug` filed by the owner, orchestrated, claimed and moved to review by its executor, its
 /// branch writing `files`: the people and the tip.
-fn in_review(r: &Repo, slug: &str, files: &[(&str, &str)]) -> (Staff, String) {
+pub(super) fn in_review(r: &Repo, slug: &str, files: &[(&str, &str)]) -> (Staff, String) {
     let wt = r.add(&slug.replace('/', "-"), Some(slug), "main");
     for (file, text) in files {
         write(&wt, file, text);
@@ -39,7 +39,7 @@ fn in_review(r: &Repo, slug: &str, files: &[(&str, &str)]) -> (Staff, String) {
 }
 
 /// The assessment `by` writes of `slug`: `stamps` at `tip`.
-fn assess(r: &Repo, slug: &str, by: &str, stamps: &[&str], tip: &str) {
+pub(super) fn assess(r: &Repo, slug: &str, by: &str, stamps: &[&str], tip: &str) {
     let needs = Needs {
         stamps: if stamps.is_empty() {
             vec!["none".into()]
@@ -49,6 +49,7 @@ fn assess(r: &Repo, slug: &str, by: &str, stamps: &[&str], tip: &str) {
         tip: Some(tip.into()),
         by: by.into(),
         why: "as the guidelines say".into(),
+        import: None,
     };
     (r.board.store)
         .set_needs(slug, &Catalogue::symphony(), &needs)

@@ -60,6 +60,9 @@ pub fn bound(name: &str) -> Option<Value> {
         // The sessions a read shows, named by the roles an earlier statement read.
         "shown_sessions" => json!([generated::writer()]),
         "prefix" | "pull_kept" => json!("pull-1"),
+        // The workflow position a task's write puts it at, which the schema's `workflow_position`
+        // event reads its transitions by.
+        "w" => json!({"phase": "build", "state": "working", "revision": 1}),
         _ => return None,
     })
 }

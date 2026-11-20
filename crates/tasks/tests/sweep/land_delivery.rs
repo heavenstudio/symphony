@@ -9,12 +9,14 @@ use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
+use symphony_board::cli::Env;
 use symphony_board::cli::machine_work::recorded::{self, FOLDER_VAR, Phase, Record, Step};
 use symphony_board::land::delivery::{Journal, Receipt, Stage, Transport};
 use symphony_board::land::{Stop, evidence, land, land_by};
 use symphony_board::stamps::{Catalogue, Needs};
 
 mod generated;
+mod import;
 
 const SLUG: &str = "sim/jump";
 /// The project file of a project that delivers by pull request.
@@ -86,6 +88,7 @@ fn assess(r: &Repo, slug: &str, by: &str, stamps: &[&str], tip: &str) {
         tip: Some(tip.into()),
         by: by.into(),
         why: "as the guidelines say".into(),
+        import: None,
     };
     (r.board.store)
         .set_needs(slug, &Catalogue::symphony(), &needs)
@@ -152,10 +155,14 @@ fn approve(r: &Repo, slug: &str, text: &str) {
 /// How the host answers a merge.
 #[derive(Clone, Copy, PartialEq)]
 enum Merges {
-    /// One commit on its default branch, the merge of it and the head.
+    /// As asked: a squash for `squash`, a merge commit for `merge`.
+    AsAsked,
+    /// One commit on its default branch, the merge of it and the head, whatever was asked.
     Squash,
     /// A merge commit of two parents.
     ByCommit,
+    /// A merge commit of two parents, the head first and the base second.
+    Reversed,
     /// One commit whose tree is the default branch's own: the head's change lost.
     WrongTree,
     /// Refused, for this kind of reason.
@@ -191,7 +198,7 @@ impl<'r> Host<'r> {
         Host {
             r,
             bare: bare.into(),
-            merges: Merges::Squash,
+            merges: Merges::AsAsked,
             asked: RefCell::default(),
             pull: RefCell::default(),
             lost: RefCell::default(),
@@ -235,8 +242,9 @@ impl<'r> Host<'r> {
             .unwrap()
     }
 
-    /// The host's own merge of `head` into its default branch, as `self.merges` has it.
-    fn merge(&self, head: &str, title: &str) -> String {
+    /// The host's own merge of `head` into its default branch by `method`, as `self.merges` has
+    /// it.
+    fn merge(&self, head: &str, title: &str, method: &str) -> String {
         let bare = &self.bare;
         let base = head_of(bare, "main");
         let tree = match self.merges {
@@ -244,8 +252,12 @@ impl<'r> Host<'r> {
             _ => git(bare, &["merge-tree", "--write-tree", &base, head]),
         };
         let mut args = vec!["commit-tree", &tree, "-p", &base, "-m", title];
-        if self.merges == Merges::ByCommit {
+        let asked = self.merges == Merges::AsAsked && method == "merge";
+        if self.merges == Merges::ByCommit || asked {
             args.extend(["-p", head]);
+        }
+        if self.merges == Merges::Reversed {
+            args = vec!["commit-tree", &tree, "-p", head, "-p", &base, "-m", title];
         }
         let made = git(bare, &args);
         git(bare, &["update-ref", "refs/heads/main", &made]);
@@ -286,12 +298,17 @@ impl Transport for Host<'_> {
                 let pushed = format!("{head}:refs/heads/{slug}");
                 git(&self.r.root, &["push", "-q", "origin", &pushed]);
                 self.pull.borrow_mut().0 = Some(head.to_string());
-                json!({
+                let mut published = json!({
                     "state": "published",
                     "repository": {"id": 7, "name": "owner/name"},
                     "pull": {"number": 3, "url": "https://example.test/owner/name/pull/3"},
                     "head": self.says_head.clone().unwrap_or_else(|| head.to_string()),
-                })
+                });
+                // As the program does: an import's upstream, pinned at the host, by its number.
+                if request["operation"] == "import" {
+                    published["upstream"] = json!({"id": 9, "name": "up/stream"});
+                }
+                published
             }
             "merge" => {
                 let head = request["head"].as_str().unwrap();
@@ -304,7 +321,9 @@ impl Transport for Host<'_> {
                         json!({"state": "refused", "kind": "other", "why": "it is closed"})
                     }
                     _ => {
-                        let made = self.merge(head, request["title"].as_str().unwrap());
+                        let (title, method) = (&request["title"], &request["method"]);
+                        let made =
+                            self.merge(head, title.as_str().unwrap(), method.as_str().unwrap());
                         self.pull.borrow_mut().1 = Some(made.clone());
                         json!({"state": "merged", "sha": made})
                     }
@@ -354,15 +373,27 @@ fn landed_with(
     host: &Host,
     vars: &[(&str, &str)],
 ) -> (String, Result<String, String>) {
+    let mut out = Vec::new();
+    let result = land_by(
+        &r.board.store,
+        &landing(r, vars),
+        slug,
+        actor,
+        &mut out,
+        host,
+    );
+    (String::from_utf8(out).unwrap(), result.map_err(refusal))
+}
+
+/// The environment a land runs in here: the checkout's, with the recorder's folder and `vars`.
+fn landing(r: &Repo, vars: &[(&str, &str)]) -> Env {
     let mut env = r.env(&r.root);
     let folder = work(r).to_string_lossy().into_owned();
     env.vars.insert(FOLDER_VAR.into(), folder);
     for (name, value) in vars {
         env.vars.insert((*name).into(), (*value).into());
     }
-    let mut out = Vec::new();
-    let result = land_by(&r.board.store, &env, slug, actor, &mut out, host);
-    (String::from_utf8(out).unwrap(), result.map_err(refusal))
+    env
 }
 
 fn lands(r: &Repo) -> PathBuf {
@@ -690,6 +721,73 @@ fn a_needed_stamp_that_is_red_refuses_as_it_does_here() {
 }
 
 #[test]
+fn the_evidence_says_a_stamp_a_gate_decision_waived_at_the_head_and_blocks_on_a_raise_not_made() {
+    use symphony_board::gates::{Decision, Kind};
+    let (r, _) = delivering();
+    write(&r.root, "tools/size-budget.toml", "symphony = 100\n");
+    git(&r.root, &["add", "-A"]);
+    git(&r.root, &["commit", "-qm", "the budget"]);
+    let (people, wt, _) = in_review(&r, SLUG, "ui/rows.gd");
+    write(&wt, "tools/size-budget.toml", "symphony = 130\n");
+    git(&wt, &["commit", "-qam", "past the line"]);
+    let tip = head(&wt, "HEAD");
+    assess(&r, SLUG, &people.assessor, &["tests", "pictures"], &tip);
+    ran(&r, SLUG, &tip, "cargo test -p sim", 0);
+    let decide = |decision: Decision| {
+        (r.board.store)
+            .decide_gate(SLUG, &Catalogue::symphony(), &decision)
+            .unwrap();
+    };
+    let waiver = Decision {
+        gate: "pictures".into(),
+        kind: Kind::Waive,
+        from: None,
+        to: None,
+        tip: Some(tip.clone()),
+        by: people.orch.clone(),
+        why: "nothing a page shows".into(),
+        at: 0.0,
+    };
+    decide(waiver.clone());
+    decide(Decision {
+        gate: "tools/size-budget.toml:symphony".into(),
+        kind: Kind::Raise,
+        from: Some(100),
+        to: Some(120),
+        tip: None,
+        why: "over after the cut".into(),
+        ..waiver
+    });
+    let mut env = r.env(&r.root);
+    (env.vars).insert(FOLDER_VAR.into(), work(&r).to_string_lossy().into_owned());
+    let read = evidence::of(&r.board.store, &env, SLUG, None).unwrap();
+    let pictures = read
+        .stamps
+        .iter()
+        .find(|stamp| stamp.name == "pictures")
+        .unwrap();
+    assert_eq!(pictures.standing, evidence::Standing::Waived);
+    assert_eq!(
+        pictures.detail,
+        format!(
+            "Waived at {} by the gate decision of {}: nothing a page shows",
+            &tip[..7],
+            people.orch
+        )
+    );
+    assert_eq!(
+        read.blocking,
+        [format!(
+            "tools/size-budget.toml:symphony raised 100 -> 120 by {}, but the tip {} sets it to \
+             130, which no decision gave: a raise lands at the number decided",
+            people.orch,
+            &tip[..7]
+        )]
+    );
+    assert!(!read.eligible);
+}
+
+#[test]
 fn a_head_changing_generated_paths_or_merging_another_history_is_refused() {
     let r = Repo::new();
     project_file(
@@ -746,7 +844,10 @@ fn a_head_changing_generated_paths_or_merging_another_history_is_refused() {
     };
     assert_eq!(to.as_deref(), Some("@orchestrator"));
     assert!(
-        told.contains("this build delivers no import by pull request"),
+        told.contains(
+            "An import of another history is delivered only from the upstream symphony.toml \
+             names ([land.upstream]), assessed as one: nothing landed"
+        ),
         "{told}"
     );
 }
@@ -1232,7 +1333,7 @@ fn a_bound_pull_request_merged_since_it_was_read_as_open_is_adopted_or_held_neve
     let (r, bare) = delivering();
     let (people, _, tip) = ready(&r, SLUG);
     let host = bound(&r, &bare, &people);
-    let squash = host.merge(&tip, "by hand");
+    let squash = host.merge(&tip, "by hand", "squash");
     host.pull.borrow_mut().1 = Some(squash.clone());
     let (said, result) = landed(&r, SLUG, &people.orch, &host);
     let line = result.unwrap();
@@ -1259,7 +1360,7 @@ fn a_bound_pull_request_merged_since_it_was_read_as_open_is_adopted_or_held_neve
     let (people, _, tip) = ready(&r, SLUG);
     let mut host = bound(&r, &bare, &people);
     host.merges = Merges::ByCommit;
-    let made = host.merge(&tip, "by hand");
+    let made = host.merge(&tip, "by hand", "squash");
     host.pull.borrow_mut().1 = Some(made);
     for _ in 0..2 {
         let (_, result) = landed(&r, SLUG, &people.orch, &host);
@@ -1298,7 +1399,7 @@ fn a_bound_pull_request_merged_since_it_was_read_as_open_is_adopted_or_held_neve
         if case == "closed" {
             host.pull.borrow_mut().2 = true;
         } else {
-            let squash = host.merge(&tip, "by hand");
+            let squash = host.merge(&tip, "by hand", "squash");
             host.pull.borrow_mut().1 = Some(squash);
         }
         match case {
@@ -1477,6 +1578,7 @@ fn a_run_cut_short_after_the_board_closed_the_task_closes_and_dispatches_nothing
         }),
         squash: Some(squash.clone()),
         held: None,
+        import: None,
     };
     // Killed after the board's write and before the journal said closed: the line is found.
     journal(Stage::Reconciled).write(&lands(&r)).unwrap();

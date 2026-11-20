@@ -24,9 +24,13 @@ the evidence behind decisions are under [Design and history](#design-and-history
 - [Upstream and downstream repositories](UPSTREAM_DOWNSTREAM.md) — the regular import of the
   public repository into a private copy with its ancestry kept, the export of selected reusable
   changes back, their checks, refusals and recovery; manual tasks, with PR delivery not enabled.
-- [GitHub issue exchange](GITHUB.md) — the optional `symphony-github` adapter, turned off
-  unless the default branch commits its settings: its settings and token file, its commands, what
-  a reconcile writes, what it keeps, and what pauses it.
+- [Setting up GitHub](GITHUB_SETUP.md) — the optional `symphony-github` from nothing to a check
+  that passes: building it, the token for the issue exchange, the GitHub Apps and rulesets a
+  delivery by pull request needs, in order, and what each failure a newcomer meets says.
+- [GitHub issue exchange and pull request delivery](GITHUB.md) — the reference for that adapter,
+  turned off unless the default branch commits its settings: its settings and token files, its
+  commands, what a reconcile writes, what it keeps, what pauses it, and how a land is delivered
+  and the protection that delivery reads.
 - [Machine build and test work](MACHINE_WORK.md) — observed build/test phases, the board's build
   and test recorder (`tasks run`), and advisory machine targets.
 - [Runs](RUNS.md) — the day files of a project's runs and their steps: the line each writes,
@@ -47,6 +51,8 @@ the evidence behind decisions are under [Design and history](#design-and-history
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
   setting, the seams it answers, its process, its commands, a register read in one request, the
   line, each call's minor, the versions and the wire's shape.
+- [Commands for a project's tools](TOOL_COMMANDS.md) — draw one card, check a branch for a
+  landing, read status and triage, and share the document write lock.
 - [Execution adapter](EXECUTION_ADAPTER.md) — bounded provider operations, scoped identities,
   trusted actor context, capabilities and the independent execution wire contract.
 - [Execution attempts](EXECUTION_ATTEMPTS.md) — the board's durable record of each provider

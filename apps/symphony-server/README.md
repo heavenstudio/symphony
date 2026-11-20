@@ -103,7 +103,9 @@ project's plugin when the plugin answers from a process of its own (`[plugins.pr
 [PLUGIN_PROTOCOL](../../docs/PLUGIN_PROTOCOL.md#the-host)), or when it compiles the plugin. The
 server of a release installed on the machine compiles none: it serves every project whose plugins
 all answer from a process, at its pin and board schema or older, and a project one board schema
-ahead, whose board it reads and writes nothing to. A start that finds no server running starts
+ahead, whose board it reads and writes nothing to, unless the step that moved it is declared to
+keep the Symphony writing ([CHECKS](../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)).
+A start that finds no server running starts
 the server of the release `current` names, by its own folder's path
 (`releases/NAME/bin/symphony-server`), when that release serves every registered project, and its
 own build otherwise (`symphony::machine::switch`); the record (`server.json`) names the release
@@ -280,7 +282,9 @@ A missing task returns 404; an unavailable board returns 503 while the document
 board continues without task counts. A board one schema ahead of the build's (main's build moved
 it on before a release caught up) is read, and nothing is written to it from the server: its ticks
 dispatch no callback, give no work and keep no owner's asks, the schema rule refuses every other
-write, and every page says so on the notice until the board and the build agree. A board that
+write, and every page says so on the notice until the board and the build agree. The exception is
+a board whose step is declared to keep the Symphony writing: its ticks and saves write it as at
+the build's own schema, and the notice says nothing of it (`Hub::read_only_ahead`). A board that
 took a read and answered it later than the 3 s wait, on its one resend too, is slow: 504, "the
 task board is slow", never "cannot be reached". The wait bounds the board tick and each sending's
 whole answer, so a read sent twice stays inside the client's 15 s request limit. Native routes apply both

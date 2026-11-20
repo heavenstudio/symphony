@@ -25,14 +25,17 @@ pub struct Host {
 
 impl Host {
     /// The local host's own policy, fixed here and never read from a definition: the local
-    /// owner holds `owner`, the board's recovery service holds `recovery`, and no adapter is
-    /// registered. A definition declaring any other capability is unsupported on this host.
+    /// owner holds `owner`, the board's recovery service holds `recovery`, and the two landing
+    /// adapters are registered: the default landing's and a project's own ([`super::effect`]). A definition declaring any other capability is unsupported on this host.
     pub fn local() -> Host {
         Host {
             grants: Grants::none()
                 .grant("owner", super::local_owner())
                 .grant("recovery", super::board_service("recovery")),
-            adapters: Vec::new(),
+            adapters: vec![
+                super::effect::DEFAULT_LAND.to_string(),
+                super::effect::PROJECT_LAND.to_string(),
+            ],
         }
     }
 }
@@ -136,29 +139,44 @@ pub fn supported_with(
             return Err(format!("unsupported edge {id}: a dependency on {why}"));
         }
         for effect in &edge.effects {
-            let unsupported = match effect {
-                Effect::ParentIntegration => "parent integration",
-                // No adapter runs here yet: a prepared intent never completes on a caller's word.
-                Effect::Prepare { .. } | Effect::Finalize { .. } => {
-                    "an adapter's prepare or finalize"
+            match effect {
+                Effect::ParentIntegration => {
+                    return Err(format!("unsupported edge {id}: parent integration"));
                 }
-                _ => continue,
-            };
+                // The host's own adapters alone prepare and finalize: a name another list
+                // registers (a guard's authority) makes no effect.
+                Effect::Prepare { adapter } | Effect::Finalize { adapter }
+                    if !host.adapters.contains(adapter) =>
+                {
+                    return Err(format!(
+                        "unsupported edge {id}: this host registers no adapter {adapter} to \
+                         prepare or finalize its effect"
+                    ));
+                }
+                _ => {}
+            }
+        }
+        // Its adapter takes a prepare or finalize edge, and no attestation comes with it
+        // (`Store::prepare_effect`): its guard could never be met, a finalize's after the effect
+        // already happened.
+        let adapted = (edge.effects.iter())
+            .any(|e| matches!(e, Effect::Prepare { .. } | Effect::Finalize { .. }));
+        if adapted && !edge.guards.is_empty() {
             return Err(format!(
-                "unsupported edge {id}: {unsupported} (tools/workflow-landing-adapters)"
+                "unsupported edge {id}: a guard on an edge its adapter prepares or finalizes, \
+                 which takes no attestation yet"
             ));
         }
     }
     Ok(())
 }
 
-/// Why this release cannot check `dependency`, none for one it checks (`none`, `done`): an
-/// accepted output, and a landing, which the board knows only from its thread and its git.
+/// Why this release cannot check `dependency`, none for one it checks (`none`, `done`,
+/// `accepted_output`): a landing, which the board knows only from its thread and its git.
 fn unsupported_dependency(dependency: Dependency) -> Option<&'static str> {
     match dependency {
-        Dependency::None | Dependency::Done => None,
-        Dependency::Landed => Some("landed (tools/workflow-landing-adapters)"),
-        Dependency::AcceptedOutput => Some("accepted_output (tools/workflow-accepted-output)"),
+        Dependency::None | Dependency::Done | Dependency::AcceptedOutput => None,
+        Dependency::Landed => Some("landed"),
     }
 }
 
@@ -172,8 +190,8 @@ fn named(pair: &Pair) -> String {
 }
 
 /// A task as activation reads it: its row's version, its status, where a workflow holds it, the
-/// status a blocked task came from, and the roles held on it, each with whether its holder is
-/// alive enough to hold it ([`crate::Health::holds`]).
+/// status a blocked task came from, the roles held on it, each with whether its holder is alive
+/// enough to hold it ([`crate::Health::holds`]), and the accepted output its last transition left.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Standing {
     pub slug: String,
@@ -182,6 +200,7 @@ pub struct Standing {
     pub position: Option<TaskPosition>,
     pub blocked_from: Option<String>,
     pub roles: Vec<(String, String, bool)>,
+    pub accepted: Option<String>,
 }
 
 /// What an activation writes: each task moved, by its transition, from the version and workflow
@@ -261,9 +280,14 @@ pub fn plan(
             )?;
         }
         let status = projection(destination.legacy);
-        let changes =
+        let moves =
             task.position.is_none() || from != to || resume != resume_from || status != task.status;
-        if (changes || source.staffing != destination.staffing)
+        // A pair that stops satisfying dependants supersedes the output accepted there, recorded
+        // as a transition that moves nothing; a mapping never accepts one.
+        let accepted =
+            super::admit::accepted_after(Some(source), destination, task.accepted.as_deref(), None);
+        let changes = moves || accepted != task.accepted;
+        if (moves || source.staffing != destination.staffing)
             && let Some((handle, role, _)) = task
                 .roles
                 .iter()
@@ -300,6 +324,7 @@ pub fn plan(
                 effects: Vec::new(),
                 key: None,
                 recovery: None,
+                accepted,
                 at,
             },
         });
@@ -349,10 +374,10 @@ impl Placing {
             position: None,
             blocked_from: None,
             roles: task.roles.to_vec(),
+            accepted: None,
         };
         let (from, _) = legacy_standing(&standing)?;
-        let legacy = builtin();
-        let source = position_of(&legacy, &from).ok_or_else(|| {
+        let source = super::builtin::position_at(&from).ok_or_else(|| {
             format!(
                 "{slug} would reopen at {}, which the board's own workflow does not declare",
                 named(&from)
@@ -362,7 +387,7 @@ impl Placing {
         let to = placed(&self.definition, &mappings, slug, &from, "reopens at")?;
         let destination =
             position_of(&self.definition, &to).expect("placed() names a declared pair");
-        fabricates_nothing(slug, source, destination)?;
+        fabricates_nothing(slug, &source, destination)?;
         past_no_guard(slug, None, &self.definition, false, None, &to, "reopen at")?;
         let status = projection(destination.legacy);
         if status != task.status {
@@ -390,6 +415,8 @@ impl Placing {
             effects: Vec::new(),
             key: None,
             recovery: None,
+            // No edge accepted the output of a task the board's own writers kept.
+            accepted: None,
             at,
         })
     }

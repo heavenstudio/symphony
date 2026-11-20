@@ -25,7 +25,8 @@ use symphony_plugin::execution::{Principal, PrincipalKind};
 /// is fetched for the operation it covers, never kept as a standing permit.
 pub const MAX_VALIDITY: f64 = 900.0;
 
-/// How far ahead of the board's clock an attestation may say it was issued, in seconds.
+/// How far ahead of the deciding machine's clock an attestation may say it was issued, in
+/// seconds.
 pub const SKEW: f64 = 30.0;
 
 /// What an attestation's signature covers before its payload: a signature over an observation
@@ -326,7 +327,7 @@ pub struct Binding<'a> {
 }
 
 /// What admission and dispatch decide guards on: the authorities the active activation commits,
-/// those the board accepted, the attestations the caller gave, and the board's clock.
+/// those the board accepted, the attestations the caller gave, and the machine's clock.
 #[derive(Clone, Copy, Debug)]
 pub struct Guarding<'a> {
     /// The project the active activation recorded ([`crate::workflow::attested_project`]): the
@@ -592,7 +593,7 @@ fn bound(attestation: &Attestation, guard: &str, binding: &Binding<'_>) -> Resul
 }
 
 /// Refused unless `now` is within `attestation`'s time: issued no later than [`SKEW`] ahead of
-/// the board's clock, not yet expired, and held for no longer than [`MAX_VALIDITY`].
+/// the machine's clock, not yet expired, and held for no longer than [`MAX_VALIDITY`].
 fn timely(attestation: &Attestation, guard: &str, now: f64) -> Result<(), Refusal> {
     let refuse = |why: String| Err(Refusal::new(RefusalCode::GuardUnavailable, why));
     let (issued, expires) = (attestation.issued_at, attestation.expires_at);
@@ -610,13 +611,13 @@ fn timely(attestation: &Attestation, guard: &str, now: f64) -> Result<(), Refusa
     }
     if issued > now + SKEW {
         return refuse(format!(
-            "the attestation of {guard} says it was issued at {issued}, ahead of the board's \
+            "the attestation of {guard} says it was issued at {issued}, ahead of this machine's \
              clock ({now})"
         ));
     }
     if now >= expires {
         return refuse(format!(
-            "the attestation of {guard} expired at {expires}; the board's clock is {now}"
+            "the attestation of {guard} expired at {expires}; this machine's clock is {now}"
         ));
     }
     Ok(())

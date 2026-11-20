@@ -68,6 +68,26 @@ impl PullRequests {
     }
 }
 
+/// What the adapter does with the project's releases: `publish` answers the release run's
+/// `release` ([`crate::release`]), a GitHub Release for a tag pushed.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Releases {
+    #[default]
+    Off,
+    Publish,
+}
+
+impl Releases {
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Releases::Off => "off",
+            Releases::Publish => "publish",
+        }
+    }
+}
+
 /// The file as written. Every key is known, so a mistyped one is refused, never ignored.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -79,6 +99,8 @@ struct Written {
     issues: Issues,
     #[serde(default)]
     pull_requests: PullRequests,
+    #[serde(default)]
+    releases: Releases,
     token_file: Option<PathBuf>,
     #[serde(default)]
     import_labels: Vec<String>,
@@ -88,8 +110,11 @@ struct Written {
     checks_token_file: Option<PathBuf>,
     checks_app_id: Option<i64>,
     landing_app_id: Option<i64>,
+    policy_token_file: Option<PathBuf>,
+    policy_app_id: Option<i64>,
     #[serde(default)]
     close_issues: bool,
+    upstream_id: Option<i64>,
 }
 
 /// The one GitHub.com repository the adapter may reach.
@@ -113,6 +138,7 @@ pub struct Config {
     pub repository: Option<Repository>,
     pub issues: Issues,
     pub pull_requests: PullRequests,
+    pub releases: Releases,
     /// Where the token is, never the token.
     pub token_file: Option<PathBuf>,
     pub import_labels: Vec<String>,
@@ -127,8 +153,20 @@ pub struct Config {
     /// delivery: the one actor the default branch's rules let update it
     /// ([`crate::preflight`]), never the App that writes the checks.
     pub landing_app_id: Option<i64>,
+    /// Where the token that reads who bypasses the default branch's rulesets is: an installation
+    /// token of a third GitHub App, which GitHub shows those lists because it may write the
+    /// repository's administration. It is sent with two kinds of read and nothing else
+    /// ([`crate::preflight::Reader`]), never the token that merges or writes the checks.
+    pub policy_token_file: Option<PathBuf>,
+    /// That App's number: neither of the other two.
+    pub policy_app_id: Option<i64>,
     /// Whether a delivered task's mapped issue is closed once the board closed the task.
     pub close_issues: bool,
+    /// The number at GitHub of the one repository an import is of, where the project imports
+    /// from an upstream: a delivery merges an import's head by a merge commit only from the
+    /// repository of that number ([`crate::deliver`]), and the default branch then permits merge
+    /// commits beside squash ([`crate::preflight`]). With none, no import is delivered.
+    pub upstream_id: Option<i64>,
 }
 
 /// The settings with the revision they were read at: a digest of the committed file's text, so a
@@ -162,7 +200,8 @@ fn label(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn repository(text: &str) -> Result<Repository, String> {
+/// The repository `OWNER/NAME` names on GitHub.com, refused where it is not that plainly.
+pub(crate) fn repository(text: &str) -> Result<Repository, String> {
     let refusal =
         || format!("repository is OWNER/NAME on GitHub.com, never a URL or another host: {text:?}");
     let (owner, name) = text.split_once('/').ok_or_else(refusal)?;
@@ -180,6 +219,73 @@ fn repository(text: &str) -> Result<Repository, String> {
         owner: owner.into(),
         name: name.into(),
     })
+}
+
+/// Refuse an `upstream_id` that names no repository, or that nothing delivers through.
+fn upstream(written: &Written) -> Result<(), String> {
+    match written.upstream_id {
+        Some(id) if id <= 0 => Err("upstream_id is a GitHub repository's number".into()),
+        Some(_) if written.pull_requests != PullRequests::Publish => Err(
+            "upstream_id needs pull_requests = \"publish\": an import is delivered by a pull \
+             request"
+                .into(),
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// What a delivery's settings leave out: every App and token it needs.
+fn delivery(written: &Written) -> Result<(), String> {
+    if written.checks_token_file.is_none() || written.checks_app_id.is_none() {
+        return Err(
+            "pull_requests = \"publish\" needs checks_token_file and checks_app_id: the GitHub \
+             App whose checks the branch's protection takes, and a token of its own"
+                .into(),
+        );
+    }
+    if written.landing_app_id.is_none() {
+        return Err(
+            "pull_requests = \"publish\" needs landing_app_id: the GitHub App token_file's token \
+             is of, the one actor the default branch's rules let update it"
+                .into(),
+        );
+    }
+    if written.checks_token_file == written.token_file {
+        return Err(
+            "checks_token_file is token_file: what writes the checks is never what merges".into(),
+        );
+    }
+    if written.policy_token_file.is_none() || written.policy_app_id.is_none() {
+        return Err(
+            "pull_requests = \"publish\" needs policy_token_file and policy_app_id: the GitHub \
+             App GitHub shows who bypasses the default branch's rules, and a token of its own"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// The policy token and its App are neither of the other two, written or not enabled.
+fn apart(written: &Written) -> Result<(), String> {
+    if written.policy_app_id.is_some()
+        && [written.landing_app_id, written.checks_app_id].contains(&written.policy_app_id)
+    {
+        return Err(
+            "policy_app_id is landing_app_id or checks_app_id: what reads who bypasses the rules \
+             neither merges nor writes the checks"
+                .into(),
+        );
+    }
+    if written.policy_token_file.is_some()
+        && [&written.token_file, &written.checks_token_file].contains(&&written.policy_token_file)
+    {
+        return Err(
+            "policy_token_file is token_file or checks_token_file: the token that reads who \
+             bypasses the rules is a token of its own"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 /// The settings `text` gives.
@@ -203,6 +309,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
     for (key, file) in [
         ("token_file", &written.token_file),
         ("checks_token_file", &written.checks_token_file),
+        ("policy_token_file", &written.policy_token_file),
     ] {
         if file.as_ref().is_some_and(|file| !file.is_absolute()) {
             return Err(wrong(format!(
@@ -213,16 +320,19 @@ pub fn parse(text: &str) -> Result<Config, String> {
     for (key, id) in [
         ("checks_app_id", written.checks_app_id),
         ("landing_app_id", written.landing_app_id),
+        ("policy_app_id", written.policy_app_id),
     ] {
         if id.is_some_and(|id| id <= 0) {
             return Err(wrong(format!("{key} is a GitHub App's number")));
         }
     }
+    upstream(&written).map_err(wrong)?;
     if written.landing_app_id.is_some() && written.landing_app_id == written.checks_app_id {
         return Err(wrong(
             "landing_app_id is checks_app_id: what merges is never what writes the checks".into(),
         ));
     }
+    apart(&written).map_err(wrong)?;
     if written.enabled {
         if repository.is_none() {
             return Err(wrong("enabled needs repository = \"OWNER/NAME\"".into()));
@@ -239,27 +349,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
             )));
         }
         if written.pull_requests == PullRequests::Publish {
-            if written.checks_token_file.is_none() || written.checks_app_id.is_none() {
-                return Err(wrong(
-                    "pull_requests = \"publish\" needs checks_token_file and checks_app_id: the \
-                     GitHub App whose checks the branch's protection takes, and a token of its \
-                     own"
-                    .into(),
-                ));
-            }
-            if written.landing_app_id.is_none() {
-                return Err(wrong(
-                    "pull_requests = \"publish\" needs landing_app_id: the GitHub App token_file's \
-                     token is of, the one actor the default branch's rules let update it"
-                        .into(),
-                ));
-            }
-            if written.checks_token_file == written.token_file {
-                return Err(wrong(
-                    "checks_token_file is token_file: what writes the checks is never what merges"
-                        .into(),
-                ));
-            }
+            delivery(&written).map_err(wrong)?;
         }
     }
     Ok(Config {
@@ -267,6 +357,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
         repository,
         issues: written.issues,
         pull_requests: written.pull_requests,
+        releases: written.releases,
         token_file: written.token_file,
         import_labels: written.import_labels,
         import_comments: written.import_comments,
@@ -274,7 +365,10 @@ pub fn parse(text: &str) -> Result<Config, String> {
         checks_token_file: written.checks_token_file,
         checks_app_id: written.checks_app_id,
         landing_app_id: written.landing_app_id,
+        policy_token_file: written.policy_token_file,
+        policy_app_id: written.policy_app_id,
         close_issues: written.close_issues,
+        upstream_id: written.upstream_id,
     })
 }
 
@@ -301,8 +395,9 @@ pub trait Source {
 }
 
 /// The settings the project's default branch commits, read from git's objects by the main
-/// checkout: `git show refs/heads/BRANCH:symphony-github.toml`, BRANCH the main checkout's
-/// `[project] default_branch` (`main` unless it says another).
+/// checkout: `git show refs/heads/BRANCH:symphony-github.toml`, BRANCH the `[project]
+/// default_branch` the main checkout's HEAD commits ([`default_branch`], `main` unless it says
+/// another).
 pub struct Committed {
     /// The main checkout.
     pub main: PathBuf,
@@ -319,17 +414,35 @@ struct ProjectTable {
     default_branch: Option<String>,
 }
 
-/// The project's default branch, as the main checkout `main`'s `symphony.toml` names it.
+/// The project's default branch, as `[project] default_branch` names it in the `symphony.toml`
+/// the main checkout `main`'s HEAD commits (`main` where none is committed or it names none):
+/// read as the land reads it, so the two agree, and an edit of the working file names no
+/// branch until it is committed.
 ///
 /// # Errors
 ///
-/// The file does not read, or names no branch.
+/// git cannot read it, the file does not read, or it names no branch.
 pub fn default_branch(main: &Path) -> Result<String, String> {
-    let file = main.join("symphony.toml");
-    let text = match std::fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(format!("{}: {error}", file.display())),
+    let at = "HEAD:symphony.toml";
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(main)
+            .args(args)
+            .output()
+            .map_err(|error| format!("git: {error}"))
+    };
+    let text = if git(&["cat-file", "-e", at])?.status.success() {
+        let shown = git(&["cat-file", "blob", at])?;
+        if !shown.status.success() {
+            return Err(format!(
+                "git could not read symphony.toml at {}'s HEAD",
+                main.display()
+            ));
+        }
+        String::from_utf8(shown.stdout).map_err(|error| format!("symphony.toml: {error}"))?
+    } else {
+        String::new()
     };
     let read: ProjectFile =
         toml::from_str(&text).map_err(|error| format!("symphony.toml: {}", error.message()))?;

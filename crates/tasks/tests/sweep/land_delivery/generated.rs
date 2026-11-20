@@ -353,8 +353,9 @@ fn a_head_that_is_not_what_the_regenerator_made_is_refused_by_name() {
     let line = refused(&r);
     assert!(
         line.ends_with(&format!(
-            "'s head {} is not the commit the regenerator made",
-            &more[..7]
+            "'s head {} is not the commit the regenerator made ({})",
+            &more[..7],
+            &made_as.head[..7]
         )),
         "{line}"
     );
@@ -364,7 +365,13 @@ fn a_head_that_is_not_what_the_regenerator_made_is_refused_by_name() {
         ..made_as.clone()
     });
     let line = refused(&r);
-    assert!(line.contains("is not one commit on"), "{line}");
+    assert!(
+        line.ends_with(&format!(
+            "is not one commit on {}, which origin/main holds",
+            &made_as.tip[..7]
+        )),
+        "{line}"
+    );
     // One commit on the tip that changes a source beside the outputs.
     let wt = r.add("stray", None, &made_as.tip);
     write(&wt, "gen/out.txt", "a\n");
@@ -700,6 +707,7 @@ fn a_land_cut_before_it_started_the_regenerator_loses_no_output_and_makes_none_t
         }),
         squash: Some(squash.clone()),
         held: None,
+        import: None,
     }
     .write(&lands(&r))
     .unwrap();
@@ -823,7 +831,13 @@ fn a_record_whose_branch_moved_or_whose_generators_changed_is_not_gone_on_from()
     git(&r.root, &["update-ref", &branch, &made_as.tip]);
     let stopped = round(&r, None).1.unwrap_err();
     assert!(
-        stopped.contains("not the commit the regenerator made"),
+        stopped.ends_with(&format!(
+            "the branch {} is at {}, not the commit the regenerator made ({}): move it away, and \
+             the next round files it",
+            made_as.slug,
+            &made_as.tip[..7],
+            &made_as.head[..7]
+        )),
         "{stopped}"
     );
     assert_eq!(made(&r), 1);
@@ -931,9 +945,97 @@ fn a_record_gone_between_the_publication_and_the_request_asks_for_no_merge() {
     });
     let refused = landed(&r, &made_as.slug, &orch, &host).1.unwrap_err();
     assert!(
-        refused.contains("no longer what the regenerator delivers: no merge asked"),
+        refused.contains(&format!(
+            "{} is no longer what the regenerator delivers: no merge asked",
+            made_as.slug
+        )),
         "{refused}"
     );
     assert_eq!(host.verbs(), ["publish"], "no merge asked");
     assert!(Receipt::read(&lands(&r), &made_as.slug).is_none());
+}
+
+#[test]
+fn a_stale_record_the_board_never_took_goes_with_its_branch() {
+    // Its branch made, no task, and an input landed since.
+    let (r, _bare, kept) = cut_after_the_record();
+    let branch = format!("refs/heads/{}", kept.slug);
+    git(&r.root, &["update-ref", &branch, &kept.head]);
+    on_main(&r, "src/b.txt", "b\n");
+    let (said, result) = round(&r, None);
+    let again = pending(&r).unwrap();
+    assert!(result.unwrap().contains(&again.slug), "{said}");
+    assert_ne!(again.slug, kept.slug);
+    assert_eq!(git(&r.root, &["for-each-ref", &branch]), "", "{said}");
+    assert!(
+        r.board.store.get(&kept.slug).is_err(),
+        "nothing filed for it"
+    );
+    // A branch somebody moved is theirs: it stays.
+    let (r, _bare, kept) = cut_after_the_record();
+    let branch = format!("refs/heads/{}", kept.slug);
+    git(&r.root, &["update-ref", &branch, &kept.tip]);
+    on_main(&r, "src/b.txt", "b\n");
+    round(&r, None).1.unwrap();
+    assert_eq!(head(&r.root, &branch), kept.tip);
+}
+
+#[test]
+fn a_withdrawal_named_before_its_task_was_cancelled_says_why_it_is_not_told_yet() {
+    let (r, bare) = generating(true);
+    let (first, orch) = assessed(&r);
+    let host = Host::new(&r, &bare).merging(Merges::Refuses("checks"));
+    landed(&r, &first.slug, &orch, &host).1.unwrap_err();
+    // A round cut after it named the task, before it cancelled it; an input landed since.
+    fs::write(lands(&r).join(WITHDRAWN), &first.slug).unwrap();
+    on_main(&r, "src/b.txt", "b\n");
+    let host = Host::new(&r, &bare);
+    let (said, result) = round(&r, Some(&host));
+    result.unwrap();
+    assert!(
+        said.contains(&format!(
+            "was not told its evidence no longer stands ({} is review and its evidence stands at \
+             {}): its checks may still pass",
+            first.slug,
+            &first.head[..7]
+        )),
+        "{said}"
+    );
+    // The round cancels it, then tells it.
+    assert_eq!(status(&r, &first.slug), "cancelled");
+    assert_eq!(host.verbs(), ["result", "result", "publish"]);
+    assert_eq!(host.request("publish")["snapshot"]["eligible"], false);
+    assert!(!lands(&r).join(WITHDRAWN).exists());
+}
+
+#[test]
+fn a_check_that_passed_on_a_tip_is_not_run_again_while_its_generated_task_waits() {
+    let (r, _bare) = generating(true);
+    let checks = r.dir.join("checks");
+    let check = format!(
+        "[verdicts]\ncheck = [\"sh\", \"-c\", \"echo checked >> '{}'\"]\n\n",
+        checks.display()
+    );
+    project_file(&r, &format!("{check}{}", manifest(&r, true)));
+    let ran = || {
+        fs::read_to_string(&checks)
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+    let tip = head(&r.root, "main");
+    round(&r, None).1.unwrap();
+    assert_eq!(ran(), 1);
+    // Started again while its task waits: the same tip, the pass kept.
+    let (said, result) = round(&r, None);
+    assert!(result.unwrap().contains("awaiting delivery"), "{said}");
+    assert_eq!(ran(), 1, "{said}");
+    assert!(
+        said.contains(&format!("on main at {} before: not run again", &tip[..7])),
+        "{said}"
+    );
+    // A tip that changed what is made is made and checked.
+    on_main(&r, "src/b.txt", "b\n");
+    round(&r, None).1.unwrap();
+    assert_eq!(ran(), 2);
 }

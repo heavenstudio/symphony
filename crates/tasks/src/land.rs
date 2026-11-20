@@ -2,6 +2,9 @@
 //! recipe in every project (`symphony.just`), and a `land` recipe of the project's own replaces it
 //! there, everywhere. It lands one task's branch, named as its slug, on the default branch:
 //!
+//! A task a custom workflow holds lands by its graph instead, through the prepare and finalize
+//! edges of this landing's adapter, with the same merge, check, move and push ([`adapter`]).
+//!
 //! 0. **Asked for.** It runs only as `just land SLUG`, whose recipe sets [`RECIPE`], and never
 //!    where the project's justfile runs a `land` of its own ([`admit`]). The marker is a guard
 //!    against running it by accident; the stamps below are the gate.
@@ -108,6 +111,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
+pub mod adapter;
 pub mod carried;
 pub mod check_paths;
 pub mod delivery;
@@ -258,6 +262,46 @@ pub struct Settings {
     /// The folders the project's `[[entrypoints]]` serve documents from, where the Symphony writes
     /// the owner's answers ([`crate::project::documents`]); `docs` unless the project names its own.
     pub documents: Vec<String>,
+    /// `[land.upstream]`: the repository whose history this one imports, where it names one. A
+    /// land delivered by a pull request merges an import of it by a merge commit
+    /// ([`delivery`]); with none, no head of another history is delivered.
+    pub upstream: Option<Upstream>,
+}
+
+/// `[land.upstream]`: the one repository a project imports from, as git reaches it.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Upstream {
+    /// What git fetches it from: never the project's own `origin`.
+    pub url: String,
+    /// Its default branch, which an import's commit must be on.
+    pub branch: String,
+}
+
+impl Upstream {
+    /// It, or why the land refuses it: a value git could read as an option, or one that names
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// The line that refuses it, the table and key named.
+    pub fn judged(self) -> Result<Upstream, String> {
+        for (key, value) in [("url", &self.url), ("branch", &self.branch)] {
+            if value.trim().is_empty() || value.starts_with('-') || value.trim() != value {
+                return Err(format!(
+                    "[land.upstream] {key} is {value:?}: it names the repository an import comes \
+                     from, and its default branch"
+                ));
+            }
+        }
+        if !(self.branch.chars()).all(|c| c.is_ascii_alphanumeric() || "-._/".contains(c)) {
+            return Err(format!(
+                "[land.upstream] branch {:?} is not a plain branch name",
+                self.branch
+            ));
+        }
+        Ok(self)
+    }
 }
 
 /// How long a generator or a land's check takes at most, unless the project names another `[land]
@@ -279,6 +323,7 @@ impl Default for Settings {
             timeout: TIMEOUT,
             check_paths: check_paths::defaults(),
             documents: crate::project::documents(""),
+            upstream: None,
         }
     }
 }
@@ -324,6 +369,7 @@ impl Settings {
             check_paths: Option<Vec<String>>,
             /// Read by [`delivery::command`], and held to its shape here.
             delivery: Vec<String>,
+            upstream: Option<Upstream>,
         }
         impl Default for Land {
             fn default() -> Land {
@@ -335,6 +381,7 @@ impl Settings {
                     check: true,
                     check_paths: None,
                     delivery: Vec::new(),
+                    upstream: None,
                 }
             }
         }
@@ -387,6 +434,9 @@ impl Settings {
             }
             None => check_paths::defaults(),
         };
+        let upstream = (file.land.upstream.map(Upstream::judged))
+            .transpose()
+            .map_err(|why| format!("{MANIFEST}: {why}"))?;
         Ok(Settings {
             default_branch,
             check,
@@ -398,6 +448,7 @@ impl Settings {
             timeout: Duration::from_secs(file.land.timeout_seconds),
             check_paths,
             documents: crate::project::documents(text),
+            upstream,
         })
     }
 
@@ -935,16 +986,21 @@ pub fn land_by(
     out: &mut dyn Write,
     transport: &dyn delivery::Transport,
 ) -> Result<String, Stop> {
-    landing(
-        store,
-        env,
-        slug,
-        actor,
-        None,
-        out,
-        &Instant::now,
-        Some(transport),
-    )
+    land_by_with_clock(store, env, slug, actor, out, transport, &Instant::now)
+}
+
+/// [`land_by`] with the clock of [`land_with_clock`]: how a test expires a delivery's fetch once
+/// the remote it waits on is known to hold it.
+pub fn land_by_with_clock(
+    store: &Store,
+    env: &Env,
+    slug: &str,
+    actor: &str,
+    out: &mut dyn Write,
+    transport: &dyn delivery::Transport,
+    now: &(dyn Fn() -> Instant + Sync),
+) -> Result<String, Stop> {
+    landing(store, env, slug, actor, None, out, now, Some(transport))
 }
 
 #[expect(
@@ -1818,6 +1874,10 @@ impl Landing<'_> {
         let slug = self.slug;
         self.leftover_group().map_err(Stop::Refused)?;
         self.recover().map_err(Stop::Refused)?;
+        // A task a custom workflow holds lands by its graph alone ([`adapter`]).
+        if let Some(position) = self.held()? {
+            return self.land_held(&position);
+        }
         if self.delivers() {
             // A merge asked of the host by a run before decides, before anything is read again.
             if let Some(done) = self.resumed() {
@@ -1901,6 +1961,7 @@ impl Landing<'_> {
         }
         self.owner_lines(&base, &tip)
             .map_err(|refusal| self.refuse(refusal))?;
+        let raised = self.raised(&base, &tip, &needed)?;
         let judged = match &approved {
             Some(approval) => {
                 let covered = covered(&self.main, slug, &base, &tip, approval).map_err(|line| {
@@ -1947,6 +2008,7 @@ impl Landing<'_> {
         if needed.told() {
             self.say(&needed.line(slug, &tip, &met));
         }
+        self.say_raised(&raised);
         if self.delivers() {
             return self.deliver(&task, &tip, &judged);
         }
@@ -2945,18 +3007,15 @@ impl Landing<'_> {
         command
     }
 
-    /// What `git ARGS` with the remote ([`Landing::main_git`]) answered within the land's
-    /// network timeout ([`Settings::network`]), or the line saying why there is no answer.
+    /// What `git ARGS` with a remote ([`Landing::main_git`]) answered within the land's network
+    /// timeout ([`Settings::network`]), or why there is no answer, which its caller says of the
+    /// remote it reached: `origin`, or the project's upstream.
     fn remote_output(&self, args: &[&str]) -> Result<std::process::Output, String> {
         if let Some(signal) = self.interrupted() {
-            return Err(format!(
-                "git {}: not run, the land took {}",
-                args[0],
-                signal_name(signal)
-            ));
+            return Err(format!("not run, the land took {}", signal_name(signal)));
         }
         let mut command = self.main_git(args);
-        let child = sys::spawn_output(&mut command).map_err(|e| format!("git {}: {e}", args[0]))?;
+        let child = sys::spawn_output(&mut command).map_err(|e| e.to_string())?;
         let group = child.id();
         self.running(group, &format!("git {}", args.join(" ")), false);
         let limit = self.settings.network();
@@ -2965,17 +3024,11 @@ impl Landing<'_> {
         });
         self.ran();
         match ended {
-            Ended::Late => Err(format!(
-                "git {} {REMOTE}: no answer within {} s",
-                args[0],
-                limit.as_secs()
-            )),
-            Ended::Interrupted(signal) => Err(format!(
-                "git {} {REMOTE}: ended, the land took {}",
-                args[0],
-                signal_name(signal)
-            )),
-            Ended::No => done.map_err(|e| format!("git {}: {e}", args[0])),
+            Ended::Late => Err(format!("no answer within {} s", limit.as_secs())),
+            Ended::Interrupted(signal) => {
+                Err(format!("ended, the land took {}", signal_name(signal)))
+            }
+            Ended::No => done.map_err(|e| e.to_string()),
         }
     }
 
@@ -3060,6 +3113,32 @@ impl Landing<'_> {
     /// the one landing alone: no branch's commit fixes git, and a land that cannot tell must not
     /// leave the answer behind. Asked before the merge and again right before the default branch
     /// moves, so an answer saved while the land merged and checked is not left behind either.
+    /// Each raise `needed`'s gate decisions gave, read at `tip` against the default branch at
+    /// `base` ([`needs::raises`]): the lines the landing says, or its refusal, to the executor,
+    /// where the tip sets a limit above the default branch's to a number no decision gave.
+    fn raised(&self, base: &str, tip: &str, needed: &Needed) -> Result<Vec<String>, Stop> {
+        needs::raises(&self.main, base, tip, &needed.decisions).map_err(|line| {
+            self.refuse(Refusal::to(
+                line,
+                "@executor",
+                "Commit the limit at the number decided, its message the account, or ask the \
+                 task's orchestrator for a decision of the number it holds; then land it again"
+                    .into(),
+            ))
+        })
+    }
+
+    /// The landing's line naming each of `raised` ([`Landing::raised`]), where there is one.
+    fn say_raised(&mut self, raised: &[String]) {
+        if !raised.is_empty() {
+            let slug = self.slug;
+            self.say(&format!(
+                "land {slug}: its gate decisions: {}",
+                raised.join("; ")
+            ));
+        }
+    }
+
     fn owner_lines(&self, base: &str, tip: &str) -> Result<(), Refusal> {
         let slug = self.slug;
         let held = self.answers_left(base, tip).map_err(|why| {
@@ -3155,7 +3234,8 @@ impl Landing<'_> {
 
     /// `git ARGS` with the remote ([`Landing::remote_output`]): the line saying why it failed.
     fn remote(&self, args: &[&str]) -> Result<(), String> {
-        let done = self.remote_output(args)?;
+        let failed = |why: &str| format!("git {} {REMOTE}: {why}", args[0]);
+        let done = self.remote_output(args).map_err(|why| failed(&why))?;
         if done.status.success() {
             return Ok(());
         }
@@ -3165,7 +3245,7 @@ impl Landing<'_> {
             .map(str::trim)
             .find(|l| !l.is_empty())
             .unwrap_or("failed");
-        Err(format!("git {} {REMOTE}: {said}", args[0]))
+        Err(failed(said))
     }
 }
 

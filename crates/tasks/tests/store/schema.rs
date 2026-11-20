@@ -491,7 +491,7 @@ on_both! {
 /// Schema 25's workflow table took six kinds; this build's step adds `authority` and `admission`
 /// to the board's check, keeps what the board held, and on PostgreSQL alters the check no more
 /// once it holds every kind, as each alter takes the table's exclusive lock.
-fn schema_25_gains_the_guards_kinds_and_alters_the_check_once(backend: Backend) {
+fn schema_26_gains_the_guards_kinds_and_alters_the_check_once(backend: Backend) {
     let db = board(backend);
     let six = "'active', 'definition', 'activation', 'event', 'receipt', 'intent'";
     let authority = |db: &Database| -> Result<(), symphony_board::rpc::DbError> {

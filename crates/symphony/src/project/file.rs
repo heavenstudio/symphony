@@ -20,16 +20,6 @@ use toml::de::DeTable;
 /// The keys of one table this build does not know, by name, with what they hold.
 pub(super) type Unknown = BTreeMap<String, toml::Value>;
 
-/// The keys the Symphony read once and acted on by nothing, removed: a file that still writes one
-/// loads, the key ignored whatever it holds and said to do nothing ([`File::retired`]), for the
-/// one release after their removal (the release after `release-2026-11-18`). The release after
-/// that drops this list, and the key is refused as any unknown one is.
-pub(super) const RETIRED: [(&str, &str); 3] = [
-    ("[agents]", "transports"),
-    ("[board]", "export"),
-    ("[board]", "disposable"),
-];
-
 /// The file as written: every table and key optional.
 #[derive(Default, Deserialize)]
 #[serde(default)]
@@ -64,10 +54,9 @@ pub(super) struct File {
 impl File {
     /// Every table and key of the file this build does not know, each named where it stands and
     /// on its line (`[projct] (line 3)`, `[board] on_review (line 41)`): the top of the file first,
-    /// then table by table in the file's shape, sorted within each; and, apart from them, the
-    /// retired keys ([`RETIRED`]) it writes, named the same way. A key [`line`] does not reach is
-    /// named without its line.
-    fn named(&self, text: &str) -> (Vec<String>, Vec<String>) {
+    /// then table by table in the file's shape, sorted within each. A key [`line`] does not reach
+    /// is named without its line.
+    pub(super) fn unknown(&self, text: &str) -> Vec<String> {
         let parsed = DeTable::parse(text).ok();
         let root = parsed.as_ref().map(|spanned| spanned.get_ref());
         let named = |path: &[&str], key: &str, stands: String| match root
@@ -106,39 +95,12 @@ impl File {
             ("[limits]", &["limits"], &self.limits.unknown),
             ("[stamps]", &["stamps"], &self.stamps.unknown),
         ];
-        let mut retired = Vec::new();
         for (table, path, unknown) in tables {
             for key in unknown.keys() {
-                let name = named(path, key, format!("{table} {key}"));
-                if RETIRED.contains(&(table, key.as_str())) {
-                    retired.push(name);
-                } else {
-                    names.push(name);
-                }
+                names.push(named(path, key, format!("{table} {key}")));
             }
         }
-        (names, retired)
-    }
-
-    /// Every table and key of the file this build does not know ([`File::named`]), a retired key
-    /// ([`RETIRED`]) left out: it is accepted.
-    pub(super) fn unknown(&self, text: &str) -> Vec<String> {
-        self.named(text).0
-    }
-
-    /// One line for each retired key ([`RETIRED`]) the file still writes, named as an unknown one
-    /// is, saying the key does nothing.
-    pub(super) fn retired(&self, text: &str) -> Vec<String> {
-        let names = self.named(text).1;
         names
-            .iter()
-            .map(|name| {
-                format!(
-                    "{FILE}: {name} does nothing: no Symphony reads it any more, and the next \
-                     release refuses it; remove it"
-                )
-            })
-            .collect()
     }
 
     /// What refuses a file naming `unknown`, when it names any: one message naming them all.
@@ -312,6 +274,9 @@ pub(super) struct FileLand {
     /// The command that delivers a task by a hosted pull request, in place of the land's own
     /// merge and push (`symphony_board::land::delivery`); none, and the land merges here.
     pub(super) delivery: Vec<String>,
+    /// The repository this one imports from (`symphony_board::land::Upstream`), strict as a
+    /// generator is: a misspelt key would change what a delivery merges.
+    pub(super) upstream: Option<symphony_board::land::Upstream>,
     #[serde(flatten)]
     pub(super) unknown: Unknown,
 }
@@ -326,19 +291,22 @@ impl Default for FileLand {
             check: true,
             check_paths: None,
             delivery: Vec::new(),
+            upstream: None,
             unknown: Unknown::new(),
         }
     }
 }
 
 /// The `[releases]` table: how often the Symphony's own release run cuts a release besides each day's,
-/// and whether a green release refreshes the machine and publishes on crates.io (docs/RELEASES.md).
+/// whether a green release refreshes the machine and publishes on crates.io, and the command that
+/// publishes its GitHub Release (docs/RELEASES.md).
 #[derive(Deserialize)]
 #[serde(default)]
 pub(super) struct FileReleases {
     pub(super) every_landings: u32,
     pub(super) refresh: bool,
     pub(super) publish: bool,
+    pub(super) github: Vec<String>,
     pub(super) candidate_reruns: u32,
     pub(super) candidate_hours: u32,
     #[serde(flatten)]
@@ -351,6 +319,7 @@ impl Default for FileReleases {
             every_landings: super::Releases::EVERY_LANDINGS,
             refresh: true,
             publish: false,
+            github: Vec::new(),
             candidate_reruns: super::Releases::CANDIDATE_RERUNS,
             candidate_hours: super::Releases::CANDIDATE_HOURS,
             unknown: Unknown::new(),

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  __vitePreload,
   field,
   holdPlace,
   list,
@@ -103,5 +104,14 @@ describe("what the page shares with the shell", () => {
     expect(field("text", "length")).toBeUndefined();
     expect(list([1])).toEqual([1]);
     expect(list({ 0: 1 })).toEqual([]);
+  });
+});
+
+describe("the preload helper a chunk is imported through", () => {
+  it("only calls the import, and answers or fails as it does", async () => {
+    const chunk = { run: true };
+    await expect(__vitePreload(() => Promise.resolve(chunk))).resolves.toBe(chunk);
+    const gone = new Error("the chunk is gone");
+    await expect(__vitePreload(() => Promise.reject(gone))).rejects.toBe(gone);
   });
 });

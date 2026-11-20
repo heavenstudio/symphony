@@ -5,8 +5,10 @@
 
 use crate::github::Fault;
 use crate::{Rig, memory};
+use symphony_github::credential::Secret;
 use symphony_github::plan::{import_slug, marker_for, with_marker};
 use symphony_github::state::{Event, Flag};
+use symphony_github::transport::{Failure, Request, Response, Transport};
 
 const IMPORT: &str = "issues = \"import\"\nimport_labels = [\"symphony\"]";
 const EXCHANGE: &str = "issues = \"exchange\"\nimport_labels = [\"symphony\"]";
@@ -141,9 +143,56 @@ fn board_answers_lost_after_the_write_are_settled_without_a_second_write() {
             .count()
     };
     assert_eq!(edits(&rig), 1);
+    // The brief's earlier words went into the journal with the intent, before the edit was
+    // dispatched: an edit whose answer was lost can be put back from them.
+    let journal = rig.journal();
+    let intent = journal
+        .iter()
+        .find(|e| e.kind == "pull" && e.event == Event::Intent)
+        .unwrap();
+    assert_eq!(intent.base["prior_title"], "Title", "{}", intent.base);
+    let prior = intent.base["prior_body"].as_str().unwrap();
+    assert!(
+        prior.starts_with("Imported from GitHub issue #1"),
+        "{prior}"
+    );
+    assert!(prior.ends_with("\n\nText."), "{prior}");
+    assert_eq!(intent.base["token"]["version"], 1, "{}", intent.base);
     rig.reconcile(&digest).ok();
     assert_eq!(edits(&rig), 1, "the edit is read back, not made again");
     assert_eq!(rig.preview().digest(), None);
+}
+
+#[test]
+fn a_brief_the_board_gives_no_token_for_is_not_rewritten() {
+    let rig = Rig::new("pull-unread", IMPORT);
+    let number = rig.github.open("Title", "Text.", &["symphony"]);
+    let slug = import_slug(77, number);
+    rig.sync();
+    rig.github.edit(number, "Title 2", "Text 2.");
+    let digest = rig.preview().digest().unwrap();
+    rig.board.unbind();
+    let ended = rig.reconcile(&digest);
+    assert_eq!(ended.code, 1);
+    assert!(
+        ended
+            .err
+            .contains("the board gives no token, so nothing was written"),
+        "{}",
+        ended.err
+    );
+    assert_eq!(rig.board.task(&slug).unwrap().title, "Title");
+    assert!(!rig.board.writes().iter().any(|w| w.starts_with("edit")));
+    let words: Vec<Event> = (rig.journal().iter())
+        .filter(|e| e.kind == "pull")
+        .map(|e| e.event)
+        .collect();
+    assert_eq!(words, [Event::Intent, Event::Failed]);
+    assert_eq!(rig.store().preview().unwrap(), None, "preview again");
+
+    rig.board.bind();
+    rig.sync();
+    assert_eq!(rig.board.task(&slug).unwrap().title, "Title 2");
 }
 
 #[test]
@@ -951,6 +1000,196 @@ fn a_marker_anyone_wrote_maps_no_task_that_was_never_opted_in() {
     assert_eq!(rig.github.issue(number)["body"], planted.as_str());
 }
 
+/// A planted issue carrying a waiting curated text's marker, adopted as a conflict, then dropped
+/// by its operator: its number.
+fn dropped_planted(rig: &Rig) -> i64 {
+    rig.board.file("tools/a", "A", "brief");
+    draft(rig, "tools/a", "Public", "Ours.");
+    let planted = with_marker("A stranger's words.", &marker_for(77, "tools/a"));
+    let number = rig.github.open("Planted", &planted, &[]);
+    rig.sync();
+    rig.sync();
+    assert_eq!(rig.state().mappings["tools/a"].flag, Some(Flag::Conflict));
+    let waiting = rig.preview();
+    assert!(waiting.digest().is_none(), "{}", waiting.out);
+
+    let board_writes = rig.board.writes().len();
+    let dropped = rig.run(&["drop", "tools/a"]).ok();
+    let url = format!("https://github.com/o/n/issues/{number}");
+    assert!(
+        dropped
+            .out
+            .contains(&format!("no longer mapped to issue #{number} ({url})")),
+        "{}",
+        dropped.out
+    );
+    assert!(
+        dropped.out.contains("published as a new issue"),
+        "{}",
+        dropped.out
+    );
+    let state = rig.state();
+    assert!(state.mappings.is_empty() && state.resolutions.is_empty());
+    let issue_id = rig.github.issue(number)["id"].as_i64().unwrap();
+    assert!(state.dropped_from("tools/a", issue_id));
+    assert!(
+        state.drafts.contains_key("tools/a"),
+        "the curated text stays"
+    );
+    let journal = rig.journal();
+    let words: Vec<(&str, Event)> = (journal.iter().rev().take(2).rev())
+        .map(|e| (e.kind.as_str(), e.event))
+        .collect();
+    assert_eq!(words, [("drop", Event::Intent), ("drop", Event::Ack)]);
+    let intent = &journal[journal.len() - 2];
+    assert_eq!(intent.target, "tools/a");
+    assert_eq!(intent.base["issue_number"], number, "the mapping it drops");
+    assert_eq!(rig.github.writes(), 0);
+    assert_eq!(
+        rig.board.writes().len(),
+        board_writes,
+        "the drop wrote no board"
+    );
+    // Edited there, so the next listing reads it again.
+    rig.github.edit(number, "Planted", &format!("{planted}\n"));
+    number
+}
+
+#[test]
+fn a_mapping_dropped_is_not_adopted_again_and_its_curated_text_is_published_anew() {
+    let rig = Rig::new("drop", EXCHANGE);
+    let planted = dropped_planted(&rig);
+    let status = rig.run(&["status"]).ok();
+    assert!(
+        status.out.contains(
+            "0 mapped, 1 curated texts\n  tools/a: curated text waits to be published\n  \
+             tools/a: 1 issue(s) dropped from it, never mapped to it again\n"
+        ),
+        "{}",
+        status.out
+    );
+    assert!(
+        status.out.contains("journal: 1000 drop tools/a done"),
+        "{}",
+        status.out
+    );
+    let said = rig.sync();
+    assert!(
+        said.contains("which it was dropped from: not mapped"),
+        "{said}"
+    );
+    assert!(
+        said.contains("publish tools/a as a new public issue"),
+        "{said}"
+    );
+    let ours = rig.state().mappings["tools/a"].issue_number;
+    assert_ne!(ours, planted);
+    assert!(
+        rig.github.issue(ours)["body"]
+            .as_str()
+            .unwrap()
+            .starts_with("Ours."),
+    );
+    assert_eq!(rig.github.issue(planted)["title"], "Planted", "not written");
+
+    // Listed again beside the publication, still carrying its marker, it is neither a
+    // duplicate nor mapped.
+    let marked = with_marker("Planted again.", &marker_for(77, "tools/a"));
+    rig.github.edit(planted, "Planted again", &marked);
+    let said = rig.sync();
+    assert!(!said.contains("more than one issue"), "{said}");
+    assert_eq!(rig.state().mappings["tools/a"].issue_number, ours);
+    assert_eq!(
+        rig.github.writes(),
+        1,
+        "one issue made, nothing else written"
+    );
+
+    // Nothing is kept of a slug mapped to nothing.
+    let refused = rig.run(&["drop", "tools/b"]);
+    assert_eq!(refused.code, 1);
+    assert!(
+        refused.err.contains("tools/b is mapped to no issue"),
+        "{}",
+        refused.err
+    );
+}
+
+#[test]
+fn a_publication_lost_after_a_drop_is_found_and_the_dropped_issue_is_no_duplicate() {
+    let rig = Rig::new("drop-lost", EXCHANGE);
+    let planted = dropped_planted(&rig);
+    let digest = rig.preview().digest().unwrap();
+    rig.github
+        .fault("POST", "/repos/o/n/issues", Fault::LoseAnswer);
+    assert_eq!(rig.reconcile(&digest).code, 1);
+    assert_eq!(rig.github.issues().len(), 2, "GitHub made the issue");
+
+    // The same preview again: its search by marker passes the dropped issue by.
+    rig.reconcile(&digest).ok();
+    let ours = rig.state().mappings["tools/a"].issue_number;
+    assert_eq!(ours, 2);
+    assert_eq!(rig.github.issues().len(), 2, "no second publication");
+    assert_eq!(rig.github.issue(planted)["title"], "Planted");
+}
+
+#[test]
+fn a_publication_lost_after_a_drop_is_mapped_by_the_next_preview_beside_the_dropped_issue() {
+    let rig = Rig::new("drop-lost-preview", EXCHANGE);
+    let planted = dropped_planted(&rig);
+    let digest = rig.preview().digest().unwrap();
+    rig.github
+        .fault("POST", "/repos/o/n/issues", Fault::LoseAnswer);
+    assert_eq!(rig.reconcile(&digest).code, 1);
+
+    // A new preview lists both issues that carry the marker: one was dropped, so the other is
+    // the publication, not a duplicate of it.
+    let marked = with_marker("Planted again.", &marker_for(77, "tools/a"));
+    rig.github.edit(planted, "Planted", &marked);
+    let said = rig.sync();
+    assert!(!said.contains("more than one issue"), "{said}");
+    assert!(
+        said.contains("carries its marker and is mapped to it"),
+        "{said}"
+    );
+    assert_eq!(rig.state().mappings["tools/a"].issue_number, 2);
+    assert_eq!(rig.github.issues().len(), 2, "no second publication");
+}
+
+#[test]
+fn an_import_dropped_is_neither_mapped_nor_imported_again() {
+    let rig = Rig::new("drop-import", IMPORT);
+    let number = rig.github.open("Title", "Text.", &["symphony"]);
+    let slug = import_slug(77, number);
+    rig.sync();
+    let dropped = rig.run(&["drop", &slug]).ok();
+    assert!(
+        dropped
+            .out
+            .contains(&format!("no longer mapped to issue #{number}")),
+        "{}",
+        dropped.out
+    );
+    assert!(!dropped.out.contains("curated text"), "{}", dropped.out);
+
+    // Edited there, so the next preview lists it beside the proposal that names it.
+    rig.github.edit(number, "Title 2", "Text 2.");
+    let said = rig.sync();
+    assert!(
+        said.contains(&format!(
+            "{slug}: issue #{number} was dropped from it: not mapped again"
+        )),
+        "{said}"
+    );
+    assert!(rig.state().mappings.is_empty());
+    assert_eq!(
+        rig.board.task(&slug).unwrap().title,
+        "Title",
+        "its edit is not taken"
+    );
+    assert_eq!(rig.board.slugs(), [slug], "nothing imported again");
+}
+
 #[test]
 fn a_publication_dispatched_under_an_earlier_preview_is_looked_for_before_any_create() {
     let rig = Rig::new("lost-create-new-preview", EXCHANGE);
@@ -1162,4 +1401,184 @@ fn duplicates_that_stopped_a_publication_stop_it_under_the_next_preview_too() {
         .count();
     assert_eq!(creates, 1, "no third issue");
     assert!(rig.state().mappings.is_empty());
+}
+
+/// A planted issue carrying a waiting curated text's marker, adopted as a conflict, whose local
+/// side its operator kept: the planted issue's number, and the digest of the preview that waits
+/// to push the curated text into it.
+fn a_push_into_the_planted_issue_waits(rig: &Rig) -> (i64, String) {
+    rig.board.file("tools/a", "A", "brief");
+    draft(rig, "tools/a", "Public", "Ours.");
+    let planted = with_marker("A stranger's words.", &marker_for(77, "tools/a"));
+    let number = rig.github.open("Planted", &planted, &[]);
+    rig.sync();
+    rig.sync();
+    assert_eq!(rig.state().mappings["tools/a"].flag, Some(Flag::Conflict));
+    rig.run(&["resolve", "tools/a", "local"]).ok();
+    let waiting = rig.preview();
+    assert!(
+        waiting.out.contains(&format!(
+            "rewrite issue #{number} from tools/a's curated text"
+        )),
+        "{}",
+        waiting.out
+    );
+    (number, waiting.digest().unwrap())
+}
+
+/// The next whole copy of the state cannot be written: a command stops at that write, after
+/// every write before it, as a crash there would leave it. Removed, the next run writes it.
+struct StateWriteStops(std::path::PathBuf);
+
+impl StateWriteStops {
+    fn plant(rig: &Rig) -> StateWriteStops {
+        let beside = rig.dir.0.join("state/state.json.new");
+        std::fs::create_dir(&beside).unwrap();
+        StateWriteStops(beside)
+    }
+
+    fn lift(self) {
+        std::fs::remove_dir(&self.0).unwrap();
+    }
+}
+
+/// A preview read before a command that changes what it was read from is applied by nobody,
+/// however that command stopped: refused by its digest, and nothing is written to GitHub.
+fn applied_by_nobody(rig: &Rig, digest: &str, number: i64) {
+    assert_eq!(rig.store().preview().unwrap(), None, "no preview is left");
+    let refused = rig.reconcile(digest);
+    assert_eq!(refused.code, 1, "{}", refused.out);
+    assert!(
+        refused
+            .err
+            .contains(&format!("no preview {digest} waits to be applied")),
+        "{}",
+        refused.err
+    );
+    assert_eq!(rig.github.writes(), 0, "nothing was pushed into the issue");
+    assert_eq!(rig.github.issue(number)["title"], "Planted");
+}
+
+#[test]
+fn a_drop_stopped_after_its_intent_leaves_no_preview_to_push_into_the_issue_it_drops() {
+    let rig = Rig::new("drop-stopped", EXCHANGE);
+    let (number, digest) = a_push_into_the_planted_issue_waits(&rig);
+
+    // Found wrong after all: dropped, and stopped before its state is written.
+    let stops = StateWriteStops::plant(&rig);
+    let stopped = rig.run(&["drop", "tools/a"]);
+    assert_eq!(stopped.code, 1, "{}", stopped.out);
+    assert!(stopped.err.contains("state.json"), "{}", stopped.err);
+    let last = rig.journal().pop().unwrap();
+    assert_eq!(
+        (last.kind.as_str(), last.event),
+        ("drop", Event::Intent),
+        "it stopped after its intent was written"
+    );
+    applied_by_nobody(&rig, &digest, number);
+
+    // Run again, the drop is made, and the curated text is published as an issue of its own.
+    stops.lift();
+    rig.run(&["drop", "tools/a"]).ok();
+    assert!(rig.state().mappings.is_empty());
+    rig.sync();
+    let ours = rig.state().mappings["tools/a"].issue_number;
+    assert_ne!(ours, number);
+    assert_eq!(rig.github.issue(number)["title"], "Planted", "not written");
+}
+
+#[test]
+fn a_resolve_stopped_before_its_state_is_written_leaves_no_preview_of_the_side_it_replaces() {
+    let rig = Rig::new("resolve-stopped", EXCHANGE);
+    let (number, digest) = a_push_into_the_planted_issue_waits(&rig);
+
+    // The operator keeps the remote side instead, and the command stops at its state's write.
+    let stops = StateWriteStops::plant(&rig);
+    let stopped = rig.run(&["resolve", "tools/a", "remote"]);
+    assert_eq!(stopped.code, 1, "{}", stopped.out);
+    assert!(stopped.err.contains("state.json"), "{}", stopped.err);
+    applied_by_nobody(&rig, &digest, number);
+
+    // Run again, the remote side is kept: the issue is not written.
+    stops.lift();
+    rig.run(&["resolve", "tools/a", "remote"]).ok();
+    rig.sync();
+    assert_eq!(rig.state().mappings["tools/a"].flag, None);
+    assert_eq!(rig.github.writes(), 0);
+}
+
+/// The fake repository, each of whose issue listings says another page follows, however few
+/// issues it holds: a repository with more issues than any search reads.
+struct Endless(std::sync::Arc<crate::github::Fake>);
+
+impl Transport for Endless {
+    fn send(&self, request: &Request) -> Result<Response, Failure> {
+        let mut response = self.0.send(request)?;
+        if request.method == "GET" && request.path.contains("/issues?") {
+            response.headers.insert(
+                "link".into(),
+                "<https://api.github.com/next>; rel=\"next\"".into(),
+            );
+        }
+        Ok(response)
+    }
+}
+
+#[test]
+fn a_lost_publication_whose_search_reaches_its_page_ceiling_ends_unknown_and_creates_nothing() {
+    let rig = Rig::new("search-ceiling", EXCHANGE);
+    rig.board.file("tools/a", "A", "brief");
+    draft(&rig, "tools/a", "Public", "Body.");
+    let digest = rig.preview().digest().unwrap();
+    rig.github
+        .fault("POST", "/repos/o/n/issues", Fault::LoseAnswer);
+    assert_eq!(rig.reconcile(&digest).code, 1);
+    assert_eq!(rig.github.issues().len(), 1, "GitHub made the issue");
+
+    // Run again where the listing never ends: 1,000 pages are read, then the run stops with
+    // the publication's result still unknown, and nothing is created.
+    let asked = rig.github.asked().len();
+    let github = std::sync::Arc::clone(&rig.github);
+    let connect = move |_token: Secret| -> Result<Box<dyn Transport>, String> {
+        Ok(Box::new(Endless(std::sync::Arc::clone(&github))))
+    };
+    let stopped = {
+        let _alone = crate::no_start();
+        crate::run(
+            &["reconcile", "--preview", &digest, "--as", "amber-fox-1"],
+            &rig.board,
+            &rig.settings,
+            &connect,
+            rig.now.get(),
+            vec![rig.dir.0.join("repository")],
+        )
+    };
+    assert_eq!(stopped.code, 1, "{}", stopped.out);
+    assert!(
+        stopped
+            .err
+            .contains("tools/a: the issues could not all be listed to look for it"),
+        "{}",
+        stopped.err
+    );
+    let asked: Vec<_> = rig.github.asked().split_off(asked);
+    let listed = (asked.iter())
+        .filter(|(method, path, _)| method == "GET" && path.contains("/issues?"))
+        .count();
+    assert_eq!(listed, 1000, "the search's ceiling");
+    assert!(
+        asked.iter().all(|(method, ..)| method == "GET"),
+        "nothing was created"
+    );
+    let last = rig.journal().pop().unwrap();
+    assert_eq!(
+        (last.kind.as_str(), last.event),
+        ("publish", Event::Unknown)
+    );
+    assert!(rig.state().mappings.is_empty());
+
+    // Where the listing ends, the same preview finds the issue made and maps it.
+    rig.reconcile(&digest).ok();
+    assert_eq!(rig.state().mappings["tools/a"].issue_number, 1);
+    assert_eq!(rig.github.issues().len(), 1, "no second publication");
 }

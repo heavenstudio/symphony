@@ -76,7 +76,11 @@ it in the downstream clone.
 4. **Settle conflicts on that branch** ([below](#conflicts-and-review)), then run the checks
    closest to what the import changed and the lint, as for any task
    ([CHECKS](CHECKS.md#the-gate-is-evidence)).
-5. **Post the evidence and move to review** ([below](#import-evidence)).
+5. **Post the evidence and move to review** ([below](#import-evidence)). Where the downstream
+   lands by pull request, its assessor names the import at the head it read, beside the stamps:
+   `just tasks needs SLUG STAMP… --tip H --import U`, U in full. Without it, or named at another
+   head, the land judges H as a task and refuses it
+   ([TASKS](TASKS.md#an-import-delivered-by-a-pull-request)).
 6. **Land it** by the downstream's landing ([how each lands](#how-each-lands)), then check the
    result: `git merge-base origin/main upstream/main` now answers U.
 
@@ -209,8 +213,13 @@ else. The two movements use the two
 The import is the only delivery that is not squashed. It passes the same gate as a task: an
 independent assessment at H, every stamp it needs met or explicitly waived there, the checks
 published by the trusted source, and a fresh validation before the request. What differs is the
-merge method asked of GitHub and the shape the receipt verifies; how the landing tells the two
-apart, and refuses a head delivered as the wrong one, is the design's.
+merge method asked of GitHub and the shape the receipt verifies. The landing tells the two apart
+by three things that must agree: the downstream's committed `[land.upstream]`, its assessment at
+H naming U (`--import`), and the history fetched from the upstream then; GitHub's side pins the
+upstream by its number (`upstream_id`). A head that holds upstream commits and is not delivered
+as an import is refused, and an import the host squashed is held
+([TASKS](TASKS.md#an-import-delivered-by-a-pull-request),
+[GITHUB](GITHUB.md#delivering-an-import)).
 
 ## Refusals and recovery
 
@@ -222,7 +231,7 @@ default branch, a local merge pushed in GitHub's place or `--allow-unrelated-his
 | Evidence missing, red, or of another commit than H | Either | The landing refuses, naming who gives what is missing. A fix on the branch is a new H. | Assessment and stamps again at the new H; nothing is carried from the old one. |
 | `origin` is not the expected repository, or (PR delivery) the pinned repository identity does not match | Either clone | Nothing is fetched into the work, pushed or merged. | Work in the right clone. A wrong remote is corrected by hand, by the maintainer. |
 | A push to upstream from the downstream clone | Downstream clone | Git refuses: the push address is disabled. | Nothing to recover. The export procedure is the way. |
-| An import head asked to land as a task, or squashed | Downstream | PR delivery refuses a task whose head holds upstream commits its base lacks. | Assess it as an import. |
+| An import head asked to land as a task, or squashed | Downstream | PR delivery refuses a task whose head holds upstream commits its base lacks, naming the newest one. | Its assessor names it an import at H: `just tasks needs SLUG STAMP… --tip H --import U`. |
 | An import was squashed anyway, by any route | Downstream | Found after the fact: S has one parent, and the merge base still answers the earlier import. With PR delivery it is held for reconciliation, not closed as landed. | A new import task of the same U. Its merge changes no file and restores the ancestry; it is reviewed and landed as an import. History is not rewritten. |
 | Private ancestry in an export: a merge in `origin/main..X`, a base that is not upstream's tip, or a SHA shared with the private list | Upstream clone, before any push | The export is not pushed. | Delete the branch and apply the patch again on a fresh branch in the upstream clone. |
 | A private commit or branch reached upstream | Upstream | It is disclosed: deleting the branch does not withdraw what was fetched or what a pull request still names. | The maintainer is told at once and decides; anything secret in it is revoked first. No agent rewrites upstream's history. |
@@ -260,8 +269,9 @@ Enabling it is a separate, explicit act in each repository, after its implementa
 For these two movements it also needs:
 
 - **The downstream seeded from upstream's history**, so a common ancestor exists, and both
-  repositories' identities pinned in the downstream's committed policy: its own, and the
-  upstream it may import from.
+  repositories' identities pinned in the downstream's committed policy: its own (`repository`),
+  and the upstream it may import from, by its address in `symphony.toml`
+  (`[land.upstream]`) and by its number in `symphony-github.toml` (`upstream_id`).
 - **The downstream's rules permitting merge commits as well as squash** for the landing
   identity alone, and no rule requiring linear history. The upstream needs squash alone.
 - **Proof on disposable repositories** that the rules hold as the design says: an import merged
@@ -276,5 +286,8 @@ topology check were run on scratch repositories on one machine: repeated imports
 base forward and bring only new commits, a squashed import is detected and repaired by a second
 import that changes no file, an export cut in the upstream clone shares no commit with the
 private list and comes home without conflict, tags stay apart, and a rewritten or unrelated
-upstream is refused. No GitHub repository, rule, check or pull request was exercised, so
-nothing here shows that GitHub enforces any of it.
+upstream is refused. The import's delivery by pull request is built and tested against a host
+that merges scratch repositories as asked, and the adapter's checks against an in-memory GitHub
+(`crates/tasks/tests/sweep/land_delivery/import.rs`,
+`crates/symphony-github/tests/exchange/import.rs`). No GitHub repository, rule, check or pull
+request was exercised, so nothing here shows that GitHub enforces any of it.

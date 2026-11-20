@@ -4,6 +4,8 @@ import {
   blocked,
   Ends,
   ends,
+  fold,
+  NAMES,
   OrchestratorBanner,
   savedStage,
   WaitCard,
@@ -14,7 +16,7 @@ import {
   waitLabel,
   waitSince,
 } from "./boardwait";
-import { aRole, aTask } from "./testing";
+import { aMachine, anOperation, aRole, aTask, aWork } from "./testing";
 import { NO_WORK } from "./work";
 
 const now = 1800000000;
@@ -63,7 +65,45 @@ describe("a cut line's end", () => {
   });
 });
 
+describe("a closed card's line", () => {
+  it.each([
+    ["", ""],
+    ["A reason", "A reason"],
+    // A line break, a run of spaces, a tab and a carriage return each fold to one space.
+    ["waits\nfor the register", "waits for the register"],
+    ["the register   regroup", "the register regroup"],
+    ["waits\r\n\t  for", "waits for"],
+    // Every white space Unicode names, not only ASCII's.
+    ["waits\u2028for\u00a0the\u3000register", "waits for the register"],
+    // The ends are folded, not trimmed: the board trims a reason's ends before it is drawn.
+    ["\n candidate alpha\t", " candidate alpha "],
+  ])("folds %j to %j", (text, folded) => {
+    expect(fold(text)).toBe(folded);
+  });
+});
+
 describe("waiting cards", () => {
+  it("draws a reason written on several lines on one, keeping its end, and titles it as written", () => {
+    const why = "Saved owner answer recovery waits\nfor the register   regroup of candidate alpha";
+    const t = aTask("tools/review-app-verdicts-saved-owner-answer-recovery-alpha", {
+      status: "blocked",
+      from: "ready",
+      waits_on: { kind: "task", who: "docs/research-handoff\nregister-alpha", why, since: now },
+    });
+    const html = render(<WaitCard task={t} now={now} />);
+    const reason = html.match(/<span class="why" title="([^"]*)">(.*?)<\/span><\/div>/s);
+    expect(reason?.[1]).toBe(why);
+    expect(reason?.[2]).toBe(
+      '<span class="cut-head">Saved owner answer recovery waits for the register regroup of</span>' +
+        '<span class="cut-tail"> candidate alpha</span>',
+    );
+    // The wait folds as well, its title as written.
+    expect(html).toContain(
+      '<span class="on" title="On docs/research-handoff\nregister-alpha">' +
+        '<span class="cut-head">On docs/research-handoff</span>' +
+        '<span class="cut-tail"> register-alpha</span></span>',
+    );
+  });
   it("tells apart cards whose title, slug, wait and reason differ only at the end", () => {
     const cards = ["alpha", "beta", "gamma"].map((end) =>
       render(
@@ -240,6 +280,39 @@ it("keeps only a known lifecycle phone stage", () => {
   expect(savedStage(null)).toBe("review");
   expect(savedStage("blocked")).toBe("review");
   expect(savedStage("ready")).toBe("ready");
+});
+it("keeps a phone stage only while a workflow's tabs have it, else its first", () => {
+  const tabs = ["phase:verify", "phase:review", "phase:build"];
+  expect(savedStage("phase:review", tabs)).toBe("phase:review");
+  expect(savedStage("review", tabs)).toBe("phase:verify");
+  expect(savedStage(null, tabs)).toBe("phase:verify");
+  expect(savedStage("phase:review")).toBe("review");
+});
+describe("a task a custom workflow holds", () => {
+  const place = { phase: "build", state: "blocked", revision: 2 };
+  const held = aTask("w/c", { status: "blocked", from: "review", workflow: place });
+  it("goes in its phase's column, blocked or not, unless a machine builds or tests it", () => {
+    expect(waitingStage(NO_WORK, held, true)).toBe("phase:build");
+    const review = { ...held, status: "review", workflow: { ...place, phase: "review" } };
+    expect(waitingStage(NO_WORK, review, true)).toBe("phase:review");
+    const working = { ...held, status: "in_progress", workflow: { ...place, state: "working" } };
+    const building = aWork([
+      aMachine("m", [anOperation("m", "b", "build", "running", { task: "w/c" })]),
+    ]);
+    expect(waitingStage(building, working, true)).toBe("build");
+    expect(waitingStage(building, working, false)).toBe("phase:build");
+  });
+  it("names its place on its card: its phase's and state's labels, else its state's ID", () => {
+    NAMES.set("build/blocked", "Build · Blocked");
+    expect(render(<WaitCard task={held} now={now} />)).toContain(
+      '<span class="state-mark">Build · Blocked</span>',
+    );
+    NAMES.clear();
+    expect(render(<WaitCard task={held} now={now} />)).toContain(
+      '<span class="state-mark">blocked</span>',
+    );
+    expect(render(<WaitCard task={aTask("w/a")} now={now} />)).not.toContain("state-mark");
+  });
 });
 it("shows one amber banner for stale orchestrators, red for none, and none for live or no queued work", () => {
   const banner = (health: string, unstarted = 2) =>

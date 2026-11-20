@@ -216,6 +216,7 @@ const COMMANDS: &[Command] = &[
             opt("--input", "input", Takes::Append),
             opt("--input-revision", "input_revision", Takes::Append),
             opt("--attestation", "attestation", Takes::Append),
+            opt("--accept", "accept", Takes::Append),
             opt("--json", "json", Takes::Bool),
         ],
     },
@@ -268,6 +269,27 @@ const COMMANDS: &[Command] = &[
         pos: &[pos("slug"), many("stamps")],
         opts: &[
             AS,
+            opt("--tip", "tip", STR),
+            opt("--import", "import", STR),
+            Opt {
+                required: true,
+                ..opt("--why", "why", STR)
+            },
+        ],
+    },
+    Command {
+        name: "gate",
+        pos: &[pos("slug"), pos("gate")],
+        opts: &[
+            AS,
+            Opt {
+                group: 1,
+                ..opt("--raise", "raise", STR)
+            },
+            Opt {
+                group: 1,
+                ..opt("--waive", "waive", Takes::Bool)
+            },
             opt("--tip", "tip", STR),
             Opt {
                 required: true,
@@ -1588,6 +1610,51 @@ mod tests {
         );
         assert_eq!(run(&["stamps"]).get("slug"), None);
         assert_eq!(run(&["stamps", "a/b"]).get("slug"), Some("a/b"));
+    }
+
+    #[test]
+    fn a_gate_decision_raises_or_waives_never_both_and_says_why() {
+        let raised = run(&[
+            "gate",
+            "a/b",
+            "tools/size-budget.toml:symphony",
+            "--raise",
+            "12_400_000",
+            "--why",
+            "w",
+        ]);
+        assert_eq!(
+            (
+                raised.get("gate"),
+                raised.get("raise"),
+                raised.flag("waive")
+            ),
+            (
+                Some("tools/size-budget.toml:symphony"),
+                Some("12_400_000"),
+                false
+            )
+        );
+        let waived = run(&[
+            "gate", "a/b", "pictures", "--waive", "--tip", "1a2b", "--why=w",
+        ]);
+        assert_eq!(
+            (waived.get("raise"), waived.flag("waive"), waived.get("tip")),
+            (None, true, Some("1a2b"))
+        );
+        assert!(
+            refused(&["gate", "a/b", "x", "--raise", "1", "--waive", "--why", "w"]).ends_with(
+                "just tasks gate: error: argument --waive: not allowed with argument --raise\n"
+            )
+        );
+        assert!(
+            refused(&["gate", "a/b", "pictures", "--waive"])
+                .ends_with("just tasks gate: error: the following arguments are required: --why\n")
+        );
+        assert!(
+            refused(&["gate", "a/b", "--waive", "--why", "w"])
+                .ends_with("just tasks gate: error: the following arguments are required: gate\n")
+        );
     }
 
     #[test]

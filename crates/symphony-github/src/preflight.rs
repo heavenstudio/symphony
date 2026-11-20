@@ -3,18 +3,24 @@
 //! never writes, and it is asked before each consequential step ([`crate::deliver`]): before a
 //! head with standing evidence is pushed, and before a merge is asked for.
 //!
-//! Three reads, all with the token that merges:
+//! Three reads, the first two with the token that merges:
 //!
 //! 1. the repository (`GET /repos/O/N`): its number, default branch, merge settings and what the
 //!    token may do there;
 //! 2. the rules in effect for the base branch (`GET /repos/O/N/rules/branches/BASE`, every page),
 //!    which GitHub evaluates from every active ruleset that applies, the organization's among
 //!    them;
-//! 3. each ruleset a rule comes from (`GET /repos/O/N/rulesets/ID`), for who may bypass it.
+//! 3. each ruleset a rule comes from (`GET /repos/O/N/rulesets/ID`), for who may bypass it, with
+//!    the policy token ([`Reader`]).
+//!
+//! GitHub shows a ruleset's bypass list only to who may write the ruleset, which the token that
+//! merges must not be able to do, so the third read has a token of its own: a third GitHub
+//! App's, which could change the rules it reads. A [`Reader`] is all the adapter does with that
+//! token, and a `Reader` has one request, that read.
 //!
 //! It passes only what it read whole. A rule counts as holding everyone only when it comes from
-//! a ruleset whose bypass list was read and is empty; a list GitHub does not show this token
-//! (it shows it only to who may write the ruleset) is not known to be empty. What must hold:
+//! a ruleset whose bypass list was read and is empty; a list GitHub does not show is not known
+//! to be empty. What must hold:
 //!
 //! - **identity**: the repository is the one bound, by its number, and the base is its default
 //!   branch; it is not archived, and it says the token does not administer it, which is not
@@ -28,7 +34,10 @@
 //!   bypass actor is that App. Without it anyone who may write merges a pull request whose check
 //!   is green, evidence withdrawn since or not;
 //! - **the merge method**: what the repository and those rules permit is the operation's method
-//!   and no other; no merge queue and no auto-merge, which this build does not deliver through.
+//!   and no other: squash alone, or squash and merge commits where the settings name an upstream
+//!   an import is merged from ([`Operation::Imports`]), and then no rule that requires a linear
+//!   history, which no merge commit meets; no merge queue and no auto-merge, which this build does
+//!   not deliver through.
 //!
 //! Classic branch protection is not read: it can add to what the rules require and never take
 //! from it, and reading it asks for administration, which the token must not have.
@@ -37,7 +46,9 @@
 //! which App a token is of, that no administrator edits a rule between this read and GitHub's
 //! own act, and how GitHub applies two rulesets together.
 
+use crate::config::Repository;
 use crate::deliver::{ELIGIBLE, Host};
+use crate::transport::Transport;
 use serde_json::{Value, json};
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -53,19 +64,34 @@ const METHODS: [(&str, &str); 3] = [
     ("rebase", "allow_rebase_merge"),
 ];
 
-/// What is delivered, which decides the merge method the base branch must permit.
+/// What is delivered to the base branch, which decides the merge methods it must permit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operation {
-    /// A task's head, squashed into one commit.
+    /// Tasks alone, each head squashed into one commit.
     Task,
+    /// Tasks, squashed, and imports of the one upstream the settings name, each merged by a merge
+    /// commit that keeps the upstream's history: what a repository with `upstream_id` delivers,
+    /// whichever of the two a step is for, since the branch's rules are one for both.
+    Imports,
 }
 
 impl Operation {
-    /// The methods the base branch may permit for it: the one it is merged by.
+    /// What a repository whose settings say `upstream_id` or not delivers.
+    #[must_use]
+    pub fn of(imports: bool) -> Operation {
+        if imports {
+            Operation::Imports
+        } else {
+            Operation::Task
+        }
+    }
+
+    /// The methods the base branch may permit for it: the ones it merges by.
     #[must_use]
     pub fn permitted(self) -> &'static [&'static str] {
         match self {
             Operation::Task => &["squash"],
+            Operation::Imports => &["merge", "squash"],
         }
     }
 }
@@ -96,6 +122,87 @@ pub enum Bypass {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Policy {
     pub digest: String,
+}
+
+/// What reads who bypasses a ruleset, with the policy token: a token that could write the
+/// repository's administration, so this type is everything the adapter does with it. It has one
+/// request, `GET /repos/O/N/rulesets/ID`, and no other way to the transport it holds.
+pub struct Reader<'a> {
+    host: Host<'a>,
+}
+
+impl<'a> Reader<'a> {
+    /// A reader of `repository`'s rulesets over `transport`, which carries the policy token.
+    #[must_use]
+    pub fn new(transport: &'a dyn Transport, repository: Repository) -> Reader<'a> {
+        Reader {
+            host: Host {
+                transport,
+                repository,
+            },
+        }
+    }
+
+    /// Who may bypass ruleset `id`, read from the ruleset itself.
+    ///
+    /// # Errors
+    ///
+    /// The answer that stops a delivery where GitHub gave none to judge: `unavailable`, of
+    /// `kind` `policy`, naming the policy token.
+    pub fn bypass(&self, id: i64) -> Result<Bypass, Value> {
+        // No answer to the policy token is said as its own: the answer keeps its state, so a
+        // land tries again, and is of the policy, so evidence that blocks is still said.
+        let (status, value) =
+            self.host
+                .get(&format!("/rulesets/{id}"))
+                .map_err(|mut stopped| {
+                    stopped["kind"] = json!("policy");
+                    stopped["why"] = json!(format!(
+                        "who bypasses ruleset {id} was not read with the policy token \
+                 (policy_token_file): {}",
+                        stopped["why"].as_str().unwrap_or_default()
+                    ));
+                    stopped
+                })?;
+        if status != 200 {
+            return Ok(Bypass::Unknown(format!(
+                "GitHub answered {status} to the policy token"
+            )));
+        }
+        if value["id"] != json!(id) || value["enforcement"] != json!("active") {
+            return Ok(Bypass::Unknown("it does not read as active".into()));
+        }
+        let Some(listed) = value["bypass_actors"].as_array() else {
+            return Ok(Bypass::Unknown(
+                "its bypass list is not shown to the policy token".into(),
+            ));
+        };
+        Ok(Bypass::Actors(
+            listed
+                .iter()
+                .map(|actor| {
+                    (
+                        actor["actor_type"].as_str().unwrap_or("unknown").into(),
+                        actor["actor_id"].as_i64(),
+                        actor["bypass_mode"].as_str().unwrap_or("unknown").into(),
+                    )
+                })
+                .collect(),
+        ))
+    }
+}
+
+/// The answer that refuses a delivery because the policy token is not there to read with:
+/// `why`, as the token's file is refused.
+pub(crate) fn unread(wanted: &Wanted<'_>, why: &str) -> Value {
+    refused(
+        wanted,
+        &[format!(
+            "who bypasses the rules of {} cannot be read, policy_token_file not being usable: \
+             {why}",
+            wanted.base
+        )],
+    )
 }
 
 /// The answer that refuses a delivery for `missing`.
@@ -137,37 +244,14 @@ fn rules(host: &Host<'_>, base: &str) -> Result<Result<Vec<Value>, String>, Valu
     )))
 }
 
-/// Who may bypass ruleset `id`, read from the ruleset itself.
-fn bypass(host: &Host<'_>, id: i64) -> Result<Bypass, Value> {
-    let (status, value) = host.get(&format!("/rulesets/{id}"))?;
-    if status != 200 {
-        return Ok(Bypass::Unknown(format!("GitHub answered {status}")));
-    }
-    if value["id"] != json!(id) || value["enforcement"] != json!("active") {
-        return Ok(Bypass::Unknown("it does not read as active".into()));
-    }
-    let Some(listed) = value["bypass_actors"].as_array() else {
-        return Ok(Bypass::Unknown(
-            "its bypass list is not shown to the merging token".into(),
-        ));
-    };
-    Ok(Bypass::Actors(
-        listed
-            .iter()
-            .map(|actor| {
-                (
-                    actor["actor_type"].as_str().unwrap_or("unknown").into(),
-                    actor["actor_id"].as_i64(),
-                    actor["bypass_mode"].as_str().unwrap_or("unknown").into(),
-                )
-            })
-            .collect(),
-    ))
-}
-
-/// The policy of the base branch read now, or the answer that stops the delivery: `refused`
+/// The policy of the base branch read now, the repository and its rules through `host` and who
+/// bypasses each ruleset through `reader`, or the answer that stops the delivery: `refused`
 /// with what is missing, or `unavailable` where GitHub gave no answer to judge.
-pub(crate) fn check(host: &Host<'_>, wanted: &Wanted<'_>) -> Result<Policy, Value> {
+pub(crate) fn check(
+    host: &Host<'_>,
+    reader: &Reader<'_>,
+    wanted: &Wanted<'_>,
+) -> Result<Policy, Value> {
     let (status, repository) = host.get("")?;
     if status != 200 {
         let missing = [format!(
@@ -182,7 +266,7 @@ pub(crate) fn check(host: &Host<'_>, wanted: &Wanted<'_>) -> Result<Policy, Valu
     let mut bypasses = BTreeMap::new();
     for id in rules.iter().filter_map(|rule| rule["ruleset_id"].as_i64()) {
         if let Entry::Vacant(unread) = bypasses.entry(id) {
-            unread.insert(bypass(host, id)?);
+            unread.insert(reader.bypass(id)?);
         }
     }
     let missing = judge(&repository, &rules, &bypasses, wanted);
@@ -280,6 +364,12 @@ pub fn judge(
     if named("merge_queue").next().is_some() {
         missing.push(format!(
             "{base} merges through a merge queue, which this build delivers nothing through"
+        ));
+    }
+    if wanted.operation == Operation::Imports && named("required_linear_history").next().is_some() {
+        missing.push(format!(
+            "a rule requires a linear history of {base}, which refuses the merge commit an import \
+             is delivered by"
         ));
     }
     methods(

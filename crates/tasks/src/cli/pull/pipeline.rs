@@ -317,10 +317,25 @@ fn replayed<'t>(
     now: f64,
 ) -> Result<Window<'t>, Error> {
     let lines = store.status_lines(since)?;
+    // A task a custom workflow holds says its moves by its recorded transitions, read by id for
+    // those touched since the window opened ([`alarm::transition_lines`]).
+    let touched: Vec<(&str, u64)> = (tasks.iter())
+        .filter(|t| t.updated >= since)
+        .filter_map(|t| {
+            let position = crate::store::workflow::task_position(&t.fields)?;
+            Some((t.slug.as_str(), position.revision))
+        })
+        .collect();
+    let moved_by_workflow = alarm::transition_lines(&store.transitions(&touched)?, since);
     let mut threads: HashMap<&str, Vec<&Line>> = HashMap::new();
-    let until_now = lines.iter().filter(|line| line.ts <= now);
-    for line in until_now {
+    for line in lines.iter().filter(|line| line.ts <= now) {
         threads.entry(line.slug.as_str()).or_default().push(line);
+    }
+    // Each in its place on its thread, which the board's own lines keep in time order.
+    for line in moved_by_workflow.iter().filter(|line| line.ts <= now) {
+        let thread = threads.entry(line.slug.as_str()).or_default();
+        let at = thread.partition_point(|said| said.ts <= line.ts);
+        thread.insert(at, line);
     }
     let mut moves: HashMap<&str, Vec<(f64, alarm::Moved<'_>)>> = HashMap::new();
     for (slug, lines) in &threads {

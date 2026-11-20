@@ -46,6 +46,7 @@ fn assessed(stamps: &[&str], tip: Option<&str>) -> Needs {
         tip: tip.map(str::to_string),
         by: "slate-owl".into(),
         why: "a page's look and a store query".into(),
+        import: None,
     }
 }
 
@@ -438,6 +439,57 @@ fn a_stamp_the_assessment_left_out_is_waived_its_line_the_reason_until_a_later_c
         ),
         ("Left out by the assessment from the brief", None, None)
     );
+}
+
+#[test]
+fn a_stamp_a_gate_decision_waived_at_the_tip_is_waived_by_it_and_needed_again_at_a_later_one() {
+    use symphony_board::gates::{Decision, GATES, Kind};
+    let mut record = task("review", Some(assessed(&["tests", "pictures"], Some(TIP))));
+    let waiver = Decision {
+        gate: "pictures".into(),
+        kind: Kind::Waive,
+        from: None,
+        to: None,
+        tip: Some(TIP.into()),
+        by: "amber-kite".into(),
+        why: "the row is measured, never seen".into(),
+        at: 500.0,
+    };
+    // A waiver of tests, which no command records, waives nothing.
+    let never = Decision {
+        gate: "tests".into(),
+        ..waiver.clone()
+    };
+    (record.fields.get_mut(symphony_board::red::FIELDS).unwrap()).insert(
+        GATES.into(),
+        serde_json::to_value([&waiver, &never]).unwrap(),
+    );
+    let mut thread = given();
+    thread.push(line(5, "system", "amber-kite", &waiver.line()));
+    let runs = [run(1, "just test-rs", Phase::Test, TIP)];
+    let gates = read(&record, &thread, &runs, Some(TIP));
+    assert_eq!(gates[0].state, GateState::Met);
+    assert_eq!(
+        gates[2],
+        Gate {
+            name: "pictures".into(),
+            state: GateState::Waived,
+            by: Some("amber-kite".into()),
+            at: Some(500.0),
+            commit: Some(TIP.into()),
+            why: Some("the row is measured, never seen".into()),
+            detail: "Waived by a gate decision at 4be91c2".into(),
+            link: Some("/task/tools/x#message-5".into()),
+            past: Vec::new(),
+        }
+    );
+    assert!(
+        !left_out(&gates[2]),
+        "its lane is drawn: a decision, not the assessment"
+    );
+    // At a later commit the stamp is needed again, read as any needed stamp is.
+    let gates = read(&record, &thread, &runs, Some(LATER));
+    assert_eq!(gates[2].state, GateState::Missing);
 }
 
 #[test]
