@@ -116,7 +116,7 @@ function readSessions(value: unknown): Record<string, SessionGo> | null {
 /**
  * A task's page, or none: its task, brief and subtasks, and what serde defaults when absent (the
  * machines' work, the brief's cut, the sessions, whether the page was asked on the server's own
- * machine, and the gates the server last answered).
+ * machine, the gates the server last answered, and how many execution attempts it has had).
  */
 export function readTaskPage(value: unknown): TaskPage | null {
   const task = readTask(field(value, "task"));
@@ -134,6 +134,7 @@ export function readTaskPage(value: unknown): TaskPage | null {
   };
   const omitted = count("brief_omitted");
   const next = count("brief_next");
+  const attempts = count("attempts");
   const revision = field(value, "brief_revision") ?? "";
   const local = field(value, "local") ?? false;
   if (
@@ -147,6 +148,7 @@ export function readTaskPage(value: unknown): TaskPage | null {
     (!absent(gates) && seen === null) ||
     omitted === null ||
     next === null ||
+    attempts === null ||
     !isText(revision) ||
     typeof local !== "boolean"
   ) {
@@ -164,6 +166,8 @@ export function readTaskPage(value: unknown): TaskPage | null {
     sessions,
     local,
     gates: seen,
+    // Left out at none, as the server leaves it out, so a page read is the page it sent.
+    ...(attempts > 0 && { attempts }),
   };
 }
 

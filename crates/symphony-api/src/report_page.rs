@@ -18,7 +18,7 @@
 
 use crate::agent_activity::{Gauge, KindLevel, Level, RoleLevel};
 use crate::health::HourPasses;
-use crate::reports::{ByStatus, DecisionCounts, GitCounts, Spread};
+use crate::reports::{ByStatus, DecisionCounts, GitCounts, PlacedHours, Spread};
 use serde::{Deserialize, Serialize};
 
 /// The Reports page's read.
@@ -158,6 +158,11 @@ pub struct ReportBucket {
     /// The board's health; none when no health line is in it.
     #[serde(default)]
     pub health: Option<BucketHealth>,
+    /// Where a custom workflow's top-level tasks spent it, by phase and by state
+    /// ([`crate::reports::Placed`]), summed over its roll-up hours that record it; left out when
+    /// none does, as on a board that runs no workflow of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<PlacedHours>,
 }
 
 /// How the top-level tasks moved in a period.

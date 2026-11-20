@@ -3,6 +3,7 @@
 //! eligibility are `evidence.rs`'s.
 
 use super::keys;
+use super::reader::Reader;
 use super::record::{Fact, Identity, Lease, Pending, Relation, Row, State};
 use super::rules::{self, Applied, Bounds, Next};
 use super::{
@@ -12,7 +13,6 @@ use crate::store::Store;
 use crate::store::execution::{Admission as Admitted, Claim, Commit, Decision, Write};
 use crate::{Error, stages};
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use symphony_plugin::execution::{
     Adapter, AttemptRef, Authorization, Call, ConversationId, ExternalLink, MAX_CALL_MS, Operation,
@@ -569,51 +569,18 @@ impl<'a> Coordinator<'a> {
 
     /// Attempt `id`.
     pub fn attempt(&self, grant: &Grant, id: &str) -> Result<Attempt, Refusal> {
-        let row = self.row(id)?;
-        grant.allows(&self.profile.scope, Some(&row.task), Act::Read)?;
-        self.view_of(row)
+        self.reader().attempt(grant, id)
     }
 
     /// Every attempt of `task`, oldest first: its history, each retry and resume linked to the
     /// attempt before it.
     pub fn history(&self, grant: &Grant, task: &str) -> Result<Vec<Attempt>, Refusal> {
-        grant.allows(&self.profile.scope, Some(task), Act::Read)?;
-        let mut lanes: HashMap<String, Option<String>> = HashMap::new();
-        let mut attempts = Vec::new();
-        for value in self.store.execution_of_task(task)? {
-            let row = Row::of(&value)?;
-            self.same_board(&row)?;
-            let lane = &row.identity.lane;
-            if !lanes.contains_key(lane) {
-                let current = self.lane_holder(task, lane)?;
-                lanes.insert(lane.clone(), current);
-            }
-            let current = lanes[lane].as_deref() == Some(row.attempt.as_str());
-            attempts.push(attempt_of(row, current));
-        }
-        Ok(attempts)
+        self.reader().history(grant, task)
     }
 
     /// Attempt `id`'s facts, in the order they were appended.
     pub fn facts(&self, grant: &Grant, id: &str) -> Result<Vec<Recorded>, Refusal> {
-        let row = self.row(id)?;
-        grant.allows(&self.profile.scope, Some(&row.task), Act::Read)?;
-        self.store
-            .execution_facts(id)?
-            .into_iter()
-            .map(|value| {
-                let fact = serde_json::from_value(value["fact"].clone()).map_err(|e| {
-                    Refusal::Board(Error::Db(format!(
-                        "an execution fact not in the board's shape: {e}"
-                    )))
-                })?;
-                Ok(Recorded {
-                    seq: value["seq"].as_u64().unwrap_or(0),
-                    at: value["at"].as_i64().unwrap_or(0),
-                    fact,
-                })
-            })
-            .collect()
+        self.reader().facts(grant, id)
     }
 
     /// The attempts whose work is due, up to `limit`, each stepped: what the host's worker loop
@@ -928,26 +895,18 @@ impl<'a> Coordinator<'a> {
         )
     }
 
+    /// Its board's attempts, read with no provider.
+    fn reader(&self) -> Reader<'a> {
+        Reader::new(self.store, self.profile.scope.clone())
+    }
+
     /// Attempt `id`'s row, if it is this board's.
     pub(super) fn row(&self, id: &str) -> Result<Row, Refusal> {
-        if keys::parse(id).is_none() {
-            return Err(Refusal::Unknown(id.to_string()));
-        }
-        let value = self
-            .store
-            .execution_attempt(id)?
-            .ok_or_else(|| Refusal::Unknown(id.to_string()))?;
-        let row = Row::of(&value)?;
-        self.same_board(&row)?;
-        Ok(row)
+        self.reader().row(id)
     }
 
     fn same_board(&self, row: &Row) -> Result<(), Refusal> {
-        let scope = &self.profile.scope;
-        if row.identity.project != scope.project || row.identity.board != scope.board {
-            return Err(Refusal::Scope);
-        }
-        Ok(())
+        self.reader().same_board(row)
     }
 
     /// Refused unless `row` runs under this coordinator's configuration: a resource means
@@ -970,37 +929,15 @@ impl<'a> Coordinator<'a> {
         ))
     }
 
-    /// The attempt that holds lane `lane` of `task`, if any.
-    pub(super) fn lane_holder(&self, task: &str, lane: &str) -> Result<Option<String>, Refusal> {
-        let fence = self.store.execution_fence(json!(["lane", task, lane]))?;
-        Ok(fence.and_then(|fence| fence["attempt"].as_str().map(str::to_string)))
-    }
-
     /// Attempt `id` as a reader sees it.
     pub(super) fn view(&self, id: &str) -> Result<Attempt, Refusal> {
-        let row = self.row(id)?;
-        self.view_of(row)
-    }
-
-    fn view_of(&self, row: Row) -> Result<Attempt, Refusal> {
-        let current = self.lane_holder(&row.task, &row.identity.lane)?.as_deref()
-            == Some(row.attempt.as_str());
-        Ok(attempt_of(row, current))
+        let reader = self.reader();
+        let row = reader.row(id)?;
+        reader.view_of(row)
     }
 
     pub(super) fn store(&self) -> &Store {
         self.store
-    }
-}
-
-fn attempt_of(row: Row, current: bool) -> Attempt {
-    Attempt {
-        id: row.attempt,
-        created: row.created,
-        identity: row.identity,
-        state: row.state,
-        revision: row.revision,
-        current,
     }
 }
 

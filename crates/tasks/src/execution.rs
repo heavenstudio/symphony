@@ -25,11 +25,13 @@
 mod coordinator;
 mod evidence;
 mod keys;
+mod reader;
 mod record;
 mod rules;
 mod view;
 
 pub use coordinator::Coordinator;
+pub use reader::Reader;
 pub(crate) use record::Row;
 pub use record::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Continuation, Dispatch, Ending,
@@ -39,7 +41,7 @@ pub use symphony_plugin::execution::{
     Adapter, AttemptRef, Capabilities, ContentRef, ExternalLink, Input, Operation, Outcome,
     Principal, PrincipalKind, Profile, ResumeMode, Scope, StopMode,
 };
-pub use view::board_scope;
+pub use view::{board_scope, principal_word, resume_mode, resume_word, stop_mode, stop_word};
 
 use crate::Error;
 use std::fmt;
@@ -277,6 +279,16 @@ pub struct Attempt {
     pub revision: i64,
     /// Whether it is its lane's current attempt: a later one supersedes it.
     pub current: bool,
+}
+
+impl Attempt {
+    /// Whether a resume in `mode` may continue it now, and why not: it must be known paused or
+    /// ended with its resource bound, owe nothing, have no cancel whose outcome is uncertain and no
+    /// successor, and a resume that reuses its resource needs that resource's cleanup not begun.
+    /// [`Coordinator::resume`] decides again on the row it writes.
+    pub fn resumable(&self, mode: ResumeMode) -> Result<(), String> {
+        rules::resumable(&self.state, mode == ResumeMode::ReuseWithNewGeneration).map(|_| ())
+    }
 }
 
 /// A fact as it was appended.

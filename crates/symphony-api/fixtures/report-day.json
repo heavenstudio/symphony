@@ -133,6 +133,20 @@
         "added": 0,
         "removed": 0,
         "reverts": 1
+      },
+      "workflow": {
+        "top": {
+          "phases": [
+            { "id": "build", "label": "Build", "hours": 0.5 },
+            { "id": "build", "label": "Make", "hours": 1.25 },
+            { "id": "verify", "label": "Verify", "hours": 0.25 }
+          ],
+          "states": [
+            { "id": "blocked", "label": "Blocked", "hours": 0.25 },
+            { "id": "working", "label": "Working", "hours": 1.75 }
+          ]
+        },
+        "subtasks": { "phases": [], "states": [] }
       }
     }
   ],
