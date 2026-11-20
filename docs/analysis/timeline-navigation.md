@@ -67,16 +67,16 @@ to this proposal:
   sit about 16 px below their diamond and time (in the Show all picture above).
 
 A message whose sender and recipient fall on the same lane, such as a post from outside to
-everyone on the task, draws a 12 px stub downwards today. What it should draw is a choice, made
-below.
+everyone on the task, draws a 12 px stub downwards today. What it draws instead is proposed below,
+under every option.
 
-The class of cause is a layer that recomputes from style constants the geometry of the
-elements it lines up with, instead of sharing their box or measuring them, plus a page-wide
-rule that overwrites a positioned control's `transform`. Two things would keep it from coming back. The arrow reads
-the boxes of its two endpoints, so any change to a mark or a lane moves it too. A mark is placed
-with `left` and a margin, or the `translate` property, so a press's `transform` composes with its
-placement instead of replacing it. A browser check that selects a mark, then presses and holds
-it, can compare the mark's centre with the arrow's ends.
+The class of cause is a layer that recomputes from style constants the geometry of the elements
+it lines up with, instead of sharing their box or measuring them, plus a page-wide rule that
+overwrites a positioned control's `transform`. Two things would keep it from coming back. The
+arrow reads the boxes of its two endpoints, so any change to a mark or a lane moves it too. A
+mark is placed with `left` and a margin, or the `translate` property, so a press's `transform`
+composes with its placement instead of replacing it. A browser check that selects a mark, then
+presses and holds it, can compare the mark's centre with the arrow's ends.
 
 ## Other systems
 
