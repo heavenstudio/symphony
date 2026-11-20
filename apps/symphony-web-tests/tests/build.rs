@@ -1015,8 +1015,9 @@ fn an_install_that_fails_says_all_it_said_and_runs_nothing() {
 
 /// The justfile's own recipes: `symphony-ui-dist` runs the client's build script with OUT as
 /// given, from the workspace, and `lint-rs` runs Cargo's checks (the wire types' TypeScript feature
-/// and the hosted board's feature among them), the build's two readings of the branch (its consumer
-/// notes, its published packages) and then the client's, with no wasm32 pass.
+/// and the hosted board's feature among them, then the board tests' raw-statement fence), the
+/// build's two readings of the branch (its consumer notes, its published packages) and then the
+/// client's, with no wasm32 pass.
 #[test]
 fn the_justfile_builds_the_client_with_its_script_and_lints_it_with_its_checks() {
     let scratch = Scratch::new("recipes");
@@ -1076,6 +1077,7 @@ fn the_justfile_builds_the_client_with_its_script_and_lints_it_with_its_checks()
                 "cwd={0}\narg=clippy\narg=--workspace\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
                 "cwd={0}\narg=clippy\narg=-p\narg=symphony-api\narg=--features\narg=typescript\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
                 "cwd={0}\narg=clippy\narg=-p\narg=symphony-board\narg=--features\narg=hosted-postgresql\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
+                "cwd={0}\narg=test\narg=-p\narg=symphony-board\narg=--test\narg=raw_fence\narg=--locked\n",
                 "bin cwd={0}\narg=symphony-build\narg=consumer-notes\narg=--check\n",
                 "bin cwd={0}\narg=symphony-build\narg=crates-check\narg=--branch\narg=.\n",
                 "client-lint cwd={0}\n"
