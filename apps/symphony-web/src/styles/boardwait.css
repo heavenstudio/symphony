@@ -266,6 +266,11 @@
   display: block;
   white-space: pre-wrap;
 }
+/* A card's estimated cost (card-costs.ts): kept whole, the slug giving way before it. */
+.waiting-slug .card-cost {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
 .waiting-slug .prio {
   flex-shrink: 0;
   font: inherit;

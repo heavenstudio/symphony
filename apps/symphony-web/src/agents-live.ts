@@ -13,6 +13,7 @@ import { scoped } from "./project";
 import { getJson, said } from "./request";
 import { whiteSpace } from "./session";
 import { field, holdPlace, list as items } from "./shared";
+import { amount, calls, costSaid, estimate, isCost, isTokens, total, unpricedSaid } from "./spend";
 import { tryAgain } from "./state";
 import {
   byPriority,
@@ -167,6 +168,10 @@ export function readAgent(value: unknown): Agent | null {
   if (run === undefined || message === undefined || slots === undefined || go === undefined) {
     return null;
   }
+  // A server from before the board kept tokens leaves both out: none taken, none priced.
+  const tokens = optional(field(value, "tokens"), (one) => (isTokens(one) ? one : null));
+  const cost = optional(field(value, "cost"), (one) => (isCost(one) ? one : null));
+  if (tokens === undefined || cost === undefined) return null;
   const text = (key: (typeof OPTIONAL_TEXTS)[number]) =>
     (field(value, key) as string | undefined) ?? null;
   return {
@@ -188,6 +193,8 @@ export function readAgent(value: unknown): Agent | null {
     last_message: message,
     slots,
     go,
+    tokens,
+    cost,
   };
 }
 
@@ -273,6 +280,20 @@ export function meta(parts: string[]): string {
 export function agentLine(agent: Agent): string {
   const worktree = agent.worktree.split("/").pop() ?? agent.worktree;
   return meta([agent.kind, agent.model, agent.state, agent.branch, worktree]);
+}
+
+/**
+ * What an agent's own sessions took, in a line: its tokens and calls, and their cost estimated at
+ * API list prices with the day those were read, never money spent; what had no price named. None
+ * for an agent that took none.
+ */
+export function agentSpent(agent: Agent): string | null {
+  const { tokens, cost } = agent;
+  if (tokens === null || (tokens.calls === 0 && total(tokens) === 0)) return null;
+  const taken = `Tokens: ${amount(total(tokens))} in ${calls(tokens.calls)}`;
+  if (cost === null) return taken;
+  const priced = `${taken} · ${costSaid(cost)}, ${estimate(cost.prices)}`;
+  return cost.unpriced.length > 0 ? `${priced}; no price for ${unpricedSaid(cost)}` : priced;
 }
 
 const finishedStatus = (status: string) => status === "done" || status === "cancelled";

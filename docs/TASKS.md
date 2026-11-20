@@ -3805,7 +3805,37 @@ total beside it; each `tokens` is `{"input", "cache_write_5m", "cache_write_1h",
 (`landed SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1
 51.5k, round 2 20.1k), $0.08 estimated at API list prices read 2026-11-16`), each amount with
 its unit, so no number in it reads as a commit. A copy of the board carries the rows
-(`Dump.usages`). The pages draw none of it yet.
+(`Dump.usages`).
+
+The pages draw the same figures, each with the day its prices were read and as an estimate, never
+money spent ([What the tokens cost](#what-the-tokens-cost)):
+
+- **A task's page** has *Tokens and estimated cost* under its changes, closed until opened, which
+  reads `/api/task-tokens?slug=SLUG` (`show --json`'s `tokens` without its `rows`) and draws the
+  total with its kinds, a table by role and one by review round, and the models no price was found
+  for; a task with none says *No tokens recorded for this task.* and draws no table.
+- **A board card** shows its task's cost all told, its subtasks' with it, beside its slug (`$1.23`,
+  `$1.23+` where some tokens had no price, `unpriced` where none had, its title saying the rest),
+  read apart from the board's
+  listings, which carry none of it: the cards drawn in one turn are asked for together
+  (`/api/task-costs?slugs=[…]`, at most `TASK_COSTS_MOST`, 200, a read: `Store::spent_under`, one
+  round trip), each once until its record changes, so no heartbeat that adds tokens reads again.
+  A task with none shows no figure.
+- **The Agents page** gives each agent its tokens and cost under its line, from the agents API.
+- **Reports** has *Tokens and cost*: the cost and the tokens of each hour, day or week by role
+  (orchestrators, executors, reviewers and the rest), and below them the window's own: tokens and
+  cost all told, each top-level task landed in the window priced once with its subtasks (the
+  median and the ten dearest, each a link to its page), and the review rounds after the first
+  against the first rounds, from the [day files](analysis/reports-and-monitoring.md#the-day-files).
+  An hour's tokens are what the board's `usage` gained between two hourly roll-ups, shared among
+  the hours between them by time: an hour no two roll-ups span is a gap, never a zero.
+
+`just tasks stats` ends with the same reading of its window's day files: tokens and cost by day
+and role, the landed tasks' median and ten dearest, and the review rounds against the first, a
+day no two roll-ups span saying `no record`; `--json` carries it as `tokens`: `prices`, `per_day`
+(each `day` with its `by_role`, `null` for no record), and `landed` (`tasks`, `without`,
+`median_dollars`, `dearest`, `first_round`, `later_rounds`, `again`). Without day files (a private server's board, or a board that
+`TASKS_SERVER` names) it says there are none and prints the rest.
 
 The table moves the board to schema 19, which a build on schema 18 reads unharmed (the
 Symphony, the shared server among them): it opens a board one schema ahead to read

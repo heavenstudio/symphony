@@ -19,9 +19,16 @@ export type Mark = "bar" | "below" | "line";
 /**
  * What a chart's figures count, which says how they are written and how its axis steps: things
  * counted (tasks, commits, lines, requests), a mean over the time watched (sessions at work), a
- * duration in seconds, task-hours, or the machine's load average.
+ * duration in seconds, task-hours, the machine's load average, model tokens, or dollars.
  */
-export type Unit = "count" | "mean" | "seconds" | "hours" | "load";
+export type Unit = "count" | "mean" | "seconds" | "hours" | "load" | "tokens" | "dollars";
+
+/** The sizes a count of tokens is written in, the largest first. */
+const TOKEN_SIZES: readonly (readonly [number, string])[] = [
+  [1e9, "G"],
+  [1e6, "M"],
+  [1e3, "k"],
+];
 
 /** `n` from 0 up to it, not included: the periods of an axis, the indexes of a list. */
 export function upTo(n: number): number[] {
@@ -38,7 +45,10 @@ export function short(value: number, places: number): string {
   return text === "-0" ? "0" : text;
 }
 
-/** `value` as a chart of `unit` writes it: `12`, `1.2k`, `2.25`, `45s`, `12m`, `3.5h`, `2.1d`. */
+/**
+ * `value` as a chart of `unit` writes it: `12`, `1.2k`, `2.25`, `45s`, `12m`, `3.5h`, `2.1d`, `4.5M`
+ * tokens, `$1.25`.
+ */
 export function format(unit: Unit, value: number): string {
   switch (unit) {
     case "count":
@@ -48,6 +58,16 @@ export function format(unit: Unit, value: number): string {
       return short(value, 2);
     case "hours":
       return `${short(value, 1)}h`;
+    case "tokens": {
+      const size = TOKEN_SIZES.find(([size]) => Math.abs(value) >= size);
+      return size === undefined ? short(value, 0) : `${short(value / size[0], 1)}${size[1]}`;
+    }
+    case "dollars": {
+      // Money keeps its cents (`$8.20`), but a whole dollar, as an axis's ticks are, none (`$20`).
+      if (Math.abs(value) >= 1000) return `$${short(value / 1000, 1)}k`;
+      const cents = fixed(value, 2);
+      return cents.endsWith(".00") ? `$${short(value, 0)}` : `$${cents}`;
+    }
     case "seconds": {
       const seconds = Math.abs(value);
       if (seconds < 60) return `${short(value, 0)}s`;
@@ -60,7 +80,8 @@ export function format(unit: Unit, value: number): string {
 
 /** The smallest step an axis of `unit` takes: a whole one of what is counted. */
 function leastStep(unit: Unit): number {
-  return unit === "count" || unit === "seconds" ? 1 : 0.5;
+  if (unit === "dollars") return 0.01;
+  return unit === "count" || unit === "seconds" || unit === "tokens" ? 1 : 0.5;
 }
 
 /** The sum of `values`, from negative zero as Rust's float sum starts. */
@@ -164,7 +185,9 @@ export function step(unit: Unit, raw: number): number {
   // A count's axis steps by whole ones: 2.5 only where it is 25, 250….
   const nice =
     [1, 2, 2.5, 5, 10]
-      .filter((nice) => unit !== "count" || Number.isInteger(nice * magnitude))
+      .filter(
+        (nice) => (unit !== "count" && unit !== "tokens") || Number.isInteger(nice * magnitude),
+      )
       .find((nice) => fraction <= nice) ?? 10;
   return Math.max(nice * magnitude, least);
 }

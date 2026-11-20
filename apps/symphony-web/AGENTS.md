@@ -349,6 +349,13 @@ once and is landed as a document's part is (the shell's `land`, once a navigatio
 load's charts, which come after the shell looked for it, land too, until the reader chooses a
 window: a first answer that drew no chart (nothing recorded, a failed read) started no landing,
 and the window chosen after it lands none (`lands`, `NearViewport`).
+_Tokens and cost_ charts each period's estimated cost and its tokens by role, from the period's
+`spend` (`ReportBucket::spend`, the server pricing the day files' tokens at read), a period with
+no record hatched, and sums the window under them (`SpendSummary`): tokens and cost all told, the
+cost per landed task (`ReportsPage::landed`: the median and the ten dearest, each a link to its
+page) and the review rounds after the first against the first, every dollar said as estimated at
+the prices read on `ReportsPage::prices`, and how an hour's tokens are counted (`TOLD`). Its two
+units, `tokens` and `dollars`, are formats of the one bar chart, not a chart of their own.
 `src/chart.tsx` draws each chart by hand, with no charting library: bars as boxes over a column
 a period, lines as one SVG whose strokes keep their width, both on one axis with its unit; a
 period no file recorded is hatched and its line broken, never a zero. Each entry of a chart's
@@ -412,7 +419,9 @@ the board is back reads the first page again, merged into what is drawn, both cu
 lost agents kept, and the events heard during a read are replayed onto its answer (`ReadCursor`,
 `src/journal.ts`, the board's as well and no other kind's, so they alone carry it). It keeps
 nothing on the device. Its text orders and trims as Rust's does (`textOrder` by UTF-8
-bytes, `whiteSpace` for `trim`), so its lists and lines are the server's.
+bytes, `whiteSpace` for `trim`), so its lists and lines are the server's. An agent with tokens
+has a line of them under its own (`agentSpent`): how many in how many calls, and their cost
+estimated at the prices read on a named day, with the models no price was found for.
 
 ## The documents
 
@@ -510,6 +519,21 @@ file reads `/api/task-diff-file` with the summary's base and head commits; a new
 closes the old files and cancels their reads. Patches are scrollable and bounded at 256 KiB,
 the file list at 500 files and 256 KiB of Git output; every incomplete or unavailable read
 says why. This code belongs only to the task kind, so the board carries none of it.
+
+Under the changes, _Tokens and estimated cost_ (`TokensPart`, `src/task-page.tsx`) is a closed
+disclosure: its heading is all a first visit draws, and opening it asks for its part from
+`/api/task-tokens` (`src/task-live.ts`'s `tokensPart`, read again on a change of the task) and
+imports its chunk (`src/task-tokens.tsx`, its style `src/task-tokens.css`), which guards the
+answer as it draws it: the total with its kinds, the tables by role and by review round, the
+models no price was found for, and _No tokens recorded for this task._ where there are none, with
+no table. As the timeline's, the chunk imports nothing of the kind's own (the part, the store, the
+live task): one that did made the build split the kind's entry in two, a file more on every first
+visit. It is a disclosure, not a part near the screen, because the page's first visit had no room
+for its chunk and its read: mounted near the screen, they came with the first visit and passed
+`TASK_FIRST_VISIT_BYTES`. A chunk that fails to load offers its Retry, unless the shell is going
+for a new build. Every figure
+is an estimate at API list prices with the day they were read (`src/spend.ts`, which says them as
+`just tasks show` does).
 
 ## The panel
 
@@ -714,22 +738,23 @@ What holds on every page, and each page's contract where its section above names
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,303 bytes, `/tasks` 123,942, `/agents`
-  114,658, `/queue` 108,165, `/reports` 112,121, `/runs` 110,061, `/docs/` 138,998, a document
-  140,683 and a task's page 142,946, and a return that finds what it kept unchanged 3,229, 3,727,
-  3,544, 3,493, 1,737, 2,171, 1,802, 1,976 and 3,620. A first visit to a kind is its entry and its
+  each page's requests) a first visit to `/` takes 112,776 bytes, `/tasks` 126,033 (the cards'
+  costs' read among them), `/agents` 116,029, `/queue` 108,656, `/reports` 115,228, `/runs`
+  111,694, `/docs/` 139,479, a document 141,164 and a task's page 143,549, and a return that finds
+  what it kept unchanged 3,228, 3,787, 3,559, 3,493, 1,755, 2,217, 1,803, 1,977 and 3,621. A first
+  visit to a kind is its entry and its
   sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
   the others (the board's feed and keep; the card and the task readers of the board and the agents
   page; the media layer's chunk and sheet, home's, the documents', a task's page's and the chat's),
   beside the HTML, the shell and the page's reads; a move to another kind takes its entry and the
   pieces no kind before it took (`apps/symphony-web-tests/tests/browser/preload.rs`). A task's page's timeline, a chunk of
   its own, comes once its box nears the screen and its part has something to draw
-  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 16,805 bytes. The
+  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 16,807 bytes. The
   reads ahead start only once the page's own reads have answered (`cache_ahead.rs`) and go marked
   as prefetches, so the budget counts them outside the first visit, with the warmed modules
   (`prefetched_bytes`). Once a page has its data and is idle, the shell warms the chat's files
   (its entry, the chunks it imports and its sheets the page has not) and then the menus' (the
-  same of theirs): 29,701 bytes outside home's first visit, and neither the chat's first open nor
+  same of theirs): 29,695 bytes outside home's first visit, and neither the chat's first open nor
   the menus' transfers anything more. Later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
@@ -799,7 +824,15 @@ What holds on every page, and each page's contract where its section above names
   reason, by key or touch, reading nothing. A positive authoritative `review_rounds`
   adds one `1 review` / `N reviews` mark before the title, on open and finished cards; zero or
   unavailable summaries show no mark. Live fields update known counts; a full replacement clears
-  an unavailable summary. No task detail read or subtask count supplies the mark.
+  an unavailable summary. No task detail read or subtask count supplies the mark. A card whose
+  task and subtasks took tokens shows their estimated cost before its priority (`$1.23`, `$1.23+`
+  where some had no price, `unpriced` where none had; its title says it is an estimate and of what
+  day's prices), the slug
+  giving way before it. The listings carry none of it: each card names its task as it mounts
+  (`useCardCost`, `src/card-costs.ts`), and the board asks for the cards named in one turn in one
+  read of `/api/task-costs` apart (`CardCosts`, at most `TASK_COSTS_MOST` slugs a read, under the
+  mount's signal), each once until its record's `updated` moves, so a heartbeat that adds tokens
+  reads nothing. A read that fails leaves its cards without a figure until they change.
   The one orchestrator banner is amber
   for stale holders and red when none is there, absent while one is live or no ready work waits.
   Counts load first, then nearby column pages; finished work defaults to 24 hours with a week switch. A feed event
