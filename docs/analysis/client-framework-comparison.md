@@ -260,8 +260,8 @@ while this ran, sharing one program between the task pages and four other kinds;
 changes is read from main's build under [Size](#size).
 
 **The fixture.** Made by `experiments/client-jsx/fixture/make.mjs` at commit
-`a40751dc2428b708045ed2ad4d6e27c15d94c314` from a seeded generator, so every run sees the same
-words. `bench`: 120 tasks (ready 29, done 30, backlog 20, in progress 13,
+`a40751dc2428b708045ed2ad4d6e27c15d94c314` (run as [the experiment](#the-experiment) says) from
+a seeded generator, so every run sees the same words. `bench`: 120 tasks (ready 29, done 30, backlog 20, in progress 13,
 review 8, concept 6, design 6, blocked 4, cancelled 4), with long briefs; the task
 `bench/task-page`, an 80-message thread and a brief of several blocks; `docs/GUIDE.md`, 60
 sections with lists, code and tables, 249 parts and about 34,000 px tall in a wide window; and
