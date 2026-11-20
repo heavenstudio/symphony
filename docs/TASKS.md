@@ -2563,7 +2563,9 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    [its own](#an-import-delivered-by-a-pull-request)). A receipt of the head and the commit is kept
    for good (`receipts/` in the lands' folder), and the head stays reachable under
    `refs/symphony/delivered/SLUG`, since a squash leaves it in no history; a head with a receipt
-   does not go back to review.
+   does not go back to review. A slug is delivered once: the release run counts, holds a release
+   and reads its notes by that receipt and that head, so neither is ever replaced
+   ([below](#a-slug-is-delivered-once)).
 5. **Reconciled.** A clean main checkout whose default branch the remote's descends from is
    fast-forwarded. A dirty or diverged one is left as it is, the land answering "landed remotely,
    reconciliation pending" once on the thread, and a land run again closes the task once the
@@ -2593,6 +2595,20 @@ run, by `result`:
 
 One limit holds by design: evidence withdrawn after the last reading and before the host acts on
 a request already made does not recall it. The receipt names the revision that was read.
+
+#### A slug is delivered once
+
+A second delivery of a slug is refused, never made over the first. A landed task moves no
+further on the board, so the one that reaches a second delivery is a slug filed again as another
+task (a board made again over a repository that keeps its receipts), or a delivery command that
+answers a new pull request for one.
+
+| What the land finds | What it does |
+| --- | --- |
+| A receipt of the slug whose head is not the one its branch is at, or of that very head with no word of this task's own that it landed it (no landed line on its thread naming the squash, no journal of that head bound to the receipt's pull request) | refused before anything is published, to the orchestrator, naming the commit and the head it was delivered as and its pull request: what it still needs goes in a new task, whose slug is its own. A task's id is no such word, as a board made again numbers its tasks again |
+| A file kept as the slug's receipt that does not read as it (cut short, or naming another slug) | refused before anything is published, naming the file and why: a person judges it, and a land never writes over it |
+| A merge a run before asked for, proved beside a receipt of another delivery of the slug or a retained head that is another commit | held for reconciliation, by name; the receipt and `refs/symphony/delivered/SLUG` stay as they were, and nothing is closed |
+| The same delivery proved again (a run cut short after its receipt was kept) | the receipt it has is kept as it was written, and the land goes on to close the task once |
 
 What else writes the default branch lands nothing there while the key is set. The regenerator
 commits and pushes nothing: what it makes is a task of its own
