@@ -26,6 +26,7 @@ use std::process::Output;
 use std::time::{Duration, Instant};
 use symphony_api::{End, RunLine};
 use symphony_board::cli::machine_work::recorded::{self, Phase, Record};
+use symphony_board::stamps::read::began;
 use symphony_board::sys::{Command, Stdio, output, wait_output};
 
 const CARGO: &str = r#"#!/bin/bash
@@ -170,9 +171,14 @@ impl Setup {
         said + "caller input\n"
     }
 
-    /// The history once it keeps `count` operations.
+    /// The history once it keeps `count` operations, in the order they began, as the board's
+    /// readers order runs ([`began`]). The history's own order is the order the recorders kept
+    /// them, and a recorder keeps its operation after its command ends: on a loaded machine the
+    /// recorder of a command that ran first can keep its record after the next command's.
     fn history(&self, count: usize) -> Vec<Record> {
-        kept(&self.work, count)
+        let mut history = kept(&self.work, count);
+        history.sort_by(|a, b| began(a).total_cmp(&began(b)));
+        history
     }
 }
 
