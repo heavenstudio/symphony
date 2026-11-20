@@ -5,6 +5,44 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### Task timeline
+
+- [ ] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
+  [2026-11-20 04:56] agent — Base: today, `tools/workflow-revision-guards` at 1440 wide on the shared server. Its builds and tests take 26 rows, its messages are rings on the bars, and the 10 h 54 m after it closed is the empty 40% in the middle. ![Today, the whole task](analysis/timeline-navigation/before-wide.webp)
+
+    A message selected, then the same mark held down: ![A message selected, then held down](analysis/timeline-navigation/before-selected-held.webp)
+
+    **The arrow is a defect, not part of this choice.** Its overlay is on a scale 8 px off the marks', it stops 6 px above them, and a held mark jumps 12 px to the right. The repair is the board task `app/timeline-message-alignment`.
+  [2026-11-20 04:56] agent — Posted for the board task `inbox/timeline-ui-needs-improvement`. The whole task under each option, from a mockup that draws this task's recorded timeline; nothing is built: ![The whole task under A](analysis/timeline-navigation/proposed-fit-clock.webp) ![The whole task under B](analysis/timeline-navigation/proposed-fit.webp) ![The whole task under C](analysis/timeline-navigation/proposed-fit-true.webp)
+
+    **A** keeps every width to scale. The empty 40% stays, and zoom gets past it. **B** gives the work 1.6 times the width. A band's 10 h 54 m is 36 px, and its label, the hours line and the range readout all say so. **C** draws A until its switch is on.
+
+    **What counts as quiet.** At least an hour with no build or test, no executor or reviewer role held, and no message or change of stage, role, round or gate, and only where those records are kept. Here the 10 h 54 m after the close is quiet. The 6 h 33 m of ready time is not: no runs are kept before 11:09, so that time is unknown and stays on the true clock. A session's heartbeat is not used: keen-swift-85 kept beating through the closed stretch.
+
+    **What each costs.** No option needs a server or schema change. B and C need the same client work: one slice more than A, the band and its switch.
+
+    **Why B.** Your request: “Could also have a "skipped range" for when no work was done”, with the whole task kept as the default: “having the default be "100% view of the timeline does make sense tho”. B narrows only measured emptiness and labels each band with its length. C leaves the empty hours in the first view.
+
+    **Earlier verdicts checked.**
+    - **reports-task-page-pictures** (A): lanes wide and a list on a phone, kept.
+    - **task-page-timeline-place** (C): the phone's 240 px box, kept.
+    - Your note on `inbox/timeline-should-not-be-collapsed-by-defa`, “Desktop collapse save almost no space and hides really good information from view.”: the whole task stays the default and nothing is collapsed. By its rule, a band holds no record.
+    - Your rejection of **timeline-burst-drawing**, “yes. rework the proposal to be more horizontal based.”: runs keep their own bars at their recorded times, on one row unless they overlap, with no folding. At the whole-task scale, runs seconds apart share pixels, and zoom parts them.
+    - **timeline-orchestrator-messages** (approved): one arrow for the selected message, and the message list and its keys, kept. The mark becomes a tick under the bars, a change of drawing only.
+
+    None of them decides whether quiet time is skipped.
+  [2026-11-20 04:56] agent — Under every option:
+    - The whole task shows first. Whole task, − and +, ⌘/Ctrl + scroll and a drag across the hours zoom, Shift + scroll moves, and an overview strip shows where the view is while zoomed.
+    - A run takes another row only when it overlaps one, so the lanes are 353 px tall against 818.
+    - Where runs are not kept, the Builds and Tests lanes are hatched, in place of the sentence above them.
+    - A selected message's arrow joins its two marks.
+
+    Zoomed to 73 minutes, a verdict selected: ![Proposed, zoomed, a verdict selected](analysis/timeline-navigation/proposed-zoom.webp) [Open the mockup](analysis/timeline-navigation/mockup.html).
+
+    **On a phone** the list and its 240 px box stay under every option. The box shows four steps where it shows one today: the "not kept" sentence becomes a row at its time, and a message takes one line. A quiet stretch is a row of its own: ![Today on a phone](analysis/timeline-navigation/before-phone.webp) ![Proposed on a phone](analysis/timeline-navigation/proposed-phone.webp) ![Proposed on a phone, Show all, at the closed stretch](analysis/timeline-navigation/proposed-phone-all.webp)
+
 ## Auto-approved: spot-check
 
 ### Releases
