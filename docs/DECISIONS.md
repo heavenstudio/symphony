@@ -5,6 +5,33 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### Task page
+
+- [ ] **task-cost-display** — A task's estimated cost would sit on its board card where its time is, and on its page beside its total time at the top of the timeline. The table at the page's foot would go, and its figures by role and by round would move into the timeline. How should the timeline show them? A: said in two lines at its top and in each part's words when pointed at; nothing drawn; the card's cost on the time's line. B: a Cost row under the stage, each round a bar from its first model call to its last with its dollars on it, and the cost by role in one line at the top; the card's cost under its time. C: each role's lane draws its own calls in each round with their dollars, and the cost by round in one line at the top; the card as B. No option puts a cost on a build or a test: the board keeps tokens by session, not by run. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/token-cost#The choice]]
+  [2026-11-20 06:17] agent — Base: today, `tools/workflow-revision-guards` at 1440 wide on a private server of main's build at `0cf424663`; the shared server's release has no token pages yet. The total time is the timeline's first line. The cost is the page's last part, closed, with 1,143 px of brief and thread between them, and opens to a table of ten rows. On the card the cost sits beside the slug, which gives way to it; the time is on the line under it, on the right. Cut together in the options' layout: ![Today, the card, the page's foot and the timeline](analysis/token-cost/base-compare.webp)
+
+    The page as it is, the brief and thread cut out: ![Today, the task page wide](analysis/token-cost/base-wide.webp) The card on a phone: ![Today, the card on a phone](analysis/token-cost/base-card-phone.webp)
+
+    On a phone, from the timeline down: ![Today on a phone](analysis/token-cost/base-phone.webp)
+  [2026-11-20 06:17] agent — Posted for the board task `app/token-cost-design`. The same task under each option, from a mockup that draws its recorded timeline (the approved navigation, quiet stretches skipped) and its recorded tokens; nothing is built: ![The task page under A](analysis/token-cost/a-wide.webp) ![The task page under B](analysis/token-cost/b-wide.webp) ![The task page under C](analysis/token-cost/c-wide.webp)
+
+    **A** keeps every figure in text, the table's shape in two lines; the lanes say a round's cost only when pointed at, as in its picture. **B** draws seven bars on one 38 px row, all labelled at the whole-task scale, from $30.75 before review 1 to $0.21 for review 6. **C** splits the same dollars over the Executor and Reviewer lanes; most reviews are minutes long, so their bars are a few pixels wide.
+
+    **Why B.** The figures sit on the timeline's clock, where you asked for them, and the eye finds where the money went: round 1 and review 3 hold 60% of this task's $80.02.
+  [2026-11-20 06:17] agent — **On a phone** the box keeps its room for steps and grows by the summary: about 110 px under A (five lines), 50 under B, 70 under C. B adds a row per round to the list, C a figure to each in-progress and review row: ![A on a phone](analysis/token-cost/a-phone.webp) ![B on a phone](analysis/token-cost/b-phone.webp) ![C on a phone](analysis/token-cost/c-phone.webp) ![B on a phone, Show all](analysis/token-cost/b-phone-all.webp) ![C on a phone, Show all](analysis/token-cost/c-phone-all.webp)
+
+    In dark: ![A, dark](analysis/token-cost/a-wide-dark.webp) ![B, dark](analysis/token-cost/b-wide-dark.webp) ![C, dark](analysis/token-cost/c-wide-dark.webp) ![B on a phone, dark](analysis/token-cost/b-phone-dark.webp) [Open the mockup](analysis/token-cost/mockup.html).
+  [2026-11-20 06:17] agent — Under every option, from your words on `app/token-cost-on-pages`: “task cards is the task page should have the total current cost (in a similar way as we have the total time), the token cost numbers in a task view could be in the timeline, with a possible summary close to it at the top, not at the bottom”.
+    - The page's total joins the time's line in its type: *1 d 3 h in all · $80.02 estimated · 6 review rounds…*.
+    - The card's total leaves the slug line and is drawn as the time is. A puts it on the time's line (`$80.02 · 1 h`), B and C under the time; either goes with any option.
+    - The section at the foot goes. What it said besides (cost by kind, tokens and calls, the day the prices were read, a model with no price) is in the total's words when pointed at, tapped or focused.
+    - Rounds are named by the review they start with. The record's round 1 is the work before review 1, and its round *n* + 1 is review *n* and the fixes after it, so today's table says rounds 1 to 7 where the timeline says 6 reviews.
+    - Nothing is recorded anew and the schema stays. The page reads the task's tokens with its timeline; B and C, and A's words per round, need the rows `tasks show --json` already gives and `/api/task-tokens` leaves out.
+
+    **Earlier verdicts checked.** **timeline-navigation** (B): every option is drawn on it. **task-page-timeline-place** (C): the phone's box keeps its room for steps. **reports-task-page-pictures** (A): lanes wide, a list on a phone. **timeline-orchestrator-messages**: messages kept. None of them decides where the cost goes.
+
 ## Auto-approved: spot-check
 
 ### Releases
