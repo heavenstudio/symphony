@@ -5,6 +5,44 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### Settings page
+
+- [ ] **settings-page-shape** — You asked for a Settings page that turns things on and off. Today no page shows or changes a setting: they are in three files, changed by hand or by a command. How far should the page go? A: it shows everything in force and where each value comes from, and changes nothing. B: as A, with switches and values for the preferences (the agents, Herdr panes, models, limits), each saved for the project or for this machine; a setting that runs a command or decides what lands is shown and never written there. C: a form over every key of every file. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#The page]]
+  [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`, the first of several rounds. Base: there is no page today, so nothing to picture. Each option drawn by hand with this repository's values, nothing built: ![The page under A](analysis/settings-page/proposed-a-wide.webp) ![The page under B](analysis/settings-page/proposed-b-wide.webp) ![The page under C](analysis/settings-page/proposed-c-wide.webp)
+
+    **What "on and off" covers.** Your four examples are three kinds of change. Herdr is a switch already (`panes`). Claude Code and Codex are not: one setting picks which a launch starts, and both are always installed. GitHub off is one line, and on is a setup with tokens and GitHub Apps no page can do. B gives the first two a switch and the third a row that says why it is off and opens its guide.
+
+    **Why not C.** Whoever reaches the server from this machine or your tailnet is you. That is enough for a verdict. It is not enough for `[board] on_land`, a command this machine runs after every land. Two rules already sort every key this way: the local file refuses those keys, and a landing that changes one needs a reviewer. B takes that line as it is.
+
+    **What each costs.** A: one page and one read. B: A, two writers (the local file's exists in the model command) and a control per kind of value. C: a control for every shape in the file, the workflow and the landing's generators among them, and the comments a project wrote beside its values to keep.
+
+    **Earlier verdicts checked.** **hosted-ingress-boundary** (B) says where a hosted server checks who visits, not what a page may write. **project-workflow-shape** and **configurable-workflow-activation** decide the workflow's settings, which B only shows. None decides a Settings page.
+  [2026-11-20 06:56] agent — B on a phone, and the page the three pictures are of: ![Option B on a phone](analysis/settings-page/proposed-phone.webp) [Open the mockup](analysis/settings-page/mockup.html).
+- [ ] **settings-page-project-save** — If the Settings page may change a preference for the whole project (a model, a limit, Herdr on or off), the change is to a committed file. How does it reach main? A: as your answers on cards do: the page commits it straight to main, after the settings check passes on the result; where a project lands by pull request it is kept and delivered as a document save is. B: always a task: the page files one with the change, and it lands on the settings check when its orchestrator lands it. C: the page writes nothing committed and shows the command to run. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#What a save writes]]
+  [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`. Base: today such a change is an edit or `just symphony-cli model`, then a task that lands on `just settings-check` green with no reviewer.
+
+    **The gate is the same under A and B:** the settings check. A drops the task around it, and the commit is the record. Under A a switch holds when you flip it; under B when someone lands it.
+
+    **What A may write** is only what lands without a reviewer today. A setting that runs a command or decides what lands is not written by the page under any option (**settings-page-shape**).
+
+    **A change for this machine alone** is not asked here: it goes in `symphony.local.toml` and lands nothing, as now.
+
+    **What each costs.** A: the committer your saves use, with one more kind of edit. B: a task, an assessor's read and a land for each flip. C: nothing.
+
+    **Earlier verdicts checked.** **github-outbound-pr-delivery** and **github-delivery-proof-setup** decide that a land may be delivered by pull request; A follows what document saves do there and changes none of it. None decides how a settings change lands from a page.
+- [ ] **settings-page-entries** — You expect more things to turn on and off than the four you named. Where does the page's list come from? A: the Symphony holds it: the page knows GitHub, the agents, Herdr and the plugins by name, and a new one is new page code. B: each thing describes itself in one small shape (its name, its state and why, what it needs, its settings and whether each is a preference or reviewed), and the page draws whatever is described; the Symphony's own first, then programs like the GitHub exchange and a project's plugins. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/settings-page#What makes an entry]]
+  [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`. Base: today nothing lists these; GitHub says its state in `symphony-github status`, the agents and Herdr in `just tasks limits` and the agents page.
+
+    **Under B a plugin can add a row** (a calendar, an identity provider) with no change to the page, and a blueprint can name the entries it turns on. Under A neither can.
+
+    **What B costs.** A shape to agree on and keep stable for plugins, under the kit's version rules, as a block is. It is built in two steps: the Symphony's own entries in that shape, then the seam for programs and plugins. The first step costs about what A does.
+
+    **A description runs nothing.** It cannot lower a setting's class: whatever would run a command or decide what lands is reviewed, whatever its plugin says.
+
+    **Earlier verdicts checked.** **kit-new-block-version** decides how the kit takes a new block, which B's seam would follow. **plugin-delivery-choice** decides how a plugin is delivered, not what it may describe. None decides this.
+
 ## Auto-approved: spot-check
 
 ### Releases
