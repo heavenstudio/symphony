@@ -15,6 +15,7 @@ use symphony_board::land::delivery::{Journal, Receipt, Stage, Transport};
 use symphony_board::land::{Stop, evidence, land, land_by};
 use symphony_board::stamps::{Catalogue, Needs};
 
+mod candidate;
 mod generated;
 mod import;
 
@@ -60,7 +61,12 @@ struct People {
 /// `slug` filed, orchestrated, its branch writing `file`, claimed and in review: the people, the
 /// worktree and the head.
 fn in_review(r: &Repo, slug: &str, file: &str) -> (People, PathBuf, String) {
-    let wt = r.add(&slug.replace('/', "-"), Some(slug), "main");
+    in_review_from(r, slug, file, "main")
+}
+
+/// [`in_review`], its branch started at `base`.
+fn in_review_from(r: &Repo, slug: &str, file: &str, base: &str) -> (People, PathBuf, String) {
+    let wt = r.add(&slug.replace('/', "-"), Some(slug), base);
     write(&wt, file, "extends Node\n");
     git(&wt, &["add", "-A"]);
     git(&wt, &["commit", "-qm", &format!("work on {slug}")]);
