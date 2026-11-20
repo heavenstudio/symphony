@@ -349,6 +349,11 @@ once and is landed as a document's part is (the shell's `land`, once a navigatio
 load's charts, which come after the shell looked for it, land too, until the reader chooses a
 window: a first answer that drew no chart (nothing recorded, a failed read) started no landing,
 and the window chosen after it lands none (`lands`, `NearViewport`).
+A project whose board runs a custom workflow gets a Workflow section after Flow
+(`workflowSection`): time by phase and time by state, two charts of the same hours, a series for
+each phase or state under each label its hours were spent under (its ID after it where two share
+a label), the four largest and Other past five; drawn only while a period of the window records a
+workflow, so a board that runs none draws the page it did.
 _Tokens and cost_ charts each period's estimated cost and its tokens by role, from the period's
 `spend` (`ReportBucket::spend`, the server pricing the day files' tokens at read), a period with
 no record hatched, and sums the window under them (`SpendSummary`): tokens and cost all told, the
@@ -519,6 +524,16 @@ file reads `/api/task-diff-file` with the summary's base and head commits; a new
 closes the old files and cancels their reads. Patches are scrollable and bounded at 256 KiB,
 the file list at 500 files and 256 KiB of Git output; every incomplete or unavailable read
 says why. This code belongs only to the task kind, so the board carries none of it.
+
+A task whose page counts execution attempts (`attempts`, which the server leaves out at none)
+draws their history under its Changes, newest first (`src/attempts.tsx`, its style
+`src/attempts.css`): a chunk the page imports for such a task alone, near the screen, so a task
+with none loads and reads nothing of it. It reads `/api/task-attempts` again on each change of the
+task and on Refresh, as the feed carries no attempt's change. A cancel, a stop or a resume waits on
+its confirmation, then posts the attempt's revision as read (`/api/attempt-control`) and draws the
+history it answers; a view opens a blank window within the click, cuts its opener and sends it the
+address `/api/attempt-view` resolved, which the page keeps nowhere
+([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)).
 
 Last, under the thread's composer, _Tokens and estimated cost_ (`TokensPart`, `src/task-page.tsx`)
 is a closed disclosure, last so it moves nothing that loads (above the thread it pushed the

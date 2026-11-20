@@ -24,11 +24,12 @@
 //! one kind the board takes a red mark from, which it registers for the run and leaves; a run
 //! with nothing to file, update or close writes nothing.
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::checks::{Ran, tail};
 use super::git::short;
 use super::record::{Board, Held};
+use symphony::machine::updates::TaskBoard;
 use symphony::taskcli::CliBoard;
 
 /// The series a release run's reds are filed in: [`symphony_board::red::SERIES`]'s release one.
@@ -69,32 +70,19 @@ pub(crate) trait Reds {
     fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String>;
 }
 
+/// The board an update's ledger tells ([`TaskBoard`]), as `CliBoard` answers it: the library's
+/// calls, which a run's reds make alike.
 impl Reds for CliBoard {
     fn register(&self) -> Result<String, String> {
-        let session = self
-            .call(
-                "register",
-                &json!({"kind": symphony_board::red::FILER, "model": "release"}),
-            )
-            .map_err(|e| e.0)?;
-        session["handle"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| format!("the board registered no handle: {session}"))
+        <CliBoard as TaskBoard>::register(self)
     }
 
     fn leave(&self, handle: &str) -> Result<(), String> {
-        self.call("leave", &json!({"handle": handle}))
-            .map(|_| ())
-            .map_err(|e| e.0)
+        <CliBoard as TaskBoard>::leave(self, handle)
     }
 
     fn status(&self, slug: &str) -> Result<Option<String>, String> {
-        match self.call("get", &json!({"slug": slug})) {
-            Ok(task) => Ok(task["status"].as_str().map(str::to_string)),
-            Err(refused) if refused.0.starts_with("no task ") => Ok(None),
-            Err(error) => Err(error.0),
-        }
+        <CliBoard as TaskBoard>::status(self, slug)
     }
 
     fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String> {
@@ -123,25 +111,36 @@ impl Reds for CliBoard {
     }
 
     fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String> {
-        self.call("say", &json!({"slug": slug, "sender": by, "text": text}))
-            .map(|_| ())
-            .map_err(|e| e.0)
+        <CliBoard as TaskBoard>::say(self, slug, by, text)
     }
 
-    /// The filer takes the reviewer role first: work started, or held by an executor, is moved
-    /// only by a session holding a role on it, and a task has one orchestrator.
     fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String> {
-        let _ = self.call(
-            "take_role",
-            &json!({"slug": slug, "handle": by, "role": "reviewer"}),
-        );
-        self.say(slug, by, why)?;
-        self.call(
-            "move",
-            &json!({"slug": slug, "status": "cancelled", "handle": by}),
-        )
-        .map(|_: Value| ())
-        .map_err(|e| e.0)
+        <CliBoard as TaskBoard>::close(self, slug, by, why)
+    }
+}
+
+/// A run's board as an update's ledger tells it: the calls of [`TaskBoard`] its [`Reds`] make.
+pub(crate) struct Told<'a>(pub(crate) &'a dyn Reds);
+
+impl TaskBoard for Told<'_> {
+    fn register(&self) -> Result<String, String> {
+        self.0.register()
+    }
+
+    fn leave(&self, handle: &str) -> Result<(), String> {
+        self.0.leave(handle)
+    }
+
+    fn status(&self, slug: &str) -> Result<Option<String>, String> {
+        self.0.status(slug)
+    }
+
+    fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String> {
+        self.0.say(slug, by, text)
+    }
+
+    fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String> {
+        self.0.close(slug, by, why)
     }
 }
 

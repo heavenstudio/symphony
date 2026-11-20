@@ -6,7 +6,7 @@
 //! tasks page's (app/tasks-page-polish): a card opens from its title, the filter row reads clearly
 //! and the board does not jump while it loads. A select's popup grows from the edge nearest its
 //! trigger, leaves drawn and easing out, and under reduced motion only fades.
-use super::components::{appearance, key, open_panel, site, task_tab, theme_action};
+use super::components::{appearance, key, open_panel, popup_ready, site, task_tab, theme_action};
 use super::{SHOWN, STALL, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
 
@@ -38,11 +38,6 @@ fn viewport(page: &mut Chrome, width: u32, height: u32) {
 
 /// The card colour of each scheme's default theme: the surface every popup draws on.
 const SURFACES: [(&str, &str); 2] = [("light", "rgb(255, 255, 255)"), ("dark", "rgb(29, 28, 25)")];
-
-/// The open select popup, positioned and done animating in.
-fn popup_ready(page: &mut Chrome) {
-    assert!(page.wait_for("(() => {const list=document.querySelector('[role=listbox][data-state=open][data-positioned=true]');return list && list.getAnimations().every(animation=>animation.playState==='finished');})()", SHOWN));
-}
 
 #[test]
 fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_both_schemes() {

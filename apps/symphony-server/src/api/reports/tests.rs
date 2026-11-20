@@ -647,6 +647,106 @@ fn a_week_that_spans_the_first_file_counting_the_tasks_done_has_none() {
     );
 }
 
+/// `hours` in one phase or state each, `(id, label, hours)`.
+fn spent(entries: &[(&str, &str, f64)]) -> Vec<Spent> {
+    (entries.iter())
+        .map(|(id, label, hours)| Spent {
+            id: (*id).into(),
+            label: (*label).into(),
+            hours: *hours,
+        })
+        .collect()
+}
+
+/// A roll-up hour at `start` whose top-level tasks spent `phases` and `states`, and whose subtasks
+/// spent an hour in a phase of their own.
+fn placed(
+    start: f64,
+    phases: &[(&str, &str, f64)],
+    states: &[(&str, &str, f64)],
+) -> symphony_api::ReportHour {
+    let mut hour = hour(start, 0, 0);
+    hour.workflow = Some(symphony_api::reports::Placed {
+        top: PlacedHours {
+            phases: spent(phases),
+            states: spent(states),
+        },
+        subtasks: PlacedHours {
+            phases: spent(&[("subtask", "Subtask", 1.0)]),
+            states: spent(&[("working", "Working", 1.0)]),
+        },
+    });
+    hour
+}
+
+/// A period sums the top-level tasks' hours by phase and by state over its roll-up hours that
+/// record them, each under its ID and label, a label renamed since being an entry of its own; the
+/// subtasks are left out, as the period's flow leaves them; and a period no hour of which records
+/// them (a board that runs no workflow) has none, which its answer leaves out.
+#[test]
+fn a_period_sums_its_hours_by_phase_and_by_state_and_one_none_records_has_none() {
+    let tree = Tree::new();
+    report(
+        &tree,
+        MONDAY,
+        vec![
+            placed(
+                MONDAY + 9.0 * HOUR,
+                &[("build", "Build", 0.75), ("verify", "Verify", 0.25)],
+                &[("awaiting", "Awaiting", 0.25), ("working", "Working", 0.75)],
+            ),
+            placed(
+                MONDAY + 10.0 * HOUR,
+                &[("build", "Make", 0.5), ("build", "Build", 0.5)],
+                &[("working", "Working", 1.0)],
+            ),
+            // An hour that records no workflow adds nothing and takes nothing away.
+            hour(MONDAY + 11.0 * HOUR, 0, 0),
+        ],
+        |_| {},
+    );
+    report(
+        &tree,
+        MONDAY + DAY,
+        vec![hour(MONDAY + DAY + 9.0 * HOUR, 1, 0)],
+        |_| {},
+    );
+    let days = page(&folders(&tree), Grain::Day, 3, wednesday(), none);
+    let monday = days.buckets[0].workflow.as_ref().unwrap();
+    assert_eq!(
+        monday.phases,
+        spent(&[
+            ("build", "Build", 1.25),
+            ("verify", "Verify", 0.25),
+            ("build", "Make", 0.5),
+        ]),
+        "summed under each ID and label, a label first met later after the rest"
+    );
+    assert_eq!(
+        monday.states,
+        spent(&[("awaiting", "Awaiting", 0.25), ("working", "Working", 1.75)])
+    );
+    assert_eq!(
+        (
+            days.buckets[1].workflow.as_ref(),
+            days.buckets[2].workflow.as_ref()
+        ),
+        (None, None),
+        "Tuesday's hours record none, Wednesday has no file"
+    );
+    let text = serde_json::to_string(&days.buckets[1]).unwrap();
+    assert!(!text.contains("workflow"), "{text}");
+    let by_hour = page(&folders(&tree), Grain::Hour, 1, MONDAY + 11.5 * HOUR, none);
+    let ten = (by_hour.buckets.iter())
+        .find(|bucket| bucket.start == MONDAY + 10.0 * HOUR)
+        .unwrap();
+    assert_eq!(
+        ten.workflow.as_ref().unwrap().phases,
+        spent(&[("build", "Make", 0.5), ("build", "Build", 0.5)]),
+        "an hour's entries as its file wrote them"
+    );
+}
+
 #[test]
 fn with_no_file_yet_every_period_is_missing_and_the_first_roll_up_is_none() {
     let tree = Tree::new();
@@ -863,10 +963,10 @@ fn a_period_sums_its_hours_tokens_by_role_and_prices_them_and_an_hour_with_none_
         spend.as_ref().map(|roles| {
             (roles.iter())
                 .map(|role| {
-                    let cost = &role.spend.cost;
+                    let cost = &role.cost;
                     (
                         role.role.clone(),
-                        role.spend.tokens.input,
+                        role.tokens.input,
                         cost.dollars,
                         cost.unpriced.len(),
                     )
@@ -940,7 +1040,7 @@ fn the_tasks_landed_in_the_window_are_priced_once_each_at_their_last_landing() {
     let page = page(&folders(&tree), Grain::Day, 3, wednesday(), none);
     let landed = page.landed.unwrap();
     let dearest: Vec<(&str, f64)> = (landed.dearest.iter())
-        .map(|task| (task.slug.as_str(), task.spend.cost.dollars))
+        .map(|task| (task.slug.as_str(), task.cost.dollars))
         .collect();
     assert_eq!(dearest, [("a/again", 12.0), ("a/cheap", 4.0)]);
     assert_eq!((landed.tasks, landed.without, landed.again), (2, 1, 1));

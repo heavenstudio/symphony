@@ -8,7 +8,8 @@
 /// marked red, for the commits it names. With them, of the tokens the board recorded
 /// (`crate::usage`): the whole table summed by role, model and speed (`usage`), and the rows of
 /// each top-level task of the read that is done, with its subtasks' (`spent`, by the table's
-/// index of slugs; `under` names each such subtask's parent). Nothing is written.
+/// index of slugs; `under` names each such subtask's parent). Whether the board runs a custom
+/// workflow is the active one's record, read by its key. Nothing is written.
 pub(in crate::store) const READ: &str = "
 LET $spoken = array::distinct((SELECT VALUE slug FROM message WHERE ts >= $since));
 LET $tasks = (SELECT sid, slug, status, created, updated, parent, instruction,
@@ -28,6 +29,7 @@ RETURN {
         FROM usage WHERE slug IN array::concat($landed, $under.slug)),
     under: $under,
     tasks: $tasks,
+    workflow: (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL,
     lines: $tasks.map(|$task| (SELECT sid, kind, ts, sender,
         IF kind = 'system' { text } ELSE IF kind = 'verdict' { string::slice(text, 0, 16) }
             ELSE { '' } AS text

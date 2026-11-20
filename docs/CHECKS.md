@@ -321,7 +321,8 @@ audit on main after the land's round files it within minutes
      any of them matches;
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
-4. `just lint-rs` (which runs `just client-lint`), and, when `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
+4. `just lint-rs` (which runs `just client-lint` and the board tests' raw-statement fence,
+   `crates/tasks/tests/raw_fence.rs`), and, when `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
    pictures, its distribution never committed.
 5. Main is merged once, when the work is complete, and the targets steps 1 to 3 pick run again
    at the new tip, before review, as main may have changed what the branch's code meets

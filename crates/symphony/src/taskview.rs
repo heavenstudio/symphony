@@ -332,6 +332,9 @@ pub fn page(
         sessions: Default::default(),
         local: false,
         gates: None,
+        attempts: store
+            .attempt_count(&record.slug)
+            .map_err(|e| e.to_string())?,
     })
 }
 

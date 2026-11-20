@@ -18,7 +18,7 @@
 
 use crate::agent_activity::{Gauge, KindLevel, Level, RoleLevel};
 use crate::health::HourPasses;
-use crate::reports::{ByStatus, DecisionCounts, GitCounts, Spread};
+use crate::reports::{ByStatus, DecisionCounts, GitCounts, PlacedHours, Spread};
 use serde::{Deserialize, Serialize};
 
 /// The Reports page's read.
@@ -135,14 +135,16 @@ pub struct Spend {
     pub cost: crate::AgentCost,
 }
 
-/// A role's tokens in a period, and their estimated cost.
+/// A role's tokens in a period, and their estimated cost: a [`Spend`]'s two fields beside its
+/// role, never `#[serde(flatten)]`, which reads no number back where `serde_json` keeps a number
+/// as its text (`arbitrary_precision`, as the server's build links it).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RoleSpend {
     /// A task's role (`executor`, `reviewer`, `reserved`), or the kind of a session working no
     /// task (`orchestrator`, `worker`).
     pub role: String,
-    #[serde(flatten)]
-    pub spend: Spend,
+    pub tokens: crate::AgentTokens,
+    pub cost: crate::AgentCost,
 }
 
 /// What the tasks landed in a window took, each with its subtasks, as the board recorded it up to
@@ -172,15 +174,15 @@ pub struct LandedSpend {
     pub again: u32,
 }
 
-/// A landed task and what it took.
+/// A landed task and what it took: a [`Spend`]'s two fields beside it, as [`RoleSpend`]'s are.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct LandedTask {
     pub slug: String,
     /// When it landed.
     pub at: f64,
-    #[serde(flatten)]
-    pub spend: Spend,
+    pub tokens: crate::AgentTokens,
+    pub cost: crate::AgentCost,
 }
 
 /// One period of a window.
@@ -228,6 +230,11 @@ pub struct ReportBucket {
     /// which is unknown, never none spent, and empty when those hours gained none.
     #[serde(default)]
     pub spend: Option<Vec<RoleSpend>>,
+    /// Where a custom workflow's top-level tasks spent it, by phase and by state
+    /// ([`crate::reports::Placed`]), summed over its roll-up hours that record it; left out when
+    /// none does, as on a board that runs no workflow of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<PlacedHours>,
 }
 
 /// How the top-level tasks moved in a period.

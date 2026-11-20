@@ -30,7 +30,7 @@ use symphony_api::report_page::{
     RoleSpend, Spend,
 };
 use symphony_api::reports::{
-    ByStatus, DecisionCounts, GitCounts, Landed, ReportDay, Spread, TokenSum,
+    ByStatus, DecisionCounts, GitCounts, Landed, PlacedHours, ReportDay, Spent, Spread, TokenSum,
 };
 use symphony_api::{HealthHour, report_file, run_day};
 use symphony_board::reports::spend;
@@ -353,10 +353,14 @@ fn landed(landings: &[Landed], prices: &Prices) -> Option<LandedSpend> {
         without: count(costs.without),
         median,
         dearest: (costs.tasks.iter().take(spend::DEAREST))
-            .map(|(slug, at, spent)| LandedTask {
-                slug: slug.clone(),
-                at: *at,
-                spend: wire(spent, prices),
+            .map(|(slug, at, spent)| {
+                let Spend { tokens, cost } = wire(spent, prices);
+                LandedTask {
+                    slug: slug.clone(),
+                    at: *at,
+                    tokens,
+                    cost,
+                }
             })
             .collect(),
         first_round: wire(&costs.first, prices),
@@ -474,6 +478,22 @@ struct Sums {
     health: Option<BucketHealth>,
     /// The tokens of its hours that tell them, by role, model and speed; none when none does.
     tokens: Option<Vec<TokenSum>>,
+    /// Where a custom workflow's top-level tasks spent its hours that record it.
+    workflow: Option<PlacedHours>,
+}
+
+/// `from`'s task-hours added to `into`'s, each under its ID and label, a new one after those kept:
+/// the hours come ordered by ID and label, so a period's stay so but for a label first met later.
+fn add_spent(into: &mut Vec<Spent>, from: &[Spent]) {
+    for spent in from {
+        match into
+            .iter_mut()
+            .find(|kept| kept.id == spent.id && kept.label == spent.label)
+        {
+            Some(kept) => kept.hours += spent.hours,
+            None => into.push(spent.clone()),
+        }
+    }
 }
 
 /// `from`'s figures added to `into`'s, status by status.
@@ -530,6 +550,11 @@ impl Sums {
             for sum in tokens {
                 spend::add(kept, sum);
             }
+        }
+        if let Some(placed) = &hour.workflow {
+            let kept = self.workflow.get_or_insert_default();
+            add_spent(&mut kept.phases, &placed.top.phases);
+            add_spent(&mut kept.states, &placed.top.states);
         }
         let waits = &hour.waits;
         for (kept, ended) in self.waits.iter_mut().zip([
@@ -602,12 +627,17 @@ impl Sums {
             health: self.health,
             spend: self.tokens.map(|sums| {
                 (spend::by_role(&sums, prices).iter())
-                    .map(|(role, spent)| RoleSpend {
-                        role: role.clone(),
-                        spend: wire(spent, prices),
+                    .map(|(role, spent)| {
+                        let Spend { tokens, cost } = wire(spent, prices);
+                        RoleSpend {
+                            role: role.clone(),
+                            tokens,
+                            cost,
+                        }
                     })
                     .collect()
             }),
+            workflow: self.workflow,
         }
     }
 }

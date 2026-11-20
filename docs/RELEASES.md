@@ -325,8 +325,11 @@ project is given and neither the library nor the shipped `symphony` compiles
 
 1. **The candidate.** It fetches `origin/main` (`--remote` and `--branch` name another remote and
    main line), the commit a project can fetch, and takes its tip; while a release candidate is
-   held it takes that one's tip instead, or runs nothing ([below](#the-release-candidate)). A tip
-   that is a release already is not checked again. A tip that does not descend from the newest
+   held it takes that one's tip instead, or runs nothing ([below](#the-release-candidate)). A
+   land's or the regenerator's push in the main checkout records what it pushed in the same
+   `origin/main`, and git refuses a fetch whose ref moved after the fetch read it, so such a
+   fetch is run again to learn where `origin` is now. A fetch that fails with the ref where it
+   was stops the run, as below. A tip that is a release already is not checked again. A tip that does not descend from the newest
    release is neither checked nor tagged: a release only moves forward, so a main that went back
    stops the run.
    When the candidate is the main checkout's main too, the run asks the regenerator a land
@@ -657,6 +660,16 @@ it. A run killed while its check ran leaves its `running.json`; a later run that
 check's group alive (a group of that id led by a process started at another time is not it) is
 refused while the killed run's time lasts, and past it files the red `run`, naming the group.
 Neither stops anything.
+
+Once it holds `run.lock` and has said so, a run of every kind (scheduled, by hand, out of cycle,
+`--refresh`, `--rerun`) takes the machine's updates lock, `updates.lock` in the machine folder,
+and holds it to its end: while the machine's server is trying a held update again under it
+([a held update tried again](#a-held-update-tried-again)), the run says so (`release: the
+machine's server is trying a held update again under PATH: this run waits for it`) and waits, as
+every command of that has its bound. A machine folder that is not there is no server's, and the
+run takes nothing; a lock that cannot be taken is said, and the run goes on without it. The order
+is always `run.lock`, then `updates.lock`: the server's round takes the second without waiting
+and never takes the first.
 
 A run that ended without recording itself (killed, or the machine stopped) is recorded by the
 next run that takes the lock, before it checks anything: the run `running.json` named, and any
@@ -1124,10 +1137,12 @@ Each step ends in one of three:
 - **Moved**, or nothing to move. Green.
 - **The project's to finish**: a writer seen on its board in the last week is behind the release's
   schema, each named with what to do (rebuild it at that schema and run it once, which records it,
-  then an orchestrator's `just release --refresh` moves the board); or its board is below schema
-  18 (`cd ROOT && just tasks migrate`, its own, brings it up). Green here, and its board's update
-  failed ([an update](#an-update), below): the update's one task says what finishes it, and the
-  run's exit is not changed by it. The step says which, with
+  then an orchestrator's `just release --refresh` moves the board, as the machine's server does
+  by itself at its next round once nothing holds it, [a held update tried
+  again](#a-held-update-tried-again)); or its board is below schema 18 (`cd ROOT && just tasks
+  migrate`, its own, brings it up). Green here, and its board's update failed ([an
+  update](#an-update), below): the update's one task says what finishes it, and the run's exit is
+  not changed by it. The step says which, with
   what finishes it and the command that says what taking the release asks of the project (`just
   symphony-cli release-notes`, [its notes](#its-notes)), in the run's output (`release: refresh:
   ID: the project's to finish: …`, then
@@ -1156,7 +1171,9 @@ finish:
 - then the retry, `just release --refresh`: an orchestrator's act, the owner having authorised the
   refresh itself, as it is after a red step's fix. It runs the refresh again for the newest release
   here, as a run of its own under the lock, checking nothing, and finishes what the steps did not:
-  the install, the boards' moves, `current` and the wait for the server.
+  the install, the boards' moves, `current` and the wait for the server. A board its writers held
+  needs none once `current` names the release: the machine's server moves it at its next round
+  after nothing holds it ([a held update tried again](#a-held-update-tried-again)).
 
 A refresh's install has an hour, its build within it, and the boards, `current` and the wait for
 the server have another hour after it. `[releases] refresh = false` turns it off, the install with
@@ -1222,6 +1239,50 @@ each time comes from ([status](#status)). The owner reads the same in the Runs p
 updates section, which every server draws from the ledger ([RUNS](RUNS.md#the-runs-page)), and
 while a board is a schema ahead of the server, the read-only notice on every page names its open
 update's task, which the page links.
+
+### A held update tried again
+
+A board a refresh left behind, its update open, moves on its own once what held it is gone: the
+machine's server judges it again at each round of that project's idle sweep (every five minutes,
+[the server guide](../apps/symphony-server/README.md)), before the round's reap, and moves it
+when nothing holds it, without a refresh (`crates/symphony/src/machine/held.rs`).
+
+- **Who.** The machine's server alone, while it is the installed release `current` names (its own
+  executable is that release's), in each project's own maintenance, never a request: a project's
+  build, a server of its own and a linked worktree's try nothing. A round reads two files first,
+  the release's manifest and the ledger, and does nothing more unless that project's update to the
+  release's schema is open, or served with its task still open. This repository's own board, in
+  the checkout that keeps the release run's record, moves with its own main and never here.
+- **The lock.** A round takes the machine's updates lock without waiting and never takes
+  `run.lock`; while a run holds it (*One run at a time*, above), or a run of a build from before
+  that lock says in its `running.json` that it runs (a living process), nothing moves that round.
+  Under the lock, `current` is read again: it still names this server's release, or nothing moves.
+- **The judgement** is the refresh's own, in its own words: a writer behind seen in the last week,
+  not a release's own and not gone from its path, holds the board; a board from before the writer
+  record is its project's own migrate's; a database down, writers or schema that cannot be read, or
+  a SurrealDB older than the release pins is red. Nothing is ever moved past the schema the release
+  serves, and no program is run from a path a board's record names.
+- **The move** is the refresh's: the store snapshotted first, to the same file a refresh writes
+  (`snapshots/before-schema-N-RELEASE`, the newest five kept), then the release's own `tasks
+  migrate` (`releases/RELEASE/bin/tasks` in the machine folder) in the project's main checkout,
+  `--leave-behind` where the only writers behind are a release's own or gone, and its schema read
+  again. The snapshot and the migrate each have the sweep's 240 s, and the server's stop ends
+  either.
+- **The ledger** is the same update's, by its identity ([an update](#an-update), above). A round
+  that does not move it records a failure (`the machine's server, RELEASE`) and posts it on the
+  update's task only when what holds it changed since the last failure said, a refresh's included,
+  so a board still held hears once for each change, never once a round. A move stamps when the
+  board reached the schema (its `schema-seen.log`, else the server's clock at the move). Once a
+  read of the board made then, with the project loaded on this server, finds it at the schema this
+  server's build writes, the update is served by the release, and its task is closed saying how
+  long it took (`… Closed by the machine's server, without a refresh.`).
+- **Each step can be taken up again.** A snapshot or a migrate that fails or runs out of its time
+  is a failure, the snapshot kept, and the next round judges the board again; a move whose round
+  ended before the ledger was written is found at the schema by the next round, which finishes it;
+  a task that could not be closed is closed by the next round.
+
+What a round did is a line in the server's log (`· held update of ID: …`). It writes no project's
+checkout, pin or branch, moves no `current` and stops no server or database.
 
 ### The install
 

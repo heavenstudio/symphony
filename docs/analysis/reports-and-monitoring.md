@@ -559,6 +559,14 @@ hours of any span sum to that span's figure (a day, a week, a local day):
   is counted in the hour its roll-up shared it to, not the minute of its call. Tokens are kept,
   never dollars: Reports and `just tasks stats` price them at read with the table their build
   embeds ([TASKS](../TASKS.md#what-the-tokens-cost)).
+- **Workflow**, on a board that runs a custom workflow alone (`workflow`, absent otherwise, so a
+  board that runs none writes the file it wrote before): the task-hours top-level tasks and
+  subtasks, apart, spent in each delivery phase and, separately, in each coordination state, from
+  the board's recorded workflow transitions alone ([WORKFLOW](../WORKFLOW.md#the-app)), each
+  under the label the definition its move was made under gave it, so a relabel adds an entry and
+  never renames an earlier one. The two lists are the same hours counted twice, never added
+  together, and neither holds the machine's time on runs, nor time at a position that projects to
+  done or cancelled.
 
 Agents, orchestrators and reviewers at work per hour, and the sessions that started, are not in
 these files: they are the agents' day files' ([AGENT_ACTIVITY](../AGENT_ACTIVITY.md)), whose hour

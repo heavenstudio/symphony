@@ -22,6 +22,7 @@ pub(in crate::store) fn read() -> Pg<'static> {
                 FROM usage u JOIN task t ON t.slug = u.slug \
                 WHERE t.slug IN (SELECT slug FROM landed) OR t.parent IN (SELECT slug FROM landed)), '[]'), \
             'tasks', coalesce((SELECT jsonb_agg(jsonb_strip_nulls(to_jsonb(p)) ORDER BY sid) FROM picked p), '[]'), \
+            'workflow', (SELECT body FROM workflow WHERE id = '[\"active\"]'::jsonb), \
             'lines', coalesce((SELECT jsonb_agg(coalesce((SELECT jsonb_agg(jsonb_build_object( \
                 'sid', m.sid, 'kind', m.kind, 'ts', m.ts, 'sender', m.sender, \
                 'text', CASE WHEN m.kind = 'system' THEN m.text WHEN m.kind = 'verdict' THEN left(m.text, 16) ELSE '' END) \

@@ -19,9 +19,11 @@ import {
   linkedFigures,
   openReports,
   type Page,
+  PLACES_NAMED,
   parseGrain,
   paths,
   period,
+  placeSeries,
   ReportsPage,
   ReportsView,
   rangeName,
@@ -33,6 +35,7 @@ import {
   SpendSummary,
   toggle,
   windowSpend,
+  workflowSection,
 } from "./reports";
 import { Backoff } from "./state";
 import { asking, CASES, childrenOf, memoryStorage, reply, server } from "./testing";
@@ -410,6 +413,11 @@ describe("the charts", () => {
     const drawn = charts(read(CASES.samples.reports), []);
     expect(firsts(drawn, "agents")).toEqual([1.5, 1.5, 1.5, 0, 2.5]);
     expect(values(drawn, "health", 2)).toEqual([3]);
+    expect(find(drawn, "phases").series.map((one) => [one.name, one.values])).toEqual([
+      ["Build", [30.5]],
+      ["Verify", [6]],
+    ]);
+    expect(values(drawn, "states")).toEqual([30.5]);
   });
 
   it("read the wire's own fixture", () => {
@@ -421,6 +429,155 @@ describe("the charts", () => {
     expect(values(drawn, "health", 2)?.[0]).toBe(12);
     expect(values(drawn, "waits", 1)?.[0]).toBeNull();
     expect(figures(shown)[0].value).toBe("5");
+  });
+});
+
+/** A period's hours by phase and by state (`PlacedHours`), each entry `[id, label, hours]`. */
+function placed(phases: [string, string, number][], states: [string, string, number][]): Wire {
+  const entry = ([id, label, hours]: [string, string, number]) => ({ id, label, hours });
+  return { phases: phases.map(entry), states: states.map(entry) };
+}
+
+/** The three days of `wire`, Monday's and Wednesday's roll-up recording a custom workflow. */
+function workflowWire(): Wire & { buckets: Wire[] } {
+  const days = wire();
+  const [monday, , wednesday] = days.buckets;
+  if (monday) {
+    monday.workflow = placed(
+      [
+        ["build", "Build", 10],
+        ["verify", "Verify", 4],
+        ["build", "Make", 1],
+      ],
+      [
+        ["working", "Working", 9],
+        ["awaiting", "Awaiting", 4],
+        ["blocked", "Blocked", 2],
+      ],
+    );
+  }
+  if (wednesday) wednesday.workflow = placed([["build", "Make", 3]], [["working", "Working", 3]]);
+  return days;
+}
+
+describe("the workflow's charts", () => {
+  it("are left out while no period records a workflow", () => {
+    expect(workflowSection(page(), [])).toBeNull();
+    expect(charts(page(), []).map(([heading]) => heading)).not.toContain("Workflow");
+    // A server built before the field, or a board that runs none, writes none; one that names it
+    // null records none either.
+    const nulls = wire();
+    for (const one of nulls.buckets) one.workflow = null;
+    expect(workflowSection(read(nulls), [])).toBeNull();
+  });
+
+  it("follow Flow with time by phase and by state, a gap where a period records none", () => {
+    const drawn = charts(read(workflowWire()), []);
+    expect(drawn.map(([heading]) => heading).slice(0, 3)).toEqual(["Flow", "Workflow", "Agents"]);
+    const phases = find(drawn, "phases");
+    expect(phases.title).toBe("Time by phase");
+    expect(phases.unit).toBe("hours");
+    expect(phases.note).toContain("per day");
+    expect(phases.note).toContain("never counted here");
+    expect(phases.series.map((one) => [one.name, one.values])).toEqual([
+      ["Build", [10, null, 0]],
+      ["Make", [1, null, 3]],
+      ["Verify", [4, null, 0]],
+    ]);
+    expect([gap(phases, 1), gap(phases, 2)]).toEqual([true, false]);
+    expect(phases.cover).toEqual([1, 0, 5 / 11]);
+    const states = find(drawn, "states");
+    expect(states.series.map((one) => [one.name, one.values])).toEqual([
+      ["Working", [9, null, 3]],
+      ["Awaiting", [4, null, 0]],
+      ["Blocked", [2, null, 0]],
+    ]);
+    // The same hours, counted twice: each chart's own total.
+    const total = (chart: ChartData) =>
+      chart.series.flatMap((one) => one.values).reduce<number>((all, v) => all + (v ?? 0), 0);
+    expect([total(phases), total(states)]).toEqual([18, 18]);
+  });
+
+  it("name a label two IDs share by its ID too, and fold the smallest past the palette", () => {
+    const shared = read({
+      ...wire(),
+      buckets: [
+        bucket(MONDAY, MONDAY + DAY, {
+          rolled: 24,
+          workflow: placed(
+            [
+              ["review", "Review", 2],
+              ["security", "Review", 1],
+            ],
+            [],
+          ),
+        }),
+      ],
+    });
+    expect(placeSeries(shared.buckets, "phases").map(([name]) => name)).toEqual([
+      "Review (review)",
+      "Review (security)",
+    ]);
+    const many: [string, string, number][] = [6, 5, 4, 3, 2, 1].map((hours) => [
+      `p${hours}`,
+      `Phase ${hours}`,
+      hours,
+    ]);
+    const crowded = read({
+      ...wire(),
+      buckets: [bucket(MONDAY, MONDAY + DAY, { rolled: 24, workflow: placed(many, []) })],
+    });
+    const series = placeSeries(crowded.buckets, "phases");
+    expect(series).toHaveLength(PLACES_NAMED + 1);
+    expect(series.map(([name, values]) => [name, values[0]])).toEqual([
+      ["Phase 6", 6],
+      ["Phase 5", 5],
+      ["Phase 4", 4],
+      ["Phase 3", 3],
+      ["Other", 3],
+    ]);
+    const five = read({
+      ...wire(),
+      buckets: [
+        bucket(MONDAY, MONDAY + DAY, { rolled: 24, workflow: placed(many.slice(0, 5), []) }),
+      ],
+    });
+    expect(placeSeries(five.buckets, "phases").map(([name]) => name)).not.toContain("Other");
+    // An entry without its hours or its ID is not read; one without its label is named by its ID.
+    const odd = read({
+      ...wire(),
+      buckets: [
+        bucket(MONDAY, MONDAY + DAY, {
+          rolled: 24,
+          workflow: {
+            phases: [{ id: "build", hours: 1 }, { id: "", label: "X", hours: 1 }, { id: "v" }],
+            states: [],
+          },
+        }),
+      ],
+    });
+    expect(placeSeries(odd.buckets, "phases")).toEqual([["build", [1]]]);
+    expect(find(charts(odd, []), "states").series).toEqual([]);
+  });
+
+  it("hide a series hidden on its own chart alone", () => {
+    const drawn = charts(read(workflowWire()), [seriesKey("phases", "Make")]);
+    expect(find(drawn, "phases").series.map((one) => one.hidden)).toEqual([false, true, false]);
+    expect(find(drawn, "states").series.every((one) => !one.hidden)).toBe(true);
+  });
+
+  it("read the wire's own fixture", () => {
+    const drawn = charts(read(fixture), []);
+    expect(find(drawn, "phases").series.map((one) => [one.name, one.values])).toEqual([
+      ["Build", [20.5, null]],
+      ["Verify", [6, null]],
+      ["Make", [4, null]],
+    ]);
+    expect(find(drawn, "states").series.map((one) => one.name)).toEqual([
+      "Working",
+      "Awaiting",
+      "Blocked",
+    ]);
   });
 });
 

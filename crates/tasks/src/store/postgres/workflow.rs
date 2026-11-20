@@ -68,7 +68,11 @@ pub(in crate::store) fn standings() -> Pg<'static> {
         'position', fields #> '{_board,workflow}',
         'blocked_from', fields #> '{_board,blocked,from}',
         'accepted', (SELECT w.body -> 'accepted' FROM workflow w
-            WHERE w.id = jsonb_build_array('event', task.slug, task.fields #> '{_board,workflow,revision}')))
+            WHERE w.id = jsonb_build_array('event', task.slug, task.fields #> '{_board,workflow,revision}')),
+        'attempts', coalesce((SELECT jsonb_agg(a.doc -> 'attempt'
+            ORDER BY (a.doc ->> 'created')::bigint, a.doc ->> 'attempt' COLLATE \"C\")
+            FROM execution_attempt a WHERE a.doc ->> 'task' = task.slug AND (a.doc ->> 'live')::boolean
+                AND coalesce(a.doc #>> '{state,cancellation}', 'none') = 'none'), '[]'::jsonb))
         ORDER BY slug)
         FROM task WHERE status NOT IN ('done', 'cancelled') OR fields #> '{_board,workflow}' IS NOT NULL),
         '[]'::jsonb))",

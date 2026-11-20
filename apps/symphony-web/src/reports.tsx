@@ -649,11 +649,121 @@ function cover(bucket: Bucket, source: Source): number {
   return Math.min(Math.max(seconds / Math.max(end - start, 1), 0), 1);
 }
 
+/** The most phases or states a chart of the workflow names: the rest are its "Other". */
+export const PLACES_NAMED = 4;
+
+/** The workflow's charts: by phase and by state, of the same hours, never added together. */
+const WORKFLOW: [string, string, string, string][] = [
+  [
+    "phases",
+    "Time by phase",
+    "phases",
+    "Task-hours top-level tasks spent in each phase of the project's workflow, per {per}, a phase " +
+      "renamed since under the name its hours were spent under. Time on builds and tests is the " +
+      "runs', never counted here.",
+  ],
+  [
+    "states",
+    "Time by state",
+    "states",
+    "Task-hours top-level tasks spent in each coordination state, per {per}: the same hours as by " +
+      "phase, counted again by state.",
+  ],
+];
+
+/** One phase's or state's hours in a period as the server writes them: `[id, label, hours]`. */
+function entries(bucket: Bucket, list: string): [string, string, number][] {
+  return bucket.list("workflow", list).flatMap((entry): [string, string, number][] => {
+    const hours = entry.written("hours");
+    const id = entry.text("id");
+    return hours === null || id === "" ? [] : [[id, entry.text("label") || id, hours]];
+  });
+}
+
+/**
+ * The series of a chart of the workflow's `list` (`phases`, `states`) over `buckets`: one for each
+ * ID and label it records, named by its label, its ID after it where two IDs share a label, the
+ * largest over the window first; past PLACES_NAMED + 1 of them, the PLACES_NAMED largest and
+ * "Other" for the rest. A period whose roll-up records no workflow is none in each, a gap.
+ */
+export function placeSeries(buckets: Bucket[], list: string): [string, (number | null)[]][] {
+  const totals = new Map<string, [string, string, number]>();
+  const key = (id: string, label: string) => `${id}\u0000${label}`;
+  for (const bucket of buckets) {
+    for (const [id, label, hours] of entries(bucket, list)) {
+      const kept = totals.get(key(id, label));
+      totals.set(key(id, label), [id, label, (kept?.[2] ?? 0) + hours]);
+    }
+  }
+  const labels = new Map<string, number>();
+  for (const [, label] of totals.values()) labels.set(label, (labels.get(label) ?? 0) + 1);
+  const ranked = [...totals.values()]
+    .map(([id, label, hours]): [string, string, number] => [
+      key(id, label),
+      (labels.get(label) ?? 0) > 1 ? `${label} (${id})` : label,
+      hours,
+    ])
+    .sort((a, b) => b[2] - a[2] || (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+  const named = ranked.length > PLACES_NAMED + 1 ? ranked.slice(0, PLACES_NAMED) : ranked;
+  const rest = new Set(ranked.slice(named.length).map(([kept]) => kept));
+  const valuesOf = (pick: (id: string, label: string) => boolean) =>
+    buckets.map((bucket) =>
+      bucket.has("workflow")
+        ? sum(
+            entries(bucket, list)
+              .filter(([id, label]) => pick(id, label))
+              .map(([, , hours]) => hours),
+          ) + 0
+        : null,
+    );
+  const series: [string, (number | null)[]][] = named.map(([kept, name]) => [
+    name,
+    valuesOf((id, label) => key(id, label) === kept),
+  ]);
+  if (rest.size > 0) series.push(["Other", valuesOf((id, label) => rest.has(key(id, label)))]);
+  return series;
+}
+
+/**
+ * The section of a custom workflow's charts out of `page`, each series `hidden` names hidden on its
+ * own chart alone; none while no period's roll-up records a workflow, as on a board that runs
+ * none.
+ */
+export function workflowSection(page: Page, hidden: string[]): [string, ChartData[]] | null {
+  if (!page.buckets.some((bucket) => bucket.has("workflow"))) return null;
+  return [
+    "Workflow",
+    WORKFLOW.map(([id, title, list, note]) => ({
+      id,
+      title,
+      note: note.replaceAll("{per}", page.grain),
+      unit: "hours" as const,
+      series: placeSeries(page.buckets, list).map(([name, values]) => ({
+        name,
+        mark: "bar" as const,
+        values,
+        hidden: hidden.includes(seriesKey(id, name)),
+      })),
+      cover: page.buckets.map((bucket) => (bucket.has("workflow") ? cover(bucket, "rollup") : 0)),
+      instead: null,
+    })),
+  ];
+}
+
 /**
  * Every section's heading and its charts, ready to draw, out of `page`, each series `hidden` names
- * by its key (`seriesKey`) hidden on its own chart alone.
+ * by its key (`seriesKey`) hidden on its own chart alone: the workflow's after Flow where a period
+ * records one.
  */
 export function charts(page: Page, hidden: string[]): [string, ChartData[]][] {
+  const drawn = fixedCharts(page, hidden);
+  const workflow = workflowSection(page, hidden);
+  if (workflow !== null) drawn.splice(1, 0, workflow);
+  return drawn;
+}
+
+/** The sections SECTIONS names, ready to draw. */
+function fixedCharts(page: Page, hidden: string[]): [string, ChartData[]][] {
   return SECTIONS.map(([heading, specs]) => [
     heading,
     specs.map((spec) => ({

@@ -6,7 +6,8 @@
 
 use serde::Serialize;
 use symphony_api::reports::{
-    Answer, ByStatus, DayFlow, Decisions, Flow, Red, ReportDay, ReportHour, TokenSum, Wait, Waits,
+    Answer, ByStatus, DayFlow, Decisions, Flow, PlacedHours, Red, ReportDay, ReportHour, Spent,
+    TokenSum, Wait, Waits,
 };
 
 /// The text of `day`.
@@ -198,6 +199,29 @@ fn hour(out: &mut Out, hour: &ReportHour) {
         None => out.null("git"),
     }
     sums(out, "tokens", hour.tokens.as_deref());
+    // Left out where there is none, as serde leaves it out: a board with no workflow of its own
+    // writes the file it wrote before.
+    if let Some(placed) = &hour.workflow {
+        out.object("workflow");
+        placed_hours(out, "top", &placed.top);
+        placed_hours(out, "subtasks", &placed.subtasks);
+        out.close();
+    }
+    out.close();
+}
+
+fn placed_hours(out: &mut Out, name: &str, hours: &PlacedHours) {
+    out.object(name);
+    out.list("phases", &hours.phases, spent);
+    out.list("states", &hours.states, spent);
+    out.close();
+}
+
+fn spent(out: &mut Out, spent: &Spent) {
+    out.open();
+    out.text("id", &spent.id);
+    out.text("label", &spent.label);
+    out.number("hours", spent.hours);
     out.close();
 }
 
