@@ -437,32 +437,70 @@ function SegView({ seg, stop }: { seg: Seg; stop: object }) {
   );
 }
 
-function AddressArrow({ selected, scale }: { selected: TimelineMessage; scale: Scale }) {
+/** A drawn box, as `getBoundingClientRect` gives it. */
+interface Box {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** A selected message's arrow in its layer: its line's x, and the y of its sender's and its
+ * recipient's ends, from the layer's corner. */
+interface ArrowPlace {
+  left: number;
+  from: number;
+  to: number;
+}
+
+/**
+ * Where the selected message's arrow is drawn in `layer`: down through the middle of its mark
+ * (`mark`, its sender's end), to the middle of its recipient's track (`recipient`), each as drawn,
+ * so it meets the mark wherever the lanes put the tracks. None while either is not drawn.
+ */
+export function arrowPlace(
+  layer: Box,
+  mark: Box | undefined,
+  recipient: Box | undefined,
+): ArrowPlace | null {
+  if (!mark || !recipient) return null;
+  return {
+    left: mark.left + mark.width / 2 - layer.left,
+    from: mark.top + mark.height / 2 - layer.top,
+    to: recipient.top + recipient.height / 2 - layer.top,
+  };
+}
+
+function AddressArrow({ selected, at }: { selected: TimelineMessage; at: number }) {
   const root = useRef<HTMLDivElement>(null);
-  const [arrow, setArrow] = useState<{ from: number; to: number } | null>(null);
+  const [arrow, setArrow] = useState<ArrowPlace | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the mark moves with its time's place on the hours (`at`), which the effect reads from the page
   useLayoutEffect(() => {
-    const element = root.current?.closest(".tl-lanes");
-    if (!element || !selected) {
+    const layer = root.current;
+    const lanes = layer?.closest(".tl-lanes");
+    if (!layer || !lanes) {
       setArrow(null);
       return;
     }
-    const measure = () => {
-      const top = element.getBoundingClientRect().top;
-      const y = (lane: string) => {
-        const box = element
-          .querySelector(`[data-lane="${lane}"] .tl-track`)
-          ?.getBoundingClientRect();
-        return box ? box.top + box.height / 2 - top : null;
-      };
-      const from = y(endpointLane(selected.from, selected.sender));
-      const to = y(endpointLane(selected.to, selected.recipient));
-      setArrow(from === null || to === null ? null : { from, to });
-    };
+    const measure = () =>
+      setArrow(
+        arrowPlace(
+          layer.getBoundingClientRect(),
+          lanes
+            .querySelector(`.tl-message-mark[data-message="${selected.id}"]`)
+            ?.getBoundingClientRect(),
+          lanes
+            .querySelector(
+              `[data-lane="${endpointLane(selected.to, selected.recipient)}"] .tl-track`,
+            )
+            ?.getBoundingClientRect(),
+        ),
+      );
     measure();
     const observer = new ResizeObserver(measure);
-    observer.observe(element);
+    observer.observe(lanes);
     return () => observer.disconnect();
-  }, [selected]);
+  }, [selected, at]);
   return (
     <div className="tl-address-track" aria-hidden="true" ref={root}>
       {arrow && (
@@ -471,7 +509,7 @@ function AddressArrow({ selected, scale }: { selected: TimelineMessage; scale: S
           data-from={endpointLane(selected.from, selected.sender)}
           data-to={endpointLane(selected.to, selected.recipient)}
           style={{
-            left: percent(scale.at(selected.at)),
+            left: arrow.left,
             top: Math.min(arrow.from, arrow.to),
             height: Math.max(Math.abs(arrow.to - arrow.from), 12),
           }}
@@ -582,7 +620,7 @@ function LanesView({
         </span>
       </div>
       {laneRows}
-      {selected && <AddressArrow selected={selected} scale={scale} />}
+      {selected && <AddressArrow selected={selected} at={scale.at(selected.at)} />}
       {lanes.gates.length > 0 && (
         <>
           <div className="tl-lane tl-gates-head">
