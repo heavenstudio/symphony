@@ -36,6 +36,7 @@ mod depends;
 mod dispatcher;
 pub(crate) mod execution;
 mod fields;
+pub(crate) mod guard;
 mod history;
 mod kept;
 mod launches;

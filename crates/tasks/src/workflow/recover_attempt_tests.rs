@@ -333,6 +333,8 @@ fn an_exhausted_bound_with_no_failure_action_moves_and_lets_nothing_go() {
         definition: validated,
         revision,
         mappings: Vec::new(),
+        authorities: Vec::new(),
+        project: None,
     };
     let facts = at(&custom, "verify", "checking", &[("cedar", "reserved")]);
     let failed = ending(&facts, Trigger::AttemptFailure);

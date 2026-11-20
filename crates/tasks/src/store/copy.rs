@@ -67,8 +67,12 @@ impl Store {
         // A workflow's records go in before the tasks: the task fence finds each managed task's
         // transition among them as the task is written (`crate::schema`'s `workflow_position`).
         // A dump with none lists no table for them, so its copy says what it said before
-        // workflows; the copy empties the board's records either way.
+        // workflows; the copy empties the board's records either way. What the board accepted
+        // from an approval authority is never copied: a copy or a restore may be older than the
+        // authority's last report, so its guards are refused until the authority reports again
+        // (`crate::workflow::guard`).
         let workflow: Vec<Value> = (dump.workflow.iter())
+            .filter(|row| row.kind != "authority")
             .map(|row| json!({ "id": row.key, "kind": row.kind, "body": row.body, "at": row.at }))
             .collect();
         let workflow = (!workflow.is_empty()).then_some(("workflow", workflow));

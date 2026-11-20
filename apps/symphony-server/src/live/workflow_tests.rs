@@ -68,6 +68,8 @@ fn custom() -> Custom {
         definition,
         revision,
         mappings,
+        authorities: Vec::new(),
+        project: None,
     }
 }
 
