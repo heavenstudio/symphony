@@ -1111,8 +1111,8 @@ things keep that branch, each said as `kept branch NAME: WHY`: a land's record o
 naming it, as `just land SLUG` run again finishes an interrupted land from that record and the
 branch, in a worktree of its own; a delivery of it by pull request not yet asked to merge, whose
 land run again reads the branch's tip (from the merge's request on, a land run again goes on from
-its journal alone, and the branch goes); and its task done by an approve no landing has closed, as what
-keeps such a task from going back to review once it is on main is its branch's tip.
+its journal alone, and the branch goes); and its task done by an approve no landing has closed, as
+what keeps such a task from going back to review once it is on main is its branch's tip.
 A head [a pull request squashed](#a-land-delivered-by-a-pull-request) is in no history of main,
 and is in main by its receipt alone: the HEAD, or the branch's tip, is exactly the head a receipt
 kept under its own task's name records; `refs/symphony/delivered/SLUG` still names that head, so

@@ -23,7 +23,8 @@
 //! * its HEAD is an ancestor of `main` (detached or on a branch), or is exactly a head a pull
 //!   request squashed into main, proved by the receipt its land kept ([`delivered`]). A branch
 //!   with no commits of its own (a reviewer's, an executor's not started, one switched to another
-//!   branch) is judged like any other: the window, the sessions and the processes are what protect an agent about to start;
+//!   branch) is judged like any other: the window, the sessions and the processes are what
+//!   protect an agent about to start;
 //! * no task in concept, design, ready, in_progress, review or blocked has the branch's name as its
 //!   slug, or as its slug with the last `/` spelled `-` (`tools/python-zero-merge-risk` for
 //!   `tools/python-zero/merge-risk`), has a role held by a session bound to it, either way (of any
@@ -1422,9 +1423,8 @@ fn recorded_lands(root: &Path) -> BTreeSet<String> {
 /// Why branch `name`, landed in main, stays though its worktree went, if it does: a land's
 /// record of its merge names it (`recorded`), which a land run again finishes from it; a delivery
 /// of it by pull request not yet asked to merge reads its tip ([`Delivered::under_way`]); or its
-/// task
-/// is done by an approve no landing has closed, which may still go back to review for a fresh
-/// approve, and the guard against sending back what landed reads the branch's tip
+/// task is done by an approve no landing has closed, which may still go back to review for a
+/// fresh approve, and the guard against sending back what landed reads the branch's tip
 /// (`crate::land::reopenable`).
 fn branch_kept(
     store: &Store,
