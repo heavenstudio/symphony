@@ -269,12 +269,10 @@ describe("a view", () => {
     }
   });
 
-  it("says a window the browser did not open", async () => {
+  it("says a window the browser did not open, and asks the provider for nothing", async () => {
     const asked = server();
-    const said = view("", "w/a", RUNNING, null);
-    await asking(asked, 1);
-    asked[0]?.answer(reply(200, CASES.samples.attemptLink));
-    expect(await said).toContain("allow this page's pop-ups");
+    expect(await view("", "w/a", RUNNING, null)).toContain("allow this page's pop-ups");
+    expect(asked).toHaveLength(0);
   });
 });
 

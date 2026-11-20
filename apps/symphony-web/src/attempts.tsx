@@ -232,7 +232,8 @@ function putStyle(): void {
 /**
  * A view of `attempt`'s resource, resolved now and sent to `opened`, the window the click opened
  * (none where the browser refused one): what the page says of it, empty once the window has it.
- * The address goes to the window alone; a window that cannot have it is closed.
+ * The address goes to the window alone; a window that cannot have it is closed, and with none the
+ * provider is asked for nothing.
  */
 export async function view(
   scope: string,
@@ -240,15 +241,15 @@ export async function view(
   attempt: AttemptView,
   opened: Window | null,
 ): Promise<string> {
+  if (opened === null) return "No view: the browser opened no window; allow this page's pop-ups";
   try {
     const answer = await post(scoped(scope, ATTEMPT_VIEW_ROUTE), { slug, attempt: attempt.id });
     const address = viewAddress(answer);
     if (address === null) throw new Error("the server's answer is no address to open");
-    if (opened === null) return "No view: the browser opened no window; allow this page's pop-ups";
     opened.location.replace(address);
     return "";
   } catch (error) {
-    opened?.close();
+    opened.close();
     return `No view of ${short(attempt.id)}: ${said(error)}`;
   }
 }

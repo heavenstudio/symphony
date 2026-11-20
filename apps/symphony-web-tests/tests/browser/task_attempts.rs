@@ -62,17 +62,31 @@ fn open(page: &mut Chrome, site: &Site, path: &str, width: u32) {
     page.open(&site.url(path));
 }
 
-/// The page as its fonts and two frames leave it, the attempts scrolled to, saved as `NAME.png`
-/// in the folder `SYMPHONY_ATTEMPT_SHOTS` names; nothing without one.
+/// The page as its fonts and two frames leave it, the attempts scrolled to, in each scheme, saved
+/// as `NAME-light.png` and `NAME-dark.png` in the folder `SYMPHONY_ATTEMPT_SHOTS` names; nothing
+/// without one. The page is left in the browser's own scheme.
 fn shot(page: &mut Chrome, name: &str) {
     let Some(folder) = std::env::var_os("SYMPHONY_ATTEMPT_SHOTS") else {
         return;
     };
-    page.eval("document.querySelector('.attempts')?.scrollIntoView({block: 'start'})");
-    page.eval("document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
     let folder = std::path::PathBuf::from(folder);
     std::fs::create_dir_all(&folder).unwrap();
-    std::fs::write(folder.join(format!("{name}.png")), page.screenshot()).unwrap();
+    for scheme in ["light", "dark"] {
+        page.call(
+            "Emulation.setEmulatedMedia",
+            json!({"features": [{"name": "prefers-color-scheme", "value": scheme}]}),
+        );
+        page.eval("document.querySelector('.attempts')?.scrollIntoView({block: 'start'})");
+        page.eval("document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
+        // The colours' transitions into the scheme, finished.
+        page.wait_for("document.getAnimations().length === 0", SHOWN);
+        std::fs::write(
+            folder.join(format!("{name}-{scheme}.png")),
+            page.screenshot(),
+        )
+        .unwrap();
+    }
+    page.call("Emulation.setEmulatedMedia", json!({"features": []}));
 }
 
 /// The text of what `selector` matches, in order.
