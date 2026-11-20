@@ -86,4 +86,14 @@ fn the_owners_workflow_operation_names_its_task_and_carries_a_whole_request() {
             "request: its task is sim/b, not the slug sim/a".to_string()
         )
     );
+    // A guarded edge's attestations are the authority's signed statements, read whole.
+    let mut ours = request.clone();
+    ours["task"] = "sim/a".into();
+    let (status, error) = refused(json!({"slug": "sim/a", "request": ours,
+        "attestations": [{"payload": "{}"}]}));
+    assert_eq!(status, 400);
+    assert!(
+        error.starts_with("attestations: not signed statements: "),
+        "{error}"
+    );
 }

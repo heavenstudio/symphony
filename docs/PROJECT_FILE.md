@@ -100,8 +100,9 @@ not there; nothing is landed for it.
 This table is a project's custom delivery workflow, strict, read by
 `symphony::project::workflow::candidate`. Project loading accepts one the local host supports and
 refuses any other with `unsupported_activation`, naming what it needs: a capability no grant of
-the host names, a guard, an adapter, or what durable attempts, landing adapters or accepted
-outputs bring. The board activates the workflow the project's default branch commits, with its
+the host names, a guard no committed approval authority attests
+([below](#workflow_authorities)) or a route around one, an adapter, or what durable attempts,
+landing adapters or accepted outputs bring. The board activates the workflow the project's default branch commits, with its
 `[[workflow_mappings]]`, and moves its tasks by its edges alone (`just tasks workflow`).
 Omission retains the current board behavior and selects built-in definition v1 in the candidate
 reader. Candidate parsing never changes a board. The [workflow reference](WORKFLOW.md) documents
@@ -121,7 +122,7 @@ where validation allows it. Unknown fields and variants refuse the candidate.
 | `edges` | required | typed routes, authority requirements, inputs, guards and effects |
 | `capabilities` | required | declared host capability IDs; declarations grant no authority |
 | `adapters` | required | declared host adapter IDs; declarations supply no adapter |
-| `guards` | required | opaque policy requirements by stable ID and adapter |
+| `guards` | required | policy requirements by stable ID and the adapter whose approval authority attests them |
 
 ## `[[workflow_mappings]]`
 
@@ -136,6 +137,39 @@ board's existing writers kept starts from built-in v1's pair of its status
 | --- | --- | --- |
 | `from` | required | the removed `{ phase, state }` pair |
 | `to` | required | the declared `{ phase, state }` pair a task there goes to |
+
+## `[[workflow_authorities]]`
+
+The approval authorities whose signed word meets the workflow's guards, one for each adapter its
+guards name ([WORKFLOW](WORKFLOW.md#guards)). A guard is a decision the project keeps in its own
+approval ledger; the board never holds that ledger and never decides a guard. What it asks of a
+project, in plain words:
+
+- **It holds a signing key.** The project runs an authority over its ledger that holds an
+  Ed25519 signing key and signs, with it, each observation of the ledger's state and each
+  attestation that a guard holds for one operation. The secret half stays with that authority:
+  never in the repository, the board or a request.
+- **It commits the public half here**, as `ed25519:` and the key's 32 bytes in lowercase hex,
+  with the adapter it answers for and the issuer it signs as. The board verifies every
+  observation and attestation by the key the default branch commits, and by nothing else.
+- **A changed key is a new generation.** Changing a key, an issuer or an authority is a commit of
+  this file, which activates a new generation of the workflow: every attestation made for the
+  previous one stops at once, and the new key goes on from the ledger state the board last
+  accepted.
+- **It names itself by `[project] id`.** An attestation names the project it is for by the id this
+  file commits, which a project with an authority must write: an id taken from a folder's name or
+  a machine's registry could differ between machines, and could match another project's.
+
+An authority with no `[workflow]`, for an adapter the workflow does not declare, named twice,
+with no issuer or a key that does not read is refused by name, and a guard with no authority
+committed for its adapter leaves the workflow unsupported.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `adapter` | required | the adapter of the workflow's `adapters` this authority answers for |
+| `issuer` | required | the name the authority signs as, which its observations and attestations repeat |
+| `contract` | required | the attestation contract it speaks, `1` in this release |
+| `key` | required | the public half of its signing key, `ed25519:` and 64 lowercase hex digits |
 
 ## `[project]`
 
