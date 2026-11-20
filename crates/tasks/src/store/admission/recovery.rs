@@ -20,6 +20,7 @@ use crate::workflow::recover::{self as plan, Recovery};
 use crate::workflow::{Recovered, Trigger, board_service};
 use serde_json::json;
 use symphony_api::workflow::Pair;
+use symphony_plugin::execution::Principal;
 
 /// Which exit a recovery answers, and so which action and which check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,25 +165,38 @@ impl Store {
                 at,
             )
             .map_err(refusal)?;
-            let slots = match &recovery.transition {
-                Some(t) => {
-                    let taking = Taking {
-                        status: &t.status,
-                        acquires: recovery.acquires,
-                        held: decided.holds_now(),
-                        holds: decided.holds_at(&t.to),
-                        add: &[],
-                        what: format!("{slug} cannot move to {} by its recovery", named(&t.to)),
-                    };
-                    self.taken(&decided, taking, &principal)?
-                }
-                None => Vec::new(),
-            };
+            let slots = self.recovery_slots(&decided, &recovery, &principal)?;
             let vars = vars(&decided, &recovery, holder, role, seen, slots, by, at);
             let guarded = !vars["slots"].as_array().is_none_or(Vec::is_empty);
             self.written(applied(guarded), vars, slug)?;
             Ok(recovery.transition)
         })
+    }
+
+    /// The slot counters `recovery`'s move holds under the cap, as `principal` takes it on what
+    /// `decided` read ([`Store::taken`]); none for a stay or a role let go alone.
+    pub(super) fn recovery_slots(
+        &self,
+        decided: &Decided,
+        recovery: &Recovery,
+        principal: &Principal,
+    ) -> Result<Vec<Value>, Failure> {
+        let Some(t) = &recovery.transition else {
+            return Ok(Vec::new());
+        };
+        let taking = Taking {
+            status: &t.status,
+            acquires: recovery.acquires,
+            held: decided.holds_now(),
+            holds: decided.holds_at(&t.to),
+            add: &[],
+            what: format!(
+                "{} cannot move to {} by its recovery",
+                decided.task.slug,
+                named(&t.to)
+            ),
+        };
+        self.taken(decided, taking, principal)
     }
 
     /// The fence on a lost holder's session, as read: refused while it holds (live, stale or
@@ -226,13 +240,14 @@ pub(super) fn applied(guarded: bool) -> crate::store::statement::Statement<'stat
     )
 }
 
-/// The write's variables: the roles the holder held that it relies on, those it drops, its
-/// transition, if any, and its line.
+/// The write's variables: the roles the holder held that it relies on (none for an attempt's
+/// ending, which names no holder, `""`), those it drops, its transition, if any, and its line, said
+/// by `by`, the session the write checks is still there unless it is the owner or the board.
 #[expect(
     clippy::too_many_arguments,
     reason = "one write's variables, each read once"
 )]
-fn vars(
+pub(super) fn vars(
     decided: &Decided,
     recovery: &Recovery,
     holder: &str,

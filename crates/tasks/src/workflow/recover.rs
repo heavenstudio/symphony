@@ -328,33 +328,35 @@ pub fn observed(
                 ));
             }
             let failure = actions.map(|a| a.attempt_failure.clone());
-            match automatic.first() {
-                Some(edge) => match &edge.retry {
-                    Some(retry) if taken(transitions, edge, &retry.exhausted) >= retry.maximum => {
-                        // Exhausted: the failure's own action, sent where the bound says.
-                        exhausted = Some(edge.id.clone());
-                        RecoveryAction {
-                            target: Some(retry.exhausted.clone()),
+            let bound = automatic.first().and_then(|edge| {
+                let retry = edge.retry.as_ref()?;
+                (taken(transitions, edge, &retry.exhausted) >= retry.maximum)
+                    .then_some((edge, retry))
+            });
+            match (automatic.first(), bound) {
+                (_, Some((edge, retry))) => {
+                    // Exhausted: the failure's own action, sent where the bound says.
+                    exhausted = Some(edge.id.clone());
+                    RecoveryAction {
+                        target: Some(retry.exhausted.clone()),
+                        manual: true,
+                        ..failure.unwrap_or(RecoveryAction {
+                            target: None,
                             manual: true,
-                            ..failure.unwrap_or(RecoveryAction {
-                                target: None,
-                                manual: true,
-                                slot: Slot::Retain,
-                                release_role: false,
-                                release_reservation: false,
-                            })
-                        }
+                            slot: Slot::Retain,
+                            release_role: false,
+                            release_reservation: false,
+                        })
                     }
-                    _ if !refused => {
-                        return Ok(Proposal::Edge {
-                            edge: edge.id.clone(),
-                            answered,
-                        });
-                    }
-                    // Admission refused the board's take: answered as if no edge left the pair.
-                    _ => failure.ok_or_else(|| undeclared(slug, &here, observation.trigger))?,
-                },
-                None => failure.ok_or_else(|| undeclared(slug, &here, observation.trigger))?,
+                }
+                (Some(edge), None) if !refused => {
+                    return Ok(Proposal::Edge {
+                        edge: edge.id.clone(),
+                        answered,
+                    });
+                }
+                // No automatic edge, or admission refused the board's take of it.
+                _ => failure.ok_or_else(|| undeclared(slug, &here, observation.trigger))?,
             }
         }
         Trigger::CancellationAcknowledged => {

@@ -276,7 +276,8 @@ impl Store {
     /// [`Store::say_keyed`]). Within a caller's retry.
     pub(super) fn keyed(&self, slug: &str, key: &str) -> Result<bool, Failure> {
         let vars = json!({"slug": slug, "key": key});
-        self.read(both(sql::KEYED, pg::keyed()), vars)
+        let keyed: Value = self.read(both(sql::KEYED, pg::keyed()), vars)?;
+        Ok(keyed == Value::Bool(true))
     }
 
     pub(super) fn tell_if_unread(

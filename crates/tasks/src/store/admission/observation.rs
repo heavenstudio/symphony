@@ -15,12 +15,14 @@
 //! nothing can answer (that action refused too, or none declared) is said on its task's thread
 //! once, under its key, which is then its answer: a later observation writes nothing.
 
-use super::recovery::{applied, ended, said};
-use super::{Decided, Error, Failure, Host, Refusal, RefusalCode, Store, Taking, context, refusal};
+use super::recovery::{applied, ended, said, vars};
+use super::{Decided, Error, Failure, Host, Refusal, RefusalCode, Store, context, refusal};
 use crate::execution::{Cancellation, Ending, Row};
+use crate::store::messages::BOARD;
+use crate::workflow::admit::word;
 use crate::workflow::recover::{self as plan, Observation, Proposal, Recovery};
 use crate::workflow::{Recovered, Transition, Trigger, board_service};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::collections::BTreeMap;
 use symphony_api::workflow::{OperationRequest, Pair, PositionSnapshot};
 use symphony_plugin::execution::Principal;
@@ -84,9 +86,10 @@ impl Store {
         let decide = |refused: Option<&Refused>| {
             self.retrying(|| self.next(slug, &observation, &principal, refused))
         };
-        let (request, answered) = match decide(None) {
-            Ok(Next::Take { request, answered }) => (request, answered),
-            decided => return self.answer(slug, &observation, None, decided),
+        let (request, answered) = match decide(None)? {
+            Next::Answered(transition) => return Ok(Some(transition)),
+            Next::Said => return Ok(None),
+            Next::Take { request, answered } => (request, answered),
         };
         // Admission decides again on its own read, fenced on the task's revision, and a repeat of
         // the request answers what the first wrote.
@@ -102,15 +105,17 @@ impl Store {
             edge: request.edge,
             why,
         };
-        let decided = decide(Some(&refused));
-        self.answer(slug, &observation, Some(&refused), decided)
+        match decide(Some(&refused))? {
+            Next::Answered(transition) => Ok(Some(transition)),
+            Next::Said => Ok(None),
+            Next::Take { .. } => unreachable!("a take admission refused is not proposed again"),
+        }
     }
 
-    /// What `observation`'s ending of `slug` is answered by on the board's read, as `principal`:
-    /// the transition that answered it, the line that said nothing could, the automatic edge to
-    /// take, or a recovery, written now. With `refused`, the board's take of the automatic edge
-    /// admission refused, it is answered as if no automatic edge left the pair, and the line says
-    /// why.
+    /// What answers `observation`'s ending of `slug` on the board's read, as `principal`: the
+    /// transition that answered it, the line that said nothing could, the automatic edge to take,
+    /// or what [`Store::proposed`] writes now. A failure refused for a reason that may pass is
+    /// said once on the thread, which is then its answer.
     fn next(
         &self,
         slug: &str,
@@ -126,13 +131,37 @@ impl Store {
         if self.keyed(slug, &key(attempt))? {
             return Ok(Next::Said);
         }
+        match self.proposed(slug, observation, &transitions, principal, refused) {
+            Err(Failure::Stop(Error::Refused(why)))
+                if observation.trigger == Trigger::AttemptFailure && may_pass(&why) =>
+            {
+                let line = unanswered(slug, observation, refused, &why);
+                self.record_once(slug, &sender(principal), &line, &key(attempt))?;
+                Ok(Next::Said)
+            }
+            next => next,
+        }
+    }
+
+    /// What `observation`'s ending of `slug`, whose recorded `transitions` these are, proposes on
+    /// admission's read, as `principal`: the automatic edge to take, or a recovery, written now.
+    /// With `refused`, the board's take of the automatic edge admission refused, it is answered as
+    /// if no automatic edge left the pair, and the line says why.
+    fn proposed(
+        &self,
+        slug: &str,
+        observation: &Observation,
+        transitions: &[Transition],
+        principal: &Principal,
+        refused: Option<&Refused>,
+    ) -> Result<Next, Failure> {
         let decided = self.decided(slug, principal, None)?;
         let at = self.now();
         let proposal = plan::observed(
             context(&decided),
             &decided.facts,
             observation,
-            &transitions,
+            transitions,
             refused.is_some(),
             principal,
             at,
@@ -151,7 +180,7 @@ impl Store {
                         at: observation.at.clone(),
                     },
                     input_revisions: BTreeMap::new(),
-                    idempotency_key: key(attempt),
+                    idempotency_key: key(&observation.attempt),
                     inputs: BTreeMap::new(),
                 },
                 answered,
@@ -171,35 +200,6 @@ impl Store {
                 let transition = recovery.transition.expect("an ending's recovery moves");
                 Ok(Next::Answered(transition))
             }
-        }
-    }
-
-    /// What `observe_attempt` answers for `observation`'s ending of `slug`, once `decided`: a
-    /// failure refused for a reason that may pass (after the board's take was `refused`, if it
-    /// was) is said on the thread, once, and answers none.
-    fn answer(
-        &self,
-        slug: &str,
-        observation: &Observation,
-        refused: Option<&Refused>,
-        decided: Result<Next, Error>,
-    ) -> Result<Option<Transition>, Error> {
-        match decided {
-            Ok(Next::Answered(transition)) => Ok(Some(transition)),
-            Ok(Next::Said) => Ok(None),
-            Ok(Next::Take { .. }) => {
-                unreachable!("a take admission refused is not proposed again")
-            }
-            Err(Error::Refused(why))
-                if observation.trigger == Trigger::AttemptFailure && may_pass(&why) =>
-            {
-                let line = unanswered(slug, observation, refused, &why);
-                let sender = sender(&board_service("recovery"));
-                let attempt = key(&observation.attempt);
-                self.retrying(|| self.record_once(slug, &sender, &line, &attempt))?;
-                Ok(None)
-            }
-            Err(error) => Err(error),
         }
     }
 
@@ -248,51 +248,16 @@ impl Store {
         principal: &Principal,
         at: f64,
     ) -> Result<(), Failure> {
-        let transition = recovery
-            .transition
-            .as_ref()
-            .expect("an ending's recovery moves");
-        let slug = &decided.task.slug;
-        let taking = Taking {
-            status: &transition.status,
-            acquires: recovery.acquires,
-            held: decided.holds_now(),
-            holds: decided.holds_at(&transition.to),
-            add: &[],
-            what: format!(
-                "{slug} cannot move to {}/{} by its recovery",
-                transition.to.phase, transition.to.state
-            ),
-        };
-        let slots = self.taken(decided, taking, principal)?;
+        let slots = self.recovery_slots(decided, recovery, principal)?;
         let guarded = !slots.is_empty();
-        let pair = |(h, r): &(String, String)| json!({"handle": h, "role": r});
-        let dropped: Vec<Value> = recovery.drop.iter().map(pair).collect();
-        let vars = json!({
-            "slug": slug,
-            "version": decided.task.version,
-            "generation": decided.active.generation,
-            "digest": decided.active.digest,
-            "dependencies": [],
-            "holding": dropped,
-            "add": [],
-            "drop": dropped,
-            "seen": [],
-            "receipt": null,
-            "receipt_body": null,
-            "actor": null,
-            "transition": transition,
-            "position": transition.position(),
-            "moved": transition.status != decided.task.status,
-            "sender": sender(principal),
-            "said": match why {
-                Some(why) => format!("{}; {why}", said(recovery, "")),
-                None => said(recovery, ""),
-            },
-            "now": at,
-            "slots": slots,
-        });
-        self.written(applied(guarded), vars, slug)?;
+        // No holder's roles relied on, as an attempt names none, and no session to check is still
+        // there: the board's write, said by its recovery service.
+        let mut vars = vars(decided, recovery, "", None, Vec::new(), slots, BOARD, at);
+        vars["sender"] = json!(sender(principal));
+        if let Some(why) = why {
+            vars["said"] = json!(format!("{}; {why}", said(recovery, "")));
+        }
+        self.written(applied(guarded), vars, &decided.task.slug)?;
         Ok(())
     }
 }
@@ -311,19 +276,17 @@ fn answering<'a>(transitions: &'a [Transition], attempt: &str) -> Option<&'a Tra
 
 /// Whether `why`, a refusal of what answers an attempt's ending, may pass: a refusal's, by its
 /// code, but a pin gone stale (the task, its workflow or its activation moved since the attempt
-/// was admitted) or a task no workflow holds, which nothing answers however long it waits.
+/// was admitted) or a task no workflow holds (none is active, or it holds no such task), which
+/// nothing answers however long it waits.
 fn may_pass(why: &str) -> bool {
-    let code =
-        (why.split_once(": ")).and_then(|(code, _)| serde_json::from_value(json!(code)).ok());
-    !matches!(
-        code,
-        None | Some(
-            RefusalCode::StaleTask
-                | RefusalCode::StaleWorkflow
-                | RefusalCode::StaleActivation
-                | RefusalCode::UnknownId
-        )
-    )
+    let silent = [
+        RefusalCode::StaleTask,
+        RefusalCode::StaleWorkflow,
+        RefusalCode::StaleActivation,
+        RefusalCode::UnknownId,
+        RefusalCode::UnsupportedActivation,
+    ];
+    (why.split_once(": ")).is_some_and(|(code, _)| !silent.iter().any(|c| word(c) == code))
 }
 
 /// The thread's line for `observation`'s failure of `slug` that nothing could answer, `why`:

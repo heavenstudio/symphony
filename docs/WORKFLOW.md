@@ -353,8 +353,8 @@ written as an operation or a recovery is, fenced on the task's version, which ev
 moves, so a decision another write overtook is made again. An ending from a pair or
 workflow revision the task has left (it moved, was reassigned, or activation placed it elsewhere,
 whether the decision or admission's take finds it) is refused as `stale_task`, and one of a task
-no workflow holds as `unknown_id`: neither waits to pass, so either stays on its attempt, moves
-nothing and is said nowhere. So does a cancel whose position declares no action for it, refused
+no workflow holds as `unknown_id`, or `unsupported_activation` where none is active: none of them
+waits to pass, so each stays on its attempt, moves nothing and is said nowhere. So does a cancel whose position declares no action for it, refused
 as `explicit_action_required`. The transition records what it recovered
 (`Transition::recovery`) under the key `attempt/ID`, an edge's and a recovery's alike, and an
 ending is answered once: a repeat answers the transition keyed by its attempt, or, for a failure

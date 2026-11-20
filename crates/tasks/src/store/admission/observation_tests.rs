@@ -33,9 +33,10 @@ fn a_refusal_may_pass_unless_its_pin_went_stale_or_no_workflow_holds_the_task() 
         "stale_workflow: the active workflow is d2, not d1",
         "stale_activation: the active generation is 3, not 2",
         "unknown_id: no custom workflow holds sim/a",
+        "unsupported_activation: no custom workflow is active on this board: the board's own \
+         writers keep its tasks",
         // What carries no refusal's code is no refusal of an answer: it is the caller's.
         "there is no execution attempt ab12",
-        "no_such_code: anything",
         "stale_task",
     ] {
         assert!(!may_pass(silent), "{silent}");
