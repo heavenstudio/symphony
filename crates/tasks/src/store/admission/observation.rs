@@ -93,7 +93,7 @@ impl Store {
         };
         // Admission decides again on its own read, fenced on the task's revision, and a repeat of
         // the request answers what the first wrote.
-        let why = match self.apply(&principal, host, &request, Some(&answered)) {
+        let why = match self.apply(&principal, host, &request, &[], Some(&answered)) {
             Ok(_) => {
                 let transitions = self.workflow_transitions(slug)?;
                 return Ok(answering(&transitions, attempt).cloned());

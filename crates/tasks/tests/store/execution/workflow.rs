@@ -44,6 +44,8 @@ fn revised(definition: Validated, mappings: Vec<Mapping>) -> Custom {
         definition,
         revision,
         mappings,
+        authorities: Vec::new(),
+        project: None,
     }
 }
 

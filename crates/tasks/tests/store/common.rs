@@ -936,6 +936,8 @@ pub fn held_flow() -> symphony_board::workflow::Custom {
         definition,
         revision,
         mappings: Vec::new(),
+        authorities: Vec::new(),
+        project: None,
     }
 }
 

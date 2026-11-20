@@ -457,7 +457,7 @@ impl Project {
     /// [`Project::load`]'s to look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
         let mut file = Self::written(text)?;
-        workflow::require_supported(file.workflow.take(), file.workflow_mappings.take())?;
+        workflow::require_supported(&mut file)?;
         if let Some(refusal) = File::refusal(&file.unknown(text)) {
             return Err(refusal);
         }
@@ -481,7 +481,7 @@ impl Project {
             return Ok((Self::plain(root), Vec::new()));
         };
         let mut file = Self::written(&text)?;
-        workflow::require_supported(file.workflow.take(), file.workflow_mappings.take())?;
+        workflow::require_supported(&mut file)?;
         let unknown = file.unknown(&text);
         let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
         Ok((project, unknown))
