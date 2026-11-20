@@ -7,8 +7,8 @@ use crate::{Rig, TOKEN};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use symphony_github::credential::Secret;
 use symphony_github::deliver::{self, Remote};
@@ -86,6 +86,29 @@ pub(crate) struct Delivery {
     pub(crate) rested: RefCell<Vec<Duration>>,
 }
 
+/// The fake gh's script, written once for every test: it answers from the folder it is linked
+/// from. macOS checks an executable newly written at its first run, which takes a good part of a
+/// second; a link to one already run is not checked again.
+fn gh_script() -> &'static Path {
+    static SCRIPT: OnceLock<PathBuf> = OnceLock::new();
+    SCRIPT.get_or_init(|| {
+        let text = "#!/bin/sh\nf=\"$(dirname \"$0\")/$(printf %s \"$4\" | tr -c 'A-Za-z0-9' '_').json\"\n\
+                    if [ \"$1 $2 $3\" != \"api -H Accept: application/vnd.github+json\" ]; then \
+                    echo \"gh: not a read: $*\" >&2; exit 2; fi\n\
+                    if [ -f \"$f\" ]; then cat \"$f\"; else echo 'gh: Not Found (HTTP 404)' >&2; \
+                    exit 1; fi\n";
+        let script = Path::new(env!("CARGO_TARGET_TMPDIR")).join("symphony-github-gh");
+        if std::fs::read_to_string(&script).ok().as_deref() != Some(text) {
+            // Written beside and moved in whole, as another test run may be running it.
+            let written = script.with_extension(std::process::id().to_string());
+            std::fs::write(&written, text).unwrap();
+            std::fs::set_permissions(&written, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::rename(&written, &script).unwrap();
+        }
+        script
+    })
+}
+
 fn settings(more: &str) -> String {
     format!("pull_requests = \"publish\"\napp_id = {APP}\n{more}")
 }
@@ -131,7 +154,8 @@ impl Delivery {
     }
 
     /// A gh CLI whose `api PATH` answers what GitHub answers a person now, who administers the
-    /// repository: written again at each call, from the fake as it is then.
+    /// repository: its answers written again at each call, from the fake as it is then, beside a
+    /// link to the one script ([`gh_script`]).
     pub(crate) fn gh(&self) -> PathBuf {
         let dir = self.rig.dir.0.join("gh");
         let _ = std::fs::remove_dir_all(&dir);
@@ -155,23 +179,14 @@ impl Delivery {
             }
         }
         let gh = dir.join("gh");
-        std::fs::write(
-            &gh,
-            format!(
-                "#!/bin/sh\nf=\"{}/$(printf %s \"$4\" | tr -c 'A-Za-z0-9' '_').json\"\n\
-                 if [ \"$1 $2 $3\" != \"api -H Accept: application/vnd.github+json\" ]; then \
-                 echo \"gh: not a read: $*\" >&2; exit 2; fi\n\
-                 if [ -f \"$f\" ]; then cat \"$f\"; else echo 'gh: Not Found (HTTP 404)' >&2; exit 1; fi\n",
-                dir.display()
-            ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink(gh_script(), &gh).unwrap();
         gh
     }
 
-    /// `rulesets ARGS` run with [`Delivery::gh`].
+    /// `rulesets ARGS` run with [`Delivery::gh`], holding [`crate::starting`] while it starts gh
+    /// unless the test holds it.
     pub(crate) fn rulesets(&self, args: &[&str]) -> crate::Ran {
+        let _alone = (!self.starts).then(crate::starting);
         let gh = self.gh();
         let mut all = vec!["rulesets"];
         all.extend_from_slice(args);

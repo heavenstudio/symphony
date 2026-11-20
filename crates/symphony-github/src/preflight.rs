@@ -205,37 +205,35 @@ pub fn instant(text: &str) -> Option<i64> {
     let (fraction, zone) = match rest.strip_prefix('.') {
         Some(rest) => {
             let digits = rest.find(|c: char| !c.is_ascii_digit())?;
-            if digits == 0 {
-                return None;
-            }
-            (&rest[..digits], &rest[digits..])
+            (rest.get(..digits)?, rest.get(digits..)?)
         }
         None => ("", rest),
     };
-    if fraction.len() > 9 {
+    if (rest.starts_with('.') && fraction.is_empty()) || fraction.len() > 9 {
         return None;
     }
     let millis: i64 = format!("{fraction:0<3}").get(..3)?.parse().ok()?;
-    let offset = match zone {
-        "Z" => 0,
-        _ => {
-            let bytes = zone.as_bytes();
-            let sign = match bytes.first() {
-                Some(b'+') => 1,
-                Some(b'-') => -1,
-                _ => return None,
-            };
-            if bytes.len() != 6 || bytes[3] != b':' {
-                return None;
-            }
-            let (hours, minutes): (i64, i64) = (zone[1..3].parse().ok()?, zone[4..6].parse().ok()?);
-            if hours > 23 || minutes > 59 {
-                return None;
-            }
-            sign * (hours * 3_600 + minutes * 60)
-        }
-    };
+    let offset = if zone == "Z" { 0 } else { offset(zone)? };
     Some((seconds - offset) * 1_000 + millis)
+}
+
+/// The seconds east of UTC an offset `+HH:MM` or `-HH:MM` says; none for any other text.
+fn offset(zone: &str) -> Option<i64> {
+    let (sign, rest) = match zone.split_at_checked(1)? {
+        ("+", rest) => (1, rest),
+        ("-", rest) => (-1, rest),
+        _ => return None,
+    };
+    let (hours, minutes) = rest.split_once(':')?;
+    let two = |part: &str| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_digit());
+    if !two(hours) || !two(minutes) {
+        return None;
+    }
+    let (hours, minutes): (i64, i64) = (hours.parse().ok()?, minutes.parse().ok()?);
+    if hours > 23 || minutes > 59 {
+        return None;
+    }
+    Some(sign * (hours * 3_600 + minutes * 60))
 }
 
 /// Remote text as a person reads it: kept to plain characters.

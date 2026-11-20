@@ -7,7 +7,8 @@
 //! ([`crate::preflight::judge_rules`]). With `--verify`, where it holds, it keeps each ruleset in
 //! the state as [`Verified`]: who bypasses it as of the instant GitHub says it last changed. A
 //! delivery takes that list while the ruleset's `updated_at` is still that instant, and refuses
-//! once it is not, whatever changed. It is run at setup and by each release run, never by a land.
+//! once it is not, whatever changed. It is run by a person, at setup and after a ruleset changes,
+//! never by a land.
 //!
 //! It reads and never writes to GitHub: gh is run as `gh api PATH`, a GET, so the token of who is
 //! signed in stays gh's and is never handled here. Nothing is kept where the policy does not hold,
@@ -16,7 +17,7 @@
 use crate::config::{PullRequests, Repository};
 use crate::preflight::{self, Bypass, MAX_PAGES, Operation, PER_PAGE, Wanted};
 use crate::reconcile::{Context, Outcome};
-use crate::state::{State, Store, Verified};
+use crate::state::{Binding, State, Store, Verified};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -139,6 +140,76 @@ fn said(read: &Read) -> String {
     )
 }
 
+/// The repository, its rules on a branch and each ruleset they come from, read whole with gh.
+struct Whole {
+    repository: Value,
+    id: i64,
+    rules: Vec<Value>,
+    reads: Vec<Read>,
+}
+
+/// What gh reads of `repository` and its rules on `base`, held to the repository `bound` names
+/// where the project is bound to one, or why it was not read whole.
+fn whole(
+    program: &str,
+    repository: &Repository,
+    base: &str,
+    bound: Option<&Binding>,
+) -> Result<Whole, String> {
+    let full = repository.full_name();
+    let read = gh(program, &format!("repos/{full}"))?;
+    let id = (read["id"].as_i64())
+        .ok_or_else(|| format!("gh api repos/{full}: names no repository number"))?;
+    if let Some(binding) = bound.filter(|binding| binding.repository_id != id) {
+        return Err(format!(
+            "{full} is repository {id} on GitHub, and this project is bound to {} ({})",
+            binding.repository_id, binding.full_name
+        ));
+    }
+    let rules = rules(program, repository, base)?;
+    let mut ids: Vec<i64> = (rules.iter())
+        .filter_map(|rule| rule["ruleset_id"].as_i64())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let reads = (ids.into_iter())
+        .map(|ruleset_id| ruleset(program, repository, ruleset_id))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Whole {
+        repository: read,
+        id,
+        rules,
+        reads,
+    })
+}
+
+/// Each of `reads` whose bypass list was read, kept in the state in `folder` as verified of
+/// repository `id` at `now`, in place of what was kept before: how many.
+fn keep(folder: &std::path::Path, reads: Vec<Read>, id: i64, now: i64) -> Result<usize, String> {
+    let verified: BTreeMap<i64, Verified> = reads
+        .into_iter()
+        .filter_map(|read| match read.bypass {
+            Bypass::Actors(bypass) => Some((
+                read.id,
+                Verified {
+                    repository: id,
+                    updated_at: read.updated_at,
+                    bypass,
+                    at: now,
+                },
+            )),
+            Bypass::Unknown(_) => None,
+        })
+        .collect();
+    let store = Store::open(folder)?;
+    let _lock = store.lock()?;
+    let mut state: State = store.state()?.unwrap_or_default();
+    let count = verified.len();
+    state.rulesets = verified;
+    store.save(&state)?;
+    Ok(count)
+}
+
 /// `rulesets`: what gh reads of the rulesets in effect on `base`, judged, and with `verify` kept
 /// where the policy holds. Exits 0 where it holds, 1 where it does not or was not read whole.
 ///
@@ -169,47 +240,19 @@ pub fn run(ctx: &Context<'_>, base: &str, verify: bool, out: &mut dyn Write) -> 
         Some(store) => store.state()?.and_then(|state| state.binding),
         None => None,
     };
-    let unread = |out: &mut dyn Write, why: String| {
-        let _ = writeln!(out, "not read whole, nothing kept: {why}");
-        Ok(1)
+    let Whole {
+        repository: read,
+        id,
+        rules,
+        reads,
+    } = match whole(ctx.gh, &repository, base, bound.as_ref()) {
+        Ok(whole) => whole,
+        Err(why) => {
+            let _ = writeln!(out, "not read whole, nothing kept: {why}");
+            return Ok(1);
+        }
     };
     let full = repository.full_name();
-    let read = match gh(ctx.gh, &format!("repos/{full}")) {
-        Ok(read) => read,
-        Err(why) => return unread(out, why),
-    };
-    let Some(id) = read["id"].as_i64() else {
-        return unread(
-            out,
-            format!("gh api repos/{full}: names no repository number"),
-        );
-    };
-    if let Some(binding) = bound.as_ref().filter(|binding| binding.repository_id != id) {
-        return unread(
-            out,
-            format!(
-                "{full} is repository {id} on GitHub, and this project is bound to {} ({})",
-                binding.repository_id, binding.full_name
-            ),
-        );
-    }
-    let rules = match rules(ctx.gh, &repository, base) {
-        Ok(rules) => rules,
-        Err(why) => return unread(out, why),
-    };
-    let mut ids: Vec<i64> = rules
-        .iter()
-        .filter_map(|rule| rule["ruleset_id"].as_i64())
-        .collect();
-    ids.sort_unstable();
-    ids.dedup();
-    let mut reads = Vec::new();
-    for ruleset_id in ids {
-        match ruleset(ctx.gh, &repository, ruleset_id) {
-            Ok(read) => reads.push(read),
-            Err(why) => return unread(out, why),
-        }
-    }
     let _ = writeln!(
         out,
         "{full} (id {id}), {base}: {} ruleset(s) in effect, read with gh",
@@ -246,27 +289,7 @@ pub fn run(ctx: &Context<'_>, base: &str, verify: bool, out: &mut dyn Write) -> 
         );
         return Ok(0);
     }
-    let verified: BTreeMap<i64, Verified> = reads
-        .into_iter()
-        .filter_map(|read| match read.bypass {
-            Bypass::Actors(bypass) => Some((
-                read.id,
-                Verified {
-                    repository: id,
-                    updated_at: read.updated_at,
-                    bypass,
-                    at: ctx.now,
-                },
-            )),
-            Bypass::Unknown(_) => None,
-        })
-        .collect();
-    let store = Store::open(&folder)?;
-    let _lock = store.lock()?;
-    let mut state: State = store.state()?.unwrap_or_default();
-    let count = verified.len();
-    state.rulesets = verified;
-    store.save(&state)?;
+    let count = keep(&folder, reads, id, ctx.now)?;
     let _ = writeln!(
         out,
         "holds, and verified: {count} ruleset(s) kept, which a delivery takes until one changes"

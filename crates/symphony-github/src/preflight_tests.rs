@@ -412,9 +412,13 @@ fn who_bypasses_a_ruleset_is_what_was_verified_while_it_is_unchanged() {
             }]
         );
     }
+}
+
+#[test]
+fn a_ruleset_github_gives_no_answer_for_is_unavailable_and_of_the_policy() {
     // No answer to judge is unavailable, never a list, and of the policy.
     for status in [401, 429, 500] {
-        let (answer, asked) = reading(status, &json!({}), Some(&none));
+        let (answer, asked) = reading(status, &json!({}), Some(&verified(&[])));
         let stopped = answer.unwrap_err();
         assert_eq!(
             (&stopped["state"], &stopped["kind"]),

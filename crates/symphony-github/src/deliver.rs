@@ -492,7 +492,7 @@ impl Run<'_> {
     }
 
     /// The upstream an import of `request` is of, held to what the settings pin, read now with the
-    /// merging token `host` carries: the repository at the request's address is the one of
+    /// App's token `host` carries: the repository at the request's address is the one of
     /// `upstream_id`, not the one bound (`id`), and its history is taken into this repository only
     /// where that makes nothing private public. Its number and name.
     fn upstream(&self, host: &Host<'_>, request: &Value, id: i64) -> Result<Value, Stopped> {
@@ -520,7 +520,7 @@ impl Run<'_> {
             (301, _) => return Err(refused(format!("the upstream {said} moved (301)"))),
             (status, _) => {
                 return Err(refused(format!(
-                    "the upstream {said} is not readable with the merging token ({status})"
+                    "the upstream {said} is not readable with the App's token ({status})"
                 )));
             }
         };
