@@ -53,6 +53,8 @@ pub(crate) fn methods(path: &str) -> Option<&'static str> {
     } else if symphony::save::ROUTES.contains(&route)
         || route == symphony_api::UPLOAD_PATH
         || route == symphony_api::AGENT_FOCUS_PATH
+        || route == symphony_api::ATTEMPT_CONTROL_ROUTE
+        || route == symphony_api::ATTEMPT_VIEW_ROUTE
     {
         Some("POST")
     } else {
@@ -76,6 +78,9 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
     }
     if route == symphony_api::AGENT_FOCUS_PATH {
         return crate::session_go::answer_focus(shared, request).await;
+    }
+    if route == symphony_api::ATTEMPT_CONTROL_ROUTE || route == symphony_api::ATTEMPT_VIEW_ROUTE {
+        return attempt(shared, &route, request).await;
     }
     let payload = match json_body(request.into_body()).await {
         Ok(payload) => payload,
@@ -137,6 +142,42 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
             StatusCode::from_u16(e.status).unwrap_or(StatusCode::BAD_REQUEST),
             e.error,
         ),
+        Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    }
+}
+
+/// A control or a view of an execution attempt (`crate::attempts`), the local owner's: never a
+/// hosted visitor's, whose posts are its host's dispatch. A view's address is answered `no-store`
+/// and said nowhere else, this server's log included.
+async fn attempt(shared: &Arc<Shared>, route: &str, request: Request) -> Response {
+    if crate::hosted::admission(&request).is_some() {
+        return error(
+            StatusCode::FORBIDDEN,
+            "an attempt's controls are the local owner's; a hosted visitor's are its host's",
+        );
+    }
+    let payload = match json_body(request.into_body()).await {
+        Ok(payload) => payload,
+        Err((status, why)) => return error(status, why),
+    };
+    let Some(hub) = shared.api.get().cloned() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the Symphony server is starting",
+        );
+    };
+    let view = route == symphony_api::ATTEMPT_VIEW_ROUTE;
+    let answered = crate::spawn::blocking(move || {
+        if view {
+            crate::attempts::view(&hub, payload).map(|link| json!(link))
+        } else {
+            crate::attempts::control(&hub, payload).map(|attempts| json!(attempts))
+        }
+    })
+    .await;
+    match answered {
+        Ok(Ok(value)) => ([(header::CACHE_CONTROL, "no-store")], Json(value)).into_response(),
+        Ok(Err((status, why))) => error(status, why),
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
     }
 }

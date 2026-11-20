@@ -1358,7 +1358,10 @@ reads with their JSON types, so a change that would break one fails its own task
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
 task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
 review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes. The current API is 2.4.
+keep their shapes. The current API is 2.5: minor 5 added `attempts`, `{"slug": S}`, a task's
+execution attempts as `symphony_api::TaskAttempts`, read as the board's own service under the
+project the call runs in, refused from outside a project's checkout
+([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md#on-a-tasks-page)).
 
 ### What a program outside the board keeps
 
