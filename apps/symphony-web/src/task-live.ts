@@ -30,6 +30,7 @@ import {
   type MachineWork,
   TASK_GATES_PATH,
   TASK_TIMELINE_PATH,
+  TASK_TOKENS_PATH,
   type Task,
   type TaskChange,
   type TaskEntry,
@@ -450,6 +451,22 @@ export function timelinePart(scope: string, slug: string): Part<unknown, TaskEve
     url: scoped(scope, `${TASK_TIMELINE_PATH}?slug=${named(slug)}`),
     read: (value) => value ?? null,
     // The task's own change moves its timeline: read again, the one shown left meanwhile.
+    hear: (value, event) => (changesTask(slug, event.changes) ? { value, again: true } : null),
+  };
+}
+
+/**
+ * The tokens of the task `slug` and what they cost, as the server sent them: the chunk of the
+ * page's disclosure of them (task-tokens.tsx), which a first visit does not carry, reads them as it
+ * draws them. Asked once the disclosure opens.
+ */
+export function tokensPart(scope: string, slug: string): Part<unknown, TaskEvent> {
+  return {
+    key: `tokens ${slug}`,
+    url: scoped(scope, `${TASK_TOKENS_PATH}?slug=${named(slug)}`),
+    read: (value) => value ?? null,
+    // The task's own change (a move, a verdict's status, a role) is when its figures are worth
+    // reading again: a heartbeat says nothing on the feed.
     hear: (value, event) => (changesTask(slug, event.changes) ? { value, again: true } : null),
   };
 }

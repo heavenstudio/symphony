@@ -184,6 +184,7 @@ pub(crate) fn run(
         now,
         repository,
         openssl: "openssl",
+        rest: &|_| {},
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = symphony_github::cli::run(&args, &ctx, &mut out, &mut err);

@@ -718,10 +718,12 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   starts at `release-candidate`, never at main; it merges `release-candidate` again before review,
   as that branch moves when another red's fix lands (but on a line a pull request delivers to,
   once the candidate advanced to a delivered head: below), and never merges main before its land
-  ([CHECKS](CHECKS.md#after-main-moves)). When the fix changes what the client is
+  ([CHECKS](CHECKS.md#after-main-moves)) but for the one merge below that a fix of the client a
+  pull request delivers makes. When the fix changes what the client is
   built from it commits the distribution its own sources make (`just client-update`), the one kind
   of branch that commits it, since no regenerator builds the candidate; the land keeps main's side
-  of it ([TASKS](TASKS.md#the-default-landing)). Its approve, where it needs review, names the
+  of it ([TASKS](TASKS.md#the-default-landing)), and where a pull request delivers it, the merge
+  of main its branch delivers does (below). Its approve, where it needs review, names the
   full tip it read, and it lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
   landing (`just tasks done SLUG NOTE --covered-by OTHER`), never landed. A fix made outside this
   repository (a consumer's) answers its red by the task cancelled, saying where. The candidate's
@@ -781,10 +783,24 @@ fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design an
   the squash carries none, less the commits of each head delivered onto the line before it: a
   fix started where an earlier fix left the candidate holds that fix's commits, which that
   one's squash said, so a candidate dropped after two advances says each entry once. A release
-  tagged on a delivered head stays in the notes of every release after it by the same reading. A fix that changes what
-  the client is built from is not delivered so yet: a delivery refuses a head that changes a
-  generator's outputs, and the candidate's fix must commit them, so that fix waits for the
-  delivery of generated outputs and its red stays open, or the candidate is dropped.
+  tagged on a delivered head stays in the notes of every release after it by the same reading.
+- **A fix of the client a pull request delivers** is delivered from a second head, as no squash
+  keeps main's side of a generated path, which main makes again meanwhile, and the candidate must
+  hold the outputs the fix's own sources make. Its head **T**, which commits them, is refused by
+  a delivered land, which says how it lands ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request),
+  step 1): it tells T by `release-candidate`, a head holding its tip and beyond it no commit the
+  remote's default branch holds. T is approved naming it, by a fresh reviewer whatever its
+  assessment names, as an advance takes only a commit an approve names, and nothing is committed
+  on it after. The branch then merges main once, keeping main's side of every generated path
+  (`git restore --source=origin/main --staged --worktree -- PATH` before the merge's commit), its
+  one merge of main, and that head **D** is assessed, tested and approved as any new head and
+  delivered. The squash brings the fix's sources onto main beside main's own outputs, which the
+  regenerator makes again from main's sources, and the advance takes T, the newest approved commit
+  holding nothing main held, as D holds main. Without an approve naming T, D's land drops the
+  candidate, as any land with no approved commit of the fix alone does. A T the candidate moved
+  past (another red's fix advanced it after T started) is taken by no advance: rebased while
+  nothing approved it, else its land drops the candidate, as above, and the delivered land says
+  so; one whose candidate ended is any task, told to put its outputs back.
 - **The rerun.** Once every red is answered, the candidate's tip is rerun: by the `--due` of the
   land that answered the last red, else by the next landing's, the next scheduled run, or `just
   release --rerun`, an orchestrator's retry. It waits for no regenerator, as a fix commits the

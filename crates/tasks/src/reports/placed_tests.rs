@@ -73,6 +73,7 @@ fn cycle() -> ReportRead {
             ],
             vec![place(BUILD, WORKING, "in_progress", 2.0)],
         ]),
+        ..ReportRead::default()
     }
 }
 
@@ -170,6 +171,7 @@ fn the_last_place_counts_up_to_the_read_and_a_place_held_from_before_the_day_cou
         tasks: vec![task("sim/long", None, -30.0)],
         workflow: true,
         places: Some(vec![vec![place(BUILD, WORKING, "in_progress", -10.0)]]),
+        ..ReportRead::default()
     };
     let day = day("sim", D, at(2.25), at(2.25), &read);
     assert_eq!(
@@ -208,6 +210,7 @@ fn a_label_renamed_by_a_later_definition_is_an_entry_of_its_own_and_never_rename
             ],
             vec![place(make, ("working", "Making"), "in_progress", 1.0)],
         ]),
+        ..ReportRead::default()
     };
     let day = day("sim", D, at(3.0), at(3.0), &read);
     assert_eq!(
@@ -240,6 +243,7 @@ fn a_task_cancelled_counts_nothing_after_and_one_with_no_place_counts_nothing() 
             ],
             vec![],
         ]),
+        ..ReportRead::default()
     };
     let day = day("sim", D, at(2.0), at(2.0), &read);
     assert_eq!(
@@ -257,6 +261,7 @@ fn a_board_that_runs_no_workflow_writes_no_field_and_the_bytes_it_wrote_before()
         tasks: vec![task("sim/legacy", None, 0.0)],
         workflow: false,
         places: None,
+        ..ReportRead::default()
     };
     let day = day("sim", D, at(2.0), at(2.0), &legacy);
     assert!(day.hours.iter().all(|hour| hour.workflow.is_none()));
