@@ -307,8 +307,9 @@ fn linked(root: &Path, name: &str, build: &Path) {
 }
 
 /// A build its project no longer runs is not counted once it has not run for longer than the
-/// project's bound; the build a link names holds however long ago it ran, and so does one on another
-/// host, whose links are not this machine's to read. A program gone from its path is gone first.
+/// project's bound; the build a link names holds however long ago it ran, and so does one on
+/// another host, whose links are not this machine's to read. A program gone from its path is gone
+/// first.
 #[test]
 fn a_build_its_project_no_longer_runs_unseen_past_its_bound_is_not_counted_and_its_own_build_holds()
 {
@@ -432,9 +433,11 @@ fn a_hold_by_no_build_the_project_runs_names_no_link_and_nothing_uncounted_leave
     let holding = found.holding(18, "release-1", 19, now);
     assert!(!holding.contains(OWN_BUILD), "{holding}");
     assert!(
-        holding.ends_with("`just release --refresh` moves it"),
+        holding.ends_with(", then the Symphony moves it"),
         "{holding}"
     );
+    // A project reads it on its own board: it names none of the Symphony's own commands.
+    assert!(!holding.contains("just "), "{holding}");
 }
 
 /// The bound is the project's own `[board] stale_writer_hours`, a whole number of hours over 0;

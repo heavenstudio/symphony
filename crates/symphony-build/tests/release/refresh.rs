@@ -576,9 +576,9 @@ fn a_lagging_writer_holds_its_own_board_alone_and_never_another_or_current() {
              writer seen there in the last week is behind {RELEASE}'s schema 19: {}",
             this_writer()
         )) && out.contains(
-            " ago); rebuild each at schema 19 and run it once, which records it, then an \
-             orchestrator's `just release --refresh` moves it (`just symphony-cli \
-             release-notes` in the project says what taking the release asks of it)\n"
+            " ago); rebuild each at schema 19 and run it once, which records it, then the \
+             Symphony moves it (`just symphony-cli release-notes` in the project says what \
+             taking the release asks of it)\n"
         ),
         "{out}"
     );
@@ -605,11 +605,12 @@ fn a_lagging_writer_holds_its_own_board_alone_and_never_another_or_current() {
             && out.contains("release: refresh-beta green ("),
         "{out}"
     );
-    // The machine's server is a project's build: its switch is a stop and a start, the owner's word.
+    // The machine's server is a project's build: its switch is a stop and a start, the owner's
+    // word.
     assert!(
         out.contains(&format!(
-            "release: refresh: the machine's server (process 4242, port {port}) is the build of {}, \
-             whose reload follows that checkout and never current",
+            "release: refresh: the machine's server (process 4242, port {port}) is the build of \
+             {}, whose reload follows that checkout and never current",
             alpha.display()
         )),
         "{out}"
@@ -727,12 +728,12 @@ fn a_build_its_project_no_longer_runs_holds_no_board_and_the_one_it_runs_does() 
             "release: refresh: beta: the project's to finish: its board stays at schema 18: a \
              writer seen there in the last week is behind {RELEASE}'s schema 19: tasks-3d4e5f at \
              schema 18 ({} on {host}, last seen 72 h ago); rebuild each at schema 19 and run it \
-             once, which records it, then an orchestrator's `just release --refresh` moves it; \
-             the project's own build of the board's binaries is among them (a link in its \
-             `.target/bin`): it takes the release by moving its pin to it and rebuilding them, \
-             or, where those binaries are the board's own, by removing those links, so its \
-             recipes run the release's (`current/bin` in the machine folder), as a project with \
-             no build of its own does, and its board moves with each release (",
+             once, which records it, then the Symphony moves it; the project's own build of the \
+             board's binaries is among them (a link in its `.target/bin`): it takes the release \
+             by moving its pin to it and rebuilding them, or, where those binaries are the \
+             board's own, by removing those links, so its recipes run the release's \
+             (`current/bin` in the machine folder), as a project with no build of its own does, \
+             and its board moves with each release (",
             linked.display()
         )),
         "{out}"

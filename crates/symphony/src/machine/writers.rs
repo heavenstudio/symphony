@@ -101,9 +101,9 @@ pub struct Runs {
 
 impl Runs {
     /// The project whose main checkout is `root`: its links, each named by the file it leads to,
-    /// and its bound. A link that leads nowhere names nothing, and a bound its file does not give as
-    /// a whole number of hours over 0 is the default, as the project's own settings check refuses
-    /// it.
+    /// and its bound. A link that leads nowhere names nothing, and a bound its file does not give
+    /// as a whole number of hours over 0 is the default, as the project's own settings check
+    /// refuses it.
     pub fn of(root: &Path) -> Runs {
         let builds = fs::read_dir(root.join(symphony_board::builds::LINKS))
             .map(|entries| {
@@ -274,7 +274,11 @@ pub fn said(writer: &Writer, now: f64) -> String {
 
 /// What a judgement says of a board at schema `live` that the writers `behind`, never none, hold
 /// below `release`'s schema `target`, with what it says of those it did not count
-/// (`not_counted`, [`Lagging::not_counted`]), read at `now`: what its project finishes.
+/// (`not_counted`, [`Lagging::not_counted`]), read at `now`: what its project finishes, and that
+/// the Symphony moves the board then. A refresh and the machine's server say it alike, so a round
+/// compares its words with a refresh's ([`steady`]); which of them moves it is theirs to say, and
+/// the project whose board it is reads it on its update's task, so it names no command that
+/// project lacks.
 pub fn holding(
     live: i64,
     behind: &[Writer],
@@ -286,7 +290,7 @@ pub fn holding(
     format!(
         "its board stays at schema {live}: {} seen there in the last week {} behind {release}'s \
          schema {target}: {}; rebuild each at schema {target} and run it once, which records it, \
-         then an orchestrator's `just release --refresh` moves it{}",
+         then the Symphony moves it{}",
         match behind.len() {
             1 => "a writer".to_string(),
             n => format!("{n} writers"),
