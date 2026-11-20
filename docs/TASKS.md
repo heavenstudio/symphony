@@ -2570,7 +2570,13 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    [what the regenerator made](#what-the-generators-make-delivered-by-a-pull-request), as is one
    that merges a commit the remote default does not hold and is not
    [an import of the upstream](#an-import-delivered-by-a-pull-request): another history, which a
-   squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). A task that is not
+   squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). The refusal of
+   generated outputs tells `@executor` to put them back as the default branch has them, but for a
+   release candidate's fix, a head that holds `release-candidate` and beyond it no commit the
+   remote default holds: that head keeps the outputs its own sources make, approved naming it,
+   and the branch delivers a merge of the default branch that keeps the default branch's
+   ([RELEASES](RELEASES.md#the-release-candidate)). With a candidate held that the head does not
+   hold, the refusal says how a fix of it is rebased first. A task that is not
    eligible at its head is refused before anything is published.
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
