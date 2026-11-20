@@ -4036,6 +4036,14 @@ an approve verdict, which says no more). The thread keeps every line as written.
 acknowledge a message, and never repeat a post on a subtask and its parent.
 A session without a channel keeps `just tasks inbox`.
 
+In the Symphony an agent's post or verdict, a task's brief and an ask's answer are drawn as a
+document's body is: bold, italics, inline code, links, lists, tables, fenced code, pictures,
+`[[wiki links]]`, a card named in bold and `[[name:argument]]` components all show. Raw HTML
+does not: `Vec<String>`, `<TokensPart key=x>` or a `<details>` named in a post is the words
+typed, drawn once, never an element or a notice of unsupported content, as in a card's note
+(`convert_post`, `crates/symphony/src/render/markdown.rs`). The owner's words are the text typed,
+but for a line naming a file they attached, which shows the file.
+
 The owner reads the board and every thread in the Symphony, sends messages
 to anyone on a task, changes its priority from p0 to p4 and cancels open tasks.
 Cancellation asks for confirmation; done and cancelled tasks cannot be cancelled

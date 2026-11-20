@@ -75,6 +75,7 @@ mod tabs;
 mod task_attempts;
 mod task_diff;
 mod task_gates;
+mod task_posts;
 mod timeline;
 mod touch;
 mod waiting_board;
