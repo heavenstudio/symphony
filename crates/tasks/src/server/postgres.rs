@@ -20,9 +20,11 @@
 //! a scratch SurrealDB's rule; any other board's outlives its starter, as its SurrealDB does, and
 //! ends at a stop or a hold. A start waits for the supervisor's word, never polls; a stop is
 //! PostgreSQL's fast shutdown, waited for by `pg_ctl`. Both take the board's starters' lock, as
-//! SurrealDB's do. A start that finds a server of the data stopping, as a scratch board's is in
-//! the moment after the command that started it ended, waits for that server's end
-//! ([`Postgres::outgoing_ended`]) and then starts its own.
+//! SurrealDB's do. A start that finds a server of the data on its way out, as a scratch board's
+//! is in the moment after the command that started it ended, waits for that server's end
+//! ([`Postgres::outgoing_ended`]) and then starts its own: one whose record says it is stopping,
+//! and one whose record still says it is ready though its starter has ended ([`STARTER`]), as it
+//! does until its watchdog's signal reaches it.
 
 use super::scratch::{Lifeline, scratch};
 use super::starters::Doing;
@@ -46,6 +48,12 @@ pub const USER: &str = "postgres";
 /// In the board's folder: the server's data and its log.
 pub(crate) const DATA: &str = "postgresql";
 const LOG: &str = "postgresql.log";
+/// In the board's folder: the server a start started on its [`Lifeline`] and the process it ends
+/// with, as `SERVER STARTER` pids on one line ([`starter_of`]). Written once that server is ready,
+/// under the starters' lock, and removed by every start before it starts one, so it names the last
+/// server the board started on a lifeline. It counts only for a running server of the pid it
+/// names: one of another pid, as a server started by hand on the data, is never taken for it.
+const STARTER: &str = "postgresql.starter";
 /// Where the socket folders are, each named for the data it serves ([`socket_folder`]).
 const SOCKETS: &str = "/tmp";
 /// The longest socket path macOS takes (`sun_path` is 104 bytes with its closing zero).
@@ -176,8 +184,17 @@ impl Postgres {
         // The record is read once for a server that serves, as every command of a board whose
         // server outlives its starter finds it, and again only after a wait.
         let mut record = self.recorded();
-        if let Some(outgoing) = record.as_ref().filter(|record| record.stopping) {
-            self.outgoing_ended(outgoing)?;
+        if let Some((outgoing, going)) = record.as_ref().and_then(|record| {
+            let going = if record.stopping {
+                Some("is stopping".to_string())
+            } else {
+                self.starter_ended(record).map(|starter| {
+                    format!("ends with its starter (pid {starter}), which has ended")
+                })
+            };
+            going.map(|going| (record, going))
+        }) {
+            self.outgoing_ended(outgoing, &going)?;
             record = self.recorded();
         }
         if let Some(serving) = self.serving(record, &version)? {
@@ -309,17 +326,18 @@ impl Postgres {
         )))
     }
 
-    /// The server `record` names, which is stopping, waited for until it has ended: a scratch
-    /// board's is asked to end as the command that started it ends ([`SUPERVISED`]'s watchdog),
-    /// and the next command meets it on its way out. The wait is for the end of its process, as
-    /// the kernel says it ([`gone`]), the board's patience its backstop, which only a stall
-    /// reaches and which says the load; then the start goes on, to a server of its own. It is
-    /// never signalled, and the wait is told before it is made. One that is starting is not
-    /// waited for: [`Postgres::running`] refuses it.
-    fn outgoing_ended(&self, record: &PidFile) -> Result<(), ServerError> {
+    /// The server `record` names, which is on its way out (`going` says how: it is stopping, or
+    /// its starter has ended), waited for until it has ended: a scratch board's is asked to end as
+    /// the command that started it ends ([`SUPERVISED`]'s watchdog), and the next command meets it
+    /// on its way out, its record saying it is ready until that signal reaches it. The wait is for
+    /// the end of its process, as the kernel says it ([`gone`]), the board's patience its
+    /// backstop, which only a stall reaches and which says the load; then the start goes on, to a
+    /// server of its own. It is never signalled, and the wait is told before it is made. One that
+    /// is starting is not waited for: [`Postgres::running`] refuses it.
+    fn outgoing_ended(&self, record: &PidFile, going: &str) -> Result<(), ServerError> {
         let left = |why: String| {
             ServerError::NotUp(format!(
-                "the board's PostgreSQL (pid {}) on {} is stopping, {why}: it is left to finish, \
+                "the board's PostgreSQL (pid {}) on {} {going}, {why}: it is left to finish, \
                  never signalled. Run the command again once it has ended; its log is {}",
                 record.pid,
                 self.data().display(),
@@ -327,7 +345,7 @@ impl Postgres {
             ))
         };
         (self.home.tell)(&format!(
-            "· the board's PostgreSQL (pid {}) is stopping: this start waits for its end, then \
+            "· the board's PostgreSQL (pid {}) {going}: this start waits for its end, then \
              starts its own",
             record.pid
         ));
@@ -349,6 +367,18 @@ impl Postgres {
         (pid_alive(record.pid) && self.serves(record.pid)).then_some(record)
     }
 
+    /// The starter of the server `record` names, when this board started that server on the
+    /// starter's [`Lifeline`] ([`STARTER`]) and the starter has ended. Such a server is on its way
+    /// out: nothing but its starter holds the lifeline open, so its watchdog asks it to end.
+    /// None for a server whose starter still runs, one started apart or by hand, or where the
+    /// record cannot be read. A starter's pid taken since by another process reads as running,
+    /// so a server is never taken for outgoing while its starter runs.
+    fn starter_ended(&self, record: &PidFile) -> Option<i64> {
+        let text = fs::read_to_string(self.home.dir.join(STARTER)).ok()?;
+        let (server, starter) = starter_of(&text)?;
+        (server == record.pid && !pid_alive(starter)).then_some(starter)
+    }
+
     /// Whether `pid` runs this board's `postgres` on its data, as the supervisor starts it.
     fn serves(&self, pid: i64) -> bool {
         let Ok(said) =
@@ -368,11 +398,19 @@ impl Postgres {
 
     /// The server started under its supervisor ([`SUPERVISED`]), on this process's lifeline when
     /// it is this process's own ([`Postgres::owned`]), and waited for until it says it is ready or
-    /// ended, the board's patience at most.
+    /// ended, the board's patience at most. One of this process's own, once ready, is recorded with
+    /// this process as its starter ([`STARTER`]); the record of any earlier one goes first.
     fn start(&self, version: String) -> Result<Serving, ServerError> {
         let log = self.log();
         let from = fs::metadata(&log).map_or(0, |meta| meta.len());
         let owned = self.owned();
+        let starter = self.home.dir.join(STARTER);
+        match fs::remove_file(&starter) {
+            Err(problem) if problem.kind() != std::io::ErrorKind::NotFound => {
+                return Err(io("could not remove", &starter)(problem));
+            }
+            _ => {}
+        }
         let input = if owned {
             let lifeline = Lifeline::of_this_process()
                 .map_err(io("could not make a lifeline for", &self.home.dir))?;
@@ -422,11 +460,17 @@ impl Postgres {
         };
         let said = Said::of(&String::from_utf8_lossy(&out.stdout));
         match (said.pid, said.ready) {
-            (Some(pid), Some(true)) => Ok(Serving {
-                pid,
-                socket: self.socket(),
-                version,
-            }),
+            (Some(pid), Some(true)) => {
+                if owned {
+                    fs::write(&starter, format!("{pid} {}\n", std::process::id()))
+                        .map_err(io("could not write", &starter))?;
+                }
+                Ok(Serving {
+                    pid,
+                    socket: self.socket(),
+                    version,
+                })
+            }
             (pid, _) => Err(ServerError::NotUp(format!(
                 "the board's PostgreSQL{} did not start: {}; its log is {}",
                 pid.map(|pid| format!(" (pid {pid})")).unwrap_or_default(),
@@ -724,6 +768,18 @@ fn pid_file(text: &str) -> Option<PidFile> {
         ready: status == Some("ready"),
         stopping: status == Some("stopping"),
     })
+}
+
+/// The server and its starter a [`STARTER`] record names, as `SERVER STARTER` pids on one line;
+/// none for a record of any other shape, as a write cut short leaves.
+fn starter_of(text: &str) -> Option<(i64, i64)> {
+    let mut pids = text.trim_end_matches('\n').split(' ').map(str::parse);
+    match (pids.next(), pids.next(), pids.next()) {
+        (Some(Ok(server)), Some(Ok(starter)), None) if server > 0 && starter > 0 => {
+            Some((server, starter))
+        }
+        _ => None,
+    }
 }
 
 /// What the supervisor said ([`SUPERVISED`]): the server's pid, and whether it was ready (`ready`)

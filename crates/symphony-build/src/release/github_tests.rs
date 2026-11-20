@@ -135,16 +135,30 @@ fn status_counts_what_is_published_names_each_pending_release_and_the_newest_pub
     let _ = fs::remove_dir_all(&folder);
 }
 
+/// A copy of the lock's descriptor that outlives the publication, as a child forked by another
+/// thread holds one until its exec, does not keep the lock: the next publication takes it.
+#[test]
+fn a_copy_of_the_lock_left_after_a_publication_holds_nothing() {
+    let folder = folder("copied");
+    let publishing = Publishing::take(&folder).expect("the lock is free");
+    let copy = publishing.0.try_clone().unwrap();
+    drop(publishing);
+    let next = Publishing::take(&folder);
+    assert!(next.is_some(), "the copy kept the lock");
+    drop(copy);
+    drop(next);
+    assert!(Publishing::take(&folder).is_some());
+}
+
 #[test]
 fn one_publication_runs_at_a_time_and_a_second_asks_nothing() {
     let folder = folder("locked");
-    let held = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(folder.join(LOCK))
-        .unwrap();
-    held.try_lock().unwrap();
+    // Another publication, holding the lock as one does.
+    let held = Publishing::take(&folder).expect("the lock is free");
+    assert!(
+        Publishing::take(&folder).is_none(),
+        "one at a time, in one process too"
+    );
     let command = ["/nowhere/never-run".to_string()];
     let asking = Asking {
         root: &folder,
