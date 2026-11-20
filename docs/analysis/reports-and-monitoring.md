@@ -550,6 +550,15 @@ hours of any span sum to that span's figure (a day, a week, a local day):
   superseded by …`, a question the agent withdrew, a card marked resolved).
 - **Git**: commits and merges that reached the branch in the hour, the lines they brought, and the
   `Revert "` commits among them.
+- **Tokens** (`tokens`): what the board's `usage` table gained in the hour, by role, model and
+  speed (`symphony_api::TokenSum`). Each roll-up keeps what the table held at its read, summed so
+  (the day's `usage`, one grouped read of the table, not its rows); the next takes its own sums
+  less those and shares the gain among the hours between the two reads by the time of each
+  between them, so each token is counted once and in no hour twice. An hour no two roll-ups span
+  (the first roll-up's, those of a server that was down) has none: a gap, never a zero. A token
+  is counted in the hour its roll-up shared it to, not the minute of its call. Tokens are kept,
+  never dollars: Reports and `just tasks stats` price them at read with the table their build
+  embeds ([TASKS](../TASKS.md#what-the-tokens-cost)).
 - **Workflow**, on a board that runs a custom workflow alone (`workflow`, absent otherwise, so a
   board that runs none writes the file it wrote before): the task-hours top-level tasks and
   subtasks, apart, spent in each delivery phase and, separately, in each coordination state, from
@@ -570,8 +579,11 @@ where its body names the commits it came between, those commits and the tasks th
 the merges on the default branch's line of first parents in that range, `Merge branch 'SLUG'`, by
 slug, as the release cadence counts landings, read with one more `git log` for each such red), the
 cards still waiting with since when, each card that left the queue in the day with its minute and
-the word of its line (`answered`, `auto_approved`, `withdrawn`), and what git was read with what it
-left out.
+the word of its line (`answered`, `auto_approved`, `withdrawn`), what git was read with what it
+left out, the board's `usage` sums at the read (above), and each top-level task landed in the day
+(`landed`), once at its last landing in it, with the tokens it and its subtasks took by role,
+review round, model and speed, which Reports prices for the cost per landed task and the review
+rounds against the first.
 
 Three choices hold for every figure: a close as covered by another task is a move to `done` like a
 landing's and counts in the lead time; a review's instruction subtasks count among the subtasks

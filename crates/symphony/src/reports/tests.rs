@@ -327,6 +327,7 @@ fn red_read(slug: &str, between: &str) -> ReportRead {
             between: Some(between.into()),
             lines: Vec::new(),
         }],
+        ..ReportRead::default()
     }
 }
 
@@ -383,4 +384,74 @@ fn a_folder_that_cannot_be_written_is_the_error() {
     let folder = tree.write("reports", "a file where the folder goes");
     let error = roll(&tree, &folder, NOW, &[]).unwrap_err();
     assert!(error.contains("reports"), "{error}");
+}
+
+/// A read whose `usage` table holds `n` input tokens of one executor.
+fn usage_read(n: u64) -> ReportRead {
+    ReportRead {
+        usage: vec![symphony_api::reports::TokenSum {
+            role: "executor".into(),
+            model: "m".into(),
+            speed: "standard".into(),
+            input: n,
+            calls: 1,
+            ..Default::default()
+        }],
+        ..ReportRead::default()
+    }
+}
+
+/// Each hour of the file of the day from `start`, by its hour of the day, with the input tokens
+/// it tells; none for an hour that tells none.
+fn inputs(folder: &Path, start: f64) -> Vec<(u32, Option<u64>)> {
+    (written(folder, start).hours.iter())
+        .zip(0..)
+        .map(|(hour, at)| {
+            let sum = (hour.tokens.as_ref()).map(|sums| sums.iter().map(|s| s.input).sum());
+            (at, sum)
+        })
+        .collect()
+}
+
+#[test]
+fn the_next_roll_up_shares_what_the_table_gained_among_the_hours_since_the_last() {
+    let tree = Tree::new();
+    repository(&tree);
+    let folder = tree.path("reports");
+    let roll_at = |now: f64, read: &ReportRead| {
+        roll_up(
+            &tree.root,
+            "sim",
+            now,
+            &folder,
+            &due(&folder, now),
+            read,
+            &[],
+            &Gate::default(),
+        )
+        .unwrap()
+    };
+    // The first roll-up, at 22:00 the day before: it keeps the sums and tells no hour.
+    let first = today() - 2.0 * HOUR;
+    roll_at(first, &usage_read(1_000));
+    let before = written(&folder, today() - DAY);
+    assert_eq!(before.usage.as_ref().unwrap()[0].input, 1_000);
+    assert!(before.hours.iter().all(|hour| hour.tokens.is_none()));
+    // The next, at 01:00: 300 gained over three hours, a hundred an hour, across midnight.
+    roll_at(today() + HOUR, &usage_read(1_300));
+    let yesterday = inputs(&folder, today() - DAY);
+    assert_eq!(
+        &yesterday[20..],
+        [(20, None), (21, None), (22, Some(100)), (23, Some(100))]
+    );
+    // A roll-up at 01:00 sharp has no hour from 01:00 yet.
+    assert_eq!(inputs(&folder, today()), [(0, Some(100))]);
+    // An hour later: what it gained goes to the hour from 01:00, added to what that hour held.
+    roll_at(today() + 2.0 * HOUR, &usage_read(1_360));
+    assert_eq!(inputs(&folder, today()), [(0, Some(100)), (1, Some(60))]);
+    assert_eq!(
+        written(&folder, today()).usage.unwrap()[0].input,
+        1_360,
+        "today's file keeps the sums for the next"
+    );
 }

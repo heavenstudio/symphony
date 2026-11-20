@@ -1,7 +1,10 @@
 //! `stats`: where the pipeline's time goes ([`crate::stages::stats`]) over the top-level tasks
 //! made in the last `--days` days, and how many were done on each of those days whenever they
 //! were made, as text or as JSON. One read of the board ([`Store::stage_records`]), whatever its
-//! size.
+//! size. Under them, the tokens the board recorded in those days and their estimated cost
+//! ([`tokens`]), from the hourly roll-up's day files and no read of the board.
+
+mod tokens;
 
 use super::{Context, Stop};
 use crate::cli::shape;
@@ -52,10 +55,15 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let summary = summarize(&rows, &closes, now, days, &|at| {
         sys::local_minute(at).chars().take(10).collect()
     });
+    let told = tokens::told(c.env, now, days, crate::usage::Prices::embedded());
     if c.parsed.flag("json") {
-        c.say(&serde_json::to_string_pretty(&json(&summary)).expect("JSON values serialize"));
+        let mut json = json(&summary);
+        if let Some(fields) = json.as_object_mut() {
+            fields.insert("tokens".into(), tokens::json(&told));
+        }
+        c.say(&serde_json::to_string_pretty(&json).expect("JSON values serialize"));
     } else {
-        for line in text(&summary) {
+        for line in text(&summary).into_iter().chain(tokens::text(&told)) {
             c.say(&line);
         }
     }
