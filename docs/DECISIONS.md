@@ -5,6 +5,21 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### Project workflows
+
+- [ ] **workflow-guard-panel** — When a project's workflow holds an action back until its own approval ledger says yes (Accept, say), the task's page would show, under that action, each approval it waits on, whose ledger decides it and the last state the board took from that ledger, and why your own last try was refused (expired, stale, missing, refused by the ledger…), one word and one line each. Above the actions it shows the approvals that let the task in and whether they still stand. Nothing on it approves: the ledger decides, the page shows its word. Approve this look, or comment. [[analysis/workflow-guard-panel#The panel]]
+  [2026-11-20 05:37] agent — For `app/workflow-guard-panel`. Today every such action is disabled and says only "its check does not answer here", naming no approval or ledger: ![Today, wide](analysis/workflow-guard-panel/before-wide.webp) ![Today, on a phone](analysis/workflow-guard-panel/before-phone.webp)
+
+    **Proposed, drawn into the real page with invented names, times and numbers.** Accept needs "release signoff" from the ledger; your last Accept came back expired. Above, "design signoff" let the task in but the ledger has decided again since: ![Proposed, wide](analysis/workflow-guard-panel/after-wide.webp) ![Proposed, on a phone](analysis/workflow-guard-panel/after-phone.webp)
+
+    Every state a row can show, grouped by where it comes from: ![Every state, wide](analysis/workflow-guard-panel/states-wide.webp) ![Every state, on a phone](analysis/workflow-guard-panel/states-phone.webp)
+
+    **What it does not claim.** Your last try is this page's alone: it lasts until the task moves or the page reloads, and the board keeps no refusals, so nothing shows across devices and an agent's refusal never shows here. A later ledger decision reads "decided again", never "revoked": the board learns that the ledger decided, not what. A revocation shows only in the ledger's own words, as "refused". With the ledger not reachable from the app, the action stays disabled and says "not from here".
+
+    **Earlier verdicts checked.** **revision-bound-project-guards** (B) puts approvals in the project's ledger, which this keeps; it says nothing of how a page shows them. **reports-task-page-pictures** (A) chose the gates' rows (met, missing or waived, with who, when and why), whose shape these rows reuse; it decides the gates, not guards. **project-workflow-shape** (C) lets a project add states and edges, not how they look. None decides this look. The same task builds it after your answer.
+
 ## Auto-approved: spot-check
 
 ### Releases
