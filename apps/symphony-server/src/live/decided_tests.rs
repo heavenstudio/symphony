@@ -280,6 +280,34 @@ fn a_hold_on_the_owners_approve_ends_on_his_approve_of_the_tip_alone() {
     );
 }
 
+/// A hold whose task has no branch of its name (a landing of another branch's) names no tip: it
+/// stays, and the look says nothing went wrong.
+#[test]
+fn a_hold_whose_task_has_no_branch_stays_held() {
+    let tree = Tree::new();
+    let root = project(&tree, "");
+    let (f, orch) = board("review", true);
+    f.store
+        .hold_blocked_on(
+            SLUG,
+            &orch,
+            Some(On {
+                thing: "check:owner",
+                why: None,
+            }),
+        )
+        .unwrap();
+    let main = symphony_board::sweep::git::rev(&root, "main").unwrap();
+    f.store
+        .say(SLUG, "owner", &format!("approve {main}"), None)
+        .unwrap();
+    let mut kept = symphony::decided::Kept::default();
+    let board = f.store.board().unwrap();
+    let looked = kept.look(&f.store, &root, &board, &Default::default(), 0.0);
+    assert_eq!(looked, symphony::decided::Looked::default());
+    assert_eq!(status(&f), "blocked");
+}
+
 /// No server ran when the owner's line was written (by hand, or a save of another build's that
 /// moved nothing): the first look reads it.
 #[test]

@@ -80,6 +80,17 @@ fn said_keeps_the_owners_dated_lines_of_every_copy_once_oldest_first() {
 }
 
 #[test]
+fn an_owners_line_with_no_time_it_reads_as_is_left_out() {
+    let undated = cards(
+        "  [2026-13-40 04:10] owner · approved — a month that is none\n  \
+         [2026-11-20 04:20] owner · rejected — no\n",
+    );
+    let read = said(undated.iter().map(|card| (MAIN, card)));
+    let stamps: Vec<&str> = read["layout"].iter().map(|l| l.stamp.as_str()).collect();
+    assert_eq!(stamps, ["2026-11-20 04:20"]);
+}
+
+#[test]
 fn a_verdict_since_the_block_decides_the_card_in_its_word() {
     let block = at("2026-11-20 04:00") + 30.0;
     for (verdict, word) in [
