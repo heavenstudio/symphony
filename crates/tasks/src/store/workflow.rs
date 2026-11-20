@@ -337,7 +337,9 @@ impl Store {
         {
             return Ok(Followed::Unchanged(active));
         }
-        activate::supported(&custom.definition, host).map_err(refused_workflow)?;
+        activate::supported_with(&custom.definition, host, &custom.authorities)
+            .and_then(|()| activate::bound(custom))
+            .map_err(refused_workflow)?;
         let by = crate::workflow::board_service("activation");
         for _ in 0..PLANS {
             // The versions first, the holders after: a claim between the two is seen by the
@@ -426,6 +428,8 @@ impl Store {
                     "revision": custom.revision,
                     "previous": read.active,
                     "mappings": activate::recorded_mappings(&custom.mappings),
+                    "authorities": custom.authorities,
+                    "project": custom.project,
                     "moved": plan.moved.len(),
                     "principal": by,
                     "at": at,
@@ -492,8 +496,35 @@ impl Store {
         let mappings = self
             .workflow_mappings(active.generation)?
             .unwrap_or_default();
+        let (project, authorities) = self.workflow_authorities_of(active.generation)?;
         // Each maps a pair once (`Validated::check_mappings`), so as maps they are equal or not.
-        Ok(crate::workflow::mapped(&mappings) == crate::workflow::mapped(&custom.mappings))
+        Ok(
+            crate::workflow::mapped(&mappings) == crate::workflow::mapped(&custom.mappings)
+                && authorities == custom.authorities
+                && project == custom.project,
+        )
+    }
+
+    /// The project and the approval authorities, sorted by adapter, activation `generation`
+    /// recorded: none for an activation that committed none, or one not recorded.
+    pub fn workflow_authorities_of(
+        &self,
+        generation: u64,
+    ) -> Result<(Option<String>, Vec<crate::workflow::Attester>), Error> {
+        #[derive(Deserialize)]
+        struct Recorded {
+            project: Option<String>,
+            #[serde(default)]
+            authorities: Vec<crate::workflow::Attester>,
+        }
+        let body: Value = self.retrying(|| {
+            self.read(
+                both(sql::AUTHORITIES, pg::authorities()),
+                json!({"generation": generation}),
+            )
+        })?;
+        Ok(decoded::<Recorded>(body, "workflow authorities")?
+            .map_or((None, Vec::new()), |r| (r.project, r.authorities)))
     }
 
     /// The mappings activation `generation` recorded, or none for an activation not recorded.

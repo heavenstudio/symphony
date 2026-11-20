@@ -113,7 +113,7 @@ impl Store {
             Next::Take { request, answered } => {
                 // Admission decides again on its own read, fenced on the task's revision, and a
                 // repeat of the request answers what the first wrote.
-                self.apply(&principal, host, &request, Some(&answered))?;
+                self.apply(&principal, host, &request, &[], Some(&answered))?;
                 let transitions = self.workflow_transitions(slug)?;
                 Ok(answering(&transitions, attempt).cloned())
             }

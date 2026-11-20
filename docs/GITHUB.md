@@ -326,7 +326,10 @@ evidence, and it reads no board for it.
   where the assessment waived it, failure where it is missing) and `symphony/eligible`. That last
   one is what a branch's protection requires, from the App `checks_app_id` names. It is written
   last when it passes and first when it fails, so it never passes over a stamp not yet written,
-  and the checks are read back as that App's before `published` is answered.
+  and the checks are read back as that App's before `published` is answered. GitHub lists a
+  check a few seconds after it takes it, so one not listed yet is read again after rests of 1, 2,
+  4 and 8 s, well inside the time the land gives the program, and nothing is written again; one
+  still not listed then is answered `unavailable`, and the next run finds what was written.
 - **`merge`** reads the protection again, refusing as `publish` does, then marks the draft ready and asks GitHub once for a squash of the bound pull request at
   the head it is given, which GitHub refuses for any other head. A mark that fails or whose answer
   is lost merges nothing. A pull request already merged is answered as merged,

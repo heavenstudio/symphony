@@ -214,6 +214,8 @@ const COMMANDS: &[Command] = &[
             opt("--revision", "revision", Takes::Value(Ty::Int)),
             opt("--key", "key", STR),
             opt("--input", "input", Takes::Append),
+            opt("--input-revision", "input_revision", Takes::Append),
+            opt("--attestation", "attestation", Takes::Append),
             opt("--accept", "accept", Takes::Append),
             opt("--json", "json", Takes::Bool),
         ],

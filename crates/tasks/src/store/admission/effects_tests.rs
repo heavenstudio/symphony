@@ -758,3 +758,228 @@ fn a_host_that_registers_no_adapter_neither_activates_nor_admits_its_edges() {
         );
     }
 }
+
+/// The authority `approvals` reports generation `generation` of e1, following `previous`.
+fn reported(f: &Fixture, generation: u64, previous: Option<u64>) {
+    use symphony_api::workflow::{ATTESTATION_CONTRACT, AuthorityState, Observation};
+    let observed = Observation {
+        contract: ATTESTATION_CONTRACT,
+        adapter: "approvals".into(),
+        issuer: "ledger".into(),
+        epoch: "e1".into(),
+        generation,
+        state: format!("s{generation}"),
+        previous: previous.map(|generation| AuthorityState {
+            epoch: "e1".into(),
+            generation,
+            state: format!("s{generation}"),
+        }),
+        at: 1.0,
+    };
+    let signed = crate::workflow::guard::tests::sign_observation(7, &observed);
+    f.store.observe_authority(&signed).unwrap();
+}
+
+/// [`guarded_landing`] where a task stays in its approved pair
+/// ([`crate::workflow::effect::tests::guarded_landing_with_stays_text`]).
+fn guarded_landing_with_stays() -> crate::workflow::Custom {
+    use crate::workflow::effect::tests::guarded_landing_with_stays_text;
+    crate::workflow::activate::tests::custom(&guarded_landing_with_stays_text())
+}
+
+/// [`approved`] on [`guarded_landing`]: birch's approve taken with the authority's pass, met at
+/// generation 3 of e1, and recorded as an admission.
+fn approved_under_guard(backend: crate::store_fixture::Backend) -> Fixture {
+    use crate::workflow::effect::tests::guarded_landing;
+    approved_under_guard_on(backend, &guarded_landing(DEFAULT_LAND, 7))
+}
+
+/// [`approved_under_guard`] on `custom`.
+fn approved_under_guard_on(
+    backend: crate::store_fixture::Backend,
+    custom: &crate::workflow::Custom,
+) -> Fixture {
+    use crate::workflow::guard::tests::{passing, sign_attestation};
+    use crate::workflow::guard::{MAX_VALIDITY, attestee};
+    let f = board(backend, custom);
+    let amber = agent_session("amber");
+    take(&f.store, SLUG, &amber, "claim").unwrap();
+    take(&f.store, SLUG, &amber, "submit").unwrap();
+    reported(&f, 3, None);
+    let birch = agent_session("birch");
+    let mut request = request(&f.store, SLUG, &birch, "approve", "sim/a:approve");
+    request
+        .inputs
+        .insert("head".into(), InputValue::Revision(HEAD.into()));
+    // Without the authority's word, the approve is refused.
+    let bare = refused(
+        f.store
+            .apply_attested(&birch, &Host::local(), &request, &[]),
+    );
+    assert!(bare.starts_with("guard_unavailable:"), "{bare}");
+    let active = f.store.workflow_active().unwrap().unwrap();
+    let issued = crate::store::now() - 1.0;
+    let attestation = symphony_api::workflow::Attestation {
+        edge: "approve".into(),
+        workflow: active.digest,
+        activation_generation: active.generation,
+        task_revision: 3,
+        principal: attestee(&birch),
+        issued_at: issued,
+        expires_at: issued + MAX_VALIDITY,
+        ..passing(custom)
+    };
+    let given = [sign_attestation(7, &attestation)];
+    (f.store)
+        .apply_attested(&birch, &Host::local(), &request, &given)
+        .unwrap();
+    assert_eq!(position(&f), (pair("deliver", "approved"), 4));
+    assert!(f.store.workflow_admission(SLUG, 4).unwrap().is_some());
+    f
+}
+
+#[test]
+fn a_decision_revoked_between_the_guarded_approve_and_the_land_withdraws_its_dispatch() {
+    for backend in BACKENDS {
+        // The approve's decision standing, the land dispatches.
+        let f = approved_under_guard(backend);
+        let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
+        prepared(&f, &fake);
+        let dispatched = f.store.dispatch_effect(&fake, SLUG, 5).unwrap();
+        assert_eq!(dispatched.stage, Stage::Dispatched, "{backend:?}");
+        // Revoked before the land's prepare, or after it and before its dispatch: either way the
+        // intent is withdrawn and nothing is sent, the prepare edge itself guarded by nothing.
+        for revoked_first in [true, false] {
+            let f = approved_under_guard(backend);
+            let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
+            if revoked_first {
+                reported(&f, 4, Some(3));
+            }
+            prepared(&f, &fake);
+            if !revoked_first {
+                reported(&f, 4, Some(3));
+            }
+            let why = refused(f.store.dispatch_effect(&fake, SLUG, 5));
+            assert!(
+                why.starts_with(
+                    "stale_input: sim/a@5 is withdrawn, and nothing is sent under it: \
+                     approvals decided again since approved was met at generation 3 of e1: a \
+                     later decision stands (generation 4 of e1 now)"
+                ),
+                "{backend:?}: {why}"
+            );
+            assert_eq!(intent(&f).stage, Stage::Withdrawn, "{backend:?}");
+            // Withdrawn for good: a dispatch again sends nothing under it.
+            let again = refused(f.store.dispatch_effect(&fake, SLUG, 5));
+            assert!(again.contains("is withdrawn"), "{backend:?}: {again}");
+        }
+    }
+}
+
+#[test]
+fn a_dispatch_rechecks_the_approve_past_a_block_or_a_release_that_stayed_in_its_pair() {
+    let custom = guarded_landing_with_stays();
+    let owner = crate::workflow::local_owner();
+    // What happens in the approved pair between the approve and the land's prepare.
+    let held = |f: &Fixture| {
+        take(&f.store, SLUG, &owner, "block").unwrap();
+        take(&f.store, SLUG, &owner, "resume").unwrap();
+    };
+    let released = |f: &Fixture| {
+        f.store.release(SLUG, "birch", Some("reviewer")).unwrap();
+    };
+    // Each with the transitions it records in the pair.
+    type Stay<'a> = (&'a str, &'a dyn Fn(&Fixture), u64);
+    let stays: [Stay; 2] = [("block and resume", &held, 2), ("release", &released, 1)];
+    for backend in BACKENDS {
+        for (what, stay, moves) in stays {
+            for revoked in [false, true] {
+                let f = approved_under_guard_on(backend, &custom);
+                stay(&f);
+                assert_eq!(
+                    position(&f),
+                    (pair("deliver", "approved"), 4 + moves),
+                    "{backend:?} {what}: stayed in the approved pair"
+                );
+                assert!(
+                    f.store
+                        .workflow_admission(SLUG, 4 + moves)
+                        .unwrap()
+                        .is_none()
+                );
+                if revoked {
+                    reported(&f, 4, Some(3));
+                }
+                let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
+                let intent = prepared(&f, &fake);
+                assert_eq!(intent.revision, 5 + moves);
+                let dispatched = f.store.dispatch_effect(&fake, SLUG, intent.revision);
+                let stage = (f
+                    .store
+                    .effect_intent(SLUG, intent.revision)
+                    .unwrap()
+                    .unwrap())
+                .stage;
+                if !revoked {
+                    assert_eq!(
+                        dispatched.unwrap().stage,
+                        Stage::Dispatched,
+                        "{backend:?} {what}"
+                    );
+                    continue;
+                }
+                let why = refused(dispatched);
+                assert!(
+                    why.contains(
+                        "approvals decided again since approved was met at generation 3 \
+                         of e1: a later decision stands"
+                    ),
+                    "{backend:?} {what}: {why}"
+                );
+                assert_eq!(stage, Stage::Withdrawn, "{backend:?} {what}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_task_brought_to_the_blocked_pair_by_another_edge_is_never_resumed_past_the_guard() {
+    use crate::workflow::effect::tests::guarded_landing_with_stays_text;
+    // An edge from verify/awaiting to the blocked pair, which saves no resume.
+    let park = "  { id = \"park\", label = \"Park\", from = { phase = \"verify\", state = \
+                \"awaiting\" }, to = { phase = \"build\", state = \"blocked\" }, operation = \
+                \"advance\", authority = [{ kind = \"project_capability\", capability = \"owner\" \
+                }], inputs = [], dependencies = \"none\", guards = [], effects = [{ kind = \
+                \"slot\", policy = \"release\" }], automatic = false, human_wait = false },\n";
+    let block = "  { id = \"block\",";
+    let text = guarded_landing_with_stays_text().replacen(block, &format!("{park}{block}"), 1);
+    let custom = crate::workflow::activate::tests::custom(&text);
+    let owner = crate::workflow::local_owner();
+    for backend in BACKENDS {
+        // Approved under the guard at 4, prepared at 5, sent back at 6, parked at 7.
+        let f = approved_under_guard_on(backend, &custom);
+        let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
+        let intent = prepared(&f, &fake);
+        take(&f.store, SLUG, &orch(), "send_back").unwrap();
+        take(&f.store, SLUG, &owner, "park").unwrap();
+        assert_eq!(position(&f), (pair("build", "blocked"), 7), "{backend:?}");
+        // The resume would stand it at approved past the guard: refused, and it stays.
+        let why = refused(take(&f.store, SLUG, &owner, "resume"));
+        assert!(
+            why.ends_with(
+                "edge resume resumes sim/a at deliver/approved, which only edges guarded by \
+                 approved enter, and no block saved it there"
+            ),
+            "{backend:?}: {why}"
+        );
+        assert_eq!(position(&f), (pair("build", "blocked"), 7), "{backend:?}");
+        // Nor is the land's first intent sent: the task left the pair it was prepared from.
+        let stale = refused(f.store.dispatch_effect(&fake, SLUG, intent.revision));
+        assert!(stale.contains("is withdrawn"), "{backend:?}: {stale}");
+        assert_eq!(intent_at(&f, intent.revision).stage, Stage::Withdrawn);
+    }
+}
+
+fn intent_at(f: &Fixture, revision: u64) -> Intent {
+    f.store.effect_intent(SLUG, revision).unwrap().unwrap()
+}

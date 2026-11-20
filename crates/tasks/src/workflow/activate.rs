@@ -40,27 +40,73 @@ impl Host {
     }
 }
 
-/// The definition refused unless this host supports everything it needs: each capability it
-/// declares granted to someone, each adapter registered, every automatic edge one the board can
-/// take on an attempt's failure ([`automatic`]), and nothing this release cannot run yet. Guards
-/// wait on revision-bound guards; `landed` dependencies and parent integration on their own
-/// follow-ups. Each refusal says which, so the project knows what it asked for.
+/// Refused where `custom` commits an approval authority and names no project: an attestation
+/// binds the project it is for, and the activation records the one its guards are held to. The
+/// project file's reader refuses the same ([`super::authorities`]); this holds for a `Custom` a
+/// caller builds itself.
+pub fn bound(custom: &Custom) -> Result<(), String> {
+    let named = custom
+        .project
+        .as_deref()
+        .is_some_and(|p| !p.trim().is_empty());
+    if custom.authorities.is_empty() || named {
+        return Ok(());
+    }
+    Err(
+        "workflow_authorities: an attestation names the project it is for, and the workflow \
+         names none"
+            .into(),
+    )
+}
+
+/// The definition refused unless this host supports everything it needs, with no approval
+/// authority committed: [`supported_with`] for none, so any guard is refused.
 pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {
+    supported_with(definition, host, &[])
+}
+
+/// The definition refused unless this host supports everything it needs: each capability it
+/// declares granted to someone, each adapter registered or committed as an approval authority
+/// (`attesters`), every automatic edge one the board can take on an attempt's failure
+/// ([`automatic`]), and nothing this release cannot run yet. A guard needs its adapter's committed
+/// authority of a contract this release reads, a graph that reaches a guarded pair by no other
+/// route ([`super::guard::coverage`]), and an edge a caller takes with an attestation: never one
+/// the board takes itself or an adapter prepares or finalizes. `landed` dependencies and parent
+/// integration wait on their own follow-ups. Each refusal says which, so the project knows what
+/// it asked for.
+pub fn supported_with(
+    definition: &Validated,
+    host: &Host,
+    attesters: &[super::Attester],
+) -> Result<(), String> {
     let d = definition.definition();
     let granted = host.grants.supported();
-    let adapters: Vec<&str> = host.adapters.iter().map(String::as_str).collect();
+    let adapters: Vec<&str> = (host.adapters.iter().map(String::as_str))
+        .chain(attesters.iter().map(|a| a.adapter.as_str()))
+        .collect();
+    for guard in &d.guards {
+        let Some(attester) = attesters.iter().find(|a| a.adapter == guard.adapter) else {
+            return Err(format!(
+                "unsupported guard: {} (its adapter {} needs an approval authority committed in \
+                 [[workflow_authorities]])",
+                guard.id, guard.adapter
+            ));
+        };
+        let contract = symphony_api::workflow::ATTESTATION_CONTRACT;
+        if attester.contract != contract {
+            return Err(format!(
+                "unsupported guard: {} (its authority {} speaks contract {}, and this release \
+                 reads {contract})",
+                guard.id, attester.adapter, attester.contract
+            ));
+        }
+    }
     super::prerequisites(
         definition,
         &granted.into_iter().collect::<Vec<_>>(),
         &adapters,
     )?;
-    if let Some(guard) = d.guards.first() {
-        return Err(format!(
-            "unsupported guard: {} (guards answer once revision-bound guards land, \
-             tools/workflow-revision-guards)",
-            guard.id
-        ));
-    }
+    super::guard::coverage(d)?;
     for position in &d.positions {
         let at = named(&position.at);
         if let Some(why) = unsupported_dependency(position.dependencies) {
@@ -100,6 +146,17 @@ pub fn supported(definition: &Validated, host: &Host) -> Result<(), String> {
                 _ => {}
             }
         }
+        // Its adapter takes a prepare or finalize edge, and no attestation comes with it
+        // (`Store::prepare_effect`): its guard could never be met, a finalize's after the effect
+        // already happened.
+        let adapted = (edge.effects.iter())
+            .any(|e| matches!(e, Effect::Prepare { .. } | Effect::Finalize { .. }));
+        if adapted && !edge.guards.is_empty() {
+            return Err(format!(
+                "unsupported edge {id}: a guard on an edge its adapter prepares or finalizes, \
+                 which takes no attestation yet"
+            ));
+        }
     }
     Ok(())
 }
@@ -117,7 +174,7 @@ fn unsupported_dependency(dependency: Dependency) -> Option<&'static str> {
 /// source pair (docs/WORKFLOW.md, "Attempts"), none where it can: another automatic edge leaves
 /// that pair, so the board could not choose; it asks inputs, which the board has none of to give;
 /// it gives a role, which only an agent session holds, or prepares or finalizes an effect, which
-/// only its adapter takes; its retry bound is exhausted to a pair on a cycle through it, which the
+/// only its adapter takes; it is guarded, and no attestation comes with the board's take; its retry bound is exhausted to a pair on a cycle through it, which the
 /// task passes every lap, so the count of its takes, which restarts there, never runs out
 /// ([`super::recover::observed`], [`laps`]); or none of its authorities is a capability `host`
 /// grants the board's recovery service, which takes it. Each reason is fixed text, the edge named
@@ -137,6 +194,8 @@ fn automatic(d: &Definition, edge: &Edge, host: &Host) -> Option<&'static str> {
         Some("an automatic edge gives a role, which only an agent session takes")
     } else if super::effect::external(&edge.effects).is_some() {
         Some("an automatic edge prepares or finalizes an effect, which only its adapter takes")
+    } else if !edge.guards.is_empty() {
+        Some("an automatic edge is guarded, and the board brings no attestation to meet its guard")
     } else if (edge.retry.as_ref()).is_some_and(|r| laps(d, edge, &r.exhausted)) {
         Some("an automatic edge's retry is exhausted to a pair on a cycle through it")
     } else if !authorized {
@@ -270,6 +329,19 @@ pub fn plan(
             .transpose()?;
         let destination = position_of(new, &to).expect("placed() names a declared pair");
         fabricates_nothing(slug, source, destination)?;
+        let held = task.position.is_some();
+        past_no_guard(slug, old, new, held, Some(&from), &to, "stand at")?;
+        if let Some(resume) = &resume {
+            past_no_guard(
+                slug,
+                old,
+                new,
+                held,
+                resume_from.as_ref(),
+                resume,
+                "resume to",
+            )?;
+        }
         let status = projection(destination.legacy);
         let moves =
             task.position.is_none() || from != to || resume != resume_from || status != task.status;
@@ -400,6 +472,7 @@ impl Placing {
         let destination =
             position_of(&self.definition, &to).expect("placed() names a declared pair");
         fabricates_nothing(slug, &source, destination)?;
+        past_no_guard(slug, None, &self.definition, false, None, &to, "reopen at")?;
         let status = projection(destination.legacy);
         if status != task.status {
             return Err(format!(
@@ -509,6 +582,36 @@ fn fabricates_nothing(slug: &str, source: &Position, destination: &Position) -> 
         return refuse(format!("the completion {:?}", destination.completion));
     }
     Ok(())
+}
+
+/// Refused where a task would come to stand at `to` (or resume to it), a pair only edges guarded by
+/// the same guards enter ([`super::guard::guarded_into`]), without having stood there already,
+/// `held` by `old` at `from`, under those guards: a mapping, a placement or a reopening never takes
+/// a task past a guard, as no attestation covers it.
+fn past_no_guard(
+    slug: &str,
+    old: Option<&Definition>,
+    new: &Definition,
+    held: bool,
+    from: Option<&Pair>,
+    to: &Pair,
+    stands: &str,
+) -> Result<(), String> {
+    let Some(guards) = super::guard::guarded_into(new, to) else {
+        return Ok(());
+    };
+    let stood = held
+        && from == Some(to)
+        && old.and_then(|old| super::guard::guarded_into(old, to)) == Some(guards);
+    if stood {
+        return Ok(());
+    }
+    Err(format!(
+        "{slug} would {stands} {}, which only edges guarded by {} enter; activation never takes a \
+         task past a guard: map it to a pair before it",
+        named(to),
+        guards.join(", ")
+    ))
 }
 
 /// A position's board status, as the task's row holds it.
