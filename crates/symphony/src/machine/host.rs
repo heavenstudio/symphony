@@ -5,8 +5,9 @@
 //! none, serves every project whose plugins all answer from a process. A host serves a project
 //! registered at its pin or an older one and at its board schema or an older one, and refuses one
 //! whose pin or board schema is newer than its own, naming who must bump; a release's server also
-//! serves a project registered one board schema ahead of it, whose board it reads and never writes,
-//! as every reader does.
+//! serves a project registered one board schema ahead of it, whose board it reads, and writes only
+//! where the step that moved it is declared to keep a Symphony one behind writing
+//! ([`symphony_board::schema::COMPATIBLE`]), as every reader does.
 //!
 //! While a project's build serves, its verdicts are the compiled plugins': a project with no plugins
 //! never replaces a running host and is served by any host holding its pin; a project whose linked
@@ -104,7 +105,8 @@ impl Build {
         if entry.pin > self.pin {
             return Some(Lack::Pin(entry.pin));
         }
-        // A release reads a board one schema ahead of its own and writes nothing to it.
+        // A release reads a board one schema ahead of its own, and writes it only where that
+        // schema's step keeps it writing.
         let reach = self.schema + i64::from(self.release.is_some());
         (entry.schema > reach).then_some(Lack::Schema(entry.schema))
     }
