@@ -46,9 +46,20 @@ lockfile written again, in a task of their own.
   the registry.
 - **React 19** (`react`, `react-dom`), the only run-time dependencies.
 - **TypeScript**, strict (`tsconfig.json`: `strict`, `noUncheckedIndexedAccess`,
-  `exactOptionalPropertyTypes`, `verbatimModuleSyntax`), checked by `tsc --noEmit`. It emits
-  nothing: Vite strips the types. `skipLibCheck` leaves the packages' own declarations unchecked,
-  which name Node's types this package does not take.
+  `exactOptionalPropertyTypes`, `verbatimModuleSyntax`), checked by `tsc --noEmit` as two
+  programs: the code a page runs (`tsconfig.json`: `src/` but its tests and the dev server, the
+  shell's `shell/cache.ts` and `shell/shell.ts`, and the Mac app's `notification.ts`), which knows
+  no Node, and the code Node runs (`tsconfig.node.json`: the Node scripts, the tests, the dev
+  server and `vite.config.ts`). It emits nothing: Vite strips the kinds' types, and the pinned
+  Node its scripts' and the shell's (`shell/strip.ts`, its own stripper, which puts blanks where
+  each type was, so a line of the result is the source's). So the shell and the scripts are
+  written in the syntax a type erases alone (no `enum`, `namespace` or parameter property), which
+  the stripper refuses. `skipLibCheck` leaves the packages' own declarations unchecked, Vite's
+  among them, which name Node's types the page's program does not take.
+- **`@types/node`**, Node's own API typed, pinned to the line of the Node `.node-version` names
+  and read by `tsconfig.node.json` alone: the Node scripts and the tests call `fs`, `path` and
+  `process` typed, where each would otherwise declare by hand the part it calls, and no page's
+  code can reach a Node API, as its program has no such types.
 - **Vite** builds the kinds (`vite.config.ts`): one entry per kind, `src/kinds/NAME.tsx`, named in
   `KINDS`; JSX by Vite's own transform, so no React plugin; no public folder and no module
   preload of Vite's, as the Symphony's server and shell serve and load the files. Its dev server
@@ -72,9 +83,17 @@ lockfile written again, in a task of their own.
   `no-timed-waits baseline:`.
 - **Vitest** runs the unit tests, with `@vitest/coverage-v8` for their coverage.
 
-`just client-lint` (`check.sh`) runs the wire types' check and the tests of the example that
-writes them, Biome, `tsc --noEmit` and the unit tests with their coverage, each whatever the ones
-before it did, and `just lint-rs` runs it, so a
+**Hand-written code here is TypeScript**: the kinds, the shell's store and script, the Node
+scripts around Vite (`dev.ts`, `report.ts`, `shell/minify.ts`, `shell/strip.ts`) and the Mac app's
+one script in a page (`apps/symphony-desktop/src/notification.ts`). JavaScript is what a build
+writes. A script a page runs as it is written is TypeScript with no syntax of its own, every type
+inferred, as the Mac app's is; one Node runs is TypeScript, which Node strips. `typescript-only.sh`
+refuses a JavaScript file (`.js`, `.jsx`, `.mjs`, `.cjs`) anywhere in the checkout, tracked or
+written and not ignored, outside the client's distribution (`apps/symphony-server/client/public/`).
+
+`just client-lint` (`check.sh`) runs `typescript-only.sh`, the wire types' check and the tests of
+the example that writes them, Biome, `tsc --noEmit` over both programs and the unit tests with
+their coverage, each whatever the ones before it did, and `just lint-rs` runs it, so a
 task's gate and the release run's lint both do. `just client-wire` writes the wire types.
 
 ## The wire types
@@ -177,8 +196,9 @@ its styles, the shared stylesheet first and then the CSS its chunks and its entr
 shared stylesheet is the build's entry for `src/styles/shared.css`, which imports its sheets in
 the order written there (the board's, the controls' theme, the frame's, then the shared
 controls'): the order of the cascade is stated in that file, never derived from a file's name. The
-shell is the manifest's line, then the device cache's store and `shell/shell.ts`, minified by the
-minifier Vite ships (`shell/minify.ts`), named by its bytes, with the server's notice styles'
+shell is the manifest's line, then the device cache's store and `shell/shell.ts`, each with its
+types stripped and the two joined (a join that is no module, a name both declare, refused), minified
+by the minifier Vite ships (`shell/minify.ts`), named by its bytes, with the server's notice styles'
 hash as its last line. The step refuses a build with no Vite manifest, no shared stylesheet or no
 kind, and publishes nothing then. `symphony-build publish-client` exchanges the stage with
 `OUT/public` whole. Files are named `NAME-HASH16.EXT` with a hex hash, as the server caches such a
@@ -294,7 +314,7 @@ already had and the written style does not set (a centred container's `text-alig
 ## The dev server
 
 `just symphony-ui-dev SERVER [PORT]` shows this client's kinds as their sources stand, with no
-client build, the page loaded again on each save: Vite's own dev server (`dev.js`, the Node around
+client build, the page loaded again on each save: Vite's own dev server (`dev.ts`, the Node around
 `src/dev-server.ts`), on the loopback address alone at PORT (0, the default, for any), over a
 Symphony server of the developer's own on port SERVER, which `just symphony --port 0` starts and
 prints (`--root DIR` another project's). It refuses 8765, the shared server's, as either port, and
@@ -305,8 +325,8 @@ the pages, the API, the feed (its WebSocket's upgrade too, `ws`) and the build's
 no CORS header
 (`cors: false`, where Vite's default lets a page on any loopback port read every answer), so a page
 of another origin reads through it no more than from the server. What it makes itself is the page's
-shell script: this checkout's shell (`shell/cache.ts` and `shell/shell.ts`,
-unminified) with Vite's client first, and each of `KINDS` as its entry under Vite (one the
+shell script: this checkout's shell (`shell/cache.ts` and `shell/shell.ts`, their types
+stripped, unminified) with Vite's client first, and each of `KINDS` as its entry under Vite (one the
 server's build has as another client's or not at all among them) with the server's shared
 stylesheet, each kind's own styles kept before the project's theme as the built shell keeps them;
 a kind the server's build has and this checkout does not is left out. So a kind added on a branch, or a

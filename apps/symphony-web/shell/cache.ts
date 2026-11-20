@@ -282,10 +282,7 @@ window.symphonyCache = ((): Store => {
         .map((item): [Item, number] => [item, rank(item)])
         .sort(
           ([a, x], [b, y]) =>
-            Number(a.pinned) - Number(b.pinned) ||
-            Number(a.visited) - Number(b.visited) ||
-            x - y ||
-            a.used - b.used,
+            +a.pinned - +b.pinned || +a.visited - +b.visited || x - y || a.used - b.used,
         )
         .map(([item]) => item);
     const recent = ranked(() => 0),

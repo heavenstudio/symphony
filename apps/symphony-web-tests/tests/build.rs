@@ -968,10 +968,10 @@ fn typescript_only(scratch: &Scratch, files: &[(&str, bool)]) -> Output {
         .expect("run typescript-only.sh")
 }
 
-/// The checkout's hand-written code is TypeScript: its JavaScript is the client's distribution and
-/// the experiments, and an ignored folder's is no one's.
+/// The checkout's hand-written code is TypeScript: its JavaScript is the client's distribution, and
+/// an ignored folder's is no one's.
 #[test]
-fn typescript_only_passes_javascript_built_or_in_an_experiment_or_ignored() {
+fn typescript_only_passes_javascript_built_or_ignored() {
     let scratch = Scratch::new("typescript-only-passes");
     let done = typescript_only(
         &scratch,
@@ -980,8 +980,10 @@ fn typescript_only_passes_javascript_built_or_in_an_experiment_or_ignored() {
                 "apps/symphony-server/client/public/assets/shell-0123.js",
                 true,
             ),
-            ("experiments/client-jsx/src/page.jsx", true),
-            ("experiments/keyed-reads/src/read.mjs", false),
+            (
+                "apps/symphony-server/client/public/assets/overlay-4567.mjs",
+                false,
+            ),
             ("apps/symphony-web/node_modules/vite/index.js", false),
             ("apps/symphony-web/shell/shell.ts", true),
             ("docs/analysis/board.html", true),
@@ -992,7 +994,7 @@ fn typescript_only_passes_javascript_built_or_in_an_experiment_or_ignored() {
 }
 
 /// A JavaScript file anywhere else is refused, each named, whether git tracks it yet or not, in any
-/// case of its extension, beside a folder named like an exception.
+/// case of its extension, in a folder named like the exception or where the experiments were.
 #[test]
 fn typescript_only_refuses_javascript_anywhere_else_naming_each() {
     let scratch = Scratch::new("typescript-only-refuses");
@@ -1005,7 +1007,7 @@ fn typescript_only_refuses_javascript_anywhere_else_naming_each() {
             ),
             ("apps/symphony-web/shell/shell.js", true),
             ("apps/symphony-server/client/publicity/notice.cjs", true),
-            ("experiments-old/probe.mjs", false),
+            ("experiments/keyed-reads/src/read.mjs", false),
             ("docs/analysis/board-design/BOARD.JS", true),
             ("tools/page.jsx", false),
         ],
@@ -1021,7 +1023,7 @@ fn typescript_only_refuses_javascript_anywhere_else_naming_each() {
             "apps/symphony-server/client/publicity/notice.cjs",
             "apps/symphony-web/shell/shell.js",
             "docs/analysis/board-design/BOARD.JS",
-            "experiments-old/probe.mjs",
+            "experiments/keyed-reads/src/read.mjs",
             "tools/page.jsx",
         ],
         "{said}"

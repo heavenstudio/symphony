@@ -55,13 +55,6 @@ declare const symphonyCache: Store;
 
 const modules = __MODULES__;
 
-/** `kind`'s files in the manifest. A kind it does not name fails what asked for it, as a load that
- * fails does. */
-function filesOf(kind: string): Files {
-  const files = modules[kind];
-  if (!files) throw new Error(`This build has no page kind ${kind}`);
-  return files;
-}
 try {
   const css = localStorage.getItem(stored("studio.cssVars"));
   if (css) {
@@ -206,7 +199,7 @@ function preload(hrefs: string[], attributes: string) {
 // A kind (apps/symphony-web) is its script, which exports its own `run` and `stop`. The script
 // asks for the chunks it imports only once it is in: a module preload asks for them beside it.
 function initialize(kind: string): Promise<Kind> {
-  const spec = filesOf(kind);
+  const spec = modules[kind] as Files;
   preload(spec.imports, 'rel="modulepreload"');
   return import(spec.script);
 }
@@ -273,7 +266,7 @@ function ensure(kind: Persistent, focus?: boolean): Promise<unknown> {
   if (!loading) {
     loading = (async () => {
       mountFor(kind);
-      const [imported] = await Promise.all([initialize(kind), styles(filesOf(kind))]);
+      const [imported] = await Promise.all([initialize(kind), styles(modules[kind] as Files)]);
       await imported.run();
       document.getElementById(failure)?.remove();
       window[shared.ready] = true;
@@ -754,7 +747,7 @@ function warm() {
       if (!kind) return;
       const loading = persistent.get(kind);
       if (loading) return loading.then(next);
-      const { script, styles, imports } = filesOf(kind);
+      const { script, styles, imports } = modules[kind] as Files;
       for (const href of [script, ...imports, ...styles]) {
         if (!document.querySelector(`link[href="${href}"]`))
           document.head.insertAdjacentHTML("beforeend", `<link rel="prefetch" href="${href}">`);
@@ -973,8 +966,9 @@ async function show(generation: number, scroll: { x: number; y: number; initial:
     // Keep the previous page while its replacement loads (its script and the chunks it
     // imports), and under the notice when it does not. Its styles are requested with its
     // script; insets and row geometry must apply before page effects can anchor.
+    const spec = modules[kind] as Files;
     const mount = mountFor(kind);
-    const [imported] = await Promise.all([initialize(kind), styles(filesOf(kind))]);
+    const [imported] = await Promise.all([initialize(kind), styles(spec)]);
     if (generation !== requested) return;
     if (active) {
       await active.imported.stop();
