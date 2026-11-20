@@ -248,13 +248,6 @@ impl Store {
         Ok(message(row))
     }
 
-    /// `what` (a post or a changes verdict to `slug`'s executor, or to `only` when that handle
-    /// executes it) has no executor to read it now: none has a native callback, and each has its
-    /// pane recorded closed or no live beat. The task's orchestrators hear it at once on the
-    /// thread, with the restore line of each executor whose pane was closed. A post to a handle
-    /// that does not execute `slug` is left alone. Under `key`, it is said once per key on the
-    /// thread however often it is asked. Never fails the write it follows: what went wrong goes to
-    /// stderr.
     /// `said`, a record line `sender` puts on `slug`'s thread, to no one, once per `key`: a later
     /// one under the key writes nothing ([`Store::say_keyed`]'s `delivery_key:[slug, key]`, read
     /// and written in the line's transaction). Within a caller's retry.
@@ -280,6 +273,13 @@ impl Store {
         Ok(keyed == Value::Bool(true))
     }
 
+    /// `what` (a post or a changes verdict to `slug`'s executor, or to `only` when that handle
+    /// executes it) has no executor to read it now: none has a native callback, and each has its
+    /// pane recorded closed or no live beat. The task's orchestrators hear it at once on the
+    /// thread, with the restore line of each executor whose pane was closed. A post to a handle
+    /// that does not execute `slug` is left alone. Under `key`, it is said once per key on the
+    /// thread however often it is asked. Never fails the write it follows: what went wrong goes to
+    /// stderr.
     pub(super) fn tell_if_unread(
         &self,
         slug: &str,
