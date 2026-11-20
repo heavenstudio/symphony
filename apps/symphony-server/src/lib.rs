@@ -16,6 +16,7 @@ mod client;
 mod file_body;
 pub mod front;
 pub mod gate;
+mod held;
 pub mod home;
 pub mod host;
 pub mod hosted;

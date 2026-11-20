@@ -30,7 +30,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use symphony::machine::release::{self, Manifest};
+use symphony::machine::release::Manifest;
 use symphony::machine::updates::{self, Failure, Ledger, Stamp, Task, Update};
 use symphony::machine::{Entry, Registry};
 use symphony::taskcli::CliBoard;
@@ -264,46 +264,19 @@ fn serving(look: &Look<'_>, schema: i64) -> Option<(String, Stamp)> {
         .min_by(|a, b| a.1.at.total_cmp(&b.1.at))
 }
 
-/// When the release `name` was installed in the machine folder `machine`: its manifest's time,
-/// which its install writes last.
+/// When the release `name` was installed in the machine folder `machine` ([`updates::installed_at`]).
 fn installed_at(machine: &Path, name: &str) -> Option<f64> {
-    let manifest = release::folder(machine, name).join(release::MANIFEST);
-    let modified = fs::metadata(manifest)
-        .and_then(|meta| meta.modified())
-        .ok()?;
-    let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
-    Some(since.as_secs_f64())
+    updates::installed_at(machine, name)
 }
 
-/// Every release installed whole in the machine folder `machine`.
+/// Every release installed whole in the machine folder `machine` ([`updates::every_installed`]).
 fn installed(machine: &Path) -> Vec<Manifest> {
-    let Ok(entries) = fs::read_dir(machine.join(release::RELEASES)) else {
-        return Vec::new();
-    };
-    (entries.filter_map(Result::ok))
-        .filter_map(|entry| {
-            let name = entry.file_name().to_str()?.to_string();
-            release::installed(machine, &name).ok().flatten()
-        })
-        .collect()
+    updates::every_installed(machine)
 }
 
-/// The board binary that writes a board at `schema`: the `tasks` of the release `current` names
-/// when it serves that schema, else of the release installed last that does.
+/// The board binary that writes a board at `schema` ([`updates::writer_of`]).
 fn writer(machine: &Path, schema: i64) -> Option<PathBuf> {
-    let current = release::current_installed(machine).filter(|m| m.serves.schema == schema);
-    let name = current.map(|m| m.release).or_else(|| {
-        (installed(machine).into_iter())
-            .filter(|manifest| manifest.serves.schema == schema)
-            .map(|manifest| {
-                let at = installed_at(machine, &manifest.release).unwrap_or(0.0);
-                (manifest.release, at)
-            })
-            .max_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(name, _)| name)
-    })?;
-    let tasks = release::binary(machine, &name, "tasks");
-    tasks.is_file().then_some(tasks)
+    updates::writer_of(machine, schema)
 }
 
 /// When `seen`'s board reached `schema`, as a record says, once it is there: its
@@ -313,15 +286,8 @@ fn reached(seen: &Seen<'_>, schema: i64) -> Option<Stamp> {
     if seen.live != Some(schema) {
         return None;
     }
-    if let Some(record) = symphony_board::live::seen::read(&seen.common)
-        && record.version == schema
-    {
-        return Some(Stamp {
-            at: record.at,
-            source: "schema-seen.log: the first store that saw the board at this schema; the move \
-                     was then or just before"
-                .into(),
-        });
+    if let Some(stamp) = updates::seen_at(&seen.common, schema) {
+        return Some(stamp);
     }
     match seen.end {
         Some(End::Moved { at, .. }) => Some(Stamp {
@@ -749,16 +715,7 @@ fn close(look: &Look<'_>, boards: &dyn Boards, update: &mut Update, why: &str) -
         look.against.run,
         latency(update)
     );
-    let closed = board.register().and_then(|filer| {
-        let closed = match board.status(&task.slug)? {
-            Some(status) if symphony_board::red::open(&status) => {
-                board.close(&task.slug, &filer, &words)
-            }
-            _ => Ok(()),
-        };
-        let _ = board.leave(&filer);
-        closed
-    });
+    let closed = updates::close_task(&board::Told(board.as_ref()), &task.slug, &words);
     Some(match closed {
         Ok(()) => {
             if let Some(task) = &mut update.task {
@@ -776,19 +733,10 @@ fn close(look: &Look<'_>, boards: &dyn Boards, update: &mut Update, why: &str) -
     })
 }
 
-/// What `update`'s times say: how long it took, and how much of it after a release serving it.
+/// What `update`'s times say: how long it took, and how much of it after a release serving it
+/// ([`updates::took`]).
 fn latency(update: &Update) -> String {
-    match (update.total(), update.after_available()) {
-        (Some(total), Some(after)) => format!(
-            "It took {} from the board reaching schema {} to the server writing it, {} of it after \
-             a release serving it was installed. ",
-            updates::said(total),
-            update.schema,
-            updates::said(after)
-        ),
-        (Some(total), None) => format!("It took {}. ", updates::said(total)),
-        _ => String::new(),
-    }
+    updates::took(update)
 }
 
 /// An update's task's title.

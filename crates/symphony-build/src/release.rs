@@ -1087,6 +1087,9 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         check: None,
     };
     let _ = record::hold(&folder, &running);
+    // The machine's updates lock, after the run's own and held to its end: the machine's server
+    // tries no held update again while a run of any kind holds the release's lock.
+    let _updates = machine_lock(out);
     span::awake();
     // A run that ended without recording itself (killed, or the machine stopped) is recorded first,
     // so its logs stay with it and `--status` names it.
@@ -1675,6 +1678,42 @@ fn said(board: &record::Board, out: &mut dyn Write, err: &mut dyn Write) -> i32 
         }
         None => 0,
     }
+}
+
+/// The machine's updates lock (`symphony::machine::updates::LOCK`), taken once the run holds its
+/// own and has said so, and held until the run ends, so the machine's server never tries a held
+/// update again ([`symphony::machine::held`]) while a release run, an out-of-cycle release or a
+/// refresh runs: waited for while a retry under way holds it, every command of which has its
+/// bound. None when the machine folder cannot be named or is not there, which no refresh reaches
+/// either and where no server tries anything, or its lock cannot be taken, said to `out`.
+fn machine_lock(out: &mut dyn Write) -> Option<symphony::machine::updates::Lock> {
+    use symphony::machine::updates;
+    // No machine folder, no server there to try an update: nothing to wait for, and none is made.
+    let machine = symphony::machine::dir()
+        .ok()
+        .filter(|machine| machine.is_dir())?;
+    let taken = match updates::try_lock(&machine) {
+        Ok(Some(lock)) => Ok(lock),
+        Ok(None) => {
+            let _ = writeln!(
+                out,
+                "release: the machine's server is trying a held update again under {}: this run \
+                 waits for it",
+                machine.join(updates::LOCK).display()
+            );
+            updates::lock(&machine)
+        }
+        Err(why) => Err(why),
+    };
+    taken
+        .map_err(|why| {
+            let _ = writeln!(
+                out,
+                "release: the machine's updates lock could not be taken, and this run goes on \
+                 without it: {why}"
+            );
+        })
+        .ok()
 }
 
 /// A run refused because another process holds the lock: its exit code. Only a run holds it, and
