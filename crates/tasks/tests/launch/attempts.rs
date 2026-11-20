@@ -288,7 +288,9 @@ fn a_first_message_refusal_cancels_the_attempt_by_closing_its_terminal_with_the_
     let ending = after_its_start(&facts, &terminal);
     assert_eq!(
         kinds(ending),
-        ["bound", "asked", "intent", "sent", "answer", "answer", "ended"],
+        [
+            "bound", "asked", "intent", "sent", "answer", "answer", "ended"
+        ],
         "{facts:?}"
     );
     // The cancel was sent as the terminate that closed the terminal, the refusal its evidence.
