@@ -1062,6 +1062,8 @@ fn under_workflow(w: &World) {
         definition,
         revision,
         mappings,
+        authorities: Vec::new(),
+        project: None,
     };
     let host = symphony_board::workflow::Host::local();
     w.store().activate_workflow(&custom, &host).unwrap();

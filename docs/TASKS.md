@@ -1358,10 +1358,11 @@ reads with their JSON types, so a change that would break one fails its own task
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
 task. Major 2 began at 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
 review name their stamps through an assessment. The fields and calls held by the consumer contract
-keep their shapes. The current API is 2.5: minor 5 added `attempts`, `{"slug": S}`, a task's
+keep their shapes. The current API is 2.6: minor 5 added `attempts`, `{"slug": S}`, a task's
 execution attempts as `symphony_api::TaskAttempts`, read as the board's own service under the
 project the call runs in, refused from outside a project's checkout
-([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md#on-a-tasks-page)).
+([EXECUTION_ATTEMPTS](EXECUTION_ATTEMPTS.md#on-a-tasks-page)); minor 6 added what a guarded edge is
+taken with ([below](#a-task-a-custom-workflow-holds)).
 
 ### What a program outside the board keeps
 
@@ -1442,6 +1443,15 @@ active. Each answer is a type of `symphony_api::workflow`.
 - **`workflow_apply`**, `{"handle": H, "request": OperationRequest}`: one typed operation admitted
   for session `H`, which must be on the board and not have left, never for a principal the request
   names; its answer is the `OperationResult`, and its refusal names its code.
+
+Minor 6 adds what a guarded edge is taken with ([WORKFLOW](WORKFLOW.md#guards)):
+
+- **`workflow_apply`** takes `"attestations": [Signed]` beside its request, the project
+  authority's signed word for each guard of the edge; without it a guarded edge is refused
+  `guard_unavailable`.
+- **`workflow_observe`**, `{"signed": Signed}`: an authority's signed observation of its state,
+  which the board accepts only from the state it accepted before; its answer is `{"observed":
+  "accepted" | "unchanged" | "conflicted", "authority": …}`.
 
 ## The agents API
 
@@ -2591,7 +2601,13 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    [what the regenerator made](#what-the-generators-make-delivered-by-a-pull-request), as is one
    that merges a commit the remote default does not hold and is not
    [an import of the upstream](#an-import-delivered-by-a-pull-request): another history, which a
-   squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). A task that is not
+   squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). The refusal of
+   generated outputs tells `@executor` to put them back as the default branch has them, but for a
+   release candidate's fix, a head that holds `release-candidate` and beyond it no commit the
+   remote default holds: that head keeps the outputs its own sources make, approved naming it,
+   and the branch delivers a merge of the default branch that keeps the default branch's
+   ([RELEASES](RELEASES.md#the-release-candidate)). With a candidate held that the head does not
+   hold, the refusal says how a fix of it is rebased first. A task that is not
    eligible at its head is refused before anything is published.
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
@@ -3880,7 +3896,37 @@ total beside it; each `tokens` is `{"input", "cache_write_5m", "cache_write_1h",
 (`landed SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1
 51.5k, round 2 20.1k), $0.08 estimated at API list prices read 2026-11-16`), each amount with
 its unit, so no number in it reads as a commit. A copy of the board carries the rows
-(`Dump.usages`). The pages draw none of it yet.
+(`Dump.usages`).
+
+The pages draw the same figures, each with the day its prices were read and as an estimate, never
+money spent ([What the tokens cost](#what-the-tokens-cost)):
+
+- **A task's page** has *Tokens and estimated cost* last, under its thread, closed until opened, which
+  reads `/api/task-tokens?slug=SLUG` (`show --json`'s `tokens` without its `rows`) and draws the
+  total with its kinds, a table by role and one by review round, and the models no price was found
+  for; a task with none says *No tokens recorded for this task.* and draws no table.
+- **A board card** shows its task's cost all told, its subtasks' with it, beside its slug (`$1.23`,
+  `$1.23+` where some tokens had no price, `unpriced` where none had, its title saying the rest),
+  read apart from the board's
+  listings, which carry none of it: the cards drawn in one turn are asked for together
+  (`/api/task-costs?slugs=[…]`, at most `TASK_COSTS_MOST`, 200, a read: `Store::spent_under`, one
+  round trip), each once until its record changes, so no heartbeat that adds tokens reads again.
+  A task with none shows no figure.
+- **The Agents page** gives each agent its tokens and cost under its line, from the agents API.
+- **Reports** has *Tokens and cost*: the cost and the tokens of each hour, day or week by role
+  (orchestrators, executors, reviewers and the rest), and below them the window's own: tokens and
+  cost all told, each top-level task landed in the window priced once with its subtasks (the
+  median and the ten dearest, each a link to its page), and the review rounds after the first
+  against the first rounds, from the [day files](analysis/reports-and-monitoring.md#the-day-files).
+  An hour's tokens are what the board's `usage` gained between two hourly roll-ups, shared among
+  the hours between them by time: an hour no two roll-ups span is a gap, never a zero.
+
+`just tasks stats` ends with the same reading of its window's day files: tokens and cost by day
+and role, the landed tasks' median and ten dearest, and the review rounds against the first, a
+day no two roll-ups span saying `no record`; `--json` carries it as `tokens`: `prices`, `per_day`
+(each `day` with its `by_role`, `null` for no record), and `landed` (`tasks`, `without`,
+`median_dollars`, `dearest`, `first_round`, `later_rounds`, `again`). Without day files (a private server's board, or a board that
+`TASKS_SERVER` names) it says there are none and prints the rest.
 
 The table moves the board to schema 19, which a build on schema 18 reads unharmed (the
 Symphony, the shared server among them): it opens a board one schema ahead to read

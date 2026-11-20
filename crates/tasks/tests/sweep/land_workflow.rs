@@ -667,3 +667,146 @@ fn a_raise_the_tip_does_not_carry_refuses_a_managed_task_before_its_prepare_edge
     assert_eq!(head(&r.root, "main^2"), tip);
     assert_eq!(at(&r, slug).0, pair("deliver", "landed"));
 }
+
+// -- a guard's decision revoked before the land ------------------------------------------------------
+
+/// The key of the project's approval authority, `approvals`.
+fn authority_key() -> ed25519_dalek::SigningKey {
+    ed25519_dalek::SigningKey::from_bytes(&[7; 32])
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `payload` signed by the authority's key, as an observation or an attestation.
+fn signed_by_authority(observation: bool, payload: String) -> symphony_api::workflow::Signed {
+    use ed25519_dalek::Signer;
+    let message = symphony_board::workflow::guard::signed_message(observation, &payload);
+    symphony_api::workflow::Signed {
+        signature: hex(&authority_key().sign(&message).to_bytes()),
+        payload,
+    }
+}
+
+/// [`WORKFLOW`] with its approve guarded by `approved`, which the project's `approvals` authority
+/// attests, its key committed, and the project `lamp` its attestations name.
+fn guarded_workflow() -> String {
+    let text = WORKFLOW
+        .replacen("adapters = [", "adapters = [\"approvals\", ", 1)
+        .replacen(
+            "guards = []",
+            "guards = [{ id = \"approved\", adapter = \"approvals\" }]",
+            1,
+        );
+    let approve = "operation = \"approve\", authority = [{ kind = \"task_role\", role = \"reviewer\" }], inputs = [\"head\"], dependencies = \"none\", guards = []";
+    assert_eq!(text.matches(approve).count(), 1, "the approve edge");
+    let text = text.replacen(
+        approve,
+        &approve.replace("guards = []", "guards = [\"approved\"]"),
+        1,
+    );
+    format!(
+        "{text}\n[project]\nid = \"lamp\"\n\n[[workflow_authorities]]\nadapter = \"approvals\"\n\
+         issuer = \"ledger\"\ncontract = 1\nkey = \"ed25519:{}\"\n",
+        hex(authority_key().verifying_key().as_bytes())
+    )
+}
+
+/// The authority reports generation `generation` of e1, following `previous`.
+fn reported(r: &Repo, generation: u64, previous: Option<u64>) {
+    use symphony_api::workflow::{ATTESTATION_CONTRACT, AuthorityState, Observation};
+    let state = |generation: u64| format!("s{generation}");
+    let observation = Observation {
+        contract: ATTESTATION_CONTRACT,
+        adapter: "approvals".into(),
+        issuer: "ledger".into(),
+        epoch: "e1".into(),
+        generation,
+        state: state(generation),
+        previous: previous.map(|generation| AuthorityState {
+            epoch: "e1".into(),
+            generation,
+            state: state(generation),
+        }),
+        at: 1.0,
+    };
+    let signed = signed_by_authority(true, serde_json::to_string(&observation).unwrap());
+    r.board.store.observe_authority(&signed).unwrap();
+}
+
+/// `slug` approved by its reviewer at `tip` with the authority's pass, met at generation 3.
+fn approved_under_guard(r: &Repo, slug: &str, people: &People, tip: &str) {
+    use symphony_api::workflow::{ATTESTATION_CONTRACT, Attestation, Attested};
+    use symphony_board::workflow::guard::{MAX_VALIDITY, attestee};
+    let store = &r.board.store;
+    let rev = agent_session(&people.rev);
+    let next = store.workflow_actions(slug, &rev, &Host::local()).unwrap();
+    let active = store.workflow_active().unwrap().unwrap();
+    let issued = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+        - 1.0;
+    let attestation = Attestation {
+        contract: ATTESTATION_CONTRACT,
+        adapter: "approvals".into(),
+        issuer: "ledger".into(),
+        epoch: "e1".into(),
+        generation: 3,
+        project: "lamp".into(),
+        task: slug.into(),
+        guard: "approved".into(),
+        edge: "approve".into(),
+        workflow: active.digest,
+        activation_generation: active.generation,
+        task_revision: next.snapshot.task_revision,
+        at: next.snapshot.at.clone(),
+        input_revisions: BTreeMap::new(),
+        principal: attestee(&rev),
+        result: Attested::Pass,
+        facts: vec!["ledger:decision/7".into()],
+        reasons: Vec::new(),
+        issued_at: issued,
+        expires_at: issued + MAX_VALIDITY,
+    };
+    let request = OperationRequest {
+        project: store.database().database().into(),
+        task: slug.into(),
+        edge: "approve".into(),
+        expected: next.snapshot,
+        input_revisions: BTreeMap::new(),
+        idempotency_key: format!("{slug}:approve:{tip}"),
+        inputs: BTreeMap::from([("head".to_string(), InputValue::Revision(tip.into()))]),
+    };
+    let given = [signed_by_authority(
+        false,
+        serde_json::to_string(&attestation).unwrap(),
+    )];
+    store
+        .apply_attested(&rev, &Host::local(), &request, &given)
+        .unwrap();
+    assert_eq!(at(r, slug), (pair("deliver", "approved"), 4));
+}
+
+#[test]
+fn a_decision_revoked_between_the_guarded_approve_and_the_land_merges_nothing() {
+    let r = Repo::new();
+    manifest(&r, &format!("\n{}", guarded_workflow()));
+    let followed = follow(&r.board.store, &r.root).unwrap();
+    assert!(matches!(followed, Followed::Activated(_)), "{followed:?}");
+    let (people, _wt, tip) = submitted(&r, SLUG);
+    reported(&r, 3, None);
+    approved_under_guard(&r, SLUG, &people, &tip);
+    // The approval withdrawn in the ledger: its authority reports the decision that follows.
+    reported(&r, 4, Some(3));
+    let before = head(&r.root, "main");
+    let (_, result) = landed(&r, SLUG, &people.orch);
+    let line = result.unwrap_err();
+    assert!(
+        line.contains("approvals decided again since approved was met at generation 3 of e1: a later decision stands"),
+        "{line}"
+    );
+    assert_eq!(head(&r.root, "main"), before, "nothing was merged");
+    assert_eq!(intent(&r, SLUG).stage, Stage::Withdrawn);
+}
