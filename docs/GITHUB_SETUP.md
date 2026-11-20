@@ -275,7 +275,9 @@ holds: a delivery would go on (policy 0123abc)
 
 It exits 0 on `holds` alone, and has made each token it needed. The next
 `just land SLUG --as HANDLE` then publishes the task as a draft pull request with its checks, and
-has it squashed.
+has it squashed, where an assessor named what the task needs at its head (`just tasks needs SLUG
+STAMP… --tip HEAD`): a reviewer's approve with no assessment, which a land that merges here
+takes, is refused before anything is published.
 
 **The tokens.** `symphony-github tokens` says whether each is current, reading nothing remote
 and writing nothing, and never prints a token:
