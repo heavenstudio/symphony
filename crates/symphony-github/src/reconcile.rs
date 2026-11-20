@@ -11,7 +11,7 @@
 //! the preview: the next preview reads the task again.
 
 use crate::board::{Board, BoardError, Bound, Token};
-use crate::config::{Config, Loaded, Repository, Role, Source};
+use crate::config::{Config, Loaded, Repository, Source};
 use crate::credential::Secret;
 use crate::github::{ApiError, Client, Comment, Issue};
 use crate::mint;
@@ -86,7 +86,7 @@ fn enabled(ctx: &Context<'_>) -> Result<Loaded, String> {
 }
 
 fn connect(ctx: &Context<'_>, loaded: &Loaded) -> Result<Box<dyn Transport>, String> {
-    let token = mint::token(ctx, &loaded.config, Role::Landing).map_err(mint::Stop::said)?;
+    let token = mint::token(ctx, &loaded.config).map_err(mint::Stop::said)?;
     (ctx.connect)(token)
 }
 

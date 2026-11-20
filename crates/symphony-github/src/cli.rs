@@ -10,7 +10,7 @@
 //! delivery by pull request ([`crate::deliver`]). `release` is the release run's: a GitHub
 //! Release for a tag it pushed ([`crate::release`]).
 
-use crate::config::{PullRequests, Releases, Role};
+use crate::config::{PullRequests, Releases};
 use crate::github::{clean_body, clean_title};
 use crate::mint::{self, Held};
 use crate::plan;
@@ -144,8 +144,8 @@ fn status(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
             if let Some(file) = &config.token_file {
                 let _ = writeln!(out, "token file: {}", file.display());
             }
-            if let Some(file) = &config.policy_token_file {
-                let _ = writeln!(out, "policy token file: {}", file.display());
+            if let Some(id) = config.app_id {
+                let _ = writeln!(out, "app: {id}");
             }
         }
         Err(why) => {
@@ -155,8 +155,8 @@ fn status(ctx: &Context<'_>, out: &mut dyn Write) -> Outcome {
     kept(ctx, out)
 }
 
-/// `tokens`: for each token file the committed settings name, whether its token is current and
-/// when it expires, or what makes one; never the token. It exits 0 unless a file is refused.
+/// `tokens`: for the token file the committed settings name, whether its token is current and
+/// when it expires, or what makes one; never the token. It exits 0 unless the file is refused.
 fn tokens(ctx: &Context<'_>, out: &mut dyn Write) -> i32 {
     let config = match ctx.source.load() {
         Ok(loaded) => loaded.config,
@@ -166,14 +166,15 @@ fn tokens(ctx: &Context<'_>, out: &mut dyn Write) -> i32 {
         }
     };
     let mut code = 0;
-    for role in Role::ALL {
-        let Some(file) = config.file_of(role) else {
-            continue;
-        };
+    let Some(file) = config.token_file.as_deref() else {
+        let _ = writeln!(out, "the committed settings name no token file");
+        return code;
+    };
+    {
         let next = |id: i64, what: &str| format!("App {id} makes {what} at its next use");
         let said = match (
-            mint::standing(ctx, &config, role, file),
-            config.app_of(role),
+            mint::standing(ctx, &config, file),
+            config.app(),
         ) {
             (Err(why), _) => {
                 code = 1;
@@ -201,10 +202,7 @@ fn tokens(ctx: &Context<'_>, out: &mut dyn Write) -> i32 {
                 }
             }
         };
-        let _ = writeln!(out, "{} {}: {said}", role.file_key(), file.display());
-    }
-    if code == 0 && Role::ALL.iter().all(|role| config.file_of(*role).is_none()) {
-        let _ = writeln!(out, "the committed settings name no token file");
+        let _ = writeln!(out, "{} {}: {said}", mint::TOKEN_FILE, file.display());
     }
     code
 }

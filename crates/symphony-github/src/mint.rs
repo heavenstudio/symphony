@@ -17,7 +17,7 @@
 //! ones. A failure writes nothing, leaves the file as it was, and names what to put right
 //! without a key, a JWT or a token.
 
-use crate::config::{App, Config, PullRequests, Releases, Role};
+use crate::config::{App, Config, PullRequests, Releases};
 use crate::credential::{self, Secret};
 use crate::reconcile::Context;
 use crate::transport::{Failure, Request};
@@ -79,7 +79,7 @@ impl Expiry {
 }
 
 /// Seconds since 1970 of `YYYY-MM-DDTHH:MM:SSZ`.
-fn seconds(text: &str) -> Option<i64> {
+pub(crate) fn seconds(text: &str) -> Option<i64> {
     let bytes = text.as_bytes();
     let shape = bytes.len() == 20
         && (bytes.iter().enumerate()).all(|(at, byte)| match at {
@@ -200,7 +200,7 @@ fn kept(real: &Path, key: &str) -> Result<Held, Stop> {
     Ok(held(&text))
 }
 
-/// What `file`, the token file of `role`, holds now, read and never made, for `tokens` to say:
+/// What `file`, the token file, holds now, read and never made, for `tokens` to say:
 /// [`Held::Unknown`] where the settings give it no App and its token reads.
 ///
 /// # Errors
@@ -209,51 +209,45 @@ fn kept(real: &Path, key: &str) -> Result<Held, Stop> {
 pub fn standing(
     ctx: &Context<'_>,
     config: &Config,
-    role: Role,
     file: &Path,
 ) -> Result<Held, String> {
     let folders: Vec<&Path> = ctx.repository.iter().map(PathBuf::as_path).collect();
-    if config.app_of(role).is_none() {
+    if config.app().is_none() {
         return credential::read(file, &folders).map(|_| Held::Unknown);
     }
-    let real = place(file, &folders, role.file_key()).map_err(Stop::said)?;
-    kept(&real, role.file_key()).map_err(Stop::said)
+    let real = place(file, &folders, TOKEN_FILE).map_err(Stop::said)?;
+    kept(&real, TOKEN_FILE).map_err(Stop::said)
 }
 
-/// The permissions `role`'s token is asked for, each the least the calls it is sent with need
-/// (docs/GITHUB.md, "The token").
+/// The settings' key of the file the token is kept in.
+pub const TOKEN_FILE: &str = "token_file";
+
+/// The permissions the token is asked for, each the least the calls it is sent with need
+/// (docs/GITHUB.md, "The token"): a delivery's pushes, pull requests and checks, a release's
+/// contents, and the issues the exchange reads or writes.
 #[must_use]
-pub fn permissions(config: &Config, role: Role) -> BTreeMap<&'static str, &'static str> {
+pub fn permissions(config: &Config) -> BTreeMap<&'static str, &'static str> {
     let mut asked = BTreeMap::new();
-    match role {
-        Role::Checks => {
-            asked.insert("checks", "write");
-        }
-        Role::Policy => {
-            asked.insert("administration", "write");
-        }
-        Role::Landing => {
-            if config.pull_requests == PullRequests::Publish {
-                asked.insert("contents", "write");
-                asked.insert("pull_requests", "write");
-            }
-            if config.releases == Releases::Publish {
-                asked.insert("contents", "write");
-            }
-            if config.issues.exports() || config.close_issues {
-                asked.insert("issues", "write");
-            } else if config.issues.imports() {
-                asked.insert("issues", "read");
-            }
-            if asked.is_empty() {
-                asked.insert("metadata", "read");
-            }
-        }
+    if config.pull_requests == PullRequests::Publish {
+        asked.insert("contents", "write");
+        asked.insert("pull_requests", "write");
+        asked.insert("checks", "write");
+    }
+    if config.releases == Releases::Publish {
+        asked.insert("contents", "write");
+    }
+    if config.issues.exports() || config.close_issues {
+        asked.insert("issues", "write");
+    } else if config.issues.imports() {
+        asked.insert("issues", "read");
+    }
+    if asked.is_empty() {
+        asked.insert("metadata", "read");
     }
     asked
 }
 
-/// The token `role`'s file holds, made first where the settings give that file an App and the
+/// The token `token_file` holds, made first where the settings give it an App and the
 /// token it holds is not current: absent, expired, within [`MARGIN`] of expiring, or of no
 /// expiry this program wrote. A file they give no App is read as it is.
 ///
@@ -261,12 +255,12 @@ pub fn permissions(config: &Config, role: Role) -> BTreeMap<&'static str, &'stat
 ///
 /// What a person must put right ([`Stop::Refused`]), or GitHub gave no token now
 /// ([`Stop::Unavailable`]); the file is then as it was.
-pub fn token(ctx: &Context<'_>, config: &Config, role: Role) -> Result<Secret, Stop> {
-    let key = role.file_key();
-    let file = (config.file_of(role))
+pub fn token(ctx: &Context<'_>, config: &Config) -> Result<Secret, Stop> {
+    let key = TOKEN_FILE;
+    let file = (config.token_file.as_deref())
         .ok_or_else(|| Stop::Refused(format!("the settings name no {key}")))?;
     let folders: Vec<&Path> = ctx.repository.iter().map(PathBuf::as_path).collect();
-    let Some(app) = config.app_of(role) else {
+    let Some(app) = config.app() else {
         return credential::read(file, &folders).map_err(Stop::Refused);
     };
     let real = place(file, &folders, key)?;
@@ -276,16 +270,16 @@ pub fn token(ctx: &Context<'_>, config: &Config, role: Role) -> Result<Secret, S
     {
         return Ok(token.clone());
     }
-    let key_file = key_file(&app, &folders, role, &real)?;
-    let (token, expires) = make(ctx, config, role, &app, &key_file)?;
+    let key_file = key_file(&app, &folders, &real)?;
+    let (token, expires) = make(ctx, config, &app, &key_file)?;
     write(&real, &token, &expires, key)?;
     Ok(token)
 }
 
 /// The App's key file, held as a token file is: outside the repository, a plain file that only
 /// its owner may read, and never the token file `token_file` it makes the token of.
-fn key_file(app: &App, folders: &[&Path], role: Role, token_file: &Path) -> Result<PathBuf, Stop> {
-    let key = format!("{}_key_file", role.prefix());
+fn key_file(app: &App, folders: &[&Path], token_file: &Path) -> Result<PathBuf, Stop> {
+    let key = "key_file";
     let named = app.key_file.display();
     let refused = |why: String| Stop::Refused(format!("{key} {named}{why}"));
     let real = (app.key_file.canonicalize()).map_err(|error| refused(format!(": {error}")))?;
@@ -293,8 +287,7 @@ fn key_file(app: &App, folders: &[&Path], role: Role, token_file: &Path) -> Resu
         .map_err(|()| refused(" is inside the repository; keep it outside".into()))?;
     if real == token_file {
         return Err(refused(format!(
-            " is {}: a token made would be written over the key",
-            role.file_key()
+            " is {TOKEN_FILE}: a token made would be written over the key"
         )));
     }
     let meta = fs::metadata(&real).map_err(|error| refused(format!(": {}", error.kind())))?;
@@ -372,16 +365,14 @@ fn sign(openssl: &str, key_file: &Path, input: &[u8], key: &str) -> Result<Vec<u
 }
 
 /// A token of `app` made by GitHub now, for the one repository the settings name and the
-/// permissions `role` is asked for, with its expiry.
+/// permissions the settings ask for ([`permissions`]), with its expiry.
 fn make(
     ctx: &Context<'_>,
     config: &Config,
-    role: Role,
     app: &App,
     key_file: &Path,
 ) -> Result<(Secret, Expiry), Stop> {
-    let prefix = role.prefix();
-    let key = role.file_key();
+    let key = TOKEN_FILE;
     let repository = (config.repository.as_ref())
         .ok_or_else(|| Stop::Refused("the settings name no repository".into()))?;
     let jwt = jwt(
@@ -389,11 +380,11 @@ fn make(
         app.id,
         key_file,
         ctx.now,
-        &format!("{prefix}_key_file"),
+        "key_file",
     )?;
     let jwt = Secret::new(&jwt).map_err(Stop::Refused)?;
     let transport = (ctx.connect)(jwt.clone()).map_err(Stop::Unavailable)?;
-    let asked = permissions(config, role);
+    let asked = permissions(config);
     let request = Request {
         method: "POST",
         path: format!("/app/installations/{}/access_tokens", app.installation),
@@ -435,15 +426,15 @@ fn make(
             Ok((token, expires))
         }
         401 => Err(Stop::Refused(format!(
-            "{making}: GitHub refused the App's JWT (401: {}): {prefix}_key_file is not App {}'s \
-             private key, {prefix}_app_id is not that App's number, or this machine's clock is \
+            "{making}: GitHub refused the App's JWT (401: {}): key_file is not App {}'s \
+             private key, app_id is not that App's number, or this machine's clock is \
              more than a minute ahead of GitHub's or nine minutes behind it",
             message(),
             app.id
         ))),
         404 => Err(Stop::Refused(format!(
             "{making}: GitHub found no installation {} of App {} (404): \
-             {prefix}_installation_id is not its number, or the App is not installed",
+             installation_id is not its number, or the App is not installed",
             app.installation, app.id
         ))),
         422 | 403 if !limited => Err(Stop::Refused(format!(
