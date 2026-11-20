@@ -1838,7 +1838,7 @@ fn delivered_earlier(r: &Repo) -> Receipt {
         by: "an-earlier-lander".into(),
         import: None,
     };
-    let path = Receipt::path(&lands(&r), SLUG);
+    let path = Receipt::path(&lands(r), SLUG);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, serde_json::to_string_pretty(&receipt).unwrap()).unwrap();
     git(&r.root, &["update-ref", RETAINED_SLUG, &first]);
