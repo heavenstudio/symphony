@@ -42,5 +42,14 @@ IF $s != NONE {
 pub(in crate::store) const SPENT_ON: &str = "SELECT * OMIT id FROM usage WHERE slug IN $slugs
     ORDER BY handle, slug, role, model, speed, round;";
 
+/// The rows of the tokens spent on `$slugs` and on their subtasks (`rows`, by the table's index of
+/// slugs), with each such subtask's parent (`under`).
+pub(in crate::store) const SPENT_UNDER: &str = "
+LET $under = (SELECT slug, parent FROM task WHERE parent IN $slugs);
+RETURN {
+    rows: (SELECT * OMIT id FROM usage WHERE slug IN array::concat($slugs, $under.slug)),
+    under: $under,
+};";
+
 /// The rows of the tokens `$handles` spent.
 pub(in crate::store) const SPENT_BY: &str = "SELECT * OMIT id FROM usage WHERE handle IN $handles;";

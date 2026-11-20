@@ -184,6 +184,7 @@ fn board() -> ReportRead {
         workflow: false,
         places: None,
         tasks: vec![old, release, a, b, c, main_red, review],
+        ..ReportRead::default()
     }
 }
 
@@ -379,6 +380,7 @@ fn a_landing_with_no_approve_before_it_is_a_landing_and_no_wait() {
                 .claim(1.0, "e")
                 .verdict(2.0, "o", "landed sim/x on m"),
         )],
+        ..ReportRead::default()
     };
     let day = day("sim", D, at(3.0), at(3.0), &read);
     assert_eq!(day.hours[2].landed, 1);
@@ -406,6 +408,7 @@ fn an_executor_that_left_resumes_by_the_next_claim_and_its_release_is_not_resumi
                 .left(3.0, "e")
                 .claim(5.0, "e2"),
         )],
+        ..ReportRead::default()
     };
     let day = day("sim", D, at(6.0), at(6.0), &read);
     assert_eq!(
@@ -440,6 +443,7 @@ fn a_review_with_no_reviewer_by_its_end_is_no_wait_and_a_reopened_task_enters_re
                 .moved(3.0, "o", "done", "review")
                 .joined(4.0, "r"),
         )],
+        ..ReportRead::default()
     };
     let day = day("sim", D, at(5.0), at(5.0), &read);
     assert!(day.hours[1].waits.review_to_reviewer.is_empty());
@@ -505,6 +509,7 @@ fn a_re_review_whose_reviewer_kept_the_role_waits_only_for_a_join_or_a_review_cl
             ),
             review,
         ],
+        ..ReportRead::default()
     };
     let day = day("sim", D, at(6.0), at(6.0), &read);
     let staffed: Vec<(usize, &str, f64)> = (day.hours.iter().enumerate())
@@ -597,6 +602,7 @@ fn a_task_done_counts_once_at_its_last_close_and_one_cancelled_or_reopened_since
         workflow: false,
         places: None,
         tasks: vec![next, cancelled, reopened, again, slice],
+        ..ReportRead::default()
     };
     let today = day("sim", D, at(10.0), at(10.0), &read);
     let per_hour = |pick: fn(&ReportHour) -> u32| -> Vec<(usize, u32)> {
@@ -714,6 +720,7 @@ fn a_task_approved_the_day_before_and_landed_after_midnight_lands_today_with_its
                 .verdict(-0.25, "r", "approve: fine")
                 .verdict(0.5, "o", "landed sim/late on m"),
         )],
+        ..ReportRead::default()
     };
     let today = day("sim", D, at(1.5), at(1.5), &read);
     assert_eq!(today.hours[0].landed, 1);
@@ -750,8 +757,7 @@ fn the_longest_in_their_status_are_the_ten_oldest_by_since_then_slug_whatever_th
         .collect();
     let read = ReportRead {
         tasks,
-        workflow: false,
-        places: None,
+        ..ReportRead::default()
     };
     let day = day("sim", D, at(9.0), at(9.0), &read);
     let longest: Vec<(&str, f64)> = day
@@ -802,6 +808,30 @@ fn a_day_file_s_text_is_the_one_serde_writes() {
         slug: "sim/\u{7f}\u{2028}".into(),
         seconds: -0.0,
     });
+    // Tokens: the sums kept, an hour that gained some, one that gained none, and a landed task.
+    let sum = symphony_api::reports::TokenSum {
+        role: "exec\"utor".into(),
+        round: 2,
+        model: "m".into(),
+        speed: "fast".into(),
+        input: u64::MAX,
+        cache_write_5m: 1,
+        cache_write_1h: 2,
+        cache_read: 3,
+        output: 4,
+        calls: 5,
+    };
+    odd.usage = Some(vec![sum.clone(), sum.clone()]);
+    // The odd day's first hour gained some; its second, none known.
+    odd.hours[0].tokens = Some(vec![sum.clone()]);
+    odd.landed = vec![
+        symphony_api::reports::Landed {
+            slug: "sim/a".into(),
+            at: 1.5,
+            spent: vec![sum],
+        },
+        symphony_api::reports::Landed::default(),
+    ];
     let days = [
         fixture,
         day("sim", D, at(13.5), at(13.5), &board()),
@@ -816,6 +846,76 @@ fn a_day_file_s_text_is_the_one_serde_writes() {
     }
     let odd = String::from_utf8(json::day(&days[4])).unwrap();
     assert!(odd.contains(r#""done":null"#), "{odd}");
+    assert!(odd.contains(r#""tokens":[{"role":"exec\"utor""#), "{odd}");
+    assert!(
+        odd.contains(r#""tokens":null"#) && odd.contains(r#""spent":[]"#),
+        "{odd}"
+    );
+}
+
+#[test]
+fn a_task_landed_in_the_day_is_named_once_at_its_last_landing_with_what_it_took() {
+    let sum = |role: &str, round: u32, n: u64| symphony_api::reports::TokenSum {
+        role: role.into(),
+        round,
+        model: "m".into(),
+        speed: "standard".into(),
+        input: n,
+        ..Default::default()
+    };
+    // Made an hour before its first landing, which can be the day before.
+    let landed = |slug: &str, hours: &[f64]| {
+        let made = hours.iter().copied().fold(0.0, f64::min) - 1.0;
+        let mut thread = Thread::default().made(made, "o").claim(made, "e");
+        for hour in hours {
+            thread = thread.verdict(*hour, "o", &format!("landed {slug} on m"));
+        }
+        task(slug, made, "done", 9.0, thread)
+    };
+    let mut sub = landed("sim/b/part", &[1.0]);
+    sub.parent = Some("sim/b".into());
+    let read = ReportRead {
+        tasks: vec![
+            // Landed twice in the day, and once the day before.
+            landed("sim/b", &[-3.0, 2.0, 5.0]),
+            landed("sim/a", &[5.0]),
+            landed("sim/quiet", &[4.0]),
+            landed("sim/tomorrow", &[30.0]),
+            landed("sim/yesterday", &[-1.0]),
+            sub,
+            task(
+                "sim/open",
+                0.0,
+                "ready",
+                0.0,
+                Thread::default().made(0.0, "o"),
+            ),
+        ],
+        spent: vec![
+            ("sim/a".into(), sum("executor", 1, 7)),
+            ("sim/b".into(), sum("executor", 1, 1)),
+            ("sim/b".into(), sum("reviewer", 2, 2)),
+            ("sim/yesterday".into(), sum("executor", 1, 9)),
+        ],
+        ..ReportRead::default()
+    };
+    let day = day("sim", D, D + DAY, at(40.0), &read);
+    let told: Vec<(&str, f64, Vec<u64>)> = (day.landed.iter())
+        .map(|task| {
+            let spent = task.spent.iter().map(|sum| sum.input).collect();
+            (task.slug.as_str(), (task.at - D) / HOUR, spent)
+        })
+        .collect();
+    assert_eq!(
+        told,
+        [
+            ("sim/quiet", 4.0, vec![]),
+            ("sim/a", 5.0, vec![7]),
+            ("sim/b", 5.0, vec![1, 2]),
+        ],
+        "top-level tasks alone, in the day alone, oldest first then by slug"
+    );
+    assert_eq!(day.usage, None, "the roll-up's to fill");
 }
 
 #[test]

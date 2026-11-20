@@ -7,6 +7,7 @@
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { TasksPage } from "../boardlive";
+import { CardCostsOf } from "../card-costs";
 import { Frame } from "../frame";
 import { MountContext } from "../mount";
 import { useRoute } from "../route";
@@ -17,7 +18,9 @@ function BoardApp() {
     <Frame route={route}>
       {/* Each scope's board is a page of its own: its kept copy, its reads and its feed. */}
       {route.path === "tasks" ? (
-        <TasksPage key={route.scope} scope={route.scope} />
+        <CardCostsOf key={route.scope} scope={route.scope}>
+          <TasksPage scope={route.scope} />
+        </CardCostsOf>
       ) : (
         <p>Loading page…</p>
       )}

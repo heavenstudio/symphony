@@ -116,6 +116,73 @@ pub struct ReportsPage {
     /// missing from the periods.
     #[serde(default)]
     pub unread: Vec<String>,
+    /// What the top-level tasks landed in the window took, by the roll-up's day files; none when
+    /// none of them names a landed task.
+    #[serde(default)]
+    pub landed: Option<LandedSpend>,
+    /// The day the price table's prices were read (`YYYY-MM-DD`), which every estimate of the
+    /// answer is at; empty from a server that prices none.
+    #[serde(default)]
+    pub prices: String,
+}
+
+/// Tokens and what they cost, estimated at API list prices: never money spent, as a subscription
+/// is not billed by the token.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct Spend {
+    pub tokens: crate::AgentTokens,
+    pub cost: crate::AgentCost,
+}
+
+/// A role's tokens in a period, and their estimated cost: a [`Spend`]'s two fields beside its
+/// role, never `#[serde(flatten)]`, which reads no number back where `serde_json` keeps a number
+/// as its text (`arbitrary_precision`, as the server's build links it).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RoleSpend {
+    /// A task's role (`executor`, `reviewer`, `reserved`), or the kind of a session working no
+    /// task (`orchestrator`, `worker`).
+    pub role: String,
+    pub tokens: crate::AgentTokens,
+    pub cost: crate::AgentCost,
+}
+
+/// What the tasks landed in a window took, each with its subtasks, as the board recorded it up to
+/// the roll-up that read its landing.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct LandedSpend {
+    /// The landed tasks the board recorded tokens for.
+    pub tasks: u32,
+    /// The landed tasks it recorded none for: in no figure here.
+    #[serde(default)]
+    pub without: u32,
+    /// The median estimated cost of those with a priced token, in US dollars; none with none.
+    #[serde(default)]
+    pub median: Option<f64>,
+    /// The dearest of them, at most ten, the dearest first.
+    #[serde(default)]
+    pub dearest: Vec<LandedTask>,
+    /// What they took up to their first review, all told.
+    #[serde(default)]
+    pub first_round: Spend,
+    /// What they took in every round after it: each review, and the fixes it asked for.
+    #[serde(default)]
+    pub later_rounds: Spend,
+    /// How many of them took anything after their first round.
+    #[serde(default)]
+    pub again: u32,
+}
+
+/// A landed task and what it took: a [`Spend`]'s two fields beside it, as [`RoleSpend`]'s are.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct LandedTask {
+    pub slug: String,
+    /// When it landed.
+    pub at: f64,
+    pub tokens: crate::AgentTokens,
+    pub cost: crate::AgentCost,
 }
 
 /// One period of a window.
@@ -158,6 +225,11 @@ pub struct ReportBucket {
     /// The board's health; none when no health line is in it.
     #[serde(default)]
     pub health: Option<BucketHealth>,
+    /// The tokens the board recorded in it, by role, with their estimated cost, out of the hours
+    /// of the roll-up's files that tell them ([`crate::ReportHour::tokens`]); none when none does,
+    /// which is unknown, never none spent, and empty when those hours gained none.
+    #[serde(default)]
+    pub spend: Option<Vec<RoleSpend>>,
     /// Where a custom workflow's top-level tasks spent it, by phase and by state
     /// ([`crate::reports::Placed`]), summed over its roll-up hours that record it; left out when
     /// none does, as on a board that runs no workflow of its own.

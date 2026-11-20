@@ -4,7 +4,11 @@
 //! from one read of the board ([`symphony_board::reports`] counts it), two cheap reads of the
 //! default branch's history ([`git`]), one more for each red that names the commits it came
 //! between ([`git::trace`]), and the decision cards of the project's documents with a live
-//! branch's posted cards ([`decisions`]).
+//! branch's posted cards ([`decisions`]). The tokens the board recorded are told by difference
+//! ([`symphony_board::reports::spend`]): what its `usage` table holds at this read less what the
+//! last day file written kept of it, today's or yesterday's, shared among the hours between the
+//! two; with neither file, or none that kept it, the hours stay unknown and this roll-up's files
+//! keep the sums for the next.
 //!
 //! Only the machine's one server rolls a project up, once an hour (apps/symphony-server,
 //! `live/reports.rs`): it reads the board for the days [`due`] names and hands that read here, off
@@ -84,9 +88,33 @@ pub fn roll_up(
     if let Err(why) = &docs {
         rolled.problems.push(format!("documents: {why}"));
     }
+    // The files as the last roll-up left them, read before any is written again: today's and
+    // yesterday's, whichever of `days` is due.
+    let today = day_start(now);
+    let kept: Vec<symphony_api::ReportDay> = [today - DAY, today]
+        .iter()
+        .filter_map(|start| {
+            symphony_board::reports::read(folder, &symphony_api::run_day(*start)).ok()?
+        })
+        .collect();
+    let gained = kept
+        .iter()
+        .filter(|file| file.usage.is_some())
+        .max_by(|a, b| a.read.total_cmp(&b.read))
+        .map(|last| {
+            let base = last.usage.as_deref().unwrap_or_default();
+            symphony_board::reports::spend::gained(base, last.read, &read.usage, now)
+        })
+        .unwrap_or_default();
     for start in days {
         let until = now.min(start + DAY);
         let mut day = symphony_board::reports::day(project, *start, until, now, read);
+        symphony_board::reports::spend::fill(
+            &mut day,
+            &read.usage,
+            kept.iter().find(|file| file.start == *start),
+            &gained,
+        );
         git::trace(
             &mut day,
             root,
