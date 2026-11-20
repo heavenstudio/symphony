@@ -51,8 +51,8 @@ const LOG: &str = "postgresql.log";
 /// In the board's folder: the server a start started on its [`Lifeline`] and the process it ends
 /// with, as `SERVER STARTER` pids on one line ([`starter_of`]). Written once that server is ready,
 /// under the starters' lock, and removed by every start before it starts one, so it names the last
-/// server the board started and only while that server runs is it read: a server of another pid, as
-/// one started by hand on the data, is never taken for the one it names.
+/// server the board started on a lifeline. It counts only for a running server of the pid it
+/// names: one of another pid, as a server started by hand on the data, is never taken for it.
 const STARTER: &str = "postgresql.starter";
 /// Where the socket folders are, each named for the data it serves ([`socket_folder`]).
 const SOCKETS: &str = "/tmp";
