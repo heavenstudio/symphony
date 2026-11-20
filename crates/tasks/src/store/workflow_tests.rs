@@ -16,6 +16,138 @@ fn pair(phase: &str, state: &str) -> Pair {
     }
 }
 
+#[test]
+fn a_position_and_a_transition_are_read_by_field_as_their_decoders_read_them() {
+    let full = json!({
+        "phase": "build", "state": "working", "resume": {"phase": "build", "state": "available"},
+        "generation": 2, "revision": 7, "digest": "d1",
+        "manual": {"trigger": "lost_holder", "holder": "amber", "role": "executor", "manual": true},
+    });
+    let with = |key: &str, value: Value| {
+        let mut changed = full.clone();
+        changed[key] = value;
+        changed
+    };
+    let without = |key: &str| {
+        let mut changed = full.clone();
+        changed.as_object_mut().unwrap().remove(key);
+        changed
+    };
+    let cases = [
+        full.clone(),
+        without("resume"),
+        without("manual"),
+        with("resume", Value::Null),
+        with("manual", Value::Null),
+        with(
+            "manual",
+            json!({"trigger": "release", "holder": "a", "role": "reviewer", "manual": false}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "attempt_failure", "holder": "ab12", "role": "checker", "manual": true}),
+        ),
+        // Each refused as its decoder refuses it.
+        without("digest"),
+        without("generation"),
+        with("revision", json!("7")),
+        with("revision", json!(-1)),
+        with("revision", json!(7.5)),
+        with("phase", json!(1)),
+        with("extra", json!(1)),
+        with("resume", json!({"phase": "build"})),
+        with(
+            "resume",
+            json!({"phase": "build", "state": "a", "extra": 1}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "gone", "holder": "a", "role": "r", "manual": true}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "release", "holder": "a", "role": "r", "manual": "yes"}),
+        ),
+        with(
+            "manual",
+            json!({"trigger": "release", "holder": "a", "role": "r", "manual": true, "x": 1}),
+        ),
+        with("manual", json!("lost_holder")),
+        with(
+            "manual",
+            json!({"trigger": "cancellation_acknowledged", "holder": "a", "role": "r", "manual": true, "attempt": "a"}),
+        ),
+        json!(["build", "working"]),
+        Value::Null,
+    ];
+    let mut read = 0;
+    for case in cases {
+        let decoded: Option<TaskPosition> = serde_json::from_value(case.clone()).ok();
+        assert_eq!(TaskPosition::of(&case), decoded, "{case}");
+        read += usize::from(decoded.is_some());
+    }
+    assert_eq!(read, 7, "the cases the decoder reads");
+    let position = TaskPosition::of(&full).unwrap();
+    assert_eq!(
+        (position.at(), position.revision),
+        (pair("build", "working"), 7)
+    );
+
+    // A transition's body is read for what the alarm says of it, whatever else it records.
+    let body =
+        serde_json::to_value(moved("sim/a", 2, pair("build", "working"), "in_progress")).unwrap();
+    let read = Moved::of(&body).unwrap();
+    assert_eq!(
+        (read.slug.as_str(), read.revision, read.status.as_str()),
+        ("sim/a", 2, "in_progress")
+    );
+    assert_eq!(read.at, body["at"].as_f64().unwrap());
+    for missing in ["slug", "revision", "status", "at"] {
+        let mut short = body.clone();
+        short.as_object_mut().unwrap().remove(missing);
+        assert_eq!(Moved::of(&short), None, "{missing}");
+    }
+}
+
+/// Every position the types can hold, each optional field set and each trigger, is read by field
+/// as it is written: a field the types gain breaks the literals below and a trigger breaks the
+/// match, and each fails here until `TaskPosition::of` reads it, so a position a newer writer
+/// records is never read as no position.
+#[test]
+fn every_position_the_types_hold_is_read_by_field_as_it_is_written() {
+    let triggers = [
+        Trigger::Release,
+        Trigger::LostHolder,
+        Trigger::AttemptFailure,
+        Trigger::CancellationAcknowledged,
+    ]
+    .map(|trigger| match trigger {
+        // A trigger the enum gains stops compiling here: list it above as well.
+        Trigger::Release
+        | Trigger::LostHolder
+        | Trigger::AttemptFailure
+        | Trigger::CancellationAcknowledged => trigger,
+    });
+    for trigger in triggers {
+        let position = TaskPosition {
+            phase: "build".into(),
+            state: "working".into(),
+            resume: Some(pair("build", "available")),
+            generation: 2,
+            revision: 7,
+            digest: "d1".into(),
+            manual: Some(Recovered {
+                trigger,
+                holder: "amber".into(),
+                role: "executor".into(),
+                manual: true,
+            }),
+        };
+        let written = serde_json::to_value(&position).unwrap();
+        assert_eq!(TaskPosition::of(&written), Some(position), "{written}");
+    }
+}
+
 fn owner() -> Principal {
     Principal::new(PrincipalKind::Human, "local".into(), "owner".into())
 }
@@ -39,6 +171,7 @@ fn moved(slug: &str, revision: u64, to: Pair, status: &str) -> Transition {
         effects: vec![],
         key: Some(format!("key{revision}")),
         recovery: None,
+        accepted: None,
         at: 1000.0 + revision as f64,
     }
 }
@@ -356,6 +489,64 @@ fn the_database_retires_a_position_only_beside_a_returns_transition() {
 }
 
 #[test]
+fn the_database_never_changes_an_admission_or_lowers_an_authority_within_its_epoch() {
+    for backend in BACKENDS {
+        let f = Fixture::on(backend, Seed::default());
+        by_hand(
+            &f,
+            "CREATE workflow:['admission', 'sim/a', 4] CONTENT { kind: 'admission', body: { edge: 'accept' }, at: 1.0 } RETURN NONE;
+             CREATE workflow:['authority', 'approvals'] CONTENT { kind: 'authority', body: { epoch: 'e1', generation: 3, state: 's3' }, at: 1.0 } RETURN NONE;
+             RETURN NONE;",
+            "INSERT INTO workflow (id, kind, body, at) VALUES \
+             ('[\"admission\", \"sim/a\", 4]', 'admission', '{\"edge\": \"accept\"}', 1.0), \
+             ('[\"authority\", \"approvals\"]', 'authority', \
+              '{\"epoch\": \"e1\", \"generation\": 3, \"state\": \"s3\"}', 1.0);",
+        )
+        .unwrap();
+        let admission = refused(by_hand(
+            &f,
+            "UPDATE workflow:['admission', 'sim/a', 4] SET body.edge = 'other' RETURN NONE; RETURN NONE;",
+            "UPDATE workflow SET body = body || '{\"edge\": \"other\"}' \
+             WHERE id = '[\"admission\", \"sim/a\", 4]';",
+        ));
+        assert_eq!(
+            admission, "workflow: a recorded admission is never changed",
+            "{backend:?}"
+        );
+        let lowered = refused(by_hand(
+            &f,
+            "UPDATE workflow:['authority', 'approvals'] SET body.generation = 2 RETURN NONE; RETURN NONE;",
+            "UPDATE workflow SET body = body || '{\"generation\": 2}' \
+             WHERE id = '[\"authority\", \"approvals\"]';",
+        ));
+        assert_eq!(
+            lowered,
+            "workflow: the generation the board accepted from an approval authority is never \
+             lowered within its epoch",
+            "{backend:?}"
+        );
+        // Forward within its epoch, a mark of conflict, or a new epoch at any generation is a move.
+        by_hand(
+            &f,
+            "UPDATE workflow:['authority', 'approvals'] SET body.generation = 4, body.conflicted = true RETURN NONE;
+             UPDATE workflow:['authority', 'approvals'] SET body.epoch = 'e2', body.generation = 1 RETURN NONE;
+             RETURN NONE;",
+            "UPDATE workflow SET body = body || '{\"generation\": 4, \"conflicted\": true}' \
+             WHERE id = '[\"authority\", \"approvals\"]'; \
+             UPDATE workflow SET body = body || '{\"epoch\": \"e2\", \"generation\": 1}' \
+             WHERE id = '[\"authority\", \"approvals\"]';",
+        )
+        .unwrap();
+        let retyped = refused(by_hand(
+            &f,
+            "UPDATE workflow:['authority', 'approvals'] SET kind = 'intent' RETURN NONE; RETURN NONE;",
+            "UPDATE workflow SET kind = 'intent' WHERE id = '[\"authority\", \"approvals\"]';",
+        ));
+        assert_eq!(retyped, "workflow: a recorded authority is never changed");
+    }
+}
+
+#[test]
 fn a_copy_carries_the_workflow_and_refuses_positions_without_their_records() {
     for backend in BACKENDS {
         let f = Fixture::on(backend, Seed::default());
@@ -530,10 +721,12 @@ fn a_board_made_at_an_older_schema_migrates_to_this_one_with_its_rows_and_then_o
     use crate::store_fixture::{HOST, NOW};
     use crate::{NewTask, Opening, Schema};
     // What an older build's board lacks of this build's definitions: schema 24's workflow
-    // records and their fence on tasks, and below 23 the execution attempts' tables as well.
+    // records and their fence on tasks (on PostgreSQL its triggers' functions too), and below 23
+    // the execution attempts' tables as well.
     const NO_WORKFLOW: (&str, &str) = (
         "REMOVE EVENT workflow_position ON task; REMOVE TABLE workflow;",
-        "DROP TRIGGER task_workflow ON task; DROP TABLE workflow;",
+        "DROP TRIGGER task_workflow ON task; DROP TABLE workflow; \
+         DROP FUNCTION board_workflow_position(); DROP FUNCTION board_workflow_history();",
     );
     const NO_EXECUTION: (&str, &str) = (
         "REMOVE TABLE execution_attempt; REMOVE TABLE execution_fact; \
@@ -562,8 +755,10 @@ fn a_board_made_at_an_older_schema_migrates_to_this_one_with_its_rows_and_then_o
         for (older, lacks) in [
             (22, &[NO_WORKFLOW, NO_EXECUTION][..]),
             (23, &[NO_WORKFLOW][..]),
-            // 24 has every table: what it lacks is the fence that lets a position go.
+            // 24 to 26 have every table: what they lack is the fence that lets a position go.
             (24, &[][..]),
+            (25, &[][..]),
+            (26, &[][..]),
         ] {
             let database = backend.database();
             let open = |how| {

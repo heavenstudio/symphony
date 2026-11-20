@@ -11,6 +11,7 @@ mod first;
 mod flags;
 mod rolled_back;
 mod served;
+mod unfollowed;
 mod writers;
 
 use crate::children::Child as _;

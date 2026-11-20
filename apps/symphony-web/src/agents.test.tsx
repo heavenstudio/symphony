@@ -8,6 +8,7 @@ import {
   AgentsView,
   type AgentsViewProps,
   MachinesView,
+  standing,
 } from "./agents";
 import {
   type AgentPageRead,
@@ -51,15 +52,24 @@ function row(
     work = NO_WORK,
     local = false,
     following = followed(),
+    names = new Map(),
   }: {
     tasks?: Task[];
     work?: MachineWork;
     local?: boolean;
     following?: Followed;
+    names?: ReadonlyMap<string, string>;
   } = {},
 ): string {
   return renderToStaticMarkup(
-    <AgentLines agent={agent} local={local} tasks={tasks} work={work} following={following} />,
+    <AgentLines
+      agent={agent}
+      local={local}
+      tasks={tasks}
+      work={work}
+      following={following}
+      names={names}
+    />,
   );
 }
 
@@ -145,6 +155,36 @@ describe("an agent's row", () => {
     // The count is the server's, whatever roles the agent's held tasks name.
     const executes: HeldTask = { slug: "a/w", role: "executor", status: "in_progress" };
     expect(row(agent({ tasks: [executes] }))).not.toContain("Following");
+  });
+
+  it("says a task's place where a custom workflow holds it, by its names or its IDs till then", () => {
+    const place = { phase: "build", state: "waiting_on", revision: 3 };
+    const held = aTask("w/held", {
+      title: "Held",
+      status: "blocked",
+      roles: [aRole("executor", "cobalt-otter")],
+      workflow: place,
+    });
+    const names = new Map([["build/waiting_on", "Build · Waiting on"]]);
+    expect(row(agent(), { tasks: [held], names })).toContain(
+      '<a href="/task/w/held">Held</a> · executor · Build · Waiting on</li>',
+    );
+    expect(row(agent(), { tasks: [held] })).toContain(
+      '<a href="/task/w/held">Held</a> · executor · build · waiting on</li>',
+    );
+    expect(standing(aTask("w/own", { status: "in_progress" }), names)).toBe("in progress");
+    expect(standing({ ...held, workflow: null }, names)).toBe("blocked");
+    const drawn = renderToStaticMarkup(
+      <AgentRow
+        agent={agent()}
+        local={false}
+        tasks={[held]}
+        work={NO_WORK}
+        scope=""
+        names={names}
+      />,
+    );
+    expect(drawn).toContain("· executor · Build · Waiting on</li>");
   });
 
   it("opens its Following list: why a read failed, the tasks it follows, and more to load", () => {

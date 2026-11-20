@@ -1,127 +1,11 @@
-//! The refresh's parts that need no board or server: which writers hold a move, what the release's
-//! own binaries are, the snapshots kept, the SurrealDB a release pins and how a command it runs
-//! fails. The whole refresh, on scratch boards and a stand-in server, is `tests/release/refresh.rs`.
+//! The refresh's parts that need no board or server: what holds the release, the SurrealDB a
+//! release pins, how a command it runs fails and what the server's reload said. The writer rule,
+//! the snapshots kept and the SurrealDB a move never replaces are the library's
+//! (`symphony::machine::writers`, `symphony::machine::moving`). The whole refresh, on scratch
+//! boards and a stand-in server, is `tests/release/refresh.rs`.
 
 use super::*;
 use crate::test_tree::Tree;
-
-/// A writer's line, `program` at `path` on `host`, at `schema`, seen `ago` seconds before `now`.
-fn writer(program: &str, path: &Path, host: &str, schema: i64, now: f64, ago: f64) -> Writer {
-    Writer {
-        program: program.into(),
-        path: path.to_string_lossy().into_owned(),
-        host: host.into(),
-        schema,
-        seen: now - ago,
-    }
-}
-
-#[test]
-fn a_writer_behind_holds_the_move_unless_it_is_a_release_of_this_machine_or_unseen_for_a_week() {
-    let tree = Tree::new();
-    fs::create_dir_all(tree.path("machine/releases/release-1/bin")).unwrap();
-    // Named through a link, as a machine folder may be: its releases are read by their real path.
-    std::os::unix::fs::symlink(tree.path("machine"), tree.path("linked")).unwrap();
-    let releases = tree.path("machine/releases").canonicalize().unwrap();
-    let here = symphony_board::sys::hostname();
-    let now = 1_000_000.0;
-    let day = 24.0 * 3600.0;
-    let own = releases.join("release-1/bin/tasks");
-    let project = Path::new("/work/alpha/.target/release/tasks");
-    let lines = vec![
-        writer("tasks", &own, &here, 18, now, 60.0),
-        writer(
-            "agent-send",
-            &releases.join("release-0/bin/agent-send"),
-            &here,
-            17,
-            now,
-            day,
-        ),
-        writer("tasks", &own, "another-host", 18, now, 60.0),
-        writer("tasks", project, &here, 18, now, 6.0 * day),
-        writer(
-            "tasks",
-            &releases.join("release-1/tasks"),
-            &here,
-            18,
-            now,
-            60.0,
-        ),
-        writer("gate", Path::new("/work/alpha/gate"), &here, 19, now, 60.0),
-        writer(
-            "old",
-            Path::new("/work/beta/old"),
-            &here,
-            18,
-            now,
-            8.0 * day,
-        ),
-    ];
-    let (mine, behind) = lagging(lines, 19, now, &tree.path("linked"));
-    let paths = |writers: &[Writer]| -> Vec<(String, String)> {
-        (writers.iter())
-            .map(|w| (w.path.clone(), w.host.clone()))
-            .collect()
-    };
-    assert_eq!(
-        paths(&mine),
-        [
-            (own.to_string_lossy().into_owned(), here.clone()),
-            (
-                releases
-                    .join("release-0/bin/agent-send")
-                    .to_string_lossy()
-                    .into_owned(),
-                here.clone()
-            ),
-        ],
-        "a release's own binaries on this host, whatever release they are of"
-    );
-    // Another host's copy of a release, a project's build, and a file in a release's folder that is
-    // no binary of it, in order of program, host and path. At the release's schema, or unseen for
-    // over a week, a writer is not behind.
-    let mut expected = vec![
-        (
-            own.to_string_lossy().into_owned(),
-            "another-host".to_string(),
-        ),
-        (project.to_string_lossy().into_owned(), here.clone()),
-        (
-            releases
-                .join("release-1/tasks")
-                .to_string_lossy()
-                .into_owned(),
-            here.clone(),
-        ),
-    ];
-    expected.sort_by(|a, b| (&a.1, &a.0).cmp(&(&b.1, &b.0)));
-    assert_eq!(paths(&behind), expected);
-    // A machine folder with no release installed has no release's own.
-    let (mine, behind) = lagging(
-        vec![writer("tasks", &own, &here, 18, now, 60.0)],
-        19,
-        now,
-        &tree.path("empty"),
-    );
-    assert!(mine.is_empty() && behind.len() == 1);
-}
-
-#[test]
-fn a_release_binary_is_one_in_its_bin_folder_and_nothing_deeper_or_beside_it() {
-    let releases = Path::new("/m/releases");
-    assert!(of_a_release(Path::new("/m/releases/r/bin/tasks"), releases));
-    assert!(!of_a_release(
-        Path::new("/m/releases/r/bin/x/tasks"),
-        releases
-    ));
-    assert!(!of_a_release(
-        Path::new("/m/releases/r/lib/tasks"),
-        releases
-    ));
-    assert!(!of_a_release(Path::new("/m/releases/bin"), releases));
-    assert!(!of_a_release(Path::new("/elsewhere/r/bin/tasks"), releases));
-}
 
 #[test]
 fn what_holds_the_release_is_a_lagging_writer_or_the_refreshs_own_red_and_never_an_old_board() {
@@ -136,67 +20,25 @@ fn what_holds_the_release_is_a_lagging_writer_or_the_refreshs_own_red_and_never_
     assert!(
         !Verdict::Move {
             live: 18,
-            leave: true
+            leave: true,
+            gone: String::new(),
         }
         .holds()
     );
 }
 
 #[test]
-fn a_release_at_currents_schema_or_behind_it_says_which_and_moves_no_board() {
+fn a_release_at_currents_schema_or_behind_it_says_which_and_moves_only_a_board_left_behind() {
     assert_eq!(
         no_move("release-2", 19, 19),
-        "release-2 serves board schema 19, as the release current names serves 19: no board moves"
+        "release-2 serves board schema 19, as the release current names serves 19: only a board \
+         left behind it moves"
     );
     assert_eq!(
         no_move("release-2", 18, 19),
-        "release-2 serves board schema 18, behind the release current names, which serves 19: no \
-         board moves, as none moves back"
+        "release-2 serves board schema 18, behind the release current names, which serves 19: none \
+         moves back, and only a board left behind 18 moves"
     );
-}
-
-#[test]
-fn a_running_database_older_than_the_pins_is_one_the_move_would_replace() {
-    assert!(older("3.2.9", "3.3.0"));
-    assert!(older("v2.3.0", "3.0.0"));
-    assert!(older("3.3", "3.3.1"));
-    assert!(!older("3.3.0", "3.3.0"));
-    assert!(!older("3.4.0", "3.3.9"));
-    assert!(!older("3.3.0-beta", "3.3.0"), "a suffix is no older");
-}
-
-#[test]
-fn the_snapshots_kept_are_the_newest_and_nothing_else_is_touched() {
-    let tree = Tree::new();
-    let folder = tree.path("snapshots");
-    fs::create_dir_all(&folder).unwrap();
-    for n in 0..7 {
-        let file = folder.join(format!("before-schema-{n}-release.surql"));
-        fs::write(&file, "x").unwrap();
-        let when = UNIX_EPOCH + Duration::from_secs(1_000 + n);
-        File::options()
-            .write(true)
-            .open(&file)
-            .unwrap()
-            .set_modified(when)
-            .unwrap();
-    }
-    fs::write(folder.join("someone-else.surql"), "y").unwrap();
-    prune(&folder, 5);
-    let mut left = tree.names("snapshots");
-    left.sort();
-    assert_eq!(
-        left,
-        [
-            "before-schema-2-release.surql",
-            "before-schema-3-release.surql",
-            "before-schema-4-release.surql",
-            "before-schema-5-release.surql",
-            "before-schema-6-release.surql",
-            "someone-else.surql",
-        ]
-    );
-    prune(&tree.path("none"), 5);
 }
 
 #[test]
@@ -379,6 +221,8 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     let logs = dir.join("logs");
     fs::create_dir_all(&logs).unwrap();
     let against = Against {
+        run: "2026-11-20T1000-1",
+        main: &dir,
         // No repository: the SurrealDB a release pins cannot be read, and is not asked for.
         root: &dir,
         ours: &dir,
@@ -401,7 +245,7 @@ fn a_board_on_postgresql_is_judged_by_its_writers_alone_and_snapshotted_with_pg_
     store.raw().table("writer").delete().unwrap();
     let mut moving = judge(&entry, &common, schema + 1, &against);
     assert!(
-        matches!(&moving.verdict, Verdict::Move { live, leave: false } if *live == schema),
+        matches!(&moving.verdict, Verdict::Move { live, leave: false, .. } if *live == schema),
         "no writer behind, and no SurrealDB pin to wait on"
     );
     snapshot(&mut moving, &against).unwrap();

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { href } from "./project";
 import { slugOrder } from "./task";
-import { markTasksReady } from "./taskcard";
+import { markTasksReady, statusWords } from "./taskcard";
 import type { MachineWork, Orchestrator, Task } from "./wire";
 import { PIPELINE, taskStage } from "./work";
 
@@ -29,8 +29,16 @@ export const PHONE_STAGES = [
 ];
 export const STAGE_KEY = "board-waiting-stage";
 
-export function savedStage(value: string | null): string {
-  return value !== null && PHONE_STAGES.includes(value) ? value : "review";
+/**
+ * What a custom workflow's IDs read as, once its definition is (`flow.tsx`): a column's key
+ * (`phase:ID`) its phase's label, a wait facet (`state:ID`) its state's, and a task's place
+ * (`PHASE/STATE`) both. Empty on a board its own writers keep.
+ */
+export const NAMES = new Map<string, string>();
+
+/** The phone's stage `value` names, when `tabs` has it; else the first of them. */
+export function savedStage(value: string | null, tabs = PHONE_STAGES): string {
+  return value !== null && tabs.includes(value) ? value : (tabs[0] as string);
 }
 
 export function waitKind(task: Task): string {
@@ -52,7 +60,12 @@ export function blocked(task: Task): boolean {
 }
 
 export function waitingStage(work: MachineWork, task: Task, connected: boolean): string {
-  if (task.status !== "blocked") return taskStage(work, task, connected);
+  const stage = taskStage(work, task, connected);
+  // A task a custom workflow holds goes in its phase's column, blocked or not, unless a machine
+  // builds or tests it.
+  const place = task.workflow;
+  if (place) return stage === "build" || stage === "test" ? stage : `phase:${place.phase}`;
+  if (task.status !== "blocked") return stage;
   return ["concept", "design", "ready", "in_progress", "review", "backlog"].includes(
     task.from ?? "",
   )
@@ -112,6 +125,16 @@ export function ends(text: string): [string, string] {
   return at < 0 ? [text, ""] : [text.slice(0, at), text.slice(at)];
 }
 
+/**
+ * `text` on one line, as a closed card draws it: each run of white space, a line break or a tab
+ * among it, is one space. A card's lines keep their spaces as written (`white-space: pre`), so the
+ * end a cut line keeps shows its leading space, and a reason written on two lines would draw on
+ * two and be clipped by the card's fixed box.
+ */
+export function fold(text: string): string {
+  return text.replace(/\s+/gu, " ");
+}
+
 /** A line of text that keeps its end when cut: the ellipsis falls between its two parts. */
 export function Ends({ text }: { text: string }) {
   const [head, tail] = ends(text);
@@ -124,8 +147,9 @@ export function Ends({ text }: { text: string }) {
 }
 
 /**
- * A task's card on the waiting board. Closed, it keeps its fixed box (`ROW`, board.tsx); its one
- * button opens it in place, by key or touch, to the whole of its title, slug, wait and reason.
+ * A task's card on the waiting board. Closed, it keeps its fixed box (`ROW`, board.tsx), each of
+ * its lines folded onto one (`fold`); its one button opens it in place, by key or touch, to the
+ * whole of its title, slug, wait and reason, each as written.
  */
 export function WaitCard({ task, now }: { task: Task; now: number }) {
   useEffect(markTasksReady);
@@ -147,6 +171,7 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
       ? `${line.why} ${line.who}`.trim()
       : (line?.why ?? "");
   const why = stale && !reason.includes("(stale)") ? `${reason} (stale)` : reason;
+  const shown = (text: string) => <Ends text={open ? text : fold(text)} />;
   return (
     <div
       className={`taskcard waiting-card p${task.priority} k-${kind}${blocked(task) ? " is-blocked" : ""}`}
@@ -155,6 +180,12 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
     >
       <a className="taskcard-title" href={href(`/task/${task.slug}`)}>
         {blocked(task) && <span className="blocked-mark">blocked</span>}
+        {task.workflow && (
+          <span className="state-mark">
+            {NAMES.get(`${task.workflow.phase}/${task.workflow.state}`) ??
+              statusWords(task.workflow.state)}
+          </span>
+        )}
         {(task.review_rounds ?? 0) > 0 && (
           <span className="review-mark">
             {task.review_rounds} {task.review_rounds === 1 ? "review" : "reviews"}
@@ -163,9 +194,7 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
         {task.title}
       </a>
       <div className="waiting-slug">
-        <code>
-          <Ends text={task.slug} />
-        </code>
+        <code>{shown(task.slug)}</code>
         <span className="prio">{`p${task.priority}`}</span>
         <button
           type="button"
@@ -179,13 +208,11 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
       </div>
       <div className="task-wait">
         <span className="on" title={waitLabel(task)}>
-          <Ends
-            text={finished ? (task.status === "done" ? "Done" : "Cancelled") : waitLabel(task)}
-          />
+          {shown(finished ? (task.status === "done" ? "Done" : "Cancelled") : waitLabel(task))}
         </span>
         <span className={old ? "age old" : "age"}>{waitAge(since, now)}</span>
         <span className="why" title={why}>
-          <Ends text={why} />
+          {shown(why)}
         </span>
       </div>
     </div>

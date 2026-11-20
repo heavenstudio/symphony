@@ -44,25 +44,36 @@ pub struct TaskPosition {
     pub manual: Option<Recovered>,
 }
 
-/// The exit of a holder a recovery answered (`Store::recover_holder`): an agent's own release of
-/// its role, or a holder lost, by the position's configured action (docs/WORKFLOW.md, "Recovery").
+/// What a recovery answered (docs/WORKFLOW.md, "Recovery"): a holder's exit
+/// (`Store::recover_holder`), an agent's own release of its role or a holder lost, or an execution
+/// attempt's ending (`Store::observe_attempt`), each by the position's configured action; or the
+/// automatic edge the board took on an attempt's failure. A transition answering an attempt is
+/// keyed `attempt/ID` ([`Transition::key`]), which names the attempt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recovered {
     pub trigger: Trigger,
+    /// The holder that exited; for an attempt, the handle it ran as, or the attempt where it ran
+    /// as none.
     pub holder: String,
-    /// The role of the position's staffing the holder held there.
+    /// The role of the position's staffing the holder held there; for an attempt, the role it ran
+    /// as.
     pub role: String,
     /// Whether the action asks a person to recover the task by hand.
     pub manual: bool,
 }
 
-/// What a recovery answers: the position's `release` action, or its `lost_holder` one.
+/// What a recovery answers: the position's `release` action, its `lost_holder` one, or, on an
+/// execution attempt's ending, its `attempt_failure` or `cancellation_acknowledged` one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Trigger {
     Release,
     LostHolder,
+    /// An attempt that ended failed or rejected, no cancel asked of it.
+    AttemptFailure,
+    /// An attempt whose cancel is known to have taken: it ended after one was asked.
+    CancellationAcknowledged,
 }
 
 impl Trigger {
@@ -71,11 +82,67 @@ impl Trigger {
         match self {
             Trigger::Release => "release",
             Trigger::LostHolder => "lost_holder",
+            Trigger::AttemptFailure => "attempt_failure",
+            Trigger::CancellationAcknowledged => "cancellation_acknowledged",
         }
     }
 }
 
 impl TaskPosition {
+    /// The position `value` holds, read by field as its decoder reads it: none where a field is
+    /// missing, of another type, or one it does not know. No decoder of its own: every program
+    /// that lists a PULL reads a held task's position, and links what it reads
+    /// (tools/size-budget.toml).
+    pub fn of(value: &Value) -> Option<TaskPosition> {
+        const FIELDS: [&str; 7] = [
+            "phase",
+            "state",
+            "resume",
+            "generation",
+            "revision",
+            "digest",
+            "manual",
+        ];
+        let fields = known(value, &FIELDS)?;
+        let resume = match fields.get("resume") {
+            None | Some(Value::Null) => None,
+            Some(pair) => {
+                let pair = known(pair, &["phase", "state"])?;
+                Some(Pair {
+                    phase: text(pair, "phase")?,
+                    state: text(pair, "state")?,
+                })
+            }
+        };
+        let manual = match fields.get("manual") {
+            None | Some(Value::Null) => None,
+            Some(recovered) => {
+                let recovered = known(recovered, &["trigger", "holder", "role", "manual"])?;
+                Some(Recovered {
+                    trigger: match recovered.get("trigger")?.as_str()? {
+                        "release" => Trigger::Release,
+                        "lost_holder" => Trigger::LostHolder,
+                        "attempt_failure" => Trigger::AttemptFailure,
+                        "cancellation_acknowledged" => Trigger::CancellationAcknowledged,
+                        _ => return None,
+                    },
+                    holder: text(recovered, "holder")?,
+                    role: text(recovered, "role")?,
+                    manual: recovered.get("manual")?.as_bool()?,
+                })
+            }
+        };
+        Some(TaskPosition {
+            phase: text(fields, "phase")?,
+            state: text(fields, "state")?,
+            resume,
+            generation: fields.get("generation")?.as_u64()?,
+            revision: fields.get("revision")?.as_u64()?,
+            digest: text(fields, "digest")?,
+            manual,
+        })
+    }
+
     /// Its pair.
     pub fn at(&self) -> Pair {
         Pair {
@@ -114,13 +181,43 @@ pub struct Transition {
     pub principal: Principal,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<Effect>,
-    /// The idempotency key of the request that made it.
+    /// The idempotency key of the request that made it: `attempt/ID` for the board's answer to
+    /// execution attempt ID's ending, by an edge or a recovery, which answers it once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// The holder's exit it answered, for a recovery's move or stay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<Recovered>,
+    /// The task's accepted output standing after it (docs/WORKFLOW.md, "Accepted outputs"): this
+    /// transition's own id where its edge accepted the output, the one before it carried by a move
+    /// between two positions that satisfy dependants, none once the task stands where none does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted: Option<String>,
     pub at: f64,
+}
+
+/// Of a recorded [`Transition`], what the pipeline alarm reads: the status it put its task at, and
+/// when. Read by field from the record's value ([`Moved::of`]), with no decoder of its own: every
+/// program that delivers a PULL (`agent-send` and `symphony` among them) composes the alarm, and
+/// links what it reads (tools/size-budget.toml).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Moved {
+    pub slug: String,
+    pub revision: u64,
+    pub status: String,
+    pub at: f64,
+}
+
+impl Moved {
+    /// The four fields of a recorded transition's `body`; none where one is missing.
+    pub fn of(body: &Value) -> Option<Moved> {
+        Some(Moved {
+            slug: body.get("slug")?.as_str()?.to_string(),
+            revision: body.get("revision")?.as_u64()?,
+            status: body.get("status")?.as_str()?.to_string(),
+            at: body.get("at")?.as_f64()?,
+        })
+    }
 }
 
 impl Transition {
@@ -193,15 +290,25 @@ struct Read {
     /// The block record the task carries, whatever its status: a workflow leaves it as it was.
     blocked: Option<Value>,
     retired: u64,
+    accepted: Option<String>,
+    /// Its live execution attempts no cancel was asked of, oldest first.
+    #[serde(default)]
+    attempts: Vec<String>,
 }
 
-/// What [`Store::standings`] answers: the read, its tasks as the planner takes them, and the
-/// block record each carries, by its slug.
-type Planned = (
-    Standings,
-    Vec<crate::workflow::activate::Standing>,
-    std::collections::BTreeMap<String, Value>,
-);
+/// What [`Store::standings`] answers.
+struct Planned {
+    /// The read, its tasks taken out into `tasks`.
+    read: Standings,
+    /// The tasks as the planner takes them.
+    tasks: Vec<crate::workflow::activate::Standing>,
+    /// The block record each task carries, by its slug.
+    blocks: std::collections::BTreeMap<String, Value>,
+    /// Each executor or reviewer the read holds as no longer holding its role, with its session's
+    /// last beat as read: one that beats before the write makes it stale, and the next plan reads
+    /// it live.
+    seen: Vec<Value>,
+}
 
 /// What a return leaves on a task in its position's place (`fields._board.workflow_retired`):
 /// the workflow revision its return made, which its next transition continues from, and the
@@ -264,7 +371,12 @@ impl Store {
         use crate::workflow::activate;
         let by = crate::workflow::board_service("activation");
         for _ in 0..PLANS {
-            let (read, tasks, blocks) = self.standings()?;
+            let Planned {
+                read,
+                tasks,
+                blocks,
+                seen,
+            } = self.standings()?;
             let Some(active) = read.active else {
                 return Ok(Followed::Legacy);
             };
@@ -304,6 +416,7 @@ impl Store {
                 },
                 "moved": moved,
                 "kept": kept_vars(&plan),
+                "seen": seen,
                 "at": at,
             });
             match self.retrying(|| {
@@ -325,14 +438,22 @@ impl Store {
     }
 
     /// What an activation plans from: the active generation and the last one recorded, each
-    /// task a workflow holds or the board's writers keep open, with the roles held on it, and
-    /// the block record each carries, by its slug.
+    /// task a workflow holds or the board's writers keep open, with the roles held on it, the
+    /// block record each carries, by its slug, and each executor or reviewer read as lost.
     fn standings(&self) -> Result<Planned, Error> {
         // The versions first, the holders after: a claim between the two is seen by the
         // second, or fences the write by the version it moved.
         let mut read: Standings =
             self.retrying(|| self.transact(both(sql::STANDINGS, pg::standings()), json!({})))?;
         let board = self.board()?;
+        let read_slug = |slug: &str| read.tasks.iter().any(|t| t.slug == slug);
+        let seen: Vec<Value> = (board.tasks.iter())
+            .flat_map(|t| t.roles.iter().map(move |r| (t, r)))
+            .filter(|(_, r)| matches!(r.role.as_str(), "executor" | "reviewer"))
+            .filter(|(t, r)| !r.health.holds() && read_slug(&t.slug))
+            .filter_map(|(_, r)| board.sessions.iter().find(|s| s.row.handle == r.handle))
+            .map(|s| json!({"handle": s.row.handle, "last_seen": s.row.last_seen}))
+            .collect();
         let mut blocks = std::collections::BTreeMap::new();
         let tasks = (std::mem::take(&mut read.tasks).into_iter())
             .map(|task| {
@@ -354,11 +475,18 @@ impl Store {
                     position: task.position,
                     blocked_from: task.blocked_from,
                     roles,
+                    accepted: task.accepted,
+                    attempts: task.attempts,
                     retired: task.retired,
                 }
             })
             .collect();
-        Ok((read, tasks, blocks))
+        Ok(Planned {
+            read,
+            tasks,
+            blocks,
+            seen,
+        })
     }
 
     /// The definition `active` names, which an activation recorded.
@@ -379,7 +507,9 @@ impl Store {
     /// the mappings it applied. Unchanged when its digest is active already. Refused whole, the
     /// previous generation left active and nothing written, when the host does not support it
     /// ([`crate::workflow::activate::supported`]) or a task cannot be placed; planned again when
-    /// the board changed between the read and the write, or another activation won.
+    /// the board changed between the read and the write (a task it read, an executor or reviewer
+    /// it read as lost beating, a task filed or reopened that it did not plan), or another
+    /// activation won.
     pub fn activate_workflow(
         &self,
         custom: &crate::workflow::Custom,
@@ -390,17 +520,24 @@ impl Store {
         // What each write opening asks first, in one small read: is it the active one already. A
         // commit that changed something else names another revision of the same workflow, which
         // stays active as it was: only a commit that changes the workflow activates.
-        if let Some(active) = self.workflow_active()?
-            && self.activated_as(&active, custom)?
+        // The active generation and the revision its definition was recorded with.
+        let mut body: Value =
+            self.retrying(|| self.read(both(sql::ACTIVE_SOURCE, pg::active_source()), json!({})))?;
+        if let Some(active) = decoded::<Active>(body["active"].take(), "active workflow")?
+            && self.activated_as(&active, &body["revision"], custom)?
         {
             return Ok(Followed::Unchanged(active));
         }
-        activate::supported(&custom.definition, host).map_err(refused_workflow)?;
+        activate::supported_with(&custom.definition, host, &custom.authorities)
+            .and_then(|()| activate::bound(custom))
+            .map_err(refused_workflow)?;
         let by = crate::workflow::board_service("activation");
         for _ in 0..PLANS {
-            let (read, tasks, _) = self.standings()?;
+            let Planned {
+                read, tasks, seen, ..
+            } = self.standings()?;
             if let Some(active) = &read.active
-                && self.activated_as(active, custom)?
+                && self.activated_as(active, &Value::Null, custom)?
             {
                 return Ok(Followed::Unchanged(active.clone()));
             }
@@ -435,12 +572,15 @@ impl Store {
                     "revision": custom.revision,
                     "previous": read.active,
                     "mappings": activate::recorded_mappings(&custom.mappings),
+                    "authorities": custom.authorities,
+                    "project": custom.project,
                     "moved": plan.moved.len(),
                     "principal": by,
                     "at": at,
                 },
                 "moved": moved,
                 "kept": kept_vars(&plan),
+                "seen": seen,
                 "at": at,
             });
             match self.retrying(|| {
@@ -471,15 +611,23 @@ impl Store {
         decoded(body, "active workflow")
     }
 
-    /// Whether `active` is `custom` already: its revision, or a definition and mappings that are
-    /// `custom`'s, recorded from another commit. The digest names the commit as well as the
-    /// workflow, so the definition and the mappings are read only where the digests differ.
+    /// Whether `active` is `custom` already: its revision, the project file it was read from in
+    /// the same format (`recorded`, its definition's revision as recorded, null where it was not
+    /// read), or a definition and mappings that are `custom`'s, recorded from another commit. The
+    /// digest names the commit as well as the workflow, and the file holds the mappings as well as
+    /// the definition, so the definition and the mappings are read only where the file's bytes
+    /// differ.
     fn activated_as(
         &self,
         active: &Active,
+        recorded: &Value,
         custom: &crate::workflow::Custom,
     ) -> Result<bool, Error> {
-        if active.digest == custom.revision.digest {
+        let theirs = &custom.revision;
+        if active.digest == theirs.digest
+            || (recorded["format"] == theirs.format
+                && recorded["source"]["project_blob"] == theirs.source.project_blob.as_str())
+        {
             return Ok(true);
         }
         let Some(recorded) = self.workflow_definition(&active.digest)? else {
@@ -493,8 +641,35 @@ impl Store {
         let mappings = self
             .workflow_mappings(active.generation)?
             .unwrap_or_default();
+        let (project, authorities) = self.workflow_authorities_of(active.generation)?;
         // Each maps a pair once (`Validated::check_mappings`), so as maps they are equal or not.
-        Ok(crate::workflow::mapped(&mappings) == crate::workflow::mapped(&custom.mappings))
+        Ok(
+            crate::workflow::mapped(&mappings) == crate::workflow::mapped(&custom.mappings)
+                && authorities == custom.authorities
+                && project == custom.project,
+        )
+    }
+
+    /// The project and the approval authorities, sorted by adapter, activation `generation`
+    /// recorded: none for an activation that committed none, or one not recorded.
+    pub fn workflow_authorities_of(
+        &self,
+        generation: u64,
+    ) -> Result<(Option<String>, Vec<crate::workflow::Attester>), Error> {
+        #[derive(Deserialize)]
+        struct Recorded {
+            project: Option<String>,
+            #[serde(default)]
+            authorities: Vec<crate::workflow::Attester>,
+        }
+        let body: Value = self.retrying(|| {
+            self.read(
+                both(sql::AUTHORITIES, pg::authorities()),
+                json!({"generation": generation}),
+            )
+        })?;
+        Ok(decoded::<Recorded>(body, "workflow authorities")?
+            .map_or((None, Vec::new()), |r| (r.project, r.authorities)))
     }
 
     /// The mappings activation `generation` recorded, or none for an activation not recorded.
@@ -548,6 +723,67 @@ impl Store {
         decoded(body, "workflow definition")
     }
 
+    /// The transitions recorded for each of `tasks`, a slug with the workflow revision its
+    /// position stands at, as the pipeline alarm reads them ([`Moved`]): in the order the tasks
+    /// are given, each task's oldest first, every one from its first revision, each read by its
+    /// id, never a scan of the record.
+    pub fn transitions(&self, tasks: &[(&str, u64)]) -> Result<Vec<Moved>, Error> {
+        let ids = (tasks.iter())
+            .flat_map(|&(slug, revision)| (1..=revision).map(move |r| event(slug, r)))
+            .collect();
+        let read = self.events(ids)?;
+        let unread = || {
+            Error::Db(format!(
+                "recorded transitions the alarm cannot read: {read}"
+            ))
+        };
+        let bodies = read.as_array().ok_or_else(unread)?;
+        bodies
+            .iter()
+            .map(|body| Moved::of(body).ok_or_else(unread))
+            .collect()
+    }
+
+    /// The accepted output standing for each of `tasks`, a slug with the workflow revision its
+    /// position stands at: the `accepted` the transition that made that revision left
+    /// (docs/WORKFLOW.md, "Accepted outputs"), with its slug and revision, in the order the tasks
+    /// are given, none for a task whose transition left none, each read by its id.
+    pub fn accepted_standing(
+        &self,
+        tasks: &[(&str, u64)],
+    ) -> Result<Vec<(String, u64, String)>, Error> {
+        let ids = (tasks.iter())
+            .filter(|&&(_, revision)| revision > 0)
+            .map(|&(slug, revision)| event(slug, revision))
+            .collect();
+        let read = self.events(ids)?;
+        Ok((read.as_array().into_iter().flatten())
+            .filter_map(|body| {
+                Some((
+                    body.get("slug")?.as_str()?.to_string(),
+                    body.get("revision")?.as_u64()?,
+                    body.get("accepted")?.as_str()?.to_string(),
+                ))
+            })
+            .collect())
+    }
+
+    /// The bodies of the transitions `ids` name, in their order, one no transition has left out:
+    /// each read by its id, never a scan of the record. Built as plain values, and read as one, so
+    /// no serializer or list reader of their own links where a PULL is composed
+    /// (tools/size-budget.toml).
+    fn events(&self, ids: Vec<Value>) -> Result<Value, Error> {
+        if ids.is_empty() {
+            return Ok(Value::Array(Vec::new()));
+        }
+        let vars = Value::Object(
+            [("ids".to_string(), Value::Array(ids))]
+                .into_iter()
+                .collect(),
+        );
+        self.retrying(|| self.read(both(sql::TRANSITIONS, pg::transitions()), vars.clone()))
+    }
+
     /// `slug`'s workflow position, or none for a task the board's own writers keep; refused for
     /// a task that is not there.
     pub fn workflow_position(&self, slug: &str) -> Result<Option<TaskPosition>, Error> {
@@ -590,6 +826,32 @@ pub(crate) fn position_held(
     fields: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
 ) -> bool {
     (fields.get("_board")).is_some_and(|board| board.contains_key("workflow"))
+}
+
+/// The position a task's board fields hold, none for a task the board's own writers keep (or one
+/// whose position is not in the board's shape, which the database's fences never write).
+pub(crate) fn task_position(
+    fields: &std::collections::BTreeMap<String, std::collections::BTreeMap<String, Value>>,
+) -> Option<TaskPosition> {
+    TaskPosition::of(fields.get("_board")?.get("workflow")?)
+}
+
+/// The id of the transition that made workflow revision `revision` of `slug`.
+fn event(slug: &str, revision: u64) -> Value {
+    Value::from(vec![json!("event"), slug.into(), revision.into()])
+}
+
+/// `value`'s fields: none where it is no object, or names a field `allowed` does not.
+fn known<'v>(value: &'v Value, allowed: &[&str]) -> Option<&'v serde_json::Map<String, Value>> {
+    let fields = value.as_object()?;
+    (fields.keys())
+        .all(|key| allowed.contains(&key.as_str()))
+        .then_some(fields)
+}
+
+/// The text `fields` holds under `key`.
+fn text(fields: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    Some(fields.get(key)?.as_str()?.to_string())
 }
 
 /// The refusal of a legacy move or staffing of `slug`, a task a custom workflow holds.

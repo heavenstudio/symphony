@@ -32,7 +32,9 @@
 //!
 //! `state` is one of `working`, `running_test` (its worktree holds a test slot or is queued for one;
 //! `state_detail` says `{"recipe", "phase": "holding"|"waiting", "since"}`), `waiting_on_input` (hc
-//! sees an approval or question), `idle`, `gone` (no pane and no sign of life). An agent waiting on its
+//! sees an approval or question), `idle`, `gone` (no pane and no sign of life). An agent with no pane
+//! whose listener the idle sweep confirms is `idle` once it is at rest ([`at_rest`]): the
+//! confirmation keeps its health live, so its last tool call says what its health cannot. An agent waiting on its
 //! own verify is `running_test` and reads live, never lost. A run is the agent's when tagged with its
 //! handle, else by exact worktree to an agent alone in it: never by a directory prefix, never to agents
 //! sharing a worktree. A quiet in-process agent with no run is judged by what works in the worktree
@@ -40,8 +42,9 @@
 
 mod place;
 
-use crate::health::Health;
+use crate::health::{Health, LIVE_SECONDS};
 use crate::json_object::object;
+use crate::rows::SessionRow;
 use crate::rows::TaskSessionRow;
 use crate::usage::{Cost, Prices, Tokens};
 use crate::{Binding, Error, Session, Store, Task};
@@ -157,6 +160,9 @@ pub struct Agent {
     pub pane: Option<String>,
     pub callback: Option<String>,
     pub chat: bool,
+    /// Its listener answered the idle sweep's last round, so no STALE or LOST line is said of it
+    /// while it does. Not on the wire.
+    pub confirmed: bool,
     pub state: &'static str,
     pub detail: Option<Detail>,
     pub health: Health,
@@ -290,6 +296,16 @@ impl Agent {
     }
 }
 
+/// Whether a session whose listener answers is at rest at `now`: outside any tool call, its last
+/// one more than [`LIVE_SECONDS`] ago, the window its health would call it live for without the
+/// confirmation. Before its first tool call, when it connected stands for that call. Never an
+/// orchestrator or the chat, which wait at their prompts as their work.
+fn at_rest(session: &SessionRow, now: f64) -> bool {
+    !matches!(session.kind.as_str(), "orchestrator" | "chat")
+        && !session.busy_until.is_some_and(|until| now <= until)
+        && now - session.last_tool.unwrap_or(session.connected) > LIVE_SECONDS
+}
+
 /// One session as the board and the probes place it, before any run is matched.
 struct Row<'a> {
     session: &'a Session,
@@ -357,9 +373,12 @@ pub fn describe_board_observed(
     let spoke = store.last_messages()?;
     let callbacks = store.callbacks()?;
     let web = store.session_urls()?;
-    let open_slots = store
-        .slots()
-        .map(|cap| (cap, crate::slots::Ledger::of_board(board).counts()));
+    // A task a custom workflow holds counts by its position's slot policy.
+    let operating = store.operating_for(&board.tasks)?;
+    let open_slots = store.slots().map(|cap| {
+        let ledger = crate::slots::Ledger::of_board_on(board, operating.as_ref());
+        (cap, ledger.counts())
+    });
     let mut held_by_handle = tasks_by_handle(&board.tasks);
     let following = following_by_handle(&board.tasks);
     let mut by_handle: HashMap<&str, Vec<&TaskSessionRow>> = HashMap::new();
@@ -483,6 +502,7 @@ pub fn describe_board_observed(
         }
         let mut health = s.health;
         let quiet = health.quiet();
+        let confirmed = callbacks.get(handle).is_some_and(|c| c.confirmed(now));
         // An in-process agent makes no tool call while it waits on what it started in the
         // background: a process it started, still working in its own worktree, is that wait.
         let waiting = match (run, row.placed) {
@@ -520,6 +540,8 @@ pub fn describe_board_observed(
             (state, None)
         } else {
             let state = match health {
+                // A confirmed listener keeps its session seen, so its health cannot say it rests.
+                Health::Live | Health::Stale if confirmed && at_rest(&s.row, now) => "idle",
                 Health::Live => "working",
                 Health::Stale => "idle",
                 Health::Unknown => "unknown",
@@ -568,6 +590,7 @@ pub fn describe_board_observed(
                 .get(handle)
                 .map(|callback| callback.address.clone()),
             chat: callbacks.get(handle).is_some_and(|callback| callback.chat),
+            confirmed,
             state,
             detail,
             health,

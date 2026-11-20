@@ -24,7 +24,7 @@ const SOURCES: [&str; 3] = [
 /// The hosted board's settings, which the board reads and judges itself.
 const EXTERNAL: &str = "crates/tasks/src/pg/external.rs";
 
-const TABLES: [(&str, &str, &str); 21] = [
+const TABLES: [(&str, &str, &str); 23] = [
     (
         "crates/symphony-api/src/workflow.rs",
         "Definition",
@@ -34,6 +34,11 @@ const TABLES: [(&str, &str, &str); 21] = [
         "crates/tasks/src/workflow.rs",
         "Mapping",
         "[[workflow_mappings]]",
+    ),
+    (
+        "crates/tasks/src/workflow/guard.rs",
+        "Attester",
+        "[[workflow_authorities]]",
     ),
     (FILE, "FileProject", "[project]"),
     (FILE, "FileEntrypoint", "[[entrypoints]]"),
@@ -49,6 +54,7 @@ const TABLES: [(&str, &str, &str); 21] = [
         "Generator",
         "[[land.generators]]",
     ),
+    ("crates/tasks/src/land.rs", "Upstream", "[land.upstream]"),
     (SOURCES[1], "FileBoard", "[board]"),
     (EXTERNAL, "Settings", "[board.external_postgresql]"),
     (EXTERNAL, "Budget", "[board.external_postgresql.budget]"),

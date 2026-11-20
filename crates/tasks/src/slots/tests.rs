@@ -14,6 +14,7 @@ fn entry<'a>(slug: &'a str, parent: Option<&'a str>, status: &'a str) -> Entry<'
         orchestrators: Vec::new(),
         executors: Vec::new(),
         red: false,
+        slot: None,
     }
 }
 
@@ -501,5 +502,67 @@ fn only_a_claim_refused_at_the_cap_points_to_the_reservation() {
             "o cannot take orchestrator on work/a, which is ready"
         ),
         ""
+    );
+}
+
+/// `entry` held by a custom workflow at a position whose slot policy holds a slot (`holds`).
+fn placed<'a>(entry: Entry<'a>, holds: bool) -> Entry<'a> {
+    Entry {
+        slot: Some(holds),
+        ..entry
+    }
+}
+
+/// The open slots orch holds, each with its open tasks and their status.
+fn slots_of<'a>(ledger: &Ledger<'a>) -> Vec<(&'a str, Slot<'a>)> {
+    ledger.held("orch").into_iter().collect()
+}
+
+#[test]
+fn a_held_task_holds_a_slot_by_its_positions_policy_whatever_status_it_projects_to() {
+    let ledger = Ledger::new(
+        [
+            // A retained block, a reviewer's acquired position and a released working one.
+            placed(led("sim/blocked", None, "blocked", "orch"), true),
+            placed(led("sim/reviewing", None, "review", "orch"), true),
+            placed(led("sim/released", None, "in_progress", "orch"), false),
+            // The board's own work in review, set apart as ever.
+            led("sim/review", None, "review", "orch"),
+        ],
+        [],
+    );
+    assert_eq!(
+        slots_of(&ledger),
+        [
+            ("sim/blocked", vec![("sim/blocked", "blocked")]),
+            ("sim/reviewing", vec![("sim/reviewing", "review")]),
+        ]
+    );
+    assert_eq!(
+        ledger.reviews()["orch"].keys().copied().collect::<Vec<_>>(),
+        ["sim/review"]
+    );
+    // Moved to a position that releases its slot, and to one that holds it.
+    let after = ledger
+        .slotted("sim/blocked", false)
+        .slotted("sim/released", true);
+    assert_eq!(
+        slots_of(&after),
+        [
+            ("sim/released", vec![("sim/released", "in_progress")]),
+            ("sim/reviewing", vec![("sim/reviewing", "review")]),
+        ]
+    );
+    // A held task's work under it is its own by its own policy, not that task's review.
+    let under = Ledger::new(
+        [
+            placed(led("sim/top", None, "review", "orch"), false),
+            placed(told("sim/top/fix", "sim/top", "in_progress"), true),
+        ],
+        [],
+    );
+    assert_eq!(
+        slots_of(&under),
+        [("sim/top", vec![("sim/top/fix", "in_progress")])]
     );
 }

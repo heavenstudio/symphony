@@ -31,12 +31,30 @@ that override, the first executable `postgres` on `PATH` supplies the folder. Di
 PostgreSQL 18 or later and its same-folder companion tools before starting anything. A
 PostgreSQL server listens on its private Unix socket alone. On a scratch home it ends with the
 process that started it; on any other it outlives its starter, as the board's SurrealDB server
-does, and the next command finds it by its cluster's own record. A command uses one connection
+does, and the next command finds it by its cluster's own record. On a scratch home a command
+run right after another meets that one's server on its way out: its start waits for the
+server's end, which the kernel reports, and then starts its own. That holds whether the
+cluster's record already says the server is stopping, or still says it is ready because the
+shutdown signal has not reached it yet: the start records each server it starts with the
+process that started it (`postgresql.starter` in the board's folder), and a server whose
+starter has ended is on its way out. The board's patience is that
+wait's backstop, and a server still stopping by then is left to finish, the refusal saying the
+machine's load and to run the command again. A server that is starting is never waited for:
+its start is refused, naming the retry. A command uses one connection
 for its lifetime; there is no pool. Its backend lives as long
 and keeps what memory its largest statement took, so a read of long lists (a whole board, the
 messages to the owner) is sent a statement a list and answered an item a row, all in one transaction
 and one snapshot: the server's memory under thirty commands at once is
 [measured](analysis/board-store-baseline.md#postgresqls-memory-peak-measured-2026-11-18).
+
+## The whole board, read and written
+
+`tasks-copy --board --out` writes the dump of the board the run reaches, and `tasks-copy
+--board` copies a dump into it, in the database the board's home names: one board read out of
+PostgreSQL and out of SurrealDB is one document, byte for byte. `tasks-copy ADDR` takes a
+PostgreSQL server by its socket's folder, `postgresql:/PATH`. A PostgreSQL board that cannot be
+read is refused as PostgreSQL's, naming its database and socket and `just tasks database`,
+which says what serves it and whether it is held.
 
 ## Holds, snapshots and recovery
 

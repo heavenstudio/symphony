@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use symphony_github::credential::Secret;
 use symphony_github::deliver::{self, Remote};
 use symphony_github::reconcile::Context;
@@ -16,19 +17,19 @@ use symphony_github::state::{Mapping, Origin};
 use symphony_github::transport::{Failure, Request, Response, Transport};
 
 /// The token of the GitHub App that writes the checks.
-const CHECKS: &str = "ghs_fixtureCHECKS0123456789abcdefSECRET";
+pub(crate) const CHECKS: &str = "ghs_fixtureCHECKS0123456789abcdefSECRET";
 /// That App's number.
 pub(crate) const APP: i64 = 42;
 /// The number of the GitHub App that merges, whose token the settings' `token_file` holds.
 pub(crate) const LANDING: i64 = 43;
 /// The token of the GitHub App that reads who bypasses the rules, and that App's number.
-const POLICY: &str = "ghs_fixturePOLICY0123456789abcdefSECRET";
+pub(crate) const POLICY: &str = "ghs_fixturePOLICY0123456789abcdefSECRET";
 pub(crate) const READER: i64 = 44;
 pub(crate) const SLUG: &str = "sim/jump";
 pub(crate) const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 /// The fake repository, asked as the App of the token a request carries.
-struct As(Arc<Fake>, i64);
+pub(crate) struct As(pub(crate) Arc<Fake>, pub(crate) i64);
 
 impl Transport for As {
     fn send(&self, request: &Request) -> Result<Response, Failure> {
@@ -71,11 +72,24 @@ impl Remote for Pushes {
     }
 }
 
+/// What makes a request with a token.
+pub(crate) type Connect = Box<dyn Fn(Secret) -> Result<Box<dyn Transport>, String>>;
+
 /// A delivery's rig: the exchange's, its settings serving `publish`, and every line it said.
 pub(crate) struct Delivery {
     pub(crate) rig: Rig,
     pub(crate) remote: Pushes,
     said: RefCell<String>,
+    /// What its requests are made through: as the App whose token each carries, unless a test
+    /// puts GitHub's Apps in front ([`crate::minting`]).
+    pub(crate) connect: Connect,
+    /// Whether the test holds [`crate::starting`], as one that makes a token signs it with
+    /// `openssl`: then no run takes [`crate::no_start`].
+    pub(crate) starts: bool,
+    /// The program that signs a GitHub App's JWT.
+    pub(crate) openssl: &'static str,
+    /// Each rest its runs asked for between two reads, none of which waited.
+    pub(crate) rested: RefCell<Vec<Duration>>,
 }
 
 fn settings(checks: &std::path::Path, policy: &std::path::Path, more: &str) -> String {
@@ -120,10 +134,15 @@ impl Delivery {
             refuses: false,
             pushed: RefCell::default(),
         };
+        let connect: Connect = Box::new(connect(&rig.github));
         Delivery {
             rig,
             remote,
             said: RefCell::default(),
+            connect,
+            starts: false,
+            openssl: "openssl",
+            rested: RefCell::default(),
         }
     }
 
@@ -137,12 +156,12 @@ impl Delivery {
 
     /// `symphony-github ARGS`, each request made as the App whose token it carries.
     pub(crate) fn run(&self, args: &[&str]) -> crate::Ran {
-        let _alone = crate::no_start();
+        let _alone = (!self.starts).then(crate::no_start);
         crate::run(
             args,
             &self.rig.board,
             &self.rig.settings,
-            &connect(&self.rig.github),
+            &self.connect,
             self.rig.now.get(),
             vec![self.rig.dir.0.join("repository")],
         )
@@ -152,16 +171,17 @@ impl Delivery {
     pub(crate) fn ask(&self, verb: &str, request: &Value) -> Value {
         let file = self.rig.dir.0.join("request.json");
         std::fs::write(&file, request.to_string()).unwrap();
-        let connect = connect(&self.rig.github);
         let ctx = Context {
             source: &self.rig.settings,
             board: &self.rig.board,
-            connect: &connect,
+            connect: &self.connect,
             now: self.rig.now.get(),
             repository: vec![self.rig.dir.0.join("repository")],
+            openssl: self.openssl,
+            rest: &|wait| self.rested.borrow_mut().push(wait),
         };
         let mut out = Vec::new();
-        let _alone = crate::no_start();
+        let _alone = (!self.starts).then(crate::no_start);
         let code = deliver::run(&ctx, &self.remote, verb, &file, &mut out).unwrap();
         assert_eq!(code, 0);
         let out = String::from_utf8(out).unwrap();
@@ -207,6 +227,11 @@ impl Delivery {
 
     /// Neither token is in anything said, kept or asked for by its address.
     pub(crate) fn assert_no_token(&self) {
+        self.assert_none_of(&[TOKEN, CHECKS, POLICY]);
+    }
+
+    /// None of `secrets` is in anything said, kept or asked for by its address.
+    pub(crate) fn assert_none_of(&self, secrets: &[&str]) {
         let folder = self.rig.dir.0.join("state");
         let mut texts = vec![self.said.borrow().clone()];
         for entry in std::fs::read_dir(&folder).unwrap() {
@@ -219,10 +244,9 @@ impl Delivery {
             texts.push(format!("{method} {path} {}", body.unwrap_or_default()));
         }
         for text in texts {
-            assert!(
-                !text.contains(TOKEN) && !text.contains(CHECKS) && !text.contains(POLICY),
-                "{text}"
-            );
+            for secret in secrets {
+                assert!(!text.contains(secret), "{text}");
+            }
         }
     }
 }
@@ -424,6 +448,77 @@ fn a_lost_answer_is_looked_for_before_anything_is_made_again() {
         "{journal:?}"
     );
     d.assert_no_token();
+}
+
+#[test]
+fn checks_github_lists_a_little_late_are_read_again_and_never_written_again() {
+    // Listed from the second read after the writes, and from the last one the bound allows.
+    for late in 1..=deliver::READ_BACK.len() {
+        let d = Delivery::new("deliver-late", "");
+        d.rig.github.list_late(late);
+        let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+        assert_eq!(
+            answer["state"], "published",
+            "listed late by {late}: {answer}"
+        );
+        assert_eq!(*d.rested.borrow(), deliver::READ_BACK[..late]);
+        assert_eq!(
+            d.rig.github.listings(HEAD),
+            late + 2,
+            "the read before the writes, and one after each rest and before the first"
+        );
+        let writes = d.writes();
+        assert_eq!(
+            writes.len(),
+            6,
+            "a pull request and five checks: {writes:?}"
+        );
+        assert_eq!(d.rig.github.checks(HEAD).len(), 5);
+    }
+}
+
+#[test]
+fn a_check_not_listed_within_the_bound_stops_unavailable_and_is_not_written_again() {
+    let d = Delivery::new("deliver-unlisted", "");
+    let bound = deliver::READ_BACK.len() + 1;
+    d.rig.github.list_late(bound);
+    let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+    assert_eq!(
+        answer,
+        json!({
+            "state": "unavailable",
+            "why": format!(
+                "the check symphony/assessment does not read back on {HEAD} as App {APP} wrote \
+                 it, read again for 15 s"
+            ),
+        })
+    );
+    assert_eq!(*d.rested.borrow(), deliver::READ_BACK);
+    assert_eq!(d.rig.github.listings(HEAD), 1 + bound);
+    let writes = d.writes();
+    assert_eq!(writes.len(), 6, "each written once: {writes:?}");
+    // The next run reads them standing and writes nothing.
+    assert_eq!(
+        d.publish(&snapshot(HEAD, "met", "r1"))["state"],
+        "published"
+    );
+    assert_eq!(d.writes(), writes);
+    assert_eq!(d.rested.borrow().len(), deliver::READ_BACK.len());
+    d.assert_no_token();
+}
+
+#[test]
+fn a_rewritten_check_is_read_again_while_github_still_lists_what_it_said_before() {
+    let d = Delivery::new("deliver-rewritten-late", "");
+    d.publish(&snapshot(HEAD, "met", "r1"));
+    let before = d.writes().len();
+    d.rig.github.list_late(2);
+    let answer = d.publish(&snapshot(HEAD, "missing", "r2"));
+    assert_eq!(answer["state"], "published", "{answer}");
+    assert_eq!(*d.rested.borrow(), deliver::READ_BACK[..2]);
+    let rewritten = d.writes().split_off(before);
+    assert_eq!(rewritten.len(), 5, "each rewritten once: {rewritten:?}");
+    assert!(names(&d.rig.github.checks(HEAD)).contains(&("symphony/eligible", "failure")));
 }
 
 #[test]

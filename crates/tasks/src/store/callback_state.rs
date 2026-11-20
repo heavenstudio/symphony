@@ -41,6 +41,11 @@ pub(super) struct State {
     /// says the whole digest, and one an older dispatcher acknowledged since is read from what it
     /// recorded ([`super::pull_account::baseline`]).
     pub(super) pull_said: Option<crate::cli::pull::Said>,
+    /// Each session with no terminal a PULL the recipient acknowledged listed idle, and the beat
+    /// it rested since ([`crate::cli::pull::Said::idle`]), kept by this generation's
+    /// acknowledgements. A dispatcher that does not list such a session forgets its entry and
+    /// leaves this as it was ([`State::recall_idle`]).
+    pub(super) pull_idle: BTreeMap<String, String>,
     // Legacy dispatchers replace Seen wholesale. They leave these stream fields untouched.
     pub(super) message_cursor: Option<i64>,
     pub(super) delivery_version: Option<u32>,
@@ -63,6 +68,47 @@ impl State {
                 }
             }
         }
+    }
+
+    /// The idle sessions with no terminal the recipient was told of, each with the beat it rested
+    /// since: what this generation's acknowledgements kept, under what the last PULL acknowledged
+    /// said, which an older dispatcher's acknowledgement of this generation's PULL records too.
+    fn idle_told(&self) -> BTreeMap<String, String> {
+        let mut told = self.pull_idle.clone();
+        if let Some(said) = &self.pull_said {
+            told.extend(said.idle.clone());
+        }
+        told
+    }
+
+    /// Read the record of what the recipient was told by what it was told of the sessions
+    /// `resting` (handle to beat) it hears idle now, with no terminal. One told idle on the beat
+    /// it rests since stays told, though a dispatcher that does not list it idle took its entry
+    /// out of the record since; one told on an earlier beat made a tool call since and is told
+    /// again; one never told is as the record has it. What the next PULL carries: every beat told,
+    /// and these.
+    pub(super) fn recall_idle(
+        &mut self,
+        resting: &BTreeMap<String, String>,
+    ) -> BTreeMap<String, String> {
+        let mut told = self.idle_told();
+        if let Some(recorded) = &mut self.pull_entries {
+            for (handle, beat) in resting {
+                let entry = ("idle".to_string(), handle.clone());
+                match told.get(handle) {
+                    Some(then) if then == beat => {
+                        self.pull_withheld.remove(&entry);
+                        recorded.insert(entry);
+                    }
+                    Some(_) => {
+                        recorded.remove(&entry);
+                    }
+                    None => {}
+                }
+            }
+        }
+        told.extend(resting.clone());
+        told
     }
 
     /// What the last PULL the recipient acknowledged said, when this generation queued it and
@@ -137,6 +183,61 @@ pub(super) fn stored_seen(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_idle_entry_is_told_while_its_session_rests_on_the_beat_it_was_told_at() {
+        let idle = |handle: &str| ("idle".to_string(), handle.to_string());
+        let beats = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            (pairs.iter())
+                .map(|(handle, beat)| (handle.to_string(), beat.to_string()))
+                .collect()
+        };
+        let resting = beats(&[("same", "10"), ("called", "20"), ("new", "30")]);
+        // Told `same` and `called` at 10; an older pass forgot `same` and withheld it, and the
+        // record still holds `called`, which made a tool call since.
+        let mut state = State {
+            pull_entries: Some(BTreeSet::from([idle("called"), idle("other")])),
+            pull_withheld: BTreeSet::from([idle("same")]),
+            pull_idle: beats(&[("same", "10"), ("called", "10"), ("gone", "5")]),
+            ..State::default()
+        };
+        let carried = state.recall_idle(&resting);
+        assert_eq!(
+            state.pull_entries,
+            Some(BTreeSet::from([idle("same"), idle("other")])),
+            "the same beat stays told, a later one is told again, an unknown one is as recorded"
+        );
+        assert!(state.pull_withheld.is_empty());
+        assert_eq!(
+            carried,
+            beats(&[
+                ("same", "10"),
+                ("called", "20"),
+                ("new", "30"),
+                ("gone", "5")
+            ])
+        );
+        // What the last PULL acknowledged said stands over what this generation kept: an older
+        // dispatcher's acknowledgement of this generation's PULL records only that.
+        let mut state = State {
+            pull_entries: Some(BTreeSet::new()),
+            pull_idle: beats(&[("called", "10")]),
+            pull_said: Some(crate::cli::pull::Said {
+                idle: beats(&[("called", "20")]),
+                ..Default::default()
+            }),
+            ..State::default()
+        };
+        state.recall_idle(&resting);
+        assert_eq!(state.pull_entries, Some(BTreeSet::from([idle("called")])));
+        // Before its first PULL nothing was told, whatever the beats.
+        let mut first = State {
+            pull_idle: beats(&[("same", "10")]),
+            ..State::default()
+        };
+        assert_eq!(first.recall_idle(&resting).len(), 3);
+        assert_eq!(first.pull_entries, None);
+    }
 
     #[test]
     fn unknown_observations_remain_readable_by_legacy_dispatchers_and_restore_without_repeats() {

@@ -31,6 +31,7 @@ fn ran(name: &str, code: i32, steps: Vec<Ran>) -> Ran {
         timed_out: false,
         interrupted: false,
         load: None,
+        alone: None,
     }
 }
 

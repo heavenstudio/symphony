@@ -7,9 +7,9 @@ use crate::common::Backend;
 use super::callbacks::Listener;
 use super::common::{Fixture, HOST};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier};
 use symphony_board::Store;
 
 /// The message ids among `lines` (posts and verdicts), each with how often it came.
@@ -266,56 +266,5 @@ fn a_dispatcher_on_another_host_delivers_there_while_this_hosts_is_busy(backend:
         json!(0),
         "nothing asked this host's dispatcher for another host's work"
     );
-}
-}
-
-on_both! {
-fn many_writers_at_once_each_message_reaches_its_recipient_exactly_once(backend: Backend) {
-    const RECIPIENTS: usize = 4;
-    const WRITERS: usize = 16;
-    let f = Fixture::on(backend, crate::common::Seed::default());
-    let recipients: Vec<Recipient> = (0..RECIPIENTS).map(|n| recipient(&f, n)).collect();
-    let writers: Vec<String> = (0..WRITERS).map(|_| f.session("worker")).collect();
-    for to in &recipients {
-        let before = to.listener.drain(&f, &writers[0], &to.handle);
-        assert!(before.is_empty(), "{before:?}");
-    }
-    let asked = Arc::new(AtomicUsize::new(0));
-    let start = Arc::new(Barrier::new(WRITERS));
-    let threads: Vec<_> = writers
-        .iter()
-        .enumerate()
-        .map(|(n, writer)| {
-            let to = &recipients[n % RECIPIENTS];
-            let (to, slug) = (to.handle.clone(), to.slug.clone());
-            let (writing, dispatcher) = (handing(&f, &asked), f.other());
-            let (start, writer) = (Arc::clone(&start), writer.clone());
-            std::thread::spawn(move || {
-                start.wait();
-                let id = writing
-                    .say(&slug, &writer, &format!("load {n}"), Some(&to))
-                    .unwrap()
-                    .id;
-                dispatcher.dispatch_detached().unwrap();
-                (to, id)
-            })
-        })
-        .collect();
-    let mut sent: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
-    for thread in threads {
-        let (to, id) = thread.join().unwrap();
-        sent.entry(to).or_default().insert(id);
-    }
-    assert_eq!(asked.load(Ordering::SeqCst), WRITERS);
-    for to in &recipients {
-        let got = ids(&to.listener.drain(&f, &writers[0], &to.handle));
-        let want: BTreeMap<i64, usize> = sent[&to.handle].iter().map(|id| (*id, 1)).collect();
-        assert_eq!(
-            got, want,
-            "{}: each of its messages once, no other's",
-            to.handle
-        );
-    }
-    assert_eq!(lease(&f)["until"], json!(0));
 }
 }

@@ -18,11 +18,12 @@ mod feed_socket;
 pub(crate) mod reports;
 pub(crate) mod run_log;
 pub(crate) mod runs;
+mod schema_updates;
 mod task_diff;
 mod validated;
 mod warm;
 
-use failure::{task_failure, unavailable};
+pub(crate) use failure::{task_failure, unavailable};
 use feed_socket::Said;
 #[cfg(test)]
 pub(crate) use warm::settling;
@@ -67,6 +68,10 @@ pub(crate) const READS: &[&str] = &[
     symphony_api::RUN_LOG_PATH,
     symphony_api::RUNS_PATH,
     symphony_api::RUN_PATH,
+    symphony_api::SCHEMA_UPDATES_PATH,
+    symphony_api::workflow::WORKFLOW_PATH,
+    symphony_api::workflow::WORKFLOW_ACTIONS_PATH,
+    symphony_api::TASK_ATTEMPTS_PATH,
 ];
 
 type Request = axum::http::Request<()>;
@@ -213,9 +218,19 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             | symphony_api::TASK_TIMELINE_PATH
             | symphony_api::TASK_DIFF_PATH
             | symphony_api::TASK_DIFF_FILE_PATH
+            | symphony_api::workflow::WORKFLOW_ACTIONS_PATH
+            | symphony_api::TASK_ATTEMPTS_PATH
     ) && let Err(why) = argument(&request, "slug")
     {
         return Some(error(StatusCode::BAD_REQUEST, why));
+    }
+    // The next actions are the local owner's, and a hosted visitor is no local owner: its host's
+    // dispatch answers for its principal.
+    if hosted && path == symphony_api::workflow::WORKFLOW_ACTIONS_PATH {
+        return Some(error(
+            StatusCode::FORBIDDEN,
+            "Forbidden: next actions are the local owner's, never a hosted visitor's",
+        ));
     }
     if path == symphony_api::AGENT_SCREEN_PATH
         && let Err(why) = argument(&request, "handle")
@@ -264,6 +279,24 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 "the Symphony server is starting",
             ),
         });
+    }
+    // The machine's schema updates are its ledger alone, read on each ask, the board never read.
+    if path == symphony_api::SCHEMA_UPDATES_PATH {
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match crate::spawn::blocking(move || schema_updates::answer(&hub)).await {
+                Ok(updates) => no_store(Json(updates)),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the schema updates could not be read: {e}"),
+                ),
+            },
+        );
     }
     // The reports are the project's day files and its git alone, the board never read: a board
     // slow or down leaves them as they are. The answer is the hub's kept one while neither moved,
@@ -505,6 +538,64 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             .await
         }
         "/api/feed" => feed(hub, scope, request).await,
+        // A task's execution attempts, the board's own read, the same for every branch: the local
+        // owner's, or the visitor's hosted admission verified (`crate::attempts`).
+        symphony_api::TASK_ATTEMPTS_PATH => {
+            let slug = query(&request, "slug").unwrap_or_default();
+            let asker = crate::hosted::admission(&request).map_or(
+                crate::attempts::Asker::Local,
+                |admitted| {
+                    let context = admitted.context();
+                    crate::attempts::Asker::hosted(&context.actor, &context.policy_revision)
+                },
+            );
+            match crate::spawn::blocking(move || crate::attempts::read(&hub, &slug, &asker)).await {
+                Ok(Ok(attempts)) => no_store(Json(attempts)),
+                Ok(Err((code, e))) => error(code, e),
+                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            }
+        }
+        // The board's active custom workflow, and the local owner's next actions on one task it
+        // holds (docs/WORKFLOW.md, "The app"): the board's own reads, the same for every branch.
+        symphony_api::workflow::WORKFLOW_PATH | symphony_api::workflow::WORKFLOW_ACTIONS_PATH => {
+            let slug = query(&request, "slug").unwrap_or_default();
+            let actions = path == symphony_api::workflow::WORKFLOW_ACTIONS_PATH;
+            match crate::spawn::blocking(move || {
+                let store = hub.reader().map_err(|e| unavailable(&e, ""))?;
+                let read = if actions {
+                    store
+                        .workflow_actions(
+                            &slug,
+                            &symphony_board::workflow::local_owner(),
+                            &symphony_board::workflow::Host::local(),
+                        )
+                        .map(|next| no_store(Json(next)))
+                        .map_err(task_failure)
+                } else {
+                    store
+                        .workflow_read()
+                        .map(|workflow| {
+                            no_store(Json(symphony_api::workflow::BoardWorkflow {
+                                project: store.database().database().to_string(),
+                                workflow,
+                            }))
+                        })
+                        .map_err(task_failure)
+                };
+                if read.as_ref().is_err_and(|(status, _)| {
+                    [StatusCode::SERVICE_UNAVAILABLE, StatusCode::GATEWAY_TIMEOUT].contains(status)
+                }) {
+                    hub.reader_failed(&store);
+                }
+                read
+            })
+            .await
+            {
+                Ok(Ok(response)) => response,
+                Ok(Err((code, e))) => error(code, e),
+                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+            }
+        }
         "/api/tasks" | "/api/task-board" => {
             let search = query(&request, "q")
                 .unwrap_or_default()

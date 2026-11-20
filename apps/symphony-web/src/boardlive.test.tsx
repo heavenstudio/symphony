@@ -152,6 +152,7 @@ describe("a feed event's changes", () => {
         ["task-signoff", ["w/a"]],
         ["task-counts", {}],
         ["task-recent-counts", {}],
+        ["workflow", { generation: 2 }],
         ["tasks-status", { available: false, slow: true }],
         ["queue", {}],
       ),
@@ -166,11 +167,12 @@ describe("a feed event's changes", () => {
       "task-signoff",
       "counts",
       "counts",
+      "counts",
       "tasks-status",
     ]);
     expect(changes?.[3]).toEqual({ region: "session", key: "amber", health: "stale" });
     expect(changes?.[5]).toEqual({ region: "task-signoff", slugs: ["w/a"] });
-    expect(changes?.[8]).toEqual({ region: "tasks-status", available: false, slow: true });
+    expect(changes?.[9]).toEqual({ region: "tasks-status", available: false, slow: true });
   });
 
   it("say a session gone, and a board's state not said, as none", () => {

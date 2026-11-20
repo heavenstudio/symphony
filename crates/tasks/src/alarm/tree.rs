@@ -139,6 +139,7 @@ fn entry<'a>(task: &'a Task, parent: Option<&'a str>) -> Entry<'a> {
         orchestrators: Vec::new(),
         executors: Vec::new(),
         red: false,
+        slot: None,
     }
 }
 

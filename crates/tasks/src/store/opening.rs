@@ -72,8 +72,9 @@ impl Opening {
         Opening { scratch, ..self }
     }
 
-    /// This build's schema, to read: a board one version ahead is read, never written, and one
-    /// behind, or not made yet, is refused, never moved forward or made.
+    /// This build's schema, to read: a board one version ahead is read, and written only where the
+    /// record its migration wrote lets this build ([`crate::schema::COMPATIBLE`]), and one behind,
+    /// or not made yet, is refused, never moved forward or made.
     pub fn read() -> Opening {
         Opening {
             access: Access::Read,
@@ -106,6 +107,15 @@ impl Opening {
             ..self
         }
     }
+}
+
+/// The board's schema as a store's writes meet it ([`Store::board_standing`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Standing {
+    /// The board's version, none for a board not made yet.
+    pub version: Option<i64>,
+    /// Whether the store's writes pass the schema guard on it now.
+    pub writes: bool,
 }
 
 /// What moves a board the rule says to migrate ([`Store::moved`]): the store, how it was opened,
@@ -264,7 +274,7 @@ impl Store {
         if let Some(why) = live::cargo_refusal_here(how.live.as_ref(), &db.addr(), db.database()) {
             return Err(Error::Refused(why));
         }
-        let store = Store::unchecked_board(db, clock, pid_alive, host, how);
+        let mut store = Store::unchecked_board(db, clock, pid_alive, host, how);
         let own = how.schema.version();
         store.retrying(|| {
             let (found, defined, line) = store.board_opening(&how.program)?;
@@ -292,6 +302,10 @@ impl Store {
                 )))),
             }
         })?;
+        // Opened to read, by the rule: the one opening whose writes take a board one schema ahead
+        // that lets an older Symphony write it ([`schema::COMPATIBLE`]). The rule refuses a reader
+        // every board but one at its schema or one ahead, so no reader got here by a migration.
+        store.reader = how.access == Access::Read;
         Ok(store)
     }
 
@@ -421,6 +435,31 @@ impl Store {
         self.retrying(|| self.board_schema().map(|(found, _)| found))
     }
 
+    /// The board's schema as this store's writes meet it: its version (none for a board not made
+    /// yet), and whether a write of this store passes the guard there ([`schema::writes`]): at its
+    /// own schema, or, for a store opened to read, one ahead whose record lets a Symphony of its
+    /// schema write it ([`schema::COMPATIBLE`]). One read, which defines and writes nothing; the
+    /// guard still reads the record again in each write's own transaction.
+    pub fn board_standing(&self) -> Result<Standing, Error> {
+        let read = || {
+            both(
+                sql::opening::BOARD_STANDING,
+                postgres::opening::BOARD_STANDING,
+            )
+        };
+        let record = self.retrying(|| match self.request(read(), json!({})) {
+            Ok(mut found) => Ok(found.pop().unwrap_or(Value::Null)),
+            Err(DbError::Failed(said)) if self.db.undefined(&said) => Ok(Value::Null),
+            Err(other) => Err(other.into()),
+        })?;
+        let version = record.get("version").and_then(Value::as_i64);
+        let from = record.get("writable_from").cloned().unwrap_or(Value::Null);
+        Ok(Standing {
+            version,
+            writes: schema::writes(version, &from, self.schema, self.reader),
+        })
+    }
+
     /// As `with`, taking the board's tables as they are, without the request that checks them: the
     /// heartbeat's, one request on every tool call, on a board any other command has opened. Its
     /// writes still meet the guard of this build's schema.
@@ -476,10 +515,12 @@ impl Store {
             process_scan: super::kept::Scan::default(),
             hand_off: None,
             giving: false,
+            settling: None,
             inbox_pool: Mutex::new(None),
             limits: crate::limits::Held::default(),
             named_server: false,
             authority: None,
+            reader: false,
         }
     }
 
@@ -517,7 +558,9 @@ impl Store {
     /// first if they were not (`defined`), and the analyzer, committed as an index needs it; then
     /// the version's steps and its record in one transaction that first checks the board is still
     /// at `found`, so a migration that fails or loses to another's leaves the board as it was, and
-    /// one another open finished first is read again rather than run twice.
+    /// one another open finished first is read again rather than run twice. The record names the
+    /// version and the oldest schema whose Symphony may write the board
+    /// ([`Schema::writable_from`]), together.
     fn migrate(
         &self,
         schema: &Schema,
@@ -534,11 +577,16 @@ impl Store {
             &format!("{}\n{}", self.defined()?, schema.postgres_steps()),
             found,
             schema.version(),
+            schema.writable_from(),
             empty,
         );
         self.run_transaction::<Value>(
             both(steps, Pg::Simple(postgres_steps.into())),
-            json!({"version": schema.version(), "was": found}),
+            json!({
+                "version": schema.version(),
+                "writable_from": schema.writable_from(),
+                "was": found,
+            }),
             Run::Unguarded,
         )?;
         Ok(())

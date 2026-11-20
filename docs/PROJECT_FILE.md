@@ -7,10 +7,7 @@ line where the project is loaded or linted (`just symphony-status --lint`), and 
 read, where the Symphony runs with the file as it is. A file that does not load is run as the plain
 project: the server serves the project with the defaults, and every page of it says so and why,
 until it loads. Three keys nothing acted on are gone (`[agents] transports`, `[board] export` and
-`[board] disposable`): a file that still writes one loads, the key ignored whatever it holds, and
-the load a server runs with, the lint and the settings check each say on stderr that it does
-nothing, by its line, failing nothing; the release after refuses it as any unknown key
-(`RETIRED` in `crates/symphony/src/project/file.rs`). The board reads its own keys (`[board]`'s
+`[board] disposable`), each refused as any unknown key is. The board reads its own keys (`[board]`'s
 commands and thresholds, `[limits]`, `[agents] launch`, `[agents.models]` and `[stamps]`) from the
 main checkout's copy, so a branch cannot change its own. A path is relative to the project's root
 and stays inside it, unless its key says otherwise.
@@ -103,8 +100,9 @@ not there; nothing is landed for it.
 This table is a project's custom delivery workflow, strict, read by
 `symphony::project::workflow::candidate`. Project loading accepts one the local host supports and
 refuses any other with `unsupported_activation`, naming what it needs: a capability no grant of
-the host names, a guard, an adapter, or what durable attempts, landing adapters or accepted
-outputs bring. The board activates the workflow the project's default branch commits, with its
+the host names, a guard no committed approval authority attests
+([below](#workflow_authorities)) or a route around one, an adapter, or what durable attempts,
+landing adapters or accepted outputs bring. The board activates the workflow the project's default branch commits, with its
 `[[workflow_mappings]]`, and moves its tasks by its edges alone (`just tasks workflow`).
 Omission retains the current board behavior and selects built-in definition v1 in the candidate
 reader. Candidate parsing never changes a board. The [workflow reference](WORKFLOW.md) documents
@@ -124,7 +122,7 @@ where validation allows it. Unknown fields and variants refuse the candidate.
 | `edges` | required | typed routes, authority requirements, inputs, guards and effects |
 | `capabilities` | required | declared host capability IDs; declarations grant no authority |
 | `adapters` | required | declared host adapter IDs; declarations supply no adapter |
-| `guards` | required | opaque policy requirements by stable ID and adapter |
+| `guards` | required | policy requirements by stable ID and the adapter whose approval authority attests them |
 
 ## `[[workflow_mappings]]`
 
@@ -143,6 +141,39 @@ and a board with no workflow active reads them and does nothing.
 | --- | --- | --- |
 | `from` | required | the removed `{ phase, state }` pair |
 | `to` | required | the declared `{ phase, state }` pair a task there goes to |
+
+## `[[workflow_authorities]]`
+
+The approval authorities whose signed word meets the workflow's guards, one for each adapter its
+guards name ([WORKFLOW](WORKFLOW.md#guards)). A guard is a decision the project keeps in its own
+approval ledger; the board never holds that ledger and never decides a guard. What it asks of a
+project, in plain words:
+
+- **It holds a signing key.** The project runs an authority over its ledger that holds an
+  Ed25519 signing key and signs, with it, each observation of the ledger's state and each
+  attestation that a guard holds for one operation. The secret half stays with that authority:
+  never in the repository, the board or a request.
+- **It commits the public half here**, as `ed25519:` and the key's 32 bytes in lowercase hex,
+  with the adapter it answers for and the issuer it signs as. The board verifies every
+  observation and attestation by the key the default branch commits, and by nothing else.
+- **A changed key is a new generation.** Changing a key, an issuer or an authority is a commit of
+  this file, which activates a new generation of the workflow: every attestation made for the
+  previous one stops at once, and the new key goes on from the ledger state the board last
+  accepted.
+- **It names itself by `[project] id`.** An attestation names the project it is for by the id this
+  file commits, which a project with an authority must write: an id taken from a folder's name or
+  a machine's registry could differ between machines, and could match another project's.
+
+An authority with no `[workflow]`, for an adapter the workflow does not declare, named twice,
+with no issuer or a key that does not read is refused by name, and a guard with no authority
+committed for its adapter leaves the workflow unsupported.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `adapter` | required | the adapter of the workflow's `adapters` this authority answers for |
+| `issuer` | required | the name the authority signs as, which its observations and attestations repeat |
+| `contract` | required | the attestation contract it speaks, `1` in this release |
+| `key` | required | the public half of its signing key, `ed25519:` and 64 lowercase hex digits |
 
 ## `[project]`
 
@@ -287,6 +318,7 @@ What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASK
 | `keys` | none | a generator's name, then the command printing its key: a tip whose key passed before runs nothing |
 | `check_paths` | the list in [TASKS](TASKS.md#the-default-landing) | what holds the project's tests and checks, which a red's fix its orchestrator approves may not change |
 | `delivery` | none: the land merges and pushes here | the command that delivers a task by a hosted pull request in place of that merge and push, a list of words run as `COMMAND VERB --request FILE` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); it decides what lands, so a change of it is reviewed |
+| `upstream` | none: no import is delivered | `[land.upstream]`, the repository this one imports from, as below |
 
 ## `[land.upstream]`
 
@@ -451,6 +483,7 @@ stands is its reader's, which no key sets. A key not listed here refuses the cat
 | `default` | `true` for `review`, `false` for the rest | whether a task no assessment has read needs it |
 | `applies` | the Symphony's own | where an assessor needs it, as `just tasks stamps` prints it |
 | `skips` | the Symphony's own | where an assessor leaves it out |
+| `waivable` | `true` for `pictures`, `false` for the rest | whether a gate decision may waive it for one tip ([TASKS](TASKS.md#gate-decisions)); `true` on `tests`, `review` or `owner` refuses the catalogue, as they are never waived |
 
 ## `[releases]`
 
@@ -462,5 +495,6 @@ other project runs.
 | `every_landings` | `20` | a release run starts once this many tasks have landed; `0` starts none |
 | `refresh` | `true` | whether a green release refreshes the machine |
 | `publish` | `false` | whether a green release, once pushed, publishes on crates.io each package whose version it lacks ([RELEASES](RELEASES.md#packages-on-cratesio)) |
+| `github` | none | the command a green release, once pushed, asks for its GitHub Release, run as `COMMAND… --request FILE`: `["symphony-github", "release"]` names the GitHub adapter's; with none, no program is run ([RELEASES](RELEASES.md#a-github-release)) |
 | `candidate_reruns` | `3` | the red reruns a release candidate takes before it is dropped |
 | `candidate_hours` | `24` | the hours a release candidate is held before it is dropped |

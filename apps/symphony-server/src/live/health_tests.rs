@@ -202,7 +202,7 @@ fn a_board_ahead_of_this_build_is_read_with_nothing_written_and_said_on_every_pa
         Store::opening(client(), Box::new(|| NOW), Box::new(|_| false), HOST, how).unwrap()
     };
     let current = opened(&Opening::read());
-    assert_eq!(hub.read_ahead(&current), None);
+    assert_eq!(hub.read_only_ahead(&current), None);
     assert!(
         !notices.has_changed().unwrap(),
         "a current board says nothing"
@@ -216,10 +216,10 @@ fn a_board_ahead_of_this_build_is_read_with_nothing_written_and_said_on_every_pa
     let schema = symphony_board::SCHEMA + 1;
     assert_eq!(
         *notices.borrow_and_update(),
-        super::health::read_only(schema)
+        super::health::read_only(schema, None)
     );
     assert_eq!(
-        super::health::read_only(schema),
+        super::health::read_only(schema, None),
         format!(
             "The task board is at schema {schema}, ahead of this Symphony's {}: it is read, and \
              nothing is written to it from here, until a Symphony at schema {schema} serves it. A \
@@ -243,6 +243,271 @@ fn a_board_ahead_of_this_build_is_read_with_nothing_written_and_said_on_every_pa
     clock.pass(1.0);
     hub.board_read(&ahead).unwrap();
     assert!(!notices.has_changed().unwrap());
+}
+
+/// A store on `fixture`'s board, opened to read as a build of `schema` opens it, or why it is
+/// refused, in the words the hub's reach hands on.
+fn reader_at(
+    fixture: &Fixture,
+    schema: symphony_board::Schema,
+) -> Result<symphony_board::Store, String> {
+    let held = fixture.store.client();
+    let client = Client::new(held.addr(), "sf", held.database());
+    let how = symphony_board::Opening::read().at(schema);
+    symphony_board::Store::opening(client, Box::new(|| NOW), Box::new(|_| false), HOST, &how)
+        .map_err(|e| e.to_string())
+}
+
+/// What `/api/projects` says of whether this server writes the board, from the hub's memory: none
+/// before its first read, true once a read found it at this build's schema, false while a reach is
+/// refused by the schema rule (the board behind this build, or two schemas ahead) and while it is
+/// read a schema ahead, and none for a reach that fails otherwise or finds no board.
+#[test]
+fn whether_this_server_writes_its_board_is_judged_by_its_last_read_and_never_reads_one() {
+    use symphony_board::{Opening, Schema};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let file = tree.path("symphony/tasks/health.json");
+    let fixture = Fixture::new(Seed::default().task("tools/one", "ready"));
+    let clock = Clock::at(now());
+    let hub = hub(&root, &file, &clock);
+    assert_eq!(hub.writes(), None, "nothing read yet");
+    let current = reader_at(&fixture, Schema::this_build()).unwrap();
+    hub.board_read(&current).unwrap();
+    assert_eq!(hub.writes(), Some(true), "a board at this build's schema");
+
+    let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
+    // The schema rule's refusals, as a reach of a board behind this build, or two ahead, says them.
+    let behind = reader_at(&fixture, newer.clone()).err().unwrap();
+    let two_ahead = reader_at(&fixture, Schema::this_build().before().before())
+        .err()
+        .unwrap();
+    for refused in [behind, two_ahead] {
+        clock.pass(1.0);
+        assert!(hub.reconnect(&mut |_| Err(refused.clone())).is_none());
+        assert_eq!(hub.writes(), Some(false), "{refused}");
+    }
+    for other in [
+        "connection refused".to_string(),
+        "the main board is not made yet, and a reader never makes a board: nothing was read or \
+         written; `just tasks list` in main makes it"
+            .to_string(),
+    ] {
+        clock.pass(1.0);
+        assert!(hub.reconnect(&mut |_| Err(other.clone())).is_none());
+        assert_eq!(hub.writes(), None, "{other}");
+    }
+    // A read of the board at this build's schema again: it writes it.
+    clock.pass(1.0);
+    hub.board_read(&current).unwrap();
+    assert_eq!(hub.writes(), Some(true));
+    // A newer build moves the board one schema on: this one reads it and writes nothing.
+    let mover = Opening::write().at(newer);
+    let held = fixture.store.client();
+    let client = Client::new(held.addr(), "sf", held.database());
+    symphony_board::Store::opening(client, Box::new(|| NOW), Box::new(|_| false), HOST, &mover)
+        .unwrap();
+    let ahead = reader_at(&fixture, Schema::this_build()).unwrap();
+    clock.pass(1.0);
+    hub.board_read(&ahead).unwrap();
+    assert_eq!(hub.writes(), Some(false), "a board a schema ahead");
+}
+
+/// The machine's ledger, in `machine`, holding `updates`.
+fn ledger(machine: &Path, updates: Vec<symphony::machine::updates::Update>) {
+    use symphony::machine::updates::{Ledger, VERSION};
+    Ledger {
+        version: VERSION,
+        updates,
+    }
+    .write(machine)
+    .unwrap();
+}
+
+/// The update of `project`'s board to `schema` in `generation`, reached an hour before `NOW`,
+/// failed once, its task `slug` on the `symphony` board, `closed` or not.
+fn failed(
+    project: &str,
+    schema: i64,
+    generation: u32,
+    closed: bool,
+) -> symphony::machine::updates::Update {
+    use symphony::machine::updates::{Failure, Stamp, Task, Update, slug};
+    let reached = Stamp {
+        at: NOW - 3_600.0,
+        source: "schema-seen.log".into(),
+    };
+    let mut update = Update::new(project, schema, generation, Some(reached));
+    update.failures.push(Failure {
+        at: NOW,
+        run: "release-2026-11-19".into(),
+        why: "the server still reads the board at the schema before".into(),
+    });
+    update.task = Some(Task {
+        project: "symphony".into(),
+        ours: true,
+        slug: slug(project, schema, generation),
+        closed,
+    });
+    update
+}
+
+/// While the board is ahead, every page's notice names the page of the task of its update when the
+/// machine's ledger holds that update open with a task not closed: its newest generation's, the
+/// task's on the one server, under its project. The ledger is read once a tick, and the notice sent
+/// again only when its words change; one that cannot be read, a task closed or an update served
+/// leave today's words.
+#[test]
+fn the_read_only_notice_names_its_open_updates_task_and_is_sent_again_only_when_it_changes() {
+    use symphony_board::{Opening, Schema};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let file = tree.path("symphony/tasks/health.json");
+    let machine = tree.path("machine");
+    std::fs::create_dir_all(&machine).unwrap();
+    let fixture = Fixture::new(Seed::default().task("tools/one", "ready"));
+    let clock = Clock::at(now());
+    crate::testing::registered(&machine, &["alpha", "symphony"]);
+    let mut hub = hub(&root, &file, &clock);
+    hub.machine = Some(machine.clone());
+    hub.serve_at("/alpha");
+    let mut notices = hub.server_notice.subscribe();
+    let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
+    let held = fixture.store.client();
+    let client = Client::new(held.addr(), "sf", held.database());
+    let mover = Opening::write().at(newer);
+    symphony_board::Store::opening(client, Box::new(|| NOW), Box::new(|_| false), HOST, &mover)
+        .unwrap();
+    let ahead = reader_at(&fixture, Schema::this_build()).unwrap();
+    let schema = symphony_board::SCHEMA + 1;
+    let tick = || {
+        clock.pass(1.0);
+        hub.board_read(&ahead).unwrap();
+    };
+    tick();
+    let plain = super::health::read_only(schema, None);
+    assert_eq!(*notices.borrow_and_update(), plain, "no ledger yet");
+
+    // The board's first generation went back; its second is open, and failed: its task is named.
+    let mut left = failed("alpha", schema, 1, false);
+    left.left = Some(symphony::machine::updates::Stamp {
+        at: NOW - 1_800.0,
+        source: "a refresh's look".into(),
+    });
+    let open = failed("alpha", schema, 2, false);
+    let others = [
+        failed("beta", schema, 1, false),
+        failed("alpha", schema + 1, 1, false),
+    ];
+    let updates = [vec![left, open.clone()], others.to_vec()].concat();
+    ledger(&machine, updates.clone());
+    tick();
+    let linked = super::health::read_only(
+        schema,
+        Some(&format!(
+            "/symphony/task/tests/release-red-update-alpha-{schema}-g2"
+        )),
+    );
+    assert_eq!(*notices.borrow_and_update(), linked);
+    assert!(
+        linked.ends_with(&format!(
+            "reaches no agent until then. Its update's task: \
+             /symphony/task/tests/release-red-update-alpha-{schema}-g2"
+        )),
+        "{linked}"
+    );
+    tick();
+    assert!(
+        !notices.has_changed().unwrap(),
+        "the same words: not sent again"
+    );
+
+    // A ledger that cannot be read says today's words, and once it reads again the task is back.
+    std::fs::write(machine.join(symphony::machine::updates::FILE), "{not json").unwrap();
+    tick();
+    assert_eq!(*notices.borrow_and_update(), plain);
+    ledger(&machine, updates.clone());
+    tick();
+    assert_eq!(*notices.borrow_and_update(), linked);
+
+    // Its task closed, or the update served, names none.
+    let mut closed = updates.clone();
+    closed[1] = failed("alpha", schema, 2, true);
+    ledger(&machine, closed);
+    tick();
+    assert_eq!(*notices.borrow_and_update(), plain);
+    let mut served = updates;
+    served[1].served = Some(symphony::machine::updates::Stamp {
+        at: NOW,
+        source: "the server's hand-off".into(),
+    });
+    ledger(&machine, served);
+    tick();
+    assert!(!notices.has_changed().unwrap(), "still today's words");
+    assert_eq!(*notices.borrow(), plain);
+}
+
+/// A task's page as this server serves it: under the machine's one server, the project whose
+/// board holds it, `/<project>/task/<slug>`, while the machine's registry holds that project; on a
+/// server of its own at `/`, `/task/<slug>` for its own project's alone. None for a project not
+/// registered, the Symphony's own board's label among them, and a path a page would not link whole.
+#[test]
+fn a_tasks_page_is_under_its_project_on_the_one_server_and_its_own_alone_on_a_server_of_its_own() {
+    use symphony::machine::updates::Task;
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let file = tree.path("symphony/tasks/health.json");
+    let clock = Clock::at(now());
+    let task = |project: &str, slug: &str| Task {
+        project: project.into(),
+        ours: project == "symphony",
+        slug: slug.into(),
+        closed: false,
+    };
+    let own = symphony::project::Project::of(&root).id.clone();
+    let machine = tree.path("machine");
+    crate::testing::registered(&machine, &["alpha", "symphony", "this repository"]);
+    let mut alone = hub(&root, &file, &clock);
+    alone.machine = Some(machine.clone());
+    assert_eq!(alone.project_id(), own);
+    let page = alone.task_pages();
+    assert_eq!(
+        page(&task(&own, "tests/release-red-update-main-24")),
+        Some("/task/tests/release-red-update-main-24".into())
+    );
+    assert_eq!(page(&task("symphony", "tests/x")), None, "another's board");
+    let mut served = hub(&root, &file, &clock);
+    served.machine = Some(machine.clone());
+    served.serve_at("/alpha");
+    served.serve_at("/ignored");
+    assert_eq!(served.project_id(), "alpha");
+    let page = served.task_pages();
+    assert_eq!(
+        page(&task("symphony", "tests/release-red-update-alpha-24")),
+        Some("/symphony/task/tests/release-red-update-alpha-24".into())
+    );
+    assert_eq!(
+        page(&task("alpha", "tools/x")),
+        Some("/alpha/task/tools/x".into())
+    );
+    assert_eq!(
+        page(&task("gamma", "tools/x")),
+        None,
+        "a project not registered"
+    );
+    for slug in ["tests/a b", "tests/a\\b", "tests/a\nb"] {
+        assert_eq!(page(&task("symphony", slug)), None, "{slug:?}");
+    }
+    assert_eq!(
+        page(&task("this repository", "tests/x")),
+        None,
+        "the Symphony's own board, not registered: its label names no page, whatever the registry"
+    );
+    // A registry that cannot be read, or none found, registers nothing.
+    std::fs::write(machine.join("projects.json"), "{").unwrap();
+    assert_eq!(served.task_pages()(&task("alpha", "tools/x")), None);
+    served.machine = None;
+    assert_eq!(served.task_pages()(&task("alpha", "tools/x")), None);
 }
 
 #[test]

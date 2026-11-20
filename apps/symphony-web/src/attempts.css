@@ -1,0 +1,44 @@
+/* A task's execution attempts (attempts.tsx), every rule under .attempts: a list of cards, newest
+   first, the one that holds its lane marked in the theme's primary colour, each line of references
+   wrapping inside its card, so an id or a resource never widens the page. */
+
+.attempts .attempts-head {
+  align-items: center;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+}
+.attempts .attempts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.attempts .attempt {
+  min-width: 0;
+  border-left-width: 3px;
+  font-size: var(--fs-sm);
+}
+.attempts .attempt[data-current="true"] {
+  border-left-color: var(--primary);
+}
+.attempts .attempt p {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+.attempts .attempt-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.attempts .attempt-meta,
+.attempts .attempt-holds {
+  color: var(--muted-foreground);
+}
+.attempts .attempt-controls {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}

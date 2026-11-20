@@ -492,6 +492,231 @@ fn a_quiet_child_at_its_prompt_whose_listener_answers_is_said_idle_once_across_w
 }
 }
 
+/// An orchestrator and a worker it oversees that holds `tests/quiet` with no terminal, its tool
+/// calls beating through `agent-quiet`: their handles and both listeners, the orchestrator's past
+/// its first PULL.
+fn worker_with_no_terminal(
+    f: &Fixture,
+) -> (
+    String,
+    String,
+    super::callbacks::Listener,
+    super::callbacks::Listener,
+) {
+    let orch = f.session("orchestrator");
+    let mut child = symphony_board::NewSession::new("worker");
+    child.parent = Some(orch.clone());
+    let worker = f.session_with(child);
+    f.task("tests/quiet");
+    f.store
+        .take_role("tests/quiet", &orch, "orchestrator")
+        .unwrap();
+    f.store.claim("tests/quiet", &worker).unwrap();
+    assert!(f.store.bind_agent("agent-quiet", &worker, true).unwrap());
+    panes(Some(json!([])));
+    let o = listen(f, &orch);
+    assert!(o.text().starts_with(BUSY_PULL));
+    let w = listen(f, &worker);
+    (orch, worker, o, w)
+}
+
+/// Where a case's sweeps keep what they saw.
+fn sweep_state(f: &Fixture) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "quiet-no-terminal-{}-{}.json",
+        std::process::id(),
+        f.store.database().database()
+    ))
+}
+
+/// A tool call of the worker's agent.
+fn tool_call(f: &Fixture, beat: &symphony_board::Beat) {
+    f.store.agent_beat("agent-quiet", beat).unwrap();
+}
+
+fn idle_once(worker: &str) -> [String; 2] {
+    ["PULL idle=1 (was 0)".to_string(), format!("idle {worker}")]
+}
+
+on_both! {
+fn a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_again_after_a_tool_call(backend: Backend) {
+    if !paired_child("blocked_panes::a_quiet_child_with_no_terminal_whose_listener_answers_is_said_idle_once_and_again_after_a_tool_call", backend) {
+        return;
+    }
+    // The incident's sessions without a terminal the agents view can bind: a turn ended at its
+    // prompt, no tool call since, its listener answering every round of the sweep.
+    let f = Fixture::on(backend, crate::common::Seed::default());
+    let (orch, worker, o, w) = worker_with_no_terminal(&f);
+    // The barrier's sender, never an idle row of its own.
+    let sender = f.session("orchestrator");
+    let state = sweep_state(&f);
+    // Each wake as the server takes it: the sweep's round first, then the clock's tick.
+    let wake = |seconds: f64| {
+        f.advance(seconds);
+        crate::common::sweep_presence(&f.store, state.clone());
+        tick(&f);
+        o.drain(&f, &sender, &orch)
+    };
+    let nothing = Vec::<String>::new();
+    for _ in 0..2 {
+        f.advance(1800.0 - symphony_board::health::LIVE_SECONDS);
+        tool_call(&f, &symphony_board::Beat::default());
+        assert_eq!(wake(symphony_board::health::LIVE_SECONDS), nothing, "a tool call within the window is work");
+    }
+    // One long call holds it at work past the window, until the call could have ended.
+    tool_call(&f, &symphony_board::Beat {
+        busy_for: Some(3600.0),
+        call: Some("long".into()),
+        ended: false,
+    });
+    assert_eq!(wake(1800.0), nothing, "inside a tool call is not idle");
+    tool_call(&f, &symphony_board::Beat {
+        call: Some("long".into()),
+        ended: true,
+        ..symphony_board::Beat::default()
+    });
+    assert_eq!(
+        wake(1800.0),
+        idle_once(&worker),
+        "at rest past the window, idle: said once, neither STALE, LOST nor takeover"
+    );
+    for _ in 0..3 {
+        assert_eq!(wake(1800.0), nothing, "not again at each wake");
+    }
+    // Between two rounds, five minutes apart, its health goes stale and comes back: the clock's
+    // ticks say nothing, the one that owes the periodic PULL neither.
+    for round in 0..3 {
+        for seconds in [100.0, 150.0] {
+            f.advance(seconds);
+            tick(&f);
+            assert_eq!(o.drain(&f, &sender, &orch), nothing, "round {round}, after {seconds} s");
+        }
+        assert_eq!(f.health(&worker), symphony_board::Health::Stale);
+        assert_eq!(wake(50.0), nothing, "nor at the round after");
+        assert_eq!(f.health(&worker), symphony_board::Health::Live);
+    }
+    // A tool call is work again, and the rest after it is a new one.
+    f.advance(1800.0 - 60.0);
+    tool_call(&f, &symphony_board::Beat::default());
+    assert_eq!(wake(60.0), nothing, "back at work, which no PULL is owed for");
+    // The last PULL it heard counted it idle, and no PULL since said otherwise.
+    assert_eq!(
+        wake(1800.0),
+        ["PULL counts unchanged".to_string(), format!("idle {worker}")],
+        "re-armed by the tool call"
+    );
+    assert_eq!(wake(1800.0), nothing);
+    for line in f.said("tests/quiet") {
+        assert!(!line.contains("STALE") && !line.contains("LOST"), "{line}");
+    }
+    drop(w);
+}
+}
+
+on_both! {
+fn a_session_that_never_made_a_tool_call_rests_from_when_it_connected(backend: Backend) {
+    if !paired_child("blocked_panes::a_session_that_never_made_a_tool_call_rests_from_when_it_connected", backend) {
+        return;
+    }
+    let f = Fixture::on(backend, crate::common::Seed::default());
+    let (orch, worker, o, w) = worker_with_no_terminal(&f);
+    // The barrier's sender, never an idle row of its own.
+    let sender = f.session("orchestrator");
+    let state = sweep_state(&f);
+    let wake = |seconds: f64| {
+        f.advance(seconds);
+        crate::common::sweep_presence(&f.store, state.clone());
+        tick(&f);
+        o.drain(&f, &sender, &orch)
+    };
+    assert_eq!(wake(symphony_board::health::LIVE_SECONDS), Vec::<String>::new(), "within the window of connecting");
+    assert_eq!(wake(1800.0), idle_once(&worker));
+    assert_eq!(wake(1800.0), Vec::<String>::new());
+    drop(w);
+}
+}
+
+/// An older dispatcher's pass over `orch`'s state: it lists no session without a terminal idle,
+/// so it records the digest without `worker`'s entry, and knows nothing of the beats told.
+fn an_older_pass_forgets(f: &Fixture, orch: &str, worker: &str) {
+    let row = f.store.raw().row("callback_state", orch);
+    let entries: Vec<(String, String)> =
+        serde_json::from_value(row.field("pull_entries").unwrap()).unwrap();
+    let idle = ("idle".to_string(), worker.to_string());
+    let kept: Vec<_> = entries.into_iter().filter(|entry| entry != &idle).collect();
+    row.set(json!({"pull_entries": kept})).unwrap();
+}
+
+on_both! {
+fn an_older_dispatchers_pass_forgets_the_idle_entry_and_the_beat_told_keeps_it_said_once(backend: Backend) {
+    if !paired_child("blocked_panes::an_older_dispatchers_pass_forgets_the_idle_entry_and_the_beat_told_keeps_it_said_once", backend) {
+        return;
+    }
+    // The server's tick and a detached dispatch of two builds, alternating on one orchestrator.
+    let f = Fixture::on(backend, crate::common::Seed::default());
+    let (orch, worker, o, w) = worker_with_no_terminal(&f);
+    // The barrier's sender, never an idle row of its own.
+    let sender = f.session("orchestrator");
+    let state = sweep_state(&f);
+    let wake = |seconds: f64| {
+        f.advance(seconds);
+        crate::common::sweep_presence(&f.store, state.clone());
+        tick(&f);
+        o.drain(&f, &sender, &orch)
+    };
+    let nothing = Vec::<String>::new();
+    assert_eq!(wake(1800.0), idle_once(&worker));
+    let row = || f.store.raw().row("callback_state", orch.as_str());
+    let told = row().field("pull_idle").unwrap();
+    assert_eq!(told, json!({worker.as_str(): f.store.board().unwrap().sessions.iter().find(|s| s.row.handle == worker).unwrap().row.connected.to_string()}));
+    let recorded = |entry: &str| {
+        let entries: Vec<(String, String)> =
+            serde_json::from_value(row().field("pull_entries").unwrap()).unwrap();
+        entries.contains(&(entry.to_string(), worker.clone()))
+    };
+    assert!(recorded("idle"), "told, so recorded");
+    for _ in 0..3 {
+        an_older_pass_forgets(&f, &orch, &worker);
+        assert!(!recorded("idle"));
+        assert_eq!(row().field("pull_idle").unwrap(), told, "the older pass keeps the field");
+        assert_eq!(wake(1800.0), nothing, "forgotten by the older pass, not said again");
+        // This build's pass leaves the record without the entry it did not say.
+        tick(&f);
+        assert_eq!(o.drain(&f, &sender, &orch), nothing);
+    }
+    // The older one acknowledges a PULL of its own, whose record says nothing of the beats.
+    an_older_pass_forgets(&f, &orch, &worker);
+    row().set(json!({"pull_said": {"counts": {}, "entries": [], "liveness_unknown": []}})).unwrap();
+    let again = wake(1800.0);
+    assert!(!again.iter().any(|line| line.starts_with("idle ")), "{again:?}");
+    // A tool call still re-arms it across both.
+    f.advance(1800.0 - 60.0);
+    tool_call(&f, &symphony_board::Beat::default());
+    wake(60.0);
+    an_older_pass_forgets_nothing_it_lacks(&f, &orch, &worker);
+    assert!(wake(1800.0).contains(&format!("idle {worker}")), "a new rest is said");
+    an_older_pass_forgets(&f, &orch, &worker);
+    assert!(!wake(1800.0).iter().any(|line| line.starts_with("idle ")));
+    drop(w);
+}
+}
+
+/// While the worker works no build lists it idle: the record holds no entry of it.
+fn an_older_pass_forgets_nothing_it_lacks(f: &Fixture, orch: &str, worker: &str) {
+    let entries: Vec<(String, String)> = serde_json::from_value(
+        f.store
+            .raw()
+            .row("callback_state", orch)
+            .field("pull_entries")
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !entries.contains(&("idle".to_string(), worker.to_string())),
+        "{entries:?}"
+    );
+}
+
 on_both! {
 fn hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_answer(backend: Backend) {
     if !paired_child("blocked_panes::hc_unanswered_is_said_for_an_outage_of_the_clocks_awake_time_never_a_slow_answer", backend) {

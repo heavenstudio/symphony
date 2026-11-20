@@ -105,6 +105,17 @@ export const CASES = cases as unknown as {
     agentScreen: unknown;
     reports: unknown;
     emptyReports: unknown;
+    /** A board's custom workflow read, two reviews and rework in it; a board's with none. */
+    workflow: unknown;
+    noWorkflow: unknown;
+    /** The owner's next actions on a task in review, one unavailable; an apply's answer. */
+    nextActions: unknown;
+    applied: unknown;
+    /** A waiting listing of tasks the workflow holds, one blocked in Build. */
+    heldListing: unknown;
+    /** A task's attempts: one stopped, its resume running, one of a provider not held; a view. */
+    attempts: unknown;
+    attemptLink: unknown;
     blocks: Block[];
   } & Record<DocumentSample, unknown>;
   /** The Rust each case's function carries, whole: no test reads it, `just client-lint` does. */

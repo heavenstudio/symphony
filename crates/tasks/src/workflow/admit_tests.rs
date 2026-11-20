@@ -18,6 +18,35 @@ fn two() -> Custom {
     custom(TWO)
 }
 
+/// TWO with work approved short of acceptance: `verify/approved`, which satisfies dependants and
+/// is no terminal, entered from `verify/awaiting` by the owner's `approve` and left by `reopen`
+/// (back to `build/available`) or `close` (on to `verify/accepted`), and its claim depending on
+/// the accepted outputs of the tasks a task depends on.
+pub(crate) fn outputs() -> String {
+    const APPROVED: &str = r#"{ at = { phase = "verify", state = "approved" }, slot = "release", dependencies = "none", unsuccessful_dependency = "block", accepts_work = false, terminal = false, legacy = "done", satisfies_dependencies = true, completion = "none" },
+  "#;
+    const EDGES: &str = r#"{ id = "approve", label = "Approve", from = { phase = "verify", state = "awaiting" }, to = { phase = "verify", state = "approved" }, operation = "advance", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "slot", policy = "release" }], automatic = false, human_wait = false },
+  { id = "reopen", label = "Reopen", from = { phase = "verify", state = "approved" }, to = { phase = "build", state = "available" }, operation = "advance", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "slot", policy = "release" }], automatic = false, human_wait = false },
+  { id = "close", label = "Close", from = { phase = "verify", state = "approved" }, to = { phase = "verify", state = "accepted" }, operation = "close_covered", authority = [{ kind = "project_capability", capability = "owner" }], inputs = [], dependencies = "none", guards = [], effects = [{ kind = "outcome", outcome = "success", satisfies_dependencies = true }, { kind = "slot", policy = "release" }], automatic = false, human_wait = false },
+  "#;
+    let claim = "operation = \"claim\", authority = [{ kind = \"task_role\", role = \"executor\" }], \
+                 inputs = [], dependencies = \"none\"";
+    assert!(TWO.contains(claim));
+    TWO.replace(
+        r#"{ id = "accepted", label = "Accepted" },"#,
+        r#"{ id = "accepted", label = "Accepted" }, { id = "approved", label = "Approved" },"#,
+    )
+    .replace(
+        r#"  { at = { phase = "verify", state = "accepted" }"#,
+        &format!(r#"  {APPROVED}{{ at = {{ phase = "verify", state = "accepted" }}"#),
+    )
+    .replace(
+        r#"  { id = "accept","#,
+        &format!(r#"  {EDGES}{{ id = "accept","#),
+    )
+    .replace(claim, &claim.replace("\"none\"", "\"accepted_output\""))
+}
+
 fn context(custom: &Custom) -> Context<'_> {
     Context {
         definition: custom.definition.definition(),
@@ -44,6 +73,7 @@ fn at(custom: &Custom, phase: &str, state: &str) -> Facts {
         dependencies: Vec::new(),
         held: Held::default(),
         present: true,
+        accepted: None,
     }
 }
 
@@ -66,6 +96,17 @@ fn request(custom: &Custom, facts: &Facts, edge: &str) -> OperationRequest {
     }
 }
 
+/// What a board with no approval authority gives admission: no attestation.
+fn unguarded() -> Guarding<'static> {
+    Guarding {
+        project: "sim",
+        attesters: &[],
+        accepted: &[],
+        given: &[],
+        now: 0.0,
+    }
+}
+
 fn amber() -> Principal {
     agent_session("amber")
 }
@@ -83,6 +124,7 @@ fn taking(
         principal,
         &Host::local(),
         &request,
+        &unguarded(),
         70.0,
     )
 }
@@ -120,7 +162,15 @@ fn admitted_on(
     };
     let mut request = request(custom, facts, edge);
     request.expected = snapshot(context, facts.position.as_ref().unwrap());
-    admit(context, facts, principal, &Host::local(), &request, 70.0)
+    admit(
+        context,
+        facts,
+        principal,
+        &Host::local(),
+        &request,
+        &unguarded(),
+        70.0,
+    )
 }
 
 #[test]
@@ -170,6 +220,7 @@ fn a_request_from_a_snapshot_that_moved_is_refused_by_what_moved() {
             &amber(),
             &Host::local(),
             &request,
+            &unguarded(),
             1.0,
         )
         .unwrap_err()
@@ -211,7 +262,15 @@ fn an_edge_the_workflow_does_not_declare_or_that_leaves_another_pair_is_unknown(
     let claim = request(&two, &facts, "claim");
     let mut free = facts;
     free.position = None;
-    let refused = admit(context(&two), &free, &amber(), &Host::local(), &claim, 1.0);
+    let refused = admit(
+        context(&two),
+        &free,
+        &amber(),
+        &Host::local(),
+        &claim,
+        &unguarded(),
+        1.0,
+    );
     assert_eq!(
         refused.unwrap_err().to_string(),
         "unknown_id: the workflow holds no position of sim/a: the board's own writers keep it"
@@ -277,7 +336,18 @@ fn a_capability_is_held_only_by_whom_the_host_grants_it() {
     let mut host = Host::local();
     host.grants = host.grants.grant("owner", amber());
     let request = request(&two, &facts, "block");
-    assert!(admit(context(&two), &facts, &amber(), &host, &request, 1.0).is_ok());
+    assert!(
+        admit(
+            context(&two),
+            &facts,
+            &amber(),
+            &host,
+            &request,
+            &unguarded(),
+            1.0
+        )
+        .is_ok()
+    );
 }
 
 #[test]
@@ -290,7 +360,15 @@ fn a_human_wait_takes_a_person_whatever_capability_an_agent_or_service_was_grant
         .grant("owner", board_service("recovery"));
     for principal in [amber(), board_service("recovery")] {
         let request = request(&two, &awaiting, "accept");
-        let refused = admit(context(&two), &awaiting, &principal, &host, &request, 1.0);
+        let refused = admit(
+            context(&two),
+            &awaiting,
+            &principal,
+            &host,
+            &request,
+            &unguarded(),
+            1.0,
+        );
         assert_eq!(code(refused), RefusalCode::HumanWait);
     }
     let accepted = taking(&two, &awaiting, &local_owner(), "accept").unwrap();
@@ -385,6 +463,7 @@ fn a_done_dependency_is_one_the_board_closed_or_the_workflow_holds_where_dependa
         facts.dependencies = vec![Prerequisite {
             slug: "sim/dep".into(),
             found,
+            accepted: None,
         }];
         match refused {
             Some(message) => {
@@ -416,7 +495,15 @@ fn inputs_are_the_edges_own_and_no_input_revision_is_taken_as_current() {
     let send = |change: &dyn Fn(&mut OperationRequest)| {
         let mut request = request(&two, &facts, "claim");
         change(&mut request);
-        admit(context, &facts, &amber(), &Host::local(), &request, 1.0)
+        admit(
+            context,
+            &facts,
+            &amber(),
+            &Host::local(),
+            &request,
+            &unguarded(),
+            1.0,
+        )
     };
     let missing = send(&|_| {}).unwrap_err();
     assert_eq!(
@@ -575,4 +662,531 @@ fn the_next_actions_preview_each_edge_and_why_the_principal_cannot_take_it_now()
             .code,
         RefusalCode::UnknownId
     );
+}
+
+#[test]
+fn a_guarded_edge_is_admitted_with_its_attestation_and_says_which_guard_it_met() {
+    use crate::workflow::guard::tests::{accepted, guarded, passing, sign_attestation};
+    let custom = guarded();
+    let facts = at(&custom, "verify", "awaiting");
+    let accepted = [accepted()];
+    let mut attestation = passing(&custom);
+    attestation
+        .input_revisions
+        .insert("design".into(), "r7".into());
+    let given = [sign_attestation(7, &attestation)];
+    let guarding = Guarding {
+        project: "sim",
+        attesters: &custom.authorities,
+        accepted: &accepted,
+        given: &given,
+        now: 200.0,
+    };
+    let mut request = request(&custom, &facts, "accept");
+    request.input_revisions.insert("design".into(), "r7".into());
+    let owner = local_owner();
+    let host = Host::local();
+    let admitted = admit(
+        context(&custom),
+        &facts,
+        &owner,
+        &host,
+        &request,
+        &guarding,
+        200.0,
+    )
+    .unwrap();
+    assert_eq!(admitted.transition.to, pair("verify", "accepted"));
+    assert_eq!(admitted.guards.len(), 1);
+    assert_eq!(admitted.guards[0].guard, "approved");
+    assert_eq!(admitted.guards[0].input_revisions, request.input_revisions);
+    // The request's own project is never the binding: the activation's is.
+    let mut elsewhere = request.clone();
+    elsewhere.project = "other".into();
+    assert!(
+        admit(
+            context(&custom),
+            &facts,
+            &owner,
+            &host,
+            &elsewhere,
+            &guarding,
+            200.0
+        )
+        .is_ok()
+    );
+    // Without an attestation, with another input revision, or for another principal: refused.
+    let bare = Guarding {
+        given: &[],
+        ..guarding
+    };
+    assert_eq!(
+        code(admit(
+            context(&custom),
+            &facts,
+            &owner,
+            &host,
+            &request,
+            &bare,
+            200.0
+        )),
+        RefusalCode::GuardUnavailable
+    );
+    let mut drifted = request.clone();
+    drifted.input_revisions.insert("design".into(), "r8".into());
+    assert_eq!(
+        code(admit(
+            context(&custom),
+            &facts,
+            &owner,
+            &host,
+            &drifted,
+            &guarding,
+            200.0
+        )),
+        RefusalCode::StaleInput
+    );
+    // The preview names the guard as what the edge waits on.
+    let preview = next_actions(context(&custom), &facts, &owner, &host).unwrap();
+    let accept = preview.actions.iter().find(|a| a.edge == "accept").unwrap();
+    assert!(accept.unavailable.contains(&RefusalCode::GuardUnavailable));
+    // An input revision on an edge no guard binds is still refused as unchecked.
+    let working = with_role(at(&custom, "build", "working"), "amber", "executor");
+    let mut on_submit = self::request(&custom, &working, "submit");
+    on_submit
+        .input_revisions
+        .insert("design".into(), "r7".into());
+    assert_eq!(
+        code(admit(
+            context(&custom),
+            &working,
+            &amber(),
+            &host,
+            &on_submit,
+            &unguarded(),
+            1.0
+        )),
+        RefusalCode::StaleInput
+    );
+}
+
+#[test]
+fn an_automatic_edge_is_the_boards_to_take_on_an_attempts_ending_never_a_callers() {
+    let custom = custom(&crate::workflow::recover::attempt_tests::attempts(false));
+    let facts = at(&custom, "verify", "checking");
+    let service = board_service("recovery");
+    let answered = Recovered {
+        trigger: crate::workflow::Trigger::AttemptFailure,
+        holder: "ab12".into(),
+        role: "checker".into(),
+        manual: false,
+    };
+    let observed = |edge: &str| {
+        let request = request(&custom, &facts, edge);
+        admit_observed(
+            context(&custom),
+            &facts,
+            &service,
+            &Host::local(),
+            &request,
+            &answered,
+            70.0,
+        )
+    };
+    let taken = observed("rework").unwrap();
+    assert_eq!(
+        (
+            &taken.transition.edge,
+            &taken.transition.to,
+            &taken.transition.principal
+        ),
+        (
+            &Some("rework".to_string()),
+            &pair("build", "available"),
+            &service
+        )
+    );
+    assert_eq!(taken.transition.recovery, Some(answered.clone()));
+    // Nor does the board take an edge a caller takes, its authority granted or not.
+    let accept = observed("accept").unwrap_err();
+    assert_eq!(
+        (accept.code, accept.message.as_str()),
+        (
+            RefusalCode::UnsupportedWriter,
+            "edge accept is a caller's to take: the board takes only an automatic edge"
+        )
+    );
+    // The owner, or the service itself, asking as a caller is refused the automatic edge.
+    for caller in [local_owner(), service.clone()] {
+        let refused = taking(&custom, &facts, &caller, "rework").unwrap_err();
+        assert_eq!(
+            (refused.code, refused.message.as_str()),
+            (
+                RefusalCode::UnsupportedWriter,
+                "edge rework is automatic: the board takes it, never a caller"
+            )
+        );
+    }
+    let rework = (custom.definition.definition().edges.iter())
+        .find(|e| e.id == "rework")
+        .unwrap();
+    let previewed = blockers(
+        context(&custom),
+        &facts,
+        &local_owner(),
+        &Host::local(),
+        rework,
+        None,
+        None,
+    );
+    assert!(
+        previewed
+            .iter()
+            .any(|r| r.message == "edge rework is automatic: the board takes it, never a caller"),
+        "{previewed:?}"
+    );
+}
+
+#[test]
+fn the_board_takes_no_guarded_edge_on_an_attempts_ending() {
+    use crate::workflow::guard::tests::guarding_edge;
+    let text = guarding_edge(
+        &crate::workflow::recover::attempt_tests::attempts(false),
+        "rework",
+    );
+    let custom = custom(&text);
+    let facts = at(&custom, "verify", "checking");
+    let answered = Recovered {
+        trigger: crate::workflow::Trigger::AttemptFailure,
+        holder: "ab12".into(),
+        role: "checker".into(),
+        manual: false,
+    };
+    let refused = admit_observed(
+        context(&custom),
+        &facts,
+        &board_service("recovery"),
+        &Host::local(),
+        &request(&custom, &facts, "rework"),
+        &answered,
+        70.0,
+    )
+    .unwrap_err();
+    assert_eq!(
+        (refused.code, refused.message.as_str()),
+        (
+            RefusalCode::GuardUnavailable,
+            "edge rework is guarded by approved: it is taken with an attestation from the \
+             project's authority"
+        )
+    );
+}
+
+#[test]
+fn a_resume_returns_a_task_to_a_guarded_pair_only_where_its_block_saved_it() {
+    use crate::workflow::effect::tests::{guarded_landing_with_stays_text, landing};
+    let custom = custom(&guarded_landing_with_stays_text());
+    let owner = local_owner();
+    let host = Host::local();
+    let resuming = |custom: &Custom, facts: &Facts| {
+        let request = request(custom, facts, "resume");
+        admit(
+            context(custom),
+            facts,
+            &owner,
+            &host,
+            &request,
+            &unguarded(),
+            1.0,
+        )
+    };
+    // Nothing saved (the task came to the blocked pair by another edge, or an activation): the
+    // resume would put it at approved past the approve's guard.
+    let unsaved = at(&custom, "build", "blocked");
+    let refused = resuming(&custom, &unsaved).unwrap_err();
+    assert_eq!(
+        (refused.code, refused.message.as_str()),
+        (
+            RefusalCode::ExplicitActionRequired,
+            "edge resume resumes sim/a at deliver/approved, which only edges guarded by approved \
+             enter, and no block saved it there"
+        )
+    );
+    // Its block saved approved: the resume returns it there.
+    let mut saved = unsaved.clone();
+    saved.position.as_mut().unwrap().resume = Some(pair("deliver", "approved"));
+    let resumed = resuming(&custom, &saved).unwrap();
+    assert_eq!(resumed.transition.to, pair("deliver", "approved"));
+    // A pair no guarded edge enters takes a resume with nothing saved, as before.
+    let plain = landing(crate::workflow::effect::DEFAULT_LAND);
+    let unguarded_resume = resuming(&plain, &at(&plain, "build", "blocked")).unwrap();
+    assert_eq!(unguarded_resume.transition.to, pair("build", "available"));
+}
+
+fn with_outputs() -> Custom {
+    custom(&outputs())
+}
+
+/// `sim/dep` at `phase/state`, workflow revision 9, with `accepted` its last transition left.
+fn prerequisite(custom: &Custom, phase: &str, state: &str, accepted: Option<&str>) -> Prerequisite {
+    let mut position = at(custom, phase, state).position.unwrap();
+    position.revision = 9;
+    Prerequisite {
+        slug: "sim/dep".into(),
+        found: Some(("done".into(), Some(position))),
+        accepted: accepted.map(str::to_string),
+    }
+}
+
+/// What stops amber's claim of `sim/a` now, as the preview says it: no request names an output.
+fn previewed(custom: &Custom, facts: &Facts) -> Vec<RefusalCode> {
+    let preview = next_actions(context(custom), facts, &amber(), &Host::local()).unwrap();
+    let claim = (preview.actions.iter())
+        .find(|a| a.edge == "claim")
+        .unwrap();
+    claim.unavailable.clone()
+}
+
+/// `sim/a`'s claim sent with `named` as the outputs it takes.
+fn claiming(custom: &Custom, facts: &Facts, named: &[(&str, &str)]) -> Result<Admitted, Refusal> {
+    let mut request = request(custom, facts, "claim");
+    for (slug, output) in named {
+        request
+            .input_revisions
+            .insert(slug.to_string(), output.to_string());
+    }
+    admit(
+        context(custom),
+        facts,
+        &amber(),
+        &Host::local(),
+        &request,
+        &unguarded(),
+        70.0,
+    )
+}
+
+#[test]
+fn an_accepted_output_dependency_is_met_only_by_the_output_standing_and_named() {
+    let custom = with_outputs();
+    let mut facts = at(&custom, "build", "available");
+    let refused = |facts: &Facts, named: &[(&str, &str)]| {
+        let refusal = claiming(&custom, facts, named).unwrap_err();
+        (refusal.code, refusal.message)
+    };
+    // None stands: a task not on the board, one the board's own writers keep (done or not), one
+    // the workflow holds short of satisfying its dependants, and one at such a position that no
+    // edge accepted.
+    for (found, accepted, stands) in [
+        (None, None, "not on the board"),
+        (Some(("done".to_string(), None)), Some("sim/dep@3"), "done"),
+        (Some(("ready".to_string(), None)), None, "ready"),
+        (
+            prerequisite(&custom, "verify", "awaiting", Some("sim/dep@3")).found,
+            Some("sim/dep@3"),
+            "at verify/awaiting",
+        ),
+        (
+            prerequisite(&custom, "verify", "approved", None).found,
+            None,
+            "at verify/approved",
+        ),
+    ] {
+        facts.dependencies = vec![Prerequisite {
+            slug: "sim/dep".into(),
+            found,
+            accepted: accepted.map(str::to_string),
+        }];
+        assert_eq!(
+            refused(&facts, &[("sim/dep", "sim/dep@3")]),
+            (
+                RefusalCode::Dependency,
+                format!(
+                    "sim/a depends on the accepted output of sim/dep, which has none standing: \
+                     it is {stands}"
+                )
+            )
+        );
+        assert_eq!(
+            previewed(&custom, &facts),
+            vec![RefusalCode::Dependency],
+            "{stands}"
+        );
+    }
+    // One stands, at a position that satisfies dependants: taken when named, and only then.
+    for (phase, state) in [("verify", "approved"), ("verify", "accepted")] {
+        facts.dependencies = vec![prerequisite(&custom, phase, state, Some("sim/dep@5"))];
+        assert_eq!(previewed(&custom, &facts), vec![]);
+        assert!(claiming(&custom, &facts, &[("sim/dep", "sim/dep@5")]).is_ok());
+        assert_eq!(
+            refused(&facts, &[]),
+            (
+                RefusalCode::ExplicitActionRequired,
+                "edge claim takes the accepted output of sim/dep: name the one it takes, \
+                 sim/dep = sim/dep@5"
+                    .into()
+            )
+        );
+        for superseded in ["sim/dep@3", "sim/dep@5 ", "sim/other@5"] {
+            assert_eq!(
+                refused(&facts, &[("sim/dep", superseded)]),
+                (
+                    RefusalCode::StaleInput,
+                    format!(
+                        "sim/a takes {superseded} of sim/dep, whose accepted output standing is \
+                         sim/dep@5"
+                    )
+                )
+            );
+        }
+    }
+    // Every task it depends on, each by its own output.
+    let mut other = prerequisite(&custom, "verify", "approved", Some("sim/two@2"));
+    other.slug = "sim/two".into();
+    facts.dependencies.push(other);
+    assert!(
+        claiming(
+            &custom,
+            &facts,
+            &[("sim/dep", "sim/dep@5"), ("sim/two", "sim/two@2")]
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        refused(&facts, &[("sim/dep", "sim/dep@5")]).0,
+        RefusalCode::ExplicitActionRequired
+    );
+    // With no task to depend on, the predicate holds, as `done`'s does.
+    facts.dependencies.clear();
+    assert!(claiming(&custom, &facts, &[]).is_ok());
+}
+
+#[test]
+fn an_input_revision_names_only_an_output_its_edge_takes() {
+    let custom = with_outputs();
+    let mut facts = at(&custom, "build", "available");
+    facts.dependencies = vec![prerequisite(
+        &custom,
+        "verify",
+        "approved",
+        Some("sim/dep@5"),
+    )];
+    let refusal =
+        claiming(&custom, &facts, &[("sim/dep", "sim/dep@5"), ("note", "r1")]).unwrap_err();
+    assert_eq!(
+        refusal.to_string(),
+        "stale_input: the board records no revision of note: an input revision names the \
+         accepted output of a task sim/a depends on, for an edge depending on accepted_output"
+    );
+    // An edge depending on `done` takes no output, so none is named for it.
+    let mut done = custom.definition.definition().clone();
+    edge_mut(&mut done, "claim").dependencies = Dependency::Done;
+    let mut request = request(&custom, &facts, "claim");
+    let context = Context {
+        definition: &done,
+        revision: &custom.revision,
+        generation: 2,
+    };
+    assert!(
+        admit(
+            context,
+            &facts,
+            &amber(),
+            &Host::local(),
+            &request,
+            &unguarded(),
+            1.0
+        )
+        .is_ok()
+    );
+    request
+        .input_revisions
+        .insert("sim/dep".into(), "sim/dep@5".into());
+    assert_eq!(
+        admit(
+            context,
+            &facts,
+            &amber(),
+            &Host::local(),
+            &request,
+            &unguarded(),
+            1.0
+        )
+        .unwrap_err()
+        .code,
+        RefusalCode::StaleInput
+    );
+}
+
+#[test]
+fn the_edge_that_accepts_an_output_names_it_by_its_transition_and_a_move_away_supersedes_it() {
+    let custom = with_outputs();
+    let owner = local_owner();
+    let taken =
+        |facts: &Facts, edge: &str| taking(&custom, facts, &owner, edge).unwrap().transition;
+    // Accepted where its edge reaches a position satisfying dependants from one that is not.
+    let approved = taken(&at(&custom, "verify", "awaiting"), "approve");
+    assert_eq!(
+        (approved.id.as_str(), approved.accepted.as_deref()),
+        ("sim/a@5", Some("sim/a@5"))
+    );
+    // Carried by a move between two such positions, and accepted there when none stood.
+    let mut standing = at(&custom, "verify", "approved");
+    standing.accepted = Some("sim/a@2".into());
+    assert_eq!(
+        taken(&standing, "close").accepted.as_deref(),
+        Some("sim/a@2")
+    );
+    standing.accepted = None;
+    assert_eq!(
+        taken(&standing, "close").accepted.as_deref(),
+        Some("sim/a@5")
+    );
+    // Superseded by a move to a position that does not satisfy dependants.
+    standing.accepted = Some("sim/a@2".into());
+    assert_eq!(taken(&standing, "reopen").accepted, None);
+    // A move between two that do not accepts nothing, whatever the facts say.
+    let mut working = with_role(at(&custom, "build", "working"), "amber", "executor");
+    working.accepted = Some("sim/a@2".into());
+    let submitted = taking(&custom, &working, &amber(), "submit").unwrap();
+    assert_eq!(submitted.transition.accepted, None);
+}
+
+#[test]
+fn an_output_stands_after_a_move_by_where_it_goes_from_where_it_was() {
+    let custom = with_outputs();
+    let d = custom.definition.definition();
+    let position = |phase: &str, state: &str| {
+        (d.positions.iter())
+            .find(|p| p.at == pair(phase, state))
+            .unwrap()
+    };
+    let (open, approved, accepted) = (
+        position("build", "available"),
+        position("verify", "approved"),
+        position("verify", "accepted"),
+    );
+    let after = |source: Option<&Position>, destination, standing, minted| {
+        accepted_after(source, destination, standing, minted)
+    };
+    assert_eq!(
+        after(Some(open), approved, None, Some("t@2")).as_deref(),
+        Some("t@2")
+    );
+    assert_eq!(
+        after(Some(open), approved, Some("t@1"), Some("t@2")).as_deref(),
+        Some("t@2")
+    );
+    assert_eq!(after(Some(open), approved, Some("t@1"), None), None);
+    assert_eq!(
+        after(None, approved, Some("t@1"), Some("t@2")).as_deref(),
+        Some("t@2")
+    );
+    assert_eq!(
+        after(Some(approved), accepted, Some("t@1"), Some("t@2")).as_deref(),
+        Some("t@1")
+    );
+    assert_eq!(after(Some(approved), accepted, None, None), None);
+    assert_eq!(after(Some(approved), open, Some("t@1"), Some("t@2")), None);
+    assert_eq!(after(Some(open), open, Some("t@1"), Some("t@2")), None);
 }

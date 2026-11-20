@@ -66,22 +66,32 @@ to = { phase = "verify", state = "awaiting" }
 "#;
 
 const COMMIT: &str = "1111111111111111111111111111111111111111";
-const BLOB: &str = "2222222222222222222222222222222222222222";
 
-/// `text` as committed, its revision from a fixed commit.
+/// `text` as committed, its revision from a fixed commit and a file whose id is its bytes' own, as
+/// git's is (here their SHA-256, as a repository of that object format names it): a text is its
+/// blob, and another text another blob.
 pub(crate) fn custom(text: &str) -> Custom {
+    use sha2::{Digest, Sha256};
     let (definition, mappings) = written(text).unwrap();
     let definition = definition.expect("a [workflow]");
+    let blob = (Sha256::digest(text.as_bytes()).iter())
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     let revision = definition
         .revision(Source {
             commit: COMMIT.into(),
-            project_blob: BLOB.into(),
+            project_blob: blob,
         })
         .unwrap();
+    let authorities = crate::workflow::authorities(text, Some(&definition)).unwrap();
     Custom {
         definition,
         revision,
         mappings,
+        project: (!authorities.is_empty())
+            .then(|| crate::workflow::attested_project(text))
+            .flatten(),
+        authorities,
     }
 }
 
@@ -100,6 +110,8 @@ fn standing(slug: &str, status: &str) -> Standing {
         position: None,
         blocked_from: None,
         roles: Vec::new(),
+        accepted: None,
+        attempts: Vec::new(),
         retired: 0,
     }
 }
@@ -133,34 +145,29 @@ fn the_local_host_supports_a_definition_of_its_own_capabilities_and_nothing_more
 
 #[test]
 fn a_definition_needing_what_this_release_cannot_run_is_unsupported() {
-    let refused = |from: &str, to: &str| {
-        let text = TWO.replacen(from, to, 1);
-        let definition = written(&text).unwrap().0.unwrap();
-        supported(&definition, &Host::local()).unwrap_err()
-    };
-    assert!(
-        refused(
+    // An attempt's ending is the board's recovery service's to answer (`Store::observe_attempt`).
+    for (from, to) in [
+        (
             "attempt_failure = { manual = true, slot = \"retain\"",
-            "attempt_failure = { target = { phase = \"build\", state = \"available\" }, manual = false, slot = \"release\""
-        )
-        .starts_with("unsupported recovery at build/working: attempt_failure needs durable attempts")
-    );
-    assert!(
-        refused(
+            "attempt_failure = { target = { phase = \"build\", state = \"available\" }, manual = false, slot = \"release\"",
+        ),
+        (
             "cancellation_acknowledged = { manual = true, slot = \"retain\"",
-            "cancellation_acknowledged = { target = { phase = \"build\", state = \"available\" }, manual = false, slot = \"release\""
-        )
-        .contains("cancellation_acknowledged needs durable attempts")
-    );
-    let accepted_output = TWO.replacen(
+            "cancellation_acknowledged = { target = { phase = \"build\", state = \"available\" }, manual = false, slot = \"release\"",
+        ),
+    ] {
+        let definition = written(&TWO.replacen(from, to, 1)).unwrap().0.unwrap();
+        assert_eq!(supported(&definition, &Host::local()), Ok(()), "{to}");
+    }
+    let landed = TWO.replacen(
         "dependencies = \"none\", unsuccessful_dependency = \"block\", accepts_work = true, terminal = false, legacy = \"ready\"",
-        "dependencies = \"accepted_output\", unsuccessful_dependency = \"block\", accepts_work = true, terminal = false, legacy = \"ready\"",
+        "dependencies = \"landed\", unsuccessful_dependency = \"block\", accepts_work = true, terminal = false, legacy = \"ready\"",
         1,
     );
-    let definition = written(&accepted_output).unwrap().0.unwrap();
+    let definition = written(&landed).unwrap().0.unwrap();
     assert_eq!(
         supported(&definition, &Host::local()),
-        Err("unsupported dependency at build/available: accepted_output (tools/workflow-accepted-output)".into())
+        Err("unsupported dependency at build/available: landed".into())
     );
     let guarded = TWO
         .replacen("adapters = []", "adapters = [\"approvals\"]", 1)
@@ -171,45 +178,66 @@ fn a_definition_needing_what_this_release_cannot_run_is_unsupported() {
         );
     let definition = written(&guarded).unwrap().0.unwrap();
     let mut host = Host::local();
-    assert_eq!(
-        supported(&definition, &host),
-        Err("unsupported adapter: approvals".into())
-    );
+    let unattested = "unsupported guard: approved (its adapter approvals needs an approval \
+                      authority committed in [[workflow_authorities]])";
+    assert_eq!(supported(&definition, &host), Err(unattested.into()));
     host.adapters.push("approvals".into());
+    assert_eq!(supported(&definition, &host), Err(unattested.into()));
+    // An authority committed for its adapter makes the guard one this release answers.
+    let attested = crate::workflow::guard::tests::guarded();
+    assert_eq!(
+        supported_with(&attested.definition, &Host::local(), &attested.authorities),
+        Ok(())
+    );
+    // Its authorities bind the project the workflow names, and refuse a workflow naming none.
+    assert_eq!(bound(&attested), Ok(()));
+    for project in [None, Some(" ".to_string())] {
+        let unbound = Custom {
+            project,
+            ..attested.clone()
+        };
+        assert!(bound(&unbound).unwrap_err().contains("names none"));
+        assert_eq!(
+            bound(&Custom {
+                authorities: Vec::new(),
+                ..unbound
+            }),
+            Ok(())
+        );
+    }
+    let mut later = attested.authorities.clone();
+    later[0].contract = 2;
     assert!(
-        supported(&definition, &host)
+        supported_with(&attested.definition, &Host::local(), &later)
             .unwrap_err()
-            .starts_with("unsupported guard: approved")
+            .contains("contract 2")
+    );
+    // A guarded pair a route reaches around its guard is refused before anything else runs.
+    let mut around = attested.definition.definition().clone();
+    let mut shortcut = around
+        .edges
+        .iter()
+        .find(|e| e.id == "accept")
+        .unwrap()
+        .clone();
+    shortcut.id = "shortcut".into();
+    shortcut.from = Pair {
+        phase: "build".into(),
+        state: "working".into(),
+    };
+    shortcut.guards.clear();
+    around.edges.push(shortcut);
+    let around = Validated::new(around).expect("a valid graph, if not a supported one");
+    assert!(
+        supported_with(&around, &Host::local(), &attested.authorities)
+            .unwrap_err()
+            .starts_with("unguarded route: edge shortcut enters verify/accepted under no guard")
     );
 }
 
 #[test]
-fn automatic_edges_and_parent_integration_are_unsupported() {
+fn parent_integration_and_adapters_are_unsupported() {
     let mut definition = custom(TWO).definition.definition().clone();
-    definition.edges[0].automatic = true;
-    definition.edges[0].human_wait = false;
-    let automatic = Validated::new(definition.clone()).unwrap();
-    assert!(
-        supported(&automatic, &Host::local())
-            .unwrap_err()
-            .starts_with("unsupported edge accept: an automatic edge needs durable attempts")
-    );
-    definition.edges[0].automatic = false;
-    definition.edges[0].human_wait = true;
-    definition.edges[0].retry = Some(symphony_api::workflow::RetryBound {
-        maximum: 2,
-        exhausted: Pair {
-            phase: "build".into(),
-            state: "working".into(),
-        },
-    });
-    let retried = Validated::new(definition.clone()).unwrap();
-    assert!(
-        supported(&retried, &Host::local())
-            .unwrap_err()
-            .starts_with("unsupported edge accept: a retry bound needs durable attempts")
-    );
-    definition.edges[0].retry = None;
     definition.edges[0].effects.push(Effect::ParentIntegration);
     let integrating = Validated::new(definition.clone());
     if let Ok(integrating) = integrating {
@@ -246,29 +274,297 @@ fn automatic_edges_and_parent_integration_are_unsupported() {
     let prepared = Validated::new(prepared).unwrap();
     let mut lander = Host::local();
     lander.adapters.push("lander".into());
+    // An adapter the host registers takes its edges; one it does not refuses the activation.
+    assert_eq!(supported(&prepared, &lander), Ok(()));
     assert_eq!(
-        supported(&prepared, &lander),
-        Err(
-            "unsupported edge prepare: an adapter's prepare or finalize \
-             (tools/workflow-landing-adapters)"
-                .into()
-        )
+        supported(&prepared, &Host::local()),
+        Err("unsupported adapter: lander".into())
     );
     definition.edges[0].dependencies = Dependency::Landed;
-    let landed = Validated::new(definition.clone()).unwrap();
+    let landed = Validated::new(definition).unwrap();
     assert_eq!(
         supported(&landed, &Host::local()),
+        Err("unsupported edge accept: a dependency on landed".into())
+    );
+}
+
+#[test]
+fn a_guard_on_an_edge_its_adapter_prepares_or_finalizes_refuses_the_activation() {
+    let attested = crate::workflow::guard::tests::guarded();
+    let mut lander = Host::local();
+    lander.adapters.push("lander".into());
+    // `submit` prepares, the only edge into verify/awaiting, so guarding it guards the pair;
+    // `accept` finalizes, keeping the outcome its terminal pair needs.
+    for (id, operation, effect) in [
+        (
+            "submit",
+            symphony_api::workflow::Operation::PrepareExternal,
+            Effect::Prepare {
+                adapter: "lander".into(),
+            },
+        ),
+        (
+            "accept",
+            symphony_api::workflow::Operation::ConfirmExternal,
+            Effect::Finalize {
+                adapter: "lander".into(),
+            },
+        ),
+    ] {
+        let mut definition = attested.definition.definition().clone();
+        definition.adapters.push("lander".into());
+        // A confirm completes a pair that asks for no covered close.
+        for position in &mut definition.positions {
+            position.completion = symphony_api::workflow::Completion::None;
+        }
+        let edge = (definition.edges.iter_mut()).find(|e| e.id == id).unwrap();
+        edge.guards = vec!["approved".into()];
+        edge.operation = operation;
+        edge.human_wait = false;
+        edge.effects.push(effect);
+        let adapted = Validated::new(definition).expect("a valid graph, if not a supported one");
+        assert_eq!(
+            supported_with(&adapted, &lander, &attested.authorities),
+            Err(format!(
+                "unsupported edge {id}: a guard on an edge its adapter prepares or finalizes, \
+                 which takes no attestation yet"
+            ))
+        );
+    }
+    // The same edge with no adapter's effect stays supported.
+    assert_eq!(
+        supported_with(&attested.definition, &lander, &attested.authorities),
+        Ok(())
+    );
+}
+
+#[test]
+fn a_definition_depending_on_accepted_outputs_is_supported_on_its_edges_and_positions() {
+    let outputs = custom(&crate::workflow::admit::tests::outputs());
+    let claim = (outputs.definition.definition().edges.iter())
+        .find(|e| e.id == "claim")
+        .unwrap();
+    assert_eq!(claim.dependencies, Dependency::AcceptedOutput);
+    assert_eq!(supported(&outputs.definition, &Host::local()), Ok(()));
+    let mut definition = outputs.definition.definition().clone();
+    for position in &mut definition.positions {
+        position.dependencies = Dependency::AcceptedOutput;
+    }
+    for edge in &mut definition.edges {
+        edge.dependencies = Dependency::AcceptedOutput;
+    }
+    let everywhere = Validated::new(definition).unwrap();
+    assert_eq!(supported(&everywhere, &Host::local()), Ok(()));
+}
+
+fn rework(d: &mut Definition) -> &mut Edge {
+    d.edges.iter_mut().find(|e| e.id == "rework").unwrap()
+}
+
+#[test]
+fn an_automatic_edge_is_one_the_boards_recovery_service_alone_can_take() {
+    use crate::workflow::recover::attempt_tests::attempts;
+    let base = custom(&attempts(false)).definition.definition().clone();
+    let supports = |change: &dyn Fn(&mut Definition)| {
+        let mut definition = base.clone();
+        change(&mut definition);
+        supported(&Validated::new(definition).unwrap(), &Host::local())
+    };
+    assert_eq!(supports(&|_| {}), Ok(()));
+    // Not a capability the host grants the board's recovery service.
+    assert_eq!(
+        supports(&|d| {
+            rework(d).authority = vec![Authority::ProjectCapability {
+                capability: "owner".into(),
+            }];
+        }),
         Err(
-            "unsupported edge accept: a dependency on landed (tools/workflow-landing-adapters)"
+            "unsupported edge rework: no authority of this automatic edge is a capability the \
+             host grants the board's recovery service"
                 .into()
         )
     );
-    definition.edges[0].dependencies = Dependency::AcceptedOutput;
-    let output = Validated::new(definition.clone()).unwrap();
+    // A task role is never the board's.
     assert!(
-        supported(&output, &Host::local())
+        supports(&|d| {
+            rework(d).authority = vec![Authority::TaskRole {
+                role: symphony_api::workflow::Role::Executor,
+            }];
+        })
+        .unwrap_err()
+        .starts_with("unsupported edge rework: no authority of this automatic edge")
+    );
+    let mut owner_only = Host::local();
+    owner_only.grants = Grants::none()
+        .grant("owner", crate::workflow::local_owner())
+        .grant("recovery", crate::workflow::local_owner());
+    assert!(
+        supported(&Validated::new(base.clone()).unwrap(), &owner_only)
             .unwrap_err()
-            .starts_with("unsupported edge accept: a dependency on accepted_output")
+            .starts_with("unsupported edge rework: no authority of this automatic edge")
+    );
+    // Nothing the board cannot give.
+    assert_eq!(
+        supports(&|d| rework(d).inputs = vec!["reason".into()]),
+        Err(
+            "unsupported edge rework: an automatic edge asks for inputs, which the board has \
+             none of to give"
+                .into()
+        )
+    );
+    assert!(
+        supports(&|d| {
+            rework(d).effects.push(Effect::AcquireRole {
+                role: symphony_api::workflow::Role::Executor,
+            });
+        })
+        .unwrap_err()
+        .starts_with("unsupported edge rework: an automatic edge gives a role")
+    );
+    // Nor an adapter's effect, which admission refuses every taker, the board among them.
+    assert_eq!(
+        supports(&|d| {
+            d.adapters.push("default_land".into());
+            let edge = rework(d);
+            edge.operation = symphony_api::workflow::Operation::PrepareExternal;
+            edge.effects.push(Effect::Prepare {
+                adapter: "default_land".into(),
+            });
+        }),
+        Err(
+            "unsupported edge rework: an automatic edge prepares or finalizes an effect, which \
+             only its adapter takes"
+                .into()
+        )
+    );
+    // Its bound is exhausted off every cycle through it: a pair it leaves or enters, or one the
+    // task passes on a lap (build/working, by claim and submit, back to verify/checking), would
+    // restart the count of its takes every lap.
+    let exhausted_to = |phase: &'static str, state: &'static str| {
+        move |d: &mut Definition| {
+            let edge = rework(d);
+            edge.to = pair("verify", "stuck");
+            edge.retry.as_mut().unwrap().exhausted = pair(phase, state);
+        }
+    };
+    let on_a_lap = Err(
+        "unsupported edge rework: an automatic edge's retry is exhausted to a pair on a cycle \
+         through it"
+            .to_string(),
+    );
+    for (phase, state) in [("verify", "checking"), ("verify", "stuck")] {
+        assert_eq!(supports(&exhausted_to(phase, state)), on_a_lap);
+    }
+    // build/working, manual by its cancellation_acknowledged, which every lap passes.
+    assert_eq!(
+        supports(&|d| rework(d).retry.as_mut().unwrap().exhausted = pair("build", "working")),
+        on_a_lap
+    );
+    // verify/stuck reached on a lap by a recovery's target: a lost executor sent there.
+    assert_eq!(
+        supports(&|d| {
+            let working = position_mut(d, &pair("build", "working"));
+            working.recovery.as_mut().unwrap().lost_holder.target = Some(pair("verify", "stuck"));
+        }),
+        on_a_lap
+    );
+    // The failure action of the edge's own source is the bound's to replace: no lap passes it.
+    assert_eq!(
+        supports(&|d| {
+            let checking = position_mut(d, &pair("verify", "checking"));
+            checking.recovery.as_mut().unwrap().attempt_failure.target =
+                Some(pair("verify", "stuck"));
+        }),
+        Ok(())
+    );
+    // One automatic edge out of a pair, so the board never chooses.
+    let twice = supports(&|d| {
+        let mut again = rework(d).clone();
+        again.id = "again".into();
+        again.operation = symphony_api::workflow::Operation::Advance;
+        again.retry = None;
+        d.edges.push(again);
+    });
+    assert_eq!(
+        twice,
+        Err(
+            "unsupported edge again: another automatic edge leaves its pair, and the board could \
+             not choose which to take"
+                .into()
+        )
+    );
+    // The board counts only its own takes.
+    let bounded = supports(&|d| {
+        let unstick = d.edges.iter_mut().find(|e| e.id == "unstick").unwrap();
+        unstick.retry = Some(symphony_api::workflow::RetryBound {
+            maximum: 2,
+            exhausted: pair("verify", "stuck"),
+        });
+    });
+    assert_eq!(
+        bounded,
+        Err(
+            "unsupported edge unstick: a retry bound on an edge a caller takes: the board counts \
+             its own takes"
+                .into()
+        )
+    );
+}
+
+#[test]
+fn a_live_attempt_keeps_its_task_from_moving_until_it_ends_or_is_cancelled() {
+    let two = custom(&format!("{TWO}{MAPPED}"));
+    let mut working = standing("sim/working", "in_progress");
+    // An attempt a cancel was asked of is not read: its result no longer counts.
+    working.attempts = vec!["bb22".into()];
+    assert_eq!(
+        planned(&two, None, &[working.clone()]),
+        Err(
+            "sim/working runs execution attempt bb22, and activation would change its position \
+             or its staffing; an attempt drains first (let it end, or cancel it), and is never \
+             rebound to another position"
+                .into()
+        )
+    );
+    // Drained or cancelled, nothing holds the task, and a cancelled attempt keeps its ending.
+    working.attempts.clear();
+    assert!(planned(&two, None, &[working]).is_ok());
+}
+
+#[test]
+fn a_task_activation_keeps_where_it_stands_keeps_its_live_attempt() {
+    let two = custom(&format!("{TWO}{MAPPED}"));
+    let mut working = standing("sim/working", "in_progress");
+    working.position = Some(TaskPosition {
+        phase: "build".into(),
+        state: "working".into(),
+        resume: None,
+        generation: 1,
+        revision: 4,
+        digest: two.revision.digest.clone(),
+        manual: None,
+    });
+    working.roles = vec![("amber".into(), "executor".into(), true)];
+    working.attempts = vec!["bb22".into()];
+    let definition = two.definition.definition();
+    let placed = plan(&two, Some(definition), &[working.clone()], 2, &by(), 60.0).unwrap();
+    assert_eq!(
+        placed.kept,
+        vec![("sim/working".to_string(), working.version)]
+    );
+    assert!(placed.moved.is_empty());
+    // Restaffed in place, it is moved under the attempt, and refused.
+    let mut restaffed = definition.clone();
+    position_mut(&mut restaffed, &pair("build", "working")).staffing =
+        Some(symphony_api::workflow::Role::Reviewer);
+    let restaffed = Custom {
+        definition: Validated::new(restaffed).unwrap(),
+        ..custom(&format!("{TWO}{MAPPED}"))
+    };
+    assert!(
+        plan(&restaffed, Some(definition), &[working], 2, &by(), 60.0)
+            .unwrap_err()
+            .starts_with("sim/working runs execution attempt bb22")
     );
 }
 
@@ -420,8 +716,8 @@ fn a_live_holder_keeps_its_task_from_moving_until_its_work_drains() {
         planned(&two, None, &[working.clone()]),
         Err(
             "sim/working is held by amber as its executor, and activation would move it or \
-             change its staffing; a live holder stands in for a live attempt, which drains \
-             first (release it, or let its work finish)"
+             change its staffing; a live holder's session drains first (release it, or let its \
+             work finish), as it may be no attempt the board sees"
                 .into()
         )
     );
@@ -469,6 +765,8 @@ fn a_reactivation_moves_only_what_changes_and_fences_the_rest() {
         definition: Validated::new(definition.clone()).unwrap(),
         revision: old.revision.clone(),
         mappings: text_mapping.clone(),
+        authorities: Vec::new(),
+        project: None,
     };
     let placed = plan(
         &new,
@@ -495,6 +793,8 @@ fn a_reactivation_moves_only_what_changes_and_fences_the_rest() {
         definition: Validated::new(projected).unwrap(),
         revision: old.revision.clone(),
         mappings: text_mapping.clone(),
+        authorities: Vec::new(),
+        project: None,
     };
     let projected = plan(
         &new,
@@ -527,6 +827,8 @@ fn a_reactivation_moves_only_what_changes_and_fences_the_rest() {
         definition: Validated::new(restaffed).unwrap(),
         revision: old.revision.clone(),
         mappings: text_mapping,
+        authorities: Vec::new(),
+        project: None,
     };
     assert!(
         plan(
@@ -545,6 +847,128 @@ fn a_reactivation_moves_only_what_changes_and_fences_the_rest() {
     assert_eq!(
         planned(&old, None, &[verify]),
         Err("sim/verify has a workflow position, and no workflow is active".into())
+    );
+}
+
+#[test]
+fn an_activation_carries_an_accepted_output_supersedes_it_where_none_stands_and_accepts_none() {
+    let old = custom(&format!(
+        "{}{MAPPED}",
+        crate::workflow::admit::tests::outputs()
+    ));
+    let mut approved = standing("sim/approved", "done");
+    approved.position = Some(TaskPosition {
+        phase: "verify".into(),
+        state: "approved".into(),
+        resume: None,
+        generation: 1,
+        revision: 4,
+        digest: old.revision.digest.clone(),
+        manual: None,
+    });
+    approved.accepted = Some("sim/approved@4".into());
+    let replanned = |definition: Definition, mappings: Vec<Mapping>, task: &Standing| {
+        let new = Custom {
+            definition: Validated::new(definition).unwrap(),
+            revision: old.revision.clone(),
+            mappings,
+            authorities: Vec::new(),
+            project: None,
+        };
+        plan(
+            &new,
+            Some(old.definition.definition()),
+            std::slice::from_ref(task),
+            2,
+            &by(),
+            60.0,
+        )
+    };
+    let only = |plan: Plan| {
+        assert!(plan.kept.is_empty(), "{plan:?}");
+        assert_eq!(plan.moved.len(), 1);
+        plan.moved.into_iter().next().unwrap().transition
+    };
+    let definition = old.definition.definition().clone();
+
+    // The same pair, satisfying dependants still: kept, its output standing.
+    let again = replanned(definition.clone(), Vec::new(), &approved).unwrap();
+    assert_eq!(again.kept, vec![("sim/approved".to_string(), 3)]);
+
+    // Mapped to another pair that satisfies them: the output is carried there.
+    let signed = pair("verify", "signed");
+    let mut renamed = definition.clone();
+    renamed.states.push(symphony_api::workflow::State {
+        id: "signed".into(),
+        label: "Signed".into(),
+    });
+    for position in &mut renamed.positions {
+        if position.at == pair("verify", "approved") {
+            position.at = signed.clone();
+        }
+    }
+    for edge in &mut renamed.edges {
+        for end in [&mut edge.from, &mut edge.to] {
+            if *end == pair("verify", "approved") {
+                *end = signed.clone();
+            }
+        }
+    }
+    renamed.states.retain(|s| s.id != "approved");
+    let mapped = vec![Mapping {
+        from: pair("verify", "approved"),
+        to: signed.clone(),
+    }];
+    let carried = only(replanned(renamed, mapped, &approved).unwrap());
+    assert_eq!(
+        (carried.to, carried.accepted.as_deref()),
+        (signed, Some("sim/approved@4"))
+    );
+
+    // The pair no longer satisfies dependants: a transition that moves nothing supersedes the
+    // output, and a live holder, which nothing moves or restaffs, does not stop it.
+    let mut unsatisfied = definition.clone();
+    position_mut(&mut unsatisfied, &pair("verify", "approved")).satisfies_dependencies = false;
+    let mut held = approved.clone();
+    held.roles = vec![("amber".into(), "executor".into(), true)];
+    let superseded = only(replanned(unsatisfied.clone(), Vec::new(), &held).unwrap());
+    assert_eq!(superseded.from.as_ref(), Some(&superseded.to));
+    assert_eq!(
+        (superseded.status.as_str(), superseded.accepted),
+        ("done", None)
+    );
+    // That transition leaves the task at another revision, where a live attempt's ending, pinned
+    // to the one before, would answer nothing: it drains first, or is cancelled.
+    let mut running = held.clone();
+    running.attempts = vec!["bb22".into()];
+    assert_eq!(
+        replanned(unsatisfied.clone(), Vec::new(), &running),
+        Err(
+            "sim/approved runs execution attempt bb22, and activation would change its position \
+             or its staffing; an attempt drains first (let it end, or cancel it), and is never \
+             rebound to another position"
+                .into()
+        )
+    );
+    running.attempts.clear();
+    assert_eq!(
+        only(replanned(unsatisfied, Vec::new(), &running).unwrap()).accepted,
+        None
+    );
+
+    // A pair kept that comes to satisfy dependants is refused, as ever: a mapping accepts nothing.
+    let mut awaiting = standing("sim/awaiting", "review");
+    awaiting.position = Some(TaskPosition {
+        state: "awaiting".into(),
+        ..approved.position.clone().unwrap()
+    });
+    awaiting.accepted = Some("sim/awaiting@2".into());
+    let mut satisfying = definition;
+    position_mut(&mut satisfying, &pair("verify", "awaiting")).satisfies_dependencies = true;
+    assert!(
+        replanned(satisfying, Vec::new(), &awaiting)
+            .unwrap_err()
+            .contains("its dependants satisfied")
     );
 }
 
@@ -611,6 +1035,7 @@ fn a_reopened_task_is_placed_where_the_activation_maps_its_status_as_its_first_t
             effects: Vec::new(),
             key: None,
             recovery: None,
+            accepted: None,
             at: 7.0,
         }
     );
@@ -936,4 +1361,160 @@ fn a_task_a_return_retired_continues_its_workflow_revisions() {
     };
     let placed = placing(&[]).reopened(&task, &by(), 7.0).unwrap();
     assert_eq!((placed.id.as_str(), placed.revision), ("sim/a@4", 4));
+}
+
+/// TWO with its submit edge guarded by `approved`: verify/awaiting is a pair only that guard
+/// lets a task into, and every open status mapped.
+fn guarded_review() -> Custom {
+    let attested = crate::workflow::guard::tests::guarded();
+    let mut definition = attested.definition.definition().clone();
+    for edge in definition.edges.iter_mut() {
+        edge.guards = match edge.id.as_str() {
+            "submit" => vec!["approved".into()],
+            _ => Vec::new(),
+        };
+    }
+    Custom {
+        definition: Validated::new(definition).unwrap(),
+        ..custom(&format!(
+            "{}{MAPPED}",
+            crate::workflow::guard::tests::guarded_text(7)
+        ))
+    }
+}
+
+#[test]
+fn an_activation_never_places_or_maps_a_task_past_a_guard() {
+    let guarded = guarded_review();
+    let refused = planned(&guarded, None, &[standing("sim/review", "review")]).unwrap_err();
+    assert_eq!(
+        refused,
+        "sim/review would stand at verify/awaiting, which only edges guarded by approved enter; \
+         activation never takes a task past a guard: map it to a pair before it"
+    );
+    // A task elsewhere is placed as before.
+    assert!(planned(&guarded, None, &[standing("sim/ready", "ready")]).is_ok());
+    // A blocked task that would resume past the guard is refused as well.
+    let mut definition = guarded.definition.definition().clone();
+    for edge in definition.edges.iter_mut() {
+        edge.guards = match edge.id.as_str() {
+            "claim" => vec!["approved".into()],
+            _ => Vec::new(),
+        };
+    }
+    let resuming = Custom {
+        definition: Validated::new(definition).unwrap(),
+        ..guarded.clone()
+    };
+    let mut blocked = standing("sim/blocked", "blocked");
+    blocked.blocked_from = Some("in_progress".into());
+    let refused = planned(&resuming, None, &[blocked]).unwrap_err();
+    assert!(
+        refused.contains("would resume to build/working"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_task_already_past_a_guard_stays_there_only_under_the_same_guards() {
+    let guarded = guarded_review();
+    let at_awaiting = |digest: &str| TaskPosition {
+        phase: "verify".into(),
+        state: "awaiting".into(),
+        resume: None,
+        generation: 1,
+        revision: 2,
+        digest: digest.into(),
+        manual: None,
+    };
+    let mut verify = standing("sim/verify", "review");
+    verify.position = Some(at_awaiting(&guarded.revision.digest));
+    // The same guards before and after: it stood there under them, and stays.
+    let kept = plan(
+        &guarded,
+        Some(guarded.definition.definition()),
+        std::slice::from_ref(&verify),
+        2,
+        &by(),
+        60.0,
+    )
+    .unwrap();
+    assert_eq!(kept.kept, vec![("sim/verify".to_string(), 3)]);
+    // Under a previous workflow that did not guard it, it never met the guard: refused.
+    let unguarded = custom(&format!("{TWO}{MAPPED}"));
+    let refused = plan(
+        &guarded,
+        Some(unguarded.definition.definition()),
+        &[verify],
+        2,
+        &by(),
+        60.0,
+    )
+    .unwrap_err();
+    assert!(
+        refused.contains("would stand at verify/awaiting"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_reopened_task_is_never_placed_past_a_guard() {
+    let guarded = guarded_review();
+    let placing = Placing {
+        definition: guarded.definition.definition().clone(),
+        mappings: guarded.mappings.clone(),
+        generation: 4,
+        digest: "d".repeat(64),
+    };
+    let refused = reopened(&placing, "review", &[]).unwrap_err();
+    assert!(
+        refused.starts_with(
+            "sim/a would reopen at verify/awaiting, which only edges guarded by approved enter"
+        ),
+        "{refused}"
+    );
+    assert!(reopened(&placing, "ready", &[]).is_ok());
+}
+
+#[test]
+fn the_board_takes_no_guarded_edge_and_no_exhausted_retry_bound_passes_a_guard() {
+    use crate::workflow::guard::tests::guarding_edge;
+    use crate::workflow::recover::attempt_tests::attempts;
+    let attesters = [crate::workflow::guard::tests::attester(7)];
+    // A guard on the automatic edge: the board brings no attestation to meet it.
+    let automatic_guarded = custom(&guarding_edge(&attempts(false), "rework"));
+    let d = automatic_guarded.definition.definition();
+    let rework = (d.edges.iter()).find(|e| e.id == "rework").unwrap();
+    assert_eq!(
+        automatic(d, rework, &Host::local()),
+        Some("an automatic edge is guarded, and the board brings no attestation to meet its guard")
+    );
+    let definition = &automatic_guarded.definition;
+    assert!(supported_with(definition, &Host::local(), &attesters).is_err());
+    // A retry bound exhausted to a pair only a guarded edge enters reaches it unguarded: the board
+    // sends the task there as a recovery, no edge taken. Here a person escalates a check to
+    // verify/stuck under the guard, where the bound also sends it.
+    let unstick = "  { id = \"unstick\",";
+    let escalate = "  { id = \"escalate\", label = \"Escalate\", from = { phase = \"verify\", state = \
+         \"checking\" }, to = { phase = \"verify\", state = \"stuck\" }, operation = \"advance\", \
+         authority = [{ kind = \"project_capability\", capability = \"owner\" }], inputs = [], \
+         dependencies = \"none\", guards = [], effects = [{ kind = \"slot\", policy = \"release\" }], \
+         automatic = false, human_wait = false },\n";
+    let escalating = attempts(false).replacen(unstick, &format!("{escalate}{unstick}"), 1);
+    assert_ne!(escalating, attempts(false), "the escalate edge is added");
+    let exhausting = custom(&guarding_edge(&escalating, "escalate"));
+    assert_eq!(
+        crate::workflow::guard::coverage(exhausting.definition.definition()),
+        Err(
+            "unguarded route: the retry bound of edge rework sends a task to verify/stuck once \
+             exhausted, which edge escalate enters under approved"
+                .into()
+        )
+    );
+    // Exhausted to where it stood, past no guard, the bound passes.
+    let staying = custom(&guarding_edge(&attempts(false), "accept"));
+    assert_eq!(
+        crate::workflow::guard::coverage(staying.definition.definition()),
+        Ok(())
+    );
 }

@@ -16,11 +16,15 @@
 
 pub mod command;
 mod folder;
+pub mod held;
 pub mod host;
 mod identity;
+pub mod moving;
 mod registry;
 pub mod release;
 pub mod switch;
+pub mod updates;
+pub mod writers;
 
 pub use folder::dir;
 pub use identity::{installation_id, installation_id_in};

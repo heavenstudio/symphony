@@ -20,9 +20,11 @@
 //!   bound to Claude Code agent X (`session.agent`), as the worktree named `agent-X` (a subagent's
 //!   session is registered at the main checkout, and a resumed agent's worktree has no lock); the
 //!   closed sessions of a task just finished (`--task`) do not count there;
-//! * its HEAD is an ancestor of `main` (detached or on a branch). A branch with no commits of its own
-//!   (a reviewer's, an executor's not started, one switched to another branch) is judged like any
-//!   other: the window, the sessions and the processes are what protect an agent about to start;
+//! * its HEAD is an ancestor of `main` (detached or on a branch), or is exactly a head a pull
+//!   request squashed into main, proved by the receipt its land kept ([`delivered`]). A branch
+//!   with no commits of its own (a reviewer's, an executor's not started, one switched to another
+//!   branch) is judged like any other: the window, the sessions and the processes are what
+//!   protect an agent about to start;
 //! * no task in concept, design, ready, in_progress, review or blocked has the branch's name as its
 //!   slug, or as its slug with the last `/` spelled `-` (`tools/python-zero-merge-risk` for
 //!   `tools/python-zero/merge-risk`), has a role held by a session bound to it, either way (of any
@@ -69,11 +71,13 @@
 //! put back if the removal is refused; and `git worktree remove`
 //! runs without `--force`, so git itself refuses one that gained a change or an untracked file in
 //! between. Then `git worktree prune`; the branch a removed worktree had checked out is deleted once
-//! merged into main, if no worktree holds it and it still points where it did, unless a land's
-//! record of its merge names it (`just land SLUG` run again finishes from it and the branch) or its
+//! merged into main or squashed into it by a receipt's proof, its head then kept under the
+//! delivery's own reference, if no worktree holds it and it still points where it did, unless a
+//! land's record of its merge names it (`just land SLUG` run again finishes from it and the
+//! branch), a delivery of it by pull request not yet asked to merge reads its tip again, or its
 //! task is done by an approve no landing has closed (the guard against moving it back to review
 //! reads the branch's tip, [`crate::land::reopenable`]), each said as `kept branch`; and each
-//! `worktree-agent-*` branch merged into main that no
+//! `worktree-agent-*` branch merged into main, or squashed into it, that no
 //! worktree holds is deleted, only if it still points where it did when listed and no live or stale
 //! session still binds its agent's detached worktree. In-process agents must use their own
 //! `agent-ID` worktree; their id does not bind an arbitrarily named checkout. One sweep runs at a
@@ -104,6 +108,7 @@ mod aside;
 pub mod build_output;
 mod coalesce;
 mod command;
+pub mod delivered;
 pub mod git;
 mod guards;
 pub mod holder;
@@ -119,11 +124,12 @@ mod verdicts;
 pub use aside::{SWEPT, swept};
 pub use command::{Request, command, command_connect};
 
-use crate::health::FINISHED;
 use crate::maps::Collect as _;
 use crate::rows::TaskSessionRow;
+use crate::workflow::operate::{self, Operating};
 use crate::{Error, Session, Store, Task, sys};
 use build_output::Cleared;
+use delivered::Delivered;
 use holder::Holder;
 use report::Row;
 use std::collections::{BTreeMap, BTreeSet};
@@ -149,12 +155,16 @@ pub struct Facts {
     pub sessions: Vec<Session>,
     pub tasks: Vec<Task>,
     pub launches: Vec<TaskSessionRow>,
+    /// The custom workflow that holds some of `tasks`, by whose positions they are finished or
+    /// still worked on; none where it holds none.
+    pub operating: Option<Operating>,
 }
 
 impl Facts {
     pub fn read(store: &Store) -> Result<Facts, Error> {
         let board = store.board()?;
         Ok(Facts {
+            operating: store.operating_for(&board.tasks)?,
             sessions: board.sessions,
             tasks: board.tasks,
             launches: store.all_task_sessions()?,
@@ -183,7 +193,7 @@ impl Finished {
     /// Of task `slug`; none while it is not done or cancelled.
     pub fn of(store: &Store, slug: &str) -> Result<Finished, Error> {
         let mut found = Finished::default();
-        if !FINISHED.contains(&store.get(slug)?.status.as_str()) {
+        if !store.finished(&store.get(slug)?)? {
             return Ok(found);
         }
         let mut slugs = vec![slug.to_string()];
@@ -312,6 +322,9 @@ pub struct Sweep {
     pub left_branches: Vec<String>,
     /// The branches of removed worktrees that stay, merged into main all the same, and why.
     pub kept_branches: Vec<Kept>,
+    /// Of the branches deleted, those a pull request squashed into main, each with how its receipt
+    /// says so ([`Delivered::proof`]); the rest are in main's history.
+    pub squashed: BTreeMap<String, String>,
     /// The main checkout's folder of evidence set aside ([`aside::swept`]), measured against its
     /// cap ([`kept`]): said by a dry run, and by a sweep while it is past its cap.
     pub set_aside: Option<kept::Measured>,
@@ -370,15 +383,20 @@ impl Sweep {
         } else {
             "deleted"
         };
+        let landed = |b: &String| {
+            self.squashed
+                .get(b)
+                .map_or("merged into main", String::as_str)
+        };
         out.extend(
             self.left_branches
                 .iter()
-                .map(|b| format!("{deleted} branch {b} (merged into main, its worktree removed)")),
+                .map(|b| format!("{deleted} branch {b} ({}, its worktree removed)", landed(b))),
         );
         out.extend(
             self.branches
                 .iter()
-                .map(|b| format!("{deleted} branch {b} (merged into main, no worktree holds it)")),
+                .map(|b| format!("{deleted} branch {b} ({}, no worktree holds it)", landed(b))),
         );
         out.extend(
             self.kept_branches
@@ -487,6 +505,8 @@ struct Index<'a> {
     tasks: BTreeMap<&'a str, &'a Task>,
     /// The tasks whose slug, with its last `/` as `-`, is a branch's name, by that name.
     spelled: BTreeMap<String, Vec<&'a Task>>,
+    /// The custom workflow by whose positions the tasks it holds are finished or still worked on.
+    operating: Option<&'a Operating>,
 }
 
 /// The branch name `slug` is worked on under when its last `/` is spelled `-`
@@ -530,6 +550,7 @@ impl<'a> Index<'a> {
                 .map(|t| (t.slug.as_str(), t))
                 .collect_map(),
             spelled: BTreeMap::new(),
+            operating: facts.operating.as_ref(),
         };
         for task in &facts.tasks {
             if let Some(name) = spelled(&task.slug) {
@@ -629,19 +650,34 @@ impl<'a> Index<'a> {
             .collect()
     }
 
+    /// Whether task `slug` is finished by its recorded facts ([`operate::finished`]): a task a
+    /// custom workflow holds by its terminal position, never the status it projects to.
+    fn done(&self, slug: &str) -> bool {
+        operate::finished(self.operating, self.tasks[slug])
+    }
+
+    /// Whether task `slug` may still be worked on or reviewed: one a custom workflow holds until
+    /// its position is terminal, whatever status it projects to; any other at a [`LIVE_TASK`]
+    /// status.
+    fn working(&self, slug: &str) -> bool {
+        let task = self.tasks[slug];
+        if crate::store::workflow::position_held(&task.fields) {
+            return !self.done(slug);
+        }
+        LIVE_TASK.contains(&task.status.as_str())
+    }
+
     /// Why a task still live keeps `path`, if one does.
     fn live(&self, path: &Path, branch: Option<&str>) -> Option<String> {
         self.tied(path, branch)
             .into_iter()
-            .find(|(slug, _)| LIVE_TASK.contains(&self.tasks[slug].status.as_str()))
+            .find(|(slug, _)| self.working(slug))
             .map(|(_, why)| why)
     }
 
-    /// Whether every task `path` is tied to is done or cancelled (or it is tied to none).
+    /// Whether every task `path` is tied to is finished (or it is tied to none).
     fn finished(&self, path: &Path, branch: Option<&str>) -> bool {
-        self.tied(path, branch)
-            .keys()
-            .all(|slug| FINISHED.contains(&self.tasks[slug].status.as_str()))
+        self.tied(path, branch).keys().all(|slug| self.done(slug))
     }
 
     /// Why the agent that worked in `path` has finished, as the board shows it: a session is bound
@@ -661,11 +697,7 @@ impl<'a> Index<'a> {
             return None;
         }
         let tied = self.tied(path, branch);
-        if tied.is_empty()
-            || !tied
-                .keys()
-                .all(|slug| FINISHED.contains(&self.tasks[slug].status.as_str()))
-        {
+        if tied.is_empty() || !tied.keys().all(|slug| self.done(slug)) {
             return None;
         }
         let (sessions, are) = if handles.len() == 1 {
@@ -735,18 +767,35 @@ fn merged(root: &Path, head: &str, main: &str, ancestry: &mut BTreeMap<String, b
             .or_insert_with(|| git::ancestor(root, head, main))
 }
 
-/// What a dry run says of `head` and `main`: merged, or how many commits it has that main has not.
+/// How `head` landed in `main`, if it did: in its history, or squashed into it by a pull request,
+/// which only a receipt git bears out says ([`delivered`]).
+fn landed(
+    root: &Path,
+    head: &str,
+    main: &str,
+    ancestry: &mut BTreeMap<String, bool>,
+    delivered: &mut Delivered,
+) -> Option<String> {
+    if merged(root, head, main, ancestry) {
+        return Some("merged into main".into());
+    }
+    delivered.proof(head, main)
+}
+
+/// What a dry run says of `head` and `main`: merged, squashed into it, or how many commits it has
+/// that main has not.
 fn merge_said(
     root: &Path,
     head: &str,
     main: &str,
     ancestry: &mut BTreeMap<String, bool>,
+    delivered: &mut Delivered,
 ) -> String {
     if head.is_empty() {
         return "no HEAD".into();
     }
-    if merged(root, head, main, ancestry) {
-        return "merged into main".into();
+    if let Some(how) = landed(root, head, main, ancestry, delivered) {
+        return how;
     }
     let range = format!("{main}..{head}");
     match git::stdout(root, &["rev-list", "--count", &range]).map(|n| n.trim().to_string()) {
@@ -783,6 +832,7 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     let mut gone: BTreeSet<PathBuf> = BTreeSet::new();
     let mut freed_refs: Vec<(PathBuf, String, String)> = Vec::new();
     let mut ancestry = BTreeMap::new();
+    let mut delivered = Delivered::of(root);
     // What this pass set aside, by its folder's name: the tasks tied to its worktree.
     let mut set_aside_from: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // Where the owner's answers are written, as the main checkout's project file names its
@@ -837,9 +887,9 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
                 break 'judged format!("kept: session {handle} is bound there, live or stale");
             }
             let head = entry.head.as_str();
-            if !merged(root, head, &main, &mut ancestry) {
+            let Some(how) = landed(root, head, &main, &mut ancestry, &mut delivered) else {
                 break 'judged "kept for an orchestrator to decide: its HEAD is not in main".into();
-            }
+            };
             if let Some(held) = index.live(path, branch) {
                 result.spared.push((listed.clone(), held.clone()));
                 break 'judged format!("kept: {held}");
@@ -912,7 +962,7 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
                             .into();
                 }
             };
-            let mut why = format!("{place} at {short}, merged into main, clean, {lock}");
+            let mut why = format!("{place} at {short}, {how}, clean, {lock}");
             if let (Some(to), Some(folder)) = (&went.aside, &artifacts) {
                 let moved = if o.dry_run { "would move" } else { "moved" };
                 why += &format!("; its {folder}/ {moved} to {}", to.display());
@@ -937,7 +987,7 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             tasks: index.stages(path, branch),
             merged: o
                 .dry_run
-                .then(|| merge_said(root, &entry.head, &main, &mut ancestry)),
+                .then(|| merge_said(root, &entry.head, &main, &mut ancestry, &mut delivered)),
             verdict,
         });
     }
@@ -969,18 +1019,25 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     if !o.dry_run && o.only.is_none() {
         let _ = git::git(root, &["worktree", "prune"]);
     }
+    let mut landings = Landings {
+        main: &main,
+        ancestry: &mut ancestry,
+        delivered: &mut delivered,
+        squashed: BTreeMap::new(),
+    };
     (result.left_branches, result.kept_branches) =
-        left_branches(root, &main, &freed_refs, store, o)?;
+        left_branches(root, &mut landings, &freed_refs, store, o)?;
     if o.only.is_none() {
-        result.branches = agent_branches(root, &main, &trees, &paths, &gone, store, o)?;
+        result.branches = agent_branches(root, &mut landings, &trees, &paths, &gone, store, o)?;
     }
+    result.squashed = landings.squashed;
+    (result.squashed)
+        .retain(|b, _| result.left_branches.contains(b) || result.branches.contains(b));
     if let (Some(checkout), Some(folder)) = (&checkout, &artifacts) {
         let stage = |slug: &str| index.tasks.get(slug).map(|task| task.status.clone());
-        let open: Vec<String> = index
-            .tasks
-            .values()
-            .filter(|task| !FINISHED.contains(&task.status.as_str()))
-            .map(|task| task.slug.clone())
+        let open: Vec<String> = (index.tasks.keys())
+            .filter(|slug| !index.done(slug))
+            .map(|slug| slug.to_string())
             .collect();
         let read = || mentions(root, &main, folder, store, &open);
         (result.set_aside, result.cap_unread) =
@@ -1311,6 +1368,32 @@ fn remove(
     }))
 }
 
+/// What a sweep's branch deletions judge a landing by: main's commit, and the two proofs of a
+/// landing in it, each read once per commit ([`landed`]).
+struct Landings<'a> {
+    main: &'a str,
+    ancestry: &'a mut BTreeMap<String, bool>,
+    delivered: &'a mut Delivered,
+    /// The branches found squashed into main, with how their receipts say so.
+    squashed: BTreeMap<String, String>,
+}
+
+impl Landings<'_> {
+    /// Whether the branch `name` at `sha` landed in main, noting one a pull request squashed.
+    fn holds(&mut self, root: &Path, name: &str, sha: &str) -> bool {
+        if merged(root, sha, self.main, self.ancestry) {
+            return true;
+        }
+        match self.delivered.proof(sha, self.main) {
+            Some(said) => {
+                self.squashed.insert(name.to_string(), said);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
 /// The tasks a land's record of its merge names, in the lands' folder of `root`'s repository
 /// ([`crate::land::Record`]): each a land interrupted after it moved the default branch, which `just
 /// land SLUG` run again finishes from the record and the task's branch. A record counts under the
@@ -1337,17 +1420,26 @@ fn recorded_lands(root: &Path) -> BTreeSet<String> {
         .collect()
 }
 
-/// Why branch `name`, merged into main, stays though its worktree went, if it does: a land's
-/// record of its merge names it (`recorded`), which a land run again finishes from it; or its task
-/// is done by an approve no landing has closed, which may still go back to review for a fresh
-/// approve, and the guard against sending back what landed reads the branch's tip
+/// Why branch `name`, landed in main, stays though its worktree went, if it does: a land's
+/// record of its merge names it (`recorded`), which a land run again finishes from it; a delivery
+/// of it by pull request not yet asked to merge reads its tip ([`Delivered::under_way`]); or its
+/// task is done by an approve no landing has closed, which may still go back to review for a
+/// fresh approve, and the guard against sending back what landed reads the branch's tip
 /// (`crate::land::reopenable`).
-fn branch_kept(store: &Store, name: &str, recorded: &BTreeSet<String>) -> Option<String> {
+fn branch_kept(
+    store: &Store,
+    name: &str,
+    recorded: &BTreeSet<String>,
+    delivered: &Delivered,
+) -> Option<String> {
     if recorded.contains(name) {
         return Some(format!(
             "a land's record of its merge names it, and `just land {name}` run again finishes that \
              land from it"
         ));
+    }
+    if let Some(why) = delivered.under_way(name) {
+        return Some(why);
     }
     let task = store.get(name).ok()?;
     if task.status != "done" || task.parent.is_some() || task.instruction {
@@ -1367,12 +1459,12 @@ fn branch_kept(store: &Store, name: &str, recorded: &BTreeSet<String>) -> Option
 }
 
 /// Delete the branch each removed worktree had checked out (`refs`: its folder, the branch, the
-/// commit it was at), once merged into main, if it still points there and no worktree but the one
-/// removed holds it, unless the land or the board still needs it ([`branch_kept`]): those deleted,
-/// and those kept with why. The `worktree-agent-*` branches are [`agent_branches`]'.
+/// commit it was at), once landed in main ([`landed`]), if it still points there and no worktree
+/// but the one removed holds it, unless the land or the board still needs it ([`branch_kept`]):
+/// those deleted, and those kept with why. The `worktree-agent-*` branches are [`agent_branches`]'.
 fn left_branches(
     root: &Path,
-    main: &str,
+    landings: &mut Landings<'_>,
     refs: &[(PathBuf, String, String)],
     store: &Store,
     o: &Options,
@@ -1395,11 +1487,11 @@ fn left_branches(
         });
         if held
             || git::rev(root, reference).as_deref() != Some(sha.as_str())
-            || !git::ancestor(root, sha, main)
+            || !landings.holds(root, name, sha)
         {
             continue;
         }
-        if let Some(why) = branch_kept(store, name, &recorded) {
+        if let Some(why) = branch_kept(store, name, &recorded, landings.delivered) {
             kept.push((name.to_string(), why));
             continue;
         }
@@ -1413,11 +1505,12 @@ fn left_branches(
     Ok((deleted, kept))
 }
 
-/// Delete each `worktree-agent-*` branch merged into main that no worktree left holds, only if it
-/// still points where it did when listed: a branch that moved since is not what was judged merged.
+/// Delete each `worktree-agent-*` branch landed in main ([`landed`]) that no worktree left holds,
+/// only if it still points where it did when listed: a branch that moved since is not what was
+/// judged landed.
 fn agent_branches(
     root: &Path,
-    main: &str,
+    landings: &mut Landings<'_>,
     trees: &[git::Listed],
     paths: &[PathBuf],
     gone: &BTreeSet<PathBuf>,
@@ -1446,10 +1539,10 @@ fn agent_branches(
         let Some((reference, sha)) = line.split_once(' ') else {
             continue;
         };
-        if held.contains(reference) || !git::ancestor(root, sha, main) {
+        let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
+        if held.contains(reference) || !landings.holds(root, name, sha) {
             continue;
         }
-        let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
         if !o.dry_run {
             (o.pause)("delete", name);
         }
@@ -1603,6 +1696,53 @@ mod tests {
             BTreeSet::from(["sim/jump".to_string(), "tools/a-b/c".to_string()])
         );
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_task_a_workflow_holds_is_finished_by_its_terminal_position_never_its_projected_status() {
+        use crate::workflow::operate::tests::{held, legacy, reviewed};
+        let launched = |slug: &str| TaskSessionRow {
+            slug: slug.into(),
+            handle: "amber".into(),
+            worktree: format!("/nowhere/{slug}"),
+            ..TaskSessionRow::default()
+        };
+        let tasks = vec![
+            // Approved: it projects to done, yet its position is no terminal one.
+            held("sim/approved", "verify", "approved"),
+            held("sim/accepted", "verify", "accepted"),
+            held("sim/cancelled", "build", "cancelled"),
+            held("sim/awaiting", "verify", "awaiting"),
+            legacy("sim/done", "done"),
+            legacy("sim/review", "review"),
+        ];
+        let facts = Facts {
+            launches: tasks.iter().map(|t| launched(&t.slug)).collect(),
+            tasks,
+            sessions: Vec::new(),
+            operating: Some(reviewed()),
+        };
+        let index = Index::of(&facts, &[]);
+        for (slug, finished) in [
+            ("sim/approved", false),
+            ("sim/accepted", true),
+            ("sim/cancelled", true),
+            ("sim/awaiting", false),
+            ("sim/done", true),
+            ("sim/review", false),
+        ] {
+            let at = canonical(Path::new(&format!("/nowhere/{slug}")));
+            assert_eq!(index.finished(&at, None), finished, "{slug}");
+            assert_eq!(index.live(&at, None).is_some(), !finished, "{slug}");
+        }
+        // With no workflow read, a held task is never taken as finished by its status.
+        let unread = Facts {
+            operating: None,
+            ..facts.clone()
+        };
+        let index = Index::of(&unread, &[]);
+        let at = canonical(Path::new("/nowhere/sim/approved"));
+        assert!(!index.finished(&at, None));
     }
 
     #[test]

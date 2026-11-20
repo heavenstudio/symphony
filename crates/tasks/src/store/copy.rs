@@ -67,8 +67,12 @@ impl Store {
         // A workflow's records go in before the tasks: the task fence finds each managed task's
         // transition among them as the task is written (`crate::schema`'s `workflow_position`).
         // A dump with none lists no table for them, so its copy says what it said before
-        // workflows; the copy empties the board's records either way.
+        // workflows; the copy empties the board's records either way. What the board accepted
+        // from an approval authority is never copied: a copy or a restore may be older than the
+        // authority's last report, so its guards are refused until the authority reports again
+        // (`crate::workflow::guard`).
         let workflow: Vec<Value> = (dump.workflow.iter())
+            .filter(|row| row.kind != "authority")
             .map(|row| json!({ "id": row.key, "kind": row.kind, "body": row.body, "at": row.at }))
             .collect();
         let workflow = (!workflow.is_empty()).then_some(("workflow", workflow));
@@ -190,16 +194,11 @@ impl Store {
             RandomState::new().hash_one(std::process::id())
         );
         let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
+        let counters = json!({
+            "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
+        });
         let copied = self.stage(&staging, &tables).and_then(|staged| {
-            let swap = sql::swap(&staging, &names);
-            let sent: serde_json::Map<String, Value> = (tables.iter())
-                .map(|(table, rows)| ((*table).to_string(), json!(rows.len())))
-                .collect();
-            let vars = json!({
-                "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
-                "sent": sent,
-            });
-            self.retrying(|| self.transact::<String>(&swap, vars.clone()))
+            self.swap_staged(&staging, &tables, counters)
                 .map_err(|error| uncommitted(error, staged, &tables))
         });
         let generation = copied.map_err(|error| self.cleanup_staging(&staging, &names, error))?;
@@ -259,6 +258,29 @@ impl Store {
         let millis = u64::try_from(limit.as_millis()).unwrap_or(u64::MAX);
         let copy = || both(sql::NOTHING_COPIED, postgres::copy::copy(&names, millis));
         self.retrying(|| self.run_transaction(copy(), vars.clone(), Run::Staging))
+    }
+
+    /// On SurrealDB, the copy's one transaction: what [`Store::stage`] put under `staging` replaces
+    /// each of `tables` on the board, the counters are set as `counters` says and the recovery
+    /// generation is replaced ([`sql::swap`]). Its answer is the generation it made. It is held to
+    /// the store's own schema whoever opened the store ([`Run::Own`]), as its staging is: a
+    /// reader's store, which may write a board one schema ahead whose step keeps it writing, never
+    /// lands a copy staged at its own schema on a board a migration moved meanwhile. It posts no
+    /// message, so it dispatches nothing.
+    pub(super) fn swap_staged(
+        &self,
+        staging: &str,
+        tables: &[(&str, Vec<Value>)],
+        counters: Value,
+    ) -> Result<String, Error> {
+        let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
+        let swap = sql::swap(staging, &names);
+        let sent: serde_json::Map<String, Value> = (tables.iter())
+            .map(|(table, rows)| ((*table).to_string(), json!(rows.len())))
+            .collect();
+        let mut vars = counters;
+        vars["sent"] = Value::Object(sent);
+        self.retrying(|| self.run_transaction::<String>(&swap, vars.clone(), Run::Own))
     }
 
     /// Every row of `tables` into schemaless tables named `{staging}_{table}`, each request at most
@@ -898,3 +920,7 @@ mod placed {
         assert_eq!(leases_ended(json!({})), json!({}));
     }
 }
+
+#[cfg(test)]
+#[path = "copy_tests.rs"]
+mod held;

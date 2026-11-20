@@ -143,15 +143,21 @@ fn postgresqls_record_says_its_server_its_socket_and_whether_it_is_ready() {
         Some(PidFile {
             pid: 86894,
             socket: PathBuf::from("/tmp/symphony-pg-try1"),
-            ready: true
+            ready: true,
+            stopping: false
         })
     );
-    for status in ["starting", "stopping", "standby "] {
-        assert!(!pid_file(&recorded(status)).unwrap().ready, "{status}");
+    for (status, stopping) in [("starting", false), ("stopping", true), ("standby ", false)] {
+        let record = pid_file(&recorded(status)).unwrap();
+        assert_eq!(
+            (record.ready, record.stopping),
+            (false, stopping),
+            "{status}"
+        );
     }
     // A record cut short, as a server that is still writing it leaves it, is not ready.
     let short = pid_file("86894\n/tmp/board/postgresql\n1794856071\n5432\n/tmp/s\n").unwrap();
-    assert!(!short.ready);
+    assert!(!short.ready && !short.stopping);
     assert_eq!(pid_file("86894\n/tmp/board/postgresql\n"), None);
     assert_eq!(pid_file("not a pid\n"), None);
     assert_eq!(pid_file(""), None);
@@ -169,6 +175,63 @@ fn the_supervisor_says_the_pid_then_whether_the_server_was_ready_or_ended() {
         Said::of("4242\n4343\nready\n"),
         said(Some(4242), Some(true))
     );
+}
+
+#[test]
+fn the_starters_record_names_a_server_and_its_starter_or_nothing() {
+    assert_eq!(starter_of("86894 512\n"), Some((86894, 512)));
+    assert_eq!(starter_of("86894 512"), Some((86894, 512)));
+    for cut in [
+        "",
+        "\n",
+        "86894",
+        "86894 ",
+        "86894 512 7\n",
+        "86894  512\n",
+        "86894\n512\n",
+        "0 512\n",
+        "86894 -1\n",
+        "86894 x\n",
+        " 86894 512\n",
+    ] {
+        assert_eq!(starter_of(cut), None, "{cut:?}");
+    }
+}
+
+/// No process has this pid: a starter long ended.
+const ENDED: i64 = i32::MAX as i64;
+
+#[test]
+fn a_server_is_outgoing_when_its_record_names_it_and_its_starter_has_ended() {
+    let board = StandIn::installation("starter", "18.1");
+    let record = |pid| PidFile {
+        pid,
+        socket: board.pg.socket(),
+        ready: true,
+        stopping: false,
+    };
+    let path = board.pg.home.dir.join(STARTER);
+    assert_eq!(
+        board.pg.starter_ended(&record(86894)),
+        None,
+        "no record: started apart or by hand"
+    );
+    fs::create_dir_all(&board.pg.home.dir).unwrap();
+    fs::write(&path, format!("86894 {ENDED}\n")).unwrap();
+    assert_eq!(board.pg.starter_ended(&record(86894)), Some(ENDED));
+    assert_eq!(
+        board.pg.starter_ended(&record(86895)),
+        None,
+        "another server on the data: the record is of an earlier one"
+    );
+    fs::write(&path, format!("86894 {}\n", std::process::id())).unwrap();
+    assert_eq!(
+        board.pg.starter_ended(&record(86894)),
+        None,
+        "its starter runs: this process"
+    );
+    fs::write(&path, "86894\n").unwrap();
+    assert_eq!(board.pg.starter_ended(&record(86894)), None, "cut short");
 }
 
 #[test]

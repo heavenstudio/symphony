@@ -68,6 +68,26 @@ impl PullRequests {
     }
 }
 
+/// What the adapter does with the project's releases: `publish` answers the release run's
+/// `release` ([`crate::release`]), a GitHub Release for a tag pushed.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Releases {
+    #[default]
+    Off,
+    Publish,
+}
+
+impl Releases {
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Releases::Off => "off",
+            Releases::Publish => "publish",
+        }
+    }
+}
+
 /// The file as written. Every key is known, so a mistyped one is refused, never ignored.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -79,6 +99,8 @@ struct Written {
     issues: Issues,
     #[serde(default)]
     pull_requests: PullRequests,
+    #[serde(default)]
+    releases: Releases,
     token_file: Option<PathBuf>,
     #[serde(default)]
     import_labels: Vec<String>,
@@ -93,6 +115,12 @@ struct Written {
     #[serde(default)]
     close_issues: bool,
     upstream_id: Option<i64>,
+    landing_installation_id: Option<i64>,
+    landing_key_file: Option<PathBuf>,
+    checks_installation_id: Option<i64>,
+    checks_key_file: Option<PathBuf>,
+    policy_installation_id: Option<i64>,
+    policy_key_file: Option<PathBuf>,
 }
 
 /// The one GitHub.com repository the adapter may reach.
@@ -116,6 +144,7 @@ pub struct Config {
     pub repository: Option<Repository>,
     pub issues: Issues,
     pub pull_requests: PullRequests,
+    pub releases: Releases,
     /// Where the token is, never the token.
     pub token_file: Option<PathBuf>,
     pub import_labels: Vec<String>,
@@ -144,6 +173,100 @@ pub struct Config {
     /// repository of that number ([`crate::deliver`]), and the default branch then permits merge
     /// commits beside squash ([`crate::preflight`]). With none, no import is delivered.
     pub upstream_id: Option<i64>,
+    /// The installation of the App `landing_app_id` names and the path of its private key, set
+    /// together: where they are, the program makes `token_file`'s token itself ([`crate::mint`]).
+    pub landing_installation_id: Option<i64>,
+    pub landing_key_file: Option<PathBuf>,
+    /// The same of `checks_app_id`'s App, for `checks_token_file`.
+    pub checks_installation_id: Option<i64>,
+    pub checks_key_file: Option<PathBuf>,
+    /// The same of `policy_app_id`'s App, for `policy_token_file`.
+    pub policy_installation_id: Option<i64>,
+    pub policy_key_file: Option<PathBuf>,
+}
+
+/// The three tokens the settings may name, each of a GitHub App of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// `token_file`'s: the issue exchange's, and where a land is delivered the one that merges.
+    Landing,
+    /// `checks_token_file`'s, which writes a delivery's checks.
+    Checks,
+    /// `policy_token_file`'s, which reads who bypasses the default branch's rules.
+    Policy,
+}
+
+impl Role {
+    pub const ALL: [Role; 3] = [Role::Landing, Role::Checks, Role::Policy];
+
+    /// The settings' key of its token file.
+    #[must_use]
+    pub fn file_key(self) -> &'static str {
+        match self {
+            Role::Landing => "token_file",
+            Role::Checks => "checks_token_file",
+            Role::Policy => "policy_token_file",
+        }
+    }
+
+    /// What its App's keys start with: `landing_app_id`, `checks_key_file`, `policy_installation_id`.
+    #[must_use]
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Role::Landing => "landing",
+            Role::Checks => "checks",
+            Role::Policy => "policy",
+        }
+    }
+}
+
+/// What makes an installation token of one GitHub App: its number, its installation's on the
+/// repository, and where its private key is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct App {
+    pub id: i64,
+    pub installation: i64,
+    pub key_file: PathBuf,
+}
+
+impl Config {
+    /// Where `role`'s token is kept.
+    #[must_use]
+    pub fn file_of(&self, role: Role) -> Option<&Path> {
+        match role {
+            Role::Landing => self.token_file.as_deref(),
+            Role::Checks => self.checks_token_file.as_deref(),
+            Role::Policy => self.policy_token_file.as_deref(),
+        }
+    }
+
+    /// The App that makes `role`'s token here: none where its installation and key are not set,
+    /// and the file's token is then kept by whoever writes it.
+    #[must_use]
+    pub fn app_of(&self, role: Role) -> Option<App> {
+        let (id, installation, key_file) = match role {
+            Role::Landing => (
+                self.landing_app_id,
+                self.landing_installation_id,
+                &self.landing_key_file,
+            ),
+            Role::Checks => (
+                self.checks_app_id,
+                self.checks_installation_id,
+                &self.checks_key_file,
+            ),
+            Role::Policy => (
+                self.policy_app_id,
+                self.policy_installation_id,
+                &self.policy_key_file,
+            ),
+        };
+        Some(App {
+            id: id?,
+            installation: installation?,
+            key_file: key_file.clone()?,
+        })
+    }
 }
 
 /// The settings with the revision they were read at: a digest of the committed file's text, so a
@@ -265,6 +388,90 @@ fn apart(written: &Written) -> Result<(), String> {
     Ok(())
 }
 
+/// An App's installation and key are set together, with its App's number and the token file
+/// the token made is kept in; no key file is a token file, and each App has a key of its own.
+fn makers(written: &Written) -> Result<(), String> {
+    let files = [
+        &written.token_file,
+        &written.checks_token_file,
+        &written.policy_token_file,
+    ];
+    let mut keys: Vec<(&str, &PathBuf)> = Vec::new();
+    for (role, id, installation, key_file, file) in [
+        (
+            Role::Landing,
+            written.landing_app_id,
+            written.landing_installation_id,
+            &written.landing_key_file,
+            &written.token_file,
+        ),
+        (
+            Role::Checks,
+            written.checks_app_id,
+            written.checks_installation_id,
+            &written.checks_key_file,
+            &written.checks_token_file,
+        ),
+        (
+            Role::Policy,
+            written.policy_app_id,
+            written.policy_installation_id,
+            &written.policy_key_file,
+            &written.policy_token_file,
+        ),
+    ] {
+        let prefix = role.prefix();
+        if installation.is_some_and(|id| id <= 0) {
+            return Err(format!(
+                "{prefix}_installation_id is a GitHub App installation's number"
+            ));
+        }
+        let Some(key_file) = key_file else {
+            if installation.is_some() {
+                return Err(format!(
+                    "{prefix}_installation_id needs {prefix}_key_file: the App's private key, \
+                     which makes the installation's token"
+                ));
+            }
+            continue;
+        };
+        if !key_file.is_absolute() {
+            return Err(format!(
+                "{prefix}_key_file is an absolute path outside the repository"
+            ));
+        }
+        if installation.is_none() {
+            return Err(format!(
+                "{prefix}_key_file needs {prefix}_installation_id: the installation whose token \
+                 the key makes"
+            ));
+        }
+        if id.is_none() {
+            return Err(format!(
+                "{prefix}_key_file needs {prefix}_app_id: the App the key is of"
+            ));
+        }
+        if file.is_none() {
+            return Err(format!(
+                "{prefix}_key_file needs {}: where the token it makes is kept",
+                role.file_key()
+            ));
+        }
+        if files.iter().any(|file| file.as_ref() == Some(key_file)) {
+            return Err(format!(
+                "{prefix}_key_file is a token file: a token made would be written over the key"
+            ));
+        }
+        if let Some((other, _)) = keys.iter().find(|(_, path)| *path == key_file) {
+            return Err(format!(
+                "{prefix}_key_file is {other}_key_file: each App has a key of its own"
+            ));
+        }
+        keys.push((prefix, key_file));
+    }
+    Ok(())
+}
+
 /// The settings `text` gives.
 ///
 /// # Errors
@@ -310,6 +517,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
         ));
     }
     apart(&written).map_err(wrong)?;
+    makers(&written).map_err(wrong)?;
     if written.enabled {
         if repository.is_none() {
             return Err(wrong("enabled needs repository = \"OWNER/NAME\"".into()));
@@ -334,6 +542,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
         repository,
         issues: written.issues,
         pull_requests: written.pull_requests,
+        releases: written.releases,
         token_file: written.token_file,
         import_labels: written.import_labels,
         import_comments: written.import_comments,
@@ -345,6 +554,12 @@ pub fn parse(text: &str) -> Result<Config, String> {
         policy_app_id: written.policy_app_id,
         close_issues: written.close_issues,
         upstream_id: written.upstream_id,
+        landing_installation_id: written.landing_installation_id,
+        landing_key_file: written.landing_key_file,
+        checks_installation_id: written.checks_installation_id,
+        checks_key_file: written.checks_key_file,
+        policy_installation_id: written.policy_installation_id,
+        policy_key_file: written.policy_key_file,
     })
 }
 
@@ -371,8 +586,9 @@ pub trait Source {
 }
 
 /// The settings the project's default branch commits, read from git's objects by the main
-/// checkout: `git show refs/heads/BRANCH:symphony-github.toml`, BRANCH the main checkout's
-/// `[project] default_branch` (`main` unless it says another).
+/// checkout: `git show refs/heads/BRANCH:symphony-github.toml`, BRANCH the `[project]
+/// default_branch` the main checkout's HEAD commits ([`default_branch`], `main` unless it says
+/// another).
 pub struct Committed {
     /// The main checkout.
     pub main: PathBuf,
@@ -389,17 +605,35 @@ struct ProjectTable {
     default_branch: Option<String>,
 }
 
-/// The project's default branch, as the main checkout `main`'s `symphony.toml` names it.
+/// The project's default branch, as `[project] default_branch` names it in the `symphony.toml`
+/// the main checkout `main`'s HEAD commits (`main` where none is committed or it names none):
+/// read as the land reads it, so the two agree, and an edit of the working file names no
+/// branch until it is committed.
 ///
 /// # Errors
 ///
-/// The file does not read, or names no branch.
+/// git cannot read it, the file does not read, or it names no branch.
 pub fn default_branch(main: &Path) -> Result<String, String> {
-    let file = main.join("symphony.toml");
-    let text = match std::fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(format!("{}: {error}", file.display())),
+    let at = "HEAD:symphony.toml";
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(main)
+            .args(args)
+            .output()
+            .map_err(|error| format!("git: {error}"))
+    };
+    let text = if git(&["cat-file", "-e", at])?.status.success() {
+        let shown = git(&["cat-file", "blob", at])?;
+        if !shown.status.success() {
+            return Err(format!(
+                "git could not read symphony.toml at {}'s HEAD",
+                main.display()
+            ));
+        }
+        String::from_utf8(shown.stdout).map_err(|error| format!("symphony.toml: {error}"))?
+    } else {
+        String::new()
     };
     let read: ProjectFile =
         toml::from_str(&text).map_err(|error| format!("symphony.toml: {}", error.message()))?;

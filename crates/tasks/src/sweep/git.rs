@@ -6,8 +6,8 @@ mod locks;
 mod owner;
 mod worktrees;
 
+pub(crate) use command::{Object, objects, read, stdout, told};
 pub use command::{git, rev, succeeds};
-pub(crate) use command::{read, stdout, told};
 pub use files::{DISPOSABLE, FINISHED_OUTPUT, fnmatch, last_touched, left_behind, modified};
 pub(super) use files::{admin, clean_regenerable};
 pub(super) use files::{file_status, regenerable};

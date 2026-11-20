@@ -172,10 +172,15 @@ impl Refresh {
         self.theirs.iter().any(|theirs| theirs == name)
     }
 
-    /// Its steps the board is told of: each but those that are their projects' to finish, which
-    /// are filed nowhere and close nothing.
+    /// Its steps the board is told of as a release's reds: the install, the registry, and each
+    /// project's board step only while green, which closes a red an older build filed for it. A
+    /// board that did not move is its update's failure, filed once on its update's own task
+    /// ([`super::updates`]), never as a red of its step too.
     pub(crate) fn told(&self) -> impl Iterator<Item = &Ran> {
-        (self.steps.iter()).filter(|ran| !self.is_theirs(&ran.name))
+        (self.steps.iter()).filter(|ran| {
+            let board = ran.name != super::install::STEP && ran.name != super::refresh::STEP;
+            !self.is_theirs(&ran.name) && (!board || ran.green())
+        })
     }
 }
 
@@ -293,7 +298,7 @@ pub(crate) struct Held {
 
 /// The release run's folder in the git common dir `common`.
 pub(crate) fn folder(common: &Path) -> PathBuf {
-    common.join("symphony").join("release")
+    common.join(symphony_board::folders::RELEASE)
 }
 
 /// The run's lock, open: the folder the run records in, where it is, and whether it was taken.
@@ -699,7 +704,7 @@ pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
     for ran in &refresh.steps {
         if refresh.is_theirs(&ran.name) {
             text.push_str(&format!(
-                "  {} {THEIRS}, filed nowhere here; log {}\n",
+                "  {} {THEIRS}, its schema update's task filed (below); log {}\n",
                 ran.name,
                 ran.log.display()
             ));
@@ -807,6 +812,7 @@ mod tests {
             timed_out: false,
             interrupted: false,
             load: None,
+            alone: None,
         }
     }
 
@@ -1297,7 +1303,7 @@ mod tests {
                  alpha: its board moved from schema 18 to 19\n  \
                  gamma: the project's to finish: its board stays at schema 18\n  \
                  refresh-beta red: exit 101; log /l\n  \
-                 refresh-gamma the project's to finish, filed nowhere here; log /l\n\
+                 refresh-gamma the project's to finish, its schema update's task filed (below); log /l\n\
                  {by_hand}",
                 local(NOW - 3600.0)
             )
@@ -1310,7 +1316,7 @@ mod tests {
             said.starts_with(
                 "last refresh: green, 1 step left to its project, of release-2026-11-12"
             ) && said.ends_with(&format!(
-                "refresh-gamma the project's to finish, filed nowhere here; log /l\n{by_hand}"
+                "refresh-gamma the project's to finish, its schema update's task filed (below); log /l\n{by_hand}"
             )),
             "{said}"
         );

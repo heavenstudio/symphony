@@ -226,13 +226,15 @@ The one exception is the run that follows a landing that moves the board's schem
 orchestrator who landed it starts at once without asking
 ([the cadence](docs/RELEASES.md#the-cadence)).
 A schema move never waits for the owner: when this board is at a schema the release `current`
-names does not serve and a green release serving it is installed, an orchestrator points
-`current` forward at that release at once, without asking, and says so on the thread of the task
-that moved the schema; another project's pages then save nothing until it takes the release,
-which is that project's to do. Restarting the shared server by hand, its first switch to a
-release's own server among it, is a separate act that needs its own word, and so is pointing
-`current` back to an older release ([the way back](docs/RELEASES.md#the-way-back)). A pin moved by hand to a commit of main waits until
-`just tasks regenerate --status --wait` exits 0 and takes the commit it names, so it never
+names does not serve, the refresh of a green release serving it points `current` forward itself
+([the forward move](docs/RELEASES.md#the-refresh)). Where one did not, its failed update's task
+filed ([an update](docs/RELEASES.md#an-update)), an orchestrator points `current` forward at that
+release at once, without asking, and says so on that task's thread; another project's pages then
+save nothing until its board moves, which its own update's task tells. Restarting the shared
+server by hand, its first switch to a release's own server among it, is a separate act that needs
+its own word, and so is pointing `current` back to an older release
+([the way back](docs/RELEASES.md#the-way-back)). A pin moved by hand to a commit of main waits
+until `just tasks regenerate --status --wait` exits 0 and takes the commit it names, so it never
 carries a client older than its sources ([TASKS](docs/TASKS.md#the-regenerator)).
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
@@ -389,7 +391,8 @@ tagged `release-YYYY-MM-DD` and that tag alone pushed, then the machine refreshe
 tip is held as the release candidate, the local branch `release-candidate` that is never pushed,
 until its reds' own tasks, started there, land; then it is rerun and released. `--due` is what a
 land's `[board] on_land` runs, `--refresh`, `--rerun` and `--drop` are an orchestrator's retries,
-and `--status` runs nothing ([status](docs/RELEASES.md#status)). It is Symphony's own release
+`--github` asks for the GitHub Release of releases tagged already
+([RELEASES](docs/RELEASES.md#a-github-release)), and `--status` runs nothing ([status](docs/RELEASES.md#status)). It is Symphony's own release
 command, not a recipe `symphony init` installs.
 
 Board roles, verdicts and configured review callbacks belong to Symphony, and so does the

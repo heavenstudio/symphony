@@ -11,9 +11,10 @@
 //! the preview: the next preview reads the task again.
 
 use crate::board::{Board, BoardError, Bound, Token};
-use crate::config::{Config, Loaded, Repository, Source};
-use crate::credential::{self, Secret};
+use crate::config::{Config, Loaded, Repository, Role, Source};
+use crate::credential::Secret;
 use crate::github::{ApiError, Client, Comment, Issue};
+use crate::mint;
 use crate::plan::{self, Action, Change, Preview, Seen, Tokens};
 use crate::state::{Entry, Event, Flag, Mapping, Origin, State, Store};
 use crate::transport::Transport;
@@ -21,7 +22,8 @@ use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// The pages of issues one preview reads at most; what is past them waits for the next.
 const MAX_PAGES: usize = 20;
@@ -41,6 +43,11 @@ pub struct Context<'a> {
     pub now: i64,
     /// The repository's folders, which the token file must be outside.
     pub repository: Vec<PathBuf>,
+    /// The program that signs a GitHub App's JSON Web Token ([`crate::mint`]): `openssl`.
+    pub openssl: &'a str,
+    /// What a delivery rests by between two reads of the checks it wrote, which GitHub lists a
+    /// little after it takes them: [`crate::deliver::rest`], or a test's, which waits on nothing.
+    pub rest: &'a dyn Fn(Duration),
 }
 
 /// How a command ended: its exit code, having said why on `out`.
@@ -83,13 +90,8 @@ fn enabled(ctx: &Context<'_>) -> Result<Loaded, String> {
 }
 
 fn connect(ctx: &Context<'_>, loaded: &Loaded) -> Result<Box<dyn Transport>, String> {
-    let file = loaded
-        .config
-        .token_file
-        .as_deref()
-        .ok_or("the settings name no token_file")?;
-    let folders: Vec<&std::path::Path> = ctx.repository.iter().map(PathBuf::as_path).collect();
-    (ctx.connect)(credential::read(file, &folders)?)
+    let token = mint::token(ctx, &loaded.config, Role::Landing).map_err(mint::Stop::said)?;
+    (ctx.connect)(token)
 }
 
 /// What an API failure does to the state: a refused credential or a repository not found
@@ -299,11 +301,17 @@ fn gather(
     })
 }
 
-/// A preview while turned off: what waited is not kept to be replayed, nothing remote is read,
-/// and each curated text not yet published is shown as it would be.
-fn turned_off(store: &Store, state: &State, why: &str, out: &mut dyn Write) -> Outcome {
-    store.drop_preview()?;
+/// A preview while turned off: nothing remote is read, what waited is not kept to be replayed,
+/// and each curated text not yet published is shown as it would be. Where nothing was kept, as
+/// in a project that never turned it on, nothing is made: no folder and no lock.
+fn turned_off(folder: &Path, why: &str, out: &mut dyn Write) -> Outcome {
     let _ = writeln!(out, "{why}. Nothing was read from GitHub.");
+    let Some(store) = Store::existing(folder) else {
+        return Ok(0);
+    };
+    let _lock = store.lock()?;
+    store.drop_preview()?;
+    let state = store.state()?.unwrap_or_default();
     for (slug, draft) in &state.drafts {
         if !state.mappings.contains_key(slug) {
             let _ = writeln!(out, "{slug} would be published as a new public issue:");
@@ -346,13 +354,14 @@ fn journaled(store: &Store) -> Result<BTreeSet<String>, String> {
 ///
 /// Why nothing was previewed.
 pub fn preview(ctx: &Context<'_>, rebind: bool, out: &mut dyn Write) -> Outcome {
-    let store = Store::open(&ctx.board.state_folder().map_err(|e| board(&e))?)?;
-    let _lock = store.lock()?;
-    let mut state = store.state()?.unwrap_or_default();
+    let folder = ctx.board.state_folder().map_err(|e| board(&e))?;
     let loaded = match enabled(ctx) {
         Ok(loaded) => loaded,
-        Err(why) => return turned_off(&store, &state, &why, out),
+        Err(why) => return turned_off(&folder, &why, out),
     };
+    let store = Store::open(&folder)?;
+    let _lock = store.lock()?;
+    let mut state = store.state()?.unwrap_or_default();
     let config = &loaded.config;
     let repository = config.repository.as_ref().ok_or("no repository is named")?;
     limited(&state, ctx.now)?;
@@ -576,36 +585,48 @@ impl Run<'_> {
         }))
     }
 
-    /// A task's title and brief rewritten by the token the preview read, or not at all.
+    /// What the task holds before a pull rewrites it, read before the pull's intent is
+    /// journaled: the board keeps no earlier words of a brief, so the intent does, and an edit
+    /// cut short can be put back from it. Where the board gives none, nothing is written.
+    fn prior(&self, action: &Action) -> Result<Option<Bound>, Stop> {
+        let Action::Pull { slug, .. } = action else {
+            return Ok(None);
+        };
+        match self.ctx.board.bound(slug) {
+            Ok(bound) => Ok(Some(bound)),
+            Err(BoardError::Refused(why)) => Err(Stop::End {
+                why: format!(
+                    "{slug}: the board gives no token, so nothing was written: {why}. Preview \
+                     again."
+                ),
+                event: Event::Failed,
+                drop: true,
+            }),
+            Err(error) => Err(end(board_said(&error), Event::Failed)),
+        }
+    }
+
+    /// A task's title and brief rewritten by the token the preview read, or not at all. `before`
+    /// is what it held when the intent was journaled.
     fn pull(
         &self,
-        slug: &str,
-        token: &Token,
-        title: &str,
-        body: &str,
+        (slug, token): (&str, &Token),
+        (title, body): (&str, &str),
+        before: &Bound,
         unknown: bool,
     ) -> Result<Value, Stop> {
         let board = self.ctx.board;
-        // The board keeps no earlier words of a brief, so the journal does: what the task read
-        // before this edit is in its acknowledgment.
-        let before = board.bound(slug).ok();
-        let done = |token: &Token, prior: Option<&Bound>| {
+        let done = |token: &Token| {
             json!({
                 "task_id": token.id(), "generation": token.generation(),
                 "local": plan::content(title, body),
-                "prior_title": prior.map(|prior| prior.title.as_str()),
-                "prior_body": prior.map(|prior| prior.body.as_str()),
             })
         };
-        if unknown
-            && let Some(now) = &before
-            && now.title == title
-            && now.body == body
-        {
-            return Ok(done(&now.token, None));
+        if unknown && before.title == title && before.body == body {
+            return Ok(done(&before.token));
         }
         match board.edit(slug, token, title, body, self.by) {
-            Ok(written) => Ok(done(&written.token, before.as_ref())),
+            Ok(written) => Ok(done(&written.token)),
             // The task is not the one, or not at the version, the preview read. The run ends
             // here and the preview with it: nothing is tried on what the board holds now.
             Err(BoardError::Refused(why)) => Err(Stop::End {
@@ -655,10 +676,9 @@ impl Run<'_> {
                 }
                 Err(error) => return Err(self.looking(state, &error, "looking for a publication")),
             };
-            let found: Vec<&Issue> = listing
-                .issues
-                .iter()
+            let found: Vec<&Issue> = (listing.issues.iter())
                 .filter(|issue| plan::find_marker(&issue.body) == Some(marker))
+                .filter(|issue| !state.dropped_from(slug, issue.id))
                 .collect();
             match found.as_slice() {
                 [] => {}
@@ -781,8 +801,14 @@ impl Run<'_> {
     }
 
     /// One action done: its result. `unknown` says an earlier run dispatched it and never
-    /// learned what came of it.
-    fn act(&mut self, state: &mut State, action: &Action, unknown: bool) -> Result<Value, Stop> {
+    /// learned what came of it; `prior` is what [`Run::prior`] read before its intent.
+    fn act(
+        &mut self,
+        state: &mut State,
+        action: &Action,
+        unknown: bool,
+        prior: Option<&Bound>,
+    ) -> Result<Value, Stop> {
         match action {
             Action::Bind { .. } | Action::Adopt { .. } | Action::Local { .. } => Ok(json!({})),
             Action::Note {
@@ -803,7 +829,15 @@ impl Run<'_> {
                 title,
                 body,
                 ..
-            } => self.pull(slug, token, title, body, unknown),
+            } => {
+                let before = prior.ok_or_else(|| {
+                    end(
+                        format!("{slug}: its brief was not read before its intent"),
+                        Event::Failed,
+                    )
+                })?;
+                self.pull((slug, token), (title, body), before, unknown)
+            }
             Action::Publish {
                 slug,
                 marker,
@@ -945,9 +979,15 @@ pub fn settle(state: &mut State, action: &Action, result: &Value) {
     }
 }
 
-fn base(action: &Action) -> Value {
+/// What an operation expects to find, journaled with its intent: for a brief's edit the token
+/// with the title and brief that the task holds before it, which the board does not keep.
+fn base(action: &Action, prior: Option<&Bound>) -> Value {
     match action {
-        Action::Pull { token, .. } => token.0.clone(),
+        Action::Pull { token, .. } => json!({
+            "token": token.0,
+            "prior_title": prior.map(|prior| prior.title.as_str()),
+            "prior_body": prior.map(|prior| prior.body.as_str()),
+        }),
         Action::Push { base, .. } => json!(base),
         _ => Value::Null,
     }
@@ -1019,15 +1059,20 @@ pub fn apply(
     limit: usize,
     out: &mut dyn Write,
 ) -> Outcome {
-    let store = Store::open(&ctx.board.state_folder().map_err(|e| board(&e))?)?;
-    let _lock = store.lock()?;
+    let folder = ctx.board.state_folder().map_err(|e| board(&e))?;
     let loaded = match enabled(ctx) {
         Ok(loaded) => loaded,
         Err(why) => {
-            store.drop_preview()?;
+            // What waited is not kept to be replayed; where nothing was kept, nothing is made.
+            if let Some(store) = Store::existing(&folder) {
+                let _lock = store.lock()?;
+                store.drop_preview()?;
+            }
             return Err(format!("{why}: nothing was dispatched"));
         }
     };
+    let store = Store::open(&folder)?;
+    let _lock = store.lock()?;
     let entries = store.entries()?;
     let preview = match store.preview()? {
         Some(preview) if preview.digest == digest => preview,
@@ -1104,6 +1149,8 @@ pub fn apply(
                 ));
             }
         }
+        let prior = run.prior(action);
+        let expected = base(action, prior.as_ref().ok().and_then(Option::as_ref));
         let entry = |event: Event, result: Value| Entry {
             at: ctx.now,
             event,
@@ -1112,13 +1159,14 @@ pub fn apply(
             kind: action.kind().into(),
             target: action.target().into(),
             digest: written(action),
-            base: base(action),
+            base: expected.clone(),
             config: loaded.revision.clone(),
             by: by.into(),
             result,
         };
         store.journal(&entry(Event::Intent, Value::Null))?;
-        match run.act(&mut state, action, unknown) {
+        let acted = prior.and_then(|prior| run.act(&mut state, action, unknown, prior.as_ref()));
+        match acted {
             Ok(result) => {
                 store.journal(&entry(Event::Ack, result.clone()))?;
                 settle(&mut state, action, &result);

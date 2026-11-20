@@ -6,7 +6,8 @@ by side. [What a live move waits for](#the-choice) is decided: the pieces not bu
 rehearsal, and the memory peak found and answered: it is found, under the target on a board of
 today's size, and over it on one ten times the size, which the card `board-pg-memory-at-ten-times`
 ([DECISIONS](../DECISIONS.md)) decides: a board of today's size may move once the pieces and the
-rehearsal are done, with the ten-times peak left open. PostgreSQL serves the board whose home
+rehearsal are done, with the ten-times peak left open. The pieces are landed and
+[the rehearsal](#the-rehearsal-2026-11-19) was clean. PostgreSQL serves the board whose home
 names it ([POSTGRESQL](../POSTGRESQL.md)), and `tasks-move` moves a board's store there and back;
 it is proved on scratch boards, and no live board has moved.
 
@@ -91,7 +92,7 @@ of its own, and each board moves by itself.
 2. **A rehearsal, on a copy.** This repository's board is exported, which only reads it, and the
    export is copied into a scratch PostgreSQL. Every table is compared with the export, search is
    compared, and the copy is timed. The result goes on the board before step 3. The live board is
-   not touched.
+   not touched. Done on 2026-11-19, clean: [the rehearsal](#the-rehearsal-2026-11-19).
 3. **This repository's board first.** Its programs are its own main's, so nothing is pinned
    behind. It is the trial for the others, and it runs a few days before the next.
 4. **Each other project: its pin, then its board.** A project's pinned build speaks SurrealDB to
@@ -174,11 +175,39 @@ a token read before the move is refused, and `just tasks recovery rebind` binds 
 restore of a board outside a scratch place is refused. That is a guard against accident: its
 absence grants nothing, and a live board's move is the owner's call.
 
-**How long the board cannot be written:** steps 1 to 6. It has not been timed. The copy of
-today's export into PostgreSQL ran in every paired run without meeting its limit, then the 300 s
-its caller waits and since 270 s at the server
-([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)), so the copy itself is under five
-minutes; the rehearsal gives the real figure, for the whole of it, before any live board is held.
+**How long the board cannot be written:** steps 1 to 6, which took 52 s on a copy of this
+repository's board, and 42 s back ([the rehearsal](#the-rehearsal-2026-11-19)). The copy into
+PostgreSQL is ended at 270 s by its server, thirty short of the 300 s its caller waits
+([TASKS](../TASKS.md#a-board-that-was-copied-or-restored)).
+
+## The rehearsal, 2026-11-19
+
+Step 2 of [the order](#the-order), run once by `tools/board-pg-cutover-rehearsal` with the
+commands on that task's thread, on main at `8b56e0580`, a development build, board schema 24.
+
+- **The board.** This repository's, read by `tasks-copy --board --out` (the main checkout's
+  build, a read): 1,029 tasks, 16,079 messages, 1,749 sessions, 2,089 roles, 5,880 deliveries,
+  21 MB. It was copied into a new SurrealDB board of a scratch repository under the temporary
+  folder, and the move was the real command there.
+- **To PostgreSQL.** `tasks-move postgresql`: 28,985 rows compared with what was read, none
+  different. The hold stood 52 s by its own log, and the command took 53.8 s.
+- **Back.** `tasks-move surrealdb`: the same 28,985 rows, a hold of 42 s, the command 42.3 s.
+  The export read from PostgreSQL is the export read from SurrealDB byte for byte, and the
+  board's dump after the round trip is the live board's export byte for byte.
+- **Search.** Fifteen searches (one word, several, a hyphenated name, a number) answered the
+  same on both engines: the same tasks in the same order with the same excerpts, the first
+  twenty of each. Two of them, of accented and of Japanese words, found nothing on either, so
+  [what does not come back the same](#the-way-back) was not met.
+- **The machine** was loaded, at 41 to 48 by its one-minute average on sixteen cores, so a quiet
+  one holds a board a shorter time.
+
+What it does not show: one run each way; the tables no dump holds were all but empty, two
+writers and nothing else, as a read-only export carries no callback, lease, counter or
+undelivered line, so those are proved by the move's tests on generated boards alone; and on a
+scratch board PostgreSQL ends with each command, where a live board's outlives it. The copy was
+read back by the move's own export; `tasks-copy --board --out` reads a board on either engine,
+the same document from each ([POSTGRESQL](../POSTGRESQL.md#the-whole-board-read-and-written)),
+so a board that has moved keeps its read-only export.
 
 ## The way back
 
@@ -207,8 +236,9 @@ minutes; the rehearsal gives the real figure, for the whole of it, before any li
 What the live move waits for, chosen on [its card](../DECISIONS.md#board-pg-cutover): the
 prerequisites, and the memory peak.
 
-- **The prerequisites and the rehearsal.** What is not ready above is built, and the rehearsal
-  on a copy is clean. They go ahead now.
+- **The prerequisites and the rehearsal.** What is not ready above is built, and
+  [the rehearsal](#the-rehearsal-2026-11-19) on a copy was clean. A board of today's size waits
+  for nothing more but the owner's word, this repository's first.
 - **The memory peak.** PostgreSQL's server peaked at 1,752 MiB with thirty sessions, and at
   14.8 GiB on a board ten times the size, against the 512 MiB target. It is found and brought
   under on a board of today's size: 377 to 419 MiB with thirty sessions, by the same driver on

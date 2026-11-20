@@ -78,9 +78,28 @@ fn reading(dir: &Path) -> Command {
     command
 }
 
-/// The text of each object `specs` names (`REV:PATH`), in order, none where it names none: one
-/// `git cat-file --batch` in `dir`, or why it could not be read.
+/// The text of each object `specs` names (`REV:PATH`), in order, none where it names none or
+/// names no file: one `git cat-file --batch` in `dir`, or why it could not be read.
 pub(crate) fn blobs(dir: &Path, specs: &[String]) -> Result<Vec<Option<String>>, String> {
+    Ok((objects(dir, specs)?.into_iter())
+        // Another kind of object (a folder, a submodule's commit) holds no text.
+        .map(|object| {
+            (object.filter(|o| o.kind == "blob"))
+                .map(|o| String::from_utf8_lossy(&o.bytes).into_owned())
+        })
+        .collect())
+}
+
+/// An object as `git cat-file --batch` answers it: its id, its kind and its bytes.
+pub(crate) struct Object {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) bytes: Vec<u8>,
+}
+
+/// Each object `specs` names (`REV:PATH`, `REV^{tree}`), in order, none where it names none: one
+/// `git cat-file --batch` in `dir`, or why it could not be read.
+pub(crate) fn objects(dir: &Path, specs: &[String]) -> Result<Vec<Option<Object>>, String> {
     if specs.is_empty() {
         return Ok(Vec::new());
     }
@@ -120,7 +139,7 @@ pub(crate) fn blobs(dir: &Path, specs: &[String]) -> Result<Vec<Option<String>>,
             continue;
         }
         let mut words = head.split(' ');
-        let (Some(_), Some(kind), Some(size), None) =
+        let (Some(id), Some(kind), Some(size), None) =
             (words.next(), words.next(), words.next(), words.next())
         else {
             return Err(failed(format!("an answer it cannot read: {head}")));
@@ -131,8 +150,11 @@ pub(crate) fn blobs(dir: &Path, specs: &[String]) -> Result<Vec<Option<String>>,
         let body = data
             .get(at..at + size)
             .ok_or_else(|| failed(format!("{spec} cut short")))?;
-        // Another kind of object (a folder, a submodule's commit) holds no text.
-        out.push((kind == "blob").then(|| String::from_utf8_lossy(body).into_owned()));
+        out.push(Some(Object {
+            id: id.into(),
+            kind: kind.into(),
+            bytes: body.to_vec(),
+        }));
         at += size + 1;
     }
     Ok(out)

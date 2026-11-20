@@ -11,6 +11,21 @@ pub fn run(plugins: &'static [&'static dyn symphony_plugin::Plugin], args: &[Str
     run_holding_none(args)
 }
 
+/// A `symphony-server` binary holding `plugins` and the execution `providers` it links
+/// ([`crate::execution`]): both installed before anything is served, then [`run`]'s rest. The exit
+/// code.
+pub fn run_with_providers(
+    plugins: &'static [&'static dyn symphony_plugin::Plugin],
+    providers: Vec<crate::execution::Provider>,
+    args: &[String],
+) -> i32 {
+    if let Err(problem) = crate::execution::install(providers) {
+        eprintln!("{problem}");
+        return 2;
+    }
+    run(plugins, args)
+}
+
 /// A `symphony-server` binary holding no plugin, the Symphony's own: [`run`] with none to install.
 /// It installs nothing, so it links none of what measures a call into a plugin
 /// ([`symphony::plugins::install`]). The exit code.

@@ -110,6 +110,7 @@ fn constants() -> String {
         ("RUN_LOG_TAIL", api::RUN_LOG_TAIL.to_string()),
         ("RUN_LOG_MOST", api::RUN_LOG_MOST.to_string()),
         ("RUNS_DAYS", api::RUNS_DAYS.to_string()),
+        ("SCHEMA_UPDATES_PATH", text(api::SCHEMA_UPDATES_PATH)),
         ("VERSION_HEADER", text(api::VERSION_HEADER)),
         ("VERDICT_TASKS", text(api::VERDICT_TASKS)),
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
@@ -133,8 +134,20 @@ fn constants() -> String {
             "TIMELINE_HISTORY_SOURCES",
             api::timeline::TIMELINE_HISTORY_SOURCES.to_string(),
         ),
+        ("TASK_ATTEMPTS_PATH", text(api::TASK_ATTEMPTS_PATH)),
+        ("ATTEMPT_CONTROL_ROUTE", text(api::ATTEMPT_CONTROL_ROUTE)),
+        ("ATTEMPT_VIEW_ROUTE", text(api::ATTEMPT_VIEW_ROUTE)),
         ("AGENT_FOCUS_PATH", text(api::AGENT_FOCUS_PATH)),
         ("AGENT_SCREEN_PATH", text(api::AGENT_SCREEN_PATH)),
+        ("WORKFLOW_PATH", text(api::workflow::WORKFLOW_PATH)),
+        (
+            "WORKFLOW_ACTIONS_PATH",
+            text(api::workflow::WORKFLOW_ACTIONS_PATH),
+        ),
+        (
+            "WORKFLOW_APPLY_ROUTE",
+            text(api::workflow::WORKFLOW_APPLY_ROUTE),
+        ),
     ];
     for (name, value) in constants {
         let _ = writeln!(out, "export const {name} = {value};");
@@ -197,7 +210,7 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         // Reports'.
         declared::<api::Grain>(cfg),
         declared::<api::report_page::ReportMark>(cfg),
-        // The Runs page's.
+        // The Runs page's, its schema updates too.
         declared::<api::RunsPage>(cfg),
         declared::<api::RunPage>(cfg),
         declared::<api::RunLine>(cfg),
@@ -205,6 +218,10 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::Suite>(cfg),
         declared::<api::FailedTest>(cfg),
         declared::<api::RunLog>(cfg),
+        declared::<api::SchemaUpdates>(cfg),
+        declared::<api::SchemaUpdate>(cfg),
+        declared::<api::UpdateState>(cfg),
+        declared::<api::UpdateTime>(cfg),
         // The task board's, its tasks and the machines' work.
         declared::<api::TaskListing>(cfg),
         declared::<api::WaitingBoard>(cfg),
@@ -216,6 +233,9 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::FieldValue>(cfg),
         declared::<api::TaskChange>(cfg),
         declared::<api::TaskFields>(cfg),
+        declared::<api::workflow::TaskPlace>(cfg),
+        declared::<api::workflow::ManualRecovery>(cfg),
+        declared::<api::workflow::Pair>(cfg),
         declared::<api::MachineWork>(cfg),
         declared::<api::MachineObservation>(cfg),
         declared::<api::WorkOperation>(cfg),
@@ -297,6 +317,38 @@ fn document_declarations(cfg: &Config) -> Vec<Declared> {
 /// The types a task's page reads, after the others in wire.ts.
 fn task_declarations(cfg: &Config) -> Vec<Declared> {
     vec![
+        // A custom workflow: the definition the board and a task's page draw by, the owner's next
+        // actions on a task, and the operation the page posts with its answer.
+        declared::<api::workflow::BoardWorkflow>(cfg),
+        declared::<api::workflow::WorkflowRead>(cfg),
+        declared::<api::workflow::Definition>(cfg),
+        declared::<api::workflow::Phase>(cfg),
+        declared::<api::workflow::State>(cfg),
+        declared::<api::workflow::Position>(cfg),
+        declared::<api::workflow::Recovery>(cfg),
+        declared::<api::workflow::RecoveryAction>(cfg),
+        declared::<api::workflow::Guard>(cfg),
+        declared::<api::workflow::Authority>(cfg),
+        declared::<api::workflow::Effect>(cfg),
+        declared::<api::workflow::RetryBound>(cfg),
+        declared::<api::workflow::Edge>(cfg),
+        declared::<api::workflow::Revision>(cfg),
+        declared::<api::workflow::Source>(cfg),
+        declared::<api::workflow::PositionSnapshot>(cfg),
+        declared::<api::workflow::InputValue>(cfg),
+        declared::<api::workflow::OperationRequest>(cfg),
+        declared::<api::workflow::NextAction>(cfg),
+        declared::<api::workflow::NextActions>(cfg),
+        declared::<api::workflow::OperationResult>(cfg),
+        declared::<api::workflow::RefusalCode>(cfg),
+        declared::<api::workflow::Role>(cfg),
+        declared::<api::workflow::Slot>(cfg),
+        declared::<api::workflow::Dependency>(cfg),
+        declared::<api::workflow::UnsuccessfulDependency>(cfg),
+        declared::<api::workflow::Outcome>(cfg),
+        declared::<api::workflow::Completion>(cfg),
+        declared::<api::workflow::Operation>(cfg),
+        declared::<api::workflow::LegacyStatus>(cfg),
         // A task's page: its brief, thread, landing offer and gates (its holders' sessions are the
         // agents page's types).
         declared::<api::TaskPage>(cfg),
@@ -310,6 +362,13 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::GatePast>(cfg),
         declared::<api::GateState>(cfg),
         declared::<api::GatesSeen>(cfg),
+        // Its execution attempts.
+        declared::<api::TaskAttempts>(cfg),
+        declared::<api::AttemptView>(cfg),
+        declared::<api::AttemptControls>(cfg),
+        declared::<api::AttemptControl>(cfg),
+        declared::<api::AttemptViewAsk>(cfg),
+        declared::<api::AttemptLink>(cfg),
         // Its timeline.
         declared::<api::TaskTimeline>(cfg),
         declared::<api::timeline::Offset>(cfg),
@@ -321,6 +380,7 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::timeline::RunResult>(cfg),
         declared::<api::timeline::GateLane>(cfg),
         declared::<api::timeline::GateSpan>(cfg),
+        declared::<api::timeline::PlaceSpan>(cfg),
         declared::<api::timeline::History>(cfg),
         declared::<api::timeline::HistorySource>(cfg),
         declared::<api::timeline::HistoryState>(cfg),
@@ -959,6 +1019,7 @@ fn task(slug: &str, status: &str, parent: Option<&str>) -> api::Task {
         waits_on: None,
         review_rounds: None,
         from: None,
+        workflow: None,
     }
 }
 
@@ -1289,6 +1350,8 @@ fn samples() -> Value {
     samples.insert("emptyQueue".into(), json!(api::Queue::default()));
     samples.insert("board".into(), json!(board));
     samples.extend(task_board_samples());
+    samples.extend(workflow_samples());
+    samples.extend(attempt_samples());
     samples.extend(agents_samples());
     samples.insert("reports".into(), json!(reports()));
     samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
@@ -1400,6 +1463,194 @@ fn task_board_samples() -> Vec<(String, Value)> {
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value))
     .collect()
+}
+
+/// A place of a workflow: `phase`'s `state`.
+fn pair(phase: &str, state: &str) -> Value {
+    json!({"phase": phase, "state": state})
+}
+
+/// A board's custom definition: built, then reviewed twice, a review sending work back to be built
+/// again, and a phase off the board.
+fn workflow_definition() -> Value {
+    let position = |phase: &str, state: &str, staffing: Value, legacy: &str| {
+        json!({"at": pair(phase, state), "staffing": staffing, "slot": "release",
+            "dependencies": "none", "unsuccessful_dependency": "block", "accepts_work": true,
+            "terminal": false, "legacy": legacy, "outcome": null,
+            "satisfies_dependencies": false, "completion": "none", "recovery": null})
+    };
+    let edge = |id: &str, label: &str, from: Value, to: Value, operation: &str, by: Value| {
+        json!({"id": id, "label": label, "from": from, "to": to, "operation": operation,
+            "alias": null, "authority": [by], "inputs": [], "dependencies": "none",
+            "guards": [], "effects": [], "automatic": false, "retry": null, "human_wait": false})
+    };
+    let executor = json!({"kind": "task_role", "role": "executor"});
+    let reviewer = json!({"kind": "task_role", "role": "reviewer"});
+    let owner = json!({"kind": "project_capability", "capability": "owner"});
+    let phase = |id: &str, label: &str, order: u32, phone: u32, column: bool| json!({"id": id, "label": label, "order": order, "phone_order": phone, "column": column});
+    let mut rework = edge(
+        "rework",
+        "Send back",
+        pair("review", "awaiting"),
+        pair("build", "working"),
+        "changes",
+        reviewer.clone(),
+    );
+    rework["inputs"] = json!(["reason"]);
+    json!({
+        "format": 1,
+        "initial": pair("build", "available"),
+        "task_kinds": ["task"],
+        "phases": [
+            phase("build", "Build", 0, 2, true),
+            phase("review", "Review", 1, 1, true),
+            phase("verify", "Verify", 2, 0, true),
+            phase("parked", "Parked", 3, 3, false),
+        ],
+        "states": [
+            {"id": "available", "label": "Available"}, {"id": "working", "label": "Working"},
+            {"id": "blocked", "label": "Blocked"}, {"id": "awaiting", "label": "Awaiting review"},
+            {"id": "accepted", "label": "Accepted"},
+        ],
+        "positions": [
+            position("build", "available", Value::Null, "ready"),
+            position("build", "working", json!("executor"), "in_progress"),
+            position("build", "blocked", Value::Null, "blocked"),
+            position("review", "awaiting", Value::Null, "review"),
+            position("verify", "awaiting", Value::Null, "review"),
+            position("verify", "accepted", Value::Null, "done"),
+            position("parked", "available", Value::Null, "backlog"),
+        ],
+        "edges": [
+            edge("claim", "Claim", pair("build", "available"), pair("build", "working"), "claim", executor.clone()),
+            edge("submit", "Submit", pair("build", "working"), pair("review", "awaiting"), "request_review", executor),
+            rework,
+            edge("pass", "Pass review", pair("review", "awaiting"), pair("verify", "awaiting"), "approve", reviewer),
+            edge("accept", "Accept", pair("verify", "awaiting"), pair("verify", "accepted"), "close_covered", owner.clone()),
+            edge("block", "Block", pair("build", "available"), pair("build", "blocked"), "block", owner),
+        ],
+        "capabilities": ["owner"],
+        "adapters": [],
+        "guards": [],
+    })
+}
+
+/// A custom workflow's reads, as [`samples`] holds them: the board's definition
+/// ([`workflow_definition`]) and the read of a board with none, a task's next actions and an
+/// edge's result, and a listing that holds its tasks in their phases ([`held_listing`]).
+fn workflow_samples() -> Vec<(String, Value)> {
+    let definition = workflow_definition();
+    let revision = json!({"format": 1, "digest": "d".repeat(64),
+        "source": {"commit": "1".repeat(40), "project_blob": "2".repeat(40)}});
+    let read: api::workflow::BoardWorkflow = serde_json::from_value(json!({
+        "project": "symphony",
+        "workflow": {"definition": definition, "revision": revision, "activation_generation": 2},
+    }))
+    .expect("a board's workflow read");
+    let none = api::workflow::BoardWorkflow {
+        project: "symphony".into(),
+        workflow: None,
+    };
+    let snapshot = json!({"workflow": revision, "activation_generation": 2, "task_revision": 7,
+        "at": pair("review", "awaiting")});
+    let next: api::workflow::NextActions = serde_json::from_value(json!({
+        "snapshot": snapshot,
+        "actions": [
+            {"edge": "pass", "operation": "approve", "destination": pair("verify", "awaiting"),
+             "label": "Pass review", "responsible": [{"kind": "task_role", "role": "reviewer"}],
+             "required_inputs": [], "unavailable": ["unauthorized"]},
+            {"edge": "rework", "operation": "changes",
+             "destination": pair("build", "working"), "label": "Send back",
+             "responsible": [{"kind": "project_capability", "capability": "owner"}],
+             "required_inputs": ["reason"], "unavailable": []},
+        ],
+    }))
+    .expect("a task's next actions");
+    let mut moved = next.clone();
+    moved.snapshot.task_revision = 8;
+    moved.snapshot.at = api::workflow::Pair {
+        phase: "build".into(),
+        state: "working".into(),
+    };
+    moved.actions.clear();
+    let applied = api::workflow::OperationResult {
+        transition: "w/a@8".into(),
+        next: moved,
+        effects: vec![api::workflow::Effect::ClearBlock],
+    };
+    let held = held_listing();
+    [
+        ("workflow", json!(read)),
+        ("noWorkflow", json!(none)),
+        ("nextActions", json!(next)),
+        ("applied", json!(applied)),
+        ("heldListing", json!(held)),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value))
+    .collect()
+}
+
+/// A listing that holds its tasks in their phases: one built, one awaiting review after its
+/// reviewer was lost, and one blocked, resuming where it was available.
+fn held_listing() -> api::TaskListing {
+    let place = |phase: &str, state: &str, revision: u64| api::workflow::TaskPlace {
+        phase: phase.into(),
+        state: state.into(),
+        resume: None,
+        revision,
+        manual: None,
+    };
+    let mut building = task("w/a", "in_progress", None);
+    building.workflow = Some(place("build", "working", 4));
+    let mut reviewed = task("w/b", "review", None);
+    reviewed.workflow = Some(api::workflow::TaskPlace {
+        manual: Some(api::workflow::ManualRecovery {
+            trigger: "lost_holder".into(),
+            holder: "sable-finch".into(),
+            role: "reviewer".into(),
+        }),
+        ..place("review", "awaiting", 9)
+    });
+    let mut stopped = task("w/c", "blocked", None);
+    stopped.workflow = Some(api::workflow::TaskPlace {
+        resume: Some(api::workflow::Pair {
+            phase: "build".into(),
+            state: "available".into(),
+        }),
+        ..place("build", "blocked", 2)
+    });
+    let column = |status: &str, ordinary: usize, blocked: usize| api::WaitingColumn {
+        status: status.into(),
+        ordinary,
+        blocked,
+        oldest: Some(1.0),
+    };
+    api::TaskListing {
+        machine_work: api::MachineWork::default(),
+        tasks: vec![building, reviewed, stopped],
+        statuses: vec!["in_progress".into(), "review".into(), "blocked".into()],
+        signoff: Vec::new(),
+        counts: vec![("phase:build".into(), 2), ("phase:review".into(), 1)],
+        lifecycle_counts: vec![
+            ("blocked".into(), 1),
+            ("in_progress".into(), 1),
+            ("review".into(), 1),
+        ],
+        next: None,
+        orchestrators: Vec::new(),
+        unstarted: 0,
+        waiting: Some(api::WaitingBoard {
+            kinds: vec![("nobody".into(), 1), ("working".into(), 2)],
+            columns: vec![column("phase:build", 1, 1), column("phase:review", 1, 0)],
+            states: vec![
+                ("awaiting".into(), 1),
+                ("blocked".into(), 1),
+                ("working".into(), 1),
+            ],
+            workflow: Some(2),
+        }),
+    }
 }
 
 /// The agents page's reads, as [`samples`] holds them: its page with every field and with none it
@@ -1969,6 +2220,25 @@ fn report_bucket(start: f64) -> api::ReportBucket {
             unanswered: 1,
             ..BucketHealth::default()
         }),
+        workflow: Some(api::reports::PlacedHours {
+            phases: vec![
+                spent("build", "Build", 30.5),
+                spent("verify", "Verify", 6.0),
+            ],
+            states: vec![
+                spent("working", "Working", 30.5),
+                spent("awaiting", "Awaiting", 6.0),
+            ],
+        }),
+    }
+}
+
+/// The task-hours spent in the phase or state `id`, named `label`.
+fn spent(id: &str, label: &str, hours: f64) -> api::reports::Spent {
+    api::reports::Spent {
+        id: id.into(),
+        label: label.into(),
+        hours,
     }
 }
 
@@ -2616,4 +2886,62 @@ fn open() {
             Err("`fn open` has no line `}` after it".into())
         );
     }
+}
+
+/// A task's execution attempts, as [`samples`] holds them: a history of an attempt paused and
+/// followed by its resume, which runs and may be stopped, cancelled or viewed, and one of a
+/// provider this server does not hold; and a view's link.
+fn attempt_samples() -> Vec<(String, Value)> {
+    let attempt = |id: &str, revision: i64, dispatch: &str| -> api::AttemptView {
+        serde_json::from_value(json!({
+            "id": id.repeat(32), "created": 1_763_500_000_000_i64 + revision, "revision": revision,
+            "current": false, "lane": "executor/amber", "role": "executor", "handle": "amber",
+            "configuration": "cloud", "dispatch": dispatch, "cancellation": "none",
+            "collection": "not_started", "cleanup": "not_due", "initiator": "service host/launcher",
+        }))
+        .expect("an attempt")
+    };
+    let mut paused = attempt("a", 6, "terminal");
+    paused.ending = Some("stopped".into());
+    paused.resource = Some("res-1".into());
+    paused.generation = Some("g1".into());
+    paused.conversation = Some("conversation-1".into());
+    paused.successor = Some("b".repeat(32));
+    paused.controls.view = true;
+    let mut resumed = attempt("b", 4, "running");
+    resumed.current = true;
+    resumed.predecessor = Some("a".repeat(32));
+    resumed.relation = Some("resume".into());
+    resumed.resource = Some("res-2".into());
+    resumed.generation = Some("g1".into());
+    resumed.initiator = "human local/owner".into();
+    resumed.controls = api::AttemptControls {
+        cancel: true,
+        stop: vec!["pause".into(), "terminate".into()],
+        resume: Vec::new(),
+        view: true,
+        unserved: None,
+    };
+    let mut elsewhere = attempt("c", 2, "paused");
+    elsewhere.lane = "reviewer/coral".into();
+    elsewhere.role = "reviewer".into();
+    elsewhere.handle = None;
+    elsewhere.configuration = "lab".into();
+    elsewhere.current = true;
+    elsewhere.resource = Some("lab-7".into());
+    elsewhere.conversation = Some("conversation-7".into());
+    elsewhere.controls.cancel = true;
+    elsewhere.controls.unserved =
+        Some("No resume or view here: its provider lab is not one this server holds".into());
+    let history = api::TaskAttempts {
+        attempts: vec![paused, resumed, elsewhere],
+    };
+    let link = api::AttemptLink {
+        url: "https://provider.invalid/res-2".into(),
+        valid_for_ms: 10_000,
+    };
+    [("attempts", json!(history)), ("attemptLink", json!(link))]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value))
+        .collect()
 }

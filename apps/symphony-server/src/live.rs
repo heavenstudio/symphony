@@ -145,6 +145,10 @@ pub(crate) struct Hub {
     machine_work: Mutex<machine_work::Sampler>,
     latest_message: Mutex<Option<i64>>,
     pub task_signoff: Mutex<Vec<String>>,
+    /// The custom workflow's active generation as the last board read found it: none before a
+    /// read, `Some(None)` on a board that never activated one. A new one is said on the feed
+    /// (`workflow`), so a page reads the definition again: a label changed moves no task.
+    workflow_generation: Mutex<Option<Option<u64>>>,
     /// What the board's snapshot reads beside the board ([`Waiting`]).
     waiting: Mutex<Waiting>,
     /// The last scan of the branches' own cards ([`BranchScan`]).
@@ -226,6 +230,14 @@ pub(crate) struct Hub {
     recording_gate: OnceLock<Arc<symphony_board::recording::Gate>>,
     /// What `server_notice` says, by where it comes from ([`health::Notices`]).
     notices: Mutex<health::Notices>,
+    /// Where the server serves this project's pages, `/<id>` under the machine's one server, empty
+    /// for a server of its own at `/` ([`crate::front::Shared`]'s `base`): given as the hub starts
+    /// ([`Hub::serve_at`]), and empty until then.
+    base: OnceLock<String>,
+    /// The machine folder, whose ledger of schema updates the read-only notice and the schema
+    /// updates' route read ([`symphony::machine::updates`]): the machine's, none where it cannot be
+    /// found and in the library's tests, which read no machine's unless they give one.
+    pub(crate) machine: Option<PathBuf>,
     /// What the pages say of a replay of the board's store's log while the worker's last reach of
     /// the board was refused for one ([`symphony_board::server::replaying_in`]).
     replaying: Mutex<Option<String>>,
@@ -270,6 +282,9 @@ pub(crate) struct Hub {
     /// The project's plugins' answers of a task's gates, kept by its branch's tip
     /// ([`symphony::gates::Kept`]): what the task page's gates read, and any other reader here.
     pub(crate) gates: symphony::gates::Kept,
+    /// The execution providers this server holds, the installed ones or a test's: a task's
+    /// attempts are resumed and viewed through them (`crate::attempts`).
+    pub(crate) providers: crate::execution::Providers,
 }
 
 /// What the hub keeps of its last scan of the branches: their own cards, when they began to be
@@ -384,6 +399,7 @@ impl Hub {
             )),
             latest_message: Mutex::new(None),
             task_signoff: Mutex::new(Vec::new()),
+            workflow_generation: Mutex::new(None),
             waiting: Mutex::new(Waiting::default()),
             branches: Mutex::new((Arc::default(), 0.0, Arc::default())),
             finished: Mutex::new(BTreeSet::new()),
@@ -419,6 +435,8 @@ impl Hub {
             runs_index: crate::api::runs::Index::default(),
             recording_gate: OnceLock::new(),
             notices: Mutex::new(health::Notices::of(root)),
+            base: OnceLock::new(),
+            machine: health::machine_folder(),
             replaying: Mutex::new(None),
             clock: Box::new(symphony_board::sweep::trigger::now),
             asks: Mutex::new(asks::AskWatch::default()),
@@ -441,6 +459,7 @@ impl Hub {
             }),
             going: Mutex::new(std::collections::HashSet::new()),
             gates: symphony::gates::Kept::default(),
+            providers: crate::execution::Providers::installed(),
         }
     }
 
@@ -1517,6 +1536,26 @@ impl Hub {
         self.changed.send_modify(|version| *version += 1);
     }
 
+    /// The active custom workflow's activation generation as the hub last read its board: none
+    /// before its first read and on a board with none.
+    pub(crate) fn workflow_generation(&self) -> Option<u64> {
+        let held = (self.workflow_generation.lock()).unwrap_or_else(|e| e.into_inner());
+        held.flatten()
+    }
+
+    /// Keep `generation`, the custom workflow's active generation just read (none on a board that
+    /// never activated one); once it changes after the first read, the change every page hears,
+    /// so a page that draws by the definition reads it again.
+    fn workflow_read(&self, generation: Option<u64>) -> Option<Value> {
+        let mut held = (self.workflow_generation.lock()).unwrap_or_else(|e| e.into_inner());
+        if *held == Some(generation) {
+            return None;
+        }
+        let first = held.is_none();
+        *held = Some(generation);
+        (!first).then(|| region_event("workflow", json!({ "generation": generation })))
+    }
+
     /// Apply one board observation after the journal, callback delivery and machine probes finish.
     fn update_board(
         &self,
@@ -1666,6 +1705,12 @@ impl Hub {
         }
         if held.error.is_some() {
             changed.push(region_event("tasks-status", json!({"available":true})));
+        }
+        // A failed read keeps the generation known before; it is no change.
+        if let Ok(active) = store.workflow_active()
+            && let Some(change) = self.workflow_read(active.map(|a| a.generation))
+        {
+            changed.push(change);
         }
         // A document rendered while the board was not read yet, or could not be read, lists none of
         // its tasks, however little the board moved since.
@@ -2459,6 +2504,7 @@ fn task_inputs_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         waits_on: _,
         review_rounds,
         from,
+        workflow,
     } = a;
     *slug == b.slug
         && *title == b.title
@@ -2475,6 +2521,7 @@ fn task_inputs_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         && *fields == b.fields
         && *review_rounds == b.review_rounds
         && *from == b.from
+        && *workflow == b.workflow
         && roles_alike(roles, &b.roles)
 }
 
@@ -2555,6 +2602,10 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
             if before.from != after.from {
                 fields.from = Some(after.from.clone().unwrap_or_default());
             }
+            // A place in a custom workflow is never taken away: only a new one is sent.
+            if before.workflow != after.workflow {
+                fields.workflow.clone_from(&after.workflow);
+            }
             // A change of what no field carries (a plugin's board fields, which no page draws)
             // sends nothing.
             if fields != symphony_api::TaskFields::default() {
@@ -2608,6 +2659,9 @@ mod postpone_tests;
 mod chat_tests;
 
 #[cfg(test)]
+mod compatible_ahead_tests;
+
+#[cfg(test)]
 mod backstop_tests;
 
 #[cfg(test)]
@@ -2615,6 +2669,9 @@ mod startup_tests;
 
 #[cfg(test)]
 mod boards_tests;
+
+#[cfg(test)]
+mod workflow_tests;
 
 #[cfg(test)]
 mod status_tests;
@@ -2793,9 +2850,11 @@ mod tests {
             f.store.client().requests() - before,
             regions.join(", ")
         );
+        // Two small reads, and the active workflow's one, which a relabel's new generation needs
+        // as it moves no task (`Hub::workflow_read`): no sign-off thread read, no column counts.
         assert_eq!(
             f.store.client().requests() - before,
-            2,
+            3,
             "no sign-off thread read"
         );
         assert_eq!(regions, ["task-fields", "session", "counts"]);

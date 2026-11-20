@@ -1,13 +1,24 @@
 // A task's page (`/task/SLUG`): its head (slug, title, state, who filed it, the owner's priority and
 // cancel, its facts, its roles and their sessions, its builds and tests), its gates, its subtasks,
-// its timeline, its brief, its thread and the composer under it. Each part is drawn from its own
+// its timeline, its brief, its changes, its execution attempts where it has some (attempts.tsx, a
+// chunk of their own), its thread and the composer under it. Each part is drawn from its own
 // read (task-live.ts's parts, in the page's store) as soon as that read is there, and is its own
 // mock-up until then: the head and the brief at the height this browser last drew them, the gates'
 // outline, the timeline's box, the thread's and the composer's ghosts, so a part that comes moves
 // none of the others. Live, it is task-live.ts's `LiveTask`, under the board's notices.
 
-import { type CSSProperties, memo, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  type ComponentType,
+  type CSSProperties,
+  memo,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { AttachControls, useAttach } from "./attach";
+import type { AttemptsProps } from "./attempts";
 import { BlocksView } from "./blocks";
 import { Button } from "./button";
 import { FRESH, type Freshness, shown } from "./cache";
@@ -15,13 +26,14 @@ import { useFrame } from "./frame";
 import { TaskGatesPanel } from "./gates";
 import { PageNotices } from "./live";
 import { useMount } from "./mount";
+import type { NextActionsProps } from "./nextactions";
 import { PartsContext, type Shown, usePart } from "./parts";
 import { href, scoped } from "./project";
 import { getJson, post, said } from "./request";
 import { currentRoute } from "./route";
 import { SelectField } from "./select";
 import { GoToSession } from "./session";
-import { field, STALE, useStore } from "./shared";
+import { field, STALE, snapshot, useStore } from "./shared";
 import { load, save } from "./storage";
 import { TaskDiffPanel } from "./task-diff";
 import { LiveTask, offerPart, type Thread } from "./task-live";
@@ -645,6 +657,70 @@ export function Brief({ slug, revision, blocks, omitted, next }: BriefProps) {
   );
 }
 
+/**
+ * A task a custom workflow holds: its place and the owner's next actions on it, a chunk of their
+ * own (nextactions.tsx), imported for such a task alone. One that does not come is said with its
+ * retry, once the shell has said the page's build is not gone (the page then loads again).
+ */
+export function WorkflowPart(props: NextActionsProps) {
+  const [part, setPart] = useState<ComponentType<NextActionsProps> | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let on = !failed;
+    if (on)
+      import("./nextactions").then(
+        (chunk) => on && setPart(() => chunk.NextActions),
+        async () => {
+          const shell = snapshot("reviewShell") as { gone(): Promise<boolean> } | undefined;
+          if (on && !(await shell?.gone())) setFailed(true);
+        },
+      );
+    return () => {
+      on = false;
+    };
+  }, [failed]);
+  const Part = part;
+  if (Part) return <Part {...props} />;
+  return failed ? (
+    <p role="alert">
+      {"The workflow's actions could not be loaded. "}
+      <Button onClick={() => setFailed(false)}>Retry</Button>
+    </p>
+  ) : null;
+}
+
+/**
+ * A task's execution attempts, a chunk of their own (attempts.tsx), imported for a task with some
+ * alone. One that does not come is said with its retry, once the shell has said the page's build is
+ * not gone (the page then loads again).
+ */
+export function AttemptsPart(props: AttemptsProps) {
+  const [part, setPart] = useState<ComponentType<AttemptsProps> | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let on = !failed;
+    if (on)
+      import("./attempts").then(
+        (chunk) => on && setPart(() => chunk.Attempts),
+        async () => {
+          const shell = snapshot("reviewShell") as { gone(): Promise<boolean> } | undefined;
+          if (on && !(await shell?.gone())) setFailed(true);
+        },
+      );
+    return () => {
+      on = false;
+    };
+  }, [failed]);
+  const Part = part;
+  if (Part) return <Part {...props} />;
+  return failed ? (
+    <p role="alert">
+      {"The task's attempts could not be loaded. "}
+      <Button onClick={() => setFailed(false)}>Retry</Button>
+    </p>
+  ) : null;
+}
+
 export interface TaskHeadProps {
   page: Page;
   /** The checkout the route names (`""`, the main one), whose sessions the role chips go to. */
@@ -672,6 +748,9 @@ export function TaskHead({ page, scope, connected }: TaskHeadProps) {
         <span className="by">{`filed by ${task.created_by}`}</span>
         <OwnerControls slug={slug} priority={task.priority} status={task.status} />
       </div>
+      {task.workflow && (
+        <WorkflowPart scope={scope} slug={slug} place={task.workflow} updated={task.updated} />
+      )}
       <ul className="facts">
         {task.parent !== null && (
           <li>
@@ -839,6 +918,16 @@ export function TaskDetail({
       <NearViewport key={`diff-${slug}`} id={`changes-${slug}`} height={160}>
         <TaskDiffPanel scope={scope} slug={slug} />
       </NearViewport>
+      {!!page?.attempts && (
+        <NearViewport key={`attempts-${slug}`} id={`attempts-${slug}`} height={120}>
+          <AttemptsPart
+            scope={scope}
+            slug={slug}
+            count={page.attempts}
+            updated={page.task.updated}
+          />
+        </NearViewport>
+      )}
       <h2>Thread</h2>
       {/* The thread and the composer under it wait under their ghost until the thread on the first
           screen is in, whatever the head and the brief do meanwhile. */}

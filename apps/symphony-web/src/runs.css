@@ -1,5 +1,6 @@
-/* The Runs page (runs.tsx): its header, what runs now, the filters and the list, a line a run;
-   a run's page with its facts, its steps as bars on its span, the tests it failed and its log.
+/* The Runs page (runs.tsx): its header, what runs now, the machine's schema updates, the filters
+   and the list, a line a run; a run's page with its facts, its steps as bars on its span, the tests
+   it failed and its log.
    A result wears its colour on its mark and its bar, never on its text alone: each says its word. */
 .runs {
   display: grid;
@@ -79,9 +80,19 @@
 [data-result="queued"] {
   --c: var(--pending);
 }
+[data-result="waiting"] {
+  --c: var(--question);
+}
+[data-result="served"] {
+  --c: var(--like);
+}
+[data-result="left"] {
+  --c: var(--pending);
+}
 
 /* Now: each machine's word, then each operation a line. */
 .runs-now,
+.runs-updates,
 .runs-list,
 .run-steps,
 .run-failed,
@@ -191,6 +202,41 @@
       "label label"
       "where who";
   }
+  .update-row {
+    grid-template-areas:
+      "result time"
+      "label label"
+      "where where"
+      "who who";
+  }
+  .update-row .run-who {
+    text-align: left;
+  }
+  .update-row .run-note,
+  .update-row .update-sources {
+    grid-column: 1 / -1;
+  }
+}
+
+/* A schema update: its board and schema, its wait, when each time came (its record's words on
+   hover) and where the times come from, small, its failures and its task; one no longer open says
+   its past failures quietly. */
+.runs-updates-sub {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-sm);
+}
+.update-row .run-note {
+  overflow-wrap: anywhere;
+}
+.update-sources {
+  grid-column: 2 / -1;
+  font-size: var(--fs-xs);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+.update-row[data-state="served"] .run-note,
+.update-row[data-state="left"] .run-note {
+  color: var(--muted-foreground);
 }
 
 /* The filters: two choices and two words, wrapping on a phone. */

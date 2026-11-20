@@ -2,6 +2,9 @@
 //! recipe in every project (`symphony.just`), and a `land` recipe of the project's own replaces it
 //! there, everywhere. It lands one task's branch, named as its slug, on the default branch:
 //!
+//! A task a custom workflow holds lands by its graph instead, through the prepare and finalize
+//! edges of this landing's adapter, with the same merge, check, move and push ([`adapter`]).
+//!
 //! 0. **Asked for.** It runs only as `just land SLUG`, whose recipe sets [`RECIPE`], and never
 //!    where the project's justfile runs a `land` of its own ([`admit`]). The marker is a guard
 //!    against running it by accident; the stamps below are the gate.
@@ -108,6 +111,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
+pub mod adapter;
 pub mod carried;
 pub mod check_paths;
 pub mod delivery;
@@ -1870,11 +1874,17 @@ impl Landing<'_> {
         let slug = self.slug;
         self.leftover_group().map_err(Stop::Refused)?;
         self.recover().map_err(Stop::Refused)?;
+        // A task a custom workflow holds lands by its graph alone ([`adapter`]).
+        if let Some(position) = self.held()? {
+            return self.land_held(&position);
+        }
         if self.delivers() {
             // A merge asked of the host by a run before decides, before anything is read again.
             if let Some(done) = self.resumed() {
                 return done;
             }
+            // A slug is delivered once: one with a receipt of another delivery is refused here.
+            self.repeated()?;
             // A pull request a run before bound, read before anything is judged: one merged or
             // closed since is settled, and one whose evidence no longer stands is told so.
             if let Some(done) = self.bound_before() {
@@ -1953,6 +1963,7 @@ impl Landing<'_> {
         }
         self.owner_lines(&base, &tip)
             .map_err(|refusal| self.refuse(refusal))?;
+        let raised = self.raised(&base, &tip, &needed)?;
         let judged = match &approved {
             Some(approval) => {
                 let covered = covered(&self.main, slug, &base, &tip, approval).map_err(|line| {
@@ -1999,6 +2010,7 @@ impl Landing<'_> {
         if needed.told() {
             self.say(&needed.line(slug, &tip, &met));
         }
+        self.say_raised(&raised);
         if self.delivers() {
             return self.deliver(&task, &tip, &judged);
         }
@@ -3103,6 +3115,32 @@ impl Landing<'_> {
     /// the one landing alone: no branch's commit fixes git, and a land that cannot tell must not
     /// leave the answer behind. Asked before the merge and again right before the default branch
     /// moves, so an answer saved while the land merged and checked is not left behind either.
+    /// Each raise `needed`'s gate decisions gave, read at `tip` against the default branch at
+    /// `base` ([`needs::raises`]): the lines the landing says, or its refusal, to the executor,
+    /// where the tip sets a limit above the default branch's to a number no decision gave.
+    fn raised(&self, base: &str, tip: &str, needed: &Needed) -> Result<Vec<String>, Stop> {
+        needs::raises(&self.main, base, tip, &needed.decisions).map_err(|line| {
+            self.refuse(Refusal::to(
+                line,
+                "@executor",
+                "Commit the limit at the number decided, its message the account, or ask the \
+                 task's orchestrator for a decision of the number it holds; then land it again"
+                    .into(),
+            ))
+        })
+    }
+
+    /// The landing's line naming each of `raised` ([`Landing::raised`]), where there is one.
+    fn say_raised(&mut self, raised: &[String]) {
+        if !raised.is_empty() {
+            let slug = self.slug;
+            self.say(&format!(
+                "land {slug}: its gate decisions: {}",
+                raised.join("; ")
+            ));
+        }
+    }
+
     fn owner_lines(&self, base: &str, tip: &str) -> Result<(), Refusal> {
         let slug = self.slug;
         let held = self.answers_left(base, tip).map_err(|why| {

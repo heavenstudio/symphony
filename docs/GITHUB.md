@@ -1,24 +1,31 @@
 # GitHub issue exchange and pull request delivery
 
-`symphony-github` exchanges selected tasks with the issues of one GitHub.com repository, and
-answers [a land delivered by a pull request](#delivering-a-land) there. It is optional and turned
+`symphony-github` exchanges selected tasks with the issues of one GitHub.com repository,
+answers [a land delivered by a pull request](#delivering-a-land) there, and answers a release run
+with [a GitHub Release](#publishing-a-release) for a tag it pushed. It is optional and turned
 off: a project that never commits its settings file runs none of it, and its
 board, its pages and its landing are as they are without it.
+
+To set it up, follow [Setting up GitHub](GITHUB_SETUP.md): building the program, the token, the
+GitHub Apps and rulesets a delivery needs, each step in order, and how to check it works. This
+page is the reference those steps link to.
 
 It is a program of its own (`crates/symphony-github`). It reaches the board through
 [`tasks api`](TASKS.md#the-tasks-api) and nothing else, GitHub through `curl`, and keeps what it
 must remember in the folder the board names for it. No other package of the workspace builds with
 it, which `crates/symphony-github/tests/boundary.rs` holds. Nothing starts it but an operator,
-and a land where the project's `[land] delivery` names it: there is no schedule, no webhook and
-no page that runs it. The design it follows, and what of
+a land where the project's `[land] delivery` names it, and a release run where its `[releases]
+github` does: there is no schedule, no webhook and no page that runs it. The design it follows, and what of
 that design is not built, is [the proposal](analysis/github-integration.md).
 
 ## Turning it on
 
 The settings are `symphony-github.toml` at the root of the tree the project's default branch
-commits (`[project] default_branch` in the main checkout's `symphony.toml`, `main` unless it
-says another). The adapter reads that file from git's objects, never from a checkout: a file a
-branch commits, one in a linked worktree and one not committed turn nothing on. A file that is
+commits (`[project] default_branch` in the `symphony.toml` the main checkout's HEAD commits, as
+the land reads it, `main` unless it says another). The adapter reads that file from git's
+objects, never from a checkout: a file a branch commits, one in a linked worktree and one not
+committed turn nothing on, and an edit of the main checkout's `symphony.toml` names no branch
+until it is committed. A file that is
 absent is the adapter turned off. One that does not read (a key it does not know, a value of
 another type, settings that do not hold together) is refused by name, and every command reads a
 refusal as turned off.
@@ -29,6 +36,7 @@ refusal as turned off.
 | `repository` | none | `"OWNER/NAME"` on GitHub.com, the one repository reached; never a URL or another host |
 | `issues` | `"off"` | `"import"`, `"export"` or `"exchange"` (both) |
 | `pull_requests` | `"off"` | `"publish"` answers [a land's delivery](#delivering-a-land); `"track"` is read and held to its word, and this build tracks none and says so |
+| `releases` | `"off"` | `"publish"` answers [a release run](#publishing-a-release) with a GitHub Release for a tag it pushed |
 | `token_file` | none | the absolute path of a file holding the token |
 | `import_labels` | `[]` | the labels that select an open issue for import |
 | `import_comments` | `false` | whether the comments of a mapped issue become notes on its task |
@@ -40,11 +48,17 @@ refusal as turned off.
 | `policy_app_id` | none | the number of the GitHub App that token is of, never `landing_app_id` or `checks_app_id` |
 | `close_issues` | `false` | whether a delivered task's mapped issue is closed once the board closed the task |
 | `upstream_id` | none | the number at GitHub of the one repository [an import](#delivering-an-import) is of; with none, no import is delivered and the default branch permits squash alone |
+| `landing_installation_id` | none | the number of the installation on the repository of the App `landing_app_id` names, whose token [the program makes](#tokens-it-makes) in `token_file` |
+| `landing_key_file` | none | the absolute path of that App's private key |
+| `checks_installation_id`, `checks_key_file` | none | the same of the App `checks_app_id` names, for `checks_token_file` |
+| `policy_installation_id`, `policy_key_file` | none | the same of the App `policy_app_id` names, for `policy_token_file` |
 
 `enabled = true` needs `repository` and `token_file`, an `issues` that imports needs
 `import_labels`, `pull_requests = "publish"` needs `checks_token_file`, `checks_app_id`,
 `landing_app_id`, `policy_token_file` and `policy_app_id`, and `upstream_id` needs
-`pull_requests = "publish"`. The settings are read again before every operation that writes GitHub or the
+`pull_requests = "publish"`. An App's installation and key file come together, with the App's
+number and the token file they make the token of; a key file is never a token file nor another
+App's key file. The settings are read again before every operation that writes GitHub or the
 board, so a landing that turns the adapter off stops a run at its next dispatch.
 
 The issues are listed from where the last listing ended, and that place holds only under the
@@ -66,23 +80,77 @@ says when it fails is redacted before it is printed or journaled, and nothing th
 holds the token. A machine without `curl` on `PATH` is told so, and nothing is sent.
 
 A fine-grained token scoped to the one repository is enough: issues read for `import`, issues
-read and write for `export` and `exchange`. A token that GitHub refuses (401) pauses the
-exchange with everything kept; the next preview that succeeds lifts the pause.
+read and write for `export` and `exchange`, and contents read and write for `releases =
+"publish"`, which GitHub takes a release's creation as. A token that GitHub refuses (401) pauses
+the exchange with everything kept; the next preview that succeeds lifts the pause.
 
 A delivery uses three tokens, each held by the same rules. `token_file`'s opens and merges the pull
 request and reads the rules of [the protection](#the-protection-a-delivery-needs): an installation token of
-the GitHub App `landing_app_id` names, with pull requests read and write, contents read and
-write, and issues write where `close_issues` is set, and no administration. `checks_token_file`'s writes the checks: an installation token of the one
-GitHub App `checks_app_id` names, with checks read and write and nothing else. GitHub takes a
+the GitHub App `landing_app_id` names, with no administration. `checks_token_file`'s writes the checks: an installation token of the one
+GitHub App `checks_app_id` names. GitHub takes a
 check from an App alone, so what merges cannot say the evidence stands. `policy_token_file`'s
-reads who bypasses each ruleset: an installation token of a third GitHub App, `policy_app_id`,
-with administration read and write, the one App permission found to be shown those lists, and
-nothing else beside the metadata GitHub adds. That permission could change or remove the rules,
+reads who bypasses each ruleset: an installation token of a third GitHub App, `policy_app_id`.
+Its permission could change or remove the rules,
 so the adapter sends this token with one request, the read of a ruleset, and has no code that
 sends it with another (`preflight::Reader`); it is read from its file at each use and given to
-nothing else. The adapter mints no
-token: whoever installs the Apps keeps a current one in each file. The head itself is pushed by the
+nothing else. Each token needs the least each call it is sent with needs, and no more, beside the
+metadata (read) GitHub adds to every one; a token [the program makes](#tokens-it-makes) is asked
+for exactly these:
+
+| Token | Its calls | Permission |
+| --- | --- | --- |
+| `token_file`'s | the issues, their comments and their edits (`/issues`) | issues read for `import`; issues write for `export` and `exchange`, and where `close_issues` closes a delivered task's issue |
+| | the repository and its merge settings, the pull requests, their merge (`/pulls`, `/pulls/N/merge`) and marking one ready (GraphQL) | pull requests write and contents write, under `pull_requests = "publish"` |
+| | a release by its tag, the tag and the release's creation (`/releases/tags/TAG`, `/git/ref/tags/TAG`, `POST /releases`) | contents write, under `releases = "publish"` |
+| | the rules in effect for the branch (`/rules/branches/BRANCH`) and a public upstream's repository | metadata, which every token has; a private upstream is read only by a token its installation reaches |
+| `checks_token_file`'s | a head's checks, read and written (`/commits/SHA/check-runs`, `/check-runs`) | checks write |
+| `policy_token_file`'s | a ruleset and its bypass list (`/rulesets/ID`) | administration write, the one App permission found to be shown those lists |
+
+Where the settings name no App's installation and key for a file, whoever installs the App
+keeps a current token in it. The head itself is pushed by the
 checkout's own git, with the credentials a person's `git push` there uses.
+
+## Tokens it makes
+
+Where the settings name an App's installation and private key beside its token file
+(`landing_installation_id` and `landing_key_file` for `token_file`, and the same of `checks_` and
+`policy_`), that file is the program's own: it makes the token there itself, at the first use
+that finds it absent, expired, within five minutes of expiring, or holding a token it did not
+write, and uses the one there otherwise. Setting them hands the file to the program, which
+replaces a token written there by hand at once (`crates/symphony-github/src/mint.rs`).
+
+- **The key** is held as the token files are: outside the repository, a plain file readable by
+  its owner alone, and refused otherwise before anything is sent. `openssl` signs the App's JSON
+  Web Token with it (RS256, made a minute back and held nine minutes, as GitHub takes none of
+  more than ten), reading the key from its file, so the key's bytes never enter the program and
+  nothing `openssl` says is shown. A machine without `openssl` on `PATH` is told to install it.
+- **The request** is `POST /app/installations/ID/access_tokens`, made by `curl` with the JWT on its
+  standard input as every token is, asking for the one repository `repository` names and the
+  permissions [the table above](#the-token) gives that token, no more: an App given more holds
+  them, and its token does not. So a made `token_file` token reads no repository but that one:
+  with a private upstream (`upstream_id`), an import is refused as not readable with the
+  merging token (404), and `token_file` stays kept by hand, holding a token that reads both.
+- **The file** holds the token on its first line and `expires_at` with the time GitHub gave on its
+  second. It is written to a file of its own beside it, readable by its owner alone, then renamed
+  over it: a reader finds the old token or the new, never part of either, and two lands at once
+  leave one of two tokens that both hold.
+- **A failure writes nothing** and leaves the file as it was. A key that is not there, is
+  readable by others or is not a key `openssl` signs with, GitHub refusing the key (401: not that
+  App's key, or the App's number wrong), finding no installation (404), or refusing what is asked
+  (422, in GitHub's words: a permission the App does not hold, or a repository it is not
+  installed on) is refused, naming the setting to put right. GitHub's 401 is said in its own
+  words, as it is answered to a JWT made by a clock more than a minute ahead of GitHub's or nine
+  minutes behind as well as to a key that is not the App's. GitHub not answering is
+  `unavailable`, and the next use asks again.
+
+No key, JWT or token is said, journaled or kept anywhere but the token file. Where the settings
+name no App for a file, it is read as it is: its token is sent, and one GitHub expired is
+answered 401, `unavailable`, until the file holds a current one. The program runs no schedule
+and nothing between uses: a token is made only by a command that sends it.
+
+**`tokens`** says, for each token file the settings name, whether its token is current and until
+when, or that it is absent, expired or kept by hand, and never the token. It reads no remote and
+writes nothing, and exits 0 unless a file is refused.
 
 ## The commands
 
@@ -92,22 +160,33 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
 - **`status`** says what the committed settings allow and what is kept. It reads no remote and
   writes nothing, not even its folder.
 - **`publish SLUG --title TITLE --body-file FILE`** opts a task in: TITLE and FILE's text are
-  kept as its curated public text and shown as they will be published. Nothing is sent.
+  kept as its curated public text and shown as they will be published. Nothing is sent. A text
+  an issue would not hold whole with its marker is refused, and so is a task imported from an
+  issue, whose text is its brief.
 - **`preview [--rebind]`** reads both sides and shows what a reconcile would do, with the exact text of
   every write, then keeps that preview under the digest it prints. It writes nothing to GitHub
-  or the board. Turned off, it reads nothing from GitHub and shows only the curated texts that
-  wait. `--rebind` binds to [another repository found at the name](#what-pauses-or-suspends).
+  or the board, and nothing anywhere but a [token it makes](#tokens-it-makes). Turned off, it
+  reads nothing from GitHub and shows only the curated texts that wait, and neither it nor
+  `reconcile` makes the state folder where nothing is kept. `--rebind` binds to
+  [another repository found at the name](#what-pauses-or-suspends).
 - **`reconcile --preview DIGEST --as HANDLE`** applies the preview of that digest and no other:
   at most 50 operations a run, or `--limit N`. HANDLE is the board session the board's writes
   are made as.
 - **`resolve SLUG local|remote`** keeps one side of a conflict, or takes up a suspended mapping
   again. It writes only the adapter's own folder; the next preview shows what follows.
+- **`drop SLUG`** drops a mapping [found wrong](#dropping-a-mapping). It writes only the
+  adapter's own folder.
 - **`preflight [--branch BASE]`** reads [the protection](#the-protection-a-delivery-needs) of
   BASE, the default branch unless named, as a delivery reads it before it writes, and says that
-  it holds or each thing missing on a line of its own. It writes nothing, here or on GitHub, and
-  exits 0 only where a delivery would go on.
+  it holds or each thing missing on a line of its own. It writes nothing, here or on GitHub, but
+  a [token it makes](#tokens-it-makes), and exits 0 only where a delivery would go on.
 - **`deliver VERB --request FILE`** answers one verb of [a land's delivery](#delivering-a-land).
   A land runs it; an operator has no reason to.
+- **`release --request FILE`** answers a release run with
+  [a GitHub Release](#publishing-a-release) for the tag FILE names. A release run runs it; an
+  operator asks through that run's own `--github`.
+- **`tokens`** says whether each token is current and when it expires, never the token
+  ([tokens it makes](#tokens-it-makes)).
 
 ## What is exchanged
 
@@ -119,7 +198,9 @@ title one line of 200 characters, a body of 60,000 with a line saying where it w
 
 **A published task** is one opted in with `publish`. Its issue carries the curated text and
 nothing of the brief or the thread, and ends in a marker, an HTML comment holding a digest of
-the repository's number and the task's slug, which shows the slug to nobody.
+the repository's number and the task's slug, which shows the slug to nobody. A curated text is
+read back with its marker within the 60,000 characters a read keeps, so `publish` refuses one
+longer than that less the marker's line.
 
 Anyone who can open an issue can write a marker, so a marker alone maps nothing. An issue
 carrying a task's marker is mapped to it only where `issues` exports and this side kept a curated
@@ -152,6 +233,22 @@ note is skipped.
 Not exchanged: thread messages, labels other than `export_label` on creation, assignees,
 workflow, roles, dependencies and stamps.
 
+## Dropping a mapping
+
+A mapping found wrong is answered by neither side of `resolve`: a planted issue that carries a
+waiting curated text's marker, adopted as a conflict, holds a stranger's words that are not the
+task's to take, and pushing the curated text into it would make the stranger's issue the
+publication. `drop SLUG` drops the mapping and keeps the issue as not the task's: no preview maps
+the two again, counts it as a duplicate of the task's publication, or takes it for a publication
+whose answer was lost. A curated text kept stays, so the next preview shows it published as a
+new issue. Nothing is written to the issue or the board, and the journal holds the drop as an act
+of its own, its intent carrying the mapping it drops. The preview waiting is dropped before
+anything else is written, so a drop or a `resolve` cut short never leaves one read before it.
+
+No command undoes a drop. The issue's id stays under the task's slug in `dropped` in
+`state.json`; removing it there by hand, while no command runs, lets the next preview map the
+two again.
+
 ## What is kept
 
 The state folder is `symphony/integrations/github` in the git common dir
@@ -162,12 +259,16 @@ no worktree and no commit, and backed up with the repository's common dir or not
   task's number with the board's recovery generation, the issue's number and ids, each side's
   digest), the curated texts, and what pauses the exchange.
 - `state.json` holds as well the pull request each delivered task is bound to, with the task's
-  number and, once it landed, the commit.
+  number and, once it landed, the commit, the issues dropped from each task's mapping, and the
+  GitHub Release each release's tag is published as, with its number, its page and the commit.
 - `preview.json`: the preview that waits.
 - `journal.jsonl`: a line before each operation is dispatched (its id, target, the digest of
   what it writes, what it expects to find, the settings' revision, who ran it) and a line with
   its result before the state moves on by it. An edit of a brief journals the brief's earlier
-  words, which the board does not keep.
+  words with its intent, which the board does not keep, so an edit cut short can be put back. A
+  last line a crash cut short is left out, and cut away before the next is written; any other
+  line that does not read stops every command that reads the journal, naming it, since a line
+  lost may be an intent.
 - `lock`: held by whichever command is writing. A second one is refused, never made to wait.
 
 ## Running it twice, and a run cut short
@@ -180,7 +281,12 @@ A reconcile is safe to run again and to interrupt.
 - An operation dispatched whose result never arrived is looked for before it is tried: a
   created issue by its marker among every issue of the repository, under whichever preview it
   was dispatched (one found is mapped, more than one stops with none mapped and none created), an issue's edit and a brief's edit by
-  reading the side they wrote, a proposal by its slug and the line naming its issue.
+  reading the side they wrote, a proposal by its slug and the line naming its issue. Such a
+  publication, or one skipped, is looked for at every later apply of it until an acknowledgment
+  maps an issue: each costs one request for each hundred issues of the repository, up to 1,000
+  pages (100,000 issues). A repository with more ends the search there: the run stops with the
+  publication's result still unknown and creates nothing, since a public issue made twice cannot
+  be recalled.
 - A brief is rewritten only by `edit_bound`, with the token the preview read. A token the board
   refuses ends the run and drops the preview: nothing is tried on what the board holds now, and
   the next preview reads the task again.
@@ -220,7 +326,10 @@ evidence, and it reads no board for it.
   where the assessment waived it, failure where it is missing) and `symphony/eligible`. That last
   one is what a branch's protection requires, from the App `checks_app_id` names. It is written
   last when it passes and first when it fails, so it never passes over a stamp not yet written,
-  and the checks are read back as that App's before `published` is answered.
+  and the checks are read back as that App's before `published` is answered. GitHub lists a
+  check a few seconds after it takes it, so one not listed yet is read again after rests of 1, 2,
+  4 and 8 s, well inside the time the land gives the program, and nothing is written again; one
+  still not listed then is answered `unavailable`, and the next run finds what was written.
 - **`merge`** reads the protection again, refusing as `publish` does, then marks the draft ready and asks GitHub once for a squash of the bound pull request at
   the head it is given, which GitHub refuses for any other head. A mark that fails or whose answer
   is lost merges nothing. A pull request already merged is answered as merged,
@@ -250,11 +359,11 @@ next run finds what was made. Evidence of another revision rewrites the checks o
 
 Every request is GitHub's REST API made by `curl`, as the exchange's are, and the one thing REST
 has no call for, marking a draft ready, is a single GraphQL mutation by the same `curl`. The `gh`
-CLI is not used or needed. The adapter is no GitHub App and holds no App's key: it cannot mint or
-renew an installation token, so each of the three files holds one made outside it, which GitHub
-expires within the hour. A token that expired is answered 401, `unavailable`, and nothing merges
-until the file holds a current one. Keeping it current is the operator's, by whatever they run
-for it; nothing here does.
+CLI is not used or needed. Each of the three installation tokens, which GitHub expires within
+the hour, is [made by the program](#tokens-it-makes) where the settings name its App's
+installation and key, so a land goes on with no file refreshed by hand. Where they do not, the
+file holds one made outside it: a token that expired is answered 401, `unavailable`, and nothing
+merges until the file holds a current one.
 
 ## Delivering an import
 
@@ -271,7 +380,8 @@ Before `publish` pushes an import's head, and again before `merge` asks for it, 
 the upstream at the address the land fetched, with `token_file`'s token, and refuses, pushing and
 merging nothing, where:
 
-- the address is not a repository on GitHub.com, or that token cannot read it;
+- the address is not a repository on GitHub.com, or that token cannot read it, as a token
+  [the program makes](#tokens-it-makes) cannot read a private upstream;
 - the repository there is not the one `upstream_id` pins (a rename keeps its number), or it is
   the repository delivered to;
 - the upstream is private and the repository delivered to is not, which would publish its
@@ -302,6 +412,45 @@ is the one operation that brings another repository's commits in, and a task hea
 is refused, but a branch that copies a private history's files as commits of its own is a task,
 and only its review sees what it publishes.
 
+## Publishing a release
+
+A project whose `symphony.toml` commits `[releases] github = ["symphony-github", "release"]` has
+its release run ask for a GitHub Release of each tag it pushed
+([RELEASES](RELEASES.md#a-github-release)): the run starts `symphony-github release --request
+FILE` in the main checkout and reads one line of JSON. The adapter answers only `enabled`
+settings whose `releases` is `"publish"`; under any other it answers `refused` and asks GitHub
+nothing, keeping nothing. The request names the release's `tag`, the `commit` it tags, its
+`body` and whether it is the `latest`.
+
+In order, with `token_file`'s token (`crates/symphony-github/src/release.rs`):
+
+1. **The repository** is read and held to the one the state is bound to by its number, as a
+   delivery holds it; with none bound yet, it is bound. Another repository at the name is
+   refused: nothing is published to it.
+2. **The release is looked for by its tag** (`GET /repos/OWNER/NAME/releases/tags/TAG`). One
+   found is kept as the tag's and answered `found`: none is made, and it is left as it is,
+   whatever its text. One that was published here and GitHub no longer shows, because a person
+   removed it or made it a draft, is refused and not made again.
+3. **The tag is read at GitHub** (`GET …/git/ref/tags/TAG`, through the tag's own object where it
+   is annotated) and must name the request's commit. GitHub makes a tag of its own for a release
+   whose tag it does not hold, so with no tag there, or one naming another commit, nothing is
+   asked for.
+4. **The release is made** (`POST …/releases`): its name the tag's, its body the text handed
+   over, cleaned to content and cut at 100,000 characters with a line saying so, neither a draft
+   nor a prerelease, and marked the latest only where the request says. Nothing is uploaded.
+
+The answer's `state` is `published` (made now), `found`, `refused` (running again as things are
+makes none: the settings, the repository, the tag, a token that may not write contents),
+`unavailable` (GitHub gave no answer to go on by, and nothing was made) or `unknown` (the release
+was asked for and its answer was lost).
+
+It is safe to run twice and to interrupt. The one write is journaled before it is made, and
+every run looks for the release by its tag first, so a second run, a run after a lost answer and
+a run after one killed between the request and its answer make no second release. A creation
+GitHub refuses as there already, made by another run since the look, is found and kept. This
+command sends one kind of write, a release's creation: it edits and deletes no release and
+makes, moves and deletes no tag.
+
 ## The protection a delivery needs
 
 A delivery is held to its evidence by GitHub only where the default branch's rules say so, and
@@ -311,7 +460,8 @@ squash (`crates/symphony-github/src/preflight.rs`). Where they do not hold it an
 with `kind` `policy` and each thing missing, and pushes, opens, marks and merges nothing; an
 answer GitHub did not give is `unavailable`, never a pass. `preflight` says the same to an
 operator. The adapter edits no rule, ruleset, protection or visibility: putting them right is a
-repository administrator's act on GitHub, and nothing here turns delivery on.
+repository administrator's act on GitHub ([the steps](GITHUB_SETUP.md#delivery-by-pull-request)),
+and nothing here turns delivery on.
 
 It makes three kinds of read. Two are with `token_file`'s token: the repository, and the rules
 in effect for the branch (`GET /repos/OWNER/NAME/rules/branches/BRANCH`, every page), which
@@ -384,61 +534,18 @@ an organization's ruleset was not tried; where it does not, a rule from one hold
   records it. It is told at the next land, so until the update restriction above is in force a
   green check can outlive its evidence where a person can merge.
 
-## Setting a repository up for delivery
-
-What a person with the organization's and the repository's administration does on GitHub, in
-this order. The adapter does none of it and no agent does it without that person's word.
-
-**Read this first.** The update restriction of step 4 stops every direct push to the default
-branch the moment it is active, a land's own push among them, and with it whatever else
-commits there by pushing. So it is turned on together with the settings of step 6 and not
-before, and only once everything that reaches the default branch is delivered by a pull
-request. Until then steps 1 to 3 change nothing a land does.
-
-1. **Three GitHub Apps** in the organization, each with no webhook and installed on the one
-   repository alone ("Only select repositories"). GitHub adds Metadata (read) to each.
-
-   | App | Repository permissions | Its number is |
-   | --- | --- | --- |
-   | the check publisher | Checks: Read and write | `checks_app_id` |
-   | the landing App | Contents: Read and write; Pull requests: Read and write; Issues: Read and write only where `close_issues` is set | `landing_app_id` |
-   | the policy reader | Administration: Read and write | `policy_app_id` |
-
-   The policy reader's permission is the one that can change or remove the rules of step 4; it
-   is asked because GitHub shows a ruleset's bypass list to nothing less
-   ([the rights each read needs](#the-protection-a-delivery-needs)).
-2. **A private key for each App**, kept outside every checkout and readable by its owner
-   alone. Whoever holds a key can act as its App.
-3. **The repository's merge settings**: squash merging allowed, merge commits and rebase
-   merging not, auto-merge off.
-4. **Two rulesets** on the default branch, both active:
-   - one with an empty bypass list that requires a pull request with squash as its one merge
-     method, requires the status check `symphony/eligible` from the check publisher (its App
-     chosen as the source, and "require branches to be up to date" off), blocks force pushes
-     and restricts deletions;
-   - one that restricts updates, with the landing App as its only bypass actor.
-5. **A current installation token of each App** in a file of its own (`token_file`,
-   `checks_token_file`, `policy_token_file`), limited to the one repository, as
-   [the token](#the-token) says. GitHub expires each within the hour.
-6. **The settings**, landed on the default branch: `symphony-github.toml` with `enabled`,
-   `repository`, `pull_requests = "publish"`, the three files and the three numbers, and
-   `[land] delivery` in `symphony.toml` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)).
-
-A repository that imports an upstream ([delivering an import](#delivering-an-import)) differs in
-three of these: step 3 allows merge commits beside squash; step 4's first ruleset names merge
-beside squash as its pull request's methods, and no ruleset requires a linear history; and step
-6 adds `upstream_id` to `symphony-github.toml` and `[land.upstream]` to `symphony.toml`
-([PROJECT_FILE](PROJECT_FILE.md#landupstream)).
-
-Then `symphony-github preflight` says whether a delivery would go on, and names each thing
-missing where it would not. Other Apps installed on the repository are worth a look as well:
-one that holds Administration can edit the rules, whatever these steps set.
-
 ## Checking it
 
-`just test-rs -p symphony-github` runs its tests: each module's own, the exchange on a board
+A setup of a repository of your own is checked by `status`, `preview` and `preflight`
+([Setting up GitHub](GITHUB_SETUP.md#checking-it)). The program itself is checked by its tests:
+`just test-rs -p symphony-github` runs them: each module's own, the exchange on a board
 and a repository held in memory with every failure above planted, and the exchange on a real
 scratch board through `tasks api` with its requests made by a real `curl` to a loopback server.
 The delivery's verbs are asked of the same repository in memory, which answers pull requests,
-their merge and a commit's checks, and its rules and rulesets, which it holds a merge to. None needs a GitHub repository or a credential. A run against GitHub itself needs a disposable
+their merge and a commit's checks, and its rules and rulesets, which it holds a merge to. A
+release is asked of it too, which answers a tag, the release of a tag and its creation, and
+makes a tag of its own for a release whose tag it lacks, as GitHub does. The tokens it makes are
+asked of GitHub's side of the Apps held in memory too, which verifies each JWT's signature with
+the App's public key by `openssl`, as the program signs it, so those tests need `openssl` on
+`PATH`. None needs a GitHub repository or a credential. A run against GitHub itself needs a disposable
 repository and a token its owner supplies, and is nobody's to start without that word.

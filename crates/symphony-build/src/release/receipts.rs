@@ -98,6 +98,27 @@ impl Receipts {
             .unwrap_or(false)
     }
 
+    /// The head of each other receipt git bears out whose squash the base `receipt`'s was made on
+    /// holds, where that head is still in `root`: what landed on the line before `receipt` did.
+    /// A head started at one of them (a release candidate's second fix, started where the first
+    /// left the candidate) holds that one's commits, which no history of the line does, so what
+    /// is read from `receipt`'s head as its own leaves these out.
+    pub(crate) fn landed_before(&self, root: &Path, receipt: &Receipt) -> Vec<&str> {
+        (self.all.iter())
+            .filter(|other| {
+                other.squash != receipt.squash
+                    && Receipts::proved(root, other)
+                    && is_ancestor(root, &other.squash, &receipt.parent).unwrap_or(false)
+                    && git(
+                        root,
+                        &["cat-file", "-e", &format!("{}^{{commit}}", other.head)],
+                    )
+                    .is_ok()
+            })
+            .map(|other| other.head.as_str())
+            .collect()
+    }
+
     /// Whether `tip` holds `commit`, in `root`: `commit` is `tip` or an ancestor of it, or what
     /// it holds was delivered there by a squash, being a head a receipt kept under [`RETAINED`]
     /// or an ancestor of one, whose squash, borne out, is `tip` or an ancestor of it. The second
@@ -322,5 +343,33 @@ pub(crate) mod tests {
         assert_eq!(receipts.holds(&root, &two.head, &tip), Ok(false));
         assert_eq!(receipts.holds(&root, &stray, &tip), Ok(false));
         assert!(receipts.holds(&root, "nothing-here", &tip).is_err());
+    }
+
+    #[test]
+    fn what_landed_before_a_receipt_is_each_borne_out_squash_its_base_holds_whose_head_is_there() {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let one = deliver(&root, "tools/one", "main");
+        let two = deliver(&root, "tools/two", &one.head);
+        let three = deliver(&root, "tools/three", "main");
+        let receipts = Receipts::read(&root);
+        assert!(receipts.landed_before(&root, &one).is_empty(), "the first");
+        assert_eq!(receipts.landed_before(&root, &two), [one.head.as_str()]);
+        // Oldest slug first, as they are read; never itself, nor what landed after it.
+        assert_eq!(
+            receipts.landed_before(&root, &three),
+            [one.head.as_str(), two.head.as_str()]
+        );
+        // One git does not bear out, and one whose head is gone, are left out.
+        let wrong = Receipt {
+            tree: one.parent.clone(),
+            ..one.clone()
+        };
+        let gone = Receipt {
+            head: "f".repeat(40),
+            ..two.clone()
+        };
+        let partly = Receipts::of(vec![wrong, gone, three.clone()]);
+        assert!(partly.landed_before(&root, &three).is_empty());
     }
 }

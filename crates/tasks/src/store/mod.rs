@@ -36,6 +36,7 @@ mod depends;
 mod dispatcher;
 pub(crate) mod execution;
 mod fields;
+pub(crate) mod guard;
 mod history;
 mod kept;
 mod launches;
@@ -66,6 +67,7 @@ pub(crate) mod unanswered;
 mod waits;
 mod work;
 pub(crate) mod workflow;
+mod workflow_events;
 mod writers;
 
 use beside::Beside;
@@ -83,10 +85,10 @@ pub use copy::{CARRIED, leases_ended, leases_past};
 pub use database::Database;
 pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;
-pub use opening::Opening;
+pub use opening::{Opening, Standing};
 pub use raw::{Raw, Rows as RawRows};
 use reading::native_health;
-pub use report_lines::{ReportRead, ReportTask};
+pub use report_lines::{ReportPlace, ReportRead, ReportTask};
 pub use search::{SearchHit, SearchSource};
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
@@ -99,7 +101,9 @@ pub use work::{
     PIPELINE, PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
     covered_line, landing,
 };
-pub use writers::{Program, RECENT as WRITERS_RECENT, SINCE as WRITERS_SINCE, Writer};
+pub use writers::{
+    EVERY as WRITERS_EVERY, Program, RECENT as WRITERS_RECENT, SINCE as WRITERS_SINCE, Writer,
+};
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;
@@ -237,6 +241,10 @@ pub struct Store {
     /// Whether its delivering passes give the open tasks no orchestrator holds first: a detached
     /// dispatcher's ([`Store::giving`]).
     giving: bool,
+    /// What its delivering passes settle of the tasks a custom workflow holds, after the give:
+    /// [`Store::settle_held_if_due`], installed by [`Store::giving`] alone, which says why it is a
+    /// pointer.
+    settling: Option<fn(&Store, &Board) -> bool>,
     /// The messages a dispatch pass reads every recipient's inbox from ([`pool::Pool`]).
     inbox_pool: Mutex<Option<pool::Pool>>,
     /// What it holds its starts and its PULL digests to ([`crate::limits`]): the open tasks an
@@ -254,6 +262,11 @@ pub struct Store {
     /// The recovery authority it was handed ([`Store::recovering`]): none refuses every write
     /// bound to a recovery generation ([`recovery`]).
     authority: Option<std::sync::Arc<dyn recovery::Authority>>,
+    /// Whether it was opened to read by the schema rule ([`schema::Access::Read`], the Symphony's
+    /// opening), whose ordinary writes alone take a board one schema ahead that lets a Symphony
+    /// of its schema write it ([`schema::COMPATIBLE`]); set only by an opening that read the board,
+    /// never by a store taken unchecked.
+    reader: bool,
 }
 
 /// The command that reaches the board on `database` again: `just tasks`, naming the database when
@@ -751,9 +764,10 @@ impl Store {
                 None
             };
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let (reason, needs, unlanded, blocked, moved, holds) = (
+            let (reason, needs, gates, unlanded, blocked, moved, holds) = (
                 change.reason.is_some(),
                 change.needs.is_some(),
+                change.gates.is_some(),
                 change.unlanded.is_some(),
                 change.blocked.is_some(),
                 (change.status.as_deref()).map(|status| status == "cancelled"),
@@ -761,8 +775,24 @@ impl Store {
             );
             let placed = placing.is_some();
             let body = both(
-                surreal::rule(reason, needs, unlanded, blocked, moved, holds, placed),
-                pg::rule(reason, needs, unlanded, blocked, moved, holds, placed),
+                surreal::rule(
+                    reason,
+                    (needs, gates),
+                    unlanded,
+                    blocked,
+                    moved,
+                    holds,
+                    placed,
+                ),
+                pg::rule(
+                    reason,
+                    (needs, gates),
+                    unlanded,
+                    blocked,
+                    moved,
+                    holds,
+                    placed,
+                ),
             );
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
@@ -1249,6 +1279,9 @@ struct Change {
     /// The task's needs it writes, the board's own field ([`crate::stamps::Needs`],
     /// [`Store::set_needs`]).
     needs: Option<Value>,
+    /// The task's gate decisions it writes, every one, the board's own field
+    /// ([`crate::gates::Decision`], [`Store::decide_gate`]).
+    gates: Option<Value>,
     /// What the block it makes waits on, the board's own field ([`crate::waits_on::Blocked`]).
     blocked: Option<Value>,
     /// The mark of a task approved and not landed, the board's own field
@@ -1258,11 +1291,13 @@ struct Change {
 }
 
 impl Change {
-    /// Whether it moves the task, blocks it, or adds or drops an executor, a reviewer or a
-    /// reservation: what a custom workflow's edges alone do to a task it holds. The orchestrator's
-    /// role is the board's coordination, which its writers keep.
+    /// Whether it moves the task, blocks it, or adds or drops an executor or a reviewer: what a
+    /// custom workflow's edges alone do to a task it holds. The orchestrator's role and a
+    /// reservation are the board's coordination, which its writers keep: a launch reserves the
+    /// work it starts a session for, and admission honours the reservation, and consumes it, when
+    /// that session takes the edge (docs/WORKFLOW.md, "Operations").
     fn moves_or_staffs(&self) -> bool {
-        let staffing = |role: &str| role != "orchestrator";
+        let staffing = |role: &str| role != "orchestrator" && role != "reserved";
         self.status.is_some()
             || self.blocked.is_some()
             || self.add.as_ref().is_some_and(|r| staffing(&r.role))
@@ -1288,6 +1323,9 @@ struct Opens {
     by: Vec<String>,
     /// What the refusal says cannot happen.
     what: String,
+    /// For a task a custom workflow holds, whether the position it moves to holds a slot by its
+    /// slot policy ([`crate::slots::Entry::slot`]).
+    slot: Option<bool>,
 }
 
 struct Say {
@@ -1340,6 +1378,7 @@ impl Change {
             "say": say,
             "move_reason": self.reason,
             "needs": self.needs,
+            "gates": self.gates,
             "blocked": self.blocked,
             "unlanded": self.unlanded,
         })

@@ -13,17 +13,24 @@
 //!
 //! A request's key is the principal's: the same key with the same request answers the result the
 //! first one wrote, and the same key with another request is refused.
+//!
+//! A guarded edge is admitted only with the attestations its caller gives
+//! ([`Store::apply_attested`], `crate::workflow::guard`), and its write is fenced on each approval
+//! authority's state they were checked at: an observation the board accepts between the read and
+//! the write makes the admission decide again, on the authority's new generation.
 
 use super::postgres as pg;
 use super::surreal::{self, cap as sql_cap, workflow as sql};
 use super::{Error, Failure, Opens, Store, Which, statement::both};
+use crate::Health;
 use crate::workflow::admit::{self, Context, Facts, Prerequisite, Refusal};
+use crate::workflow::guard::{Accepted, Attester, Checked, Guarding};
 use crate::workflow::{Active, Host, Recorded, TaskPosition, Transition};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use symphony_api::workflow::{
-    Authority, Effect, NextActions, OperationRequest, OperationResult, RefusalCode, Role,
+    Authority, Effect, NextActions, OperationRequest, OperationResult, RefusalCode, Role, Signed,
     WorkflowRead,
 };
 use symphony_plugin::execution::{Principal, PrincipalKind};
@@ -43,6 +50,23 @@ pub struct Receipt {
     pub effects: Vec<Effect>,
 }
 
+/// What a guarded edge's admission recorded (`workflow:['admission', SLUG, REVISION]`): the
+/// transition it admitted, by whom, on which input revisions, and each guard it met, with the
+/// attestation and the authority's accepted state. It is the board's audit of what it admitted,
+/// never an approval: the decisions stay in the project's ledger.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Admission {
+    pub slug: String,
+    pub revision: u64,
+    pub transition: String,
+    pub edge: String,
+    pub principal: Principal,
+    pub input_revisions: std::collections::BTreeMap<String, String>,
+    pub guards: Vec<Checked>,
+    pub at: f64,
+}
+
 #[derive(Deserialize)]
 struct Read {
     active: Option<Active>,
@@ -52,8 +76,16 @@ struct Read {
     found: Vec<Found>,
     receipt: Option<Receipt>,
     present: bool,
+    #[serde(default)]
+    project: Option<String>,
+    #[serde(default)]
+    attesters: Vec<Attester>,
+    #[serde(default)]
+    accepted: Vec<Accepted>,
 }
 
+/// The task admission decides on; `accepted` is the accepted output its last transition left
+/// (`body.accepted` of the event at its workflow revision), as for each [`Found`].
 #[derive(Deserialize)]
 struct TaskRead {
     slug: String,
@@ -61,12 +93,15 @@ struct TaskRead {
     status: String,
     created_by: String,
     position: Option<TaskPosition>,
+    accepted: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct RoleRead {
     handle: String,
     role: String,
+    #[serde(default)]
+    expires: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -75,9 +110,20 @@ struct Found {
     version: i64,
     status: String,
     position: Option<TaskPosition>,
+    accepted: Option<String>,
 }
 
-/// One read's decision context: the workflow active and its definition, and the task's facts.
+/// The accepted outputs of a task a custom workflow holds (docs/WORKFLOW.md, "Accepted outputs"):
+/// its own standing, and, where an edge leaving its pair depends on `accepted_output`, each task
+/// it depends on with the output standing for it, which a request taking that edge names.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Outputs {
+    pub own: Option<String>,
+    pub takes: Vec<(String, Option<String>)>,
+}
+
+/// One read's decision context: the workflow active and its definition, the task's facts, and the
+/// approval authorities the activation commits with the state the board accepted from each.
 struct Decided {
     active: Active,
     recorded: Recorded,
@@ -85,6 +131,14 @@ struct Decided {
     task: TaskRead,
     found: Vec<Found>,
     receipt: Option<Receipt>,
+    /// The reservations on the task that lapsed (past their expiry, or held by a session lost or
+    /// gone), which stand against no claim: the write drops them, fenced on each lost reserver's
+    /// session as it was read.
+    lapsed: Vec<(String, String)>,
+    lapsed_seen: Vec<Value>,
+    project: Option<String>,
+    attesters: Vec<Attester>,
+    accepted: Vec<Accepted>,
 }
 
 impl Store {
@@ -118,17 +172,82 @@ impl Store {
         })
     }
 
+    /// `slug`'s accepted outputs ([`Outputs`]), read as admission reads them; refused as
+    /// [`Store::workflow_actions`] is.
+    pub fn accepted_outputs(&self, slug: &str) -> Result<Outputs, Error> {
+        self.retrying(|| {
+            let decided = self.decided(slug, &crate::workflow::board_service("reader"), None)?;
+            let context = context(&decided);
+            let at = decided.facts.position.as_ref().map(TaskPosition::at);
+            let own = Prerequisite {
+                slug: slug.to_string(),
+                found: Some((decided.task.status.clone(), decided.facts.position.clone())),
+                accepted: decided.facts.accepted.clone(),
+            };
+            let takes = (context.definition.edges.iter()).any(|e| {
+                Some(&e.from) == at.as_ref()
+                    && e.dependencies == symphony_api::workflow::Dependency::AcceptedOutput
+            });
+            let mut outputs = Outputs {
+                own: admit::standing(context, &own).map(str::to_string),
+                takes: Vec::new(),
+            };
+            if takes {
+                outputs.takes = (decided.facts.dependencies.iter())
+                    .map(|p| {
+                        (
+                            p.slug.clone(),
+                            admit::standing(context, p).map(str::to_string),
+                        )
+                    })
+                    .collect();
+            }
+            Ok(outputs)
+        })
+    }
+
     /// `request` admitted for `principal`, whom the host bound, and written in one transaction
     /// fenced on everything its decision read, or refused, its code first
     /// ([`admit::Refusal`]); capacity under the project's cap is decided in the write's own
     /// counters. Answers the transition it wrote, its effects and the principal's next actions
     /// after it. A request repeating a key the principal used answers that request's result when
-    /// it is the same request, and is refused when it is another.
+    /// it is the same request, and is refused when it is another. Given no attestation, a guarded
+    /// edge is refused ([`Store::apply_attested`]).
     pub fn apply_operation(
         &self,
         principal: &Principal,
         host: &Host,
         request: &OperationRequest,
+    ) -> Result<OperationResult, Error> {
+        self.apply(principal, host, request, &[], None)
+    }
+
+    /// [`Store::apply_operation`], each guard of the edge met by one of `attestations`: signed by
+    /// the key the active activation commits for its authority, covering exactly this operation
+    /// and principal, passing, in its time, and at the authority's generation the board accepted
+    /// (`crate::workflow::guard::check`). The write is fenced on those accepted states and records
+    /// the admission (`workflow:['admission', SLUG, REVISION]`). A repeated key answers its
+    /// first result whatever attestations come with it: the operation is not taken twice.
+    pub fn apply_attested(
+        &self,
+        principal: &Principal,
+        host: &Host,
+        request: &OperationRequest,
+        attestations: &[Signed],
+    ) -> Result<OperationResult, Error> {
+        self.apply(principal, host, request, attestations, None)
+    }
+
+    /// [`Store::apply_attested`], or, with what it `answered`, the automatic edge the board
+    /// takes on an execution attempt's ending (`Store::observe_attempt`), admitted by the same
+    /// checks, with no attestation, and written by the same write.
+    fn apply(
+        &self,
+        principal: &Principal,
+        host: &Host,
+        request: &OperationRequest,
+        attestations: &[Signed],
+        answered: Option<&crate::workflow::Recovered>,
     ) -> Result<OperationResult, Error> {
         let board = self.database().database();
         if request.project != board {
@@ -163,64 +282,59 @@ impl Store {
             }
             let context = context(&decided);
             let at = self.now();
-            let admitted = admit::admit(context, &decided.facts, principal, host, request, at)
-                .map_err(refusal)?;
-            let transition = &admitted.transition;
-            let status = transition.status.clone();
-            let taking = Taking {
-                status: &status,
-                acquires: admitted.acquires,
-                add: &admitted.add,
-                what: format!("{slug} cannot take {}", request.edge),
-            };
-            let slots = self.taken(&decided, taking, principal)?;
-            let receipt = Receipt {
-                principal: principal.clone(),
-                key: request.idempotency_key.clone(),
-                slug: slug.to_string(),
-                request: digest.clone(),
-                sent: request.clone(),
-                transition: transition.id.clone(),
-                effects: transition.effects.clone(),
-            };
-            let row = |(handle, role): &(String, String)| {
-                json!({"slug": slug, "handle": handle, "role": role, "since": at})
-            };
-            let pair = |(handle, role): &(String, String)| json!({"handle": handle, "role": role});
-            let holding: Vec<Value> = relied_on(&decided.facts, principal, request, context)
-                .iter()
-                .map(pair)
-                .collect();
-            let guarded = !slots.is_empty();
-            let vars = json!({
-                "slug": slug,
-                "version": decided.task.version,
-                "generation": decided.active.generation,
-                "digest": decided.active.digest,
-                "dependencies": fenced(&decided, request),
-                "holding": holding,
-                "add": admitted.add.iter().map(row).collect::<Vec<_>>(),
-                "drop": admitted.drop.iter().map(pair).collect::<Vec<_>>(),
-                "receipt": receipt_id,
-                "receipt_body": receipt,
-                "actor": agent(principal),
-                "transition": transition,
-                "position": transition.position(),
-                "moved": status != decided.task.status,
-                "sender": sender(principal),
-                "said": said(transition),
-                "now": at,
-                "slots": slots,
-                "seen": [],
-            });
+            let guarding = guarding(&decided, attestations);
+            let admitted = match answered {
+                None => admit::admit(
+                    context,
+                    &decided.facts,
+                    principal,
+                    host,
+                    request,
+                    &guarding,
+                    at,
+                ),
+                Some(answered) => admit::admit_observed(
+                    context,
+                    &decided.facts,
+                    principal,
+                    host,
+                    request,
+                    answered,
+                    at,
+                ),
+            }
+            .map_err(refusal)?;
+            // A caller's word never prepares or finalizes: the edge's adapter takes it.
+            if let Some(adapter) = crate::workflow::effect::external(&admitted.transition.effects) {
+                let by = crate::workflow::effect::taken_by(adapter, slug)
+                    .map(|command| format!("; {command} takes it"))
+                    .unwrap_or_default();
+                return Err(refusal(Refusal::new(
+                    RefusalCode::ExplicitActionRequired,
+                    format!(
+                        "edge {} is the adapter {adapter}'s to take, with what it reads of the \
+                         effect itself: no request prepares or finalizes one{by}",
+                        request.edge
+                    ),
+                )));
+            }
+            let (mut vars, receipt) =
+                applied(self, &decided, &admitted, principal, request, &digest, at)?;
+            vars["said"] = json!(said(&admitted.transition));
+            let guarded = !vars["slots"].as_array().is_none_or(Vec::is_empty);
+            let (joins, joins_pg) = joins_said(&vars);
             let logged = surreal::logged("$slug", "$sender", "'system'", "$said", "NONE");
+            let logged_pg = pg::logged(
+                "v ->> 'slug'",
+                "v ->> 'sender'",
+                "'system'",
+                "v ->> 'said'",
+                "NULL",
+            );
             let guard = if guarded { sql_cap::GUARD } else { "" };
             let body = both(
-                format!("{}{logged}{guard}", sql::APPLY),
-                pg::workflow::apply(
-                    &pg::logged("v ->> 'slug'", "v ->> 'sender'", "'system'", "v ->> 'said'", "NULL"),
-                    guarded,
-                ),
+                format!("{}{logged}{joins}{guard}", sql::APPLY),
+                pg::workflow::apply(&format!("{logged_pg}{joins_pg}"), guarded),
             );
             self.written(body, vars, slug)?;
             Ok(receipt)
@@ -297,6 +411,7 @@ impl Store {
             effects: Vec::new(),
             key: None,
             recovery: None,
+            accepted: None,
             at: self.now(),
         }))
     }
@@ -328,9 +443,7 @@ impl Store {
             ))
         })?;
         let recorded = self.recorded(&active)?;
-        let roles: Vec<(String, String)> = (read.roles.into_iter())
-            .map(|r| (r.handle, r.role))
-            .collect();
+        let (roles, lapsed, lapsed_seen) = self.lapsing(read.roles)?;
         let reviews = (recorded.definition.edges.iter())
             .filter(|e| task.position.as_ref().is_some_and(|p| p.at() == e.from))
             .any(|e| {
@@ -352,15 +465,18 @@ impl Store {
             position: task.position.clone(),
             roles,
             dependencies: (dependencies.iter())
-                .map(|d| Prerequisite {
-                    slug: d.clone(),
-                    found: (read.found.iter())
-                        .find(|f| f.slug == *d)
-                        .map(|f| (f.status.clone(), f.position.clone())),
+                .map(|d| {
+                    let found = (read.found.iter()).find(|f| f.slug == *d);
+                    Prerequisite {
+                        slug: d.clone(),
+                        found: found.map(|f| (f.status.clone(), f.position.clone())),
+                        accepted: found.and_then(|f| f.accepted.clone()),
+                    }
                 })
                 .collect(),
             held,
             present: read.present,
+            accepted: task.accepted.clone(),
         };
         Ok(Decided {
             active,
@@ -369,7 +485,53 @@ impl Store {
             task,
             found: read.found,
             receipt: read.receipt,
+            lapsed,
+            lapsed_seen,
+            project: read.project,
+            attesters: read.attesters,
+            accepted: read.accepted,
         })
+    }
+
+    /// `roles` as admission reads them, and the reservations among them that lapsed, as the
+    /// board's own claim lapses them: past their expiry, or held by a session lost or gone, each
+    /// such session fenced at the beat it was read at. Sessions are read only where a
+    /// reservation could have lapsed by its holder.
+    #[expect(
+        clippy::type_complexity,
+        reason = "one read's three parts, each used once"
+    )]
+    fn lapsing(
+        &self,
+        roles: Vec<RoleRead>,
+    ) -> Result<(Vec<(String, String)>, Vec<(String, String)>, Vec<Value>), Failure> {
+        let now = self.now();
+        let reserving = roles.iter().any(|r| r.role == "reserved");
+        let sessions = if reserving {
+            self.sessions().map_err(Failure::Stop)?
+        } else {
+            Vec::new()
+        };
+        let (mut kept, mut lapsed, mut seen) = (Vec::new(), Vec::new(), Vec::new());
+        for role in roles {
+            let pair = (role.handle, role.role);
+            if pair.1 != "reserved" {
+                kept.push(pair);
+                continue;
+            }
+            let session = sessions.iter().find(|s| s.row.handle == pair.0);
+            let expired = role.expires.is_some_and(|expires| expires < now);
+            let gone = session.is_none_or(|s| matches!(s.health, Health::Lost | Health::Left));
+            if expired || gone {
+                if !expired && let Some(session) = session {
+                    seen.push(json!({"handle": pair.0, "last_seen": session.row.last_seen}));
+                }
+                lapsed.push(pair);
+            } else {
+                kept.push(pair);
+            }
+        }
+        Ok((kept, lapsed, seen))
     }
 
     /// The definition `active` names, as activation recorded it.
@@ -385,8 +547,10 @@ impl Store {
     }
 
     /// The slot counters an admitted operation holds under the project's cap: one that takes a
-    /// slot, or moves the task into work or review from outside them, is counted as a start
-    /// would be, and refused as `capacity` past the cap.
+    /// slot, or moves the task to a position whose slot policy holds one from a position that
+    /// holds none, is counted as a start would be, and refused as `capacity` past the cap. The
+    /// ledger counts the task at its destination by that position's policy
+    /// ([`crate::slots::Entry::slot`]), never by the status it projects to.
     fn taken(
         &self,
         decided: &Decided,
@@ -394,8 +558,7 @@ impl Store {
         principal: &Principal,
     ) -> Result<Vec<Value>, Failure> {
         let status = taking.status;
-        let starts = crate::slots::OPEN.contains(&status)
-            && !crate::slots::OPEN.contains(&decided.task.status.as_str());
+        let starts = taking.holds && !taking.held;
         let Some(cap) = self.slots() else {
             return Ok(Vec::new());
         };
@@ -418,6 +581,7 @@ impl Store {
             status: Some(status.to_string()),
             by,
             what: taking.what,
+            slot: Some(taking.holds),
             ..Opens::default()
         };
         self.slots_taken(&view, slug, &opens, cap)
@@ -431,12 +595,30 @@ impl Store {
 }
 
 /// What a write takes under the cap: the status it moves its task to, whether it takes a slot,
-/// the roles it adds, and what a refusal says cannot happen.
+/// whether the task's position holds one before it (`held`) and its destination after it
+/// (`holds`), the roles it adds, and what a refusal says cannot happen.
 struct Taking<'a> {
     status: &'a str,
     acquires: bool,
+    held: bool,
+    holds: bool,
     add: &'a [(String, String)],
     what: String,
+}
+
+impl Decided {
+    /// Whether the position at `at` holds a slot by its slot policy, whatever status it projects
+    /// to ([`crate::slots::Entry::slot`]).
+    fn holds_at(&self, at: &symphony_api::workflow::Pair) -> bool {
+        (self.recorded.definition.positions.iter())
+            .find(|p| p.at == *at)
+            .is_some_and(|p| p.slot != symphony_api::workflow::Slot::Release)
+    }
+
+    /// Whether the task's position as read holds a slot.
+    fn holds_now(&self) -> bool {
+        (self.task.position.as_ref()).is_some_and(|p| self.holds_at(&p.at()))
+    }
 }
 
 fn context(decided: &Decided) -> Context<'_> {
@@ -522,17 +704,158 @@ fn sender(principal: &Principal) -> String {
     }
 }
 
-/// The transition's line on its task's thread.
+/// The transition's line on its task's thread, naming the attempt whose failure the board took it
+/// on, for an automatic edge.
 fn said(transition: &Transition) -> String {
     let named = |p: &symphony_api::workflow::Pair| format!("{}/{}", p.phase, p.state);
-    format!(
+    let mut line = format!(
         "took {} ({}): {} → {}, workflow revision {}",
         transition.edge.as_deref().unwrap_or("an edge"),
         transition.id,
         transition.from.as_ref().map_or_else(String::new, named),
         named(&transition.to),
         transition.revision
-    )
+    );
+    // The board's take answering an attempt records what it recovered, keyed by the attempt.
+    let key = (transition.recovery.as_ref()).and(transition.key.as_deref());
+    if let Some(attempt) = key.and_then(|k| k.strip_prefix("attempt/")) {
+        line.push_str(&format!(", on the failure of attempt {attempt}"));
+    }
+    line
+}
+
+/// The variables of `sql::APPLY` for `admitted`, and its receipt: one builder for every write
+/// that takes an edge ([`Store::apply_operation`], and an external effect's prepare and finalize):
+/// the receipt under the request's key, the roles relied on, added and dropped (with the
+/// reservations that lapsed, which the decision no longer counts), the dependencies and the slot
+/// counters fenced, and each role the edge gives its taker, said as a join ([`joins_said`]).
+fn applied(
+    store: &Store,
+    decided: &Decided,
+    admitted: &admit::Admitted,
+    principal: &Principal,
+    request: &OperationRequest,
+    digest: &str,
+    at: f64,
+) -> Result<(Value, Receipt), Failure> {
+    let slug = request.task.as_str();
+    let transition: &Transition = &admitted.transition;
+    let taking = Taking {
+        status: &transition.status,
+        acquires: admitted.acquires,
+        held: decided.holds_now(),
+        holds: decided.holds_at(&transition.to),
+        add: &admitted.add,
+        what: format!("{slug} cannot take {}", request.edge),
+    };
+    let slots = store.taken(decided, taking, principal)?;
+    let receipt = Receipt {
+        principal: principal.clone(),
+        key: request.idempotency_key.clone(),
+        slug: slug.to_string(),
+        request: digest.to_string(),
+        sent: request.clone(),
+        transition: transition.id.clone(),
+        effects: transition.effects.clone(),
+    };
+    let row = |(handle, role): &(String, String)| json!({"slug": slug, "handle": handle, "role": role, "since": at});
+    let pair = |(handle, role): &(String, String)| json!({"handle": handle, "role": role});
+    // Each role the edge gives its taker is said as the board's own join says it, so every reader
+    // of who held a task's roles (a fresh reviewer's, a post's recipient, where the time went)
+    // reads it from the thread as it reads a join (`Store::ever_held`).
+    let joined: Vec<String> = (admitted.add.iter())
+        .map(|(handle, role)| format!("{handle} joined as {role}"))
+        .collect();
+    // Each authority once, however many guards it met: the write is fenced on its state and
+    // counts the admission, and a guarded edge's admission is recorded.
+    let mut authorities: Vec<Value> = Vec::new();
+    for g in &admitted.guards {
+        if authorities
+            .iter()
+            .all(|a| a["adapter"] != g.adapter.as_str())
+        {
+            authorities.push(json!({"adapter": g.adapter, "epoch": g.epoch,
+                "generation": g.generation, "state": g.state}));
+        }
+    }
+    let admission = (!admitted.guards.is_empty()).then(|| Admission {
+        slug: slug.to_string(),
+        revision: transition.revision,
+        transition: transition.id.clone(),
+        edge: request.edge.clone(),
+        principal: principal.clone(),
+        input_revisions: request.input_revisions.clone(),
+        guards: admitted.guards.clone(),
+        at,
+    });
+    let vars = json!({
+        "slug": slug,
+        "version": decided.task.version,
+        "generation": decided.active.generation,
+        "digest": decided.active.digest,
+        "dependencies": fenced(decided, request),
+        "holding": relied_on(&decided.facts, principal, request, context(decided))
+            .iter()
+            .map(pair)
+            .collect::<Vec<_>>(),
+        "add": admitted.add.iter().map(row).collect::<Vec<_>>(),
+        "drop": (admitted.drop.iter())
+            .chain(decided.lapsed.iter().filter(|l| !admitted.drop.contains(l)))
+            .map(pair)
+            .collect::<Vec<_>>(),
+        "receipt": receipt_id(principal, &request.idempotency_key),
+        "receipt_body": receipt,
+        "actor": agent(principal),
+        "transition": transition,
+        "position": transition.position(),
+        "moved": transition.status != decided.task.status,
+        "sender": sender(principal),
+        "now": at,
+        "slots": slots,
+        "seen": decided.lapsed_seen,
+        "joined": joined,
+        "authorities": authorities,
+        "admission": admission,
+    });
+    Ok((vars, receipt))
+}
+
+/// What admission holds `decided`'s guards to: the project and authorities its activation
+/// recorded, the states the board accepted from them, and `given`, the attestations the request
+/// carries, on this machine's time, never the store's, which its caller may pin (TASKS_NOW): an
+/// attestation's expiry is a bound only on a clock no caller sets.
+fn guarding<'a>(decided: &'a Decided, given: &'a [Signed]) -> Guarding<'a> {
+    Guarding {
+        project: decided.project.as_deref().unwrap_or_default(),
+        attesters: &decided.attesters,
+        accepted: &decided.accepted,
+        given,
+        now: super::now(),
+    }
+}
+
+/// The statements, on each store, that say each role `vars` gives as joined (its `joined`), after
+/// the write's own line.
+fn joins_said(vars: &Value) -> (String, String) {
+    let (mut surreal_lines, mut pg_lines) = (String::new(), String::new());
+    for i in 0..vars["joined"].as_array().map_or(0, Vec::len) {
+        surreal_lines.push_str(&surreal::logged(
+            "$slug",
+            "$sender",
+            "'system'",
+            &format!("$joined[{i}]"),
+            "NONE",
+        ));
+        pg_lines.push('\n');
+        pg_lines.push_str(&pg::logged(
+            "v ->> 'slug'",
+            "v ->> 'sender'",
+            "'system'",
+            &format!("v -> 'joined' ->> {i}"),
+            "NULL",
+        ));
+    }
+    (surreal_lines, pg_lines)
 }
 
 fn refusal(refusal: Refusal) -> Failure {
@@ -546,9 +869,22 @@ fn stopped(failure: Failure) -> Error {
     }
 }
 
+mod effects;
+pub use effects::{Finalized, Reviewed};
+mod observation;
+mod operations;
 mod recovery;
+pub use operations::Settled;
 pub(in crate::store) use recovery::Released;
 
 #[cfg(test)]
 #[path = "admission_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "admission/accepted_tests.rs"]
+mod accepted_tests;
+
+#[cfg(test)]
+#[path = "admission/guard_tests.rs"]
+mod guard_tests;

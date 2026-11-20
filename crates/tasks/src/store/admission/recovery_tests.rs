@@ -176,6 +176,18 @@ fn a_session_that_leaves_is_recovered_by_each_positions_lost_holder_action() {
         assert_eq!(f.store.get("sim/a").unwrap().status, "review");
         assert!(roles(&f, "sim/a").contains(&("birch".into(), "reviewer".into())));
         assert!(position(&f, "sim/a").manual.is_some());
+        // Left, it leaves no more: refused as any write by a session that left, before any
+        // recovery, and at once, with no try again.
+        let (before, tried) = (f.store.dump().unwrap(), Store::tried_again_here());
+        let again = f.store.leave("birch");
+        assert!(f.store.refuses_actor(again.as_ref().unwrap_err(), "birch"));
+        assert_eq!(
+            refused(again),
+            "session birch has left; attach again",
+            "{backend:?}"
+        );
+        assert_eq!(Store::tried_again_here(), tried);
+        assert_eq!(f.store.dump().unwrap(), before);
         f.store.leave("amber").unwrap();
         // amber's executor on sim/b moves back to available, and its leftover executor role on
         // sim/a, which verify/reviewing does not staff, goes alone.
@@ -237,10 +249,20 @@ fn a_recovery_racing_the_holders_own_transition_has_one_winner() {
 }
 
 #[test]
-fn next_offers_no_task_a_workflow_holds() {
+fn next_offers_a_held_task_by_its_open_claim_edge_and_none_whose_claim_is_taken() {
     for backend in BACKENDS {
         let f = board(backend, &workflow());
-        assert_eq!(f.store.next_for("amber").unwrap(), None);
+        let next = |handle: &str| f.store.next_for(handle).unwrap().map(|t| t.slug);
+        assert_eq!(next("amber").as_deref(), Some("sim/a"));
+        // Another's live reservation stands against it, as admission's own claim refuses it.
+        f.store.reserve("sim/a", "birch", 60.0).unwrap();
+        assert_eq!(next("amber").as_deref(), Some("sim/b"));
+        assert_eq!(next("birch").as_deref(), Some("sim/a"));
+        take(&f.store, "sim/a", &agent_session("birch"), "claim").unwrap();
+        take(&f.store, "sim/b", &agent_session("amber"), "claim").unwrap();
+        // Each claimed, and sim/busy at a position no claim leaves: nothing to take.
+        assert_eq!(next("amber"), None);
+        assert_eq!(next("birch"), None);
     }
 }
 

@@ -47,6 +47,7 @@ use serde::{Deserialize, Serialize};
 pub mod agent_activity;
 mod agent_probes;
 mod agents;
+pub mod attempts;
 pub mod gates;
 pub mod health;
 mod links;
@@ -57,12 +58,17 @@ pub mod report_page;
 pub mod reports;
 mod runs;
 pub mod runs_rollup;
+mod schema_updates;
 mod task_diff;
 mod task_queries;
 mod task_stage;
 pub mod timeline;
 pub mod workflow;
 pub use agent_activity::{AGENT_ACTIVITY_SCHEMA, AgentHour, AgentLine};
+pub use attempts::{
+    ATTEMPT_CONTROL_ROUTE, ATTEMPT_VIEW_ROUTE, AttemptControl, AttemptControls, AttemptLink,
+    AttemptView, AttemptViewAsk, TASK_ATTEMPTS_PATH, TaskAttempts,
+};
 pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
@@ -75,6 +81,9 @@ pub use runs::{
     RunsPage, Suite, TRIGGERS, fold, run_day, run_name,
 };
 pub use runs_rollup::{RUNS_DAY_SCHEMA, RUNS_ROLLUP, RunsDay};
+pub use schema_updates::{
+    SCHEMA_UPDATES_PATH, SCHEMA_UPDATES_SHOWN, SchemaUpdate, SchemaUpdates, UpdateState, UpdateTime,
+};
 pub use task_diff::{
     TASK_DIFF_FILE_PATH, TASK_DIFF_PATH, TaskDiff, TaskDiffFile, TaskDiffPatch, TaskDiffSource,
 };
@@ -408,6 +417,14 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
 /// The document's first folder under docs, shared by main and scoped branch proposals.
 /// Root-level documents belong to docs; categories are path names, not inferred card kinds.
 pub fn queue_category(path: &str) -> &str {
@@ -539,6 +556,11 @@ pub struct Task {
     /// and its [`WaitsOn`] says no reason is recorded (docs/TASKS.md, what a task waits on).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    /// Where a custom workflow holds it ([`workflow::TaskPlace`]): none for a task the board's own
+    /// writers keep, every task of a board with no custom workflow among them, and from a server
+    /// before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<workflow::TaskPlace>,
 }
 
 /// What an open task waits on, why, and since when: the one line the board's card ends in, read by
@@ -662,6 +684,10 @@ pub struct TaskPage {
     /// none since it started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gates: Option<GatesSeen>,
+    /// How many execution attempts the task has had ([`TASK_ATTEMPTS_PATH`] reads them), left out
+    /// at none: a page draws their history only for a task that has some.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub attempts: usize,
 }
 
 /// A chunk of a long brief: its blocks, the byte it ends at, the bytes still left and the
@@ -1157,6 +1183,9 @@ pub struct TaskFields {
     /// Present only when the status it was blocked from changes. Empty string clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    /// Present only when its place in a custom workflow changes; a place is never taken away.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<workflow::TaskPlace>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

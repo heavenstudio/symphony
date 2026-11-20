@@ -111,18 +111,24 @@ app in tests.
 
 `sweep.rs` and `sweep/` are the worktree sweep: what a finished worktree sets aside (`aside.rs`),
 the build output it clears (`build_output.rs`), what the main checkout keeps (`kept.rs`), a lock's
-holder (`holder.rs`), the detached sweeps work finishing starts (`trigger.rs`). The lsof scan is the
-leaf `crates/process-cwd/`. `on_review.rs` and `on_land.rs` start `[board] on_review` and
-`[board] on_land`; `cli/commands/finish.rs` is what follows a move. `land.rs` and `land/` are
+holder (`holder.rs`), the proof of a head a pull request squashed (`delivered.rs`), the detached
+sweeps work finishing starts (`trigger.rs`). The lsof scan is the leaf `crates/process-cwd/`.
+`on_review.rs` and `on_land.rs` start `[board] on_review` and `[board] on_land`;
+`cli/commands/finish.rs` is what follows a move. `land.rs` and `land/` are
 `tasks land`, the default landing ([TASKS](../../docs/TASKS.md#the-default-landing)): `needs.rs`
 what it requires, `check_paths.rs` which tests and checks a branch changes, `moving.rs` how it moves
 the main checkout, `regenerate.rs` the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)).
+`adapter.rs` is the land of a task a custom workflow holds, the adapter `default_land` on the
+workflow's external-effect boundary (`workflow/effect.rs` its vocabulary and decisions,
+`store/admission/effects.rs` its three writes, [WORKFLOW](../../docs/WORKFLOW.md#external-effects)).
 `delivery.rs` is a land delivered by a hosted pull request and `evidence.rs` the one reading of a
 task's evidence it and `tasks api` go by
 ([TASKS](../../docs/TASKS.md#a-land-delivered-by-a-pull-request)).
 `covering.rs` with `store/work/covered.rs` is a close covered by another landing
 ([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
-the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `red.rs` the red mark.
+the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `gates.rs` with
+`store/work/gates.rs` and `cli/commands/gate.rs` a task's gate decisions, which `land/needs.rs`
+reads ([TASKS](../../docs/TASKS.md#gate-decisions)), `red.rs` the red mark.
 
 ### Execution attempts
 
@@ -130,7 +136,9 @@ the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), 
 ([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md)): `coordinator.rs` admission, controls and
 the worker's step, `rules.rs` the transitions it decides on what a write read, `evidence.rs`
 collection, cleanup and eligibility, `record.rs` the row and its facts, `keys.rs` the ids and
-operation keys; `store/execution.rs` with its statements is their store.
+operation keys, `reader.rs` the reads that need no provider, `view.rs` the board scope
+(`board_scope`) and an attempt on the wire; `store/execution.rs` with its statements is their
+store.
 
 ### The rules of work
 
@@ -248,7 +256,7 @@ keeps running against a newer board for a while, and a change keeps what it read
 - a new meaning goes in a field older binaries ignore and keep, beside the old one, which keeps its
   meaning, with no schema change: an orchestrator's `seen`, `statuses` and PULL entries keep the
   whole-board meaning older dispatchers read, and what it hears and was told lives in `narrowing`,
-  `pull_withheld`, `pull_awaiting` and `pull_said`, written at both acknowledgement sites
+  `pull_withheld`, `pull_awaiting`, `pull_said` and `pull_idle`, written at both acknowledgement sites
   (`store/callback_state.rs`, `store/pull_account.rs`); `revision`, which every older write moves,
   is never read, and taking or releasing a `callback_lease` rewrites no `seen` or `statuses`;
 - with an older dispatcher interleaving, no entry an orchestrator hears is lost and no line is said
@@ -263,6 +271,14 @@ keeps running against a newer board for a while, and a change keeps what it read
   by moving its `seen` back by hand); and the Symphony, which opens its board to read, stays
   uncounted: it takes a new schema only by its reload after the move, so counting it would refuse
   every refresh's migrate (`store/writers.rs`; `tests/store/writers.rs`).
+- each schema's definitions are committed, one file per engine
+  (`tests/store/catalogue/ENGINE-VERSION.txt`, written with `TASKS_CATALOGUE=write`), and a
+  version in `schema::COMPATIBLE` keeps every table of the one before as that version's file has
+  it (`tests/store/catalogue.rs`). Only a store opened to read through the rule has the reader's
+  role (`Store::reader`, set in `store/opening.rs`), and only its ordinary write may take a board
+  one ahead whose `meta:schema` record lets it: a writer's, an unchecked store's, a copy's staging
+  and a recovery's rebind are held to their own schema (`store/transaction.rs`'s `Run`;
+  `tests/store/compatible_ahead.rs`, [CHECKS](../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)).
 
 ### Its contracts
 
@@ -320,7 +336,8 @@ but through `store/transaction.rs`, the store's one sender, `store/raw.rs`, whic
 own statements, and `store/database.rs`, which makes a board's database. A new statement goes
 there; a test that needs a row no command writes, or reads one, asks `Store::raw` by table, id and
 equal fields and writes no statement of its own, and one that must (the engine itself is its
-subject) is in the list `tests/store/raw_fence.rs` holds. A store test written once for both
+subject) is in the list `tests/raw_fence.rs` holds, a target of its own that `just lint-rs` runs, so
+a branch that touches any board target's tests meets it. A store test written once for both
 databases is `on_both!`'s (`tests/store/main.rs`), each run on the binary's own scratch server of
 each (`tests/store/common.rs`'s `Backend`).
 

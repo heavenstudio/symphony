@@ -25,6 +25,8 @@ symphony-args = { path = "../symphony-args" }
 # The private headless Chrome `synced` times the pages in, the shot's driver.
 symphony-chrome = { path = "../chrome-devtools" }
 symphony-env = { path = "../symphony-env" }
+# The leaf the board starts its children from: a lock no fork copies (`close_on_fork`).
+process-cwd = { path = "../process-cwd" }
 serde = { version = "1", features = ["derive"] }
 # The features the library's serde_json takes, which the release run's JSON is read and written
 # under (an object keeps its members in order; an integer keeps its value).

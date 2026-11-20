@@ -90,13 +90,22 @@ COMMAND's, so every descriptor (a jobserver's included), the signal mask and the
 signals the caller ignores reach it as they would without the recorder, and whatever
 ends that process, `SIGKILL` included, ends COMMAND; only `SIGPIPE` starts at its
 default, as a shell's command does. Before it does, it forks its recorder, detached in
-a session of its own with none of the caller's streams open, which watches that
+a session of its own with none of the caller's streams open and out of its folder,
+at the root, which watches that
 process through a kqueue (its exec, its exit and its status) and writes the record;
 COMMAND waits at most 1 s to hear that the recorder watches it, and runs unrecorded
 otherwise. Elsewhere `tasks run` runs COMMAND as its child and waits for it: a
 hang-up, interrupt, quit or terminate signal it receives, unless the caller ignores
 it, reaches COMMAND, and it ends by the signal that ended COMMAND; there a `SIGKILL`
 of `tasks run` leaves COMMAND running, and the signal mask is not passed on.
+
+That recorder outlives COMMAND for as long as the record takes to write, the board's
+answer included, and is never a process working in COMMAND's checkout: it writes nothing
+there, and names what it reads there by COMMAND's working directory, as it names a
+`TASKS_WORK` that is no whole path. So what asks which processes work in a checkout (the
+release run's look after each check, which stops a run on one
+([RELEASES](RELEASES.md)); the worktree sweep; a land) counts COMMAND and what it started,
+and no recorder, whatever the machine's load makes of the time it takes.
 
 It prints nothing of its own except for a command line it cannot read (status 2,
 with its usage) or a command that cannot start (127 or 126, as a shell says them).

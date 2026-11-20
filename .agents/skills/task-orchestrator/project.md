@@ -40,7 +40,10 @@ Read this page with the orchestrator skill, as the [root guide](../../../AGENTS.
   here would hold development back or slow it for no gain the task needs (a size or first-visit
   budget at its line once the cut was made first, a wait the work does not need), decide it
   without a card and without asking, and say on the task's thread which rule gave way, why, and
-  what was measured. A raised budget is still a commit of its own with its account, judged by the
-  task's reviewer. What stays the owner's word is unchanged: pointing `current` back, restarting
-  the shared server by hand, running a release by hand outside the cadence and the schema rule,
-  and turning publication or a project's delivery on.
+  what was measured. A quality gate that gives way is recorded with `just tasks gate`, where the
+  assessor, the reviewer and the land read it ([gate decisions](../../../docs/TASKS.md#gate-decisions)):
+  a raised budget or cap names its limit and number, and is still a commit of its own with its
+  account, judged by the task's reviewer; a waivable stamp is waived for one tip. What stays the
+  owner's word is unchanged: pointing `current` back, restarting the shared server by hand,
+  running a release by hand outside the cadence and the schema rule, and turning publication or a
+  project's delivery on.

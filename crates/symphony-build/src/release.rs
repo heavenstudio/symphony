@@ -5,7 +5,8 @@
 //! judged by checks this repository owns, never by a consuming project's suite. Every red check,
 //! and a run that stopped short of deciding, is a task on the board ([`board`]); when every check
 //! is green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it
-//! holds ([`notes`]) and pushes that one tag, then installs it on the machine ([`install`]),
+//! holds ([`notes`]) and pushes that one tag, asks for its GitHub Release where the project names a
+//! command for one ([`github`]), then installs it on the machine ([`install`]),
 //! moves each registered project's board to its schema under the writer rule and points `current`
 //! at it ([`refresh`]), writing no project's checkout. `--commit COMMIT` does the same out of
 //! cycle for a commit already on the remote's main and past the newest release. A run of main's
@@ -31,6 +32,7 @@
 //! ended without recording itself is recorded by the next ([`record::recover`]); everything it runs
 //! is bounded by the run's time and stops when the run is told to (HUP, INT or TERM, [`group`]).
 
+mod alone;
 mod board;
 pub(crate) mod cadence;
 mod candidate;
@@ -39,6 +41,7 @@ pub(crate) mod consumer;
 pub(crate) mod crates;
 mod failures;
 mod git;
+mod github;
 mod gone;
 mod group;
 mod inputs;
@@ -54,6 +57,7 @@ mod schedule;
 mod span;
 mod steps;
 mod tags;
+mod updates;
 #[cfg(test)]
 mod waits;
 
@@ -64,7 +68,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use checks::{Ran, Step, Within};
-use git::{commit, git, git_until, is_ancestor, short};
+use git::{commit, fetch_line, git, git_until, is_ancestor, short};
 use group::Bound;
 use place::{Place, normal};
 use record::{Checking, Run, Running, local};
@@ -89,7 +93,7 @@ fn refuse(err: &mut dyn Write, usage: &str, command: &str, problem: &str) -> i32
 const USAGE: &str = "usage: symphony-build release [-h] [--root ROOT] [--remote NAME] \
 [--branch NAME] [--worktree PATH] [--check NAME=COMMAND] [--commit COMMIT] [--no-push] \
 [--timeout SECONDS] [--status] [--schedule] [--at HH:MM] [--due [SLUG COMMIT]] [--refresh] \
-[--rerun] [--drop]";
+[--rerun] [--drop] [--github [NAME ...]]";
 const HELP: &str =
     "Symphony's releases: main's tip as fetched from the remote, verified in a clean \
 checkout outside the repository's folder, building and testing nothing of the projects this \
@@ -121,7 +125,8 @@ options:
                         86400)
   --status              print the newest release, the last run and its age, the release
                         candidate, the landings since the last release and what the next run
-                        waits for, the last publication on crates.io, the last refresh, and the
+                        waits for, the last publication on crates.io, the GitHub Releases
+                        asked for once one was, the last refresh, and the
                         release current names, the machine's server and what holds the switch;
                         run nothing
   --schedule            print the schedule entry that runs `just release` each day; install nothing
@@ -140,7 +145,10 @@ options:
                         check or step that was red, did not run or whose inputs changed; refused
                         while none is held or a red waits
   --drop                drop the release candidate, so the next run checks main's tip: an
-                        orchestrator's act";
+                        orchestrator's act
+  --github [NAME ...]   ask the command [releases] github names for the GitHub Release of each
+                        release named, or of every release tagged here, oldest first, checking
+                        and tagging nothing: one found there is not made again";
 
 /// The checks a run runs unless told others: the full verification.
 const VERIFY: (&str, &str) = ("verify", "just verify");
@@ -166,6 +174,11 @@ const REFRESH: Duration = Duration::from_secs(3600);
 /// The time a release's publication on crates.io has, past its push: cargo's build of each package
 /// it uploads, the upload and cargo's wait for crates.io's index to list it.
 const PUBLISH: Duration = Duration::from_secs(3600);
+/// The time a release's GitHub Release has, past its push, with each release an earlier run left
+/// pending: the adapter's few requests for each.
+const GITHUB: Duration = Duration::from_secs(15 * 60);
+/// The time `--github` has for every release it asks for.
+const GITHUB_BY_HAND: Duration = Duration::from_secs(3600);
 /// The tests' clock: the seconds since the epoch a run takes as now, in place of this machine's.
 /// No flag sets it, and a run on it pushes only to a remote that is a folder on this machine
 /// ([`far_push`]), so a release named for another day than the machine's never leaves it.
@@ -250,6 +263,7 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         flag("--refresh", false),
         flag("--rerun", false),
         flag("--drop", false),
+        flag("--github", false),
     ];
     if names_legacy_commit(args, &flags) {
         let _ = writeln!(err, "`{LEGACY_COMMIT} COMMIT` is now `--commit COMMIT`");
@@ -262,6 +276,8 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         }
         // The landing a `--due` comes after, as a landing's command names it.
         Ok(parsed) if parsed.flag("--due") && parsed.positionals.len() == 2 => parsed,
+        // The releases `--github` asks for.
+        Ok(parsed) if parsed.flag("--github") => parsed,
         Ok(parsed) if !parsed.positionals.is_empty() => {
             let extra = parsed.positionals.join(" ");
             return refuse(
@@ -311,6 +327,7 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         "--refresh",
         "--rerun",
         "--drop",
+        "--github",
     ]
     .into_iter()
     .filter(|mode| parsed.flag(mode))
@@ -320,7 +337,8 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             err,
             USAGE,
             "release",
-            "--status, --schedule, --commit, --due, --refresh, --rerun and --drop are one each",
+            "--status, --schedule, --commit, --due, --refresh, --rerun, --drop and --github are \
+             one each",
         );
     }
     let repo = match repo(Path::new(parsed.value("--root").unwrap_or("."))) {
@@ -366,6 +384,9 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     };
     if parsed.flag("--drop") {
         return drop_candidate(&repo, now, out, err);
+    }
+    if parsed.flag("--github") {
+        return github_by_hand(&repo, &parsed.positionals, now, out, err);
     }
     let mut cause = None;
     if parsed.flag("--due") {
@@ -560,11 +581,7 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
 fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<PathBuf>, String> {
     let until = Bound::until(Instant::now() + DRIVER_BUILD);
     let mut place = place::place(&repo.root, &repo.main, &repo.common, &options.worktree)?;
-    let tracking = format!("refs/remotes/{}/{}", options.remote, options.branch);
-    let refspec = format!("+refs/heads/{}:{tracking}", options.branch);
-    let fetch = ["fetch", "--quiet", "--no-tags", &options.remote, &refspec];
-    git_until(&repo.root, &fetch, until)?;
-    let tip = commit(&repo.root, &tracking)?;
+    let tip = fetch_line(&repo.root, &options.remote, &options.branch, until)?;
     place.checkout(&repo.root, &repo.common, &tip, until, options.now)?;
     let launcher = place.checkout.join("tools/rs-bin.sh");
     if !launcher.is_file() {
@@ -748,11 +765,13 @@ fn status(
         }
     }
     let _ = write!(out, "{}", record::publish_status(&runs, now));
+    let _ = write!(out, "{}", github::status(&folder, now));
     let _ = write!(out, "{}", record::refresh_status(&runs, now));
     // Whether the machine's server is the release `current` names, or what holds it on a
     // project's build ([`symphony::machine::switch`]).
     match symphony::machine::dir() {
         Ok(machine) => {
+            let _ = write!(out, "{}", updates::status(&machine, now));
             let _ = write!(out, "{}", symphony::machine::switch::standing(&machine));
         }
         Err(problem) => {
@@ -898,6 +917,56 @@ fn drop_candidate(repo: &Repo, now: f64, out: &mut dyn Write, err: &mut dyn Writ
     0
 }
 
+/// `--github [NAME…]`: the GitHub Release of each release named, or of every release tagged here,
+/// asked of the command `[releases] github` names ([`github`]), checking and tagging nothing. 0
+/// when each is published or there already, 1 when one is left pending or nothing can be asked.
+fn github_by_hand(
+    repo: &Repo,
+    names: &[String],
+    now: f64,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let refused = |err: &mut dyn Write, why: &str| {
+        let _ = writeln!(err, "symphony-build release: {why}");
+        1
+    };
+    let command = &repo.project.releases.github;
+    if command.is_empty() {
+        return refused(
+            err,
+            "[releases] github names no command in symphony.toml, so nothing publishes a GitHub \
+             Release (docs/RELEASES.md)",
+        );
+    }
+    let ordered = match ordered_releases(&repo.root) {
+        Ok(ordered) => ordered,
+        Err(problem) => return refused(err, &problem),
+    };
+    let tagged: Vec<String> = ordered.iter().map(|(release, _)| release.name()).collect();
+    if let Some(unknown) = names.iter().find(|name| !tagged.contains(name)) {
+        return refused(err, &format!("no release {unknown} is tagged here"));
+    }
+    if tagged.is_empty() {
+        return refused(err, "no release is tagged here");
+    }
+    let wanted = if names.is_empty() { &tagged } else { names };
+    let asking = github::Asking {
+        root: &repo.root,
+        main: &repo.main,
+        folder: &record::folder(&repo.common),
+        command,
+        by: "by hand",
+        now,
+        until: Bound::until(Instant::now() + GITHUB_BY_HAND),
+    };
+    let lines = asking.publish(wanted, &ordered);
+    for (_, line) in &lines {
+        let _ = writeln!(out, "release: GitHub: {line}");
+    }
+    i32::from(!lines.iter().all(|(published, _)| *published))
+}
+
 /// This repository's release tags, each with the commit it tags.
 fn local_releases(root: &Path) -> Result<Vec<(String, String)>, String> {
     let listed = git(
@@ -1014,6 +1083,9 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         check: None,
     };
     let _ = record::hold(&folder, &running);
+    // The machine's updates lock, after the run's own and held to its end: the machine's server
+    // tries no held update again while a run of any kind holds the release's lock.
+    let _updates = machine_lock(out);
     span::awake();
     // A run that ended without recording itself (killed, or the machine stopped) is recorded first,
     // so its logs stay with it and `--status` names it.
@@ -1083,6 +1155,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
     {
         let commit = record.commit.clone();
         record.published = Some(refreshing.publish(&record.id, &tag, &commit, out));
+        refreshing.github(&record.id, &tag, out);
     }
     if ran.is_ok()
         && !options.refresh
@@ -1257,10 +1330,7 @@ fn turn(
     *held = candidate::read(folder).map_err(Stop::Error)?;
     let (remote, branch) = (options.remote.as_str(), options.branch.as_str());
     if let Some(open) = held.as_mut().filter(|held| held.open()) {
-        let tracking = format!("refs/remotes/{remote}/{branch}");
-        let refspec = format!("+refs/heads/{branch}:{tracking}");
-        let fetch = ["fetch", "--quiet", "--no-tags", remote, &refspec];
-        git_until(&repo.root, &fetch, until).map_err(Stop::Error)?;
+        fetch_line(&repo.root, remote, branch, until).map_err(Stop::Error)?;
         note(out, &settle_held(repo, remote, branch, open, options.now));
         candidate::write(folder, open).map_err(Stop::Error)?;
     }
@@ -1357,6 +1427,46 @@ impl Refreshing<'_> {
             let _ = writeln!(out, "release: crates.io: {line}");
         }
         published
+    }
+
+    /// The GitHub Release of the release `tag`, and of each release an earlier ask left pending,
+    /// asked by the run `id` of the command `[releases] github` names ([`github`]), each line of
+    /// it said: nothing at all while the project names none, and nothing asked under `--no-push`.
+    /// It changes neither the run's result nor its exit.
+    fn github(&self, id: &str, tag: &str, out: &mut dyn Write) {
+        let command = &self.repo.project.releases.github;
+        if command.is_empty() {
+            return;
+        }
+        if !self.options.push {
+            let _ = writeln!(
+                out,
+                "release: GitHub: not published: --no-push publishes nothing"
+            );
+            return;
+        }
+        let ordered = match ordered_releases(&self.repo.root) {
+            Ok(ordered) => ordered,
+            Err(problem) => {
+                let _ = writeln!(out, "release: GitHub: not asked: {problem}");
+                return;
+            }
+        };
+        self.hold_for(GITHUB);
+        let mut wanted = github::Ledger::read(self.folder).pending();
+        wanted.push(tag.to_string());
+        let asking = github::Asking {
+            root: &self.repo.root,
+            main: &self.repo.main,
+            folder: self.folder,
+            command,
+            by: id,
+            now: self.options.now,
+            until: Bound::hearing(Instant::now() + GITHUB, self.heard),
+        };
+        for (_, line) in asking.publish(&wanted, &ordered) {
+            let _ = writeln!(out, "release: GitHub: {line}");
+        }
     }
 
     /// [`Refreshing::publish`]'s work: nothing while `[releases] publish` is off or under
@@ -1503,6 +1613,8 @@ impl Refreshing<'_> {
             .surreal()
             .to_path_buf();
         let against = refresh::Against {
+            run: id,
+            main: &self.repo.main,
             root: &self.repo.root,
             ours: &self.repo.common,
             machine,
@@ -1534,6 +1646,7 @@ fn refresh_only(
     record.tip.clone_from(commit);
     let _ = writeln!(out, "release: refresh to {tag} ({})", short(commit));
     record.published = Some(refreshing.publish(&record.id, &tag, commit, out));
+    refreshing.github(&record.id, &tag, out);
     let refreshed = refreshing.to(&record.id, &tag, commit, out);
     record.result = if refreshed.green() { "green" } else { "red" }.into();
     record.refreshed = Some(refreshed);
@@ -1558,6 +1671,42 @@ fn said(board: &record::Board, out: &mut dyn Write, err: &mut dyn Write) -> i32 
         }
         None => 0,
     }
+}
+
+/// The machine's updates lock (`symphony::machine::updates::LOCK`), taken once the run holds its
+/// own and has said so, and held until the run ends, so the machine's server never tries a held
+/// update again ([`symphony::machine::held`]) while a release run, an out-of-cycle release or a
+/// refresh runs: waited for while a retry under way holds it, every command of which has its
+/// bound. None when the machine folder cannot be named or is not there, which no refresh reaches
+/// either and where no server tries anything, or its lock cannot be taken, said to `out`.
+fn machine_lock(out: &mut dyn Write) -> Option<symphony::machine::updates::Lock> {
+    use symphony::machine::updates;
+    // No machine folder, no server there to try an update: nothing to wait for, and none is made.
+    let machine = symphony::machine::dir()
+        .ok()
+        .filter(|machine| machine.is_dir())?;
+    let taken = match updates::try_lock(&machine) {
+        Ok(Some(lock)) => Ok(lock),
+        Ok(None) => {
+            let _ = writeln!(
+                out,
+                "release: the machine's server is trying a held update again under {}: this run \
+                 waits for it",
+                machine.join(updates::LOCK).display()
+            );
+            updates::lock(&machine)
+        }
+        Err(why) => Err(why),
+    };
+    taken
+        .map_err(|why| {
+            let _ = writeln!(
+                out,
+                "release: the machine's updates lock could not be taken, and this run goes on \
+                 without it: {why}"
+            );
+        })
+        .ok()
 }
 
 /// A run refused because another process holds the lock: its exit code. Only a run holds it, and
@@ -1837,21 +1986,8 @@ fn night(
     let mut place =
         place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(placed)?;
     let remote = options.remote.as_str();
-    let tracking = format!("refs/remotes/{remote}/{}", options.branch);
-    git_until(
-        &repo.root,
-        &[
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            remote,
-            &format!("+refs/heads/{}:{tracking}", options.branch),
-        ],
-        until,
-    )
-    .map_err(Stop::Error)?;
+    let tip = fetch_line(&repo.root, remote, &options.branch, until).map_err(Stop::Error)?;
     let main_line = format!("{remote}/{}", options.branch);
-    let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
     let delivered = receipts::Receipts::read(&repo.root);
     let mut candidate = match (&options.out_of_cycle, held) {
         (_, Some(held)) => {
@@ -2044,7 +2180,25 @@ fn night(
         };
         tell_check(&ran, out);
         stopped_in(&ran)?;
-        let looked = look(&place, &candidate, until, &after(&ran), true);
+        let mut looked = look(&place, &candidate, until, &after(&ran), true);
+        // Its tests' failures, each rerun alone in the checkout the look found as it was, which
+        // is looked at again once they ended ([`alone`]).
+        let mut ran = ran;
+        if looked.is_ok() && alone::rerun(&mut ran, &place.checkout, &logs, within, out) {
+            let mut reruns = (ran.steps.iter())
+                .filter_map(|step| step.alone.as_ref())
+                .flat_map(|alone| &alone.reruns);
+            looked = reruns.try_for_each(stopped_in).and_then(|()| {
+                let at = format!("after `{}` reran its failures alone", ran.name);
+                look(&place, &candidate, until, &at, true)
+            });
+            if looked.is_err() {
+                alone::void(
+                    &mut ran,
+                    "the run stopped after its reruns, before they could be looked at",
+                );
+            }
+        }
         keep(record, &logs, ran, looked)?;
     }
     if let Some(held) = held {
@@ -2124,6 +2278,7 @@ fn night(
         &checked,
         &publishes,
         &held_notes,
+        &alone::notes(&record.checks, &board::passed_alone_slug(&record.id)),
         &taking,
         &changes,
     );
@@ -2336,20 +2491,7 @@ fn moved_on(
     candidate: &str,
     until: Bound<'_>,
 ) -> Result<Option<String>, Stop> {
-    let tracking = format!("refs/remotes/{remote}/{branch}");
-    git_until(
-        &repo.root,
-        &[
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            remote,
-            &format!("+refs/heads/{branch}:{tracking}"),
-        ],
-        until,
-    )
-    .map_err(Stop::Error)?;
-    let tip = commit(&repo.root, &tracking).map_err(Stop::Error)?;
+    let tip = fetch_line(&repo.root, remote, branch, until).map_err(Stop::Error)?;
     let on = tip != candidate && is_ancestor(&repo.root, candidate, &tip).map_err(Stop::Error)?;
     Ok(on.then_some(tip))
 }
@@ -2898,6 +3040,7 @@ mod tests {
             timed_out: false,
             interrupted: false,
             load: None,
+            alone: None,
         }
     }
 

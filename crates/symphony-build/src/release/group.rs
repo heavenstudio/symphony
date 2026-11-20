@@ -91,9 +91,18 @@ pub(crate) fn stamp(pid: i64) -> Option<Stamp> {
     }
 }
 
-/// Whether the process group `group`, whose leader started at `start`, still has a process: its
-/// leader, or what that left running when it ended. A group of that id whose living leader started
-/// at another time is another group; one whose start cannot be told counts as that group.
+/// Whether the process group `group`, whose leader started at `start`, still runs: a member that
+/// is neither exiting nor a zombie, its leader or what that left running when it ended. A group of
+/// that id whose living leader started at another time is another group; one whose start cannot be
+/// told counts as that group.
+///
+/// It is asked of the group of a check this user's release run started, unattended, every member
+/// of which is this user's (a set-user-id program keeps the real user), so this user's signal
+/// reaches each of them while it runs. A signal that reaches no member (EPERM) says what ESRCH
+/// does, that none of the check runs: it is Darwin's answer once each member is exiting or a
+/// zombie, and otherwise one of a later group of another user's, which is not the check's either.
+/// Linux's signal still reaches a zombie, so a member must also be one the census reads live
+/// ([`members`]); a census that cannot be read leaves the group running.
 pub(crate) fn lives(group: i64, start: Option<&Stamp>) -> bool {
     let Ok(id) = libc::pid_t::try_from(group) else {
         return false;
@@ -101,9 +110,20 @@ pub(crate) fn lives(group: i64, start: Option<&Stamp>) -> bool {
     if id <= 1 {
         return false;
     }
-    // SAFETY: signal 0 sends nothing: killpg only says whether the group has a process.
+    // SAFETY: signal 0 sends nothing: killpg only says whether the group has a process this user
+    // may signal.
     let asked = unsafe { libc::killpg(id, 0) };
-    if asked != 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+    if asked != 0
+        && matches!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH | libc::EPERM)
+        )
+    {
+        return false;
+    }
+    let runs =
+        members(id.cast_unsigned()).map_or(true, |found| found.iter().any(|member| member.live));
+    if !runs {
         return false;
     }
     match (start, stamp(group)) {
@@ -194,17 +214,22 @@ fn owned_signal(pid: u32, how: libc::c_int) -> io::Result<()> {
         if unsafe { libc::killpg(group_of(pid), how) } == 0 {
             return Ok(());
         }
-        let error = io::Error::last_os_error();
-        // Darwin reports EPERM for a group containing only zombies. A census below must still
-        // establish that no live member remains; EPERM alone never means successful cleanup.
-        if error.raw_os_error() == Some(libc::ESRCH)
-            || (error.raw_os_error() == Some(libc::EPERM) && !running(pid)?)
-        {
-            Ok(())
-        } else {
-            Err(error)
-        }
+        unreached(io::Error::last_os_error())
     })
+}
+
+/// A group signal that reached no member, which leaves the group to the census that follows
+/// every signal ([`drain`]): ESRCH, no process left in it, and EPERM, Darwin's answer once each
+/// member is a zombie or exiting. An exiting member is counted out of the signal as its exit
+/// begins, some milliseconds before its status reads as a zombie (longer on a loaded machine), so
+/// in between the census still reads it live: the drain looks again, and fails at its deadline
+/// on a member that stays live, as one the signal may not reach would. Neither answer ever means
+/// the cleanup succeeded. Every other refusal stands.
+fn unreached(error: io::Error) -> io::Result<()> {
+    match error.raw_os_error() {
+        Some(libc::ESRCH | libc::EPERM) => Ok(()),
+        _ => Err(error),
+    }
 }
 
 fn retry_interrupted<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
@@ -555,7 +580,9 @@ const WORKING_THERE: &str = "working there";
 const WORKING_IN: &str = "working in ";
 
 /// How long what a look finds in a folder has to leave it before it counts: what a check's killed
-/// group still runs, or the board's recorder writing down how the check ended, leaves within it.
+/// group still runs leaves within it. The board's recorder of a check is never among what a look
+/// finds, however long it takes to write down how the check ended: it works at the root, out of
+/// the checkout, and holds no file of it open (docs/MACHINE_WORK.md).
 pub(crate) const SETTLE: Duration = Duration::from_secs(5);
 /// How long a look waits before it lists again what it found.
 const AGAIN: Duration = Duration::from_secs(1);
@@ -764,6 +791,40 @@ mod tests {
         assert_eq!(error.to_string(), "census refused");
         // Even at its deadline a completed drain succeeds, without a timer assertion.
         drain(&mut kill, &mut || Ok(false), Duration::ZERO, &mut clock).unwrap();
+    }
+
+    #[test]
+    fn a_signal_that_reached_no_member_leaves_the_group_to_the_census() {
+        let refused = |code| unreached(io::Error::from_raw_os_error(code));
+        refused(libc::ESRCH).unwrap();
+        // Darwin's answer while the only members left are exiting, which the census reads live.
+        refused(libc::EPERM).unwrap();
+        for stands in [libc::EINVAL, libc::EINTR] {
+            assert_eq!(refused(stands).unwrap_err().raw_os_error(), Some(stands));
+        }
+        // The census decides: a member that leaves is drained, one that stays live is an error
+        // at the deadline, never a successful cleanup.
+        let looks = std::cell::Cell::new(0);
+        let mut clock = Paused::default();
+        drain(
+            &mut || refused(libc::EPERM),
+            &mut || {
+                looks.set(looks.get() + 1);
+                Ok(looks.get() < 3)
+            },
+            GRACE,
+            &mut clock,
+        )
+        .unwrap();
+        assert_eq!((looks.get(), clock.elapsed()), (3, POLL * 2));
+        let error = drain(
+            &mut || refused(libc::EPERM),
+            &mut || Ok(true),
+            GRACE,
+            &mut clock,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     }
 
     #[test]
@@ -1508,6 +1569,57 @@ mod tests {
         for nothing in [0, 1, -5, i64::MAX] {
             assert!(!lives(nothing, None), "{nothing}");
         }
+    }
+
+    /// Our child `pid`'s exit, waited for and left unreaped: a zombie, its id still its group's.
+    fn exited(pid: u32) -> libc::c_int {
+        // SAFETY: siginfo_t is plain output data for which all zeroes is valid.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        retry_interrupted(|| {
+            // SAFETY: waits for our unreaped child alone, writing one siginfo_t and reaping none.
+            let waited = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    libc::id_t::from(pid),
+                    &raw mut info,
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            };
+            if waited == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        })
+        .unwrap();
+        info.si_code
+    }
+
+    #[test]
+    fn a_group_whose_every_member_is_exiting_or_a_zombie_does_not_live() {
+        let mut child = Owned(
+            command("sleep")
+                .arg("1000")
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        let pid = child.0.id();
+        let group = i64::from(pid);
+        let start = stamp(group);
+        assert!(start.is_some(), "a running process's start is read");
+        assert!(lives(group, start.as_ref()));
+        signal(group_of(pid), libc::SIGKILL);
+        assert_eq!(exited(pid), libc::CLD_KILLED);
+        // Darwin's killpg reaches no member of it, Linux's still reaches its zombie: either way
+        // nothing of it runs, whatever start was recorded for it.
+        assert!(
+            !lives(group, start.as_ref()),
+            "its killed leader, left unreaped, runs nothing"
+        );
+        assert!(!lives(group, None), "nor when its start is unknown");
+        child.0.wait().unwrap();
+        assert!(!lives(group, start.as_ref()), "nor once it is reaped");
     }
 
     #[test]

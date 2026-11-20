@@ -1023,7 +1023,8 @@ async fn front_names_the_projects_and_answers_loopback_alone() {
 }
 
 /// The project list as data: every project, the starter's with its hub's counts, its first card,
-/// its feed's version and its task asks, and one with no hub yet with none of them.
+/// its feed's version, its task asks and that this server writes the board it read, and one with no
+/// hub yet with none of them.
 #[tokio::test]
 async fn the_project_list_names_each_project_with_its_counts_first_card_and_task_asks() {
     use crate::testing::board::{Fixture, Seed};
@@ -1081,6 +1082,11 @@ async fn the_project_list_names_each_project_with_its_counts_first_card_and_task
     assert_eq!(asks.questions["owner"], 1);
     assert!(asks.verdicts.is_empty());
     assert_eq!((&alpha.refused, &alpha.unwell), (&None, &None));
+    assert_eq!(
+        alpha.writes,
+        Some(true),
+        "a board read at this build's schema"
+    );
     // Beta's hub is not made yet: named, with nothing of its board.
     let beta = &list.projects[1];
     assert_eq!(
@@ -1089,9 +1095,10 @@ async fn the_project_list_names_each_project_with_its_counts_first_card_and_task
             beta.waiting,
             &beta.next,
             &beta.asks,
-            &beta.refused
+            &beta.refused,
+            beta.writes
         ),
-        (None, None, &None, &None, &None)
+        (None, None, &None, &None, &None, None)
     );
     // Asked again, the same server answers the same id.
     assert_eq!(
@@ -1334,8 +1341,8 @@ async fn the_project_list_says_why_a_project_is_refused_and_nothing_else_of_it()
         "{beta:?}"
     );
     assert_eq!(
-        (beta.version, &beta.asks, &beta.unwell),
-        (None, &None, &None)
+        (beta.version, &beta.asks, &beta.unwell, beta.writes),
+        (None, &None, &None, None)
     );
 }
 

@@ -5,7 +5,7 @@
 
 use super::coordinator::{to_value, written};
 use super::keys;
-use super::record::{Artifact, Cleanup, Collection, Dispatch, Ending, Fact, Row};
+use super::record::{Artifact, Cleanup, Collection, Dispatch, Ending, Fact, Row, State};
 use super::rules::Applied;
 use super::{Act, Attempt, Cancellation, Collected, Coordinator, Eligibility, Grant, Refusal};
 use crate::store::execution::{Decision, Write};
@@ -191,7 +191,8 @@ impl Coordinator<'_> {
     }
 
     /// Attempt `id`'s cleanup begun, once it has ended and its collection has: the key the
-    /// project's hook cleans under, the same while that cleanup is under way.
+    /// project's hook cleans under, the same while that cleanup is under way. A resource handed
+    /// to a resume is refused while that resume holds it or may still take it.
     pub fn begin_cleanup(&self, grant: &Grant, id: &str) -> Result<String, Refusal> {
         let row = self.row(id)?;
         grant.allows(&self.profile().scope, Some(&row.task), Act::Cleanup)?;
@@ -210,6 +211,14 @@ impl Coordinator<'_> {
                 (Cleanup::Complete, _) => return refuse("its resource is cleaned up already"),
                 _ => {}
             }
+            if let Some(resume) = &state.resource_handed_to
+                && self.resume_holds(resume, state)?
+            {
+                return refuse(&format!(
+                    "its resource was handed to attempt {resume}, a resume that reuses it: its \
+                     cleanup is that attempt's"
+                ));
+            }
             let identity = &row.identity;
             let number = state.cleanups + 1;
             let key = keys::cleanup(
@@ -223,6 +232,8 @@ impl Coordinator<'_> {
             applied.state.cleanup = Cleanup::Running;
             applied.state.cleanup_key = Some(key.clone());
             applied.state.cleanups = number;
+            // A resume handed the resource ended without taking it: it is this attempt's again.
+            applied.state.resource_handed_to = None;
             applied.facts.push(Fact::Cleanup {
                 key: key.clone(),
                 cleanup: Cleanup::Running,
@@ -232,6 +243,18 @@ impl Coordinator<'_> {
             Ok(Decision::write(written(&applied, None, false), Ok(key)))
         })?;
         answer
+    }
+
+    /// Whether attempt `resume`, which `state`'s resource was handed to, holds that resource or
+    /// may still take it: it bound it, or it is live. Once it ended without it, it never will, so
+    /// a read of it unfenced can only answer yes too early, never no.
+    fn resume_holds(&self, resume: &str, state: &State) -> Result<bool, crate::Error> {
+        let Some(value) = self.store().execution_attempt(resume)? else {
+            return Ok(true);
+        };
+        let after = Row::of(&value)?;
+        let id = |state: &State| state.resource.as_ref().map(|binding| binding.id.clone());
+        Ok(after.state.live() || (id(&after.state).is_some() && id(&after.state) == id(state)))
     }
 
     /// Attempt `id`'s cleanup under `key` ended as `cleanup` (complete, failed or unknown), with
@@ -293,7 +316,7 @@ impl Coordinator<'_> {
             .execution_artifacts(id)?
             .into_iter()
             .map(|value| {
-                serde_json::from_value(value["artifact"].clone()).map_err(|e| {
+                super::objects::read(&value["artifact"]).map_err(|e| {
                     Refusal::Board(crate::Error::Db(format!(
                         "an execution artifact not in the board's shape: {e}"
                     )))

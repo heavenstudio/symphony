@@ -24,11 +24,12 @@
 //! one kind the board takes a red mark from, which it registers for the run and leaves; a run
 //! with nothing to file, update or close writes nothing.
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::checks::{Ran, tail};
 use super::git::short;
 use super::record::{Board, Held};
+use symphony::machine::updates::TaskBoard;
 use symphony::taskcli::CliBoard;
 
 /// The series a release run's reds are filed in: [`symphony_board::red::SERIES`]'s release one.
@@ -62,37 +63,26 @@ pub(crate) trait Reds {
     fn status(&self, slug: &str) -> Result<Option<String>, String>;
     /// A red task `slug`, filed by `by` at p0 and marked red.
     fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String>;
+    /// A task `slug` of no red, filed by `by` at p1: the tests a run's failures passed alone.
+    fn file(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String>;
     fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String>;
     /// Close `slug` with `why` on its thread.
     fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String>;
 }
 
+/// The board an update's ledger tells ([`TaskBoard`]), as `CliBoard` answers it: the library's
+/// calls, which a run's reds make alike.
 impl Reds for CliBoard {
     fn register(&self) -> Result<String, String> {
-        let session = self
-            .call(
-                "register",
-                &json!({"kind": symphony_board::red::FILER, "model": "release"}),
-            )
-            .map_err(|e| e.0)?;
-        session["handle"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| format!("the board registered no handle: {session}"))
+        <CliBoard as TaskBoard>::register(self)
     }
 
     fn leave(&self, handle: &str) -> Result<(), String> {
-        self.call("leave", &json!({"handle": handle}))
-            .map(|_| ())
-            .map_err(|e| e.0)
+        <CliBoard as TaskBoard>::leave(self, handle)
     }
 
     fn status(&self, slug: &str) -> Result<Option<String>, String> {
-        match self.call("get", &json!({"slug": slug})) {
-            Ok(task) => Ok(task["status"].as_str().map(str::to_string)),
-            Err(refused) if refused.0.starts_with("no task ") => Ok(None),
-            Err(error) => Err(error.0),
-        }
+        <CliBoard as TaskBoard>::status(self, slug)
     }
 
     fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String> {
@@ -108,26 +98,49 @@ impl Reds for CliBoard {
         self.call("create", &task).map(|_| ()).map_err(|e| e.0)
     }
 
-    fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String> {
-        self.call("say", &json!({"slug": slug, "sender": by, "text": text}))
-            .map(|_| ())
-            .map_err(|e| e.0)
+    fn file(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String> {
+        let task = json!({
+            "slug": slug,
+            "title": title,
+            "body": body,
+            "by": by,
+            "priority": 1,
+            "links": [LINK],
+        });
+        self.call("create", &task).map(|_| ()).map_err(|e| e.0)
     }
 
-    /// The filer takes the reviewer role first: work started, or held by an executor, is moved
-    /// only by a session holding a role on it, and a task has one orchestrator.
+    fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String> {
+        <CliBoard as TaskBoard>::say(self, slug, by, text)
+    }
+
     fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String> {
-        let _ = self.call(
-            "take_role",
-            &json!({"slug": slug, "handle": by, "role": "reviewer"}),
-        );
-        self.say(slug, by, why)?;
-        self.call(
-            "move",
-            &json!({"slug": slug, "status": "cancelled", "handle": by}),
-        )
-        .map(|_: Value| ())
-        .map_err(|e| e.0)
+        <CliBoard as TaskBoard>::close(self, slug, by, why)
+    }
+}
+
+/// A run's board as an update's ledger tells it: the calls of [`TaskBoard`] its [`Reds`] make.
+pub(crate) struct Told<'a>(pub(crate) &'a dyn Reds);
+
+impl TaskBoard for Told<'_> {
+    fn register(&self) -> Result<String, String> {
+        self.0.register()
+    }
+
+    fn leave(&self, handle: &str) -> Result<(), String> {
+        self.0.leave(handle)
+    }
+
+    fn status(&self, slug: &str) -> Result<Option<String>, String> {
+        self.0.status(slug)
+    }
+
+    fn say(&self, slug: &str, by: &str, text: &str) -> Result<(), String> {
+        self.0.say(slug, by, text)
+    }
+
+    fn close(&self, slug: &str, by: &str, why: &str) -> Result<(), String> {
+        self.0.close(slug, by, why)
     }
 }
 
@@ -190,7 +203,7 @@ fn closed(status: &str) -> bool {
 /// [`LEGACY_SERIES`], so it is updated and closed as it would have been, never left open beside a
 /// new one; else the first of its generations in [`SERIES`] that is open (true) or not on the board
 /// (false), a closed one passed over.
-fn generation(board: &dyn Reds, key: &str) -> Result<(String, bool), String> {
+pub(crate) fn generation(board: &dyn Reds, key: &str) -> Result<(String, bool), String> {
     let (old, open) = first(board, LEGACY_SERIES, key)?;
     if open {
         return Ok((old, true));
@@ -297,11 +310,12 @@ fn between(night: &Night<'_>) -> String {
 /// executor clears, say.
 const FIRST: &str = "It blocks every release, so it is staffed before anything else and fixed as \
 a bug fix is (RULES.md `workflow/fast-bugfixes`): one agent, the smallest checks that cover the \
-repair, and the code fixed, never a test or check loosened; a test red on the machine's load (it \
-passes alone, or fails on a wall-clock bound, a sleep-ordered step or a timeout under load) is \
-discarded in this fix instead, as RULES.md `tests/no-test-fails-on-load` says, with one line on \
-this thread naming it, the evidence it is load and what it proved. It is red work, which takes no \
-orchestrator slot.";
+repair, and the code fixed, never a test or check loosened. A test the run reran alone that passed \
+is no red, and has a task of its own; a test red here failed alone too, or was not rerun. One red \
+on the machine's load all the same (it fails on a wall-clock bound, a sleep-ordered step or a \
+timeout under load) is discarded in this fix instead, as RULES.md `tests/no-test-fails-on-load` \
+says, with one line on this thread naming it, the evidence it is load and what it proved. It is \
+red work, which takes no orchestrator slot.";
 /// What a red's fix needs to land, as its assessor reads it at review ([`symphony_board::stamps`]):
 /// the catalogue's worked example for a red, said in full.
 const LANDS: &str = "What its fix needs to land is read at review by an assessor, before any \
@@ -312,8 +326,9 @@ reviewer's approve as well, which its orchestrator staffs, and the fix says on t
 code was not the thing to fix.";
 /// What a stop the owner clears says of its landing: nothing lands for it.
 const NOTHING_LANDS: &str = "Nothing lands for it: what clears it is a process ended, not a fix.";
-/// How many of the commands that rerun a failure alone a red task lists at most.
-const RERUNS_LISTED: usize = 12;
+/// How many of the commands that rerun a failure alone a red task lists at most: as many as the
+/// run reruns itself ([`super::alone::MOST`]).
+const RERUNS_LISTED: usize = super::alone::MOST;
 
 /// How a red task says the load when its check ended, and beside it how long the machine slept
 /// under its run, when it did: a failure across a sleep is not one of load.
@@ -540,6 +555,7 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
          {tail}\n\n\
          {environment}\
          {alone}\n\n\
+         {reran}\
          {since}\n\n\
          {held}\
          Who fixes: any free executor takes this from the board. {FIRST} {LANDS}\n\n\
@@ -567,6 +583,7 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
         tail = quoted(ran),
         environment = environment(ran),
         alone = alone(ran, night),
+        reran = reran(ran),
         since = since(night),
         key = key(&ran.name),
     )
@@ -584,7 +601,7 @@ fn again(ran: &Ran, night: &Night<'_>) -> String {
         )
     });
     format!(
-        "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}{}\n\n{}{held}",
+        "Still red on {} (run {}, {}): {}. Log: {}\n{}\n\n{}{}\n\n{}{}{held}",
         short(night.commit),
         night.id,
         night.when,
@@ -593,8 +610,118 @@ fn again(ran: &Ran, night: &Night<'_>) -> String {
         load(ran, night),
         environment(ran),
         alone(ran, night),
+        reran(ran),
         quoted(ran)
     )
+}
+
+/// What a red task says of its failures the run reran alone ([`super::alone`]), a paragraph of its
+/// own: each rerun's result, with its time, load and log, or why none was rerun; nothing for a
+/// check whose failures the run does not rerun.
+fn reran(ran: &Ran) -> String {
+    let Some(alone) = &ran.alone else {
+        return String::new();
+    };
+    if alone.reruns.is_empty() {
+        let why = alone.why_not.as_deref().unwrap_or("it named none");
+        return format!("The run reran none of its failures alone: {why}.\n\n");
+    }
+    let mut text = format!(
+        "The run reran each failure alone, one at a time, in this checkout and over the build that \
+         failed (`{} --alone`); each failed in the run under the load above, and alone:\n",
+        super::alone::RUNNER
+    );
+    for rerun in &alone.reruns {
+        let twice = if super::alone::failed_again(rerun) {
+            ": it failed twice"
+        } else {
+            ""
+        };
+        text.push_str(&format!(
+            "- `{}`: {} ({}, {:.0} s; {}){twice}. Log: {}\n",
+            rerun.name,
+            super::alone::said_of(rerun),
+            rerun.ended(),
+            rerun.seconds,
+            super::alone::load_of(rerun),
+            rerun.log.display()
+        ));
+    }
+    if let Some(why) = &alone.why_not {
+        text.push_str(&format!("Those reruns judge nothing: {why}.\n"));
+    }
+    text.push('\n');
+    text
+}
+
+/// The series of the tasks a run files for the tests that failed in it and passed alone: one task
+/// a run, never a red, and never in [`SERIES`].
+pub(crate) const PASSED_ALONE: &str = "tests/passed-alone-";
+
+/// The task the run `id` files for its tests that passed alone.
+pub(crate) fn passed_alone_slug(id: &str) -> String {
+    format!("{PASSED_ALONE}{}", key(id))
+}
+
+/// The task a run files for every test that failed in it and passed when the run reran it alone,
+/// whatever else it found: its slug, title and body; none when no such test. Reruns that judge
+/// nothing ([`super::alone::Alone::why_not`]) name none.
+fn passed_alone(night: &Night<'_>, checks: &[Ran]) -> Option<(String, String, String)> {
+    let load = super::alone::load_of;
+    let lines: Vec<String> = (super::alone::passed_in(checks).into_iter())
+        .map(|(step, rerun)| {
+            format!(
+                "- `{}`, in `{}`: failed in the run ({}, {}; log {}); passed alone ({}, {:.0} s, \
+                 {}; log {}).",
+                rerun.name,
+                step.name,
+                super::alone::failed(step),
+                load(step),
+                step.log.display(),
+                rerun.ended(),
+                rerun.seconds,
+                load(rerun),
+                rerun.log.display()
+            )
+        })
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let slug = passed_alone_slug(night.id);
+    let title = format!(
+        "Passed alone: {} test{} failed in release run {} and passed rerun alone",
+        lines.len(),
+        if lines.len() == 1 { "" } else { "s" },
+        night.id
+    );
+    let body = format!(
+        "The Symphony release run {id} ({when}), on {on} at {commit}, failed these tests in company, \
+         and each passed when the run reran it alone, one at a time, in the same checkout and over \
+         the same build (RULES.md `tests/rerun-the-failure-alone`). So none of them is a red of the \
+         release (docs/RELEASES.md, \"The release run\", step 5), and the release was judged \
+         without them; this task is for them, all of this run's in one.\n\n\
+         {lines}\n\n\
+         Find why each failed in company and passed alone: an order or a resource it shares with \
+         another test, the machine's load (a wall-clock bound, a sleep-ordered step or a timeout), \
+         or the runner. Then fix the code or the runner, rewrite the test on a condition, a count, \
+         CPU time or an injected clock (docs/CHECKS.md, \"Time in tests\"), or discard it with one \
+         line on this thread naming the test, the evidence and what it proved (RULES.md \
+         `tests/no-test-fails-on-load`). Never a timeout, a budget or a tolerance widened, a retry \
+         added or a test ignored to pass. It holds no release: it is p1 work, not red, staffed as \
+         any task.\n\n\
+         run: {id}",
+        id = night.id,
+        when = night.when,
+        on = if night.rerun {
+            "the release candidate"
+        } else {
+            "main"
+        },
+        commit = short(night.commit),
+        lines = lines.join("\n"),
+    );
+    Some((slug, title, body))
 }
 
 /// Whether the step `name` is one of a release's refresh ([`super::refresh::STEP`]: its install
@@ -732,6 +859,12 @@ enum Act {
     },
     /// Close the open red `slug`, saying why.
     Close { slug: String, why: String },
+    /// File the task `slug` of the tests that passed alone ([`passed_alone`]): no red.
+    Alone {
+        slug: String,
+        title: String,
+        body: String,
+    },
 }
 
 /// The red check or step an act files or tells: its key and name.
@@ -772,7 +905,7 @@ fn as_red(act: Result<Option<Act>, String>, ran: &Ran) -> Result<Option<Act>, St
                 text,
                 of: of(),
             },
-            close @ Act::Close { .. } => close,
+            other @ (Act::Close { .. } | Act::Alone { .. }) => other,
         })
     })
 }
@@ -943,6 +1076,9 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
         });
         found.push(act(board, night, RUN, stopped, "the run got through"));
     }
+    if let Some((slug, title, body)) = passed_alone(night, checks) {
+        found.push(Ok(Some(Act::Alone { slug, title, body })));
+    }
     let mut errors = Vec::new();
     let mut acts = Vec::new();
     for found in found {
@@ -974,6 +1110,9 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
                 done.updated.push(slug.clone());
                 done.reds.extend(of.as_ref().map(|of| of.on(slug)));
             }),
+            Act::Alone { slug, title, body } => board
+                .file(slug, title, body, &handle)
+                .map(|()| done.filed.push(slug.clone())),
             Act::File { slug, red, of } => {
                 let wrote = match board.create(slug, &red.title, &red.body, &handle) {
                     Ok(()) => {
@@ -995,7 +1134,10 @@ pub(crate) fn report(board: &dyn Reds, night: &Night<'_>, checks: &[Ran]) -> Boa
             }
         };
         if let Err(error) = wrote {
-            let (Act::Close { slug, .. } | Act::Say { slug, .. } | Act::File { slug, .. }) = &act;
+            let (Act::Close { slug, .. }
+            | Act::Say { slug, .. }
+            | Act::File { slug, .. }
+            | Act::Alone { slug, .. }) = &act;
             errors.push(format!("{slug}: {error}"));
         }
     }
@@ -1078,6 +1220,17 @@ mod tests {
                 .map(|(status, _)| status.clone()))
         }
 
+        /// A task of no red: its first post says so, before its title and body.
+        fn file(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String> {
+            assert_eq!(by, "filer-1");
+            self.refused("file")?;
+            self.tasks.borrow_mut().insert(
+                slug.into(),
+                ("ready".into(), vec![format!("p1, no red: {title}\n{body}")]),
+            );
+            Ok(())
+        }
+
         fn create(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String> {
             assert_eq!(by, "filer-1");
             if self.raced == Some(slug) {
@@ -1122,6 +1275,7 @@ mod tests {
             timed_out: false,
             interrupted: false,
             load: None,
+            alone: None,
         }
     }
 
@@ -2001,12 +2155,13 @@ mod tests {
              - `just test-rs -p symphony --test nightly`\n\n"
                 .into(),
             format!("Who fixes: any free executor takes this from the board. {FIRST} {LANDS}"),
-            // A test red on load is discarded, not fixed.
-            "the code fixed, never a test or check loosened; a test red on the machine's load (it \
-             passes alone, or fails on a wall-clock bound, a sleep-ordered step or a timeout under \
-             load) is discarded in this fix instead, as RULES.md `tests/no-test-fails-on-load` \
-             says, with one line on this thread naming it, the evidence it is load and what it \
-             proved."
+            // A test that passed alone is no red; one red on load all the same is discarded.
+            "the code fixed, never a test or check loosened. A test the run reran alone that \
+             passed is no red, and has a task of its own; a test red here failed alone too, or was \
+             not rerun. One red on the machine's load all the same (it fails on a wall-clock \
+             bound, a sleep-ordered step or a timeout under load) is discarded in this fix \
+             instead, as RULES.md `tests/no-test-fails-on-load` says, with one line on this \
+             thread naming it, the evidence it is load and what it proved."
                 .into(),
         ] {
             assert!(filed.contains(&said), "{said:?} in:\n{filed}");
@@ -2587,6 +2742,202 @@ mod tests {
                 && filed.contains("No project's checkout is written.")
                 && !filed.contains("branch"),
             "{filed}"
+        );
+    }
+
+    /// The tests step `verify/tests` red, its failures rerun alone, each `(ARGS, CODE)`, or none
+    /// rerun for `why_not`.
+    fn tests_reran(reruns: &[(&str, i32)], why_not: Option<&str>) -> Ran {
+        let load = Some(super::super::checks::Load {
+            averages: [31.92, 70.68, 171.07],
+            processors: 16,
+        });
+        let reruns = (reruns.iter())
+            .enumerate()
+            .map(|(n, (args, code))| Ran {
+                seconds: 3.0,
+                log: PathBuf::from(format!("/logs/verify-tests.alone/{}.log", n + 1)),
+                load: load.clone(),
+                ..ran(args, *code)
+            })
+            .collect();
+        Ran {
+            command: "tools/test-lanes.sh".into(),
+            log: PathBuf::from("/logs/verify.steps/tests.log"),
+            load,
+            alone: Some(super::super::alone::Alone {
+                reruns,
+                why_not: why_not.map(str::to_string),
+            }),
+            ..ran("verify/tests", 100)
+        }
+    }
+
+    #[test]
+    fn a_step_whose_failures_each_passed_alone_files_no_red_and_one_task_for_them_at_p1() {
+        let board = Fake::with(&[("tests/release-red-verify-tests", "ready")]);
+        let passed = tests_reran(&[("-p a --lib -- x --exact", 0), ("-p b --lib", 0)], None);
+        let verify = Ran {
+            steps: vec![passed],
+            ..ran("verify", 1)
+        };
+        let done = report(&board, &night(&[]), &[verify]);
+        let slug = "tests/passed-alone-2026-11-12t0300-1";
+        assert_eq!(done.filed, [slug], "{done:?}");
+        assert_eq!(
+            done.closed,
+            ["tests/release-red-verify-tests"],
+            "a step green as judged closes its red"
+        );
+        assert!(done.reds.is_empty(), "{done:?}");
+        let filed = board.thread(slug).join("\n");
+        let load = "load 31.92, 70.68, 171.07 (over 1, 5 and 15 minutes) on 16 processors";
+        for said in [
+            "p1, no red: Passed alone: 2 tests failed in release run 2026-11-12T0300-1 and passed \
+             rerun alone\n"
+                .to_string(),
+            "The Symphony release run 2026-11-12T0300-1 (2026-11-12 03:00), on main at \
+             cafe01234567, failed these tests in company"
+                .into(),
+            format!(
+                "- `-p a --lib -- x --exact`, in `verify/tests`: failed in the run (exit 100, \
+                 {load}; log /logs/verify.steps/tests.log); passed alone (exit 0, 3 s, {load}; log \
+                 /logs/verify-tests.alone/1.log).\n- `-p b --lib`, in `verify/tests`:"
+            ),
+            "rewrite the test on a condition, a count, CPU time or an injected clock".into(),
+            "\n\nrun: 2026-11-12T0300-1".into(),
+        ] {
+            assert!(filed.contains(&said), "{said:?} in:\n{filed}");
+        }
+        assert_eq!(passed_alone_slug("2026-11-12T0300-1"), slug);
+        assert!(!slug.starts_with(SERIES));
+
+        // On the release candidate, and refused by the board: said, nothing else held up.
+        let board = Fake {
+            refuse: vec!["file"],
+            ..Fake::default()
+        };
+        let mut on_candidate = night(&[]);
+        on_candidate.rerun = true;
+        let verify = Ran {
+            steps: vec![tests_reran(&[("-p a --lib", 0)], None)],
+            ..ran("verify", 1)
+        };
+        assert!(
+            passed_alone(&on_candidate, std::slice::from_ref(&verify))
+                .unwrap()
+                .2
+                .contains("on the release candidate at cafe01234567")
+        );
+        let done = report(&board, &on_candidate, &[verify]);
+        assert_eq!(
+            done.error.as_deref(),
+            Some("tests/passed-alone-2026-11-12t0300-1: file refused")
+        );
+    }
+
+    #[test]
+    fn a_step_with_a_failure_that_failed_again_alone_is_red_saying_each_rerun_and_the_rest_get_their_task()
+     {
+        let board = Fake::default();
+        let twice = tests_reran(
+            &[
+                ("-p a --lib -- x --exact", 0),
+                ("-p b --lib -- y --exact", 100),
+            ],
+            None,
+        );
+        let verify = Ran {
+            steps: vec![twice],
+            ..ran("verify", 1)
+        };
+        let done = report(&board, &night(&[]), &[verify]);
+        assert_eq!(
+            done.filed,
+            [
+                "tests/release-red-verify-tests",
+                "tests/passed-alone-2026-11-12t0300-1"
+            ]
+        );
+        let red = board.thread("tests/release-red-verify-tests").join("\n");
+        let load = "load 31.92, 70.68, 171.07 (over 1, 5 and 15 minutes) on 16 processors";
+        assert!(
+            red.contains(&format!(
+                "The run reran each failure alone, one at a time, in this checkout and over the \
+                 build that failed (`tools/test-lanes.sh --alone`); each failed in the run under \
+                 the load above, and alone:\n\
+                 - `-p a --lib -- x --exact`: passed alone (exit 0, 3 s; {load}). Log: \
+                 /logs/verify-tests.alone/1.log\n\
+                 - `-p b --lib -- y --exact`: failed again alone (exit 100, 3 s; {load}): it failed \
+                 twice. Log: /logs/verify-tests.alone/2.log\n\n"
+            )),
+            "{red}"
+        );
+        assert!(red.contains(FIRST), "{red}");
+        let passed = board
+            .thread("tests/passed-alone-2026-11-12t0300-1")
+            .join("\n");
+        assert!(passed.contains("1 test failed"), "{passed}");
+        assert!(!passed.contains("-p b --lib"), "{passed}");
+
+        // Red again while its task is open: the line it gets says the reruns too.
+        let done = report(
+            &board,
+            &night(&[]),
+            &[Ran {
+                steps: vec![tests_reran(&[("-p b --lib -- y --exact", 100)], None)],
+                ..ran("verify", 1)
+            }],
+        );
+        assert_eq!(done.updated, ["tests/release-red-verify-tests"]);
+        let again = board.thread("tests/release-red-verify-tests");
+        assert!(
+            again
+                .last()
+                .unwrap()
+                .contains("failed again alone (exit 100, 3 s;"),
+            "{again:?}"
+        );
+    }
+
+    #[test]
+    fn a_step_none_of_whose_failures_was_rerun_is_red_saying_why_and_files_no_task_for_them() {
+        let board = Fake::default();
+        let none = tests_reran(
+            &[],
+            Some("it names 13 failures, more than the 12 the run reruns"),
+        );
+        let voided = tests_reran(&[("-p a --lib", 0)], Some("the run stopped"));
+        for step in [none, voided] {
+            let verify = Ran {
+                steps: vec![step],
+                ..ran("verify", 1)
+            };
+            assert!(passed_alone(&night(&[]), std::slice::from_ref(&verify)).is_none());
+            let said = reran(&verify.steps[0]);
+            assert!(
+                said == "The run reran none of its failures alone: it names 13 failures, more \
+                         than the 12 the run reruns.\n\n"
+                    || said.ends_with("Those reruns judge nothing: the run stopped.\n\n"),
+                "{said}"
+            );
+        }
+        let verify = Ran {
+            steps: vec![tests_reran(&[], Some("it names 13 failures"))],
+            ..ran("verify", 1)
+        };
+        let done = report(&board, &night(&[]), &[verify]);
+        assert_eq!(done.filed, ["tests/release-red-verify-tests"]);
+        assert!(
+            board
+                .thread("tests/release-red-verify-tests")
+                .join("\n")
+                .contains("The run reran none of its failures alone: it names 13 failures.\n\n")
+        );
+        assert_eq!(
+            reran(&ran("verify/lint", 1)),
+            "",
+            "a step the run reruns nothing of"
         );
     }
 }

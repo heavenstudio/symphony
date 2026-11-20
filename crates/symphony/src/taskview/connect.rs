@@ -103,10 +103,12 @@ pub fn connect_running(root: &Path) -> Result<symphony_board::Store, String> {
 }
 
 /// The board of the project at `root` as `env` reaches it, opened to read by the schema rule: a
-/// board one version ahead is read and never written, and a write on it is refused naming the
-/// project and `just symphony`; a board behind this build, or not made yet, is refused before it is
-/// read, naming `just tasks`, and never moved forward or made. So a branch's build, its command
-/// line or a preview server, cannot move the live board past the build its board command runs.
+/// board one version ahead is read, and written only while the record its migration wrote lets
+/// this build write it ([`symphony_board::schema::COMPATIBLE`]), its guard reading that record in
+/// each write; otherwise a write on it is refused naming the project and `just symphony`. A board
+/// behind this build, or not made yet, is refused before it is read, naming `just tasks`, and
+/// never moved forward or made. So a branch's build, its command line or a preview server, cannot
+/// move the live board past the build its board command runs.
 /// A folder this process serves is reached held to its repository ([`serve`]).
 pub fn connect_in(
     root: &Path,
