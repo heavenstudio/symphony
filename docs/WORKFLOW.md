@@ -228,7 +228,8 @@ result of an effect it reads back.
   The same key again answers the same intent, and with other bindings is refused.
 - **Dispatch** comes before anything is sent. The intent stands only while the task is still at
   the revision the prepare made, under the generation that admitted it, with every binding the
-  adapter reads now equal to the one recorded. Otherwise it is withdrawn, for good, and the
+  adapter reads now equal to the one recorded, and with each guard that brought the task into the
+  pair it was prepared from still standing ([guards](#guards)). Otherwise it is withdrawn, for good, and the
   dispatch refused as `stale_input` naming what moved, as a finalize that meets it withdrawn is: a task taken out of its prepared pair by
   another edge cancels its reservation this way. An adapter then checks the real head once more
   as it acts, by merging the bound commit itself and never a branch name.
@@ -270,7 +271,10 @@ task is not delivered by a pull request (`[land] delivery`) yet.
 `effect::Adapter` of its own that reads its repository and pull request: its `land` recipe decides
 its evidence and policy as before, and the board holds it to what it bound.
 
-A guarded landing edge stays refused until revision-bound guards.
+A guard on the prepare or finalize edge itself refuses the activation: an adapter takes those
+edges, and no attestation comes with them. A project guards the edge that brings a task into the
+pair its prepare leaves (the approve, say), and each dispatch rechecks that guard
+([guards](#guards)).
 
 ## Guards
 
@@ -333,14 +337,22 @@ principal, the input revisions, and each guard met with its attestation and the 
 state, the board's audit of what it admitted, never an approval. A request repeating its key
 answers its first result and admits nothing again.
 
-An effect that cannot be taken back (a merge, a push, a message out) is checked again right before
-it: `Store::revalidate_dispatch(SLUG, REVISION, FRESH)` refuses unless the task still stands where
-that transition left it, under the same activation, and each guard its admission met is met again
-now, by the attestations it recorded or by fresh ones covering the same operation, signed, in their
-time and at the generation the board accepts now. A decision revoked since, an expired
-attestation or an authority in conflict stops the effect. The landing adapters call it
-(`tools/workflow-landing-adapters`); a transition no guard admitted is checked on its position
-alone.
+An effect that cannot be taken back is checked again right before it. An external effect's
+dispatch (`Store::dispatch_effect`, which the default landing and a project's landing call before
+they merge) reads the admission of the transition that brought the task into the pair its prepare
+left, the prepare being the only transition since, and refuses unless each guard it met still
+stands: its authority still committed with the key that verifies the attestation it recorded, and
+the board still accepting the very state it was met at, not in conflict. A decision revoked since
+moves that state, so the intent is withdrawn and nothing is merged. The attestation's own time was
+held when it was admitted: a land comes whenever it runs, and the authority's state is its current
+word. A transition no guard admitted dispatches on its position and bindings alone.
+
+`Store::revalidate_dispatch(SLUG, REVISION, FRESH)` is the stricter check, for a caller that holds
+the guarded transition itself: it refuses unless the task still stands where that transition left
+it, under the same activation, and each guard its admission met is met again now, by the
+attestations it recorded or by fresh ones covering the same operation, signed, in their time and
+at the generation the board accepts now. A decision revoked since, an expired attestation or an
+authority in conflict refuses.
 
 A route never goes around a guard. An activation is refused where a pair a guarded edge enters is
 reached without its guards: by another edge into it under other guards or none, as the initial

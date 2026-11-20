@@ -200,18 +200,25 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
             .ok_or_else(|| Stop::Refused(format!("--input is NAME=TEXT, not {given:?}")))?;
         inputs.insert(name.to_string(), InputValue::Text(value.to_string()));
     }
+    // Each name once, by either option: a second would replace the first unsaid.
     let mut input_revisions = BTreeMap::new();
-    for given in c.parsed.all("accept") {
-        let (prerequisite, output) = given
-            .split_once('=')
-            .ok_or_else(|| Stop::Refused(format!("--accept is SLUG=OUTPUT, not {given:?}")))?;
-        input_revisions.insert(prerequisite.to_string(), output.to_string());
-    }
-    for given in c.parsed.all("input_revision") {
-        let (name, value) = given.split_once('=').ok_or_else(|| {
-            Stop::Refused(format!("--input-revision is NAME=REVISION, not {given:?}"))
-        })?;
-        input_revisions.insert(name.to_string(), value.to_string());
+    for (option, shape, key) in [
+        ("--accept", "SLUG=OUTPUT", "accept"),
+        ("--input-revision", "NAME=REVISION", "input_revision"),
+    ] {
+        for given in c.parsed.all(key) {
+            let (name, revision) = given
+                .split_once('=')
+                .ok_or_else(|| Stop::Refused(format!("{option} is {shape}, not {given:?}")))?;
+            if input_revisions
+                .insert(name.to_string(), revision.to_string())
+                .is_some()
+            {
+                return Err(Stop::Refused(format!(
+                    "{name} is given twice (--accept and --input-revision name each input once)"
+                )));
+            }
+        }
     }
     let attestations = (c.parsed.all("attestation").iter())
         .map(|path| signed(path, "--attestation"))

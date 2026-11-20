@@ -758,3 +758,106 @@ fn a_host_that_registers_no_adapter_neither_activates_nor_admits_its_edges() {
         );
     }
 }
+
+/// The authority `approvals` reports generation `generation` of e1, following `previous`.
+fn reported(f: &Fixture, generation: u64, previous: Option<u64>) {
+    use symphony_api::workflow::{ATTESTATION_CONTRACT, AuthorityState, Observation};
+    let observed = Observation {
+        contract: ATTESTATION_CONTRACT,
+        adapter: "approvals".into(),
+        issuer: "ledger".into(),
+        epoch: "e1".into(),
+        generation,
+        state: format!("s{generation}"),
+        previous: previous.map(|generation| AuthorityState {
+            epoch: "e1".into(),
+            generation,
+            state: format!("s{generation}"),
+        }),
+        at: 1.0,
+    };
+    let signed = crate::workflow::guard::tests::sign_observation(7, &observed);
+    f.store.observe_authority(&signed).unwrap();
+}
+
+/// [`approved`] on [`guarded_landing`]: birch's approve taken with the authority's pass, met at
+/// generation 3 of e1, and recorded as an admission.
+fn approved_under_guard(backend: crate::store_fixture::Backend) -> Fixture {
+    use crate::workflow::effect::tests::guarded_landing;
+    use crate::workflow::guard::tests::{passing, sign_attestation};
+    use crate::workflow::guard::{MAX_VALIDITY, attestee};
+    let custom = guarded_landing(DEFAULT_LAND, 7);
+    let f = board(backend, &custom);
+    let amber = agent_session("amber");
+    take(&f.store, SLUG, &amber, "claim").unwrap();
+    take(&f.store, SLUG, &amber, "submit").unwrap();
+    reported(&f, 3, None);
+    let birch = agent_session("birch");
+    let mut request = request(&f.store, SLUG, &birch, "approve", "sim/a:approve");
+    request
+        .inputs
+        .insert("head".into(), InputValue::Revision(HEAD.into()));
+    // Without the authority's word, the approve is refused.
+    let bare = refused(
+        f.store
+            .apply_attested(&birch, &Host::local(), &request, &[]),
+    );
+    assert!(bare.starts_with("guard_unavailable:"), "{bare}");
+    let active = f.store.workflow_active().unwrap().unwrap();
+    let issued = crate::store::now() - 1.0;
+    let attestation = symphony_api::workflow::Attestation {
+        edge: "approve".into(),
+        workflow: active.digest,
+        activation_generation: active.generation,
+        task_revision: 3,
+        principal: attestee(&birch),
+        issued_at: issued,
+        expires_at: issued + MAX_VALIDITY,
+        ..passing(&custom)
+    };
+    let given = [sign_attestation(7, &attestation)];
+    (f.store)
+        .apply_attested(&birch, &Host::local(), &request, &given)
+        .unwrap();
+    assert_eq!(position(&f), (pair("deliver", "approved"), 4));
+    assert!(f.store.workflow_admission(SLUG, 4).unwrap().is_some());
+    f
+}
+
+#[test]
+fn a_decision_revoked_between_the_guarded_approve_and_the_land_withdraws_its_dispatch() {
+    for backend in BACKENDS {
+        // The approve's decision standing, the land dispatches.
+        let f = approved_under_guard(backend);
+        let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
+        prepared(&f, &fake);
+        let dispatched = f.store.dispatch_effect(&fake, SLUG, 5).unwrap();
+        assert_eq!(dispatched.stage, Stage::Dispatched, "{backend:?}");
+        // Revoked before the land's prepare, or after it and before its dispatch: either way the
+        // intent is withdrawn and nothing is sent, the prepare edge itself guarded by nothing.
+        for revoked_first in [true, false] {
+            let f = approved_under_guard(backend);
+            let fake = Fake::new(DEFAULT_LAND, &bindings(&f, HEAD));
+            if revoked_first {
+                reported(&f, 4, Some(3));
+            }
+            prepared(&f, &fake);
+            if !revoked_first {
+                reported(&f, 4, Some(3));
+            }
+            let why = refused(f.store.dispatch_effect(&fake, SLUG, 5));
+            assert!(
+                why.starts_with(
+                    "stale_input: sim/a@5 is withdrawn, and nothing is sent under it: \
+                     approvals decided again since approved was met at generation 3 of e1: a \
+                     later decision stands (generation 4 of e1 now)"
+                ),
+                "{backend:?}: {why}"
+            );
+            assert_eq!(intent(&f).stage, Stage::Withdrawn, "{backend:?}");
+            // Withdrawn for good: a dispatch again sends nothing under it.
+            let again = refused(f.store.dispatch_effect(&fake, SLUG, 5));
+            assert!(again.contains("is withdrawn"), "{backend:?}: {again}");
+        }
+    }
+}

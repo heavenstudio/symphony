@@ -955,3 +955,56 @@ fn a_preview_names_the_guard_an_edge_waits_on() {
     let submit = definition.edges.iter().find(|e| e.id == "submit").unwrap();
     assert_eq!(needs_attestation(submit), None);
 }
+
+#[test]
+fn a_guard_met_stands_for_a_dispatch_only_at_the_state_and_key_it_was_met_by() {
+    let case = Case::new();
+    let met = case
+        .check(&[sign_attestation(7, &passing(&case.custom))])
+        .unwrap();
+    let attesters = case.attesters.clone();
+    assert_eq!(unstanding(&met, &attesters, &[accepted()]), None);
+    // Nothing the board accepted since the admission counts as a move: its admissions do not.
+    let counted = Accepted {
+        admitted: 9,
+        ..accepted()
+    };
+    assert_eq!(unstanding(&met, &attesters, &[counted]), None);
+    let said = |attesters: &[Attester], accepted: &[Accepted]| {
+        unstanding(&met, attesters, accepted).expect("it no longer stands")
+    };
+    // A later decision: a generation on, a new epoch, or another state at the same generation.
+    for later in [
+        Accepted {
+            generation: 4,
+            state: "s4".into(),
+            ..accepted()
+        },
+        Accepted {
+            epoch: "e2".into(),
+            ..accepted()
+        },
+        Accepted {
+            state: "x3".into(),
+            ..accepted()
+        },
+    ] {
+        let why = said(&attesters, std::slice::from_ref(&later));
+        assert!(
+            why.starts_with("approvals decided again since approved was met at generation 3 of e1: a later decision stands"),
+            "{why}"
+        );
+    }
+    let conflicted = Accepted {
+        conflicted: true,
+        ..accepted()
+    };
+    assert!(said(&attesters, &[conflicted]).contains("in conflict at generation 3 of e1"));
+    assert!(said(&attesters, &[]).contains("accepts no state from it now"));
+    assert!(said(&[], &[accepted()]).contains("no longer commits"));
+    // The authority's key changed with a later activation: the word it met by is not its own.
+    let rekeyed = [attester(8)];
+    assert!(said(&rekeyed, &[accepted()]).contains("no longer verifies by the key committed"));
+    // No guard met: nothing to stand.
+    assert_eq!(unstanding(&[], &[], &[]), None);
+}

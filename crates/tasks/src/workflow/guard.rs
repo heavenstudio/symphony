@@ -543,6 +543,58 @@ pub fn check(
     Ok(checked)
 }
 
+/// Why the guards an admission met (`met`) no longer stand for an effect that cannot be taken
+/// back, none while they do; what a dispatch asks right before one (`Store::dispatch_effect`).
+/// Each guard's authority is still the one the active activation commits (`attesters`), its
+/// attestation still verifies by the key committed for it, and the board still accepts the very
+/// state it was met at (`accepted`), not in conflict. A later decision (a revocation, a
+/// withdrawal, a lost approver) moves that state, so it no longer stands. The attestation's own
+/// time was held when it was admitted: a dispatch comes whenever its land runs, and the
+/// authority's state, not the receipt's age, is its current word.
+pub fn unstanding(
+    met: &[Checked],
+    attesters: &[Attester],
+    accepted: &[Accepted],
+) -> Option<String> {
+    met.iter().find_map(|checked| {
+        let (guard, adapter) = (&checked.guard, &checked.adapter);
+        let Some(attester) = (attesters.iter()).find(|a| a.adapter == *adapter) else {
+            return Some(format!(
+                "{guard} was met by {adapter}, which the active workflow no longer commits"
+            ));
+        };
+        if let Err(why) = verified_attestation(attester, &checked.signed) {
+            return Some(format!(
+                "the attestation that met {guard} no longer verifies by the key committed for \
+                 {adapter}: {why}"
+            ));
+        }
+        let met_at = format!("generation {} of {}", checked.generation, checked.epoch);
+        let Some(now) = accepted.iter().find(|a| a.adapter == *adapter) else {
+            return Some(format!(
+                "{guard} was met at {met_at} of {adapter}, and the board accepts no state from it now"
+            ));
+        };
+        if now.conflicted {
+            return Some(format!(
+                "{adapter} is in conflict at generation {} of {}: nothing it attested is \
+                 dispatched until it reports a state following that one",
+                now.generation, now.epoch
+            ));
+        }
+        let same = now.epoch == checked.epoch
+            && now.generation == checked.generation
+            && now.state == checked.state;
+        (!same).then(|| {
+            format!(
+                "{adapter} decided again since {guard} was met at {met_at}: a later decision \
+                 stands (generation {} of {} now)",
+                now.generation, now.epoch
+            )
+        })
+    })
+}
+
 /// Refused unless `attestation` covers exactly the operation `binding` names.
 fn bound(attestation: &Attestation, guard: &str, binding: &Binding<'_>) -> Result<(), Refusal> {
     let mismatched: Option<(&str, String, String)> = if attestation.project != binding.project {

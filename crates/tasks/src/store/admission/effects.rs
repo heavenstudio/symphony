@@ -261,7 +261,9 @@ impl Store {
 
     /// The intent of `slug` at `revision` moved on to dispatched, once `adapter` has read its
     /// bindings again and they are the ones bound, the workflow is the one that admitted its
-    /// prepare and the task has not moved since: the adapter may then send its request. A
+    /// prepare, the task has not moved since, and each guard that brought it into the pair it was
+    /// prepared from stands at the authority's state it was met at (`guard::unstanding`): the
+    /// adapter may then send its request. A
     /// reservation stale or cancelled by then is withdrawn and refused, and nothing is sent under
     /// it. One dispatched before is read again the same way, so a run again sends nothing for
     /// bindings that moved; refused where its effect happened already, which is finalized instead.
@@ -294,6 +296,9 @@ impl Store {
             Stage::Withdrawn => return Err(withdrawn(&intent)),
         }
         let now = adapter.current(&intent).map_err(unread)?;
+        // The guards that brought the task into the pair it was prepared from, met again now:
+        // a decision revoked since withdraws the intent, and nothing is sent under it.
+        let unguarded = self.prepared_from_unguarded(slug, revision)?;
         let moved = self.retrying(|| {
             let standing = self.standing(slug, revision)?;
             let held = standing.intent.ok_or(Failure::Again)?;
@@ -310,7 +315,8 @@ impl Store {
                 }
             }
             let position = standing.task.as_ref().and_then(|t| t.position.as_ref());
-            let stale = effect::stale(&held, standing.active.as_ref(), position, Some(&now));
+            let stale = effect::stale(&held, standing.active.as_ref(), position, Some(&now))
+                .or_else(|| unguarded.clone());
             let next = Intent {
                 stage: if stale.is_some() {
                     Stage::Withdrawn

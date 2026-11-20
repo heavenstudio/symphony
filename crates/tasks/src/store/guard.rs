@@ -157,6 +157,30 @@ impl Store {
             .map_err(|e| Error::Db(format!("an admission not in the board's shape: {e}")))
     }
 
+    /// Why the guards that brought `slug` into the pair its effect was prepared from, by the
+    /// prepare at its transition `revision`, no longer stand ([`guard::unstanding`]), none while
+    /// they do or where no guard admitted that transition: the admission of the transition before
+    /// the prepare, while the prepare is the only transition since, which the dispatch's own
+    /// check of the task's revision holds (`Store::dispatch_effect`).
+    pub(in crate::store) fn prepared_from_unguarded(
+        &self,
+        slug: &str,
+        revision: u64,
+    ) -> Result<Option<String>, Error> {
+        let Some(before) = revision.checked_sub(1) else {
+            return Ok(None);
+        };
+        let Some(admission) = self.workflow_admission(slug, before)? else {
+            return Ok(None);
+        };
+        let now = self.workflow_authorities()?;
+        Ok(guard::unstanding(
+            &admission.guards,
+            &now.attesters,
+            &now.accepted,
+        ))
+    }
+
     /// The check a dispatch makes right before an effect of `slug`'s transition `revision` that it
     /// cannot take back (a merge, a push, a message out), answered with each guard met again:
     /// none for a transition no guard admitted. The task still stands where that transition left

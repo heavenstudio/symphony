@@ -887,6 +887,16 @@ mod guarded {
             "{}",
             bad_revision.err
         );
+        let twice = c.run_as(
+            &amber,
+            &[
+                &with[..],
+                &["--accept", "design=r1", "--input-revision", "design=r7"],
+            ]
+            .concat(),
+            "",
+        );
+        assert!(twice.err.contains("design is given twice"), "{}", twice.err);
         with.extend(["--input-revision", "design=r7"]);
         // An attestation expired by this machine's clock is refused, though TASKS_NOW pins the
         // command's clock inside its time: the caller sets that clock, never the guard's.

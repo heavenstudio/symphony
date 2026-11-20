@@ -15,6 +15,34 @@ pub(crate) fn landing(adapter: &str) -> Custom {
     custom(&format!("{LANDING}{MAPPED}").replace(DEFAULT_LAND, adapter))
 }
 
+/// [`landing`] with its approve guarded by `approved`, which the `approvals` authority attests by
+/// the key of `seed`, in the project `sim`: the land's prepare leaves the pair that guard brings
+/// the task into.
+pub(crate) fn guarded_landing(adapter: &str, seed: u8) -> Custom {
+    let approve = "inputs = [\"head\"], dependencies = \"none\", guards = []";
+    let text = format!("{LANDING}{MAPPED}")
+        .replace(DEFAULT_LAND, adapter)
+        .replacen("adapters = [", "adapters = [\"approvals\", ", 1)
+        .replacen(
+            "guards = []",
+            "guards = [{ id = \"approved\", adapter = \"approvals\" }]",
+            1,
+        );
+    assert_eq!(text.matches(approve).count(), 2, "approve and prepare_land");
+    let guarded = text.replacen(
+        &format!("operation = \"approve\", authority = [{{ kind = \"task_role\", role = \"reviewer\" }}], {approve}"),
+        "operation = \"approve\", authority = [{ kind = \"task_role\", role = \"reviewer\" }], \
+         inputs = [\"head\"], dependencies = \"none\", guards = [\"approved\"]",
+        1,
+    );
+    assert_ne!(guarded, text, "the fixture guards approve");
+    custom(&format!(
+        "{guarded}\n[project]\nid = \"sim\"\n\n[[workflow_authorities]]\nadapter = \"approvals\"\n\
+         issuer = \"ledger\"\ncontract = 1\nkey = \"{}\"\n",
+        crate::workflow::guard::tests::attester(seed).key
+    ))
+}
+
 pub(crate) fn bindings(head: &str) -> Bindings {
     Bindings {
         project: "board".into(),
