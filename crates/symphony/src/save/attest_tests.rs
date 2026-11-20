@@ -8,8 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Condvar, Mutex};
 use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
@@ -50,11 +49,8 @@ struct Ledger(Answering);
 /// The operations each authority was asked, in order, with how it answers: the tests share it.
 static ASKED: Mutex<Vec<(Answering, Operation)>> = Mutex::new(Vec::new());
 
-/// What lets a stuck authority answer, once the test is done with it.
-static UNSTUCK: LazyLock<(Mutex<Sender<()>>, Mutex<Receiver<()>>)> = LazyLock::new(|| {
-    let (send, receive) = mpsc::channel();
-    (Mutex::new(send), Mutex::new(receive))
-});
+/// Whether a stuck authority may answer, set once the test is done with it.
+static LET_GO: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -123,7 +119,8 @@ impl Authority for Ledger {
             Answering::Closed => return Err("the ledger is closed for the night".into()),
             Answering::Broken => panic!("the ledger's file is gone"),
             Answering::Stuck => {
-                let _ = UNSTUCK.1.lock().unwrap().recv();
+                let let_go = LET_GO.0.lock().unwrap();
+                drop(LET_GO.1.wait_while(let_go, |go| !*go).unwrap());
                 return Err("let go".into());
             }
         };
@@ -350,7 +347,8 @@ fn an_authority_that_errs_panics_or_does_not_answer_refuses_the_operation_and_mo
     );
     // The authority answers only once the test lets it: the wait's deadline is what ends it.
     let stuck = said(&STUCK, Duration::from_millis(50));
-    UNSTUCK.0.lock().unwrap().send(()).unwrap();
+    *LET_GO.0.lock().unwrap() = true;
+    LET_GO.1.notify_all();
     assert_eq!(stuck, format!("{guard}it did not answer within 50ms"));
     assert_eq!(at(&f).state, "awaiting");
 }
