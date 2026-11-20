@@ -756,10 +756,10 @@ What holds on every page, and each page's contract where its section above names
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,777 bytes, `/tasks` 126,063 (the cards'
-  costs' read among them), `/agents` 116,029, `/queue` 108,658, `/reports` 115,252, `/runs`
-  111,695, `/docs/` 139,474, a document 141,159 and a task's page 143,439, and a return that finds
-  what it kept unchanged 3,229, 3,785, 3,558, 3,494, 1,754, 2,217, 1,801, 1,975 and 3,619. A first
+  each page's requests) a first visit to `/` takes 112,818 bytes, `/tasks` 126,128 (the cards'
+  costs' read among them), `/agents` 116,078, `/queue` 108,694, `/reports` 115,859, `/runs`
+  111,747, `/docs/` 139,525, a document 141,339 and a task's page 143,621, and a return that finds
+  what it kept unchanged 3,228, 3,786, 3,557, 3,492, 1,756, 2,217, 1,801, 1,975 and 3,622. A first
   visit to a kind is its entry and its
   sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
   the others (the board's feed and keep; the card and the task readers of the board and the agents
@@ -767,12 +767,12 @@ What holds on every page, and each page's contract where its section above names
   beside the HTML, the shell and the page's reads; a move to another kind takes its entry and the
   pieces no kind before it took (`apps/symphony-web-tests/tests/browser/preload.rs`). A task's page's timeline, a chunk of
   its own, comes once its box nears the screen and its part has something to draw
-  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 16,807 bytes. The
+  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 16,825 bytes. The
   reads ahead start only once the page's own reads have answered (`cache_ahead.rs`) and go marked
   as prefetches, so the budget counts them outside the first visit, with the warmed modules
   (`prefetched_bytes`). Once a page has its data and is idle, the shell warms the chat's files
   (its entry, the chunks it imports and its sheets the page has not) and then the menus' (the
-  same of theirs): 29,689 bytes outside home's first visit, and neither the chat's first open nor
+  same of theirs): 29,714 bytes outside home's first visit, and neither the chat's first open nor
   the menus' transfers anything more. Later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
