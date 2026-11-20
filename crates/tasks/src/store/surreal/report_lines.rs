@@ -5,7 +5,8 @@
 /// closed task without writing the task, so an approve before the window and its landing in it are
 /// read (the lines by `message_ts`). Each one's thread is read by its own range of keys: a
 /// verdict's text only for its first words, a post's not at all. A body is read only for a task
-/// marked red, for the commits it names. Nothing is written.
+/// marked red, for the commits it names. Whether the board runs a custom workflow is the active
+/// one's record, read by its key. Nothing is written.
 pub(in crate::store) const READ: &str = "
 LET $spoken = array::distinct((SELECT VALUE slug FROM message WHERE ts >= $since));
 LET $tasks = (SELECT sid, slug, status, created, updated, parent, instruction,
@@ -14,6 +15,7 @@ LET $tasks = (SELECT sid, slug, status, created, updated, parent, instruction,
     ORDER BY sid);
 RETURN {
     tasks: $tasks,
+    workflow: (SELECT VALUE body FROM ONLY workflow:['active']) ?? NULL,
     lines: $tasks.map(|$task| (SELECT sid, kind, ts, sender,
         IF kind = 'system' { text } ELSE IF kind = 'verdict' { string::slice(text, 0, 16) }
             ELSE { '' } AS text

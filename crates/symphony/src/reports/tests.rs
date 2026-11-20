@@ -314,6 +314,7 @@ fn without_git_the_files_are_written_with_no_git_figures_and_say_why() {
 /// `between`.
 fn red_read(slug: &str, between: &str) -> ReportRead {
     ReportRead {
+        workflow: false,
         places: None,
         tasks: vec![symphony_board::ReportTask {
             slug: slug.into(),

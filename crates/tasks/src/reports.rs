@@ -560,3 +560,6 @@ mod json;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod placed_tests;

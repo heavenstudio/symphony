@@ -10,6 +10,7 @@ pub(in crate::store) fn read() -> Pg<'static> {
             OR slug IN (SELECT slug FROM message WHERE ts >= (v ->> 'since')::double precision)) \
         SELECT jsonb_build_object( \
             'tasks', coalesce((SELECT jsonb_agg(jsonb_strip_nulls(to_jsonb(p)) ORDER BY sid) FROM picked p), '[]'), \
+            'workflow', (SELECT body FROM workflow WHERE id = '[\"active\"]'::jsonb), \
             'lines', coalesce((SELECT jsonb_agg(coalesce((SELECT jsonb_agg(jsonb_build_object( \
                 'sid', m.sid, 'kind', m.kind, 'ts', m.ts, 'sender', m.sender, \
                 'text', CASE WHEN m.kind = 'system' THEN m.text WHEN m.kind = 'verdict' THEN left(m.text, 16) ELSE '' END) \

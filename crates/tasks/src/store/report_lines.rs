@@ -1,9 +1,9 @@
 //! What the hourly roll-up of a project's reports reads of its board ([`crate::reports`]): every
 //! task open now, every one written since the window opened and every one with a line since then,
-//! top-level and subtasks alike, each with its thread's lines, in one round trip. On a board that
-//! runs a custom workflow it reads each of those tasks' recorded workflow transitions after
-//! ([`Store::report_places`]), which a board that runs none never asks for past the one read that
-//! says so.
+//! top-level and subtasks alike, each with its thread's lines, and whether the board runs a custom
+//! workflow, in one round trip. On a board that runs one, each of those tasks' recorded workflow
+//! transitions are read after it ([`Store::report_places`]); a board that runs none is asked
+//! nothing more.
 
 use super::postgres::report_lines as pg;
 use super::statement::both;
@@ -42,6 +42,8 @@ pub struct ReportRead {
     /// Each task open now, written since the window opened or with a line since then, in the order
     /// they were made.
     pub tasks: Vec<ReportTask>,
+    /// Whether the board runs a custom workflow: it has activated one.
+    pub workflow: bool,
     /// Where a custom workflow put each of `tasks`, a list for each in their order
     /// ([`Store::report_places`]); none on a board that runs no workflow of its own, and from
     /// [`Store::report_records`], which never reads them.
@@ -78,12 +80,13 @@ impl Store {
     /// `read` with the places a custom workflow put each of its tasks at
     /// ([`ReportRead::places`]), from each task's own recorded transitions
     /// ([`Store::workflow_transitions`]), oldest first, each named by the definition its move was
-    /// made under, read once a digest. A board that never activated a workflow answers in one
-    /// read, with none, and its tasks' transitions are never asked for. A read that fails fails
-    /// the whole: a roll-up never counts part of a board's tasks as all of them.
+    /// made under, read once a digest. A read whose board runs no workflow
+    /// ([`ReportRead::workflow`]) is answered as it is, with none, and nothing is asked of the
+    /// board. A read that fails fails the whole: a roll-up never counts part of a board's tasks as
+    /// all of them.
     pub fn report_places(&self, mut read: ReportRead) -> Result<ReportRead, Error> {
         read.places = None;
-        if self.workflow_active()?.is_none() {
+        if !read.workflow {
             return Ok(read);
         }
         let mut definitions: Vec<(String, Option<Definition>)> = Vec::new();
@@ -150,7 +153,12 @@ fn taken_apart(answer: &Value) -> Option<ReportRead> {
     if tasks.len() != threads.len() {
         return None;
     }
-    let mut read = ReportRead::default();
+    let mut read = ReportRead {
+        workflow: answer
+            .get("workflow")
+            .is_some_and(|active| !active.is_null()),
+        ..ReportRead::default()
+    };
     for (task, thread) in tasks.iter().zip(threads) {
         let mut lines = Vec::new();
         for line in thread.as_array()? {
@@ -191,6 +199,10 @@ pub(super) fn line_of(row: &Value) -> Option<Line> {
 }
 
 #[cfg(test)]
+#[path = "report_places_tests.rs"]
+mod places_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -224,6 +236,14 @@ mod tests {
             "parent": null, "instruction": true, "red": {"series": "main"}});
         let read = taken_apart(&json!({"tasks": [marked], "lines": [[]]})).unwrap();
         assert!(read.tasks[0].instruction && read.tasks[0].marked_red);
+        assert!(!read.workflow, "a read that names no workflow runs none");
+        for (workflow, runs) in [
+            (json!(null), false),
+            (json!({"generation": 1, "digest": "d"}), true),
+        ] {
+            let read = taken_apart(&json!({"tasks": [], "lines": [], "workflow": workflow}));
+            assert_eq!(read.map(|read| read.workflow), Some(runs), "{workflow}");
+        }
         let null_red = json!({"slug": "a", "status": "ready", "created": 1.0, "updated": 2.0,
             "red": null});
         let read = taken_apart(&json!({"tasks": [null_red], "lines": [[]]})).unwrap();
