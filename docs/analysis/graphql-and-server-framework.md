@@ -9,8 +9,10 @@ own in [DECISIONS](../DECISIONS.md), so each can be answered alone.
 
 Every claim says how it is known: **measured** (on this machine, by the runs named), **read in
 code** (the file named) or **read in docs** (the source linked, looked up on 2026-11-14), or
-**inferred** (reasoned from those, not tried). The probes are in `experiments/graphql-stack/`;
-nothing the Symphony builds, tests or serves reads them.
+**inferred** (reasoned from those, not tried). The probes are in `experiments/graphql-stack/` at
+commit `a40751dc2428b708045ed2ad4d6e27c15d94c314`, removed from the tree since; nothing the
+Symphony built, tested or served read them, and [the probe](#the-probe) says how to run them
+from that revision.
 
 ## The choices
 
@@ -209,7 +211,8 @@ nothing measurable on loopback.
 ### Bytes on the wire
 
 What each data library adds to a React 19 page's first visit, measured by the probe
-(`experiments/graphql-stack/web`): one page per library, each drawing the board's counts and a
+(`experiments/graphql-stack/web` at commit `a40751dc2428b708045ed2ad4d6e27c15d94c314`,
+[the probe](#the-probe)): one page per library, each drawing the board's counts and a
 column from one read, built alone by Vite 8.3.8 with the web client's settings, its script
 gzipped at the best level as the server sends it. The baseline is React and a hand-written
 `fetch`, as the foundation reads today: 67,720 bytes.
@@ -617,7 +620,11 @@ server implements, which is the same on Axum's main line as in 0.8.9
 
 ## The probe
 
-`experiments/graphql-stack/`, its README naming the commands.
+`experiments/graphql-stack/` at commit `a40751dc2428b708045ed2ad4d6e27c15d94c314`, removed from
+the tree since, its README naming the commands. Its two probes read nothing outside that folder;
+a checkout of that revision runs them:
+`git worktree add --detach DIR a40751dc2428b708045ed2ad4d6e27c15d94c314`, then the README in
+`DIR/experiments/graphql-stack`.
 
 - **The client's bytes** (`web/`): a React 19.3.1 page per library, built alone by Vite 8.3.8
   with the web client's settings (`es2023`, no module preload), its script gzipped at the best

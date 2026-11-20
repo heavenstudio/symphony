@@ -819,3 +819,27 @@ describe("a kind the client does not know", () => {
     expect(drawn([{ type: "media", media: later({}) }])).toContain("Unsupported media: unnamed");
   });
 });
+
+// The server names an element of a document it cannot draw by its tag alone and sends what the
+// element holds after it (`crates/symphony/src/blocks.rs`): the notice holds no words of its own,
+// so the element's are drawn once.
+describe("an unsupported element named alone", () => {
+  it("is its notice with no empty paragraph, what it holds drawn once after it", () => {
+    const html = drawn([
+      { type: "unknown", tag: "widget", text: "" },
+      { type: "group", blocks: [paragraph("visible")] },
+    ]);
+    expect(html).toBe(
+      '<aside class="unknown-block" role="alert"><strong>Unsupported document content: ' +
+        "widget</strong></aside><p>visible</p>",
+    );
+    expect(html.match(/visible/g)).toHaveLength(1);
+  });
+
+  it("still draws the words a notice carries", () => {
+    expect(drawn([{ type: "unknown", tag: "p@surprise", text: "yes" }])).toBe(
+      '<aside class="unknown-block" role="alert"><strong>Unsupported document content: ' +
+        "p@surprise</strong><p>yes</p></aside>",
+    );
+  });
+});
