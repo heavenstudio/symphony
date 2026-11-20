@@ -277,6 +277,10 @@ fn verified(bypass: &[(&str, Option<i64>, &str)]) -> Verified {
     }
 }
 
+/// What a ruleset that shows no time it last changed is.
+const SHOWS_NO_TIME: &str =
+    "it shows no time it last changed that reads, so its verification cannot be held to it";
+
 /// Ruleset 2 as the App's token reads it.
 fn ruleset(updated_at: &str, can: &str) -> Value {
     json!({"id": 2, "enforcement": "active", "updated_at": updated_at,
@@ -363,15 +367,6 @@ fn who_bypasses_a_ruleset_is_what_was_verified_while_it_is_unchanged() {
                  2026-11-20T05:03:25.191+01:00: {VERIFY}"
             )),
         ),
-        (
-            200,
-            json!({"id": 2, "enforcement": "active", "current_user_can_bypass": "never"}),
-            Some(&none),
-            unknown(&format!(
-                "it changed at  after it was verified as last changed at \
-                 2026-11-20T05:03:25.191+01:00: {VERIFY}"
-            )),
-        ),
         // Never verified, or verified of another repository: not known, never empty.
         (200, ruleset(AT, "never"), None, unknown(&never)),
         (200, ruleset(AT, "never"), Some(&elsewhere), unknown(&never)),
@@ -411,6 +406,34 @@ fn who_bypasses_a_ruleset_is_what_was_verified_while_it_is_unchanged() {
                 body: None,
             }]
         );
+    }
+}
+
+#[test]
+fn a_ruleset_or_a_record_with_no_time_it_last_changed_holds_nobody() {
+    let timeless = Verified {
+        updated_at: String::new(),
+        ..verified(&[])
+    };
+    for (body, verified, why) in [
+        (
+            json!({"id": 2, "enforcement": "active", "current_user_can_bypass": "never"}),
+            verified(&[]),
+            SHOWS_NO_TIME.to_string(),
+        ),
+        (
+            ruleset("yesterday", "never"),
+            verified(&[]),
+            SHOWS_NO_TIME.to_string(),
+        ),
+        (
+            ruleset(AT, "never"),
+            timeless,
+            format!("its verification kept no time it last changed that reads: {VERIFY}"),
+        ),
+    ] {
+        let (answer, _) = reading(200, &body, Some(&verified));
+        assert_eq!(answer, Ok(Bypass::Unknown(why)), "{body}");
     }
 }
 

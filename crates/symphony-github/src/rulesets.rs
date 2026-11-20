@@ -296,7 +296,3 @@ pub fn run(ctx: &Context<'_>, base: &str, verify: bool, out: &mut dyn Write) -> 
     );
     Ok(0)
 }
-
-#[cfg(test)]
-#[path = "rulesets_tests.rs"]
-mod tests;

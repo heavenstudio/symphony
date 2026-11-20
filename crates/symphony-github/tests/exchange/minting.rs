@@ -312,6 +312,14 @@ fn permissions() -> Value {
     json!({"checks": "write", "contents": "write", "pull_requests": "write"})
 }
 
+/// Those permissions as the token file says them.
+const ASKED: &str = "checks=write,contents=write,pull_requests=write";
+
+/// A token file as the program writes it: `token`, expiring at `at`, made for [`ASKED`].
+fn made(token: &str, at: i64) -> String {
+    format!("{token}\nexpires_at {}\npermissions {ASKED}\n", clock(at))
+}
+
 /// The delivery answered published, and each request to the repository carried the token of
 /// the App the protection holds it to.
 fn published(d: &Delivery, answer: &Value) {
@@ -355,7 +363,7 @@ fn an_absent_token_is_made_once_and_the_delivery_goes_on() {
     let (token, _) = apps.tokens().remove(0);
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
-        format!("{token}\nexpires_at {}\n", clock(d.rig.now.get() + 3_600))
+        made(&token, d.rig.now.get() + 3_600)
     );
     let mode = std::fs::metadata(&file).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600, "{}", file.display());
@@ -379,19 +387,25 @@ fn an_absent_token_is_made_once_and_the_delivery_goes_on() {
 }
 
 #[test]
-fn an_expired_a_nearly_expired_and_an_unknown_token_are_each_made_again_once() {
+fn an_expired_a_nearly_expired_an_unknown_and_an_other_token_are_each_made_again_once() {
     let _alone = crate::starting();
     let now = 2_000;
     for (case, kept) in [
-        (
-            "expired",
-            format!("ghs_old\nexpires_at {}\n", clock(now - 1)),
-        ),
-        (
-            "expiring",
-            format!("ghs_old\nexpires_at {}\n", clock(now + MARGIN)),
-        ),
+        ("expired", made("ghs_old", now - 1)),
+        ("expiring", made("ghs_old", now + MARGIN)),
         ("by hand", "ghs_old\n".to_string()),
+        // Current, but made before the settings asked for checks: a land would get 403 on them.
+        (
+            "made for less",
+            format!(
+                "ghs_old\nexpires_at {}\npermissions contents=write,pull_requests=write\n",
+                clock(now + 3_600)
+            ),
+        ),
+        (
+            "of an older build",
+            format!("ghs_old\nexpires_at {}\n", clock(now + 3_600)),
+        ),
     ] {
         let (d, apps) = delivery("mint-again", true, "");
         d.rig.now.set(now);
@@ -402,6 +416,11 @@ fn an_expired_a_nearly_expired_and_an_unknown_token_are_each_made_again_once() {
         assert_eq!(apps.asked().len(), 1, "{case}: one token");
         let text = std::fs::read_to_string(&d.rig.token_file).unwrap();
         assert!(text.starts_with("ghs_minted"), "{case}: {text}");
+        assert!(
+            text.ends_with(&format!("\npermissions {ASKED}\n")),
+            "{case}: {text}"
+        );
+        assert_eq!(apps.asked()[0].2["permissions"], permissions(), "{case}");
         d.publish(&snapshot(HEAD, "met", "r1"));
         assert_eq!(apps.asked().len(), 1, "{case}: made once");
         d.assert_none_of(
@@ -418,8 +437,10 @@ fn an_expired_a_nearly_expired_and_an_unknown_token_are_each_made_again_once() {
 fn a_current_token_makes_no_call() {
     let _alone = crate::starting();
     let (d, apps) = delivery("mint-current", true, "");
-    let until = clock(d.rig.now.get() + MARGIN + 1);
-    write(&d.rig.token_file, &format!("{TOKEN}\nexpires_at {until}\n"));
+    write(
+        &d.rig.token_file,
+        &made(TOKEN, d.rig.now.get() + MARGIN + 1),
+    );
     let answer = d.publish(&snapshot(HEAD, "met", "r1"));
     published(&d, &answer);
     assert_eq!(apps.asked().len(), 0, "{:?}", apps.asked());
@@ -703,10 +724,7 @@ fn unset_a_token_file_is_read_as_it_is_and_an_expired_one_is_unavailable() {
     let after = std::fs::read(&d.rig.token_file).unwrap();
     assert_eq!(before, after, "no file is written");
     // A file of the shape the program writes is one token too many where it makes none.
-    write(
-        &d.rig.token_file,
-        &format!("{TOKEN}\nexpires_at {}\n", clock(5_000)),
-    );
+    write(&d.rig.token_file, &made(TOKEN, 5_000));
     let answer = d.publish(&snapshot(HEAD, "met", "r1"));
     assert_eq!(answer["state"], "refused", "{answer}");
     assert!(
@@ -768,7 +786,10 @@ fn two_runs_at_once_leave_one_valid_token_and_no_torn_file() {
             "{kept} is one of {made:?}"
         );
         assert!(apps.tokens().iter().any(|(made, _)| made == token));
-        assert_eq!(rest, format!("expires_at {}\n", clock(now + 3_600)));
+        assert_eq!(
+            rest,
+            format!("expires_at {}\npermissions {ASKED}\n", clock(now + 3_600))
+        );
         let beside = std::fs::read_dir(file.parent().unwrap()).unwrap().count();
         assert_eq!(beside, 1, "no file left half made beside it");
     }
@@ -819,18 +840,30 @@ fn tokens_says_whether_the_token_is_current_and_never_the_token() {
     let now = 3_000;
     d.rig.now.set(now);
     let file = d.rig.token_file.display().to_string();
-    write(
-        &d.rig.token_file,
-        &format!("{TOKEN}\nexpires_at {}\n", clock(now + 2_820)),
-    );
+    write(&d.rig.token_file, &made(TOKEN, now + 2_820));
     let ran = d.run(&["tokens"]);
     assert_eq!(
         ran.out,
         format!("token_file {file}: current until 1970-01-01T01:37:00Z (in 47 min)\n")
     );
     assert_eq!(ran.code, 0, "{ran:?}");
-    // Expiring, expired, of no expiry, and absent.
+    // Made for other permissions, expiring, expired, of no expiry, and absent.
     for (kept, said) in [
+        (
+            Some(format!(
+                "{TOKEN}\nexpires_at {}\npermissions contents=write\n",
+                clock(now + 2_820)
+            )),
+            "current until 1970-01-01T01:37:00Z (in 47 min), made for permissions contents=write \
+             where the settings ask for checks=write,contents=write,pull_requests=write; App 42 \
+             makes another at its next use",
+        ),
+        (
+            Some(format!("{TOKEN}\nexpires_at {}\n", clock(now + 2_820))),
+            "current until 1970-01-01T01:37:00Z (in 47 min), made for permissions it does not \
+             record where the settings ask for checks=write,contents=write,pull_requests=write; \
+             App 42 makes another at its next use",
+        ),
         (
             Some(format!("{TOKEN}\nexpires_at {}\n", clock(now + 240))),
             "expires at 1970-01-01T00:54:00Z (in 4 min); App 42 makes another at its next use",

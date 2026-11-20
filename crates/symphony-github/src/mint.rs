@@ -3,9 +3,10 @@
 //!
 //! A token file the settings give no App is read as it is ([`credential::read`]): its token is
 //! sent, and one GitHub expired is answered 401. A token file they give an App is the program's
-//! own. It holds the token on its first line and `expires_at` with GitHub's time on its second,
-//! and [`token`] makes a new one when the file is absent, expired, within [`MARGIN`] of expiring,
-//! or holds no expiry this program wrote: a JSON Web Token signed by the App's key, sent to
+//! own. It holds the token on its first line, `expires_at` with GitHub's time on its second and
+//! the permissions it was asked for on its third ([`asked`]), and [`token`] makes a new one when
+//! the file is absent, expired, within [`MARGIN`] of expiring, holds no expiry this program
+//! wrote, or was made for permissions other than the settings ask for now: a JSON Web Token signed by the App's key, sent to
 //! `POST /app/installations/ID/access_tokens`, asking for the one repository the settings name
 //! and the permissions of [`permissions`] alone.
 //!
@@ -117,8 +118,13 @@ pub enum Held {
     Absent,
     /// No token and expiry this program wrote: a token kept by hand, or nothing that reads.
     Unknown,
-    /// A token and when GitHub expires it.
-    Token { token: Secret, expires: Expiry },
+    /// A token, when GitHub expires it, and the permissions it was asked for ([`asked`]), where
+    /// the file says them: a file an older build wrote does not.
+    Token {
+        token: Secret,
+        expires: Expiry,
+        permissions: Option<String>,
+    },
 }
 
 impl Held {
@@ -127,17 +133,38 @@ impl Held {
     pub fn current(&self, now: i64) -> bool {
         matches!(self, Held::Token { expires, .. } if expires.at - now > MARGIN)
     }
+
+    /// Whether its token holds for [`MARGIN`] past `now` and was asked for `asked`, the
+    /// permissions the settings ask for now ([`asked`]): one made for others is made again.
+    #[must_use]
+    pub fn serves(&self, now: i64, asked: &str) -> bool {
+        self.current(now)
+            && matches!(self, Held::Token { permissions: Some(made), .. } if made == asked)
+    }
 }
 
-/// What the file's `text` holds: its token on the first line, `expires_at TIME` on the second.
+/// What the file's `text` holds: its token on the first line, `expires_at TIME` on the second,
+/// and `permissions ASKED` on a third where the file says them.
 fn held(text: &str) -> Held {
     let mut lines = text.lines();
-    let (Some(token), Some(expires), None) = (lines.next(), lines.next(), lines.next()) else {
+    let (Some(token), Some(expires)) = (lines.next(), lines.next()) else {
         return Held::Unknown;
+    };
+    let permissions = match (lines.next(), lines.next()) {
+        (None, _) => None,
+        (Some(line), None) => match line.strip_prefix("permissions ") {
+            Some(asked) if !asked.is_empty() => Some(asked.to_string()),
+            _ => return Held::Unknown,
+        },
+        (Some(_), Some(_)) => return Held::Unknown,
     };
     let expires = expires.strip_prefix("expires_at ").and_then(Expiry::parse);
     match (Secret::new(token), expires) {
-        (Ok(token), Some(expires)) => Held::Token { token, expires },
+        (Ok(token), Some(expires)) => Held::Token {
+            token,
+            expires,
+            permissions,
+        },
         _ => Held::Unknown,
     }
 }
@@ -243,9 +270,20 @@ pub fn permissions(config: &Config) -> BTreeMap<&'static str, &'static str> {
     asked
 }
 
+/// The [`permissions`] the settings ask for, as the token file says them:
+/// `checks=write,contents=write,pull_requests=write`, each `NAME=ACCESS` in name order.
+#[must_use]
+pub fn asked(config: &Config) -> String {
+    (permissions(config).iter())
+        .map(|(name, access)| format!("{name}={access}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 /// The token `token_file` holds, made first where the settings give it an App and the
-/// token it holds is not current: absent, expired, within [`MARGIN`] of expiring, or of no
-/// expiry this program wrote. A file they give no App is read as it is.
+/// token it holds is not current: absent, expired, within [`MARGIN`] of expiring, of no
+/// expiry this program wrote, or asked for permissions other than the settings ask for now
+/// ([`Held::serves`]). A file they give no App is read as it is.
 ///
 /// # Errors
 ///
@@ -261,14 +299,15 @@ pub fn token(ctx: &Context<'_>, config: &Config) -> Result<Secret, Stop> {
     };
     let real = place(file, &folders, key)?;
     let held = kept(&real, key)?;
+    let asked = asked(config);
     if let Held::Token { token, .. } = &held
-        && held.current(ctx.now)
+        && held.serves(ctx.now, &asked)
     {
         return Ok(token.clone());
     }
     let key_file = key_file(&app, &folders, &real)?;
     let (token, expires) = make(ctx, config, &app, &key_file)?;
-    write(&real, &token, &expires, key)?;
+    write(&real, &token, &expires, &asked, key)?;
     Ok(token)
 }
 
@@ -446,9 +485,15 @@ fn make(
     }
 }
 
-/// `token` and its expiry written to the token file at `real`: to a file of its own beside it,
-/// readable by its owner alone, then renamed over it.
-fn write(real: &Path, token: &Secret, expires: &Expiry, key: &str) -> Result<(), Stop> {
+/// `token`, its expiry and the permissions it was `asked` for written to the token file at
+/// `real`: to a file of its own beside it, readable by its owner alone, then renamed over it.
+fn write(
+    real: &Path,
+    token: &Secret,
+    expires: &Expiry,
+    asked: &str,
+    key: &str,
+) -> Result<(), Stop> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let named = real.display();
     let refused = |error: std::io::Error| {
@@ -472,7 +517,12 @@ fn write(real: &Path, token: &Secret, expires: &Expiry, key: &str) -> Result<(),
             .create_new(true)
             .mode(0o600)
             .open(&beside)?;
-        write!(file, "{}\nexpires_at {}\n", token.expose(), expires.text)?;
+        write!(
+            file,
+            "{}\nexpires_at {}\npermissions {asked}\n",
+            token.expose(),
+            expires.text
+        )?;
         file.sync_all()?;
         fs::rename(&beside, real)
     })();

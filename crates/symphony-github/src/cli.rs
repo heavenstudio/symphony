@@ -186,10 +186,30 @@ fn tokens(ctx: &Context<'_>, out: &mut dyn Write) -> i32 {
             next(app.id, "another")
         ),
         (Ok(Held::Absent), Some(app)) => format!("absent; {}", next(app.id, "one")),
-        (Ok(Held::Token { expires, .. }), Some(app)) => {
+        (
+            Ok(Held::Token {
+                expires,
+                permissions,
+                ..
+            }),
+            Some(app),
+        ) => {
             let left = expires.at - ctx.now;
-            if left > mint::MARGIN {
+            let asked = mint::asked(&config);
+            if left > mint::MARGIN && permissions.as_deref() == Some(asked.as_str()) {
                 format!("current until {} (in {} min)", expires.text, left / 60)
+            } else if left > mint::MARGIN {
+                let made = permissions.map_or_else(
+                    || "permissions it does not record".to_string(),
+                    |made| format!("permissions {made}"),
+                );
+                format!(
+                    "current until {} (in {} min), made for {made} where the settings ask for \
+                     {asked}; {}",
+                    expires.text,
+                    left / 60,
+                    next(app.id, "another")
+                )
             } else if left > 0 {
                 format!(
                     "expires at {} (in {} min); {}",

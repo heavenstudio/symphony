@@ -164,13 +164,25 @@ pub(crate) fn bypass(
     else {
         return Ok(Bypass::Unknown(format!("it was never verified: {VERIFY}")));
     };
-    let now = value["updated_at"].as_str().unwrap_or_default();
-    match (instant(now), instant(&verified.updated_at)) {
+    let said = value["updated_at"].as_str();
+    match (said.and_then(instant), instant(&verified.updated_at)) {
         (Some(now), Some(then)) if now == then => {}
-        _ => {
+        (None, _) => {
+            return Ok(Bypass::Unknown(
+                "it shows no time it last changed that reads, so its verification cannot be held \
+                 to it"
+                    .into(),
+            ));
+        }
+        (Some(_), None) => {
+            return Ok(Bypass::Unknown(format!(
+                "its verification kept no time it last changed that reads: {VERIFY}"
+            )));
+        }
+        (Some(_), Some(_)) => {
             return Ok(Bypass::Unknown(format!(
                 "it changed at {} after it was verified as last changed at {}: {VERIFY}",
-                plain(now),
+                plain(said.unwrap_or_default()),
                 plain(&verified.updated_at)
             )));
         }

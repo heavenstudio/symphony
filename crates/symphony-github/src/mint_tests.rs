@@ -104,16 +104,35 @@ fn githubs_time_reads_as_seconds_since_1970_and_nothing_else_does() {
 }
 
 #[test]
-fn a_file_holds_a_token_and_its_expiry_or_nothing_this_program_wrote() {
+fn a_file_holds_a_token_its_expiry_and_its_permissions_or_nothing_this_program_wrote() {
     let token = |held: &Held| match held {
-        Held::Token { token, expires } => Some((token.expose().to_string(), expires.at)),
+        Held::Token {
+            token,
+            expires,
+            permissions,
+        } => Some((token.expose().to_string(), expires.at, permissions.clone())),
         _ => None,
     };
+    let asked = Some("checks=write,contents=write".to_string());
+    assert_eq!(
+        token(&held(
+            "ghs_abc\nexpires_at 1970-01-01T01:00:00Z\npermissions checks=write,contents=write\n"
+        )),
+        Some(("ghs_abc".into(), 3_600, asked.clone()))
+    );
+    assert_eq!(
+        token(&held(
+            "ghs_abc\nexpires_at 1970-01-01T01:00:00Z\npermissions checks=write,contents=write"
+        )),
+        Some(("ghs_abc".into(), 3_600, asked)),
+        "no last line end"
+    );
+    // A file an older build wrote says no permissions.
     let held_now = held("ghs_abc\nexpires_at 1970-01-01T01:00:00Z\n");
-    assert_eq!(token(&held_now), Some(("ghs_abc".into(), 3_600)));
+    assert_eq!(token(&held_now), Some(("ghs_abc".into(), 3_600, None)));
     assert_eq!(
         token(&held("ghs_abc\nexpires_at 1970-01-01T01:00:00Z")),
-        Some(("ghs_abc".into(), 3_600)),
+        Some(("ghs_abc".into(), 3_600, None)),
         "no last line end"
     );
     for unknown in [
@@ -125,6 +144,9 @@ fn a_file_holds_a_token_and_its_expiry_or_nothing_this_program_wrote() {
         "ghs_abc\nexpires 1970-01-01T01:00:00Z\n",
         "ghs_abc\nexpires_at tomorrow\n",
         "ghs_abc\nexpires_at 1970-01-01T01:00:00Z\nmore\n",
+        "ghs_abc\nexpires_at 1970-01-01T01:00:00Z\npermissions\n",
+        "ghs_abc\nexpires_at 1970-01-01T01:00:00Z\npermissions \n",
+        "ghs_abc\nexpires_at 1970-01-01T01:00:00Z\npermissions checks=write\nmore\n",
         "two tokens\nexpires_at 1970-01-01T01:00:00Z\n",
         "\nexpires_at 1970-01-01T01:00:00Z\n",
     ] {
@@ -140,6 +162,7 @@ fn a_token_is_current_only_past_the_margin() {
             at: expires,
             text: String::new(),
         },
+        permissions: None,
     };
     let now = 10_000;
     assert!(at(now + MARGIN + 1).current(now));
@@ -148,6 +171,30 @@ fn a_token_is_current_only_past_the_margin() {
     assert!(!at(now - 1).current(now));
     assert!(!Held::Absent.current(now));
     assert!(!Held::Unknown.current(now));
+}
+
+#[test]
+fn a_token_serves_only_while_current_and_made_for_what_is_asked_now() {
+    let now = 10_000;
+    let made = |expires: i64, permissions: Option<&str>| Held::Token {
+        token: Secret::new("ghs_abc").unwrap(),
+        expires: Expiry {
+            at: expires,
+            text: String::new(),
+        },
+        permissions: permissions.map(str::to_string),
+    };
+    let asked = "checks=write,contents=write,pull_requests=write";
+    assert!(made(now + MARGIN + 1, Some(asked)).serves(now, asked));
+    // Made for less, before the settings asked for checks, or by a build that said nothing.
+    let fewer = made(now + MARGIN + 1, Some("contents=write,pull_requests=write"));
+    assert!(fewer.current(now) && !fewer.serves(now, asked));
+    assert!(!made(now + MARGIN + 1, None).serves(now, asked));
+    // Made for more is not what is asked either: the least is asked for again.
+    assert!(!made(now + MARGIN + 1, Some(asked)).serves(now, "contents=write"));
+    assert!(!made(now + MARGIN, Some(asked)).serves(now, asked));
+    assert!(!Held::Absent.serves(now, asked));
+    assert!(!Held::Unknown.serves(now, asked));
 }
 
 #[test]
@@ -413,10 +460,10 @@ fn a_token_made_is_written_whole_at_mode_600_or_not_at_all() {
     private(&file, "ghs_old\n");
     let token = Secret::new("ghs_new").unwrap();
     let expires = Expiry::parse("1970-01-01T01:00:00Z").unwrap();
-    write(&file, &token, &expires, "token_file").unwrap();
+    write(&file, &token, &expires, "checks=write", "token_file").unwrap();
     assert_eq!(
         fs::read_to_string(&file).unwrap(),
-        "ghs_new\nexpires_at 1970-01-01T01:00:00Z\n"
+        "ghs_new\nexpires_at 1970-01-01T01:00:00Z\npermissions checks=write\n"
     );
     assert_eq!(
         fs::metadata(&file).unwrap().permissions().mode() & 0o777,
@@ -437,6 +484,7 @@ fn a_token_made_is_written_whole_at_mode_600_or_not_at_all() {
         &file,
         &Secret::new("ghs_newer").unwrap(),
         &expires,
+        "checks=write",
         "token_file",
     );
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
@@ -449,7 +497,7 @@ fn a_token_made_is_written_whole_at_mode_600_or_not_at_all() {
     );
     assert_eq!(
         fs::read_to_string(&file).unwrap(),
-        "ghs_new\nexpires_at 1970-01-01T01:00:00Z\n"
+        "ghs_new\nexpires_at 1970-01-01T01:00:00Z\npermissions checks=write\n"
     );
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
     let _ = fs::remove_dir_all(&dir);

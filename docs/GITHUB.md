@@ -104,8 +104,9 @@ checkout's own git, with the credentials a person's `git push` there uses.
 
 Where the settings name the App's installation and private key beside its token file
 (`installation_id` and `key_file`), that file is the program's own: it makes the token there itself, at the first use
-that finds it absent, expired, within five minutes of expiring, or holding a token it did not
-write, and uses the one there otherwise. Setting them hands the file to the program, which
+that finds it absent, expired, within five minutes of expiring, holding a token it did not
+write, or made for permissions other than the settings ask for now, and uses the one there
+otherwise. Setting them hands the file to the program, which
 replaces a token written there by hand at once (`crates/symphony-github/src/mint.rs`).
 
 - **The key** is held as the token files are: outside the repository, a plain file readable by
@@ -119,8 +120,11 @@ replaces a token written there by hand at once (`crates/symphony-github/src/mint
   them, and its token does not. So a made `token_file` token reads no repository but that one:
   with a private upstream (`upstream_id`), an import is refused as not readable with the
   App's token (404), and `token_file` stays kept by hand, holding a token that reads both.
-- **The file** holds the token on its first line and `expires_at` with the time GitHub gave on its
-  second. It is written to a file of its own beside it, readable by its owner alone, then renamed
+- **The file** holds the token on its first line, `expires_at` with the time GitHub gave on its
+  second, and on its third the permissions it was asked for
+  (`permissions checks=write,contents=write,pull_requests=write`): a token made before the
+  settings asked for more, or by a build that wrote no third line, is made again at its next use.
+  It is written to a file of its own beside it, readable by its owner alone, then renamed
   over it: a reader finds the old token or the new, never part of either, and two lands at once
   leave one of two tokens that both hold.
 - **A failure writes nothing** and leaves the file as it was. A key that is not there, is
@@ -138,7 +142,8 @@ answered 401, `unavailable`, until the file holds a current one. The program run
 and nothing between uses: a token is made only by a command that sends it.
 
 **`tokens`** says, for each token file the settings name, whether its token is current and until
-when, or that it is absent, expired or kept by hand, and never the token. It reads no remote and
+when, or that it is absent, expired, made for other permissions or kept by hand, and never the
+token. It reads no remote and
 writes nothing, and exits 0 unless a file is refused.
 
 ## The commands
