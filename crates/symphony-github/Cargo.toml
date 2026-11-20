@@ -21,6 +21,8 @@ serde_json.workspace = true
 toml.workspace = true
 # The digests a preview, a synchronized version and an operation are named by.
 sha2.workspace = true
+# The base64url of a GitHub App's JSON Web Token, whose signature `openssl` makes (src/mint.rs).
+data-encoding = "2"
 
 [dev-dependencies]
 # The scratch board its exchange tests run on, reached as the program reaches it: `tasks api`.
