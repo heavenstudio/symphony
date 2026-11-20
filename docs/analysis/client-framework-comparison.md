@@ -149,11 +149,14 @@ owner values more, and it is chosen after the move is, if the client moves to JS
 `experiments/client-jsx/` at commit `a40751dc2428b708045ed2ad4d6e27c15d94c314`, removed from the
 tree since, holds a JSX client of three pages, with a manifest and lockfile of its own (React
 19.3.1, Preact 11.2.0, Vite 8.3.8, `@vitejs/plugin-react` 6.3.0, plain JSX, no TypeScript);
-nothing the Symphony built, tested or served read it, and its README names the commands. Its
-build copies a Dioxus distribution's style sheets (`SYMPHONY_DIOXUS_DIST`, the
-[baseline's](#method)) and its bench builds the workspace's Chrome driver by path, so it runs from
-a checkout of that whole revision, with that revision's server:
-`git worktree add --detach DIR a40751dc2428b708045ed2ad4d6e27c15d94c314`, then its README in
+nothing the Symphony built, tested or served read it, and its README names the commands. It
+reads three things outside its folder: its build copies a Dioxus distribution's style sheets
+(`SYMPHONY_DIOXUS_DIST`, the [baseline's](#method)), its document page imports
+`apps/symphony-ui/assets/attach.css`, and its bench builds the workspace's Chrome driver by path.
+That style sheet left with the Dioxus client (`e82ca23a7`), before `a40751dc`, so it runs from a
+checkout of commit `6cc256bfd05ab36822f02ef793ecbd8c501f0bdf`, main just before that merge, whose
+`experiments/` is the same, with that revision's server:
+`git worktree add --detach DIR 6cc256bfd05ab36822f02ef793ecbd8c501f0bdf`, then its README in
 `DIR/experiments/client-jsx`. One source builds twice: `--mode react`, and `--mode preact`, where
 Vite aliases `react` and `react-dom` to `preact/compat`.
 
