@@ -113,6 +113,23 @@ fn task() -> TaskData {
     }
 }
 
+/// An operation an authority attests: the owner accepting sim/a, binding one input revision.
+fn operation() -> Operation {
+    Operation::new(
+        "sim".into(),
+        "sim/a".into(),
+        "accept".into(),
+        "approved".into(),
+        crate::authority::Snapshot::new("d1".into(), 2, 3, "verify".into(), "awaiting".into()),
+        BTreeMap::from([("design".to_string(), "r1".to_string())]),
+        crate::execution::Principal::new(
+            crate::execution::PrincipalKind::Human,
+            "local".into(),
+            "owner".into(),
+        ),
+    )
+}
+
 fn page() -> PageData {
     PageData {
         root: "/r/ünï code".into(),
@@ -321,6 +338,16 @@ pub(crate) fn every_request() -> Vec<(Request, &'static str)> {
             "gates.kept_while",
         ),
         (
+            Attest {
+                authority: "approvals".into(),
+                root: root.clone(),
+                operation: operation(),
+                within_ms: 10_000,
+            }
+            .into(),
+            "authorities.attest",
+        ),
+        (
             Changed {
                 watch: 1,
                 root: root.clone(),
@@ -423,7 +450,9 @@ fn defined(source: &str, kind: &str) -> Vec<(String, bool)> {
 
 #[test]
 fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks_no_build() {
-    let found = defined(include_str!("protocol.rs"), "struct");
+    // The data an authority's call carries is the protocol's too.
+    let mut found = defined(include_str!("protocol.rs"), "struct");
+    found.extend(defined(include_str!("authority.rs"), "struct"));
     let unmarked: Vec<&str> = found
         .iter()
         .filter(|(_, marked)| !marked)
@@ -443,6 +472,9 @@ fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks
         "PageData",
         "CardData",
         "Declaration",
+        "Operation",
+        "Snapshot",
+        "Signed",
     ] {
         assert!(names.contains(&name), "{name} in {names:?}");
     }
@@ -460,7 +492,7 @@ fn every_struct_of_the_protocol_is_non_exhaustive_so_a_field_a_minor_adds_breaks
             root: "/r".into()
         }
     );
-    assert_eq!(Version::new(0, 3), PROTOCOL);
+    assert_eq!(Version::new(0, 4), PROTOCOL);
 }
 
 #[test]
@@ -678,7 +710,7 @@ fn a_host_and_a_plugin_speak_the_lower_minor_of_one_major_and_refuse_another_by_
     );
     assert_eq!(Declaration::of(&Declaring).protocol, PROTOCOL);
     assert_eq!(Version::default(), PROTOCOL);
-    assert_eq!(PROTOCOL.to_string(), "0.3");
+    assert_eq!(PROTOCOL.to_string(), "0.4");
 }
 
 #[test]
@@ -966,6 +998,9 @@ impl Plugin for Declaring {
     fn gates(&self) -> Vec<&dyn Gates> {
         vec![self]
     }
+    fn authorities(&self) -> Vec<&dyn crate::Authority> {
+        vec![self]
+    }
     fn watches(&self) -> Vec<&dyn Watch> {
         vec![self, self]
     }
@@ -1086,6 +1121,20 @@ impl Gates for Declaring {
             state: GateState::default(),
             ..Gate::default()
         }])
+    }
+}
+
+impl crate::Authority for Declaring {
+    fn adapter(&self) -> &str {
+        "approvals"
+    }
+    fn attest(
+        &self,
+        _: &Path,
+        operation: &Operation,
+        _: std::time::Duration,
+    ) -> Result<Signed, String> {
+        Ok(Signed::new(operation.guard.clone(), "ab".repeat(64)))
     }
 }
 
@@ -1224,6 +1273,7 @@ fn a_declaration_names_every_seams_objects_in_the_plugins_order_and_reads_back_t
     );
     assert_eq!(declared.transports, ["uds"]);
     assert_eq!(declared.theme, Declaring.theme());
+    assert_eq!(declared.authorities, ["approvals"]);
     let text = serde_json::to_string(&declared).unwrap();
     assert_eq!(
         serde_json::from_str::<Declaration>(&text).unwrap(),
@@ -1377,6 +1427,8 @@ fn every_calls_answer_reads_back_whatever_order_its_members_come_in() {
         }]),
     );
     answers::<KeptWhile>(a, "c0ffee".into());
+    answers::<Attest>(a, Ok(Signed::new("{}".into(), "ab".repeat(64))));
+    answers::<Attest>(a, Err("the ledger is closed".into()));
     answers::<Changed>(a, Some("models".into()));
     answers::<Forget>(a, ());
     answers::<CheckDocs>(a, vec![ProblemData::of(&Problem::new("a", 0, "b".into()))]);

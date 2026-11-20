@@ -56,6 +56,19 @@ fn every_line_the_board_writes_on_a_change_of_status_says_which() {
             ),
             Step::Between("blocked", "ready"),
         ),
+        (
+            system("unblocked: the owner decided layout (reject); back to in_progress"),
+            Step::Between("blocked", "in_progress"),
+        ),
+        (
+            system("unblocked: the owner approved 1a2b3c4; back to review"),
+            Step::Between("blocked", "review"),
+        ),
+        (
+            system("unblocked: the owner decided layout (approve); back to nowhere"),
+            Step::Unchanged,
+        ),
+        (system("unblocked: no status named"), Step::Unchanged),
         (verdict("approve: ok"), Step::Between("review", "done")),
         (verdict("approve"), Step::Between("review", "done")),
         (

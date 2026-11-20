@@ -2,7 +2,7 @@
 # the docs shares. Std only, so a build script links it without the Symphony library.
 [package]
 name = "symphony-docs"
-version = "1.0.1"
+version = "1.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = true
