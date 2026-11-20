@@ -8,7 +8,8 @@ records. [Its card](../DECISIONS.md#timeline-navigation) asks the one open choic
 stretches are skipped, and by default or on request.
 
 Every picture is of one task, `tools/workflow-revision-guards`, read from the shared server on
-2026-11-20 at 04:45, after it closed. Pictures of today are the page as served. Proposed
+2026-11-20 at 04:45, after it closed. Pictures of today are the page as served then, before the
+alignment repair below landed. Proposed
 pictures are an [HTML mockup](timeline-navigation/mockup.html) that draws that task's recorded
 timeline: its stages, review rounds, role holds, message instants, 178 builds and tests, and
 gates, with no message bodies or machine names. The mockup reads and writes nothing. Its toolbar,
@@ -38,45 +39,48 @@ draws 259 steps in 12,830 px. The 10 h 54 m stretch is only a date heading betwe
 ![Today on a phone](timeline-navigation/before-phone.webp)
 ![Today on a phone, Show all, at the closed stretch](timeline-navigation/before-phone-all.webp)
 
-### The arrow and the held mark
+### The arrow and the held mark, before the repair
 
-![A message selected, then held down](timeline-navigation/before-selected-held.webp)
+![A message selected, then held down, before the repair](timeline-navigation/before-selected-held.webp)
 
 Message #15266 (coral-badger-11 to `@executor`, 11-19 09:47) selected, above, and held down,
-below. These are defects, not choices. Their repair is the task `app/timeline-message-alignment`,
-which needs none of this proposal. Measured in the page:
+below. These were defects, not choices. The task `app/timeline-message-alignment` repaired all
+three, and landed on main at 512adedbd after these pictures, so its source is the baseline this
+proposal builds on. Measured in the page before it:
 
-- **Across.** The arrow's overlay starts at the name column's width, 9rem. Each lane's name is
+- **Across.** The arrow's overlay started at the name column's width, 9rem. Each lane's name is
   9rem plus 8 px of padding, because the flex basis counts the content box. The arrow's scale
-  is therefore 8 px wider and starts 8 px further left than the marks'. The arrow drifts 0 to
+  was therefore 8 px wider and started 8 px further left than the marks'. The arrow drifted 0 to
   8 px left of its mark: 8 px at the task's start, none at its end, 4.4 px here.
-- **Down.** The arrow runs between the centres of the two lanes' tracks. A mark's button lays
-  out 36 px tall, not the 24 px its style sets, and centres its ring, so every ring sits 6 px
-  below its track's centre. The arrow starts 6 px above its mark and stops 6 px above the
+- **Down.** The arrow ran between the centres of the two lanes' tracks. A mark's button laid
+  out 36 px tall, not the 24 px its style set, and centred its ring, so every ring sat 6 px
+  below its track's centre. The arrow started 6 px above its mark and stopped 6 px above the
   addressed lane's rings, over that lane's bar words.
 - **Held.** Every pressed button gets `transform: scale(.97)` from the board's sheet. That
-  replaces the mark's own `translateX(-50%)` while the button is down, so the mark jumps 12 px to
-  the right. Here it ends 16.4 px from its arrow.
+  replaced the mark's own `translateX(-50%)` while the button was down, so the mark jumped 12 px
+  to the right. Here it ended 16.4 px from its arrow.
 
-The repair moves the marks and the arrow alone. Two more come from the same causes and are left
-to this proposal:
+Each has its own cause, and all three are of one class: one geometry worked out in three
+places. A page-wide press rule replaced the transform that positioned a mark. A button's least
+height moved a mark's ring off its track's middle. The arrow's overlay and the tracks took their
+origin from different boxes. The repair takes away each cause rather than its offset: a mark is
+centred on its time by its margin, so a press's shrink composes with it; a mark is its own
+height, so its ring is on its lane's middle; and the arrow is drawn from the mark's and the
+recipient track's measured boxes, so a change to either moves it too. Its browser test selects a
+mark, holds it down and compares the mark's centre with the arrow's, so a return of any of the
+three fails there.
+
+The repair moved the marks and the arrow alone. Two more findings share those causes and are
+left to this proposal:
 
 - **The hour lines** are a layer of their own on the same 9rem start, so they sit up to 8 px
   left of their tick labels and of the times the bars are drawn at.
-- **A phone's message rows** are buttons and take the controls' minimum height, so their words
+- **A phone's message rows** are buttons and take the controls' least height, so their words
   sit about 16 px below their diamond and time (in the Show all picture above).
 
 A message whose sender and recipient fall on the same lane, such as a post from outside to
-everyone on the task, draws a 12 px stub downwards today. What it draws instead is proposed below,
+everyone on the task, draws a 12 px stub downwards. What it draws instead is proposed below,
 under every option.
-
-The class of cause is a layer that recomputes from style constants the geometry of the elements
-it lines up with, instead of sharing their box or measuring them, plus a page-wide rule that
-overwrites a positioned control's `transform`. Two things would keep it from coming back. The
-arrow reads the boxes of its two endpoints, so any change to a mark or a lane moves it too. A
-mark is placed with `left` and a margin, or the `translate` property, so a press's `transform`
-composes with its placement instead of replacing it. A browser check that selects a mark, then
-presses and holds it, can compare the mark's centre with the arrow's ends.
 
 ## Other systems
 
@@ -280,7 +284,7 @@ schema change, and each is tested at its own layout functions and drawn in a bro
 2. **Ticks on a line.** Ticks at the foot of each lane and the 22 px Board & others lane. The
    arrow runs between measured marks, with its address on the hours line, and a message on one
    lane gets a ring and no arrow. The hour lines are drawn from the tracks' own start. This
-   follows the alignment repair.
+   builds on the landed alignment repair.
 3. **Zoom and move.** The view's window, the toolbar line, ⌘/Ctrl + scroll, Shift + scroll,
    pinch, the drag across the hours, the keys, the overview, and parts brought into view. The
    window's arithmetic is unit tested, and a browser test zooms, moves and returns.
