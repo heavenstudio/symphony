@@ -19,7 +19,7 @@ use axum::extract::connect_info::MockConnectInfo;
 use axum::http::{HeaderMap, Request, header};
 use serde_json::{Value, json};
 use std::sync::Arc;
-use symphony_board::execution::{Admission, Coordinator, Grant, Input, Worked};
+use symphony_board::execution::{Admission, Collection, Coordinator, Grant, Input, Worked};
 use symphony_board::rpc::Client;
 use symphony_plugin::execution::ContentRef;
 use tower::ServiceExt;
@@ -325,6 +325,58 @@ fn a_cancel_is_the_local_owners_intent_through_the_coordinator() {
     assert!(s.fake.calls().iter().all(|op| *op != Operation::Cancel));
     assert!(matches!(s.step(&id), Outcome::Accepted(_)));
     assert!(s.fake.calls().contains(&Operation::Cancel));
+}
+
+#[test]
+fn a_resource_whose_cleanup_has_begun_is_offered_and_resumed_only_on_a_new_one() {
+    let s = Served::new();
+    let id = s.running();
+    let revision = s.shown(&id)["revision"].clone();
+    let (status, body) = s.control(json!({"slug": TASK, "attempt": id, "revision": revision,
+        "act": "stop", "mode": "terminate"}));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(matches!(s.step(&id), Outcome::Accepted(_)));
+    assert!(matches!(s.step(&id), Outcome::Observed(_)));
+    let ended = s.shown(&id);
+    assert_eq!(ended["ending"], "stopped", "{ended}");
+    assert_eq!(
+        ended["controls"]["resume"],
+        json!(["new_resource", "reuse_with_new_generation"]),
+        "its resource not yet cleaned, either way"
+    );
+
+    // Its evidence collected and its resource's cleanup begun, as a project's worker does.
+    let worker = s.worker(PROJECT, CONFIGURATION);
+    let cleaner = Grant::from_host(
+        Principal::new(PrincipalKind::Service, "board".into(), "cleaner".into()),
+        s.scope(PROJECT),
+        &[Act::Collect, Act::Cleanup],
+        "policy-1",
+    );
+    worker.begin_collection(&cleaner, &id).unwrap();
+    worker
+        .end_collection(&cleaner, &id, Collection::None, Some("it wrote nothing"))
+        .unwrap();
+    worker.begin_cleanup(&cleaner, &id).unwrap();
+    let cleaning = s.shown(&id);
+    assert_ne!(cleaning["cleanup"], "not_due", "{cleaning}");
+    assert_eq!(
+        cleaning["controls"]["resume"],
+        json!(["new_resource"]),
+        "a resource being cleaned is not reused"
+    );
+
+    // A reuse asked all the same is the coordinator's refusal, and writes nothing.
+    let before = s.kept(TASK);
+    let (status, body) = s.control(json!({"slug": TASK, "attempt": id,
+        "revision": cleaning["revision"], "act": "resume", "mode": "reuse_with_new_generation"}));
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(said(&body).contains("cleanup has begun"), "{body}");
+    assert_eq!(s.kept(TASK), before, "nothing written");
+    let (status, body) = s.control(json!({"slug": TASK, "attempt": id,
+        "revision": cleaning["revision"], "act": "resume", "mode": "new_resource"}));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["attempts"][1]["predecessor"], json!(id));
 }
 
 #[test]
