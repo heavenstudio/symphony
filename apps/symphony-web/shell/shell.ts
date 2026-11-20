@@ -1,5 +1,67 @@
 // One history adapter; switching page kinds awaits the old runtime's cleanup.
+//
+// The shell's script is cache.ts and then this file, each with its types stripped on its own
+// (strip.ts), as one module (package.sh), the manifest's line first: a name this one declares at its
+// top, the store's cannot.
+import type { Ahead, Store } from "./cache.ts";
+
+/** A kind's files in the manifest package.sh writes: its script, the chunks it imports, its styles. */
+interface Files {
+  script: string;
+  imports: string[];
+  styles: string[];
+}
+
+/** The kinds' manifest, which package.sh writes in the place of the line that names it. */
+declare const __MODULES__: Record<string, Files>;
+
+/** A kind's script: a module exporting `run`, which mounts the kind, and `stop`. */
+interface Kind {
+  run(): unknown;
+  stop(): unknown;
+}
+
+/** A request to the menus (`reviewOverlay`, apps/symphony-web/src/overlay.tsx), as the shell reads it. */
+interface OverlayRequest {
+  kind: string;
+  owner?: unknown;
+  callback?: ((answer: unknown) => void) | undefined;
+}
+
+/** What the shell and the page kinds say to each other on the window (apps/symphony-web/src/shared.ts). */
+interface Page {
+  symphonyCache?: Store;
+  reviewShell: { gone: () => Promise<boolean>; alarm: typeof alarm };
+  reviewOverlay: (request: OverlayRequest) => void;
+  reviewOverlayRequest?: OverlayRequest | null;
+  reviewHoldPlace: (rows: string) => void;
+  reviewLand: (target: Element) => void;
+  reviewPanelReady?: boolean;
+  reviewOverlayReady?: boolean;
+  reviewActivityOpen?: boolean;
+  reviewAppearanceOpen?: boolean;
+  reviewQuickDraft?: { open?: boolean };
+  reviewPanelOpener?: HTMLElement | null;
+  reviewPanelFocus?: unknown;
+}
+
+declare const window: Window & typeof globalThis & Page;
+/** The link the browser says it reads over (Chrome's Network Information), where it says one. */
+declare const navigator: Navigator & {
+  connection?: { saveData?: boolean; effectiveType?: string };
+};
+/** The device cache's store (cache.ts), on the window before this script runs. */
+declare const symphonyCache: Store;
+
 const modules = __MODULES__;
+
+/** `kind`'s files in the manifest. A kind it does not name fails what asked for it, as a load that
+ * fails does. */
+function filesOf(kind: string): Files {
+  const files = modules[kind];
+  if (!files) throw new Error(`This build has no page kind ${kind}`);
+  return files;
+}
 try {
   const css = localStorage.getItem(stored("studio.cssVars"));
   if (css) {
@@ -12,10 +74,10 @@ try {
 } catch (_) {
   /* Storage can be unavailable in a private browser. */
 }
-let active;
+let active: { kind: string; imported: Kind; mount: HTMLElement } | undefined;
 let requested = 0;
 let switching = Promise.resolve();
-const styleLoads = new Map();
+const styleLoads = new Map<string, Promise<unknown>>();
 const preloaded = new Set(
   [...document.querySelectorAll('link[rel="modulepreload"]')].map((link) =>
     link.getAttribute("href"),
@@ -63,7 +125,14 @@ symphonyCache.read = (...args) => {
 // never waits on the chat's module.
 // Each has its root, its ready flag (`reviewPanelReady`, `reviewOverlayReady`) and event
 // (`review:panel-ready`...), and its failure notice (`#panel-error`...) with a retry.
-const PERSISTENT = {
+type Persistent = "panel" | "overlay";
+interface Shared {
+  root: string;
+  ready: "reviewPanelReady" | "reviewOverlayReady";
+  said: string;
+  retry: string;
+}
+const PERSISTENT: Record<Persistent, Shared> & Partial<Record<string, Shared>> = {
   panel: {
     root: "quick-root",
     ready: "reviewPanelReady",
@@ -77,18 +146,19 @@ const PERSISTENT = {
     retry: "Retry loading menus",
   },
 };
-const persistent = new Map();
+const persistent = new Map<Persistent, Promise<unknown>>();
 
 // A failed load's alert `id` in the notice region: what failed, and a button that takes the
 // alert down and tries `again`.
-function alarm(id, said, retry, again) {
+function alarm(id: string, said: string, retry: string, again: () => void) {
   let notice = document.getElementById(id);
   if (!notice) {
     notice = document.createElement("div");
     notice.id = id;
     notice.className = "shell-notice";
     notice.setAttribute("role", "alert");
-    document.getElementById("shell-notices").append(notice);
+    // The page's own (index.html, package.sh).
+    (document.getElementById("shell-notices") as HTMLElement).append(notice);
   }
   const button = document.createElement("button");
   button.textContent = retry;
@@ -105,7 +175,7 @@ function alarm(id, said, retry, again) {
 // longer has: its import fails. The page then asks for its own shell, bypassing the cache, and a
 // 404 says the build is gone; it loads again, once per build it was opened on (kept in the tab's
 // storage, without which it never does), and otherwise says the failure as before.
-async function gone() {
+async function gone(): Promise<boolean> {
   const own = new URL(import.meta.url).pathname;
   try {
     if ((await read(own, { cache: "no-store" })).status !== 404) return false;
@@ -124,7 +194,7 @@ async function gone() {
 window.reviewShell = { gone, alarm };
 
 // Each of `hrefs` asked for once, by a link of `attributes`, beside the module that needs it.
-function preload(hrefs, attributes) {
+function preload(hrefs: string[], attributes: string) {
   for (const href of hrefs) {
     if (href && !preloaded.has(href)) {
       preloaded.add(href);
@@ -135,13 +205,13 @@ function preload(hrefs, attributes) {
 
 // A kind (apps/symphony-web) is its script, which exports its own `run` and `stop`. The script
 // asks for the chunks it imports only once it is in: a module preload asks for them beside it.
-function initialize(kind) {
-  const spec = modules[kind];
+function initialize(kind: string): Promise<Kind> {
+  const spec = filesOf(kind);
   preload(spec.imports, 'rel="modulepreload"');
   return import(spec.script);
 }
 
-function mountFor(kind) {
+function mountFor(kind: string): HTMLElement {
   const shared = PERSISTENT[kind];
   const id = shared ? shared.root : `review-root-${kind}`;
   let mount = document.getElementById(id);
@@ -149,30 +219,31 @@ function mountFor(kind) {
     mount = document.createElement("div");
     mount.id = id;
     mount.hidden = !shared;
-    (shared ? document.body : document.getElementById("main")).append(mount);
+    // The page's own `#main` (index.html, package.sh).
+    (shared ? document.body : (document.getElementById("main") as HTMLElement)).append(mount);
   }
   return mount;
 }
 
-function styles(spec) {
-  const pending = [];
+function styles(spec: Files): Promise<unknown[]> {
+  const pending: Promise<unknown>[] = [];
   for (const href of spec.styles) {
     let loaded = styleLoads.get(href);
     if (!loaded) {
-      let link = [...document.querySelectorAll("link[rel=stylesheet]")].find(
+      const link = [...document.querySelectorAll<HTMLLinkElement>("link[rel=stylesheet]")].find(
         (link) => link.getAttribute("href") === href,
       );
       if (link?.sheet) loaded = Promise.resolve();
       else {
         const fresh = !link;
-        link ||= document.createElement("link");
+        const element = link || document.createElement("link");
         loaded = new Promise((resolve, reject) => {
-          link.addEventListener("load", resolve, { once: true });
-          link.addEventListener(
+          element.addEventListener("load", resolve, { once: true });
+          element.addEventListener(
             "error",
             () => {
               styleLoads.delete(href);
-              link.remove();
+              element.remove();
               reject(new Error(`Styles could not load: ${href}`));
             },
             { once: true },
@@ -180,9 +251,9 @@ function styles(spec) {
         });
         // Page styles go before the project's theme package, which wins the cascade.
         if (fresh) {
-          link.rel = "stylesheet";
-          link.href = href;
-          document.head.insertBefore(link, document.head.querySelector("[data-symphony-theme]"));
+          element.rel = "stylesheet";
+          element.href = href;
+          document.head.insertBefore(element, document.head.querySelector("[data-symphony-theme]"));
         }
       }
       styleLoads.set(href, loaded);
@@ -195,31 +266,30 @@ function styles(spec) {
 // A persistent module's script, the chunks it imports and its styles are requested together; it
 // mounts once all are in. A failure says so with a retry, and the next use tries again. `focus`: a
 // click opened the panel's sheet, which takes the focus.
-function ensure(kind, focus) {
+function ensure(kind: Persistent, focus?: boolean): Promise<unknown> {
   const shared = PERSISTENT[kind];
   const failure = `${kind}-error`;
-  if (!persistent.has(kind)) {
-    persistent.set(
-      kind,
-      (async () => {
-        mountFor(kind);
-        const [imported] = await Promise.all([initialize(kind), styles(modules[kind])]);
-        await imported.run();
-        document.getElementById(failure)?.remove();
-        window[shared.ready] = true;
-        dispatchEvent(new Event(`review:${kind}-ready`));
-        return { imported };
-      })().catch(async (error) => {
-        persistent.delete(kind);
-        if (await gone()) return;
-        console.error(shared.said, error);
-        if (kind === "panel") loadingSheets();
-        alarm(failure, shared.said, shared.retry, () => ensure(kind));
-      }),
-    );
+  let loading = persistent.get(kind);
+  if (!loading) {
+    loading = (async () => {
+      mountFor(kind);
+      const [imported] = await Promise.all([initialize(kind), styles(filesOf(kind))]);
+      await imported.run();
+      document.getElementById(failure)?.remove();
+      window[shared.ready] = true;
+      dispatchEvent(new Event(`review:${kind}-ready`));
+      return { imported };
+    })().catch(async (error) => {
+      persistent.delete(kind);
+      if (await gone()) return;
+      console.error(shared.said, error);
+      if (kind === "panel") loadingSheets();
+      alarm(failure, shared.said, shared.retry, () => ensure(kind));
+    });
+    persistent.set(kind, loading);
   }
   if (kind === "panel") loadingSheets(focus);
-  return persistent.get(kind);
+  return loading;
 }
 
 // Until the panel's module mounts, the sheet or activity list a click opened is drawn here at
@@ -230,12 +300,12 @@ function ensure(kind, focus) {
 // panel replaces it and takes the focus into its own sheet (apps/symphony-web/src/panel-focus.ts);
 // a failed load takes it down beside the retry notice. (A spinner's markup alone would cost every
 // first visit some 400 gzip bytes of the owner's budget.)
-function loadingSheets(focus) {
+function loadingSheets(focus?: boolean) {
   const old = document.getElementById("panel-loading");
   focus ||= old?.contains(document.activeElement);
   old?.remove();
   if (!persistent.has("panel") || window.reviewPanelReady) return;
-  const sheet = (open, id, label, inner, what) =>
+  const sheet = (open: boolean, id: string, label: string, inner: string, what: string) =>
     open
       ? `<aside id="${id}" aria-label="${label}" tabindex="-1">${inner}<p role="status" data-what="${what}"></p></aside>`
       : "";
@@ -256,10 +326,11 @@ function loadingSheets(focus) {
     );
   if (!sheets) return;
   document.body.insertAdjacentHTML("beforeend", `<div id="panel-loading">${sheets}</div>`);
-  if (focus) document.querySelector("#panel-loading aside").focus();
+  // The sheet just put in the page.
+  if (focus) (document.querySelector("#panel-loading aside") as HTMLElement).focus();
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
-      for (const status of document.querySelectorAll("#panel-loading [data-what]"))
+      for (const status of document.querySelectorAll<HTMLElement>("#panel-loading [data-what]"))
         status.textContent = `Loading ${status.dataset.what}…`;
     }),
   );
@@ -274,7 +345,8 @@ addEventListener("keydown", (event) => {
   const quick = sheet.id === "quick-sheet",
     opener = window.reviewPanelOpener;
   window.reviewPanelOpener = window.reviewPanelFocus = null;
-  if (quick) window.reviewQuickDraft.open = false;
+  // A `+` sheet is drawn here only while the draft says it is open (`loadingSheets`).
+  if (quick) (window.reviewQuickDraft as { open?: boolean }).open = false;
   else window.reviewActivityOpen = false;
   dispatchEvent(new Event(quick ? "review:quick" : "review:activity"));
   requestAnimationFrame(() =>
@@ -298,7 +370,7 @@ window.reviewOverlay = (request) => {
 };
 
 // The box that scrolls around `node`: its nearest ancestor that scrolls, or none for the page.
-function scrollerOf(node) {
+function scrollerOf(node: Element): HTMLElement | null {
   let box = node.parentElement;
   while (
     box &&
@@ -310,7 +382,7 @@ function scrollerOf(node) {
 
 // Whether `r` meets the window, cut to `clip` (a scroller's box) when there is one, and 600 px
 // above and below it.
-function reaches(r, clip) {
+function reaches(r: DOMRect, clip?: DOMRect): boolean {
   return (
     r.bottom > r.top &&
     r.right > r.left &&
@@ -323,7 +395,7 @@ function reaches(r, clip) {
 
 // Whether a box `selector` names is within a sentinel's reach: 600 px above and below what its own
 // scroller shows of the window (`.viewport-sentinel`, as `viewport::waits_near` decides).
-function near(selector) {
+function near(selector: string): boolean {
   return [...document.querySelectorAll(selector)].some((box) => {
     const r = box.getBoundingClientRect();
     return reaches(r) && reaches(r, scrollerOf(box)?.getBoundingClientRect());
@@ -337,12 +409,13 @@ function pendingNear() {
 
 // Call `stop` on the reader's own scroll, click or key (typing in a field aside); what it returns
 // stops listening.
-function onGesture(stop) {
+function onGesture(stop: () => void): () => void {
   const gestures = ["wheel", "touchstart", "touchmove", "mousedown", "keydown"];
-  const gesture = (event) => {
+  const gesture = (event: Event) => {
     if (
       event.type !== "keydown" ||
-      !event.target.matches?.("input, textarea, select, [contenteditable]")
+      // A window or a document has no `matches`.
+      !(event.target as Partial<Element>).matches?.("input, textarea, select, [contenteditable]")
     )
       stop();
   };
@@ -355,7 +428,12 @@ function onGesture(stop) {
 // A touch that moves owns the scrolling until its scrollers finish their momentum. A refresh
 // arriving after touchstart must not begin a position hold in the middle of that gesture. Track
 // each scroller: an unrelated box ending its scroll must not end the page's flick.
-let touchScroll = null;
+let touchScroll: {
+  moved: boolean;
+  down: boolean;
+  scrollers: Set<Node>;
+  release: AbortController;
+} | null = null;
 function clearTouchScroll() {
   touchScroll?.release.abort();
   touchScroll = null;
@@ -368,10 +446,13 @@ addEventListener(
     touchScroll = { moved: false, down: true, scrollers: new Set(), release };
     // Releases still target where each contact began, even after that node is removed. Keep
     // listeners there as well as at the window, for every contact that remains down.
-    const targets = new Set([event.target, ...Array.from(event.touches, (touch) => touch.target)]);
+    const targets = new Set([
+      event.target as EventTarget,
+      ...Array.from(event.touches, (touch) => touch.target),
+    ]);
     for (const target of targets) {
       for (const type of ["touchend", "touchcancel"]) {
-        target.addEventListener(type, releaseTouch, {
+        target.addEventListener(type, releaseTouch as EventListener, {
           capture: true,
           passive: true,
           signal: release.signal,
@@ -391,11 +472,12 @@ addEventListener(
 addEventListener(
   "scroll",
   (event) => {
-    if (touchScroll?.moved) touchScroll.scrollers.add(event.target);
+    // An element, or the document for the page.
+    if (touchScroll?.moved) touchScroll.scrollers.add(event.target as Node);
   },
   { capture: true, passive: true },
 );
-function releaseTouch(event) {
+function releaseTouch(event: TouchEvent) {
   const touch = touchScroll;
   if (!touch || event.touches.length > 0) return;
   touch.down = false;
@@ -412,7 +494,7 @@ addEventListener(
   "scrollend",
   (event) => {
     if (!touchScroll) return;
-    touchScroll.scrollers.delete(event.target);
+    touchScroll.scrollers.delete(event.target as Node);
     if (!touchScroll.down && touchScroll.scrollers.size === 0) clearTouchScroll();
   },
   { capture: true, passive: true },
@@ -421,7 +503,10 @@ addEventListener("pagehide", clearTouchScroll);
 
 // Updates sharing a scrolling box share its original anchor until that hold ends. Starting a
 // second hold after a row moved would make the two correct toward different positions each frame.
-const placeHolds = new Map();
+const placeHolds = new Map<
+  HTMLElement | null,
+  { anchor: Element; stop: () => void; renew: () => void }
+>();
 addEventListener("pagehide", () => {
   for (const held of placeHolds.values()) held.stop();
 });
@@ -446,7 +531,7 @@ window.reviewHoldPlace = (rows) => {
     if (touchScroll.scrollers.size === 0) clearTouchScroll();
   }
   if (touchScroll?.moved) return;
-  const shows = (node) => {
+  const shows = (node: Element) => {
     const top = node.getBoundingClientRect().top,
       box = scrollerOf(node)?.getBoundingClientRect();
     return top >= 0 && top < innerHeight && (!box || (top >= box.top && top < box.bottom));
@@ -516,16 +601,18 @@ const SCROLL_KEYS = ["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown"
 // Call `stop` on the reader's own input that scrolls the page: a wheel, a touch that moves, a press
 // on the page's own scrollbar (its target the root element) or a scroll key. A click, a tap, a
 // selection or any other key scrolls nothing. What it returns stops listening.
-function onScrollInput(stop) {
+function onScrollInput(stop: () => void): () => void {
   const kinds = ["wheel", "touchmove", "mousedown", "keydown"];
-  const takes = (event) =>
+  const takes = (event: KeyboardEvent) =>
     `input, textarea, select, [contenteditable]${event.key === " " ? ", button, summary" : ""}`;
-  const input = (event) => {
+  const input = (event: Event) => {
     if (
       event.type === "mousedown"
         ? event.target === document.documentElement
         : event.type !== "keydown" ||
-          (SCROLL_KEYS.includes(event.key) && !event.target.matches?.(takes(event)))
+          (SCROLL_KEYS.includes((event as KeyboardEvent).key) &&
+            // A window or a document has no `matches`.
+            !(event.target as Partial<Element>).matches?.(takes(event as KeyboardEvent)))
     )
       stop();
   };
@@ -550,10 +637,18 @@ function onScrollInput(stop) {
 // end aside). Only the next navigation lands again: a later call (a section's read in, the page's
 // last, an outline read again) opens what holds the element while the hold runs, and does nothing
 // once it has ended, leaving the page where the reader, or what they did, put it.
-let landing = { generation: 0, ended: true, place: null, listening: () => {} };
+/** Where an element and the page are (`placeOf`). */
+type Place = [top: number, y: number, inner: number, length: number];
+interface Landing {
+  generation: number;
+  ended: boolean;
+  place: Place | null;
+  listening: () => void;
+}
+let landing: Landing = { generation: 0, ended: true, place: null, listening: () => {} };
 
 // Where `target` and the page are: its top, the page's scroll and its scroller's, the page's length.
-function placeOf(target) {
+function placeOf(target: Element): Place {
   return [
     target.getBoundingClientRect().top,
     scrollY,
@@ -564,7 +659,7 @@ function placeOf(target) {
 
 // Whether the page went from `before` to `now` (each `placeOf`) by a scroll that moved the element
 // alike.
-function scrolledAway([top, y, inner], [now, nowY, nowInner, nowLength]) {
+function scrolledAway([top, y, inner]: Place, [now, nowY, nowInner, nowLength]: Place): boolean {
   const scrolled = nowY - y + nowInner - inner;
   const pulledBack = nowY < y && nowY >= nowLength - document.documentElement.clientHeight - 1;
   return Math.abs(scrolled) >= 0.5 && !pulledBack && Math.abs(now - top + scrolled) < 1;
@@ -577,16 +672,21 @@ function endLanding() {
 
 // Land on `target`, the element the address names, once for each navigation: open every `details`
 // around it, scroll it into view and hold it there (above).
-function land(target) {
+function land(target: Element) {
   const held = landing.generation === requested;
   if (held && landing.ended) return;
-  for (let parent = target; parent; parent = parent.parentElement) {
+  for (let parent: Element | null = target; parent; parent = parent.parentElement) {
     if (parent instanceof HTMLDetailsElement) parent.open = true;
   }
   // The hold running brings it back into view, from where it now is.
   if (held) return;
   endLanding();
-  const current = { generation: requested, ended: false, place: null, listening: () => {} };
+  const current: Landing = {
+    generation: requested,
+    ended: false,
+    place: null,
+    listening: () => {},
+  };
   landing = current;
   target.scrollIntoView();
   current.place = placeOf(target);
@@ -601,7 +701,8 @@ function land(target) {
     // An element drawn again in its place is held in turn; none at all is nothing quiet.
     const now = document.getElementById(id);
     if (now) {
-      const before = current.place,
+      // Set as the landing began, before its first frame.
+      const before = current.place as Place,
         there = placeOf(now);
       if (scrolledAway(before, there)) return endLanding();
       if (Math.abs(there[0] - before[0]) >= 0.5 || there[3] !== before[3]) now.scrollIntoView();
@@ -619,7 +720,7 @@ window.reviewLand = land;
 
 // `then`, once the page has drawn its data (none of its reads in flight for half a second, the
 // last of them answered) and the browser is idle.
-function settled(then) {
+function settled(then: () => void) {
   // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: a browser with no idle callback (Safari) goes on at once
   (window.requestIdleCallback || setTimeout)(
     function next() {
@@ -641,23 +742,24 @@ function settled(then) {
 let warmed = false;
 function warm() {
   const link = navigator.connection,
-    kinds = Object.keys(PERSISTENT);
-  if (warmed || link?.saveData || /2g/.test(link?.effectiveType)) return;
+    kinds = Object.keys(PERSISTENT) as Persistent[];
+  if (warmed || link?.saveData || /2g/.test(link?.effectiveType ?? "")) return;
   warmed = true;
   // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: a browser with no idle callback (Safari) goes on at once
   (window.requestIdleCallback || setTimeout)(
-    function next() {
+    function next(): unknown {
       // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: looks again each 500 ms whether the page's reads went quiet, where the last read's answer is the event
       if (reads || Date.now() - answered < 500) return setTimeout(next, 500);
       const kind = kinds.shift();
       if (!kind) return;
-      if (persistent.has(kind)) return persistent.get(kind).then(next);
-      const { script, styles, imports } = modules[kind];
+      const loading = persistent.get(kind);
+      if (loading) return loading.then(next);
+      const { script, styles, imports } = filesOf(kind);
       for (const href of [script, ...imports, ...styles]) {
         if (!document.querySelector(`link[href="${href}"]`))
           document.head.insertAdjacentHTML("beforeend", `<link rel="prefetch" href="${href}">`);
       }
-      const last = document.querySelector(`link[rel=prefetch][href="${script}"]`);
+      const last = document.querySelector<HTMLLinkElement>(`link[rel=prefetch][href="${script}"]`);
       if (last) last.onload = last.onerror = next;
       else next();
     },
@@ -668,26 +770,27 @@ function warm() {
 // Read ahead (docs/analysis/client-cache.md, "Read ahead"): once a page has drawn its data, its
 // feed is open and the browser is idle, the first AHEAD task and document links it shows on the
 // screen are read into the client cache one after another, at the lowest priority and outside the
-// page's own reads (cache.js, `ahead`), so opening one draws at once: a task's page and its
+// page's own reads (cache.ts, `ahead`), so opening one draws at once: a task's page and its
 // thread's newest page, a document's first part (`view=first`, at most
 // symphony_api::AHEAD_BYTES). Not when the browser asks to save data or the link is 3g or slower;
 // never a link that acts (a download, `data-native`, another window), a search, a folder,
 // another checkout's page or the page itself. A page whose feed is not open within a minute
 // reads nothing ahead.
 const AHEAD = 8;
-function ahead(generation, tries = 60) {
+function ahead(generation: number, tries = 60) {
   const link = navigator.connection;
-  if (link?.saveData || /2g|3g/.test(link?.effectiveType) || !window.symphonyCache) return;
+  if (link?.saveData || /2g|3g/.test(link?.effectiveType ?? "") || !window.symphonyCache) return;
   settled(() => {
     if (generation !== requested) return;
-    const feed = document.querySelector("main[data-feed], main [data-feed]")?.dataset.feed;
+    const feed = document.querySelector<HTMLElement>("main[data-feed], main [data-feed]")?.dataset
+      .feed;
     if (feed !== "live")
       // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: looks again each second, a minute at most, whether the feed is open, where its data-feed turning live is the event
       return feed && tries > 1 && setTimeout(() => ahead(generation, tries - 1), 1000);
     const base = project().base || "",
       id = base.replace(/^\/+/, ""),
-      items = new Map();
-    for (const anchor of document.querySelectorAll("main a[href]")) {
+      items = new Map<string, [kind: string, reads: Ahead[]]>();
+    for (const anchor of document.querySelectorAll<HTMLAnchorElement>("main a[href]")) {
       const box = anchor.getBoundingClientRect(),
         url = inPlace(anchor);
       if (
@@ -702,7 +805,7 @@ function ahead(generation, tries = 60) {
       )
         continue;
       const kind = route(url.pathname);
-      let path;
+      let path: string;
       try {
         path = decodeURIComponent(url.pathname)
           .slice(base.length)
@@ -713,7 +816,7 @@ function ahead(generation, tries = 60) {
       }
       if (path.startsWith("@")) continue;
       path = path.replace(/^doc\//, "");
-      const api = (name) => `${base}/api/${name}`,
+      const api = (name: string) => `${base}/api/${name}`,
         encoded = encodeURIComponent;
       if (kind === "task" && /^task\/./.test(path)) {
         const slug = path.slice(5).replace(/\/$/, "");
@@ -763,13 +866,20 @@ const SYMPHONY_ROUTES = [
   "favicon.ico",
 ];
 
-function within(route, path) {
+function within(route: string, path: string): boolean {
   return route === "" || path === route || path.startsWith(`${route}/`);
 }
 
 // The project the server inlines in the page (symphony_api::PROJECT_ELEMENT): its plugins'
 // pages and its entrypoints. A page without it is the plain project.
-function project() {
+/** The page's project, as far as the shell reads it (symphony_api::ProjectView). */
+interface ProjectView {
+  base?: string;
+  nav?: { href: string }[];
+  entrypoints?: string[];
+}
+
+function project(): ProjectView {
   try {
     return JSON.parse(document.getElementById("symphony-project")?.textContent || "{}");
   } catch {
@@ -779,7 +889,7 @@ function project() {
 
 // `key` as the project keeps it in the browser (project::stored): the one server's projects share
 // its origin, so each key takes the project's id first; a server of its own keeps it as it is.
-function stored(key) {
+function stored(key: string): string {
   const id = (project().base || "").replace(/^\/+/, "");
   return id ? `${id}:${key}` : key;
 }
@@ -788,12 +898,12 @@ function stored(key) {
 // project at `/<id>/`, a server of its own at `/`. Every link the client draws is written there
 // (project::href), so a click follows its address as a new tab or a copy of it does; a link
 // elsewhere, the project switch's, loads as the browser loads it.
-function ours(path) {
+function ours(path: string): boolean {
   const base = project().base || "";
   return !base || path === base || path.startsWith(`${base}/`);
 }
 
-function route(path) {
+function route(path: string): string | null {
   try {
     path = decodeURIComponent(path);
   } catch {
@@ -826,7 +936,8 @@ function route(path) {
   // name before `.html` or `.htm`: `.html` alone names none, as symphony_api::is_html) is a
   // document, its frame drawn in the documents' kind.
   const urls = view.entrypoints?.length ? view.entrypoints : ["docs"];
-  const name = clean.split("/").pop();
+  // A split gives one word at least.
+  const name = clean.split("/").pop() as string;
   if (
     !SYMPHONY_ROUTES.concat(pages).some((taken) => within(taken, clean)) &&
     urls.some((url) => within(url, clean)) &&
@@ -840,7 +951,7 @@ function route(path) {
   return clean === "" ? "review" : null;
 }
 
-function scrollAnchor(preserveScroll) {
+function scrollAnchor(preserveScroll: boolean) {
   const id = addressed();
   if (id === null) return;
   if (!id) {
@@ -851,7 +962,7 @@ function scrollAnchor(preserveScroll) {
   if (target) land(target);
 }
 
-async function show(generation, scroll) {
+async function show(generation: number, scroll: { x: number; y: number; initial: boolean }) {
   if (generation !== requested) return;
   const kind = route(location.pathname);
   if (!kind) {
@@ -859,12 +970,11 @@ async function show(generation, scroll) {
     return;
   }
   if (active?.kind !== kind) {
-    const spec = modules[kind];
     // Keep the previous page while its replacement loads (its script and the chunks it
     // imports), and under the notice when it does not. Its styles are requested with its
     // script; insets and row geometry must apply before page effects can anchor.
     const mount = mountFor(kind);
-    const [imported] = await Promise.all([initialize(kind), styles(spec)]);
+    const [imported] = await Promise.all([initialize(kind), styles(filesOf(kind))]);
     if (generation !== requested) return;
     if (active) {
       await active.imported.stop();
@@ -875,7 +985,8 @@ async function show(generation, scroll) {
     active = { kind, imported, mount };
   }
   document.getElementById("module-error")?.remove();
-  const root = document.scrollingElement;
+  // The page's root element, which scrolls it.
+  const root = document.scrollingElement as Element;
   const position = {
     x: scrollX,
     y: scrollY,
@@ -927,7 +1038,7 @@ function navigate() {
 // The address a click on `link` takes in place, the shell's to follow, or nothing: a link that
 // acts (a download, `data-native`, another window) or leads off the project's pages is the
 // browser's.
-function inPlace(link) {
+function inPlace(link: HTMLAnchorElement | null | false): URL | undefined {
   if (
     !link ||
     link.hasAttribute("download") ||
@@ -972,18 +1083,18 @@ addEventListener("review:appearance", () => {
   if (window.reviewAppearanceOpen) ensure("panel");
 });
 addEventListener("review:activity-arrived", () => ensure("panel"));
-async function pendingStep(step) {
+async function pendingStep(step: string) {
   await ensure("panel");
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
-      document.querySelector(`[data-pending-action=${step}]`)?.click();
+      document.querySelector<HTMLElement>(`[data-pending-action=${step}]`)?.click();
     }),
   );
 }
 document.addEventListener("click", (event) => {
   const step =
     event.target instanceof Element &&
-    event.target.closest("[data-pending-step]")?.dataset.pendingStep;
+    event.target.closest<HTMLElement>("[data-pending-step]")?.dataset.pendingStep;
   if (step) {
     event.preventDefault();
     pendingStep(step);

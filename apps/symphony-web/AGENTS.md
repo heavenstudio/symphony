@@ -177,8 +177,8 @@ its styles, the shared stylesheet first and then the CSS its chunks and its entr
 shared stylesheet is the build's entry for `src/styles/shared.css`, which imports its sheets in
 the order written there (the board's, the controls' theme, the frame's, then the shared
 controls'): the order of the cascade is stated in that file, never derived from a file's name. The
-shell is the manifest's line, then the device cache's store and `shell/shell.js`, minified by the
-minifier Vite ships (`shell/minify.js`), named by its bytes, with the server's notice styles'
+shell is the manifest's line, then the device cache's store and `shell/shell.ts`, minified by the
+minifier Vite ships (`shell/minify.ts`), named by its bytes, with the server's notice styles'
 hash as its last line. The step refuses a build with no Vite manifest, no shared stylesheet or no
 kind, and publishes nothing then. `symphony-build publish-client` exchanges the stage with
 `OUT/public` whole. Files are named `NAME-HASH16.EXT` with a hex hash, as the server caches such a
@@ -221,7 +221,7 @@ it: an effect's own (its cleanup aborts it), or, for a handler or a read with no
 (a click's post, a document's versions read), the kind's mount (`useMount()`, `src/mount.ts`, which
 `stop` aborts). A kind the shell stopped does nothing more: Later answered after the reader left
 moves no one, and a late read writes nothing over the next kind's. The device
-cache's store is the shell's (`shell/cache.js`, `symphonyCache`, which `src/cache.ts` names what
+cache's store is the shell's (`shell/cache.ts`, `symphonyCache`, which `src/cache.ts` names what
 to keep in), and it opens every IndexedDB transaction: this client opens none of its own.
 
 A move between two kinds stops one and runs the other; a move within a kind is the shell's
@@ -305,7 +305,7 @@ the pages, the API, the feed (its WebSocket's upgrade too, `ws`) and the build's
 no CORS header
 (`cors: false`, where Vite's default lets a page on any loopback port read every answer), so a page
 of another origin reads through it no more than from the server. What it makes itself is the page's
-shell script: this checkout's shell (`shell/cache.js` and `shell/shell.js`,
+shell script: this checkout's shell (`shell/cache.ts` and `shell/shell.ts`,
 unminified) with Vite's client first, and each of `KINDS` as its entry under Vite (one the
 server's build has as another client's or not at all among them) with the server's shared
 stylesheet, each kind's own styles kept before the project's theme as the built shell keeps them;
@@ -591,7 +591,7 @@ What holds on every page, and each page's contract where its section above names
   can end that (`whenFree`: the focus leaving the fields, a busy region, list box or details
   changing, or an element added or removed), never on a timer.
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
-  ([the client cache](../../docs/analysis/client-cache.md)). The store is `shell/cache.js`
+  ([the client cache](../../docs/analysis/client-cache.md)). The store is `shell/cache.ts`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
   kind shares it, and it opens every IndexedDB transaction. `src/cache.ts` and
   `src/cache-document.ts` reach it: an
@@ -690,8 +690,8 @@ What holds on every page, and each page's contract where its section above names
   `Site::set_document` serves a document's outline, its first part and its sections by their keys
   as the server does).
   Once a page has its data, its feed is open and the browser is idle, the shell reads ahead the
-  first 8 task and document links on the screen in its `main` (`ahead` in `shell/shell.js` and
-  `shell/cache.js`; [Read ahead](../../docs/analysis/client-cache.md#read-ahead)): one after
+  first 8 task and document links on the screen in its `main` (`ahead` in `shell/shell.ts` and
+  `shell/cache.ts`; [Read ahead](../../docs/analysis/client-cache.md#read-ahead)): one after
   another, at `priority: "low"`, marked `Purpose: prefetch`, naming any tag kept, and kept
   unvisited. A task is its page and its thread's newest page; a document its first part
   (`/api/document?view=first`: the head, every heading among it, and the leading sections whole
@@ -936,8 +936,8 @@ What holds on every page, and each page's contract where its section above names
   (`NO_SCROLLBARS`), so the kind Chrome draws cannot change every region's width. `apps/symphony-web-tests/tests/browser/skeleton.rs`
   covers the rest.
 - **The page.** `package.sh` writes the shell, whose single history adapter is
-  `shell/shell.js`: the page kinds' manifest on its first line (`const modules =
-  …;`), then the store and that script minified by the minifier Vite ships (`shell/minify.js`).
+  `shell/shell.ts`: the page kinds' manifest on its first line (`const modules =
+  …;`), then the store and that script minified by the minifier Vite ships (`shell/minify.ts`).
   Every kind names its script, the chunks that script imports (`imports`) and its styles:
   the shell imports that script, a module exporting `run` and `stop`, with a module preload of
   each chunk it has not asked for yet beside it. Its
@@ -969,7 +969,7 @@ What holds on every page, and each page's contract where its section above names
   the builds before it, and the folder weighs up to `KEEP` builds. Once its build is gone, an
   import that fails asks for the page's own shell past the cache: a 404 loads the
   page again, onto the build served, once per build in the tab's storage
-  (`gone` in `shell/shell.js`); anything else says the failure with its retry.
+  (`gone` in `shell/shell.ts`); anything else says the failure with its retry.
   A kind's `stop` unmounts it and awaits its cleanup before another kind starts, its feed and
   event subscriptions among it. Back and forward use this same adapter. The persistent panel remains mounted once opened,
   retaining chat, task form and conversation state across kinds. The initial
@@ -1126,7 +1126,7 @@ What holds on every page, and each page's contract where its section above names
 
 1. Draw the page in a module of its own (`src/NAME.tsx`), its reads guarded and its pure parts
    exported for the unit tests, with an entry in `src/kinds/NAME.tsx` and the name in `KINDS`
-   (`vite.config.ts`); its route is the shell's (`shell/shell.js`) and, for a route the Symphony
+   (`vite.config.ts`); its route is the shell's (`shell/shell.ts`) and, for a route the Symphony
    answers itself, `symphony_api::SYMPHONY_ROUTES`.
 2. Give it browser tests in `apps/symphony-web-tests/tests/browser`, and name it in the build
    test's kinds (`tests/build.rs`) with the sheets it loads.
