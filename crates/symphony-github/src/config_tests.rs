@@ -229,3 +229,16 @@ fn a_folder_in_no_repository_has_no_checkouts() {
     }
     assert!(checkouts(Path::new("/nonexistent/folder")).is_err());
 }
+
+#[test]
+fn releases_are_off_unless_the_settings_say_publish_and_any_other_word_is_refused() {
+    assert_eq!(parse(ON).unwrap().releases, Releases::Off);
+    assert_eq!(Releases::Off.word(), "off");
+    let on = parse(&format!("{ON}releases = \"publish\"\n")).unwrap();
+    assert_eq!(on.releases, Releases::Publish);
+    assert_eq!(on.releases.word(), "publish");
+    // It asks for nothing a delivery does: the one token and the repository `enabled` needs.
+    assert_eq!(on.pull_requests, PullRequests::Off);
+    assert!(parse(&format!("{ON}releases = \"draft\"\n")).is_err());
+    assert!(parse(&format!("{ON}releases = true\n")).is_err());
+}

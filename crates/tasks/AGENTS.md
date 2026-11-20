@@ -103,7 +103,9 @@ unanswered post (PULL, recovery and the reap read it). Who hears what:
 `herdr`): `startup.rs` a launch's start, `restore.rs`, `close.rs` and `cleanup.rs`, `screen.rs` what
 the owner may be looking at, `procs.rs` what under a terminal is work, `place.rs` its tab, `reap.rs`
 and `reap/` the idle sweep the Symphony runs every five minutes, `recover.rs` the resume of a
-conversation an unanswered post waits on, `staff.rs` a staffing pass, `defaults.rs` the agent and
+conversation an unanswered post waits on, `attempts.rs` hc as the execution provider each launch,
+restore and close records an attempt through
+([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md#local-terminals)), `staff.rs` a staffing pass, `defaults.rs` the agent and
 model a launch starts, `running.rs` the machine's agents. `bin/fake-hc.rs` stands in for hc and the
 app in tests.
 
@@ -135,7 +137,8 @@ reads ([TASKS](../../docs/TASKS.md#gate-decisions)), `red.rs` the red mark.
 ([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md)): `coordinator.rs` admission, controls and
 the worker's step, `rules.rs` the transitions it decides on what a write read, `evidence.rs`
 collection, cleanup and eligibility, `record.rs` the row and its facts, `keys.rs` the ids and
-operation keys; `store/execution.rs` with its statements is their store.
+operation keys, `view.rs` the board scope every host of a project's attempts uses
+(`board_scope`); `store/execution.rs` with its statements is their store.
 
 ### The rules of work
 
@@ -253,7 +256,7 @@ keeps running against a newer board for a while, and a change keeps what it read
 - a new meaning goes in a field older binaries ignore and keep, beside the old one, which keeps its
   meaning, with no schema change: an orchestrator's `seen`, `statuses` and PULL entries keep the
   whole-board meaning older dispatchers read, and what it hears and was told lives in `narrowing`,
-  `pull_withheld`, `pull_awaiting` and `pull_said`, written at both acknowledgement sites
+  `pull_withheld`, `pull_awaiting`, `pull_said` and `pull_idle`, written at both acknowledgement sites
   (`store/callback_state.rs`, `store/pull_account.rs`); `revision`, which every older write moves,
   is never read, and taking or releasing a `callback_lease` rewrites no `seen` or `statuses`;
 - with an older dispatcher interleaving, no entry an orchestrator hears is lost and no line is said
@@ -268,6 +271,14 @@ keeps running against a newer board for a while, and a change keeps what it read
   by moving its `seen` back by hand); and the Symphony, which opens its board to read, stays
   uncounted: it takes a new schema only by its reload after the move, so counting it would refuse
   every refresh's migrate (`store/writers.rs`; `tests/store/writers.rs`).
+- each schema's definitions are committed, one file per engine
+  (`tests/store/catalogue/ENGINE-VERSION.txt`, written with `TASKS_CATALOGUE=write`), and a
+  version in `schema::COMPATIBLE` keeps every table of the one before as that version's file has
+  it (`tests/store/catalogue.rs`). Only a store opened to read through the rule has the reader's
+  role (`Store::reader`, set in `store/opening.rs`), and only its ordinary write may take a board
+  one ahead whose `meta:schema` record lets it: a writer's, an unchecked store's, a copy's staging
+  and a recovery's rebind are held to their own schema (`store/transaction.rs`'s `Run`;
+  `tests/store/compatible_ahead.rs`, [CHECKS](../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)).
 
 ### Its contracts
 

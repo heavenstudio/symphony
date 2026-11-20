@@ -176,6 +176,7 @@ fn parse(line: &str, folder: &Path, check: &str) -> Option<Ran> {
         timed_out: false,
         interrupted: false,
         load,
+        alone: None,
     })
 }
 
@@ -248,6 +249,7 @@ mod tests {
             timed_out: false,
             interrupted: false,
             load: None,
+            alone: None,
         }
     }
 

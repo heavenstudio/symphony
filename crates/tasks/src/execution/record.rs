@@ -218,6 +218,10 @@ pub struct State {
     pub cleanups: u64,
     /// The attempt that followed it in its lane, a resume or a retry.
     pub successor: Option<String>,
+    /// The resume its resource was handed to, which reuses it at a new generation: the
+    /// resource's cleanup is that attempt's, unless it ended without taking it.
+    #[serde(default)]
+    pub resource_handed_to: Option<String>,
 }
 
 impl State {
@@ -227,11 +231,13 @@ impl State {
     }
 
     /// Whether anything is still owed for it: it is live, its collection is under way, or a
-    /// resource bound to it is not known to be cleaned up.
+    /// resource bound to it, and not handed to a resume, is not known to be cleaned up.
     pub fn open(&self) -> bool {
         self.live()
             || self.collection == Collection::Collecting
-            || (self.resource.is_some() && self.cleanup != Cleanup::Complete)
+            || (self.resource.is_some()
+                && self.resource_handed_to.is_none()
+                && self.cleanup != Cleanup::Complete)
     }
 }
 
@@ -290,7 +296,8 @@ pub enum Fact {
         digest: String,
         initiator: Principal,
     },
-    /// A worker is about to send operation `sequence`, under its lease's epoch.
+    /// A worker is about to send operation `sequence` under its lease's epoch, or to reconcile it
+    /// by its key when `reconcile`.
     Sent {
         sequence: u64,
         worker: Principal,

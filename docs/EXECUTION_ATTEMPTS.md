@@ -6,8 +6,9 @@ judges those attempts. It is stage 2 of the [execution design](analysis/remote-e
 under [its card](DECISIONS.md#execution-provider-attempts), built on the kit's
 [execution adapter contract](EXECUTION_ADAPTER.md), whose types it reuses. A project supplies the
 provider as a kit `Adapter`, its credentials and its storage; the host that runs Symphony builds
-the grants and runs the coordinator. Nothing starts it: local terminals launch as before, and no
-route, setting or client page reaches it yet ([what is not delivered](#what-this-does-not-deliver)).
+the grants and runs the coordinator. The board's own launcher is its first provider: each local
+terminal is an attempt ([local terminals](#local-terminals)). No route, setting or client page
+reaches attempts yet ([what is not delivered](#what-this-does-not-deliver)).
 
 ## The record
 
@@ -26,9 +27,10 @@ capabilities negotiated then, who asked and under which policy revision, the req
 runtime epoch and the capacity scope, and the predecessor a retry or a resume follows. Changing any
 of it is another attempt. The state keeps each dimension apart: dispatch (pending, starting,
 unknown, running, paused, held, terminal, with how it ended), cancellation, collection, cleanup, the
-bound resource and its generation, the conversation, the operation owed, and the evidence
-references the provider reported. `Store::live_attempts` names a task's attempts whose runtime may
-still be alive, held ones included: what a workflow change waits on.
+bound resource and its generation, the resume that resource was handed to, the conversation, the
+operation owed, and the evidence references the provider reported. `Store::live_attempts` names a
+task's attempts whose runtime may still be alive, held ones included: what a workflow change waits
+on.
 
 ## Admission
 
@@ -42,10 +44,11 @@ key, before anything is sent. A task the board does not hold, or a closed one, t
 
 `Coordinator::step` acts for one attempt under a lease the database's clock times, each lease the
 next epoch, and `run_due` steps the attempts due under its configuration: a pass the host calls,
-starting no thread and no scheduler of its own. Before an operation is sent, the step records it
-as sent; the answer is written only while that lease holds, else kept as a stale fact that
-changes nothing. An operation's key is a function of its project, board, configuration, attempt,
-kind and sequence alone, so a repeat sends the same key.
+starting no thread and no scheduler of its own. Before an operation is sent, the step records it as
+sent, and before one is reconciled it records the reconcile the same way, so the facts name every
+call a worker made, under which epoch; the answer is written only while that lease holds, else kept
+as a stale fact that changes nothing. An operation's key is a function of its project, board,
+configuration, attempt, kind and sequence alone, so a repeat sends the same key.
 
 An answer that settles nothing (lost contact, a deadline, an invalid reply) never fails the
 attempt and never starts another: the operation is reconciled by its key, after a backoff that
@@ -57,10 +60,14 @@ A worker that dies leaves its lease to run out, and the attempt is due again the
 
 ## Controls
 
-A cancel bars every result of the attempt from the moment it is written. One asked before
-anything was sent ends the attempt at once; one asked while the start is in flight is sent once
-the start's resource is known; one the provider refuses leaves the cancellation unconfirmed. A
-stop asks the bound resource to pause or terminate, in a mode its provider offers; a cancel asked
+A cancel bars every result of the attempt from the moment it is written. One asked while its
+start or resume has not reached the provider, never sent or answered by an authoritative absence,
+ends the attempt at once with nothing provisioned, whatever its dispatch; one asked while the
+start is in flight is sent once the start's resource is known; one the provider refuses leaves
+the cancellation unconfirmed. A held attempt does no I/O, so a cancel of it bars its results and
+sends nothing: it stays held, in its lane and its capacity place, until a person's retry
+supersedes it. A stop asks the bound resource to pause or terminate, in a mode its provider
+offers, and is refused for a held attempt, which waits for a person; a cancel asked
 while a stop is in flight is sent once the stop is answered, whether it was taken or refused,
 and only a cancel, or the terminate that stands in for one on a provider that cannot cancel,
 settles it. A resume admits another attempt continuing a paused or ended one, from a checkpoint
@@ -69,7 +76,11 @@ it; a retry admits a new execution after a held or ended one, and is a person's 
 naming the evidence that the predecessor was found or isolated. Either is admitted in the same
 transaction that links the two and ends a still-live predecessor superseded, its capacity place
 handed to the new attempt, so following an attempt never needs a free place and is never half
-done. `external_link` resolves a view for its caller, never kept.
+done. A resume that reuses its predecessor's resource at a new generation takes that resource's
+cleanup in the same transaction: from then on the predecessor no longer counts it as open and
+its cleanup is refused while the resume holds the resource or may still take it, and a resume of
+a resource whose cleanup has begun is refused, on a new resource alone. `external_link` resolves
+a view for its caller, never kept.
 
 ## Evidence and what may count
 
@@ -78,7 +89,9 @@ project's storage collected. An artifact is kept only when the attempt's current
 generation and runtime epoch made it; any other is a stale fact alone. Its name is a relative path
 that leads nowhere above the manifest; the same artifact reported again changes nothing, and
 another under the same name is refused. Cleanup begins once the attempt has ended and its
-collection has, under a key a late report of an earlier cleanup cannot match.
+collection has, under a key a late report of an earlier cleanup cannot match. A resource handed
+to a resume is that resume's to clean; one the resume ended without taking (refused, or
+cancelled before it was sent) is its predecessor's again, whose cleanup then takes it back.
 
 `Coordinator::eligibility` says whether an attempt's result may be put forward as the task's
 evidence, and every reason it may not: it holds its lane, it succeeded, no cancel was asked, its
@@ -95,12 +108,57 @@ revision. A grant is never deserialized, so no payload, query or claimed handle 
 or board, an attempt of one, and a worker grant on some tasks alone are refused; a coordinator
 steps only its own configuration's attempts and refuses another's before touching its lease.
 
+## Local terminals
+
+`just tasks launch`, `restore` and `close` run hc as a provider of attempts
+([`launch/attempts.rs`](../crates/tasks/src/launch/attempts.rs)), through the coordinator's public
+API alone, so a local run and a remote one are one history. The provider is the configuration
+`local-hc`, built in the launcher: no project setting names it, and no local command reads a
+remote one. Its scope is the board's own identity, the project's id (its file's, else the
+registry's, else its main checkout's folder name) and the board's database, the same from the main
+checkout and from a linked worktree: `execution::board_scope` is the one constructor every host of
+the board's attempts shares, a launch naming its project by `Hc::project`, and
+`launch::attempts::profile` is the provider under it. Its resource is the terminal's own address. It starts,
+finds again, observes and terminates a terminal and resumes a conversation in a new one; it pauses
+nothing and gives no view. A lane is the role and the handle: who may execute or review a task
+stays the board's role rules, and no launch is refused over an attempt.
+
+- **A launch** admits its attempt before hc is started, its input the task as the board holds it,
+  the commit its checkout is at and its first message. The start is `hc run` alone; the first
+  message, which may wait a minute, stays the launcher's step, and hc's receipt of it is the
+  observation that records the attempt running, with the conversation when the launch chose it.
+  A terminal hc answered is the attempt's however long the answer took: where it came after the
+  call's bound or the step's lease, the start is settled by the reconcile it then owes, answered
+  with the terminal found, and the launch goes on.
+- **A refusal or a rollback** leaves the attempt ended with why. An hc that refuses the run is a
+  rejected start, its error the reason. A launch or a restore that fails after its terminal
+  started cancels the attempt: the cancel is sent as the terminate that closes the terminal, the
+  failure in its receipt, and the closed terminal is observed gone. A terminal that will not
+  close leaves the attempt live with its cancellation unconfirmed, as the launch's own error says.
+- **A restore** admits a resume of the attempt its handle ran last on the task it restores, from
+  the recorded conversation, at the next runtime epoch, once that attempt is recorded ended: one
+  still read as running is observed gone first, as the restore starts only where no terminal runs
+  as the handle, and a start that never answered is reconciled absent and cancelled. Where the handle ran no
+  attempt on that task, or one that never had a terminal, the restore admits a plain start; an
+  attempt the handle left running on another task reads so until that task's close or cleanup.
+- **A close** asks a terminate as the closer, and the close's own last look and kill are its
+  answer: a terminal that stays refuses the stop, and the attempt goes on running. Cleanup, a
+  finished task's close and the idle sweep say a terminal they closed is gone, by one observation.
+
+No attempt replaces the launch records on the task (`task_session`) or changes a reader of them,
+and none is made up for a launch from before attempts: its close ends no attempt, and its restore
+is its first. A terminal an older build closes leaves its attempt reading
+running until the next restore, close or cleanup of its handle observes it. An attempt of another
+configuration is never read as a terminal: only a `local-hc` resource is an address given to hc.
+A task that also holds attempts a host admitted under another name for this board cannot list its
+ended ones here, so a restore there starts plainly; its live ones are still read one by one.
+
 ## What this does not deliver
 
 This is the board's half alone; full provider integration is not complete.
 
-- **Local terminals are unchanged.** hc's launch, sessions and links keep their own calls;
-  running them as a provider of attempts is the board task `tools/local-provider-attempts`.
+- **No worker runs for local attempts.** Each is stepped by the command that acts on its terminal,
+  and none is observed between commands: a terminal that ends by itself reads running until then.
 - **No one sees attempts yet.** The authorized task API, controls, history and session-link
   presentation in the client are the board task `tools/attempt-history-presentation`; until it
   lands, attempts are reachable only through the Rust API.
@@ -109,8 +167,10 @@ This is the board's half alone; full provider integration is not complete.
 
 ## Tests
 
+`crates/tasks/tests/launch/attempts.rs` runs the local provider against `fake-hc`.
 `crates/tasks/tests/store/execution.rs` runs the coordinator on each database against a
 deterministic provider (`tests/store/execution/fake.rs`) that scripts lost responses, outages,
-crashes before and after the provider acted, refusals, conflicts and calls that race a second
-worker or a cancel. `execution/rules_tests.rs` holds the transitions without a database, and
-`tests/consumer_api.rs` the shapes a host calls.
+crashes before and after the provider acted, refusals, conflicts and calls that race a second worker
+or a cancel, and races admissions from stores of their own for one request key, one lane and the
+last place of a capacity scope. `execution/rules_tests.rs` holds the transitions without a database,
+and `tests/consumer_api.rs` the shapes a host calls.

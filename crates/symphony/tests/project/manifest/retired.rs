@@ -1,6 +1,6 @@
 //! The keys the Symphony reads no more (`[agents] transports`, `[board] export`,
-//! `[board] disposable`): a file that still writes one loads, the key ignored and said to do
-//! nothing, and it is refused nowhere but under another table.
+//! `[board] disposable`): a file that still writes one is refused as a file writing any key the
+//! Symphony does not know is, by its name and line, with nothing said of them apart.
 
 use super::{folder, parsed, refused};
 use crate::Tree;
@@ -12,135 +12,80 @@ const ALL: &str = "[agents]\npanes = \"hc\"\ntransports = [\"claude-uds\", \"inb
                    [board]\nguide = \"docs/TASKS.md\"\nexport = \"docs/history/tasks.md\"\n\
                    disposable = [\"artifacts/*\", \".target/*\"]\n";
 
-fn says(name: &str) -> String {
-    format!(
-        "symphony.toml: {name} does nothing: no Symphony reads it any more, and the next release \
-         refuses it; remove it"
-    )
-}
+/// What refuses [`ALL`]: the three named table by table, sorted within each.
+const REFUSAL: &str = "symphony.toml: [agents] transports (line 3), [board] disposable (line 8), \
+                       [board] export (line 7) are not settings the Symphony knows";
 
 #[test]
-fn a_file_that_still_writes_a_retired_key_parses_as_the_file_without_it() {
-    let without = parsed("[agents]\npanes = \"hc\"\n\n[board]\nguide = \"docs/TASKS.md\"\n");
-    assert_eq!(parsed(ALL), without);
-    // each alone is the plain project, whatever it holds: nothing reads the value, so none is
-    // checked (a path leading out of the project, a value of another type)
-    let plain = parsed("").unwrap();
-    for text in [
-        "[agents]\ntransports = []\n",
-        "[agents]\ntransports = \"claude-uds\"\n",
-        "[board]\nexport = \"../tasks.md\"\n",
-        "[board]\nexport = 3\n",
-        "[board]\ndisposable = [\"artifacts/*\"]\n",
-        "[board]\ndisposable = { any = true }\n",
-    ] {
-        assert_eq!(parsed(text).as_ref(), Ok(&plain), "{text}");
-    }
-}
-
-#[test]
-fn a_retired_key_is_refused_beside_no_other_and_under_no_other_table() {
-    // an unknown key beside them is still refused, and alone in the refusal
-    assert_eq!(
-        refused(&format!("{ALL}starts = [\"y\"]\n")),
-        "symphony.toml: [board] starts (line 9) is not a setting the Symphony knows"
-    );
-    // the names are retired where they stood, and unknown anywhere else
+fn each_retired_key_is_refused_by_name_and_line_whatever_it_holds() {
     for (text, named) in [
-        ("transports = []\n", "transports (line 1)"),
-        ("[board]\ntransports = []\n", "[board] transports (line 2)"),
-        ("[agents]\nexport = \"x\"\n", "[agents] export (line 2)"),
+        ("[agents]\ntransports = []\n", "[agents] transports"),
         (
-            "[project]\ndisposable = []\n",
-            "[project] disposable (line 2)",
+            "[agents]\ntransports = \"claude-uds\"\n",
+            "[agents] transports",
+        ),
+        ("[board]\nexport = \"../tasks.md\"\n", "[board] export"),
+        ("[board]\nexport = 3\n", "[board] export"),
+        (
+            "[board]\ndisposable = [\"artifacts/*\"]\n",
+            "[board] disposable",
         ),
         (
-            "[agents.launch]\ntransports = []\n",
-            "[agents.launch] transports (line 2)",
+            "[board]\ndisposable = { any = true }\n",
+            "[board] disposable",
         ),
     ] {
         assert_eq!(
             refused(text),
-            format!("symphony.toml: {named} is not a setting the Symphony knows")
+            format!("symphony.toml: {named} (line 2) is not a setting the Symphony knows"),
+            "{text}"
         );
     }
 }
 
 #[test]
-fn a_project_whose_file_writes_them_loads_runs_and_is_told_each_does_nothing() {
-    let tree = Tree::new();
-    let root = folder(&tree, "Night Shift");
-    assert!(Project::retired(&root).is_empty(), "no file");
-    std::fs::write(root.join(FILE), ALL).unwrap();
-    let loaded = Project::load(&root).unwrap();
-    assert_eq!(loaded.agents.panes, "hc");
-    assert_eq!(loaded.board.guide(), "docs/TASKS.md");
-    assert!(project_problems(&root).is_empty());
-    // the running project is the file's, not the plain one a refused file leaves
-    assert_eq!(*Project::of(&root), loaded);
-    assert_eq!(Project::problem(&root), None);
+fn a_file_writing_all_three_names_each_beside_any_other_unknown_key() {
+    assert_eq!(refused(ALL), REFUSAL);
     assert_eq!(
-        Project::retired(&root),
-        [
-            says("[agents] transports (line 3)"),
-            says("[board] disposable (line 8)"),
-            says("[board] export (line 7)"),
-        ]
+        refused(&format!("{ALL}starts = [\"y\"]\n")),
+        "symphony.toml: [agents] transports (line 3), [board] disposable (line 8), \
+         [board] export (line 7), [board] starts (line 9) are not settings the Symphony knows"
     );
-    // (table by table, sorted within each, as unknown keys are named)
-    // one key is one line
-    std::fs::write(root.join(FILE), "[board]\nexport = \"t.md\"\n").unwrap();
-    assert_eq!(Project::retired(&root), [says("[board] export (line 2)")]);
-    // a file that writes none, or does not parse, says nothing here
-    std::fs::write(root.join(FILE), "[board]\nguide = \"docs/TASKS.md\"\n").unwrap();
-    assert!(Project::retired(&root).is_empty());
-    std::fs::write(root.join(FILE), "[board\nexport = \"t.md\"\n").unwrap();
-    assert!(Project::retired(&root).is_empty());
-    assert!(Project::load(&root).is_err());
+    // without them the same file is read
+    let without = parsed("[agents]\npanes = \"hc\"\n\n[board]\nguide = \"docs/TASKS.md\"\n");
+    assert_eq!(without.unwrap().agents.panes, "hc");
 }
 
 #[test]
-fn the_settings_check_and_the_lint_say_it_and_pass() {
+fn a_project_whose_file_writes_them_does_not_load_and_runs_with_them_left_out() {
+    let tree = Tree::new();
+    let root = folder(&tree, "Night Shift");
+    std::fs::write(root.join(FILE), ALL).unwrap();
+    assert_eq!(Project::load(&root).unwrap_err(), REFUSAL);
+    assert_eq!(project_problems(&root), [REFUSAL]);
+    // the running project leaves them out and reads the rest, as with any unknown key
+    let running = Project::of(&root);
+    assert_eq!(running.agents.panes, "hc");
+    assert_eq!(running.board.guide(), "docs/TASKS.md");
+    assert_eq!(Project::problem(&root), None);
+}
+
+#[test]
+fn the_settings_check_and_the_lint_refuse_it_and_say_no_retired_line() {
     let tree = Tree::new();
     std::fs::write(tree.root.join(FILE), ALL).unwrap();
-    let said = [
-        says("[agents] transports (line 3)"),
-        says("[board] disposable (line 8)"),
-        says("[board] export (line 7)"),
-    ]
-    .map(|line| line + "\n")
-    .concat();
-    let (mut out, mut err) = (Vec::new(), Vec::new());
     let args = [tree.root.to_str().unwrap().to_string()];
-    assert_eq!(symphony::lint::settings(&args, &mut out, &mut err), 0);
-    assert_eq!(String::from_utf8(err).unwrap(), said);
-    assert!(
-        String::from_utf8(out)
-            .unwrap()
-            .starts_with("✔ symphony.toml")
-    );
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    // the lint goes on past the project file to the documents, of which this tree has none (2)
-    assert_eq!(symphony::lint::main(&tree.root, &mut out, &mut err), 2);
-    let err = String::from_utf8(err).unwrap();
-    assert!(err.starts_with(&said), "{err}");
-    assert!(!err.contains("the project file is refused"), "{err}");
-    // beside a key that is refused, both still say it, and fail on the other alone
-    std::fs::write(tree.root.join(FILE), format!("{ALL}starts = [\"y\"]\n")).unwrap();
+    assert_eq!(symphony::lint::settings(&args, &mut out, &mut err), 1);
+    assert_eq!(
+        String::from_utf8(err).unwrap(),
+        format!("{REFUSAL}\n✖ the project file is refused.\n")
+    );
+    assert!(out.is_empty());
     let (mut out, mut err) = (Vec::new(), Vec::new());
     assert_eq!(symphony::lint::main(&tree.root, &mut out, &mut err), 1);
     let err = String::from_utf8(err).unwrap();
-    assert!(err.starts_with(&said), "{err}");
-    assert!(
-        err.contains("[board] starts (line 9) is not a setting"),
-        "{err}"
-    );
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    assert_eq!(symphony::lint::settings(&args, &mut out, &mut err), 1);
-    let err = String::from_utf8(err).unwrap();
+    assert!(err.starts_with(&format!("{REFUSAL}\n")), "{err}");
+    assert!(err.contains("the project file is refused"), "{err}");
     assert!(!err.contains("does nothing"), "{err}");
-    assert!(
-        err.contains("[board] starts (line 9) is not a setting"),
-        "{err}"
-    );
 }

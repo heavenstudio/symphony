@@ -919,8 +919,9 @@ impl Regenerator<'_, '_> {
     /// - Its inputs are the tip's ([`Self::stale`]): one generation for one input key. Its branch
     ///   and task are made where a run cut short left them unmade, and it waits.
     /// - Its inputs changed: its task is cancelled, saying why, a pull request it is bound to is
-    ///   told its evidence no longer stands, and the newest tip is made. Not once its merge was
-    ///   asked for: the host may hold its commit, which the land settles.
+    ///   told its evidence no longer stands, and the newest tip is made; with no task on the board,
+    ///   its branch goes with the record. Not once its merge was asked for: the host may hold its
+    ///   commit, which the land settles.
     fn waiting(
         &mut self,
         pending: &Pending,
@@ -1025,6 +1026,14 @@ impl Regenerator<'_, '_> {
             };
             let _ = store.leave(&filer);
             cancelled.map_err(|error| format!("{slug} could not be cancelled: {error}"))?;
+        } else if status.is_none() {
+            // A task the board never took: nothing but the record names its branch, which goes
+            // first, and only where it is still at the commit made.
+            let branch = format!("refs/heads/{slug}");
+            let _ = run_git(
+                &self.landing.main,
+                &["update-ref", "-d", &branch, &pending.head],
+            );
         }
         let _ = fs::remove_file(folder.join(PENDING));
         self.retract();
@@ -1081,8 +1090,10 @@ impl Regenerator<'_, '_> {
             Some(at) if at == pending.head => {}
             Some(at) => {
                 return Err(format!(
-                    "the branch {slug} is at {}, not the commit the regenerator made",
-                    short(&at)
+                    "the branch {slug} is at {}, not the commit the regenerator made ({}): move \
+                     it away, and the next round files it",
+                    short(&at),
+                    short(&pending.head)
                 ));
             }
             None => {
@@ -1521,8 +1532,10 @@ impl Regenerator<'_, '_> {
     /// too; else the tip it took (a red round's as committed). Kept in [`CHECKED`] while it runs and
     /// once it ends, said, and its red filed, added to or closed ([`CHECK`]), the task saying no
     /// more than is known of one past its time or one that could not run. A round discarded as
-    /// stale, or stopped, is not checked: the round after it checks the newer tip. None but when it
-    /// took a signal: the line the regenerator stops with, nothing judged.
+    /// stale, or stopped, is not checked: the round after it checks the newer tip. Nor is a commit
+    /// the same check passed on last, which a pending round takes again at each start while its
+    /// task waits. None but when it took a signal: the line the regenerator stops with, nothing
+    /// judged.
     fn check(&mut self, store: &Store, round: &Round) -> Option<String> {
         let command = self.landing.settings.main_check.clone();
         let path = self.worktree.take()?;
@@ -1539,6 +1552,15 @@ impl Regenerator<'_, '_> {
         let default = self.landing.settings.default_branch.clone();
         let shown = command.join(" ");
         let at = short(&commit);
+        let passed = format!("the check `{shown}` passed on {default} at {at}");
+        // A pending round takes the same tip at each start while its task waits: what passed on
+        // that commit is not run again.
+        if Checked::read(&self.landing.folder).is_some_and(|before| {
+            before.state == "passed" && before.tip == commit && before.line == passed
+        }) {
+            self.say(&format!("{passed} before: not run again"));
+            return None;
+        }
         let checking = format!("checking {default} at {at} ({shown})");
         self.keep_check(&Checked::new("checking", &commit, None, &checking));
         let ran = match self.checkout(&path, &commit) {
@@ -1549,10 +1571,7 @@ impl Regenerator<'_, '_> {
             Err(why) => Err(why),
         };
         let (filed, line) = match ran {
-            Ok(Ran::Passed) => (
-                None,
-                format!("the check `{shown}` passed on {default} at {at}"),
-            ),
+            Ok(Ran::Passed) => (None, passed),
             Ok(Ran::Interrupted(signal)) => {
                 return Some(format!(
                     "interrupted by {} while it checked {default} at {at}: what the round made \
@@ -1678,10 +1697,17 @@ impl Landing<'_> {
                     .any(|g| owns(&g.outputs, name))
             });
             let wrong = if pending.head != tip {
-                Some("is not the commit the regenerator made".to_string())
+                Some(format!(
+                    "is not the commit the regenerator made ({})",
+                    short(&pending.head)
+                ))
             } else if parents != [pending.tip.as_str()] || !ancestor(&self.main, &pending.tip, base)
             {
-                Some("is not one commit on the tip it was made of, held remotely".to_string())
+                Some(format!(
+                    "is not one commit on {}, which {}/{default} holds",
+                    short(&pending.tip),
+                    super::REMOTE
+                ))
             } else {
                 stray.map(|stray| format!("changes {stray}, outside the generators' outputs"))
             };

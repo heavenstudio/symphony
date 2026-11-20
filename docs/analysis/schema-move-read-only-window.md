@@ -7,9 +7,11 @@ release count out of that window: the orchestrator starts a release run right af
 landing. This page weighs the two ways that card named to remove the window instead, and a third
 met on the way, and recommends one.
 
-A is the way chosen ([its card](../DECISIONS.md#schema-move-keeps-pages-writing)), and nothing of
-it is built: this page is its design, and building it is work of its own. Until then the window is
-as [the window](#the-window) says.
+A is the way chosen ([its card](../DECISIONS.md#schema-move-keeps-pages-writing)), and it is
+built ([CHECKS](../CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). Building it was a
+schema step of its own, 25, and it removes the window only once a release carrying it is
+`current`. Until then, and for every step not declared, the window is as
+[the window](#the-window) says.
 
 ## The window
 
@@ -248,6 +250,7 @@ writes out of the server into a program agents also run.
 Without either, the cadence's rule stands alone: a release run started at once after each schema
 landing, and the window until its release is `current`.
 
-A is the way chosen ([its card](../DECISIONS.md#schema-move-keeps-pages-writing)). Nothing of it is
-built yet; until it is, and until a release carrying it is `current`, every schema landing keeps
-the window as above.
+A is the way chosen ([its card](../DECISIONS.md#schema-move-keeps-pages-writing)), and it is
+built ([CHECKS](../CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)). Until a release
+carrying it is `current`, and for every step not declared after that, a schema landing keeps the
+window as above.

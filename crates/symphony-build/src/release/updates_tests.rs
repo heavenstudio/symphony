@@ -71,6 +71,10 @@ impl Reds for Fake {
         Ok(())
     }
 
+    fn file(&self, slug: &str, title: &str, body: &str, by: &str) -> Result<(), String> {
+        self.create(slug, title, body, by)
+    }
+
     fn say(&self, slug: &str, _: &str, text: &str) -> Result<(), String> {
         self.refused()?;
         let mut tasks = self.0.tasks.borrow_mut();

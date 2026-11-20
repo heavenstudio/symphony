@@ -1,5 +1,6 @@
 //! Resume recorded agent conversations while holding their session against concurrent closes.
 
+use super::attempts::Local;
 use super::hc::{self, Hc, text_of};
 use super::{
     GONE, LaunchError, Machine, Start, Started, agent_of, branch_exists, claude_args, cleanup,
@@ -239,7 +240,27 @@ fn restore_one(
             session.handle
         )));
     }
+    let local = Local::new(store, hc, crate::workflow::board_service("restore"));
+    let conversation = session
+        .claude_session
+        .strip_prefix("codex:")
+        .unwrap_or(&session.claude_session);
+    let task = store.get(slug)?;
+    let attempt = local
+        .follow(
+            &task,
+            &session.role,
+            &session.handle,
+            &worktree,
+            text,
+            conversation,
+        )?
+        .id;
     let mut terminal = String::new();
+    // The terminal this restore started and cannot use goes, and its attempt ends cancelled.
+    let abandon = |terminal: &str, why: &str| {
+        let _ = local.abandon(&attempt, hc, terminal, why); // the problem is what the caller must hear
+    };
     let started = start_confirmed(
         hc,
         machine,
@@ -255,24 +276,28 @@ fn restore_one(
             args,
             text,
         },
+        (&local, &attempt),
     );
-    let message = started.map_err(|problem| {
-        if !terminal.is_empty() {
-            let _ = hc.close(&terminal); // the problem is what the caller must hear
-        }
-        Error::from(problem)
-    })?;
+    let message = started
+        .and_then(|message| {
+            local.running(&attempt, Some(conversation))?;
+            Ok(message)
+        })
+        .inspect_err(|problem| abandon(&terminal, &problem.to_string()))?;
     // Reopened and revived only while the restore still holds the session and the record is the
     // one read: else the record says what holds, the terminal this one started goes, and it
     // records nothing.
     let reopened = store.reopen_task_session_as(session, &terminal, hold);
     if !matches!(reopened, Ok(true)) {
-        let _ = hc.close(&terminal); // the problem is what the caller must hear
         let why = match reopened {
             Err(Error::Refused(why)) => why,
-            Err(problem) => return Err(problem),
+            Err(problem) => {
+                abandon(&terminal, &problem.to_string());
+                return Err(problem);
+            }
             Ok(_) => format!("{}'s record changed", session.handle),
         };
+        abandon(&terminal, &format!("{why} while it was restored"));
         return Err(Error::Refused(format!(
             "{why} while it was restored, so the restore records nothing and terminal \
              {terminal}, which it started, is killed"
