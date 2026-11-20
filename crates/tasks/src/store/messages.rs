@@ -165,6 +165,25 @@ impl Store {
         self.post(slug, sender, sender, text, to, Some((key, true)), false)
     }
 
+    /// A line of the board's own to `slug`'s orchestrator, made once per `key` on its thread
+    /// however often it is asked, in the post's own write (`delivery_key:[slug, key]`), as
+    /// [`Store::say_keyed`] makes one; an identical line the board said there before under no key
+    /// is taken for it. What the owner said that leaves a task's block standing is told so
+    /// (`symphony::decided`).
+    pub fn tell_orchestrator_once(&self, slug: &str, text: &str, key: &str) -> Result<(), Error> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(refused("an empty message says nothing".into()));
+        }
+        let body = || both(sql::unread(true), pg::unread(true));
+        let vars = json!({
+            "slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "key": key,
+            "said": text, "now": (self.clock)(),
+        });
+        self.retrying(|| self.transact::<Value>(body(), vars.clone()))
+            .map(|_| ())
+    }
+
     /// The owner's message on a task's thread, which waits on an agent's answer: posted as
     /// [`Store::say`] posts, and in the same write it opens the task's ask, or joins the open one
     /// ([`crate::Ask`]). The next line by a session holding a role on the task, or by the session

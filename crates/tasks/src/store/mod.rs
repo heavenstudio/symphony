@@ -75,7 +75,7 @@ use statement::{Statement, both};
 use surreal::reading::{native_bounds, reading};
 use surreal::session_read;
 
-pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
+pub(crate) use crate::stages::BLOCK_LINE;
 pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, ChatSeat, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
