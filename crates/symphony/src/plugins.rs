@@ -12,8 +12,8 @@ use std::sync::{Arc, OnceLock};
 
 use symphony_plugin::vocabulary::{Block, NavItem, Picture, Presentation, Span};
 use symphony_plugin::{
-    BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Generator, HomeRegion,
-    Page, Plugin, ProseRule, Route, ThreadLine, Watch,
+    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Generator,
+    HomeRegion, Page, Plugin, ProseRule, Route, ThreadLine, Watch,
 };
 
 pub use symphony_plugin::Reply;
@@ -422,6 +422,15 @@ impl Plugins {
             .board_fields()
             .into_iter()
             .find(|field| field.name() == name)
+    }
+
+    /// The approval authority answering for `adapter`: the first plugin's that does, for the
+    /// process's life, so it can be asked on a thread of its own.
+    pub fn authority(&self, adapter: &str) -> Option<&'static dyn Authority> {
+        self.list.iter().find_map(|plugin| {
+            let plugin: &'static dyn Plugin = *plugin;
+            (plugin.authorities().into_iter()).find(|authority| authority.adapter() == adapter)
+        })
     }
 
     pub fn watches(&self) -> Vec<&dyn Watch> {
