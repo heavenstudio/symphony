@@ -1120,11 +1120,26 @@ trigger; the next hourly sweep covers them. The Symphony's explicit finish actio
 sweep.
 A worktree goes, locked or not, when its HEAD is in main (detached or on a branch), nothing in
 it did not land, no live work holds it and its lock holds nobody; the branch it had checked out
-goes with it once merged, if no other worktree holds it and it still points where it did. Two
+goes with it once merged, if no other worktree holds it and it still points where it did. Three
 things keep that branch, each said as `kept branch NAME: WHY`: a land's record of its merge
 naming it, as `just land SLUG` run again finishes an interrupted land from that record and the
-branch, in a worktree of its own; and its task done by an approve no landing has closed, as what
-keeps such a task from going back to review once it is on main is its branch's tip.
+branch, in a worktree of its own; a delivery of it by pull request not yet asked to merge, whose
+land run again reads the branch's tip (from the merge's request on, a land run again goes on from
+its journal alone, and the branch goes); and its task done by an approve no landing has closed, as
+what keeps such a task from going back to review once it is on main is its branch's tip.
+A head [a pull request squashed](#a-land-delivered-by-a-pull-request) is in no history of main,
+and is in main by its receipt alone: the HEAD, or the branch's tip, is exactly the head a receipt
+kept under its own task's name records; `refs/symphony/delivered/SLUG` still names that head, so
+no commit is lost with the branch; the squash the receipt names is the commit it recorded, of
+that one parent and that tree, the tree git makes of merging the head into that parent; and that
+squash is on `origin/main` as last fetched and in main here. The sweep reads all of it from git
+and the kept file, fetches nothing and asks no host. Anything less is a head not in main, kept as
+one: a branch that moved on after its delivery, a receipt that does not read, is another task's
+or names another commit, a retained head gone or moved, a squash the remote was never seen to
+hold or the main checkout has not followed. Such a worktree and branch are said as `squashed
+into main as COMMIT by pull request #N` where a merged one says `merged into main`, and every
+rule below holds for them as for any other. The sweep deletes no retained head, no receipt and
+no branch of the remote.
 Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
 build output and caches, and holds no owner verdict no commit has (an owner's dated line under a
 card, in a document of the project's entrypoint folders, that its HEAD does not hold; a worktree
@@ -1161,7 +1176,7 @@ those its executors' and reviewers' sessions are bound to once none of those is 
 in-process agent has no launch record), and those on the task's branch (an agent that left has
 released its roles). Before each removal the sweep refreshes
 sessions, launches, locks and activity and searches that tree for process working directories;
-a lock it lifts goes back if the removal is refused. A detached agent's merged
+a lock it lifts goes back if the removal is refused. A detached agent's merged or squashed
 `worktree-agent-ID` branch stays while its live or stale session still binds its worktree.
 In-process agents work only in their own `agent-ID` worktree; a different directory they create
 is not bound by their agent id. Full sessions register from the worktree they use. Each removal
@@ -1228,7 +1243,8 @@ says `cleared build output PATH (why; SIZE)`. Code: `crates/tasks/src/sweep/buil
 **`just tasks sweep --dry-run` says what a sweep would do, and does none of it.** One line per
 worktree git lists, `worktree PATH: SIZE; TASKS; MERGED; VERDICT`: what it holds on disk (the main
 checkout's line has no size), the tasks tied to it with their status (`task SLUG (STATUS)`, or `no
-task`), `merged into main` or how many commits it has that main has not, and what the sweep would
+task`), `merged into main`, `squashed into main as COMMIT by pull request #N` or how many commits
+it has that main has not, and what the sweep would
 do with it and why (`would remove: …`, `kept: …`, or `kept for an orchestrator to decide: …` for
 tracked edits, files that did not land and commits not in main). Then `set aside in PATH: SIZE`
 says what the main checkout's `FOLDER/swept/` holds against its cap (above), and its summary ends
@@ -2620,8 +2636,9 @@ a squash by its receipt, and a release candidate advances to the head the receip
 ([RELEASES](RELEASES.md#the-cadence)); a land run again after it was cut while dispatching starts
 the regenerator, which makes nothing twice, and no release run a second time, so a release run
 its landing made due is asked for by the next landing or the release run's `--due`, run by hand
-([RELEASES](RELEASES.md#the-cadence)). The sweep keeps the worktree and branch of a squashed
-head, which it finds in no history.
+([RELEASES](RELEASES.md#the-cadence)). The sweep takes the worktree and branch of a squashed
+head by that receipt, once git bears it out and the main checkout holds the squash
+(the worktree sweep, under "Finished worktrees go by themselves" above); the retained head stays.
 
 ### An import delivered by a pull request
 
