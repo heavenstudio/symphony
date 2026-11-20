@@ -353,7 +353,8 @@ and each test now has a time and a timeout of its own under one scheduler
 
 Once the GitHub plugin is in, a release's checks run on GitHub's CI, and a project without the
 plugin keeps the local run exactly as it is. The design, approved on
-[its card](../DECISIONS.md#release-run-on-github) and not built yet:
+[its card](../DECISIONS.md#release-run-on-github). Its workflow is in the tree, started by hand
+alone ([RELEASES](../RELEASES.md#on-githubs-runners)); `just release` does not start it yet:
 
 **Optional by the plugin.** The release run verifies locally unless the project's GitHub
 integration is installed, its repository identity verified and hosted verification turned on,
@@ -366,10 +367,13 @@ with the commit as its input: never on a push or a pull request, since a task's 
 ([the landing design](github-pr-landing.md#checks-github-requires)). It checks out that commit
 and runs that commit's own `just verify`, a step or a lane to a job:
 
-- one job builds every test binary once and hands it to the tests' jobs as an archive, where
-  nextest's can carry them; else each job builds its own, which the trial settles;
 - one job each for the lint, the client check, the size check, the docs audit, the crates and
-  semver checks, and for each lane of the tests;
+  semver checks, the hosted board's check and the tests, the jobs being the steps the commit's
+  `tools/verify.sh` names;
+- the tests one job: their one build is the build folder itself, since all their lanes but one run
+  by Cargo over it to keep their fixtures shared, and a nextest archive carries only what nextest
+  runs. Jobs of a few lanes each would take that folder from one build, or each build its own,
+  which the trial's measure of the folder and of the build decides;
 - every job runs whatever the others did, as the steps do now, and uploads its log and its line
   of `steps.tsv`.
 
@@ -440,8 +444,9 @@ work for a run. The deterministic reds would have been found as they were.
 measured a run. From then a run of main's tip may follow a clock set from a run's length
 ([C](#c-main-judged-in-smaller-steps)), which this machine's load never allowed.
 
-It waits for `tools/github-pr-delivery`, whose credential and repository binding it uses. Its
-first step is the trial: the workflow on one commit, by hand, measured.
+`just release` starting it uses the credential and repository binding of the GitHub plugin
+(`tools/github-pr-delivery`), and waits for the trial: the workflow started by hand on one
+commit, and measured.
 
 ## The candidate's bounds
 
