@@ -23,6 +23,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// The pages of issues one preview reads at most; what is past them waits for the next.
 const MAX_PAGES: usize = 20;
@@ -44,6 +45,9 @@ pub struct Context<'a> {
     pub repository: Vec<PathBuf>,
     /// The program that signs a GitHub App's JSON Web Token ([`crate::mint`]): `openssl`.
     pub openssl: &'a str,
+    /// What a delivery rests by between two reads of the checks it wrote, which GitHub lists a
+    /// little after it takes them: [`crate::deliver::rest`], or a test's, which waits on nothing.
+    pub rest: &'a dyn Fn(Duration),
 }
 
 /// How a command ended: its exit code, having said why on `out`.
