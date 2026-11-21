@@ -5,27 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### Project workflows: the guard panel's links
-
-- [ ] **workflow-guard-panel-links** — The guard panel you found okay, redrawn so each row leads somewhere, as you asked. Every row opens the board's own record of it in place. A reason or a fact the ledger gives becomes a link to what it names (a task, a decision card, a document, a GitHub run). The ledger's name links to its own page for this approval, and "Let in by…" links to that move in the task's timeline. Where the fix is a command, the row shows it to copy. Nothing on it approves, as before. Approve this look, or comment. [[analysis/workflow-guard-panel#What a row links to]]
-  [2026-11-21 10:23] agent — For `app/workflow-guard-panel`; replaces **workflow-guard-panel**, which you rejected: "a lot of gates should probably link to something. An action, a log, a task, a decision card, a github run etc."
-
-    **Proposed, drawn into the real page with invented names, times, numbers and links.** Your Accept was refused: the ledger's two reasons link to the open task and the failed run, and the row's record is open under it. Above, "design signoff" links to the decision it rested on: ![Proposed, wide](analysis/workflow-guard-panel/links-wide.webp) ![Proposed, on a phone](analysis/workflow-guard-panel/links-phone.webp)
-
-    Every state a row can show, each with what it links to, one record open: ![Every state, wide](analysis/workflow-guard-panel/links-states-wide.webp) ![Every state, on a phone](analysis/workflow-guard-panel/links-states-phone.webp)
-
-    **Where each link comes from.**
-
-    - **The record** is what the board already keeps, or read from your try: who, when, the ledger's answer, what it rests on.
-    - **Reasons and facts** are the ledger's own words, which it already sends. A task, card, document or web address in them becomes a link; plain words stay quoted. A link that leaves the app is marked and names its site.
-    - **The ledger's page** needs one new, optional line in the project's settings saying where its ledger shows an approval. Without it the name is plain text.
-
-    **What still links to nothing.** A row whose attestation failed its signature shows nothing it says. Expired, missing and conflict rows have their record and the ledger's page, and no more: the board keeps no log of the ledger's reports, and no refusal beyond this page.
-
-    **Earlier verdicts checked.** **workflow-guard-panel**, rejected, asks for these links and calls the rest of the look okay, so the rows, words and colours are kept and only the links and the record are new. **revision-bound-project-guards** (B) keeps approvals in the project's ledger, which this keeps. **reports-task-page-pictures** (A) chose the gates' rows, whose way of linking this reuses. None decides how a guard's row links. The same task builds it after your answer.
-
 ## Auto-approved: spot-check
 
 ### Releases
@@ -45,6 +24,28 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
+
+## Waiting on an agent
+
+### Project workflows: the guard panel's links
+
+- [-] **workflow-guard-panel-links** — The guard panel you found okay, redrawn so each row leads somewhere, as you asked. Every row opens the board's own record of it in place. A reason or a fact the ledger gives becomes a link to what it names (a task, a decision card, a document, a GitHub run). The ledger's name links to its own page for this approval, and "Let in by…" links to that move in the task's timeline. Where the fix is a command, the row shows it to copy. Nothing on it approves, as before. Approve this look, or comment. [[analysis/workflow-guard-panel#What a row links to]]
+  [2026-11-21 10:23] agent — For `app/workflow-guard-panel`; replaces **workflow-guard-panel**, which you rejected: "a lot of gates should probably link to something. An action, a log, a task, a decision card, a github run etc."
+
+    **Proposed, drawn into the real page with invented names, times, numbers and links.** Your Accept was refused: the ledger's two reasons link to the open task and the failed run, and the row's record is open under it. Above, "design signoff" links to the decision it rested on: ![Proposed, wide](analysis/workflow-guard-panel/links-wide.webp) ![Proposed, on a phone](analysis/workflow-guard-panel/links-phone.webp)
+
+    Every state a row can show, each with what it links to, one record open: ![Every state, wide](analysis/workflow-guard-panel/links-states-wide.webp) ![Every state, on a phone](analysis/workflow-guard-panel/links-states-phone.webp)
+
+    **Where each link comes from.**
+
+    - **The record** is what the board already keeps, or read from your try: who, when, the ledger's answer, what it rests on.
+    - **Reasons and facts** are the ledger's own words, which it already sends. A task, card, document or web address in them becomes a link; plain words stay quoted. A link that leaves the app is marked and names its site.
+    - **The ledger's page** needs one new, optional line in the project's settings saying where its ledger shows an approval. Without it the name is plain text.
+
+    **What still links to nothing.** A row whose attestation failed its signature shows nothing it says. Expired, missing and conflict rows have their record and the ledger's page, and no more: the board keeps no log of the ledger's reports, and no refusal beyond this page.
+
+    **Earlier verdicts checked.** **workflow-guard-panel**, rejected, asks for these links and calls the rest of the look okay, so the rows, words and colours are kept and only the links and the record are new. **revision-bound-project-guards** (B) keeps approvals in the project's ledger, which this keeps. **reports-task-page-pictures** (A) chose the gates' rows, whose way of linking this reuses. None decides how a guard's row links. The same task builds it after your answer.
+  [2026-11-21 17:29] owner · rejected — What up with this stupid “the record” link? Put the link on the name of the gate.
 
 ## Rejected and replaced
 
