@@ -132,14 +132,26 @@ fn announced(what: &str, said: &std::sync::mpsc::Receiver<String>) -> Result<Str
 /// or the queue draws from the server under its ghost, as one the device has no copy for does.
 const NO_STORE: &str = "Object.defineProperty(window, 'indexedDB', { value: undefined });";
 
-/// The width the window leaves a page beside its scrollbar, as a script's expression: the root's,
-/// which the root's scrollbar gutter (`scrollbar-gutter: stable`, styles/board.css) narrows
-/// whether or not the page scrolls, as it does the page's fixed controls. Chrome draws a classic
-/// scrollbar, 15 px of every width, or an overlay one, none, as the machine's settings choose
-/// (macOS's automatic scroll bars are classic while a mouse is attached), so what fills the window
-/// is this wide, never `innerWidth`; nor `document.documentElement.clientWidth`, which leaves the
-/// gutter out only while the page scrolls.
-const PAGE_WIDTH: &str = "document.documentElement.getBoundingClientRect().width";
+/// The width the window leaves a page beside its scrollbar, as a script's expression: the window's
+/// (`innerWidth`) less a scrollbar's thickness, probed on a box of its own that scrolls. The page
+/// keeps that room whether or not it scrolls (`scrollbar-gutter: stable` on its root,
+/// styles/board.css), and so do its fixed controls, so what fills the window is this wide. Chrome
+/// draws a classic scrollbar, 15 px of every width, or an overlay one, none, as the machine's
+/// settings choose (macOS's automatic scroll bars are classic while a mouse is attached; a phone's
+/// emulation draws overlay ones), so it is never `innerWidth` alone; nor
+/// `document.documentElement.clientWidth`, which leaves the gutter out only while the page
+/// scrolls. It is read from the window, not from the root's own box, so a rule that narrows the
+/// root (a `max-width` or a margin on `html`) narrows what fills the window and not this.
+const PAGE_WIDTH: &str = "(() => { const probe = document.createElement('div'); \
+    probe.style.cssText = 'position:absolute;top:0;left:0;width:100px;height:100px;overflow:scroll;visibility:hidden'; \
+    document.documentElement.append(probe); const bar = probe.offsetWidth - probe.clientWidth; \
+    probe.remove(); return innerWidth - bar; })()";
+
+/// `script`, a page function of the window's width, called with [`PAGE_WIDTH`], as a script's
+/// expression.
+fn at_page_width(script: &str) -> String {
+    format!("({script})({PAGE_WIDTH})")
+}
 
 /// Hold, from the page's first script on, every timer of the asks' retry the page sets
 /// ([`symphony_web_tests::RETRY_MS`]: a failed read of a document's questions or of the chat's

@@ -73,15 +73,38 @@ fn every_board_status_has_its_built_in_pair_and_nothing_else_does() {
 }
 
 #[test]
-fn a_file_without_a_workflow_is_none_and_its_mappings_map_onto_nothing() {
+fn a_file_without_a_workflow_is_none_and_its_mappings_map_onto_built_in_v1() {
+    use crate::workflow::activate::tests::BACK;
     assert_eq!(written("").unwrap(), (None, vec![]));
     assert_eq!(
         written("[project]\nid = \"demo\"\n").unwrap(),
         (None, vec![])
     );
+    // Mappings with no [workflow] say where a return to the board's writers sends each task:
+    // from a pair built-in v1 does not declare to one it does.
+    let (none, back) = written(BACK).unwrap();
+    assert_eq!((none, back.len()), (None, 5));
+    assert_eq!(
+        (back[0].from.clone(), back[0].to.clone()),
+        (pair("build", "available"), pair("ready", "available"))
+    );
     assert_eq!(
         written(MAPPED).unwrap_err(),
-        "workflow_mappings: no [workflow] to map onto"
+        "workflow_mappings: ready/available is still declared; an ID keeps its meaning, so \
+         only a removed pair is mapped"
+    );
+    let nowhere = "[[workflow_mappings]]\nfrom = { phase = \"build\", state = \"working\" }\nto = { phase = \"deploy\", state = \"queued\" }\n";
+    assert_eq!(
+        written(nowhere).unwrap_err(),
+        "workflow_mappings: build/working -> deploy/queued names a destination the workflow \
+         does not declare"
+    );
+    let twice = format!(
+        "{BACK}[[workflow_mappings]]\nfrom = {{ phase = \"build\", state = \"working\" }}\nto = {{ phase = \"ready\", state = \"available\" }}\n"
+    );
+    assert_eq!(
+        written(&twice).unwrap_err(),
+        "workflow_mappings: build/working is mapped twice"
     );
     // The candidate reader keeps its meaning: omission is built-in v1, mappings not read.
     assert_eq!(
@@ -260,7 +283,8 @@ fn the_committed_reader_reads_the_branch_tip_and_nothing_uncommitted() {
         committed(&repo.0, "main").unwrap(),
         Committed {
             commit: repo.head(),
-            custom: None
+            custom: None,
+            returning: Vec::new(),
         }
     );
     fs::write(repo.0.join(FILE), "[project]\nid = \"demo\"\n").unwrap();
@@ -277,6 +301,10 @@ fn the_committed_reader_reads_the_branch_tip_and_nothing_uncommitted() {
     assert_eq!(custom.mappings.len(), 2);
     assert_eq!(custom.revision.source.commit, tip);
     custom.definition.check_revision(&custom.revision).unwrap();
+    assert!(
+        read.returning.is_empty(),
+        "a custom definition's mappings are its own"
+    );
 
     // What the working tree and the index hold changes nothing until it is committed.
     fs::write(repo.0.join(FILE), "[workflow]\nformat = 999\n").unwrap();

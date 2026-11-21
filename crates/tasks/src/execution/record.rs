@@ -286,7 +286,7 @@ pub(crate) struct Pin {
 
 impl Row {
     pub(crate) fn of(value: &Value) -> Result<Row, crate::Error> {
-        super::objects::read(value).map_err(|e| {
+        crate::objects::read(value).map_err(|e| {
             crate::Error::Db(format!(
                 "an execution attempt not in the board's shape: {e}"
             ))

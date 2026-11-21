@@ -129,9 +129,13 @@ where validation allows it. Unknown fields and variants refuse the candidate.
 Where a task goes when a newly committed `[workflow]` no longer declares the pair it stands at
 (or the pair it resumes to when blocked). Each entry names a removed pair and a pair the workflow
 declares, and no pair is mapped twice; a pair the workflow still declares is never remapped, as an
-ID keeps its meaning (rename it instead). Mappings with no `[workflow]` are refused. A task the
-board's existing writers kept starts from built-in v1's pair of its status
-([WORKFLOW](WORKFLOW.md#activation-and-mappings)).
+ID keeps its meaning (rename it instead). A task the board's existing writers kept starts from
+built-in v1's pair of its status ([WORKFLOW](WORKFLOW.md#activation-and-mappings)).
+
+Mappings in a file with no `[workflow]` map onto built-in v1, the board's own writers: each
+names a pair v1 does not declare and one it does. They say where each task goes when a project
+that ran a custom workflow drops it ([WORKFLOW](WORKFLOW.md#returning-to-the-boards-own-writers)),
+and a board with no workflow active reads them and does nothing.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
@@ -493,5 +497,6 @@ other project runs.
 | `refresh` | `true` | whether a green release refreshes the machine |
 | `publish` | `false` | whether a green release, once pushed, publishes on crates.io each package whose version it lacks ([RELEASES](RELEASES.md#packages-on-cratesio)) |
 | `github` | none | the command a green release, once pushed, asks for its GitHub Release, run as `COMMAND… --request FILE`: `["symphony-github", "release"]` names the GitHub adapter's; with none, no program is run ([RELEASES](RELEASES.md#a-github-release)) |
+| `rulesets` | none | the command each run runs after its checks as the check `rulesets`, in the main checkout, red unless it exits 0: `["symphony-github", "rulesets", "--verify"]` verifies again who bypasses the default branch's rules, where the adapter's settings publish pull requests; with none, the run has no such check ([RELEASES](RELEASES.md#who-bypasses-the-rules-again)) |
 | `candidate_reruns` | `3` | the red reruns a release candidate takes before it is dropped |
 | `candidate_hours` | `24` | the hours a release candidate is held before it is dropped |
