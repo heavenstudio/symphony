@@ -2702,7 +2702,10 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   and stays so until it moves to review.
 - **Who watches.** One watcher per project, `tasks land --watch` (`watch.lock` in the lands'
   folder, `watch.log` its lines), started by each arming where none runs, which reads each armed
-  task every `[land] watch_seconds` (30) and ends once none is left. Armed means the host answered
+  task every `[land] watch_seconds` (30) and ends once none is left. A round writes a task's line
+  to the log only where it differs from its round before, so a task that waits days for its
+  approve is one line there and the log grows by what changed, never by how long the watcher ran;
+  it is set aside past 1 MiB (`watch.log.1`) when a watcher starts. Armed means the host answered
   an arming and has not answered a disarm since: a publication between keeps it so, as the host
   keeps its merge armed across a push, and one that stopped before the host answered its arming
   again (an answer lost, a host away) has its pull request read every round, whatever its checks
