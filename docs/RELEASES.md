@@ -1196,14 +1196,18 @@ verification of one commit ([its card](DECISIONS.md#release-main-judged-in-steps
   now rather than at the count's, and nothing else is shortened: a red one is held as the release
   candidate as any run is ([the release candidate](#the-release-candidate)), and `current` then
   moves under the refresh's rule on writers as for any release ([the refresh](#the-refresh)).
-  The orchestrator who landed it runs `just release` once the land is done ([who runs
-  it](#who-runs-it)), unless the land's own `--due` started a run, which is that run. Such a
-  landing waits, approved, while a run or the release candidate holds the release (`just release
+  The task's orchestrator runs `just release` once the board's landed line is on its thread
+  ([who runs it](#who-runs-it)), unless the land's own `--due` started a run, which is that run.
+  Such a landing waits while a run or the release candidate holds the release (`just release
   --status`: `next run: in progress`, or a candidate open), since a run started then judges
   nothing of main's newest commit ([main while it is open](#main-while-it-is-open)), and lands
-  once neither does. A second one does not wait for `current` to name a release serving the
-  first's schema: the board may then stand more than one schema ahead of the machine's server
-  until a release at its schema is `current`.
+  once neither does. Where a pull request delivers it, its last stamp is its land, as the host
+  merges within seconds of it ([TASKS](TASKS.md#a-land-dispatched-at-review)): so it waits before
+  that stamp, its reviewer (or its assessor, where it needs no review) started only once
+  `just release --status` shows neither; elsewhere it waits approved, and its land waits. A
+  second one does not wait for `current` to name a release serving the first's schema: the board
+  may then stand more than one schema ahead of the machine's server until a release at its schema
+  is `current`.
 - **A landing of an additive step** raises no `VERSION` ([the contract](CHECKS.md#the-board-is-a-contract)):
   it owes no `board` note and starts no run of its own, as every build of the contract, the
   machine's server among them, keeps reading and writing the board. Main's build adds the step to
@@ -1687,8 +1691,9 @@ cannot be taken back once a project fetches it, so running `just release` or
 `just release --commit` by hand and installing its schedule are the owner's call: an orchestrator
 does either only on the owner's word. The cadence's run has that word (*The cadence*, above): a
 land starts `--due` without asking, and the release it runs is automatic. So has the run that
-follows a landing that moves the board's schema (*The cadence*, above): the orchestrator who
-landed it runs `just release` without asking each time, the owner's standing word for those runs
+follows a landing that moves the board's schema (*The cadence*, above): the task's orchestrator
+runs `just release` once the board's landed line is on its thread, without asking each time, the
+owner's standing word for those runs
 alone, and any other run by hand stays the owner's call. So has a green release's
 refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
 run without asking on a red refresh's task or a failed update's once it is fixed, or once a

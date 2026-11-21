@@ -235,7 +235,7 @@ or `--commit` by hand, installing its schedule and turning `[releases] publish` 
 owner's call; an orchestrator reruns `just release --refresh` without asking once what a refresh
 left red, or left to a project, is put right ([who runs it](docs/RELEASES.md#who-runs-it)).
 The one exception is the run that follows a landing that moves the board's schema, which the
-orchestrator who landed it starts at once without asking
+task's orchestrator starts at once without asking, once the board's landed line is on its thread
 ([the cadence](docs/RELEASES.md#the-cadence)).
 A schema move never waits for the owner: when this board is at a schema the release `current`
 names does not serve, the refresh of a green release serving it points `current` forward itself
