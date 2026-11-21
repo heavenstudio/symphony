@@ -343,6 +343,8 @@ What the default landing, `just land SLUG`, does besides its merge ([TASKS](TASK
 | `keys` | none | a generator's name, then the command printing its key: a tip whose key passed before runs nothing |
 | `check_paths` | the list in [TASKS](TASKS.md#the-default-landing) | what holds the project's tests and checks, which a red's fix its orchestrator approves may not change |
 | `delivery` | none: the land merges and pushes here | the command that delivers a task by a hosted pull request in place of that merge and push, a list of words run as `COMMAND VERB --request FILE` ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); it decides what lands, so a change of it is reviewed |
+| `watch_seconds` | `30` | how long the delivery watcher rests between two rounds of reading what the host made of each armed pull request ([TASKS](TASKS.md#a-land-dispatched-at-review)); `0` is refused |
+| `merge_within_minutes` | `30` | how long an armed pull request whose evidence stands may stay neither merged nor red before the watcher turns its merge off and says so; `0` is refused |
 | `upstream` | none: no import is delivered | `[land.upstream]`, the repository this one imports from, as below |
 
 ## `[land.upstream]`
@@ -522,6 +524,8 @@ other project runs.
 | `refresh` | `true` | whether a green release refreshes the machine |
 | `publish` | `false` | whether a green release, once pushed, publishes on crates.io each package whose version it lacks ([RELEASES](RELEASES.md#packages-on-cratesio)) |
 | `github` | none | the command a green release, once pushed, asks for its GitHub Release, run as `COMMAND… --request FILE`: `["symphony-github", "release"]` names the GitHub adapter's; with none, no program is run ([RELEASES](RELEASES.md#a-github-release)) |
+| `hosted` | none | the command a release run asks to verify its commit on GitHub's machines in place of this one, run as `COMMAND… --request FILE`: `["symphony-github", "verify"]` names the GitHub adapter's; with none, no program is run and every run verifies here ([RELEASES](RELEASES.md#on-githubs-runners)) |
+| `hosted_every_minutes` | `30` | while `hosted` names a command, a run of main's tip also starts at a landing once this many minutes passed since the last run started, unless that tip is judged already: the least time between two starts, since one run at a time holds the release's lock, so a value below a whole run's length makes the runs back to back. Such a run verifies nothing on this machine, and still builds at its tip and, when green, installs and refreshes here. `0` starts none by the clock, and without `hosted` it is not read ([RELEASES](RELEASES.md#the-hosted-clock)) |
 | `rulesets` | none | the command each run runs after its checks as the check `rulesets`, in the main checkout, red unless it exits 0: `["symphony-github", "rulesets", "--verify"]` verifies again who bypasses the default branch's rules, where the adapter's settings publish pull requests; with none, the run has no such check ([RELEASES](RELEASES.md#who-bypasses-the-rules-again)) |
 | `candidate_reruns` | `3` | the red reruns a release candidate takes before it is dropped |
 | `candidate_hours` | `24` | the hours a release candidate is held before it is dropped |

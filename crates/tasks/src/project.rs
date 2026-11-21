@@ -333,7 +333,7 @@ pub fn registered_roots(machine: &Path) -> Vec<(String, PathBuf)> {
     }
     std::fs::read_to_string(machine.join(REGISTRY))
         .ok()
-        .and_then(|text| serde_json::from_str::<Registry>(&text).ok())
+        .and_then(|text| crate::objects::parse::<Registry>(&text))
         .map(|registry| {
             registry
                 .projects

@@ -6,15 +6,20 @@ project's board to one repository on GitHub.com, and it does three things, each 
 - **The issue exchange.** Open issues carrying a label you choose become proposals on the board,
   and tasks you opt in are published as issues. It needs one token and no GitHub App:
   [its steps](#the-issue-exchange).
-- **Delivery by pull request.** `just land` opens a pull request for the task, writes its
-  evidence there as checks, and has GitHub squash it, in place of merging and pushing the default
-  branch itself. It needs one GitHub App installed on the repository, with no administration, and
-  one ruleset on its default branch, verified by someone who administers the repository:
+- **Delivery by pull request.** A task's move to review opens a pull request for it, writes its
+  evidence there as checks and turns on GitHub's auto-merge, and GitHub squashes it once the
+  evidence stands, in place of a land merging and pushing the default branch itself. It needs one
+  GitHub App installed on the repository, with no administration, and one ruleset on its default
+  branch, verified by someone who administers the repository:
   [its steps](#delivery-by-pull-request).
 - **GitHub Releases.** A release run publishes a GitHub Release for each tag it pushes, its text
   the release's notes. It needs the exchange's one token with contents read and write, and is
   the release run's alone, so it serves the Symphony's own repository:
   [its steps](#github-releases).
+- **A release verified on GitHub's runners.** A release run has its commit's full verification
+  run on GitHub's macOS runners in place of the machine it runs on. It needs the same token with
+  actions read and write, and is the release run's alone:
+  [its steps](#a-release-verified-on-githubs-runners).
 
 This page is the setup, in order, from nothing to a check that passes. How each part behaves,
 every setting and every refusal are in [GITHUB](GITHUB.md).
@@ -56,8 +61,10 @@ cargo install --locked --path crates/symphony-github
 
 That puts it in Cargo's `bin` folder (`~/.cargo/bin`), beside the `tasks` that
 `cargo install symphony-board` put there. It runs the `tasks` its `--tasks PROGRAM` option
-names, else the one beside it, else the one on `PATH`. A land runs it by name, so for delivery it
-must be on the `PATH` of whoever runs `just land`.
+names, else the one beside it, else the one on `PATH`. A land runs it by the name `[land]
+delivery` gives, and so does the dispatch a move to review starts: named bare, it must be on the
+`PATH` of every session that moves a task or gives a verdict, and named by its path
+(`.target/bin/symphony-github`) it need not be.
 
 `symphony-github --version` prints its version, and `symphony-github --help` its commands. Run
 every command below in the project's main checkout.
@@ -130,8 +137,9 @@ nothing, until steps 7 and 8 are done.
    | --- | --- |
    | Checks: Read and write | the evidence, written as checks |
    | Contents: Read and write | the pull request's merge, and a release where `releases = "publish"` |
-   | Pull requests: Read and write | the pull request, opened, marked ready and merged |
+   | Pull requests: Read and write | the pull request, opened, marked ready, armed for auto-merge, merged and closed |
    | Issues: Read and write | only where `close_issues` is set or the issue exchange is on |
+   | Actions: Read and write | only where `verification = "hosted"`: the workflow's start and the reads of its run |
 
    Never Administration: the App must not be able to change the rules it is held to. Who
    bypasses them is read by a person instead, in step 8.
@@ -152,7 +160,8 @@ nothing, until steps 7 and 8 are done.
    calls need, written to its token file, and made again before it expires. The token file need
    not be there yet. With the issue exchange on as well, the same token serves both.
 5. **The repository's merge settings** (Settings, General, Pull Requests): squash merging
-   allowed, merge commits and rebase merging not.
+   allowed, merge commits and rebase merging not, and "Allow auto-merge" ticked, which `arm`
+   turns on for a pull request.
 6. **The settings, landed while the default branch still takes a push.** `symphony-github.toml`,
    at the root:
 
@@ -239,6 +248,27 @@ so these steps are for that repository.
 `symphony-github status` then says `releases: publish`, and the release run's `--status` counts
 the releases published and names each one pending with why.
 
+## A release verified on GitHub's runners
+
+The release run ([RELEASES](RELEASES.md#on-githubs-runners)) is the Symphony's own repository's,
+so these steps are for that repository.
+
+1. **The workflow.** The default branch commits `.github/workflows/release-verify.yml`, and the
+   repository's settings allow Actions to run it.
+2. **The token.** `token_file`'s token with actions read and write on the repository, which
+   starts the workflow and reads its runs, logs and artifacts. Where the program makes the token,
+   the App is given that permission (step 1 of [delivery](#delivery-by-pull-request)) and whoever
+   owns the installation accepts it; the next token is asked for it.
+3. **The adapter's word.** Commit `verification = "hosted"` to `symphony-github.toml` on the
+   default branch, beside `enabled = true`, `repository` and `token_file`.
+4. **The run's command.** Commit `hosted = ["symphony-github", "verify"]` to the `[releases]`
+   table of `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#releases)). The run starts that
+   program by name, so it is on the `PATH` of whoever starts the release run, as `unzip` is,
+   which opens each job's artifact.
+
+`symphony-github status` then says `verification: hosted`, and each release run says which
+judged it: `verify verified on GitHub (RUN)`, or `verify verified here, not on GitHub: WHY`.
+
 ## Checking it
 
 **The settings.** `symphony-github status` says what the committed settings allow, reading
@@ -291,9 +321,12 @@ OWNER/NAME (id 123456789, bound to nothing here yet), main: checks written and m
 holds: a delivery would go on (policy 0123abc)
 ```
 
-It exits 0 on `holds` alone, and has made the token it needed. The next
-`just land SLUG --as HANDLE` then publishes the task as a draft pull request with its checks, and
-has it squashed.
+It exits 0 on `holds` alone, and has made the token it needed. The next task moved to review is
+then dispatched: its pull request opened with its checks and its auto-merge armed. GitHub
+squashes it once `symphony/eligible` is green, which takes an assessment at its head (`just tasks
+needs SLUG STAMP… --tip HEAD`) and every stamp that names standing there. A task nobody assessed
+waits in review with its checks pending, and nothing merges it. A task that reached done
+before the settings landed is published and armed by `just land SLUG --as HANDLE`.
 
 **The token.** `symphony-github tokens` says whether it is current, reading nothing remote and
 writing nothing, and never prints it:

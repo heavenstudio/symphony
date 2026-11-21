@@ -40,7 +40,8 @@ impl Storage {
         })
     }
 
-    pub(super) fn environment(self) -> [(&'static str, String); 2] {
+    /// The environment a server keeps its data this way under, each variable and its value.
+    pub fn environment(self) -> [(&'static str, String); 2] {
         [
             (
                 "SURREAL_SURREALKV_VLOG_THRESHOLD",

@@ -57,8 +57,9 @@ orchestrator the board gives, covered closes), `messages.rs` threads, inboxes an
 status lines the alarm replays, `stamp.rs` what tells a task and its thread from the ones a reader
 read before, in one small read, `copy.rs` the whole-board copy, `opening.rs` how a store opens by
 the schema rule, `transaction.rs` the schema guard every write starts with and the one decoder
-of its answers, which reads each struct from an object alone (the crate's `objects.rs`, which
-reads an attempt's row too), `writers.rs` the line each program that opens a board to write
+of its answers, which reads each struct from an object alone (the crate's `objects.rs`, the one
+reader of the JSON the board holds as a value and of the text it drops when it cannot read it; a
+read whose refusal a caller is shown stays `serde_json`'s), `writers.rs` the line each program that opens a board to write
 keeps, which `tasks migrate` reads before it moves one
 ([TASKS](../../docs/TASKS.md#who-writes-a-board)), `recovery.rs` the recovery generation, the
 token and the writes bound to it and the authority a store is handed, with `server/recovery.rs`
@@ -239,17 +240,30 @@ scratch board.
 
 ### The schema moves forward, and older builds keep reading
 
-A schema change is a new version with additive steps in `schema.rs`, migrated once, in one
-transaction, by main's build at its first command after it lands; every write transaction starts
-with the schema guard, and a reader one version behind still reads (`schema.rs`, `store/opening.rs`,
-`store/transaction.rs`; `tests/store/schema.rs`, `tests/store/open_read.rs`). So an older build
-keeps running against a newer board for a while, and a change keeps what it reads:
+The board is a contract ([CHECKS](../../docs/CHECKS.md#the-board-is-a-contract)): `schema::VERSION`
+counts breaking steps alone, and a step that only adds is an additive step on it
+(`schema::ADDED`, each with the tables it defines and why it is additive), which leaves the version
+as it is. A breaking step is a new version, migrated once, in one transaction, by main's build at
+its first command after it lands; an additive step is migrated the same way where a build may move
+the board, and holds no writer. Every write transaction starts with the schema guard, which also
+refuses a write naming a table of a step the board lacks (`schema::needs`), and a reader one
+version behind still reads (`schema.rs`, `store/opening.rs`, `store/transaction.rs`;
+`tests/store/schema.rs`, `tests/store/open_read.rs`, `tests/store/contract.rs`,
+`store/transaction_tests.rs`). So an older build keeps running against a newer board for a while,
+and a change keeps what it reads:
 
-- nothing new on `session`: even an optional field breaks an older reader once a row carries it, so
-  callback addresses, chat ownership, delivery state and bindings live in schemaless tables
-  (`callback_state`, `callback_event`, `callback_lease`, `chat_event`); and an old column keeps its
-  old reading: a launch record's `claude_session` holds Claude ids as before and Codex ids prefixed
-  `codex:`, which restore dispatches on and the agents API strips;
+- the open tables (`schema::OPEN`) are read past a field a build does not know and written by
+  named fields, never replaced whole (`store/surreal/fence_tests.rs`), so a field of an additive
+  step survives every build of the contract. Each row struct refuses a field it does not know
+  (`deny_unknown_fields`), and the store's reader hands an open table's row only the fields it
+  names (`rows::open_row`, `objects::read`), so the whole-board dump alone, read exactly
+  (`objects::read_exact`), refuses one by name, as a copy would drop it. A new table, or a new field on one, is a step's;
+  a closed table changes only by a breaking step;
+- before contract 28 nothing new went on `session`, as builds before it refused an optional field
+  once a row carried it: callback addresses, chat ownership, delivery state and bindings live in
+  schemaless tables (`callback_state`, `callback_event`, `callback_lease`, `chat_event`); and an
+  old column keeps its old reading: a launch record's `claude_session` holds Claude ids as before
+  and Codex ids prefixed `codex:`, which restore dispatches on and the agents API strips;
 - an in-process binding never registers a callback or takes over a handle with a native
   registration, and a bound key of no known class fails closed until a full-session hook binds it
   (its refusal asks for a retry once the new `tasks` is linked);
@@ -275,12 +289,15 @@ keeps running against a newer board for a while, and a change keeps what it read
   uncounted: it takes a new schema only by its reload after the move, so counting it would refuse
   every refresh's migrate (`store/writers.rs`; `tests/store/writers.rs`).
 - each schema's definitions are committed, one file per engine
-  (`tests/store/catalogue/ENGINE-VERSION.txt`, written with `TASKS_CATALOGUE=write`), and a
-  version in `schema::COMPATIBLE` keeps every table of the one before as that version's file has
-  it (`tests/store/catalogue.rs`). Only a store opened to read through the rule has the reader's
+  (`tests/store/catalogue/ENGINE-VERSION.txt`, and `ENGINE-VERSION.STEPS.txt` for its additive
+  steps, written with `TASKS_CATALOGUE=write`); each additive step is the file before with only
+  what an additive step may add, its declared tables and no row written, and a version in
+  `schema::COMPATIBLE` keeps every table of the one before as that version's file has it
+  (`tests/store/catalogue.rs`). Only a store opened to read through the rule has the reader's
   role (`Store::reader`, set in `store/opening.rs`), and only its ordinary write may take a board
   one ahead whose `meta:schema` record lets it: a writer's, an unchecked store's, a copy's staging
-  and a recovery's rebind are held to their own schema (`store/transaction.rs`'s `Run`;
+  and a recovery's rebind are held to their own schema, and the last two, with the dump, to their
+  own additive steps exactly (`store/transaction.rs`'s `Run`;
   `tests/store/compatible_ahead.rs`, [CHECKS](../../docs/CHECKS.md#a-schema-step-that-keeps-the-symphony-writing)).
 
 ### Its contracts

@@ -88,6 +88,27 @@ impl Releases {
     }
 }
 
+/// Whether the adapter runs the release's verification on GitHub's machines: `hosted` answers the
+/// release run's `verify` ([`crate::verify`]), which starts the workflow for one commit and reads
+/// its result.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Verification {
+    #[default]
+    Off,
+    Hosted,
+}
+
+impl Verification {
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Verification::Off => "off",
+            Verification::Hosted => "hosted",
+        }
+    }
+}
+
 /// The file as written. Every key is known, so a mistyped one is refused, never ignored.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,6 +122,8 @@ struct Written {
     pull_requests: PullRequests,
     #[serde(default)]
     releases: Releases,
+    #[serde(default)]
+    verification: Verification,
     token_file: Option<PathBuf>,
     #[serde(default)]
     import_labels: Vec<String>,
@@ -160,6 +183,7 @@ pub struct Config {
     pub issues: Issues,
     pub pull_requests: PullRequests,
     pub releases: Releases,
+    pub verification: Verification,
     /// Where the token is, never the token.
     pub token_file: Option<PathBuf>,
     pub import_labels: Vec<String>,
@@ -413,6 +437,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
         issues: written.issues,
         pull_requests: written.pull_requests,
         releases: written.releases,
+        verification: written.verification,
         token_file: written.token_file,
         import_labels: written.import_labels,
         import_comments: written.import_comments,

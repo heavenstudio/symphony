@@ -1,6 +1,7 @@
-//! `symphony-github deliver`, the four verbs a land delivered by a pull request asks: what each
+//! `symphony-github deliver`, the verbs a land delivered by a pull request asks: what each
 //! writes to GitHub and in what order, that a second run and a lost answer make nothing twice,
-//! what is refused before anything is sent, and that neither token is in anything said or kept.
+//! what is refused before anything is sent, and that the token is in nothing said or kept.
+//! GitHub's auto-merge, `arm`, `disarm` and `close`, is [`crate::armed`]'s.
 
 use crate::github::{Fake, Fault};
 use crate::{Rig, TOKEN};
@@ -265,6 +266,24 @@ impl Delivery {
         )
     }
 
+    /// `arm` of pull request `pull` at `head`, squashed.
+    pub(crate) fn arm(&self, pull: i64, head: &str) -> Value {
+        self.ask(
+            "arm",
+            &json!({
+                "verb": "arm", "slug": SLUG, "by": "amber-fox-1", "head": head,
+                "repository": 77, "pull": pull, "method": "squash",
+                "title": "sim/jump: the private title", "body": "the private brief",
+            }),
+        )
+    }
+
+    /// `verb` (`disarm` or `close`) of pull request `pull`.
+    pub(crate) fn end(&self, verb: &str, pull: i64) -> Value {
+        let request = json!({"verb": verb, "slug": SLUG, "repository": 77, "pull": pull});
+        self.ask(verb, &request)
+    }
+
     pub(crate) fn result(&self, pull: i64) -> Value {
         let request = json!({"verb": "result", "slug": SLUG, "repository": 77, "pull": pull});
         self.ask("result", &request)
@@ -320,7 +339,7 @@ pub(crate) fn snapshot(head: &str, tests: &str, revision: &str) -> Value {
     })
 }
 
-fn names(checks: &[(String, String, i64)]) -> Vec<(&str, &str)> {
+pub(crate) fn names(checks: &[(String, String, i64)]) -> Vec<(&str, &str)> {
     (checks.iter())
         .map(|(name, conclusion, _)| (name.as_str(), conclusion.as_str()))
         .collect()
@@ -334,7 +353,9 @@ fn nothing_is_asked_of_github_unless_the_settings_serve_publish() {
             None => d.rig.settings.set(None),
             Some(more) => d.rig.enable(more),
         }
-        for verb in ["publish", "merge", "result", "landed"] {
+        for verb in [
+            "publish", "arm", "merge", "disarm", "close", "result", "landed",
+        ] {
             let answer = d.ask(
                 verb,
                 &json!({"slug": SLUG, "snapshot": snapshot(HEAD, "met", "r1")}),
@@ -370,8 +391,8 @@ fn publish_pushes_the_head_opens_one_pull_request_and_writes_each_check_once() {
     assert_eq!(pulls.len(), 1);
     assert_eq!(pulls[0]["title"], SLUG);
     assert_eq!(
-        pulls[0]["draft"], true,
-        "a draft until its merge is asked for"
+        pulls[0]["draft"], false,
+        "ready for review, as GitHub arms no auto-merge on a draft"
     );
     assert_eq!(pulls[0]["body"], "The Symphony task `sim/jump`.");
     assert_eq!(
@@ -560,6 +581,109 @@ fn a_check_not_listed_within_the_bound_stops_unavailable_and_is_not_written_agai
     d.assert_no_token();
 }
 
+/// A second head of [`SLUG`], pushed to the pull request its first one opened.
+const NEXT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+/// `verb` (`arm` or `merge`) of pull request `pull` at `head`, squashed.
+fn at(d: &Delivery, verb: &str, pull: i64, head: &str) -> Value {
+    d.ask(
+        verb,
+        &json!({
+            "verb": verb, "slug": SLUG, "by": "amber-fox-1", "head": head,
+            "repository": 77, "pull": pull, "method": "squash",
+            "title": "sim/jump: the private title", "body": "the private brief",
+        }),
+    )
+}
+
+#[test]
+fn a_head_pushed_to_an_open_pull_request_is_published_once_github_moved_it_there() {
+    // Moved by the second read of the pull request, and by the last one the bound allows.
+    for late in [1, 2, deliver::READ_BACK.len()] {
+        let d = Delivery::new("deliver-head-late", "");
+        let pull = d.publish(&snapshot(HEAD, "met", "r1"))["pull"]["number"].clone();
+        assert!(d.rested.borrow().is_empty(), "one opened after its push");
+        d.rig.github.move_late(late, None);
+        let answer = d.publish(&snapshot(NEXT, "met", "r1"));
+        assert_eq!(answer["state"], "published", "moved late by {late}");
+        assert_eq!(answer["head"], NEXT, "moved late by {late}: {answer}");
+        assert_eq!(answer["pull"]["number"], pull);
+        assert_eq!(*d.rested.borrow(), deliver::READ_BACK[..late]);
+        assert_eq!(d.rig.github.pulls().len(), 1);
+        assert_eq!(d.rig.github.checks(NEXT).len(), 5);
+    }
+}
+
+#[test]
+fn a_pull_request_not_moved_within_the_bound_stops_unavailable_and_is_read_first_next() {
+    let d = Delivery::new("deliver-head-unmoved", "");
+    d.publish(&snapshot(HEAD, "met", "r1"));
+    d.rig.github.move_late(5, None);
+    let answer = d.publish(&snapshot(NEXT, "met", "r1"));
+    assert_eq!(
+        answer,
+        json!({
+            "state": "unavailable",
+            "why": "pull request #100 is still at aaaaaaa, not the head bbbbbbb pushed to its \
+                    branch, read again for 15 s: the next run reads it first",
+        })
+    );
+    assert_eq!(*d.rested.borrow(), deliver::READ_BACK);
+    let writes = d.writes();
+    // The next run finds it moved and the checks standing: nothing is written or rested for.
+    let answer = d.publish(&snapshot(NEXT, "met", "r1"));
+    assert_eq!(answer["state"], "published", "{answer}");
+    assert_eq!(answer["head"], NEXT);
+    assert_eq!(d.writes(), writes);
+    assert_eq!(d.rested.borrow().len(), deliver::READ_BACK.len());
+    d.assert_no_token();
+}
+
+#[test]
+fn a_head_someone_else_pushed_is_answered_as_it_is_and_never_as_the_one_pushed() {
+    let other = "c".repeat(40);
+    // There at the first read after the push, and after two reads at the head before.
+    for late in [0, 2] {
+        let d = Delivery::new("deliver-head-other", "");
+        d.publish(&snapshot(HEAD, "met", "r1"));
+        d.rig.github.move_late(late, Some(&other));
+        let answer = d.publish(&snapshot(NEXT, "met", "r1"));
+        // What the land refuses: a publication at another head than its tip.
+        assert_eq!(answer["state"], "published", "{answer}");
+        assert_eq!(answer["head"], json!(other), "late by {late}");
+        assert_eq!(*d.rested.borrow(), deliver::READ_BACK[..late]);
+        // And nothing is armed or merged at the head asked for.
+        for verb in ["arm", "merge"] {
+            let refused = at(&d, verb, 100, NEXT);
+            assert_eq!(refused["kind"], "head", "{verb}: {refused}");
+        }
+        assert_eq!(d.rig.github.pulls()[0]["state"], "open");
+    }
+}
+
+#[test]
+fn arm_and_merge_after_a_publish_see_the_head_it_pushed() {
+    for verb in ["arm", "merge"] {
+        let d = Delivery::new("deliver-head-then", "");
+        (d.rig.github).set_repository(&json!({"allow_auto_merge": true}));
+        d.publish(&snapshot(HEAD, "met", "r1"));
+        d.rig.github.move_late(2, None);
+        // While GitHub has not moved it, either refuses the head pushed, as it does any other.
+        d.remote.push(NEXT, SLUG).unwrap();
+        let refused = at(&d, verb, 100, NEXT);
+        assert_eq!(
+            (&refused["state"], &refused["kind"]),
+            (&json!("refused"), &json!("head")),
+            "{verb}: {refused}"
+        );
+        // A publish answers once it is there, so what the land asks next sees it.
+        assert_eq!(d.publish(&snapshot(NEXT, "met", "r1"))["head"], NEXT);
+        let answer = at(&d, verb, 100, NEXT);
+        let done = if verb == "arm" { "mergeable" } else { "merged" };
+        assert_eq!(answer["state"], done, "{verb}: {answer}");
+    }
+}
+
 #[test]
 fn a_rewritten_check_is_read_again_while_github_still_lists_what_it_said_before() {
     let d = Delivery::new("deliver-rewritten-late", "");
@@ -572,6 +696,7 @@ fn a_rewritten_check_is_read_again_while_github_still_lists_what_it_said_before(
     let rewritten = d.writes().split_off(before);
     assert_eq!(rewritten.len(), 5, "each rewritten once: {rewritten:?}");
     assert!(names(&d.rig.github.checks(HEAD)).contains(&("symphony/eligible", "failure")));
+    assert!(names(&d.rig.github.checks(HEAD)).contains(&("symphony/tests", "in_progress")));
 }
 
 #[test]
@@ -584,12 +709,23 @@ fn evidence_that_changed_rewrites_its_checks_the_failing_verdict_first() {
         answer["state"], "published",
         "what stands is said, whatever it is"
     );
+    // Each rewritten in place, but the stamp now pending: a run of its own after the one that
+    // completed, which GitHub goes by in its place.
     let rewritten = d.writes().split_off(before);
     assert_eq!(rewritten.len(), 5, "{rewritten:?}");
-    assert!(
-        rewritten
-            .iter()
-            .all(|write| write.starts_with("PATCH /repos/o/n/check-runs/"))
+    assert_eq!(
+        (rewritten.iter())
+            .filter(|write| write.starts_with("PATCH /repos/o/n/check-runs/"))
+            .count(),
+        4,
+        "{rewritten:?}"
+    );
+    assert_eq!(
+        (rewritten.iter())
+            .filter(|write| *write == "POST /repos/o/n/check-runs")
+            .count(),
+        1,
+        "{rewritten:?}"
     );
     // The first rewritten is the one that said every stamp stood.
     let first = d
@@ -603,10 +739,16 @@ fn evidence_that_changed_rewrites_its_checks_the_failing_verdict_first() {
         (&sent["name"], &sent["conclusion"]),
         (&json!("symphony/eligible"), &json!("failure"))
     );
+    // The verdict that passed at this head fails now, as withdrawn; the stamp short of it waits.
     let checks = d.rig.github.checks(HEAD);
     assert_eq!(checks.len(), 5, "each name once: {checks:?}");
-    assert!(names(&checks).contains(&("symphony/tests", "failure")));
+    assert!(names(&checks).contains(&("symphony/tests", "in_progress")));
     assert!(names(&checks).contains(&("symphony/eligible", "failure")));
+    assert_eq!(
+        d.rig.github.runs(HEAD).len(),
+        6,
+        "the completed run stays beside it"
+    );
     // Another head carries none of them.
     let other = "b".repeat(40);
     d.publish(&snapshot(&other, "met", "r3"));
@@ -736,7 +878,10 @@ fn a_merge_is_one_squash_of_the_head_asked_once() {
     let squash = "5".repeat(40);
     assert_eq!(
         d.result(100),
-        json!({"state": "open", "head": HEAD, "sha": null, "base": "main", "repository": 77})
+        json!({
+            "state": "open", "head": HEAD, "sha": null, "base": "main", "repository": 77,
+            "auto_merge": false, "mergeable_state": "clean", "foreign": [],
+        })
     );
     assert_eq!(d.merge(100), json!({"state": "merged", "sha": squash}));
     let merged = d.rig.github.pulls().remove(0)["merged_as"].clone();
@@ -748,13 +893,12 @@ fn a_merge_is_one_squash_of_the_head_asked_once() {
         ),
         (&json!(HEAD), &json!("squash"), &json!(SLUG))
     );
-    // Marked ready just before, by the one mutation, naming the pull request by its node.
-    let ready: Vec<Value> = (d.rig.github.asked().into_iter())
-        .filter(|(method, path, _)| method == "POST" && path == "/graphql")
-        .map(|(.., body)| serde_json::from_str(&body.unwrap()).unwrap())
-        .collect();
-    assert_eq!(ready.len(), 1);
-    assert_eq!(ready[0]["variables"], json!({"id": "PR_node100"}));
+    // Opened ready: nothing is marked.
+    assert!(
+        !(d.writes().iter()).any(|write| write == "POST /graphql"),
+        "{:?}",
+        d.writes()
+    );
     // Asked again it reads that it is merged and asks for no second merge.
     assert_eq!(d.merge(100), json!({"state": "merged", "sha": squash}));
     assert_eq!(
@@ -766,7 +910,10 @@ fn a_merge_is_one_squash_of_the_head_asked_once() {
     );
     assert_eq!(
         d.result(100),
-        json!({"state": "merged", "head": HEAD, "sha": squash, "base": "main", "repository": 77})
+        json!({
+            "state": "merged", "head": HEAD, "sha": squash, "base": "main", "repository": 77,
+            "auto_merge": false, "mergeable_state": "clean", "foreign": [],
+        })
     );
     d.assert_no_token();
 }
@@ -957,21 +1104,13 @@ fn the_command_takes_one_verb_and_a_request_that_reads() {
 }
 
 #[test]
-fn a_draft_stays_one_until_its_merge_and_a_mark_that_fails_merges_nothing() {
-    // The answer to the mark is lost: nothing merged, and the next run reads the pull request.
+fn a_draft_an_earlier_build_opened_is_made_ready_and_a_mark_that_fails_merges_nothing() {
+    // The answer to the mark is lost: nothing more published, and the next run reads it first.
     let d = Delivery::new("deliver-draft", "");
     d.publish(&snapshot(HEAD, "met", "r1"));
-    assert_eq!(
-        d.publish(&snapshot(HEAD, "met", "r1"))["state"],
-        "published"
-    );
-    assert_eq!(
-        d.rig.github.pulls()[0]["draft"],
-        true,
-        "publishing again leaves it a draft"
-    );
+    d.rig.github.set_pull(100, &json!({"draft": true}));
     d.rig.github.fault("POST", "/graphql", Fault::LoseAnswer);
-    let answer = d.merge(100);
+    let answer = d.publish(&snapshot(HEAD, "met", "r1"));
     assert_eq!(answer["state"], "unavailable", "{answer}");
     assert!(
         answer["why"]
@@ -980,15 +1119,12 @@ fn a_draft_stays_one_until_its_merge_and_a_mark_that_fails_merges_nothing() {
             .contains("nothing was merged"),
         "{answer}"
     );
+    // It was marked: the next publication finds it ready and marks nothing twice.
     assert_eq!(
-        d.writes()
-            .iter()
-            .filter(|write| write.starts_with("PUT "))
-            .count(),
-        0
+        d.publish(&snapshot(HEAD, "met", "r1"))["state"],
+        "published"
     );
-    // It was marked: the next merge finds it ready and marks nothing twice.
-    assert_eq!(d.merge(100)["state"], "merged");
+    assert_eq!(d.rig.github.pulls()[0]["draft"], false);
     assert_eq!(
         d.writes()
             .iter()
@@ -996,9 +1132,21 @@ fn a_draft_stays_one_until_its_merge_and_a_mark_that_fails_merges_nothing() {
             .count(),
         1
     );
+    // A merge of one still a draft marks it first, once.
+    let d = Delivery::new("deliver-draft-merge", "");
+    d.publish(&snapshot(HEAD, "met", "r1"));
+    d.rig.github.set_pull(100, &json!({"draft": true}));
+    assert_eq!(d.merge(100)["state"], "merged");
+    let ready: Vec<Value> = (d.rig.github.asked().into_iter())
+        .filter(|(method, path, _)| method == "POST" && path == "/graphql")
+        .map(|(.., body)| serde_json::from_str(&body.unwrap()).unwrap())
+        .collect();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0]["variables"], json!({"id": "PR_node100"}));
     // A token that may not mark it: refused by kind, still a draft, nothing merged.
     let d = Delivery::new("deliver-draft-refused", "");
     d.publish(&snapshot(HEAD, "met", "r1"));
+    d.rig.github.set_pull(100, &json!({"draft": true}));
     d.rig
         .github
         .fault("POST", "/graphql", Fault::Status(403, Vec::new()));
@@ -1009,7 +1157,7 @@ fn a_draft_stays_one_until_its_merge_and_a_mark_that_fails_merges_nothing() {
     );
     assert_eq!(
         answer["why"],
-        "GitHub left pull request #100 a draft (403): "
+        "GitHub left pull request #100 a draft (403): planted"
     );
     let pull = d.rig.github.pulls().remove(0);
     assert_eq!(
@@ -1027,12 +1175,12 @@ fn a_draft_stays_one_until_its_merge_and_a_mark_that_fails_merges_nothing() {
 /// that refuses a head it has a pull request for hands over exactly this, not eligible
 /// (`Landing::bound_before` in the board's `land/delivery.rs`).
 fn withdrawn(head: &str) -> Value {
-    use symphony_board::land::evidence::{Assessment, Snapshot, Stamp, Standing, VERSION};
-    let stamp = |name: &str, standing| Stamp {
-        name: name.into(),
-        standing,
-        detail: "a private line".into(),
-        evidence: Vec::new(),
+    use symphony_board::land::evidence::{Assessment, Snapshot, Stamp, VERSION};
+    let stamp = |name: &str, standing: &str| -> Stamp {
+        serde_json::from_value(json!({
+            "name": name, "standing": standing, "detail": "a private line", "evidence": [],
+        }))
+        .unwrap()
     };
     serde_json::to_value(Snapshot {
         version: VERSION,
@@ -1052,9 +1200,9 @@ fn withdrawn(head: &str) -> Value {
         }),
         assessed: true,
         stamps: vec![
-            stamp("tests", Standing::Missing),
-            stamp("review", Standing::Met),
-            stamp("pictures", Standing::Waived),
+            stamp("tests", "missing"),
+            stamp("review", "met"),
+            stamp("pictures", "waived"),
         ],
         blocking: vec!["tests: red at the head".into()],
         eligible: false,
@@ -1080,7 +1228,7 @@ fn evidence_the_board_withdrew_fails_the_required_check_of_a_pull_request_alread
     let checks = d.rig.github.checks(HEAD);
     assert_eq!(checks.len(), 5, "each name once: {checks:?}");
     assert!(names(&checks).contains(&("symphony/eligible", "failure")));
-    assert!(names(&checks).contains(&("symphony/tests", "failure")));
+    assert!(names(&checks).contains(&("symphony/tests", "in_progress")));
     let first: Value = serde_json::from_str(
         &(d.rig
             .github
@@ -1102,10 +1250,11 @@ fn evidence_the_board_withdrew_fails_the_required_check_of_a_pull_request_alread
         5,
         "each check is of the new revision"
     );
-    // At a head the branch moved to: pushed, so the pull request is at it, failing there.
+    // At a head the branch moved to: pushed, so the pull request is at it, where nothing stood
+    // yet, so its verdict is pending there.
     let other = "b".repeat(40);
     assert_eq!(d.publish(&withdrawn(&other))["head"], other.as_str());
-    assert!(names(&d.rig.github.checks(&other)).contains(&("symphony/eligible", "failure")));
+    assert!(names(&d.rig.github.checks(&other)).contains(&("symphony/eligible", "in_progress")));
     assert_eq!(d.rig.github.pulls()[0]["head"]["sha"], other.as_str());
     d.assert_no_token();
 }

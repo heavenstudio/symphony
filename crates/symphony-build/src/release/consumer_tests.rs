@@ -1137,3 +1137,174 @@ fn a_head_started_at_another_delivered_head_says_that_ones_entries_once() {
     assert_eq!(history[1].entries, both[..1]);
     assert_eq!(history[2].entries, both[1..]);
 }
+
+/// One landing [`deliver_all`] delivers: its slug, the earlier one of those delivered with it
+/// whose head its branch starts at (main's tip where none), what its one commit says, and the
+/// release tagged on main once its squash is there, if any.
+struct Planned {
+    slug: String,
+    from: Option<usize>,
+    message: String,
+    release: Option<String>,
+}
+
+/// Each of `planned` delivered as [`deliver`] delivers one, in a single `git fast-import` rather
+/// than a dozen commands for each: its branch's one commit writing a file of its own, squashed
+/// onto main in one commit of one parent, its head retained, then its receipt kept. The receipts,
+/// in order.
+fn deliver_all(
+    repo: &Scratch,
+    planned: &[Planned],
+) -> Vec<symphony_board::land::delivery::Receipt> {
+    use std::collections::HashMap;
+    use symphony_board::land::delivery::{RETAINED, Receipt};
+    let first = repo.git(&["rev-parse", "main"]);
+    let data = |text: &str| format!("data {}\n{text}\n", text.len());
+    let mut stream = String::new();
+    let mut main = first.clone();
+    for (at, plan) in planned.iter().enumerate() {
+        let (head, squash) = (2 * at + 1, 2 * at + 2);
+        let from =
+            (plan.from).map_or_else(|| main.clone(), |earlier| format!(":{}", 2 * earlier + 1));
+        let who = format!("t <t@example.com> {} +0000", 1_700_000_000 + at);
+        let file = format!(
+            "M 100644 inline {}.txt\n{}",
+            plan.slug.replace('/', "-"),
+            data(&plan.slug)
+        );
+        let commit = |branch: &str, mark: usize, message: &str, from: &str| {
+            format!(
+                "commit refs/heads/{branch}\nmark :{mark}\nauthor {who}\ncommitter {who}\n{}from \
+                 {from}\n{file}",
+                data(message)
+            )
+        };
+        stream += &commit(&plan.slug, head, &plan.message, &from);
+        stream += &commit("main", squash, &format!("{}: its title", plan.slug), &main);
+        stream += &format!("reset {RETAINED}{}\nfrom :{head}\n", plan.slug);
+        main = format!(":{squash}");
+        if let Some(release) = &plan.release {
+            stream += &format!(
+                "tag {release}\nfrom {main}\ntagger {who}\n{}",
+                data(release)
+            );
+        }
+    }
+    let file = repo.root.with_file_name("delivered.marks");
+    let export = format!("--export-marks={}", file.display());
+    crate::release::git::git_fed(&repo.root, &["fast-import", "--quiet", &export], &stream)
+        .unwrap();
+    let marks: HashMap<String, String> = (std::fs::read_to_string(&file).unwrap().lines())
+        .filter_map(|line| line.split_once(' '))
+        .map(|(mark, commit)| (mark.to_string(), commit.to_string()))
+        .collect();
+    let trees: HashMap<String, String> = (repo.git(&["log", "--format=%H %T", "main"]).lines())
+        .filter_map(|line| line.split_once(' '))
+        .map(|(commit, tree)| (commit.to_string(), tree.to_string()))
+        .collect();
+    let lands = crate::release::receipts::lands(&repo.root).unwrap();
+    let mut parent = first;
+    (planned.iter().enumerate())
+        .map(|(at, plan)| {
+            let squash = marks[&format!(":{}", 2 * at + 2)].clone();
+            let receipt = Receipt {
+                slug: plan.slug.clone(),
+                task: 7,
+                operation: "task".into(),
+                repository: 11,
+                name: "owner/repository".into(),
+                pull: 5,
+                head: marks[&format!(":{}", 2 * at + 1)].clone(),
+                base_observed: parent.clone(),
+                parent: std::mem::replace(&mut parent, squash.clone()),
+                tree: trees[&squash].clone(),
+                squash,
+                revision: "r1".into(),
+                by: "lander".into(),
+                import: None,
+            };
+            let path = Receipt::path(&lands, &receipt.slug);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, serde_json::to_string_pretty(&receipt).unwrap()).unwrap();
+            receipt
+        })
+        .collect()
+}
+
+/// Fifty landings delivered by pull requests between six releases, each saying an entry of its
+/// own. Every fifth head was started at the head before it, and so was the first after each
+/// release, so a head holds another's commits. Git bears out two receipts no more, the second the
+/// one a later head was started at. The notes say each entry once, in the release its squash came
+/// in, but for the unborne receipt no later head holds. What they cost in git grows with the
+/// receipts, never with their pairs: the receipts are proved once for the whole history, and
+/// each delivered squash is read by one `git log` of its own.
+#[test]
+fn fifty_delivered_landings_are_said_once_each_by_git_linear_in_their_receipts() {
+    use symphony_board::land::delivery::Receipt;
+    let tree = Tree::new();
+    let repo = Scratch::new(&tree);
+    repo.release("release-2026-11-01");
+    let planned: Vec<Planned> = (0..50_usize)
+        .map(|n| Planned {
+            slug: format!("tools/r{n:02}"),
+            from: (n > 0 && (n % 5 == 4 || n % 10 == 0)).then(|| n - 1),
+            message: format!("Work {n}\n\nConsumer-Note: settings: `r{n:02}` is read"),
+            release: (n % 10 == 9).then(|| format!("release-2026-11-{:02}", n / 10 + 2)),
+        })
+        .collect();
+    let receipts = deliver_all(&repo, &planned);
+    let lands = crate::release::receipts::lands(&repo.root).unwrap();
+    for unborne in [&receipts[31], &receipts[43]] {
+        let wrong = Receipt {
+            tree: unborne.parent.clone(),
+            ..unborne.clone()
+        };
+        let path = Receipt::path(&lands, &wrong.slug);
+        std::fs::write(path, serde_json::to_string(&wrong).unwrap()).unwrap();
+    }
+    let last = receipts.last().cloned();
+    let tip = repo.git(&["rev-parse", "HEAD"]);
+    let all = releases(&repo.root, &tip).unwrap();
+    assert_eq!(all.len(), 6);
+    let counted = || {
+        let from = crate::release::git::ran();
+        let history = history(&repo.root, &all);
+        (history, crate::release::git::ran() - from)
+    };
+
+    let (read, with) = counted();
+    let said: Vec<Vec<Entry>> = (read.unwrap().into_iter())
+        .map(|notes| notes.entries)
+        .collect();
+    let expected: Vec<Vec<Entry>> = (0..6)
+        .map(|release| {
+            let landed = (release > 0).then(|| (release - 1) * 10..release * 10);
+            (landed.into_iter().flatten())
+                .filter(|n| *n != 31)
+                .map(|n| entry(&format!("settings: `r{n:02}` is read")))
+                .collect()
+        })
+        .collect();
+    assert_eq!(said, expected);
+
+    // A delivered squash whose head is gone is refused, as it was.
+    let gone = Receipt {
+        head: "f".repeat(40),
+        ..last.clone().unwrap()
+    };
+    let path = Receipt::path(&lands, &gone.slug);
+    std::fs::write(&path, serde_json::to_string(&gone).unwrap()).unwrap();
+    let refused = history(&repo.root, &all).unwrap_err();
+    assert!(
+        refused.starts_with("git log --reverse") && refused.contains(&gone.head),
+        "{refused}"
+    );
+    std::fs::write(&path, serde_json::to_string(&last.unwrap()).unwrap()).unwrap();
+
+    // The same history read with no receipt: what the receipts cost is the difference. Each of
+    // the five ranges lists its commits once, each of the 48 squashes git bears out is read
+    // once, and two reads prove every receipt.
+    std::fs::remove_dir_all(lands.join(symphony_board::land::delivery::RECEIPTS)).unwrap();
+    let (_, without) = counted();
+    assert_eq!(with - without, 5 + 48 + 2);
+}

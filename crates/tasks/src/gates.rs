@@ -101,7 +101,7 @@ impl Decision {
 pub fn of(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Vec<Decision> {
     (fields.get(crate::red::FIELDS))
         .and_then(|board| board.get(GATES))
-        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .and_then(|value| crate::objects::read(value).ok())
         .unwrap_or_default()
 }
 

@@ -148,7 +148,7 @@ impl Blocked {
             return None;
         }
         let kept = fields.get(crate::red::FIELDS)?.get(BLOCKED)?;
-        serde_json::from_value(kept.clone()).ok()
+        crate::objects::read(kept).ok()
     }
 
     /// The record as the board writes it.

@@ -67,7 +67,7 @@ impl Store {
         if body.is_null() {
             return Ok(None);
         }
-        serde_json::from_value(body)
+        crate::objects::read(&body)
             .map(Some)
             .map_err(|e| Error::Db(format!("a workflow intent not in the board's shape: {e}")))
     }
@@ -87,7 +87,7 @@ impl Store {
         if body.is_null() {
             return Ok(None);
         }
-        serde_json::from_value(body).map(Some).map_err(|e| {
+        crate::objects::read(&body).map(Some).map_err(|e| {
             Error::Db(format!(
                 "a workflow transition not in the board's shape: {e}"
             ))

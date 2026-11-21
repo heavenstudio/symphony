@@ -508,7 +508,15 @@ const COMMANDS: &[Command] = &[
             opt("--background", "background", STR),
         ],
     },
-    plain("land", SLUG),
+    Command {
+        name: "land",
+        pos: &[maybe("slug")],
+        opts: &[
+            AS,
+            opt("--dispatch", "dispatch", Takes::Bool),
+            opt("--watch", "watch", Takes::Bool),
+        ],
+    },
     Command {
         name: "regenerate",
         pos: &[],

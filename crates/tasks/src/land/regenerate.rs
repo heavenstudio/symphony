@@ -134,7 +134,7 @@ impl Passed {
     pub fn read(folder: &Path) -> Passed {
         fs::read_to_string(folder.join(PASSED))
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
+            .and_then(crate::objects::parse)
             .unwrap_or_default()
     }
 
@@ -259,7 +259,7 @@ impl State {
     /// As the lands' `folder` keeps it.
     pub fn read(folder: &Path) -> Option<State> {
         let text = fs::read_to_string(folder.join(STATE)).ok()?;
-        serde_json::from_str(&text).ok()
+        crate::objects::parse(&text)
     }
 
     /// Whether a round finished with the default branch at `tip`: its outputs found current there,
@@ -319,7 +319,7 @@ impl Checked {
     /// As the lands' `folder` keeps it.
     pub fn read(folder: &Path) -> Option<Checked> {
         let text = fs::read_to_string(folder.join(CHECKED)).ok()?;
-        serde_json::from_str(&text).ok()
+        crate::objects::parse(&text)
     }
 
     /// `state` on `tip` as this process writes it now, filed in `task`, said by `line`.
@@ -553,6 +553,19 @@ pub fn run_by(
     out: &mut dyn Write,
     transport: Option<&dyn Transport>,
 ) -> Result<String, String> {
+    run_with_clock(store, env, out, transport, &std::time::Instant::now)
+}
+
+/// [`run_by`] with the monotonic clock its command timeouts read, as [`super::land_with_clock`]
+/// gives a land: a test holds time still through the round's git steps and advances it once the
+/// command it means to expire runs.
+pub fn run_with_clock(
+    store: &Store,
+    env: &Env,
+    out: &mut dyn Write,
+    transport: Option<&dyn Transport>,
+    now: &(dyn Fn() -> std::time::Instant + Sync),
+) -> Result<String, String> {
     let common = crate::git::common_dir(&env.cwd).map_err(|e| e.to_string())?;
     let main = trigger::main_checkout(&common)
         .ok_or_else(|| format!("{} has no main checkout to regenerate on", common.display()))?
@@ -609,11 +622,12 @@ pub fn run_by(
             folder: folder.clone(),
             log,
             interrupts: interrupts.as_ref(),
-            now: &std::time::Instant::now,
+            now,
             recorder: None,
             named: false,
             transport,
             delivery,
+            mode: super::Mode::Land,
             out: &mut *out,
         };
         let mut regenerator = Regenerator {

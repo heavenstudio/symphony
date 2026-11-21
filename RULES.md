@@ -206,7 +206,9 @@ goes through one named helper: in Rust `test_time::wait::until` for a test's wai
 reads what an event dropped under load would have said (`apps/symphony-server/src/backstop.rs`),
 the board store's retry (`crates/tasks/src/store/mod.rs`), `reload/retry.rs`'s `backoff` and
 the GitHub program's `deliver::rest` between two reads of the checks it wrote
-(`crates/symphony-github/src/deliver.rs`); in the React client `src/timing.ts`'s `retryWait` (the
+(`crates/symphony-github/src/deliver.rs`) and the delivery watcher's `dispatch::rest` between two
+rounds of reading whether the host merged, which no event tells this machine
+(`crates/tasks/src/land/dispatch.rs`); in the React client `src/timing.ts`'s `retryWait` (the
 next of a `Backoff`'s waits), `Debounce` (whose rests take each other's place), `deadline` and
 `tick` (to the next minute), with `Backoff` and `tryAgain` (`src/state.ts`), and in its unit
 tests `src/testing.ts`'s `until` for a condition and `turn()` for a turn of the event loop. A
@@ -467,12 +469,14 @@ by hand ([its card](docs/DECISIONS.md#consumer-manifest-line)).
 
 ### `commits/only-the-land-pushes`
 
-Nothing is pushed but main, by the land, and a release's tag, by the release run
-([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)): nothing else of a task, its branch
-included. A project that sets `[land] delivery` has its land's program push the task's branch
-for its pull request ([TASKS](docs/TASKS.md#a-land-delivered-by-a-pull-request)); this repository
-sets none. A consuming project's branch is pushed only on the owner's word naming that push; a
-release's refresh makes none and moves no pin ([the refresh](docs/RELEASES.md#the-refresh)).
+Nothing is pushed but a task's branch, by the dispatch of its land, for the pull request that
+delivers it, and a release's tag, by the release run
+([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)): nothing else of a task. Main is
+pushed by nobody, the owner included, while this repository sets `[land] delivery`: it moves only
+by GitHub's squash of a task's pull request, and its ruleset refuses any other update
+([TASKS](docs/TASKS.md#a-land-delivered-by-a-pull-request)). A consuming project's branch is
+pushed only on the owner's word naming that push; a release's refresh makes none and moves no pin
+([the refresh](docs/RELEASES.md#the-refresh)).
 
 ### `delete-by-name`
 

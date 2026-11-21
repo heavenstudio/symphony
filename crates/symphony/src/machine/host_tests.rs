@@ -461,6 +461,7 @@ fn a_release_build_is_its_manifest_and_a_running_one_its_front() {
         commit: "abc".into(),
         serves: super::super::release::Serves {
             schema: 6,
+            additions: 0,
             protocol: version,
             tasks_api: version,
             pin: 2,

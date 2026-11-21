@@ -440,6 +440,88 @@ fn a_due_tip_that_does_not_build_says_why_and_its_night_runs_from_the_linked_bui
     assert!(!fixture.records().join("running.json").exists());
 }
 
+/// A fixture counting each landing whose tip's launcher names a build that cannot be started: the
+/// build it names.
+fn unstartable() -> (Fixture, std::path::PathBuf) {
+    let fixture = counting(1);
+    let built = fixture.root.join("built");
+    fs::write(&built, "a file nobody may execute").unwrap();
+    fixture.write(
+        "tools/rs-bin.sh",
+        &format!("#!/bin/sh\necho '{}'\n", built.display()),
+    );
+    fs::set_permissions(
+        fixture.main.join("tools/rs-bin.sh"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    fixture.commit("a launcher whose build cannot start");
+    git(&fixture.main, &["push", "-q", "origin", "main"]);
+    (fixture, built)
+}
+
+/// The run goes on in the process whose hand-off failed, so that start must not have made it the
+/// program it did not become (`replace`, whose own test holds its signals and environment to that).
+#[test]
+fn a_due_tips_build_that_cannot_be_started_says_why_and_its_night_runs_from_the_linked_build() {
+    let (fixture, built) = unstartable();
+
+    let landed = landing(&fixture, "tools/one");
+    let args = ["--check", CHECK, "--due", "tools/one", &landed];
+    let (code, out, err) = fixture.release_at(NOW, &args);
+    assert_eq!(code, 0, "{out}{err}");
+    let handed = format!(
+        "release: the run goes on from {0}, built in its own checkout\nrelease: {0} cannot run \
+         (Permission denied (os error 13)): the run goes on from this build\n",
+        built.display()
+    );
+    assert!(out.contains(&handed), "{out}");
+    assert!(
+        out.contains("release: green; tagged release-2026-11-12"),
+        "{out}"
+    );
+    assert_eq!(
+        fixture.runs().len(),
+        1,
+        "one run, of the build that counted"
+    );
+    assert!(!fixture.records().join("running.json").exists());
+}
+
+/// The same run, what it says going to a pipe nobody reads: a start made as std's `exec` makes it
+/// returns with SIGPIPE back at its default, and the line that says the start failed then kills
+/// the run before it records anything. Left ignored, as Rust's runtime set it, each such write
+/// fails and the run goes on to its release.
+#[test]
+fn a_run_that_goes_on_after_a_start_that_failed_still_outlives_a_pipe_nobody_reads() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    let (fixture, _) = unstartable();
+    let landed = landing(&fixture, "tools/one");
+    let args = ["--check", CHECK, "--due", "tools/one", &landed];
+    let (reader, said) = std::io::pipe().unwrap();
+    drop(reader);
+    let ended = fixture
+        .command(NOW, &args, &[])
+        .stdin(Stdio::null())
+        .stdout(said)
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
+    assert_eq!(
+        (ended.signal(), ended.code()),
+        (None, Some(0)),
+        "SIGPIPE is {}",
+        libc::SIGPIPE
+    );
+    let runs = fixture.runs();
+    assert_eq!(runs.len(), 1, "the run it went on with is recorded");
+    assert_eq!(runs[0]["result"], "green", "{}", runs[0]);
+    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
+}
+
 #[test]
 fn a_cadence_of_none_starts_no_run_and_says_the_night_still_runs() {
     let fixture = counting(0);

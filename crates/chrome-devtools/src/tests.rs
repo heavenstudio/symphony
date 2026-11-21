@@ -17,8 +17,8 @@ use tungstenite::{Message, WebSocket};
 use crate::profiles::{self, next_profile};
 use crate::{
     BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, LAUNCH_BACKSTOP, Leash, Owner, POLL,
-    PROTOCOL_CPU, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, load_said,
-    process, signal_group,
+    PROTOCOL_CPU, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, listed,
+    load_said, process, signal_group,
 };
 
 /// This test binary as the leash: it runs [`browser_leash`] alone.
@@ -270,6 +270,8 @@ fn browser_leash() {
         assert!(args.contains(&"--disable-backgrounding-occluded-windows".into()));
         // No updater, whose wake leaves the browser's group and outlives the leash.
         assert!(args.contains(&"--disable-updater-scheduler".into()));
+        // Motion as the page asks, not as the machine's settings reduce it.
+        assert!(args.contains(&"--force-prefers-no-reduced-motion".into()));
         // A same-site visit keeps its frame, in the one list of features turned off Chrome reads.
         let disabled: Vec<_> = args
             .iter()
@@ -1755,6 +1757,8 @@ fn browser_waits_keep_events_and_bound_idle_polls_without_charging_observer_dela
                     json!(false)
                 }
                 "after-timeout" => json!("usable"),
+                // Asked of a condition that threw: this page's document has its element.
+                "document.documentElement === null" => json!(false),
                 other => panic!("unexpected evaluation {other}"),
             };
             peer.reply(&command, json!({"result": {"value": value}}));
@@ -4854,4 +4858,127 @@ fn a_context_left_for_a_fresh_one_leaves_no_target_and_the_page_runs_on_in_the_n
         assert_eq!(chrome.eval("1 + 1").unwrap(), json!(2));
         before = pages;
     }
+}
+
+#[test]
+fn a_target_is_listed_only_by_its_own_id_among_the_answers_targets() {
+    let targets = json!({"targetInfos": [{"targetId": "A1", "type": "page"}, {"targetId": "B2"}]});
+    assert!(listed(&targets, "A1"));
+    assert!(listed(&targets, "B2"));
+    assert!(!listed(&targets, "A"), "a part of an id is not it");
+    assert!(!listed(&json!({"targetInfos": []}), "A1"));
+    assert!(!listed(&json!({}), "A1"), "an answer with no list");
+}
+
+#[test]
+fn a_page_prefers_no_reduced_motion_until_a_caller_emulates_it() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let (base, _asked) = caching_server();
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    chrome.open(&base).unwrap();
+    let reduced = "matchMedia('(prefers-reduced-motion: reduce)').matches";
+    assert_eq!(chrome.eval(reduced).unwrap(), json!(false));
+    chrome
+        .call(
+            "Emulation.setEmulatedMedia",
+            json!({"features": [{"name": "prefers-reduced-motion", "value": "reduce"}]}),
+        )
+        .unwrap();
+    assert_eq!(chrome.eval(reduced).unwrap(), json!(true));
+}
+
+#[test]
+fn a_condition_that_throws_on_a_document_with_no_element_yet_is_asked_again() {
+    const ROOT: &str = "document.documentElement === null";
+    let thrown = || json!({"exceptionDetails": {"text": "Uncaught", "exception": {"className": "TypeError"}}});
+    // The stand-in page: `window.root` throws twice on a document with no element, the second
+    // time as the page goes on, then is met; `window.broken` throws on a document that has one.
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, move |peer| {
+        let mut asked: Vec<String> = Vec::new();
+        while let Some(command) = peer.next() {
+            if marker(&command) {
+                peer.reply(&command, json!({"result": {"value": null}}));
+                continue;
+            }
+            if probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+                continue;
+            }
+            let expression = command["params"]["expression"].as_str().unwrap().to_owned();
+            asked.push(expression.clone());
+            let count = asked.iter().filter(|asked| **asked == expression).count();
+            let roots = asked.iter().filter(|asked| *asked == ROOT).count();
+            match (expression.as_str(), count) {
+                ("window.root", 1 | 2) | ("window.broken", _) => peer.reply(&command, thrown()),
+                ("window.root", _) => peer.reply(&command, json!({"result": {"value": true}})),
+                (ROOT, _) if roots == 1 => peer.reply(&command, json!({"result": {"value": true}})),
+                (ROOT, _) if roots == 2 => {
+                    refuse(peer, &command, "Execution context was destroyed.");
+                }
+                (ROOT, _) => peer.reply(&command, json!({"result": {"value": false}})),
+                (other, count) => panic!("evaluation {count} of {other}"),
+            }
+        }
+        asked
+    });
+    assert!(chrome.wait_for("window.root", PROTOCOL_CPU).unwrap());
+    let broken = chrome
+        .wait_for("window.broken", PROTOCOL_CPU)
+        .unwrap_err()
+        .to_string();
+    assert!(broken.starts_with("window.broken threw: "), "{broken}");
+    // An evaluation on its own is asked once, and its throw is its answer wherever it is.
+    assert!(chrome.eval("window.broken").is_err());
+    drop(chrome);
+    assert_eq!(
+        peer.join().unwrap(),
+        [
+            "window.root",
+            ROOT,
+            "window.root",
+            ROOT,
+            "window.root",
+            "window.broken",
+            ROOT,
+            "window.broken"
+        ]
+    );
+}
+
+#[test]
+fn a_wait_for_a_closed_page_takes_a_turn_of_the_browsers_between_two_looks() {
+    // The stand-in browser lists the page for three looks, then no longer. What it saw: the
+    // observer's turns that came before each look.
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let (mut looks, mut turns) = (Vec::new(), 0u32);
+        while let Some(command) = peer.next() {
+            if command["method"] == "Target.getTargets" {
+                looks.push(std::mem::take(&mut turns));
+                let listed = if looks.len() <= 3 {
+                    json!([{"targetId": "closing", "type": "page"}])
+                } else {
+                    json!([])
+                };
+                peer.reply(&command, json!({"targetInfos": listed}));
+            } else if marker(&command) {
+                turns += 1;
+                peer.reply(&command, json!({"result": {"value": null}}));
+            } else if probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+            } else {
+                panic!("unexpected {command}");
+            }
+        }
+        looks
+    });
+    chrome.wait_closed("closing").unwrap();
+    drop(chrome);
+    let looks = peer.join().unwrap();
+    assert_eq!(looks.len(), 4, "{looks:?}");
+    // A look's own call starts one observer turn; the pause between two looks is a turn waited
+    // for, with its own.
+    assert!(looks[1..].iter().all(|turns| *turns >= 2), "{looks:?}");
 }

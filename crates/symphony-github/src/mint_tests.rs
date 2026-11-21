@@ -221,6 +221,11 @@ fn the_token_is_asked_for_the_least_its_calls_need() {
         "a release's creation"
     );
     assert_eq!(
+        asked("verification = \"hosted\"\n"),
+        [("actions", "write")],
+        "a hosted verification's dispatch and the reads of its run"
+    );
+    assert_eq!(
         asked(&format!("{publish}releases = \"publish\"\n")),
         [
             ("checks", "write"),

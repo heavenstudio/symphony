@@ -117,8 +117,10 @@ own, the owner's to run from the main checkout as `tasks-reclaim` is, and no boa
    and releases it at the end.
 2. **Snapshot and export.** A snapshot of the held store is kept. The move then reads the board
    through a server of its own, which no record names: its schema, which must be this build's
-   (a move migrates nothing), and the databases the store holds, which must be the board's alone,
-   as the whole store changes places. The board is written out whole as `export.json`: the eleven
+   (a move migrates nothing), and the databases the store holds beside the board's own (the
+   scratch boards of `just tasks --database NAME`), which are not moved: they stay in the old
+   store, kept whole in `moved/STAMP-ENGINE/`, and the move names them. A scratch board on the
+   new engine starts empty. The board is written out whole as `export.json`: the eleven
    tables of the dump, and the tables no copy holds, below. The export is written where it is
    kept, in `moved/STAMP-ENGINE/`, before anything of the board changes places.
 3. **Copy.** The export goes into a new store of the other engine in a work folder of the move's
@@ -133,8 +135,9 @@ own, the owner's to run from the main checkout as `tasks-reclaim` is, and no boa
    committed; the folder's recovery bindings are revoked; the journal is removed.
 6. **Release.** The hold the move set is released, and the next command starts the new engine.
 
-Nothing is deleted but the move's work folder. The old store and the export stay in `moved/`,
-and the snapshot with the snapshots, until the owner says otherwise.
+Nothing is deleted but the move's work folder. The old store, with every database it held
+beside the board's, and the export stay in `moved/`, and the snapshot with the snapshots, until
+the owner says otherwise.
 
 **A failure.** Before the switch nothing of the board has changed places: the work folder is
 removed, the export already written stays in `moved/STAMP-ENGINE/` beside nothing else, and the

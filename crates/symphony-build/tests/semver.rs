@@ -273,6 +273,66 @@ fn launcher_resolves_relative_target_and_forwards_each_argument_and_the_exit_sta
     );
 }
 
+/// A stand-in checker that counts its runs in `runs` and says `body` after.
+fn counting(tree: &tree::Tree, body: &str) -> (PathBuf, PathBuf) {
+    let (binary, runs) = (tree.path("checker"), tree.path("runs"));
+    fixture_script::write(
+        &binary,
+        &format!(
+            "#!/bin/sh\necho run >> '{0}'\nn=$(wc -l < '{0}' | tr -d ' ')\necho \"out $n\"\n{body}\n",
+            runs.display()
+        ),
+        false,
+    );
+    (binary, runs)
+}
+
+#[test]
+fn a_check_the_registrys_index_did_not_answer_is_run_again_and_any_other_failure_is_not() {
+    const UNREAD: &str = "error: failed to retrieve index of crate versions from registry";
+    let run = |body: &str| {
+        let tree = tree::Tree::new();
+        let (binary, runs) = counting(&tree, body);
+        let said = tree.path("said");
+        let done = bash(
+            r#"source "$1"; checked "$2" "$3" semver-checks -p one"#,
+            &[&said, &binary],
+        );
+        assert!(!said.exists(), "what the checker said is removed");
+        let runs = std::fs::read_to_string(runs).unwrap().lines().count();
+        (
+            done.status.code(),
+            runs,
+            String::from_utf8(done.stdout).unwrap(),
+            String::from_utf8(done.stderr).unwrap(),
+        )
+    };
+    // The index unread once, then a check that passes: green, each run's output kept.
+    let (status, runs, out, err) = run(&format!(
+        "[ \"$n\" -gt 1 ] && exit 0\necho '{UNREAD}' >&2\nexit 101"
+    ));
+    assert_eq!((status, runs, out.as_str()), (Some(0), 2, "out 1\nout 2\n"));
+    assert_eq!(
+        err,
+        format!(
+            "{UNREAD}\nsemver: crates.io's index did not answer run 1 of 3; running the check \
+             again\n"
+        )
+    );
+    // Unread every time: three runs, and the checker's own status.
+    let (status, runs, _, err) = run(&format!("echo '{UNREAD}' >&2\nexit 101"));
+    assert_eq!((status, runs), (Some(101), 3));
+    assert_eq!(err.matches("running the check again").count(), 2, "{err}");
+    // A finding, or any other failure, is the answer at once, and so is a pass.
+    let (status, runs, out, err) = run("echo 'error: a finding' >&2\nexit 7");
+    assert_eq!(
+        (status, runs, out.as_str(), err.as_str()),
+        (Some(7), 1, "out 1\n", "error: a finding\n")
+    );
+    assert_eq!(run("exit 0").0, Some(0));
+    assert_eq!(run("exit 0").1, 1);
+}
+
 /// Real rustdoc comparisons, offline: independent versions of a tiny API, never a mutation of
 /// the workspace. These also document why the compile guards still hold arbitrary types.
 #[test]

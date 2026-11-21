@@ -290,6 +290,15 @@ pub struct Releases {
     /// `COMMAND… --request FILE` (the GitHub adapter's `symphony-github release`); none, and no
     /// program is run and nothing is published there.
     pub github: Vec<String>,
+    /// The command a release run asks to verify its commit on GitHub's machines in place of
+    /// verifying it here, run as `COMMAND… --request FILE` (the GitHub adapter's
+    /// `symphony-github verify`); none, and no program is run and every run verifies here.
+    pub hosted: Vec<String>,
+    /// While `hosted` names a command, a run on main's tip also starts at a landing once this many
+    /// minutes passed since the last run started and the tip is not the commit last judged: the
+    /// hosted clock, set from how long a run there takes. Such a run verifies nothing here. 0
+    /// starts none by the clock.
+    pub hosted_every_minutes: u32,
     /// The command each release run runs as a check of its own, `rulesets`, after the checks
     /// (the GitHub adapter's `symphony-github rulesets --verify`, where its settings publish pull
     /// requests): red unless it exits 0; none, and the run has no such check.
@@ -305,10 +314,19 @@ pub struct Releases {
 impl Releases {
     /// The landings a release run waits for unless the project says: the owner's 20.
     pub const EVERY_LANDINGS: u32 = 20;
+    /// The least minutes between the starts of two runs of the hosted clock unless the project
+    /// says; one run at a time holds the release's lock, so a longer run is followed by the next.
+    pub const HOSTED_EVERY_MINUTES: u32 = 30;
     /// The red reruns a release candidate may take unless the project says.
     pub const CANDIDATE_RERUNS: u32 = 3;
     /// The hours a release candidate is held unless the project says.
     pub const CANDIDATE_HOURS: u32 = 24;
+
+    /// The minutes of the hosted clock: none while `hosted` names no command or the minutes are 0.
+    pub fn hosted_clock(&self) -> Option<u32> {
+        (!self.hosted.is_empty() && self.hosted_every_minutes > 0)
+            .then_some(self.hosted_every_minutes)
+    }
 
     /// Whether a red run holds its commit as the release candidate: neither bound is 0.
     pub fn holds_candidates(&self) -> bool {
@@ -323,6 +341,8 @@ impl Default for Releases {
             refresh: true,
             publish: false,
             github: Vec::new(),
+            hosted: Vec::new(),
+            hosted_every_minutes: Releases::HOSTED_EVERY_MINUTES,
             rulesets: Vec::new(),
             candidate_reruns: Releases::CANDIDATE_RERUNS,
             candidate_hours: Releases::CANDIDATE_HOURS,
@@ -775,6 +795,11 @@ impl Project {
                     .into(),
             );
         }
+        if (file.releases.hosted.first()).is_some_and(|program| program.trim().is_empty()) {
+            return Err(
+                "[releases] hosted names no command: leave it out to verify a release here".into(),
+            );
+        }
         if (file.releases.rulesets.first()).is_some_and(|program| program.trim().is_empty()) {
             return Err(
                 "[releases] rulesets names no command: leave it out to verify no rulesets".into(),
@@ -782,6 +807,12 @@ impl Project {
         }
         if let Some(upstream) = land.upstream.take() {
             upstream.judged()?;
+        }
+        if land.watch_seconds == 0 {
+            return Err("[land] watch_seconds is 0: the watcher rests between its rounds".into());
+        }
+        if land.merge_within_minutes == 0 {
+            return Err("[land] merge_within_minutes is 0: a host is given time to merge".into());
         }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
@@ -830,6 +861,8 @@ impl Project {
                 refresh: file.releases.refresh,
                 publish: file.releases.publish,
                 github: file.releases.github,
+                hosted: file.releases.hosted,
+                hosted_every_minutes: file.releases.hosted_every_minutes,
                 rulesets: file.releases.rulesets,
                 candidate_reruns: file.releases.candidate_reruns,
                 candidate_hours: file.releases.candidate_hours,

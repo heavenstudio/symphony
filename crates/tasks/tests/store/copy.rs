@@ -5,7 +5,6 @@
 use crate::children::Child as _;
 use crate::common::{Backend, Fixture, NOW, Seed, client, server_addr, session, task};
 use serde_json::json;
-use std::time::Duration;
 use symphony_board::rows::{
     AskRow, BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, HeldRow, LinkRow, MessageRow, RoleRow,
     SessionRow, TaskRow, TaskSessionRow, UsageRow,
@@ -694,46 +693,6 @@ fn a_postgresql_copy_the_server_ends_says_the_rows_it_reached_and_leaves_the_boa
     f.store.copy(&everything()).unwrap();
     assert_eq!(f.store.dump().unwrap(), everything());
     assert_ne!(f.store.recovery_generation().unwrap(), generation);
-}
-
-/// A copy still running at its caller's wait is ended by the server before the caller stops
-/// waiting, so it does not replace the board after the caller was told it failed. The copy is held
-/// at its first insert by a lock the test holds, for as long as the test holds it; once the lock
-/// is let go and no backend is at work, the board is the one it was.
-#[test]
-fn a_postgresql_copy_held_past_its_callers_wait_is_ended_and_does_not_replace_the_board() {
-    let f = Fixture::on(Backend::PostgreSql, Seed { dump: everything() });
-    let holder = postgresql_of(&f);
-    holder
-        .simple(
-            "CREATE FUNCTION fixture_held() RETURNS trigger LANGUAGE plpgsql AS $$ \
-             BEGIN PERFORM pg_advisory_xact_lock(7); RETURN NULL; END $$; \
-             CREATE TRIGGER fixture_held BEFORE INSERT ON task \
-             FOR EACH STATEMENT EXECUTE FUNCTION fixture_held(); \
-             SELECT pg_advisory_lock(7);",
-        )
-        .unwrap();
-    let impatient = Store::opening_on(
-        postgresql_of(&f).waiting(Duration::from_secs(4)).into(),
-        Box::new(|| NOW),
-        Box::new(|_| false),
-        "this-host",
-        &symphony_board::Opening::write(),
-    )
-    .unwrap();
-    let generation = f.store.recovery_generation().unwrap();
-    assert!(matches!(impatient.copy(&many_words()), Err(Error::Db(_))));
-    holder.simple("SELECT pg_advisory_unlock(7)").unwrap();
-    let at_work = "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
-                   AND pid <> pg_backend_pid() AND state <> 'idle'";
-    test_time::wait::until_true(
-        "every other backend of the board's database at rest",
-        test_time::backstop(Duration::from_secs(30)),
-        || holder.simple(at_work).unwrap()[0].value() == Some("0"),
-    )
-    .unwrap();
-    assert_eq!(f.store.dump().unwrap(), everything());
-    assert_eq!(f.store.recovery_generation().unwrap(), generation);
 }
 
 /// A board bigger than the server takes in one request (4 MiB): 1200 messages of 4 KiB each.

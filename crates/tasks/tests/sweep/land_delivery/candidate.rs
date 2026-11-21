@@ -177,7 +177,7 @@ fn a_candidate_fix_keeps_its_outputs_and_is_delivered_by_a_merge_of_main_that_ke
     let host = Host::new(&r, &bare);
     let (said, result) = landed(&r, SLUG, &people.orch, &host);
     result.unwrap_or_else(|line| panic!("{line}\n{said}"));
-    assert_eq!(host.verbs()[..2], ["publish", "merge"]);
+    assert_eq!(host.verbs()[..3], ["publish", "arm", "merge"]);
     assert_eq!(host.request("publish")["head"], delivered.as_str());
     let receipt = Receipt::read(&lands(&r), SLUG).unwrap();
     assert_eq!(receipt.head, delivered);

@@ -174,6 +174,10 @@ pub(crate) struct Night<'a> {
     /// How long the machine slept under the run, in seconds; 0 when it did not
     /// ([`super::span`]).
     pub(crate) slept: f64,
+    /// Whether the check [`super::rulesets::NAME`] is the one the project's `[releases] rulesets`
+    /// names: its red is put right on GitHub by who administers the repository, which its task
+    /// says in place of how a fix in code starts, lands and closes it ([`administered`]).
+    pub(crate) rulesets: bool,
 }
 
 /// The key a check's red task is filed under: its name in lower case, every run of anything but a
@@ -324,6 +328,19 @@ reviewer (`/assess-task`): a fix in code that leaves the failing tests unchanged
 one that changes a test, a check, a budget or a run step (`[land] check_paths`) needs a fresh \
 reviewer's approve as well, which its orchestrator staffs, and the fix says on the thread why the \
 code was not the thing to fix.";
+/// Who puts right a red of the project's rulesets check ([`administered`]), and how its task is
+/// answered: no executor's commit.
+const ADMINISTRATORS: &str = "Who fixes: whoever administers the repository on GitHub, not an \
+executor with a commit. This check reads who may bypass the default branch's rules, with the gh of \
+whoever runs the release, and its lines above say what it found, each thing missing among them. \
+Where they say the policy does not hold, the rules are put right on GitHub (docs/GITHUB.md, \"Who \
+bypasses the rules\"); where they say the rulesets were not read whole, that gh is signed in as \
+someone who administers the repository; only where they say the adapter is turned off is it a \
+setting of the project's, put right as a change of settings. No code is changed and no check \
+loosened for it. Whoever takes this task says on its thread what those lines name and puts it to \
+the owner (`just tasks say SLUG TEXT --to owner`), then cancels the task once it is put right, \
+saying where, as a red fixed outside this repository is answered (RULES.md \
+`workflow/release-reds-first`). It blocks every release, so it is put to them before anything else.";
 /// What a stop the owner clears says of its landing: nothing lands for it.
 const NOTHING_LANDS: &str = "Nothing lands for it: what clears it is a process ended, not a fix.";
 /// How many of the commands that rerun a failure alone a red task lists at most: as many as the
@@ -525,6 +542,43 @@ fn held(tip: &str) -> String {
     )
 }
 
+/// Whether `ran` is the project's rulesets check ([`super::rulesets`]), whose red no commit
+/// answers: a check a run was given under that name, in a project that names no command, is any
+/// check.
+fn administered(ran: &Ran, night: &Night<'_>) -> bool {
+    night.rulesets && ran.name == super::rulesets::NAME
+}
+
+/// What a red of the project's rulesets check held with the release candidate at `tip` says of it,
+/// in [`held`]'s place: no branch starts there for it.
+fn held_administered(tip: &str) -> String {
+    format!(
+        "The release candidate: this run holds {tip} as the commit to release, the local branch \
+         `{branch}` (never pushed). This red asks for no branch and no fix there. Once it is \
+         answered, and every other red of the candidate with it, the candidate's tip is rerun (the \
+         next landing starts it, or `just release --rerun`), which runs `{name}` again.\n\n",
+        tip = short(tip),
+        branch = super::candidate::BRANCH,
+        name = super::rulesets::NAME,
+    )
+}
+
+/// What closes a red of the project's rulesets check, in [`closed_by`]'s place: the task
+/// cancelled once it is put right, or a run green in it.
+fn closed_administered(name: &str, night: &Night<'_>) -> String {
+    if night.candidate.is_some() {
+        return format!(
+            "Cancelling this task once it is put right, saying where, answers it for the release \
+             candidate, whose rerun runs `{name}` again; a rerun of the candidate green in `{name}` \
+             closes it too."
+        );
+    }
+    format!(
+        "The next run of `just release` closes this task once `{name}` is green; cancelling it \
+         once it is put right, saying where, answers it before that."
+    )
+}
+
 /// What closes a red task of the check `name`: a run green in it, and, for a red of the release
 /// candidate, its own land.
 fn closed_by(name: &str, night: &Night<'_>) -> String {
@@ -545,8 +599,11 @@ fn closed_by(name: &str, night: &Night<'_>) -> String {
 /// the environment's (files of its build gone while it ran), the commands that rerun its failures
 /// alone, the commits since the last green run, how a release candidate's red is fixed ([`held`]),
 /// who fixes it, how its fix is approved, the open red `beside` it ([`beside`]), what closes it and
-/// the commits it came between ([`between`]).
+/// the commits it came between ([`between`]). A red of the project's rulesets check says who
+/// administers the repository puts it right, and how its task is answered, in place of those of a
+/// fix in code ([`administered`]).
 fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
+    let administered = administered(ran, night);
     format!(
         "The Symphony release run is red in `{name}` on {on} at {commit} (run {id}, {when}).\n\n\
          Command: `{command}`, in the release run's clean checkout of that commit: {ended}.\n\
@@ -558,19 +615,34 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
          {reran}\
          {since}\n\n\
          {held}\
-         Who fixes: any free executor takes this from the board. {FIRST} {LANDS}\n\n\
+         {who}\n\n\
          {beside}\
          {closed}\n\n\
          {between}\
          key: {key}\ncheck: {name}",
         between = between(night),
-        held = night.candidate.map(held).unwrap_or_default(),
+        held = (night.candidate)
+            .map(if administered {
+                held_administered
+            } else {
+                held
+            })
+            .unwrap_or_default(),
+        who = if administered {
+            ADMINISTRATORS.to_string()
+        } else {
+            format!("{EXECUTORS} {FIRST} {LANDS}")
+        },
         on = if night.rerun {
             "the release candidate"
         } else {
             "main"
         },
-        closed = closed_by(&ran.name, night),
+        closed = if administered {
+            closed_administered(&ran.name, night)
+        } else {
+            closed_by(&ran.name, night)
+        },
         beside = beside.unwrap_or_default(),
         name = ran.name,
         commit = short(night.commit),
@@ -590,9 +662,18 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
 }
 
 /// The line a red task that is still open gets on a later red run: for a release candidate's, its
-/// tip, which its fix starts from or merges.
+/// tip, which its fix starts from or merges, or, for the project's rulesets check
+/// ([`administered`]), which no branch starts from.
 fn again(ran: &Ran, night: &Night<'_>) -> String {
     let held = night.candidate.map_or_else(String::new, |tip| {
+        if administered(ran, night) {
+            return format!(
+                "\n\nThe release candidate is {}, the branch `{}`: no fix of this red starts \
+                 there, as who administers the repository puts it right on GitHub.",
+                short(tip),
+                super::candidate::BRANCH
+            );
+        }
         format!(
             "\n\nThe release candidate is {}, the branch `{}`: a fix of this red starts from it, or \
              merges it before review, and never merges main before the approve.",
@@ -1293,6 +1374,7 @@ mod tests {
             candidate: None,
             rerun: false,
             slept: 0.0,
+            rulesets: false,
         }
     }
 
@@ -1793,6 +1875,96 @@ mod tests {
             ),
             "{thread:?}"
         );
+    }
+
+    /// What only a red a commit fixes says: who takes it, how its fix lands and where it starts.
+    const OF_A_FIX: [&str; 5] = [
+        "any free executor takes this from the board",
+        "What its fix needs to land",
+        "Its own land closes this task",
+        "start this task's branch",
+        "a fix of this red starts from it",
+    ];
+
+    #[test]
+    fn a_red_of_the_projects_rulesets_check_says_an_administrators_act_answers_it_never_a_fix() {
+        let board = Fake::default();
+        let mut named = night(&[]);
+        named.rulesets = true;
+        let done = report(&board, &named, &[ran("rulesets", 1), ran("verify", 1)]);
+        assert_eq!(
+            done.filed,
+            ["tests/release-red-rulesets", "tests/release-red-verify"]
+        );
+        let filed = board.thread("tests/release-red-rulesets").join("\n");
+        for said in [
+            "Who fixes: whoever administers the repository on GitHub, not an executor with a \
+             commit.",
+            "the rules are put right on GitHub (docs/GITHUB.md, \"Who bypasses the rules\")",
+            "that gh is signed in as someone who administers the repository",
+            "No code is changed and no check loosened for it.",
+            "puts it to the owner (`just tasks say SLUG TEXT --to owner`), then cancels the task \
+             once it is put right, saying where",
+            "The next run of `just release` closes this task once `rulesets` is green; cancelling \
+             it once it is put right, saying where, answers it before that.",
+        ] {
+            assert!(filed.contains(said), "{said}\n\n{filed}");
+        }
+        for of_a_fix in OF_A_FIX {
+            assert!(!filed.contains(of_a_fix), "{of_a_fix}\n\n{filed}");
+        }
+        // The check beside it is a fix's, as ever.
+        let verify = board.thread("tests/release-red-verify").join("\n");
+        assert!(verify.contains(OF_A_FIX[0]) && verify.contains(OF_A_FIX[1]));
+        assert!(!verify.contains("administers"), "{verify}");
+    }
+
+    #[test]
+    fn a_check_given_the_name_rulesets_where_the_project_names_none_is_any_checks_red() {
+        let board = Fake::default();
+        report(&board, &night(&[]), &[ran("rulesets", 1)]);
+        let filed = board.thread("tests/release-red-rulesets").join("\n");
+        assert!(filed.contains(OF_A_FIX[0]) && filed.contains(OF_A_FIX[1]));
+        assert!(!filed.contains("administers"), "{filed}");
+    }
+
+    #[test]
+    fn a_release_candidates_rulesets_red_starts_no_branch_and_is_answered_cancelled() {
+        let board = Fake::with(&[("tests/release-red-rulesets", "in_progress")]);
+        let mut held = night(&[]);
+        held.rulesets = true;
+        held.candidate = Some("cafe0123456789abcdef");
+        // Still red: the open task hears where the candidate is, and that nothing starts there.
+        report(&board, &held, &[ran("rulesets", 1)]);
+        let again = &board.thread("tests/release-red-rulesets")[0];
+        assert!(
+            again.ends_with(
+                "\n\nThe release candidate is cafe01234567, the branch `release-candidate`: no \
+                 fix of this red starts there, as who administers the repository puts it right on \
+                 GitHub."
+            ),
+            "{again}"
+        );
+        // Filed on the run that first holds the candidate.
+        let board = Fake::default();
+        report(&board, &held, &[ran("rulesets", 1)]);
+        let filed = board.thread("tests/release-red-rulesets").join("\n");
+        for said in [
+            "The release candidate: this run holds cafe01234567 as the commit to release, the local \
+             branch `release-candidate` (never pushed). This red asks for no branch and no fix \
+             there.",
+            "(the next landing starts it, or `just release --rerun`), which runs `rulesets` again.",
+            "Who fixes: whoever administers the repository on GitHub",
+            "Cancelling this task once it is put right, saying where, answers it for the release \
+             candidate, whose rerun runs `rulesets` again; a rerun of the candidate green in \
+             `rulesets` closes it too.",
+        ] {
+            assert!(filed.contains(said), "{said}\n\n{filed}");
+        }
+        for of_a_fix in OF_A_FIX {
+            assert!(!filed.contains(of_a_fix), "{of_a_fix}\n\n{filed}");
+        }
+        assert!(!filed.contains("The next run of `just release` closes"));
     }
 
     #[test]

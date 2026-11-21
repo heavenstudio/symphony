@@ -115,6 +115,7 @@ pub mod adapter;
 pub mod carried;
 pub mod check_paths;
 pub mod delivery;
+pub mod dispatch;
 pub mod evidence;
 mod moving;
 use moving::Move;
@@ -266,7 +267,20 @@ pub struct Settings {
     /// land delivered by a pull request merges an import of it by a merge commit
     /// ([`delivery`]); with none, no head of another history is delivered.
     pub upstream: Option<Upstream>,
+    /// `[land] watch_seconds`: how long the delivery watcher rests between two rounds of reading
+    /// what the host made of each armed pull request ([`dispatch`]).
+    pub watch: Duration,
+    /// `[land] merge_within_minutes`: how long an armed pull request whose evidence stands may stay
+    /// neither merged nor red before the watcher disarms it and says so ([`dispatch`]).
+    pub merge_within: Duration,
 }
+
+/// The default of `[land] watch_seconds`: a host merges seconds after the check it waits on turns
+/// green, so a merge is closed here within half a minute, at one read of each such pull request a
+/// round.
+pub const WATCH: Duration = Duration::from_secs(30);
+/// The default of `[land] merge_within_minutes`.
+pub const MERGE_WITHIN: Duration = Duration::from_secs(30 * 60);
 
 /// `[land.upstream]`: the one repository a project imports from, as git reaches it.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -324,6 +338,8 @@ impl Default for Settings {
             check_paths: check_paths::defaults(),
             documents: crate::project::documents(""),
             upstream: None,
+            watch: WATCH,
+            merge_within: MERGE_WITHIN,
         }
     }
 }
@@ -370,6 +386,8 @@ impl Settings {
             /// Read by [`delivery::command`], and held to its shape here.
             delivery: Vec<String>,
             upstream: Option<Upstream>,
+            watch_seconds: u64,
+            merge_within_minutes: u64,
         }
         impl Default for Land {
             fn default() -> Land {
@@ -382,6 +400,8 @@ impl Settings {
                     check_paths: None,
                     delivery: Vec::new(),
                     upstream: None,
+                    watch_seconds: WATCH.as_secs(),
+                    merge_within_minutes: MERGE_WITHIN.as_secs() / 60,
                 }
             }
         }
@@ -423,6 +443,16 @@ impl Settings {
                 "{MANIFEST}: [land] delivery names no command: leave it out to land here"
             ));
         }
+        if file.land.watch_seconds == 0 {
+            return Err(format!(
+                "{MANIFEST}: [land] watch_seconds is 0: the watcher rests between its rounds"
+            ));
+        }
+        if file.land.merge_within_minutes == 0 {
+            return Err(format!(
+                "{MANIFEST}: [land] merge_within_minutes is 0: a host is given time to merge"
+            ));
+        }
         let (check, main_check) = if file.land.check {
             (file.verdicts.check, Vec::new())
         } else {
@@ -449,6 +479,8 @@ impl Settings {
             check_paths,
             documents: crate::project::documents(text),
             upstream,
+            watch: Duration::from_secs(file.land.watch_seconds),
+            merge_within: Duration::from_secs(file.land.merge_within_minutes.saturating_mul(60)),
         })
     }
 
@@ -636,15 +668,56 @@ fn no_branch(main: &Path, slug: &str, default: &str, approved: &str) -> String {
 /// not on the default branch until it lands, and the line that lands it: `just land SLUG --as
 /// HANDLE`, the Symphony's default landing, or the `land` recipe of the project's own that replaces
 /// it ([`own_land`]). Outside a checkout, or where the justfile cannot be read for it, the default
-/// landing is named.
+/// landing is named. What an approve of a task says is [`approved_task`], which says this
+/// wherever the host does not merge it.
 pub fn approved(env: &Env, slug: &str) -> String {
+    let (main, default) = lands_on(env);
+    approved_here(env, slug, main.as_deref(), &default)
+}
+
+/// What a verdict that approved `task` says, run where `env` runs. Where the project delivers by
+/// pull request ([`dispatch::bound`]) and the task is one the delivery takes
+/// ([`on_review::delivery_task`]), nobody lands it: the host merges its pull request, named once
+/// its dispatch bound one, and the board closes the task, `just land` being only what settles it
+/// by hand. Anywhere else, a project whose `land` is a recipe of its own included, it is
+/// [`approved`]'s line.
+pub fn approved_task(env: &Env, task: &Task) -> String {
+    let slug = &task.slug;
+    let (main, default) = lands_on(env);
+    let bound = (main.as_deref())
+        .filter(|_| on_review::delivery_task(task.parent.as_deref(), task.instruction))
+        .and_then(|main| Some((main, dispatch::bound(main, slug)?)))
+        .filter(|(main, _)| !matches!(own_land(main, env), Ok(Some(_))))
+        .map(|(_, bound)| bound);
+    let Some(bound) = bound else {
+        return approved_here(env, slug, main.as_deref(), &default);
+    };
+    let pull = bound.map_or_else(
+        || "its pull request, bound by its dispatch,".into(),
+        |b| format!("pull request #{} of {} ({})", b.pull, b.name, b.url),
+    );
+    format!(
+        "{slug} is approved: done on the board, not on {default} until the host merges it; the \
+         host merges {pull} once its checks pass, and the board closes the task; `just land \
+         {slug} --as HANDLE` only settles it by hand"
+    )
+}
+
+/// The main checkout of the repository `env` runs in, none outside one, and the default branch
+/// its settings name, as a line says it.
+fn lands_on(env: &Env) -> (Option<PathBuf>, String) {
     let main = crate::git::common_dir(&env.cwd)
         .ok()
         .and_then(|common| trigger::main_checkout(&common).map(Path::to_path_buf));
     let default = (main.as_deref())
         .and_then(|main| Settings::of(main).ok())
         .map_or_else(|| "the default branch".into(), |s| s.default_branch);
-    let how = match main.and_then(|main| own_land(&main, env).ok().flatten()) {
+    (main, default)
+}
+
+/// [`approved`]'s line for a land made here, on `default` of the main checkout `main`.
+fn approved_here(env: &Env, slug: &str, main: Option<&Path>, default: &str) -> String {
+    let how = match main.and_then(|main| own_land(main, env).ok().flatten()) {
         Some(justfile) => format!(
             "the `land` recipe of the project's own lands it ({}): `just land {slug}`",
             justfile.display()
@@ -848,9 +921,7 @@ impl Record {
             .iter()
             .find_map(|path| {
                 let text = fs::read_to_string(path).ok()?;
-                serde_json::from_str::<Record>(&text)
-                    .ok()
-                    .filter(|record| record.slug == slug)
+                crate::objects::parse::<Record>(&text).filter(|record| record.slug == slug)
             })
     }
 
@@ -871,7 +942,7 @@ impl Record {
         let dashed = Record::dashed(folder, slug);
         let ours = fs::read_to_string(&dashed)
             .ok()
-            .and_then(|text| serde_json::from_str::<Record>(&text).ok())
+            .and_then(|text| crate::objects::parse::<Record>(&text))
             .is_some_and(|record| record.slug == slug);
         if ours {
             let _ = fs::remove_file(dashed);
@@ -972,7 +1043,17 @@ pub fn land_with_clock(
     out: &mut dyn Write,
     now: &(dyn Fn() -> Instant + Sync),
 ) -> Result<String, Stop> {
-    landing(store, env, slug, actor, recorder, out, now, None)
+    landing(
+        store,
+        env,
+        slug,
+        actor,
+        recorder,
+        out,
+        now,
+        None,
+        Mode::Land,
+    )
 }
 
 /// [`land`] with `transport` answering a delivery's verbs in place of the command `[land]
@@ -1000,7 +1081,107 @@ pub fn land_by_with_clock(
     transport: &dyn delivery::Transport,
     now: &(dyn Fn() -> Instant + Sync),
 ) -> Result<String, Stop> {
-    landing(store, env, slug, actor, None, out, now, Some(transport))
+    landing(
+        store,
+        env,
+        slug,
+        actor,
+        None,
+        out,
+        now,
+        Some(transport),
+        Mode::Land,
+    )
+}
+
+/// `tasks land SLUG --dispatch`: the task's head published to its pull request with its evidence
+/// whatever it says, and the host's own merge of it armed ([`dispatch`]); started detached by the
+/// board's writes that can change the evidence, never waited on.
+///
+/// # Errors
+///
+/// What a land refuses before it publishes, or the board failing.
+pub fn dispatch(
+    store: &Store,
+    env: &Env,
+    slug: &str,
+    actor: &str,
+    out: &mut dyn Write,
+) -> Result<String, Stop> {
+    landing(
+        store,
+        env,
+        slug,
+        actor,
+        None,
+        out,
+        &Instant::now,
+        None,
+        Mode::Dispatch,
+    )
+}
+
+/// [`dispatch`] with `transport` answering the delivery's verbs, as [`land_by`] does.
+///
+/// # Errors
+///
+/// As [`dispatch`].
+pub fn dispatch_by(
+    store: &Store,
+    env: &Env,
+    slug: &str,
+    actor: &str,
+    out: &mut dyn Write,
+    transport: &dyn delivery::Transport,
+) -> Result<String, Stop> {
+    let mode = Mode::Dispatch;
+    landing(
+        store,
+        env,
+        slug,
+        actor,
+        None,
+        out,
+        &Instant::now,
+        Some(transport),
+        mode,
+    )
+}
+
+/// One round of the delivery watcher for `slug`, armed at the host, at `clock` (seconds since
+/// 1970), under the land's lock ([`dispatch::watch`]).
+fn watch_round(
+    store: &Store,
+    env: &Env,
+    slug: &str,
+    actor: &str,
+    out: &mut dyn Write,
+    transport: Option<&dyn delivery::Transport>,
+    clock: i64,
+) -> Result<String, Stop> {
+    let mode = Mode::Watch(clock);
+    landing(
+        store,
+        env,
+        slug,
+        actor,
+        None,
+        out,
+        &Instant::now,
+        transport,
+        mode,
+    )
+}
+
+/// What a [`landing`] does once it holds the land's lock.
+#[derive(Clone, Copy)]
+enum Mode {
+    /// A land: `tasks land SLUG`.
+    Land,
+    /// A dispatch at review ([`dispatch`]).
+    Dispatch,
+    /// A round of the delivery watcher at a wall clock, in whole seconds since 1970.
+    Watch(i64),
 }
 
 #[expect(
@@ -1016,6 +1197,7 @@ fn landing(
     out: &mut dyn Write,
     now: &(dyn Fn() -> Instant + Sync),
     transport: Option<&dyn delivery::Transport>,
+    mode: Mode,
 ) -> Result<String, Stop> {
     let common = crate::git::common_dir(&env.cwd).map_err(|e| Stop::Refused(e.to_string()))?;
     let main = trigger::main_checkout(&common)
@@ -1044,8 +1226,18 @@ fn landing(
     fs::create_dir_all(&folder).map_err(|e| Stop::Refused(at(&folder, &e)))?;
     let tree = worktree(&main, &settings, &folder, FOLDER, "worktree").map_err(Stop::Refused)?;
     let log = folder.join(format!("{}.log", file_stem(slug)));
-    File::create(&log).map_err(|e| Stop::Refused(at(&log, &e)))?;
-    let landed = Landing {
+    // A land's log is its own; a dispatch or a round of the watcher, which runs no command, adds
+    // to the one there.
+    match mode {
+        Mode::Land => File::create(&log).map(drop),
+        Mode::Dispatch | Mode::Watch(_) => OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+            .map(drop),
+    }
+    .map_err(|e| Stop::Refused(at(&log, &e)))?;
+    let landing = Landing {
         store,
         env,
         slug,
@@ -1063,9 +1255,14 @@ fn landing(
         named: false,
         transport,
         delivery,
+        mode,
         out,
-    }
-    .land();
+    };
+    let landed = match mode {
+        Mode::Land => landing.land(),
+        Mode::Dispatch => landing.dispatched(),
+        Mode::Watch(clock) => landing.watched(clock),
+    };
     landed.map_err(ended)
 }
 
@@ -1712,6 +1909,10 @@ struct Landing<'a> {
     transport: Option<&'a dyn delivery::Transport>,
     /// `[land] delivery` ([`delivery::command`]): empty where the land merges here and pushes.
     delivery: Vec<String>,
+    /// What it is: a land; a dispatch ([`dispatch`]), which runs detached with its lines in its
+    /// log alone, so what stops it is said on the task's thread as well; or a watcher's round,
+    /// which says a refusal on the thread once at a head ([`Landing::refuse`]).
+    mode: Mode,
     out: &'a mut dyn Write,
 }
 
@@ -1830,7 +2031,30 @@ impl Landing<'_> {
     /// do; the stop it makes.
     fn refuse(&self, refusal: Refusal) -> Stop {
         if !refusal.thread || !self.task {
+            if matches!(self.mode, Mode::Dispatch) && self.task {
+                // Nobody reads a dispatch's log: a task its dispatch left undelivered says so.
+                let slug = self.slug;
+                self.post(
+                    &format!(
+                        "land {slug}: its dispatch stopped: {}; `just land {slug} --dispatch` \
+                         dispatches it again, as a later write to it does",
+                        refusal.line
+                    ),
+                    Some("@orchestrator"),
+                );
+            }
             return Stop::Refused(refusal.line);
+        }
+        // A watcher round stops where the last one did until what stopped it changes: what it
+        // refuses is said once at the branch's head, whoever said it first (a land, a dispatch).
+        // Kept only where a round can read it, a land delivered by a pull request, whose end
+        // forgets it: a land that merges here keeps none, as nothing there would remove it.
+        if self.delivers() {
+            let tip = rev(&self.main, &format!("refs/heads/{}", self.slug)).unwrap_or_default();
+            let new = dispatch::said(&self.folder, self.slug, &format!("{tip} {}", refusal.line));
+            if !new && matches!(self.mode, Mode::Watch(_)) {
+                return Stop::Refused(refusal.line);
+            }
         }
         let slug = self.slug;
         let mut said = format!("land refused: {}", refusal.line);

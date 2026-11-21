@@ -37,6 +37,7 @@ refusal as turned off.
 | `issues` | `"off"` | `"import"`, `"export"` or `"exchange"` (both) |
 | `pull_requests` | `"off"` | `"publish"` answers [a land's delivery](#delivering-a-land); `"track"` is read and held to its word, and this build tracks none and says so |
 | `releases` | `"off"` | `"publish"` answers [a release run](#publishing-a-release) with a GitHub Release for a tag it pushed |
+| `verification` | `"off"` | `"hosted"` answers [a release run](#verifying-a-release) with its commit's verification on GitHub's runners |
 | `token_file` | none | the absolute path of a file holding the token |
 | `import_labels` | `[]` | the labels that select an open issue for import |
 | `import_comments` | `false` | whether the comments of a mapped issue become notes on its task |
@@ -75,12 +76,14 @@ holds the token. A machine without `curl` on `PATH` is told so, and nothing is s
 
 A fine-grained token scoped to the one repository is enough: issues read for `import`, issues
 read and write for `export` and `exchange`, and contents read and write for `releases =
-"publish"`, which GitHub takes a release's creation as. A token that GitHub refuses (401) pauses
+"publish"`, which GitHub takes a release's creation as, and actions read and write for
+`verification = "hosted"`, which starts the workflow and reads its runs. A token that GitHub refuses (401) pauses
 the exchange with everything kept; the next preview that succeeds lifts the pause.
 
 A delivery uses the same one token: an installation token of the GitHub App `app_id` names, with
-no administration. It pushes nothing (the checkout's own git does), opens and merges the pull
-request, writes the checks, and reads [the protection](#the-protection-a-delivery-needs). GitHub
+no administration. It pushes nothing (the checkout's own git does), opens, merges and closes the
+pull request, turns GitHub's auto-merge of it on and off, writes the checks, reads the other
+checks at its head, and reads [the protection](#the-protection-a-delivery-needs). GitHub
 takes a check from an App alone, and the default branch requires `symphony/eligible` from this one,
 so a person who may write cannot say the evidence stands. Who may bypass the rules is the one
 thing the App is not shown, by design: it is [verified](#who-bypasses-the-rules) with the gh CLI
@@ -91,9 +94,10 @@ makes](#tokens-it-makes) is asked for exactly these:
 | Its calls | Permission |
 | --- | --- |
 | the issues, their comments and their edits (`/issues`) | issues read for `import`; issues write for `export` and `exchange`, and where `close_issues` closes a delivered task's issue |
-| the repository and its merge settings, the pull requests, their merge (`/pulls`, `/pulls/N/merge`) and marking one ready (GraphQL) | pull requests write and contents write, under `pull_requests = "publish"` |
+| the repository and its merge settings, the pull requests, their merge and their closing (`/pulls`, `/pulls/N/merge`), marking one ready and turning its auto-merge on and off (GraphQL) | pull requests write and contents write, under `pull_requests = "publish"` |
 | a head's checks, read and written (`/commits/SHA/check-runs`, `/check-runs`) | checks write, under `pull_requests = "publish"` |
 | a release by its tag, the tag and the release's creation (`/releases/tags/TAG`, `/git/ref/tags/TAG`, `POST /releases`) | contents write, under `releases = "publish"` |
+| the workflow's runs, its start for one commit, one run, its jobs, their logs and its artifacts (`/actions/workflows/release-verify.yml/runs` and `/dispatches`, `/actions/runs/N`, `/actions/jobs/N/logs`, `/actions/artifacts/N/zip`) and the commit (`/commits/SHA`) | actions write, under `verification = "hosted"` |
 | the rules in effect for the branch (`/rules/branches/BRANCH`), each ruleset they come from (`/rulesets/ID`, never shown its bypass list) and a public upstream's repository | metadata, which every token has; a private upstream is read only by a token its installation reaches |
 
 Where the settings name no installation and key, whoever installs the App keeps a current token
@@ -185,6 +189,9 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
 - **`release --request FILE`** answers a release run with
   [a GitHub Release](#publishing-a-release) for the tag FILE names. A release run runs it; an
   operator asks through that run's own `--github`.
+- **`verify --request FILE`** answers a release run with
+  [its commit's verification](#verifying-a-release) on GitHub's runners. A release run runs it;
+  an operator has no reason to.
 - **`tokens`** says whether the token is current and when it expires, never the token
   ([tokens it makes](#tokens-it-makes)).
 
@@ -312,30 +319,87 @@ A reconcile is safe to run again and to interrupt.
 
 A project whose `symphony.toml` commits `[land] delivery = ["symphony-github", "deliver"]` lands
 its tasks by pull request ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)): the land runs
-`symphony-github deliver VERB --request FILE` for each of four verbs and reads one line of JSON.
+`symphony-github deliver VERB --request FILE` for each verb below and reads one line of JSON.
 The adapter answers only `enabled` settings whose `pull_requests` is `"publish"`; under any other
 it answers `refused` and asks GitHub nothing. It decides nothing: the land hands it the task's
 evidence, and it reads no board for it.
 
 - **`publish`** reads [the protection](#the-protection-a-delivery-needs) of the default branch
   first and refuses where it does not hold, then pushes the head to the branch named as the
-  task, never forced, and only when
-  `origin` is the settings' repository on GitHub.com. It finds the open pull request of that
-  branch into the default branch before it opens one, as a draft, which nobody merges, then writes the evidence as checks on the
-  head: `symphony/assessment`, `symphony/NAME` for each stamp (success where it stands, neutral
-  where the assessment waived it, failure where it is missing) and `symphony/eligible`. That last
-  one is what a branch's protection requires, from the App `app_id` names. It is written
-  last when it passes and first when it fails, so it never passes over a stamp not yet written,
-  and the checks are read back as that App's before `published` is answered. GitHub lists a
-  check a few seconds after it takes it, so one not listed yet is read again after rests of 1, 2,
-  4 and 8 s, well inside the time the land gives the program, and nothing is written again; one
-  still not listed then is answered `unavailable`, and the next run finds what was written.
-- **`merge`** reads the protection again, refusing as `publish` does, then marks the draft ready and asks GitHub once for a squash of the bound pull request at
-  the head it is given, which GitHub refuses for any other head. A mark that fails or whose answer
-  is lost merges nothing. A pull request already merged is answered as merged,
-  with no second request.
-- **`result`** reads the bound pull request: open, merged with its commit, or closed.
+  task, never forced, and only when `origin` is the settings' repository on GitHub.com. It finds
+  the open pull request of that branch into the default branch before it opens one, ready for
+  review, as GitHub turns on no auto-merge of a draft; one an earlier build opened as a draft is
+  marked ready. It then writes the evidence as checks on the head: `symphony/assessment`,
+  `symphony/NAME` for each stamp and `symphony/eligible`, which is what the branch's protection
+  requires, from the App `app_id` names. Each check is in one of four states (below).
+  `symphony/eligible` is written last when it passes and first otherwise, so it never passes over
+  a stamp not yet written, and the checks are read back as that App's before `published` is
+  answered. GitHub lists a check a few seconds after it takes it, so one not listed yet is read
+  again after rests of 1, 2, 4 and 8 s, well inside the time the land gives the program, and
+  nothing is written again; one still not listed then is answered `unavailable`, and the next run
+  finds what was written. GitHub also moves a pull request that is open already to a head pushed
+  a few seconds after the push, so one still at the head it was read at before the push is read
+  again after the same rests, once the checks stand, and `published` names the head pushed; one
+  that has not moved then is answered `unavailable`, and the next run reads it first. A head
+  that is neither, as someone else pushed, is answered as it is, and the land refuses it.
+- **`arm`** reads the protection again, refusing as `publish` does, then turns on GitHub's
+  auto-merge of the bound pull request at the head it is given (`expectedHeadOid`), by the method
+  and commit text `merge` would ask for. GitHub then merges it itself once every check the branch
+  requires passes, `symphony/eligible` among them. A pull request that is a draft is marked ready
+  first. It answers:
+  - `{"state": "armed", "pull": N, "head": SHA}`, also when auto-merge was on already by that
+    method and that text (GitHub's `auto_merge.commit_title` and `commit_message`), which it
+    turns on no second time. GitHub merges by the text it was armed with, so one on by another
+    text, armed at an earlier head or before the task's curated text was written, is turned off
+    and on again at this head with this text. One turned off whose arming GitHub then refuses,
+    or whose answer is lost, is answered so and left as GitHub has it: the next run reads it
+    first and arms it;
+  - `{"state": "mergeable", "pull": N, "head": SHA}` where GitHub can merge it already (it takes
+    no auto-merge of a pull request in `clean` or `unstable` status): the land asks `merge`;
+  - `{"state": "merged", "sha": SHA}` and `{"state": "closed"}` where it is so already;
+  - `{"state": "refused", "kind": KIND, "why": TEXT}`: `head` where the pull request is at
+    another head, `conflict` where it is in conflict with its base, `policy` (with `missing`)
+    where the protection does not hold, `permission` for anything else GitHub refused, such as a
+    repository that does not allow auto-merge;
+  - `{"state": "unavailable", "why": TEXT}` where the answer was lost: the next run reads first.
+- **`merge`** reads the protection again, refusing as `publish` does, then marks a draft ready
+  and asks GitHub once for a squash of the bound pull request at the head it is given, which
+  GitHub refuses for any other head. A mark that fails or whose answer is lost merges nothing. A
+  pull request already merged is answered as merged, with no second request.
+- **`disarm`** turns auto-merge of the bound pull request off, so no check that passes later
+  merges it. It answers `{"state": "disarmed"}` (also where it was off), `{"state": "merged",
+  "sha": SHA}` where GitHub merged it first, `{"state": "closed"}`, `refused` with `kind`
+  `permission`, or `unavailable`.
+- **`close`** turns auto-merge off as `disarm` does, then closes the pull request unmerged, its
+  branch left as it is. It answers `{"state": "closed"}` (also where it was closed),
+  `{"state": "merged", "sha": SHA}` where GitHub merged it first, `refused` with `kind`
+  `permission`, or `unavailable`.
+- **`result`** reads the bound pull request and writes nothing: `{"state", "head", "sha",
+  "base", "repository", "auto_merge", "mergeable_state", "foreign"}`. `state` is `open`,
+  `merged` (with `sha`, its commit) or `closed`; `auto_merge` is whether auto-merge is on;
+  `mergeable_state` is GitHub's word for whether it merges (`clean`, `blocked`, `dirty`,
+  `unstable`, `unknown` and the rest); and `foreign`, read only while it is open, is each check
+  run at its head another App wrote whose newest run did not pass (`failure`, `cancelled`,
+  `timed_out`, `action_required`, `startup_failure`), as `{"name", "conclusion"}`. The App's own
+  checks are never foreign. A CI that writes commit statuses rather than check runs is not read,
+  so a required one that fails holds the merge, unnamed, until `[land] merge_within_minutes`
+  passes and the watcher says so.
 - **`landed`** keeps the commit, and closes the task's mapped issue where `close_issues` says.
+
+A check says one of four things of the head:
+
+| Check | Passes | Neutral | Fails | Pending |
+| --- | --- | --- | --- | --- |
+| `symphony/assessment` | an assessor read it | | | not read yet |
+| `symphony/NAME` | the stamp stands | the assessment waived it | missing, and red at the head (`red`) | missing |
+| `symphony/eligible` | every stamp the task needs stands | | a stamp it needs is red, or evidence that stood at this head was withdrawn | anything else |
+
+A pending check is a check run still in progress, with no conclusion: GitHub holds a required
+check, and so a merge and an armed auto-merge, until it completes. A check that completed and is
+pending again is written as a new run beside the old one, as GitHub goes by the newest run of a
+name; one pending that completes is that run, completed. Once `symphony/eligible` has passed at a
+head, evidence there that is short of standing again fails it, titled as withdrawn, rather than
+leave it pending, and it stays failing at that head until the evidence stands again.
 
 The pull request's title and text, and the squash commit's title, are the task's curated text
 (`publish SLUG`) or, with none, its slug; an import's merge commit is titled as below. The title and brief the land hands over, the thread,
@@ -344,21 +408,23 @@ where it stands, and no more.
 
 A land that finds the evidence of a bound pull request withdrawn publishes that too: `publish`
 with a snapshot that is not eligible pushes the head the branch is at and fails
-`symphony/eligible` there before any other check moves. The pull request stays as it is, ready
-if a merge was asked for before: what keeps it from merging then is the failed check the
-branch's rules require. Where the protection no longer holds, a snapshot that blocks is still
+`symphony/eligible` there before any other check moves. The pull request stays as it is, armed
+if it was: what keeps it from merging then is the failed check the branch's rules require, and a
+land that gives the task up asks `disarm` or `close`. Where the protection no longer holds, a snapshot that blocks is still
 said, by its checks alone, on the pull request already bound and at the head it is at: no head
 is pushed and no pull request opened past a policy that does not hold. A waived stamp's check is
 neutral and says only that the assessment waived it: the assessor's reason is board text and is
 sent nowhere.
 
 Every write is journaled before it is made and looked for before it is made again: a pull
-request by its branch, a check by its name, its conclusion and the evidence's revision, a merge
-by the pull request's own state. A lost answer is answered `unavailable` or `unknown`, and the
+request by its branch, a check by its name, its conclusion and the evidence's revision, a merge,
+an auto-merge and a close by the pull request's own state. A lost answer is answered `unavailable` or `unknown`, and the
 next run finds what was made. Evidence of another revision rewrites the checks of that head.
 
-Every request is GitHub's REST API made by `curl`, as the exchange's are, and the one thing REST
-has no call for, marking a draft ready, is a single GraphQL mutation by the same `curl`. A delivery
+Every request is GitHub's REST API made by `curl`, as the exchange's are, and the three things
+REST has no call for, marking a draft ready and turning auto-merge on
+(`enablePullRequestAutoMerge`) and off (`disablePullRequestAutoMerge`), are each a single GraphQL
+mutation by the same `curl`. A delivery
 never runs the `gh` CLI: only [verifying who bypasses the rules](#who-bypasses-the-rules) does, as
 someone who administers the repository. The installation token, which GitHub expires within the
 hour, is [made by the program](#tokens-it-makes) where the settings name the App's installation
@@ -453,13 +519,65 @@ GitHub refuses as there already, made by another run since the look, is found an
 command sends one kind of write, a release's creation: it edits and deletes no release and
 makes, moves and deletes no tag.
 
+## Verifying a release
+
+A project whose `symphony.toml` commits `[releases] hosted = ["symphony-github", "verify"]` has
+its release run verify its commit on GitHub's runners
+([RELEASES](RELEASES.md#on-githubs-runners)): the run starts `symphony-github verify --request
+FILE` in the main checkout and reads one line of JSON. The adapter answers only `enabled`
+settings whose `verification` is `"hosted"`; under any other it answers `refused` and asks GitHub
+nothing, keeping nothing. The request names the `commit`, its 40 hexadecimal digits, the
+`folder` the run's logs are downloaded into, which must be there, and the `seconds` the run may
+be waited for (six hours with none).
+
+In order, with `token_file`'s token (`crates/symphony-github/src/verify.rs`):
+
+1. **The repository** is read and held to the one the state is bound to by its number, as a
+   delivery holds it; with none bound yet, it is bound. Another repository at the name is
+   refused: nothing is started in it.
+2. **The commit must be there** (`GET …/commits/SHA`): one GitHub does not hold is `unavailable`,
+   and nothing is started.
+3. **The workflow is started** on the default branch for that commit (`POST
+   …/actions/workflows/release-verify.yml/dispatches`, its one input the commit), the one write
+   this command sends, journaled before it is made. The state's lock is held until GitHub
+   answers it and never while the run is waited for, so a land's delivery is not kept waiting.
+4. **Its run is found**: the newest dispatched run of the workflow titled for the commit that
+   was not listed before the dispatch, looked for over two minutes, as GitHub lists a run a
+   little after it takes the dispatch. A dispatch whose answer was lost is looked for the same
+   way; none showing is `unavailable`.
+5. **The run is waited for**, read every 30 seconds until it has ended. Twenty reads in a row
+   left unanswered give the wait up as `unavailable`; the time given ending first is `late`, the
+   run left to end.
+6. **It is believed** only if GitHub says it is of the bound repository, of
+   `.github/workflows/release-verify.yml`, started by a `workflow_dispatch` on the default
+   branch, titled for exactly the commit, and completed with a conclusion; anything else is
+   `refused` and nothing is downloaded. Whether the workflow file it ran is the one the default
+   branch commits is the release run's to check with its own git, by the commit the answer
+   names.
+7. **Its logs are downloaded** into the folder: each job's log (`job-N.log`) and each artifact's
+   archive (`artifact-N.zip`). GitHub answers each with a redirect to another host, which a
+   second `curl` fetches with no token, its URL read from standard input and said nowhere, as it
+   carries the download's own signature. A job with no log and an artifact that cannot be
+   fetched are said in the answer (`no_log`, `missing`) and stop nothing.
+
+The answer's `state` is `ended` (with `run`, its page, attempt, conclusion and the commit whose
+workflow file it ran; `jobs`, each with its conclusion as GitHub gave it, its seconds and its
+log; and `artifacts`), `late`, `refused` (asking again as things are changes nothing: the
+settings, the repository, the workflow file, a token that may not start it, a run not believed)
+or `unavailable` (GitHub gave no answer to go on by). A red run is `ended` like a green one: what
+its jobs concluded is the release run's to judge.
+
+It is safe to run twice: each request starts a run of its own and reads that one, and the
+workflow is given no secret and writes nothing, so a run started and never read costs runner
+minutes and nothing else. The command cancels no run.
+
 ## The protection a delivery needs
 
 A delivery is held to its evidence by GitHub only where the default branch's rules say so, and
 the adapter reads them before each step that counts on them: before `publish` pushes a head
-whose evidence stands, and again before `merge` marks the pull request ready and asks for the
-squash (`crates/symphony-github/src/preflight.rs`). Where they do not hold it answers `refused`
-with `kind` `policy` and each thing missing, and pushes, opens, marks and merges nothing; an
+whose evidence stands, and again before `arm` turns on auto-merge and before `merge` marks the
+pull request ready and asks for the squash (`crates/symphony-github/src/preflight.rs`). Where they do not hold it answers `refused`
+with `kind` `policy` and each thing missing, and pushes, opens, marks, arms and merges nothing; an
 answer GitHub did not give is `unavailable`, never a pass. `preflight` says the same to an
 operator. The adapter edits no rule, ruleset, protection or visibility: putting them right is a
 repository administrator's act on GitHub ([the steps](GITHUB_SETUP.md#delivery-by-pull-request)),
@@ -555,7 +673,9 @@ A setup of a repository of your own is checked by `status`, `preview`, `rulesets
 and a repository held in memory with every failure above planted, and the exchange on a real
 scratch board through `tasks api` with its requests made by a real `curl` to a loopback server.
 The delivery's verbs are asked of the same repository in memory, which answers pull requests,
-their merge and a commit's checks, and its rules and rulesets, which it holds a merge to. A
+their merge, their auto-merge and their closing, and a commit's checks, and its rules
+and rulesets, which it holds a merge to; it merges a pull request whose auto-merge is on after
+each check written, once nothing the rules require is missing at its head, as GitHub does. A
 release is asked of it too, which answers a tag, the release of a tag and its creation, and
 makes a tag of its own for a release whose tag it lacks, as GitHub does. The rulesets are verified through a gh that answers what that repository answers a person.
 The tokens it makes are

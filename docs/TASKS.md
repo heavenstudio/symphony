@@ -37,10 +37,19 @@ common dir, under the same namespace and database. The Symphony serves each
 registered project's board, and reconnects to one whose server restarted. A
 project's heartbeat keys, sweep state and staffing lock stay in its common dir.
 
-Each build of the board writes one schema version, which the board records. A
-build opens a board at its own version with one read and no write. A newer
-build migrates an older board forward once, its additive steps and the new
-version in one transaction before any other write. An older build is refused
+Each build of the board writes one contract, its schema version, which the board records with the
+additive steps on it the board has ([CHECKS](CHECKS.md#the-board-is-a-contract)). The version
+counts breaking steps alone: a step that only adds (a table of its own, an index that is not
+unique, an optional field on a table every build reads and writes past what it does not know)
+leaves it as it is. A build opens a board of its own contract with one read and no write, whatever
+additive steps either has. One with fewer steps than the board reads and writes it, keeping on each
+row the fields it does not know. One with more adds them where it may move the board (below), in
+one transaction, as any move, holding no writer; where it may not, it uses the board as it is: a
+write naming a table of a step the board lacks is refused before anything is written, and the
+board refuses a field or a table it does not define. A whole-board copy, export or move to another
+engine runs only on a board with the build's own steps. A newer contract migrates an older board
+forward once, its steps and the new version in one transaction before any other write. An older
+build is refused
 before it writes, naming the project, the program to rebuild (its file name and
 where it is) and `just symphony`. A Symphony one version
 behind still reads the board, and every write it would send is refused the same
@@ -68,7 +77,8 @@ once a schema lands, and only such a build makes the board when it is not made
 yet. A PostgreSQL board also checks `crates/tasks/src/store/postgres/schema.rs` from the same
 default-branch commit. Where it commits none (a consuming project, which pins a build), it is only
 `just tasks migrate` run in the main checkout, which says whether it made the
-board, moved it from one version to the next, or found nothing to move; there
+board, moved it from one version to the next, added the additive steps it lacked, or found
+nothing to move; there
 any writer makes a board not made yet. A repository with no main checkout (a
 bare repository's worktrees, a submodule's working tree) moves its board, where
 its default branch commits no source, only by `just tasks migrate`, run in any
@@ -159,7 +169,9 @@ once, which records it, then migrate again; `just tasks migrate --leave-behind` 
 all the same, and each writer left behind is refused, naming itself as the program to rebuild,
 until it is. A writer not seen for a week is not counted. Only the migrate asks: where a project's
 default branch commits the board's source, as this repository's does, main's build moves the board
-at its first command once a schema lands, and names no writer.
+at its first command once a schema lands, and names no writer. A move of additive steps alone, to
+a board of the build's contract, names none either: every build of the contract writes the board
+after it ([CHECKS](CHECKS.md#the-board-is-a-contract)).
 
 The shared server is not counted. The Symphony opens a board to read
 (`crates/symphony/src/taskview/connect.rs`), though it writes through that store (the owner's
@@ -243,9 +255,12 @@ the room the old store takes comes back only once it is removed. The exports sta
 The `tasks-move` binary, the owner's to run the same way, moves the board's store to the other
 engine (`tasks-move postgresql --as HANDLE`, `tasks-move surrealdb --as HANDLE`) and puts a
 snapshot of a PostgreSQL board back over it (`tasks-move --restore SNAPSHOT --as HANDLE`): held,
-exported, copied, every row compared, then switched under a journal with a commit point. A
-failure before it leaves the board on the engine it was on, nothing is deleted, and a move cut
-short is settled by its holder's next `tasks-move`
+exported, copied, every row compared, then switched under a journal with a commit point. It
+moves the board's own database alone: a scratch board (`--database NAME`) in the same store
+stays in the old store, which is kept whole in `symphony/tasks/moved/`, and the move names each,
+so a scratch board on the new engine starts empty. A failure before the commit point leaves the
+board on the engine it was on, nothing is deleted, and a move cut short is settled by its
+holder's next `tasks-move`
 ([one board's move](analysis/board-pg-cutover.md#one-boards-move),
 [POSTGRESQL](POSTGRESQL.md#holds-snapshots-and-recovery)).
 
@@ -2101,8 +2116,9 @@ reason with no words is refused. A move to blocked names what it waits on as wel
 task's branch, named as its slug, on the default branch. `just tasks claim` says so of a top-level
 task (a slice works on its parent's branch, and an instruction subtask's slug is none), an approve
 of one says that the task is done on the board but not on the default branch until it lands, and
-the line that lands it (or the project's own `land`), an approve of a subtask that its work lands
-with the task it is under, and a land
+the line that lands it (or the project's own `land`), or, where the project
+[delivers by pull request](#a-land-delivered-by-a-pull-request), that the host merges it, an
+approve of a subtask that its work lands with the task it is under, and a land
 with no branch so named names the branch whose tip is the commit the approve names, and the rename
 (`git branch -m BRANCH SLUG`). It is the convention a project gets without configuring anything, and a lower level
 replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
@@ -2300,7 +2316,10 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   which answers it once that land advanced the candidate; one covered by any other landing has
   its fix on main and not in the candidate, which is dropped. A red fixed outside this
   repository is answered by its task cancelled, saying where; one done otherwise waits for its
-  land.
+  land. Where a pull request delivers it ([below](#a-land-delivered-by-a-pull-request)), a fix
+  that changes what the client is built from is the one branch that merges main before its land:
+  once from a second head, after the head that commits its own outputs is approved
+  ([RELEASES](RELEASES.md#the-release-candidate)).
 - **Merged and checked.** In a worktree of its own (`land` in the project's `[agents]
   worktrees`, else `symphony/tasks/land/worktree`), never the main checkout: one `--no-ff`
   merge commit, "Merge branch 'SLUG'", committed through the project's git hooks, those git
@@ -2381,8 +2400,11 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   ([RELEASES](RELEASES.md#the-cadence)).
 
 The merge of the task's tip is one step of the land, the one a hosted pull request's
-merge would take the place of: the approval before it and the record, the move, the
-push and the close after it stay as they are.
+merge takes the place of under `[land] delivery`: the approval before it and the record, the move,
+the push and the close after it stay as they are. There no land needs running at all: the task's
+move to review dispatches it, the host merges once its last stamp stands, and the watcher closes
+the task ([a land dispatched at review](#a-land-dispatched-at-review)); `just land SLUG` arms one
+that reached done without a dispatch and settles a merge no watcher saw.
 
 **Bounded.** The merge's commit, with its hooks, and the check each run in a process group
 of its own, which the land ends whole past `[land] timeout_seconds` (an hour unless the project says;
@@ -2586,13 +2608,23 @@ makes no merge and no push of the default branch: the host of the project's repo
 the task's head into one commit there, and the main checkout follows it. A head that imports the
 project's upstream is the one exception, merged there by a merge commit
 ([below](#an-import-delivered-by-a-pull-request)). With no such key the land is the one above, and
-nothing here is reached. This repository sets none.
+nothing here is reached. This repository sets one: its tasks are delivered to
+`heavenstudio/symphony` by [`symphony-github deliver`](GITHUB.md#delivering-a-land), built in the
+main checkout ([AGENTS](../AGENTS.md#this-repository-as-its-own-project)).
+
+Nobody lands a task there, so an approve of one names no landing to run: it says that the task is
+done on the board and not on the default branch until the host merges it, that the host merges
+its pull request once its checks pass (named by its number, repository and address once a
+dispatch bound one, from its journal) and the board closes the task, and names `just land SLUG
+--as HANDLE` only as what settles it by hand. A project whose `land` is a recipe of its own keeps
+the line of [the default landing](#the-default-landing).
 
 The board names no host. The command is the project's own program, run in the main checkout as
 `COMMAND VERB --request FILE`, FILE one JSON object and its standard output another whose `state`
-says what it came to; [`symphony-github deliver`](GITHUB.md#delivering-a-land) is one. Its four
-verbs are `publish`, `merge`, `result` and `landed` (`crates/tasks/src/land/delivery.rs`), and it
-decides nothing: what a task needs and whether it stands is
+says what it came to; [`symphony-github deliver`](GITHUB.md#delivering-a-land) is one. Its verbs
+are `publish`, `arm`, `merge`, `disarm`, `close`, `result` and `landed`
+(`crates/tasks/src/land/delivery.rs`, `crates/tasks/src/land/dispatch.rs`), and it decides
+nothing: what a task needs and whether it stands is
 [the evidence](#the-evidence-of-a-task-at-its-head) the land reads and hands it.
 
 It delivers nothing past a check the project asks for. The default land runs `[verdicts] check`
@@ -2619,9 +2651,14 @@ A land keeps a journal of the delivery in the lands' folder, written before each
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
    published again or refused, never merged as it was.
-3. **Merge requested.** One `merge`, a squash of that pull request at that head, or a merge
+3. **Armed.** `arm` turns on the host's own merge of that head, by the squash and the text a
+   merge asks: the host merges it once every check it requires passes, `symphony/eligible` among
+   them, and the watcher closes the task ([below](#a-land-dispatched-at-review)). A pull request
+   the host would merge now (its evidence standing, no other check to wait on) takes no such
+   arming, answered `mergeable`, and the land asks the merge itself.
+4. **Merge requested.** One `merge`, a squash of that pull request at that head, or a merge
    commit for an import.
-4. **Merged remotely.** The commit the host made is proved by git alone: on the fetched default
+5. **Merged remotely.** The commit the host made is proved by git alone: on the fetched default
    branch, of one parent, its tree the merge of that parent and the head (an import's proof is
    [its own](#an-import-delivered-by-a-pull-request)). A receipt of the head and the commit is kept
    for good (`receipts/` in the lands' folder), and the head stays reachable under
@@ -2629,11 +2666,11 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    does not go back to review. A slug is delivered once: the release run counts, holds a release
    and reads its notes by that receipt and that head, so neither is ever replaced
    ([below](#a-slug-is-delivered-once)).
-5. **Reconciled.** A clean main checkout whose default branch the remote's descends from is
+6. **Reconciled.** A clean main checkout whose default branch the remote's descends from is
    fast-forwarded. A dirty or diverged one is left as it is, the land answering "landed remotely,
    reconciliation pending" once on the thread, and a land run again closes the task once the
    checkout can follow. Nothing here is reset, merged or pushed for it.
-6. **Closed**, then what follows a land: the landed line names the commit, the head and the pull
+7. **Closed**, then what follows a land: the landed line names the commit, the head and the pull
    request, once; `[board] on_land` runs with the commit, once; and `landed` tells the program on
    every run that reaches here, as the verb is safe to ask twice and a run cut short before it
    told nobody.
@@ -2658,6 +2695,85 @@ run, by `result`:
 
 One limit holds by design: evidence withdrawn after the last reading and before the host acts on
 a request already made does not recall it. The receipt names the revision that was read.
+
+#### A land dispatched at review
+
+Nobody runs a land of a task the host delivers: a write to the board that can change its evidence
+starts its dispatch, the host merges it once its last stamp stands, within seconds, and the
+watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
+
+- **What dispatches.** A top-level task's move to review, and after it each later move,
+  assessment (`tasks needs`), verdict and gate decision, starts `tasks land SLUG --dispatch`
+  detached from the main checkout, as the one who wrote, with the land's mark; the write returns
+  at once and its lines go to `dispatch.log` in the lands' folder. The move to review leaves
+  `SLUG.dispatching` there, naming who moved it, until a dispatch binds the task's pull request,
+  and from then on its binding is what a later write dispatches it by: so a first dispatch that
+  stopped before it published is made again by the next write, and a task never moved to review,
+  or delivered and closed, starts none. A dispatch that stops says why on the task's thread, to
+  `@orchestrator`, with the `just land SLUG --dispatch` that dispatches it again: nobody reads its
+  log. A board that `TASKS_SERVER` names (a test's) starts one only under `TASKS_DISPATCH=on`;
+  `TASKS_DISPATCH=off` starts none anywhere. One dispatch runs at a time under the land's lock,
+  and one asked while another runs runs after it.
+- **What a dispatch does.** What a land does up to the publication, the refusals at the head
+  above among it (each goes to the thread, to whom it names, and nothing is pushed); then the head
+  pushed, never forced, its pull request opened ready and the checks written from the evidence at
+  that head, whatever it says, and the host's merge armed. `symphony/eligible` is pending while a
+  stamp is not given yet (an assessment, a review, the owner's approve), fails where one is red at
+  the head or evidence that stood there was withdrawn, and passes once every stamp stands: so a
+  reviewer's approve, or the owner's, is what lets the host merge, and a task in review stays
+  there until it does. A check belongs to its commit, so a green eligible on one head merges
+  nothing at another; a new commit is pushed to the same pull request at the next dispatch, the
+  merge armed across it and pending until the approve names the new head. One whose head and
+  evidence are as last published asks the host nothing more. Armed only while the task is in
+  review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
+  first and its checks said again after, so no check published meanwhile lets the host merge it,
+  and stays so until it moves to review.
+- **Who watches.** One watcher per project, `tasks land --watch` (`watch.lock` in the lands'
+  folder, `watch.log` its lines), started by each arming where none runs, which reads each armed
+  task every `[land] watch_seconds` (30) and ends once none is left. A round writes a task's line
+  to the log only where it differs from its round before, so a task that waits days for its
+  approve is one line there and the log grows by what changed, never by how long the watcher ran;
+  it is set aside past 1 MiB (`watch.log.1`) when a watcher starts. Armed means the host answered
+  an arming and has not answered a disarm since: a publication between keeps it so, as the host
+  keeps its merge armed across a push, and one that stopped before the host answered its arming
+  again (an answer lost, a host away) has its pull request read every round, whatever its checks
+  said, and is published and armed again. A refusal a round stops at (a head refused at the head,
+  an arming refused) holds until what it names changes, so it is said on the thread once at the
+  branch's head, however many rounds read it again (`SLUG.said` in the lands' folder keeps the
+  last one said, by a land, a dispatch or a round, until the delivery ends, landed or cancelled;
+  a land that merges here keeps none). A task whose evidence does not
+  stand yet costs it no read of the host, which merges nothing while eligible is pending; it reads
+  its evidence again, so a write no command dispatches for (the owner's through the Symphony, a run
+  recorded at the head) is published at its next round. One whose evidence stands has its pull
+  request read: merged, the commit is proved and the task closed from review or done alike, the
+  checkout fast-forwarded and `[board] on_land` and the regenerator started, as a land closes one
+  ([above](#a-land-delivered-by-a-pull-request)). A task whose merge a run asked for or found and
+  whose land did not end (the board lost between the host's merge and the close, a crash) is the
+  watcher's as well, armed or not: each round goes on from where its journal stands, as a land run
+  again does, the task closed once and what follows a land started once, and the watcher does not
+  end while one is there. A round that cannot finish it (the board or the host away, the main
+  checkout dirty or diverged) says why in `watch.log`, once while the reason is the same, and the
+  next tries again; one still not
+  finished `[land] merge_within_minutes` after the first round that stopped is said once on the
+  thread to `@orchestrator`, naming `just land SLUG`. One held for a person stays held, read by no
+  round. A merge no watcher saw (a reboot, which ends the watcher) is settled by the next dispatch
+  or `just land SLUG`, and a watcher any arming starts finishes every such journal it finds.
+- **A merge that does not come**, once the evidence stood (before, the task is in review and its
+  evidence says what is missing). The host's merge is turned off first, so a check that passes
+  later merges nothing behind the board, and one line says why, to `@orchestrator`:
+
+| What the watcher reads | What follows |
+| --- | --- |
+| A check that is not the Symphony's red at the head (a CI the repository adds), or the host reporting the pull request in conflict with the default branch | the task back to in progress (from done by review): its executor merges the default branch once, or puts the check right, and moves it to review, which dispatches it again |
+| The pull request closed unmerged, by someone | back to in progress, naming it; the next dispatch opens another |
+| Neither merged nor red once `[land] merge_within_minutes` (30) passed since its evidence stood (review time counts for nothing) | the task stays where it is, the work not at fault: `just land SLUG` arms it again |
+| Any of these where the task cannot go back (cancelled or closed, a document save, which stays pending and shown, or what the regenerator made, which it cancels and makes again) | `tools/delivery-failed-SLUG` filed to `@orchestrator`, naming the pull request and why; a second failure is a line on the one open |
+
+A task cancelled while its pull request is open has it closed unmerged, its merge off and its
+branch left. A close the host does not make is asked again by the watcher's next round while its
+merge is armed; one no longer armed, which nothing merges, is said to `@orchestrator` with the
+`just land SLUG --dispatch` that closes it. One the host merged at a head its branch has moved
+past is held for reconciliation, by name, as any merge of another head.
 
 #### A slug is delivered once
 

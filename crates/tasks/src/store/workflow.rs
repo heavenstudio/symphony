@@ -957,8 +957,8 @@ pub(crate) fn unplaced(slug: &str) -> String {
 /// still stands ([`Store::standing_blocks`]), what it waits on, why and who blocked it kept, or one
 /// waiting on `parked` where none does; its source is the status the return gives it either way.
 fn blocked(carried: Option<&Value>, from: Option<String>, at: f64) -> crate::waits_on::Blocked {
-    let kept = carried
-        .and_then(|record| serde_json::from_value::<crate::waits_on::Blocked>(record.clone()).ok());
+    let kept =
+        carried.and_then(|record| crate::objects::read::<crate::waits_on::Blocked>(record).ok());
     match kept {
         Some(kept) => crate::waits_on::Blocked { from, ..kept },
         None => crate::waits_on::Blocked {
@@ -992,7 +992,7 @@ fn decoded<T: serde::de::DeserializeOwned>(body: Value, what: &str) -> Result<Op
     if body.is_null() {
         return Ok(None);
     }
-    serde_json::from_value(body)
+    crate::objects::read(&body)
         .map(Some)
         .map_err(|e| Error::Db(format!("a {what} not in the board's shape: {e}")))
 }

@@ -1,4 +1,4 @@
-use super::read;
+use super::{parse, read, read_exact};
 use crate::execution::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Dispatch, Ending, Identity, Lease,
     Pending, Pin, Relation, Row, State,
@@ -441,4 +441,193 @@ fn the_shapes_no_row_holds_read_as_from_value_reads_them() {
     for value in [json!({"a": 1}), json!({"a": "s"}), json!(null)] {
         agree::<std::collections::HashMap<String, u8>>(value);
     }
+}
+
+#[test]
+fn an_open_tables_row_reads_past_a_field_it_does_not_know_and_reads_alone_refuses_it() {
+    use crate::rows::{Dump, RoleRow, TaskRow, WorkflowRow};
+    let role = json!({"slug": "a", "handle": "h", "role": "executor", "since": 1.0});
+    let mut ahead = role.clone();
+    ahead["fixture_note"] = json!({"kept": [1, null]});
+    // Through the store's reader, at the top, in a list and inside another struct, as it is read
+    // without the field.
+    let (objects, values) = both::<RoleRow>(ahead.clone());
+    assert_eq!(objects.unwrap(), read::<RoleRow>(&role).unwrap());
+    assert_eq!(
+        values.unwrap_err(),
+        "unknown field `fixture_note`, expected one of `slug`, `handle`, `role`, `since`, `expires`"
+    );
+    let rows: Vec<RoleRow> = read(&json!([role, ahead])).unwrap();
+    assert_eq!(rows[0], rows[1]);
+    let held: (Vec<RoleRow>, i64) = read(&json!([[ahead], 3])).unwrap();
+    assert_eq!(held.0[0], rows[0]);
+    // Read exactly, as a copy reads the board, it is refused at every depth: in a list, a tuple,
+    // an option, a map's value and a variant's, and the dump's own tables.
+    #[derive(Debug, Derived)]
+    enum Holding {
+        Role(#[allow(dead_code)] RoleRow),
+    }
+    let refused = "unknown field `fixture_note`, expected one of `slug`, `handle`, `role`, `since`, `expires`";
+    assert_eq!(read_exact::<RoleRow>(&role).unwrap(), rows[0]);
+    assert_eq!(
+        read_exact::<RoleRow>(&ahead).unwrap_err().to_string(),
+        refused
+    );
+    let deep = [
+        json!([role, ahead]),
+        json!([[ahead], 3]),
+        json!({"role": ahead}),
+        json!({"Role": ahead}),
+        json!({"roles": [role, ahead]}),
+    ];
+    let exactly = [
+        read_exact::<Vec<RoleRow>>(&deep[0]).map(drop),
+        read_exact::<(Vec<Option<RoleRow>>, i64)>(&deep[1]).map(drop),
+        read_exact::<std::collections::BTreeMap<String, RoleRow>>(&deep[2]).map(drop),
+        read_exact::<Holding>(&deep[3]).map(drop),
+        read_exact::<Dump>(&deep[4]).map(drop),
+    ];
+    for (value, exactly) in deep.iter().zip(exactly) {
+        assert_eq!(exactly.unwrap_err().to_string(), refused, "{value}");
+    }
+    read::<(Vec<Option<RoleRow>>, i64)>(&deep[1]).unwrap();
+    read::<std::collections::BTreeMap<String, RoleRow>>(&deep[2]).unwrap();
+    read::<Holding>(&deep[3]).unwrap();
+    assert_eq!(
+        read::<Dump>(&deep[4]).unwrap().roles,
+        [rows[0].clone(), rows[0].clone()]
+    );
+    // An alias the struct names is handed to it: SurrealDB's `sid` for a task's `id`.
+    let task = json!({"sid": 7, "slug": "sim/jump", "title": "Jump", "status": "ready",
+        "created_by": "owner", "created": 1.0, "updated": 2.0, "fixture_note": "x"});
+    let read_task: TaskRow = read(&task).unwrap();
+    assert_eq!((read_task.id, read_task.slug.as_str()), (7, "sim/jump"));
+    assert!(
+        read_exact::<TaskRow>(&task)
+            .unwrap_err()
+            .to_string()
+            .starts_with("unknown field `fixture_note`")
+    );
+    // The rest refuse it through either reader: a closed table's row and the dump itself.
+    let record = json!({"key": ["active"], "kind": "active", "body": {}, "at": 1.0, "extra": 1});
+    let (objects, values) = both::<WorkflowRow>(record);
+    assert!(objects.unwrap_err().starts_with("unknown field `extra`"));
+    assert!(values.unwrap_err().starts_with("unknown field `extra`"));
+    let dump = json!({"roles": [], "fixture_table": []});
+    let (objects, values) = both::<Dump>(dump);
+    assert!(
+        objects
+            .unwrap_err()
+            .starts_with("unknown field `fixture_table`")
+    );
+    assert!(
+        values
+            .unwrap_err()
+            .starts_with("unknown field `fixture_table`")
+    );
+}
+
+/// A map's key as a derived unit enum reads it.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Derived)]
+#[serde(rename_all = "snake_case")]
+enum Key {
+    First,
+    Second,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Derived)]
+struct Named(String);
+
+#[test]
+fn a_maps_key_reads_as_the_string_it_is() {
+    use std::collections::BTreeMap;
+    agree::<BTreeMap<String, u8>>(json!({"1": 2, "true": 3}));
+    agree::<BTreeMap<Key, u8>>(json!({"first": 1, "second": 2}));
+    agree::<BTreeMap<Key, u8>>(json!({"third": 1}));
+    agree::<BTreeMap<std::path::PathBuf, u8>>(json!({"a/b": 1}));
+    // The keys `serde_json` parses from their strings, which no type the board reads has.
+    let (objects, values) = both::<BTreeMap<u32, u8>>(json!({"1": 2}));
+    assert_eq!(
+        objects.unwrap_err(),
+        "invalid type: string \"1\", expected u32"
+    );
+    assert_eq!(values.unwrap(), BTreeMap::from([(1, 2)]));
+    let (objects, values) = both::<BTreeMap<bool, u8>>(json!({"true": 2}));
+    assert_eq!(
+        objects.unwrap_err(),
+        "invalid type: string \"true\", expected a boolean"
+    );
+    assert_eq!(values.unwrap(), BTreeMap::from([(true, 2)]));
+    let (objects, values) = both::<BTreeMap<Named, u8>>(json!({"a": 2}));
+    assert_eq!(
+        objects.unwrap_err(),
+        "invalid type: string \"a\", expected tuple struct Named"
+    );
+    assert_eq!(values.unwrap(), BTreeMap::from([(Named("a".into()), 2)]));
+}
+
+/// `text` as [`parse`] reads it, then as `serde_json::from_str` does, its refusal dropped.
+fn texts<T: DeserializeOwned>(text: &str) -> (Option<T>, Option<T>) {
+    (parse(text), serde_json::from_str(text).ok())
+}
+
+#[test]
+fn text_reads_as_serde_json_reads_it_and_is_dropped_where_it_does_not() {
+    let binding = Binding {
+        id: "res".into(),
+        generation: "g1".into(),
+    };
+    let written = r#" {"id": "res", "generation": "g1"} "#;
+    assert_eq!(
+        texts::<Binding>(written),
+        (Some(binding.clone()), Some(binding.clone()))
+    );
+    assert_eq!(parse::<Binding>(written.as_bytes()), Some(binding.clone()));
+    for row in requests().into_iter().map(row) {
+        let text = serde_json::to_string(&row).unwrap();
+        let (parsed, direct) = texts::<Row>(&text);
+        assert_eq!(parsed, direct, "{text}");
+        assert_eq!(parsed, Some(row));
+    }
+    assert_eq!(
+        texts::<Vec<(u8, Option<f64>)>>("[[1, 1.50], [2, null]]"),
+        (
+            Some(vec![(1, Some(1.5)), (2, None)]),
+            Some(vec![(1, Some(1.5)), (2, None)])
+        )
+    );
+    for unread in [
+        "",
+        "{",
+        "null",
+        "7",
+        r#"{"id": "res"}"#,
+        r#"{"id": 1, "generation": "g1"}"#,
+        r#"{"id": "res", "generation": "g1"} {"id": "res", "generation": "g1"}"#,
+        r#"{"id": "res", "generation": "g1"} trailing"#,
+        "\u{feff}{\"id\": \"res\", \"generation\": \"g1\"}",
+    ] {
+        assert_eq!(texts::<Binding>(unread), (None, None), "{unread}");
+    }
+    assert_eq!(parse::<Binding>([0xff, 0xfe]), None);
+}
+
+#[test]
+fn text_reads_differently_only_for_an_array_as_a_struct_and_a_field_said_twice() {
+    // Its fields in an array's order: dropped here, read by `serde_json`.
+    let (parsed, direct) = texts::<Binding>(r#"["res", "g1"]"#);
+    assert_eq!(parsed, None);
+    assert_eq!(direct.unwrap().id, "res");
+    let (parsed, direct) = texts::<Vec<Binding>>(r#"[{"id": "a", "generation": "g"}, ["b", "g"]]"#);
+    assert_eq!(parsed, None);
+    assert_eq!(direct.unwrap().len(), 2);
+    // A field said twice: the later one here, refused by `serde_json`.
+    let twice = r#"{"id": "first", "generation": "g1", "id": "second"}"#;
+    assert_eq!(
+        serde_json::from_str::<Binding>(twice)
+            .unwrap_err()
+            .to_string(),
+        "duplicate field `id` at line 1 column 40"
+    );
+    assert_eq!(parse::<Binding>(twice).unwrap().id, "second");
 }

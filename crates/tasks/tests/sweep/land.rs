@@ -840,6 +840,46 @@ fn a_conflict_fixed_on_the_branch_and_approved_again_lands() {
     assert_eq!(store.get(SLUG).unwrap().status, "done");
 }
 
+/// The files in the lands' folder that keep a refusal said (`SLUG.said`).
+fn refusals_kept(r: &Repo) -> Vec<String> {
+    let folder = r.root.join(".git/symphony/tasks/land");
+    let mut kept: Vec<String> = (fs::read_dir(&folder).unwrap())
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".said"))
+        .collect();
+    kept.sort();
+    kept
+}
+
+#[test]
+fn a_land_refused_once_and_then_landed_here_leaves_no_refusal_kept() {
+    // Only a delivery by pull request reads the last refusal said, and only its end forgets it:
+    // a land that merges here keeps none, so a slug filed again finds no refusal it never made.
+    let r = Repo::new();
+    manifest(&r, "");
+    let wt = branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = judged(&r, SLUG, "changes", "not yet");
+    let refused = landed(&r, SLUG, &people.orch).1.unwrap_err();
+    assert_eq!(refused, unapproved(SLUG, "in_progress"));
+    assert_eq!(last(&r, SLUG), format!("land refused: {refused}"));
+    assert_eq!(refusals_kept(&r), [""; 0], "none kept by the refusal");
+    // Refused again at the same head: said again, as a land a person runs always says.
+    landed(&r, SLUG, &people.orch).1.unwrap_err();
+    let said = (r.board.store.thread(SLUG).unwrap().iter())
+        .filter(|post| post.text == format!("land refused: {refused}"))
+        .count();
+    assert_eq!(said, 2);
+    let store = &r.board.store;
+    store.move_to(SLUG, "review", &people.exe).unwrap();
+    let tip = head(&wt, "HEAD");
+    store
+        .verdict(SLUG, &people.rev, "approve", &format!("{tip}: reads well"))
+        .unwrap();
+    landed(&r, SLUG, &people.orch).1.unwrap();
+    assert_eq!(store.get(SLUG).unwrap().status, "done");
+    assert_eq!(refusals_kept(&r), [""; 0], "none left by the land");
+}
+
 /// The refusal of a task in `status` with no approve standing: who approves it, and by what.
 fn unapproved(slug: &str, status: &str) -> String {
     let approve = format!(

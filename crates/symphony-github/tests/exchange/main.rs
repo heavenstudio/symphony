@@ -2,16 +2,19 @@
 //! repository held in memory (`github.rs`). `flows.rs` and `recovery.rs` run it on a board held
 //! in memory (`memory.rs`), where each failure is planted exactly; `scratch.rs` runs it on a
 //! real scratch board through `tasks api`, its requests made by a real `curl` to a loopback
-//! server (`http.rs`). `deliver.rs` asks it the four verbs of a land delivered by a pull request,
-//! `protection.rs` what those verbs refuse of a repository not protected for one, and
+//! server (`http.rs`). `deliver.rs` asks it the verbs of a land delivered by a pull request,
+//! `armed.rs` those of one GitHub merges by its auto-merge, `protection.rs` what those verbs
+//! refuse of a repository not protected for one, and
 //! `rulesets.rs` the rulesets a person verifies for them. `release.rs` asks it for a GitHub
-//! Release of a tag, as the release run does.
+//! Release of a tag, as the release run does, and `verify.rs` for its commit's verification on
+//! GitHub's machines.
 
 #![expect(
     clippy::unwrap_used,
     reason = "the fixtures beside the tests assert as they do: an unwrap is the failure"
 )]
 
+mod armed;
 mod deliver;
 mod flows;
 mod github;
@@ -24,6 +27,7 @@ mod recovery;
 mod release;
 mod rulesets;
 mod scratch;
+mod verify;
 
 use github::Fake;
 use memory::MemBoard;
@@ -144,6 +148,10 @@ pub(crate) struct Shared(pub(crate) Arc<Fake>);
 impl Transport for Shared {
     fn send(&self, request: &Request) -> Result<Response, Failure> {
         self.0.send(request)
+    }
+
+    fn fetch(&self, url: &str, to: &Path) -> Result<u16, Failure> {
+        self.0.fetch(url, to)
     }
 }
 

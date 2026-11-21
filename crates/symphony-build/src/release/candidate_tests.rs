@@ -72,6 +72,7 @@ fn run(id: &str, commit: &str, checks: Vec<Ran>) -> Run {
         slept: 0.0,
         inputs: None,
         environment: None,
+        hosted: Vec::new(),
     }
 }
 

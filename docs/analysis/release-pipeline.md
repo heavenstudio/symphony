@@ -288,10 +288,14 @@ tasks land:
 
 - **On this machine** the count of landings stays as it is. It is there so the machine is not
   always under a run's load, and no run is added beside it.
-- **On GitHub**, once [the hosted run](#the-hosted-run-on-github) exists and its trial has said
-  how long a run takes, a run of main's tip may start on a clock set from that length: a run of
-  an hour started about every half hour, so at most two run at once. It is the whole run on one
-  commit, never a partial round, and a tip already judged starts none.
+- **On GitHub**, where [the hosted run](#the-hosted-run-on-github) is on, a run of main's tip
+  starts on a clock set from how long a run there takes, which the trial measured at 49 minutes
+  (workflow run 44903375883). The example of a run of an hour started every half hour, two at
+  once, is not built: one run at a time holds the release's lock, so the interval is the least
+  time between two starts and a run longer than it is followed by the next. It is the whole run
+  on one commit, never a partial round, a tip already judged starts none, and a run it starts
+  verifies nothing on this machine ([RELEASES](../RELEASES.md#the-hosted-clock), which says what
+  was built and what each run still costs this machine: a landing is the tick).
 - **A red** of such a run is a red of main as any other, naming the landings since the last
   green run, fewer than today's because the runs are closer.
 
@@ -353,8 +357,10 @@ and each test now has a time and a timeout of its own under one scheduler
 
 Once the GitHub plugin is in, a release's checks run on GitHub's CI, and a project without the
 plugin keeps the local run exactly as it is. The design, approved on
-[its card](../DECISIONS.md#release-run-on-github). Its workflow is in the tree, started by hand
-alone ([RELEASES](../RELEASES.md#on-githubs-runners)); `just release` does not start it yet:
+[its card](../DECISIONS.md#release-run-on-github). Its workflow is in the tree, and `just
+release` starts it where a project turns it on, which this repository has not
+([RELEASES](../RELEASES.md#on-githubs-runners), which says what was built and what was left for
+later: a rerun of named steps and the rerun of a failure alone stay on this machine):
 
 **Optional by the plugin.** The release run verifies locally unless the project's GitHub
 integration is installed, its repository identity verified and hosted verification turned on,
@@ -494,7 +500,7 @@ Tasks:
 - **To be filed by the orchestrator**, which the board then names: B's rerun inside the run, with
   the candidate's reruns bound counting only what fails alone; the hosted run's trial, after
   `tools/github-pr-delivery`; the hosted run in `just release`, after the trial; and the hosted
-  run's clock, after both.
+  run's clock, after both (`tools/release-hosted-clock`).
 
 Neither a card nor a task:
 

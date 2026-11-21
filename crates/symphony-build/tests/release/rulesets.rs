@@ -175,9 +175,18 @@ fn where_it_does_not_hold_the_run_is_red_in_it_alone_and_green_again_once_put_ri
         MISSING.trim().to_string(),
         "bypassed by Team 3 (always)".into(),
         "The next run of `just release` closes this task once `rulesets` is green".into(),
+        // Whose act answers it: no executor's commit.
+        "Who fixes: whoever administers the repository on GitHub, not an executor with a commit."
+            .into(),
+        "then cancels the task once it is put right, saying where".into(),
     ] {
         assert!(red.body.contains(&said), "{said}\n{}", red.body);
     }
+    assert!(
+        !red.body.contains("any free executor takes this"),
+        "{}",
+        red.body
+    );
 
     // Put right on GitHub, with nothing landed: the next run is green in it, closes its red and
     // releases.

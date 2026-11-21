@@ -994,9 +994,12 @@ What holds on every page, and each page's contract where its section above names
   the outline guesses for a task this browser knows nothing of (four signed gates, one waited
   on) stays under 0.05 in both. A task of another shape (two gates, one unsigned) stays under
   0.05 on a return and on a wide first visit, and on a phone's first visit moves what is under
-  its gates once: it is held under 0.14 with the page's answer first (it scores 0.1399) and
-  under 0.064 with the gates' first (0.0636). Those two limits only go down; the board task
-  `app/task-first-visit-holds-still` brings them to 0.05. For every other ghost:
+  its gates once, the move the owner kept (the card `task-first-visit-head-first`). Both tasks
+  are measured under each colour scheme, which the test sets itself and never takes from the
+  machine, as the box a shift moves holds the card's shadow and the light theme's is the
+  larger: dark it is held under 0.14 with the page's answer first (it scores 0.1399) and under
+  0.064 with the gates' first (0.0636), light under 0.156 (0.1556) and 0.069 (0.0689), the same
+  elements moving the same 32 px. Those four limits only go down. For every other ghost:
   `apps/symphony-web-tests/tests/browser/landmarks.rs` compares each region's place on the ghost and on the page,
   on a first visit and the next, on a board, a queue and tasks shaped as the live ones (a
   later card, a later queue group, the board's lower row, a task opened first and after
@@ -1015,12 +1018,14 @@ What holds on every page, and each page's contract where its section above names
   after the new page mounts instead of applying its late top reset. A scroll to the
   element the address names, its own or a web kind's (`route.ts`), is held there while
   the page draws around it (`land`): the sections a landing brings near draw after
-  it, often taller than their ghosts, and the browser's own scroll anchoring holds nothing
-  under a page's ghost (`.settle`). A landing is one hold for each navigation. It ends
-  when it goes quiet (nothing moved and nothing waiting or busy within reach for four
-  frames, or 1800 at most), at the reader's input that scrolls (a wheel, a touch that
-  moves, a press on the page's scrollbar, a scroll key; not a click, a tap, a selection
-  or another key) and at any scroll that moves the page and the element alike (find in
+  it, often taller than their ghosts, and the browser's own scroll anchoring, which holds
+  nothing under a page's ghost (`.settle`), is off while it holds (`overflow-anchor` on the
+  root, the root's own value put back after), as an adjustment of its own would scroll the page
+  and the element alike, a scroll away to the hold. A landing is one hold for each navigation.
+  It ends when it goes quiet (nothing moved and nothing waiting or busy within reach for four
+  frames, or 1800 at most), once no element has its id, at the reader's input that scrolls (a
+  wheel, a touch that moves, a press on the page's scrollbar, a scroll key; not a click, a tap, a
+  selection or another key) and at any scroll that moves the page and the element alike (find in
   the page, a focus, a script). Only the next navigation lands again: a later call (a
   section's read in, an outline read again) does nothing once it has ended.
   Compilation leaves `OUT/public` serving its last build;

@@ -281,7 +281,7 @@ fn repeated_unknown_or_older_samples_do_not_rewrite_binding_metadata() {
     let s = Subagent::bound(&f);
     let place = Some(("/wt/a", "tools/a"));
     s.reading(0.0, place, read("boot-1", 100.0));
-    f.store.client().query("DEFINE EVENT binding_writes ON callback_state WHEN true THEN { UPSERT callback_audit:writes SET count = (count ?? 0) + 1; };", json!({})).unwrap();
+    f.store.client().query("DEFINE TABLE callback_audit SCHEMALESS; DEFINE EVENT binding_writes ON callback_state WHEN true THEN { UPSERT callback_audit:writes SET count = (count ?? 0) + 1; };", json!({})).unwrap();
     let writes = || {
         (f.store.raw().row("callback_audit", "writes"))
             .field("count")

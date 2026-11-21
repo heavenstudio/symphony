@@ -83,12 +83,17 @@ fn publish(d: &Delivery, snapshot: &Value, url: Option<&str>) -> Value {
     )
 }
 
-fn merge(d: &Delivery, method: &str, url: Option<&str>) -> Value {
-    let request = json!({
+/// What a land asks to merge pull request 100 by `method`, as a task.
+fn merge_request(method: &str) -> Value {
+    json!({
         "verb": "merge", "slug": SLUG, "by": "amber-fox-1", "head": HEAD, "repository": 77,
         "pull": 100, "method": method, "title": "Merge branch 'sim/jump'",
         "body": "the private brief", "operation": "task",
-    });
+    })
+}
+
+fn merge(d: &Delivery, method: &str, url: Option<&str>) -> Value {
+    let request = merge_request(method);
     d.ask(
         "merge",
         &url.map_or_else(|| request.clone(), |url| of(request.clone(), url)),
@@ -320,4 +325,55 @@ fn an_import_whose_upstream_changed_since_it_was_published_is_not_merged() {
         "the upstream up/stream is private and o/n is not: an import would publish its history"
     );
     assert!(!d.writes().iter().any(|write| write.starts_with("PUT ")));
+}
+
+#[test]
+fn an_import_is_armed_to_merge_by_a_merge_commit_while_its_upstream_bears_it_out() {
+    let d = importing("import-armed");
+    d.rig
+        .github
+        .set_repository(&json!({"allow_auto_merge": true}));
+    let mut short = imported(Some(UPSTREAM));
+    short["stamps"][0]["standing"] = json!("missing");
+    short["eligible"] = json!(false);
+    assert_eq!(publish(&d, &short, Some(URL))["state"], "published");
+    let arm = |method: &str| {
+        let mut request = merge_request(method);
+        request["verb"] = json!("arm");
+        d.ask("arm", &of(request, URL))
+    };
+    // Squashed it would lose the upstream's history: refused before anything is asked.
+    let writes = d.writes();
+    assert!(why(&arm("squash")).starts_with("a merge is of one whole commit"));
+    assert_eq!(d.writes(), writes);
+    // The upstream turned private since: nothing turned on.
+    upstream(
+        &d,
+        json!({"id": PINNED, "full_name": "up/stream", "private": true}),
+    );
+    assert!(why(&arm("merge")).starts_with("the upstream up/stream is private"));
+    assert_eq!(d.writes(), writes);
+    upstream(
+        &d,
+        json!({"id": PINNED, "full_name": "up/stream", "private": false}),
+    );
+    assert_eq!(
+        arm("merge"),
+        json!({"state": "armed", "pull": 100, "head": HEAD})
+    );
+    let armed = d.rig.github.pulls().remove(0)["auto_merge"].clone();
+    assert_eq!(
+        (
+            &armed["merge_method"],
+            &armed["commit_title"],
+            &armed["commit_message"]
+        ),
+        (
+            &json!("merge"),
+            &json!("Merge branch 'sim/jump'"),
+            &json!(format!(
+                "Merged from {HEAD} by pull request #100, an import of {UPSTREAM}."
+            ))
+        )
+    );
 }

@@ -363,7 +363,7 @@ impl Store {
         if body.is_null() {
             return Ok(None);
         }
-        serde_json::from_value(body)
+        crate::objects::read(&body)
             .map(Some)
             .map_err(|e| Error::Db(format!("a workflow receipt not in the board's shape: {e}")))
     }

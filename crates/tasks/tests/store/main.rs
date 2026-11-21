@@ -47,6 +47,7 @@ mod claim;
 mod closing;
 mod common;
 mod compatible_ahead;
+mod contract;
 mod copy;
 mod copy_marker;
 mod covered;

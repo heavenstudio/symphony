@@ -132,11 +132,14 @@ fn an_import_is_merged_by_a_merge_commit_and_the_next_one_follows_from_it() {
     let base = head(&bare, "main");
     let host = Host::new(&r, &bare);
     let line = landed(&r, SLUG, &people.orch, &host).1.unwrap();
-    assert_eq!(host.verbs(), ["publish", "merge", "result", "landed"]);
+    assert_eq!(
+        host.verbs(),
+        ["publish", "arm", "merge", "result", "landed"]
+    );
     // Each publication and merge says what it imports, from where.
     let url = upstream.to_string_lossy().into_owned();
     let told = json!({"url": url, "branch": "main", "commit": first});
-    for verb in ["publish", "merge"] {
+    for verb in ["publish", "arm", "merge"] {
         let request = host.request(verb);
         assert_eq!(request["operation"], "import", "{verb}");
         assert_eq!(request["upstream"], told, "{verb}");
@@ -217,7 +220,7 @@ fn a_task_in_a_project_that_imports_is_squashed_as_ever() {
     let base = head(&bare, "main");
     let host = Host::new(&r, &bare);
     landed(&r, SLUG, &people.orch, &host).1.unwrap();
-    for verb in ["publish", "merge"] {
+    for verb in ["publish", "arm", "merge"] {
         let request = host.request(verb);
         assert_eq!(request["operation"], "task", "{verb}");
         assert!(request.get("upstream").is_none(), "{verb}: {request}");
@@ -702,7 +705,7 @@ fn an_import_whose_merge_answer_was_lost_is_adopted_and_one_refused_names_who_ac
     let line = landed(&r, SLUG, &people.orch, &host).1.unwrap();
     assert_eq!(
         host.verbs(),
-        ["publish", "merge", "result", "result", "landed"]
+        ["publish", "arm", "merge", "result", "result", "landed"]
     );
     assert!(
         line.contains(&format!(

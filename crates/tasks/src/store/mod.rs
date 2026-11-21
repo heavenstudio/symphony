@@ -254,6 +254,12 @@ pub struct Store {
     limits: crate::limits::Held,
     /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
     schema: i64,
+    /// How many additive steps on that contract it has ([`schema::ADDED`]): a whole-board copy's
+    /// and a rebind's guard holds the board to exactly these.
+    additions: i64,
+    /// Each table its additive steps define, with the step: a write naming one is refused on a
+    /// board without that step ([`schema::needs`]).
+    added: std::sync::Arc<[(String, i64)]>,
     /// What a write on a board at another version is refused with, naming the board's project.
     refusal: schema::Refusal,
     /// Whether `TASKS_SERVER` named the board's server, so the command that reaches the board again
@@ -1026,6 +1032,7 @@ enum Sessions {
 }
 
 /// Why one try of a call ended without its result.
+#[derive(Debug)]
 enum Failure {
     /// The board moved under it: read and decide again.
     Again,

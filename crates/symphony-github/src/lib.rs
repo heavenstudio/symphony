@@ -9,7 +9,8 @@
 //! a pull request (`[land] delivery`, [`deliver`]), which the land runs and no one else, and
 //! reads the repository's protection before it does ([`preflight`]); `rulesets` verifies who
 //! bypasses it, with the gh CLI of someone who administers the repository ([`rulesets`]). `release` answers the release
-//! run with a GitHub Release for a tag it pushed ([`release`]).
+//! run with a GitHub Release for a tag it pushed ([`release`]), and `verify` with its commit's
+//! verification run on GitHub's machines ([`verify`]).
 
 #![forbid(unsafe_code)]
 
@@ -27,6 +28,7 @@ pub mod release;
 pub mod rulesets;
 pub mod state;
 pub mod transport;
+pub mod verify;
 
 /// The integration's name: its state folder's, `symphony/integrations/github`.
 pub const NAME: &str = "github";

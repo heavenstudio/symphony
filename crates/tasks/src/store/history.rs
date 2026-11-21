@@ -63,8 +63,7 @@ impl Store {
             .and_then(|board| board.get(alarm::FIXED))
             .and_then(|fixed| fixed.get(record.tip))
             .and_then(|ends| ends.get(alarm::written_key(record.at)));
-        let Some(first) =
-            value.and_then(|value| serde_json::from_value::<alarm::Tip>(value.clone()).ok())
+        let Some(first) = value.and_then(|value| crate::objects::read::<alarm::Tip>(value).ok())
         else {
             return Ok(None);
         };

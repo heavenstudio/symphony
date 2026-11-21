@@ -242,7 +242,7 @@ FOR $r IN $drop { DELETE type::record('role', [$slug, $r.handle, $r.role]) RETUR
 FOR $r IN $add {
     IF array::len(SELECT VALUE handle FROM role WHERE slug = $slug AND role IN [$r.role, 'reserved'] AND handle != $r.handle) > 0 { THROW 'stale' };
 };
-FOR $r IN $add { UPSERT type::record('role', [$slug, $r.handle, $r.role]) CONTENT $r RETURN NONE; };
+FOR $r IN $add { UPSERT type::record('role', [$slug, $r.handle, $r.role]) SET slug = $r.slug, handle = $r.handle, role = $r.role, since = $r.since, expires = $r.expires RETURN NONE; };
 IF $transition != NONE {
     CREATE type::record('workflow', ['event', $slug, $transition.revision])
         CONTENT { kind: 'event', body: $transition, at: $transition.at } RETURN NONE;

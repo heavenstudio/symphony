@@ -143,6 +143,25 @@ fn mappings_refuse_unknown_fields_and_malformed_pairs() {
 }
 
 #[test]
+fn a_pair_written_as_an_array_is_refused_as_no_table() {
+    let positional = MAPPED.replace(
+        "from = { phase = \"ready\", state = \"available\" }",
+        "from = [\"ready\", \"available\"]",
+    );
+    assert_ne!(positional, MAPPED);
+    assert_eq!(
+        written(&format!("{CUSTOM}{positional}")).unwrap_err(),
+        "workflow_mappings: invalid type: sequence, expected struct Pair"
+    );
+    let listed = "workflow = [\"one\"]\n";
+    let refused = candidate(listed).unwrap_err();
+    assert!(
+        refused.starts_with("workflow: invalid type: sequence, expected struct "),
+        "{refused}"
+    );
+}
+
+#[test]
 fn a_mapping_names_a_removed_pair_and_a_declared_destination_once() {
     let custom = candidate(CUSTOM).unwrap();
     custom
