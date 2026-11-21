@@ -2,9 +2,10 @@
 //! repository held in memory (`github.rs`). `flows.rs` and `recovery.rs` run it on a board held
 //! in memory (`memory.rs`), where each failure is planted exactly; `scratch.rs` runs it on a
 //! real scratch board through `tasks api`, its requests made by a real `curl` to a loopback
-//! server (`http.rs`). `deliver.rs` asks it the four verbs of a land delivered by a pull request, and
-//! `protection.rs` what those verbs refuse of a repository not protected for one. `release.rs` asks
-//! it for a GitHub Release of a tag, as the release run does.
+//! server (`http.rs`). `deliver.rs` asks it the four verbs of a land delivered by a pull request,
+//! `protection.rs` what those verbs refuse of a repository not protected for one, and
+//! `rulesets.rs` the rulesets a person verifies for them. `release.rs` asks it for a GitHub
+//! Release of a tag, as the release run does.
 
 #![expect(
     clippy::unwrap_used,
@@ -21,6 +22,7 @@ mod minting;
 mod protection;
 mod recovery;
 mod release;
+mod rulesets;
 mod scratch;
 
 use github::Fake;
@@ -176,6 +178,19 @@ pub(crate) fn run(
     now: i64,
     repository: Vec<PathBuf>,
 ) -> Ran {
+    run_gh(args, board, source, connect, now, repository, "gh")
+}
+
+/// The same, with `gh` the gh CLI it runs.
+pub(crate) fn run_gh(
+    args: &[&str],
+    board: &dyn Board,
+    source: &dyn Source,
+    connect: &dyn Fn(Secret) -> Result<Box<dyn Transport>, String>,
+    now: i64,
+    repository: Vec<PathBuf>,
+    gh: &str,
+) -> Ran {
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
     let ctx = Context {
         source,
@@ -184,6 +199,7 @@ pub(crate) fn run(
         now,
         repository,
         openssl: "openssl",
+        gh,
         rest: &|_| {},
     };
     let (mut out, mut err) = (Vec::new(), Vec::new());
