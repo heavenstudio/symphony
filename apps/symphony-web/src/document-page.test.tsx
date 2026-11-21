@@ -6,6 +6,7 @@ import {
   DocumentPage,
   Excerpt,
   ExcerptBody,
+  FirstDocument,
   FolderPage,
   GhostDocument,
   HtmlPage,
@@ -14,7 +15,7 @@ import {
   Versions,
 } from "./document-page";
 import { memoryStorage } from "./testing";
-import type { Block, Document, DocumentCard, Section } from "./wire";
+import type { Block, Document, DocumentCard, Folder, Section } from "./wire";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -112,6 +113,33 @@ describe("a folder before its read", () => {
     const html = renderToStaticMarkup(<FolderPage path="docs" scope="" />);
     expect(html).toContain('<div class="document-page" data-ready="loading" data-feed="live">');
     expect(html).toContain('<p role="status">Loading folder…</p>');
+  });
+});
+
+describe("a folder with no document", () => {
+  const folder: Folder = {
+    path: "docs",
+    title: "Docs",
+    crumbs: [],
+    docs: 0,
+    intro: null,
+    entries: [],
+  };
+  it("says in one line what makes the first one and a card, with the guide's link", () => {
+    const html = renderToStaticMarkup(<FirstDocument folder={folder} />);
+    expect(html).toContain(
+      '<p class="first-steps">No document is here yet. A Markdown file in this folder is a page of its own, and a card in its register waits for your verdict in the queue: <a href="',
+    );
+    expect(html).toContain('/docs/GETTING_STARTED.md" target="_blank"');
+  });
+  it("says nothing once it lists a document or a folder, or draws an intro", () => {
+    const entry = { kind: "doc", path: "docs/A.md", title: "A", docs: 0, waiting: 0, summary: "" };
+    expect(renderToStaticMarkup(<FirstDocument folder={{ ...folder, entries: [entry] }} />)).toBe(
+      "",
+    );
+    expect(renderToStaticMarkup(<FirstDocument folder={{ ...folder, intro: DOCUMENT }} />)).toBe(
+      "",
+    );
   });
 });
 
