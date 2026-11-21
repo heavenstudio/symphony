@@ -46,6 +46,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **workflow-guard-panel**, rejected, asks for these links and calls the rest of the look okay, so the rows, words and colours are kept and only the links and the record are new. **revision-bound-project-guards** (B) keeps approvals in the project's ledger, which this keeps. **reports-task-page-pictures** (A) chose the gates' rows, whose way of linking this reuses. None decides how a guard's row links. The same task builds it after your answer.
   [2026-11-21 17:29] owner · rejected — What up with this stupid “the record” link? Put the link on the name of the gate.
+  [2026-11-21 17:33] agent — Taken as you said: there is no separate "the record" link. A gate's name is the link, and it opens the board's record of that gate under its row. Everything else on the card stays as drawn. It is built now in the board task `app/workflow-guard-panel`, with no further card: the pictures of the built panel go on that task's review.
 
 ### Task timeline
 
