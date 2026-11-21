@@ -62,6 +62,18 @@ fn what_judged_is_said_with_the_run_or_with_why_it_was_this_machine() {
         there.said(),
         "verify verified on GitHub (https://github.com/o/n/actions/runs/1)"
     );
+    // A check stopped while its run there was waited for was GitHub's to judge, and is said so.
+    let waited = Hosted {
+        judged: "GitHub".into(),
+        ..Hosted::here(
+            "verify",
+            "its run there had not ended when this run stopped",
+        )
+    };
+    assert_eq!(
+        waited.said(),
+        "verify asked of GitHub: its run there had not ended when this run stopped"
+    );
     // Its environment is that run's runners: no run here, and no other run there, is on it.
     let on = environment(&there).said();
     assert!(
@@ -271,7 +283,12 @@ fn artifacts_are_laid_out_as_a_run_here_lists_its_steps_and_nothing_leaves_the_f
     lay_out(&unlisted, &folder, &steps, Within::bound(far())).unwrap();
     assert_eq!(fs::read_to_string(steps.join(steps::FILE)).unwrap(), "");
     lay_out(&json!({}), &folder, &steps, Within::bound(far())).unwrap();
-    assert!(steps::read(&steps, "verify").unwrap().is_empty());
+    assert_eq!(
+        steps::read(&steps, "verify").unwrap().len(),
+        0,
+        "{:?}",
+        steps::read(&steps, "verify").unwrap()
+    );
 }
 
 #[test]

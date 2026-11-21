@@ -613,7 +613,10 @@ impl Inner {
                     .unwrap_or_default();
                 answer(200, &json!(comments))
             }
-            _ => self.delivery(method, &parts, query, &sent),
+            _ => match self.verified(method, &parts, &sent) {
+                Some(response) => response,
+                None => self.delivery(method, &parts, query, &sent),
+            },
         }
     }
 
@@ -644,9 +647,6 @@ impl Inner {
     /// A delivery's calls: a branch's pull requests, their merge and a commit's checks.
     fn delivery(&mut self, method: &str, parts: &[&str], query: &str, sent: &Value) -> Response {
         if let Some(response) = self.released(method, parts, sent) {
-            return response;
-        }
-        if let Some(response) = self.verified(method, parts, sent) {
             return response;
         }
         match (method, parts) {
@@ -804,15 +804,10 @@ impl Inner {
         })
     }
 
-    /// A hosted verification's calls: a commit, the workflow's runs and its dispatch, one run,
-    /// its jobs and artifacts, and the redirect each download is answered with.
+    /// A hosted verification's calls: a commit, the workflow's runs and its dispatch and one
+    /// run, then the rest ([`Inner::downloaded`]).
     fn verified(&mut self, method: &str, parts: &[&str], sent: &Value) -> Option<Response> {
         let missing = || answer(404, &json!({"message": "Not Found"}));
-        let redirect = |url: String| Response {
-            status: 302,
-            headers: BTreeMap::from([("location".to_string(), url)]),
-            body: String::new(),
-        };
         let number = |text: &str| text.parse::<i64>().unwrap_or_default();
         let (id, clock) = (self.id, self.clock);
         let actions = &mut self.actions;
@@ -869,6 +864,23 @@ impl Inner {
                 }
                 answer(200, &found)
             }
+            _ => return self.downloaded(method, parts),
+        })
+    }
+
+    /// The rest of a hosted verification's calls: a run's jobs and artifacts, and the redirect
+    /// each download is answered with.
+    fn downloaded(&mut self, method: &str, parts: &[&str]) -> Option<Response> {
+        let missing = || answer(404, &json!({"message": "Not Found"}));
+        let redirect = |url: String| Response {
+            status: 302,
+            headers: BTreeMap::from([("location".to_string(), url)]),
+            body: String::new(),
+        };
+        let number = |text: &str| text.parse::<i64>().unwrap_or_default();
+        let clock = self.clock;
+        let actions = &mut self.actions;
+        Some(match (method, parts) {
             ("GET", ["actions", "runs", _, "jobs"]) => {
                 let jobs: Vec<Value> = (actions.jobs.iter().enumerate())
                     .map(|(at, (name, conclusion, _))| {

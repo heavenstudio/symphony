@@ -82,13 +82,11 @@ impl Hosted {
 
     /// As a run's line says it.
     pub(crate) fn said(&self) -> String {
-        match (&self.run, &self.why) {
-            (Some(run), _) if self.there() => format!("{} verified on GitHub ({run})", self.check),
-            (_, why) => format!(
-                "{} verified here, not on GitHub: {}",
-                self.check,
-                why.as_deref().unwrap_or("it gave no result")
-            ),
+        let why = || self.why.as_deref().unwrap_or("it gave no result");
+        match &self.run {
+            Some(run) if self.there() => format!("{} verified on GitHub ({run})", self.check),
+            _ if self.there() => format!("{} asked of GitHub: {}", self.check, why()),
+            _ => format!("{} verified here, not on GitHub: {}", self.check, why()),
         }
     }
 }

@@ -5,7 +5,9 @@
 //! judged by checks this repository owns, never by a consuming project's suite. Every red check,
 //! and a run that stopped short of deciding, is a task on the board ([`board`]); when every check
 //! is green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it
-//! holds ([`notes`]) and pushes that one tag, asks for its GitHub Release where the project names a
+//! holds ([`notes`]) and pushes that one tag (where the project names a command that verifies on
+//! GitHub's machines, the full verification is asked of it in place of the checkout, and run there
+//! when it gives no result: [`hosted`]), asks for its GitHub Release where the project names a
 //! command for one ([`github`]), then installs it on the machine ([`install`]),
 //! moves each registered project's board to its schema under the writer rule and points `current`
 //! at it ([`refresh`]), writing no project's checkout. `--commit COMMIT` does the same out of
@@ -106,7 +108,8 @@ the last week is a release's own or at that schema, and then current pointed at 
 machine's server follows; no project's checkout, branch or pin is written. \
 A run red in a check holds its commit as the release candidate, the local branch \
 release-candidate, until its reds' own lands answer them; then it is rerun, and main's tip is run \
-only once none is held (docs/RELEASES.md).
+only once none is held. Where [releases] hosted names a command, the full verification is asked \
+of GitHub's runners through it and run here only when they give no result (docs/RELEASES.md).
 
 options:
   -h, --help            show this help message and exit

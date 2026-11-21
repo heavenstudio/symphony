@@ -137,7 +137,7 @@ fn nothing_is_asked_of_github_while_verification_is_not_turned_on() {
     let rig = rig("verify-absent");
     rig.settings.set(None);
     stopped(&ask(&rig, &request(&rig)), "refused", "turned off");
-    assert!(rig.github.asked().is_empty());
+    assert_eq!(rig.github.asked().len(), 0, "{:?}", rig.github.asked());
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn a_request_that_names_no_whole_commit_or_no_folder_starts_nothing() {
     }
     let asked = json!({"commit": COMMIT, "folder": folder(&rig), "seconds": "long"});
     stopped(&ask(&rig, &asked), "refused", "seconds is how long");
-    assert!(rig.github.asked().is_empty());
+    assert_eq!(rig.github.asked().len(), 0, "{:?}", rig.github.asked());
     // A request that is no JSON object asks nothing and is an error of the command line.
     let file = rig.dir.0.join("verify.json");
     std::fs::write(&file, "[]").unwrap();
@@ -198,7 +198,7 @@ fn a_commit_github_does_not_hold_or_a_branch_without_the_workflow_starts_nothing
         "unavailable",
         "o/n does not hold the commit cccc",
     );
-    assert!(writes(&rig).is_empty());
+    assert_eq!(writes(&rig).len(), 0, "{:?}", writes(&rig));
     let rig = self::rig("verify-no-workflow");
     rig.github.actions(|actions| actions.workflow = false);
     stopped(
@@ -206,8 +206,8 @@ fn a_commit_github_does_not_hold_or_a_branch_without_the_workflow_starts_nothing
         "refused",
         "o/n has no workflow release-verify.yml on its default branch",
     );
-    assert!(writes(&rig).is_empty());
-    assert!(events(&rig).is_empty());
+    assert_eq!(writes(&rig).len(), 0, "{:?}", writes(&rig));
+    assert_eq!(events(&rig).len(), 0, "{:?}", events(&rig));
 }
 
 #[test]
@@ -441,6 +441,46 @@ fn a_red_run_is_answered_as_it_ended_each_job_as_github_concluded_it() {
         answer["missing"],
         json!(["verify-hosted: GitHub answered 410 and no download"])
     );
+}
+
+#[test]
+fn a_read_before_the_start_that_github_does_not_answer_starts_nothing() {
+    for (path, why) in [
+        ("/repos/o/n/commits/", "reading the commit cccc"),
+        (
+            "/repos/o/n/actions/workflows/release-verify.yml/runs",
+            "listing the runs of release-verify.yml: GitHub answered 400",
+        ),
+    ] {
+        let rig = rig("verify-unread-before");
+        (rig.github).fault("GET", path, Fault::Status(400, vec![]));
+        stopped(&ask(&rig, &request(&rig)), "unavailable", why);
+        assert!(writes(&rig).is_empty(), "{path}");
+        assert!(events(&rig).is_empty(), "{path}");
+    }
+    // A repository that names no default branch is asked to start nothing either.
+    let rig = rig("verify-no-branch");
+    (rig.github).set_repository(&json!({"default_branch": "-x y"}));
+    stopped(
+        &ask(&rig, &request(&rig)),
+        "unavailable",
+        "the repository names no default branch",
+    );
+    assert_eq!(writes(&rig).len(), 0, "{:?}", writes(&rig));
+}
+
+#[test]
+fn while_another_run_writes_the_state_nothing_is_started() {
+    let rig = rig("verify-second-writer");
+    assert_eq!(ask(&rig, &request(&rig))["state"], "ended");
+    let held = rig.store().lock().unwrap();
+    stopped(
+        &ask(&rig, &request(&rig)),
+        "unavailable",
+        "one writer at a time",
+    );
+    drop(held);
+    assert_eq!(writes(&rig), [DISPATCH], "no second dispatch");
 }
 
 #[test]

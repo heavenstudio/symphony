@@ -289,7 +289,7 @@ fn a_green_run_on_github_releases_its_steps_and_logs_kept_and_nothing_verified_h
     assert!(
         read(logs.join("verify.log")).contains(&format!("the workflow run {URL} ended success"))
     );
-    assert!(fixture.reds().is_empty());
+    assert_eq!(fixture.reds().len(), 0, "{:?}", fixture.reds());
     let status = fixture.run(NOW + 60.0, &["--status"], 0);
     assert!(
         status.contains(&format!("; verify verified on GitHub ({URL})")),
@@ -349,7 +349,12 @@ fn a_red_run_on_github_files_each_red_step_and_a_job_that_did_not_end_is_never_g
         !ran_here(&fixture),
         "a red there is not verified again here:\n{out}"
     );
-    assert!(fixture.remote_tags().is_empty());
+    assert_eq!(
+        fixture.remote_tags().len(),
+        0,
+        "{:?}",
+        fixture.remote_tags()
+    );
     let reds = fixture.reds();
     assert_eq!(
         reds.keys().collect::<Vec<_>>(),
@@ -551,7 +556,7 @@ fn a_check_named_by_hand_and_a_project_that_names_no_command_ask_nothing() {
     let out = fixture.run(NOW + DAY_AFTER, &[], 0);
     assert!(!out.contains("GitHub"), "{out}");
     assert!(ran_here(&fixture));
-    assert!(stand.asked().is_empty());
+    assert_eq!(stand.asked().len(), 0, "{:?}", stand.asked());
     assert!(fixture.runs().last().unwrap().get("hosted").is_none());
 }
 
@@ -572,7 +577,18 @@ fn a_run_whose_time_ends_while_github_is_waited_for_is_red_and_verifies_nothing_
         !ran_here(&fixture),
         "its time was up: nothing is verified here:\n{out}"
     );
-    assert!(fixture.remote_tags().is_empty());
+    assert!(
+        out.contains(
+            "release: verify asked of GitHub: its run there had not ended when this run stopped"
+        ),
+        "{out}"
+    );
+    assert_eq!(
+        fixture.remote_tags().len(),
+        0,
+        "{:?}",
+        fixture.remote_tags()
+    );
     let run = fixture.runs().last().unwrap().clone();
     assert_eq!(run["checks"][0]["timed_out"], true, "{run}");
     assert_eq!(run["hosted"][0]["judged"], "GitHub");
