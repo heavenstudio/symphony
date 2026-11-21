@@ -1,18 +1,18 @@
 # Task board
 
-The standalone workspace provides the generic board and document commands, and
-the default landing, `just land SLUG` ([the default landing](#the-default-landing)),
-which `symphony init` installs in every project. Verification, certificates and the
-landing/stamp recipes in the workflow examples are supplied by a consuming project,
-whose own `land` recipe replaces the default everywhere for it; no project gate
-executable or stamp backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
-
 How several agent sessions share work, and how they, and the owner, talk
-about it. Sessions may run in any worktree of this repository; the board is the
+about it. Sessions may run in any worktree of a repository; the board is the
 same for all of them.
 
-
-Commands shown use the consuming project's recipes and board connection.
+This is the board's full reference. [Getting started](GETTING_STARTED.md) walks
+a first task from filing to landing, and [the commands](COMMANDS.md) says which
+command to reach for. The commands shown are the recipes `symphony init`
+installs in a project, the default landing among them, `just land SLUG`
+([the default landing](#the-default-landing)). A project with a landing policy
+of its own (its verification, certificates and stamps, as the `land-approve`,
+`land-stamps` and `land-request` recipes of the examples here) writes its own
+`land` recipe, which replaces the default everywhere for it; Symphony bundles
+no such policy.
 
 ## Where it lives
 
@@ -1010,7 +1010,7 @@ another program in its foreground). A close and a restore of one session each ho
 run, so neither starts while the other runs; one whose hold lapsed and was taken over writes
 nothing more, and a restore that lost it kills the terminal it started. A Codex record
 takes the thread its callback registered whichever is written first; one closed with no thread
-says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-herdr).
+says on its thread that restore cannot resume it. See the [tasks skill](../crates/symphony/shipped/skills/tasks/SKILL.md#launch-restore-clean-up-hc).
 
 An initialized JavaScript REPL can retain `kernel.js` and `trusted-worker.js` under the
 ChatGPT app's bundled `node`. Their command lines do not distinguish waiting for a cell
@@ -1782,7 +1782,7 @@ Decided with it:
 
 A task is a slug (`sim/jump-departure`, the same slug the branch and commits
 use), a title, a markdown body, a priority from `0` (most urgent) to `4`, and
-optional links: `--link docs/game/SPEC.md#Heading` to the spec it implements,
+optional links: `--link docs/SPEC.md#Heading` to the spec it implements,
 `--depends` for tasks that must be done first, `--parent` for a larger task
 or an instruction to an agent ([Subtasks](#subtasks)).
 
@@ -4249,8 +4249,10 @@ Cancellation asks for confirmation; done and cancelled tasks cannot be cancelled
 again. The board records these writes as `owner`. In the shared app, cancellation
 also closes the task's sessions and starts the worktree sweep, as the CLI does.
 An agent message addressed to `owner` rings the app's 🔔. Creating, claiming,
-other moves and verdicts go through agents. The app files no task: what the owner
-says that waits on an agent is an [ask](#asks).
+other moves and verdicts go through agents. The app's **+** files a task from a
+line the owner writes, in `concept` under `inbox/`, for an orchestrator to brief
+([REVIEW](REVIEW.md#asking)); anything else the owner says that waits on an agent
+is an [ask](#asks).
 
 ## Asks
 

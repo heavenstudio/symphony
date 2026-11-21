@@ -1,7 +1,8 @@
 # Setting up GitHub
 
 Symphony runs without GitHub. `symphony-github` is an optional program that connects a
-project's board to one repository on GitHub.com, and it does three things, each set up on its own:
+project's board to one repository on GitHub.com, and it does four things, each set up on its own;
+the first two are a project's, the last two serve the Symphony's own releases:
 
 - **The issue exchange.** Open issues carrying a label you choose become proposals on the board,
   and tasks you opt in are published as issues. It needs one token and no GitHub App:
