@@ -684,7 +684,8 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
         until: options.now + DRIVER_BUILD.as_secs_f64(),
         check: None,
     };
-    let _ = record::hold(&folder, &building);
+    let held = record::hold(&folder, &building);
+    unsaid(&mut std::io::stderr(), UNHELD, held);
     let built = driver(repo, options, out);
     record::release(&folder, &building.id);
     drop(lock);
@@ -1254,7 +1255,7 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
         until: options.now + options.timeout.as_secs_f64(),
         check: None,
     };
-    let _ = record::hold(&folder, &running);
+    unsaid(err, UNHELD, record::hold(&folder, &running));
     // The machine's updates lock, after the run's own and held to its end: the machine's server
     // tries no held update again while a run of any kind holds the release's lock.
     let _updates = machine_lock(out);
@@ -1275,7 +1276,11 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             check: check.cloned(),
             ..running.clone()
         };
-        let _ = record::hold(&folder, &running);
+        unsaid(
+            &mut std::io::stderr(),
+            UNHELD,
+            record::hold(&folder, &running),
+        );
     };
     let within = Within {
         // The run's time is counted while the machine is awake: a sleep takes none of it.
@@ -1584,7 +1589,7 @@ impl Refreshing<'_> {
     /// The lock's word made to cover `more` from now, so no later run takes this one for stuck.
     fn hold_for(&self, more: Duration) {
         let until = self.options.now + self.started.took().seconds + more.as_secs_f64();
-        let _ = record::hold(
+        let held = record::hold(
             self.folder,
             &Running {
                 until: until.max(self.running.until),
@@ -1592,6 +1597,7 @@ impl Refreshing<'_> {
                 ..self.running.clone()
             },
         );
+        unsaid(&mut std::io::stderr(), UNHELD, held);
     }
 
     /// The release `tag` (`commit`) published on crates.io by the run `id` ([`crates::publish`]),
@@ -1957,7 +1963,7 @@ fn held(
     record.error = Some(why);
     record.board = tell(repo, options, folder, &record, false, None);
     said(&record.board, out, err);
-    let _ = record::write(folder, &record);
+    unsaid(err, UNRECORDED, record::write(folder, &record));
     1
 }
 
@@ -2025,8 +2031,23 @@ fn outlived(
     record.error = Some(why);
     record.board = tell(repo, options, folder, &record, false, None);
     said(&record.board, out, err);
-    let _ = record::write(folder, &record);
+    unsaid(err, UNRECORDED, record::write(folder, &record));
     1
+}
+
+/// What [`unsaid`] says of a lock's word ([`record::hold`]) that was not written: a later run then
+/// reads the lock as held by a process no run knows of.
+const UNHELD: &str = "this run could not say it holds the lock";
+/// What [`unsaid`] says of a run's record ([`record::write`]) that was not written: `--status` and
+/// the next run then know nothing of this one.
+const UNRECORDED: &str = "this run could not be recorded";
+
+/// A failure the run goes on past, said on `err` where it happens, so a later line is not read as
+/// its cause: `what` and why `done` failed, and nothing when it did not.
+fn unsaid(err: &mut dyn Write, what: &str, done: Result<(), String>) {
+    if let Err(why) = done {
+        let _ = writeln!(err, "symphony-build release: {what}: {why}");
+    }
 }
 
 /// Whether `run` was red in the key `key`: the run's own when it stopped short, else a check's.
@@ -3009,6 +3030,42 @@ mod tests {
             let said = checks_of(bad.iter().copied(), None).unwrap_err();
             assert!(said.contains(why), "{bad:?}: {said}");
         }
+    }
+
+    #[test]
+    fn a_failure_the_run_goes_on_past_is_said_where_it_happens_and_a_success_says_nothing() {
+        let mut err = Vec::new();
+        unsaid(&mut err, UNHELD, Ok(()));
+        assert!(err.is_empty(), "{}", String::from_utf8_lossy(&err));
+        unsaid(&mut err, UNHELD, Err("running.json: no space left".into()));
+        unsaid(&mut err, UNRECORDED, Err(String::new()));
+        assert_eq!(
+            String::from_utf8(err).unwrap(),
+            "symphony-build release: this run could not say it holds the lock: running.json: no \
+             space left\n\
+             symphony-build release: this run could not be recorded: \n"
+        );
+    }
+
+    /// A run that finds the lock held is still reported when its record cannot be written, and
+    /// says so beside the line that names the holder.
+    #[test]
+    fn a_record_that_cannot_be_written_is_said_on_stderr_by_its_cause() {
+        let folder = std::env::temp_dir().join(format!("unrecorded-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        // `runs` is a file, so the record's folder cannot be made.
+        fs::write(folder.join("runs"), "").unwrap();
+        let run = run_of("1", "release", "0123456789");
+        let mut err = Vec::new();
+        unsaid(&mut err, UNRECORDED, record::write(&folder, &run));
+        let _ = fs::remove_dir_all(&folder);
+        let said = String::from_utf8(err).unwrap();
+        assert!(
+            said.starts_with("symphony-build release: this run could not be recorded: ")
+                && said.contains("runs"),
+            "{said}"
+        );
     }
 
     #[test]
