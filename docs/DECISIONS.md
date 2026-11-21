@@ -5,6 +5,57 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### People and sign-in
+
+- [ ] **task-acts-who** — You file, move, rank and cancel tasks today. With several people, something must say who does. A: it is part of deciding; the members of the group that owns a task move, rank and cancel it, and anyone who may speak files one. B: it is a power of its own, to manage tasks, given apart from deciding. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who acts on a task]]
+  [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
+
+    ![Who may file, move, rank and cancel a task](analysis/users-and-identity/task-acts.svg)
+
+    **Base (today).** You file a task from the page, move it, rank it and cancel it. Agents act on tasks by the roles they hold there.
+
+    **A, part of deciding.**
+    - The members of the group that owns a task move, rank and cancel it, as they approve it.
+    - Anyone who may speak files a task. It goes to the group its place gives.
+
+    **B, a power of its own.**
+    - A sixth power, to manage tasks. Whoever holds it files, moves, ranks and cancels any task on the board.
+    - The owning group still decides its cards and approves its tasks.
+    - A person can run a board's tasks without deciding anything on it.
+
+    **Under both** starting an agent on a task needs the power to direct agents, and approving a task is deciding.
+
+    **Why A.** A task's order and its end are decisions about the work, and the group that owns the work makes them. B fits a team with someone who plans and does not decide. It costs a sixth power to give, and two people who can each say what is next.
+
+    **Earlier verdicts checked.**
+    - **group-answer-settles** (A) says any one member settles what their group owns. It was asked of a card's answer, not of moving or cancelling a task.
+    - **owning-group-how-named** (C) says which group a task belongs to, not what its members may do to it.
+
+    Neither decides this.
+- [ ] **verdict-note-reach** — You decided that the words of someone who may not direct agents are held until passed on. A person may still be allowed to decide. Their verdict is written on the card, where agents read it. What is left to choose is the note they write beside it. A: the note is held like their other words, so an agent sees a rejection and not its reason. B: the note is written with the verdict; deciding carries the right to say why, on that card only. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#The note beside a verdict]]
+  [2026-11-21 17:41] agent — Posted for the board task `app/users-and-identity`, a question your A on **words-without-agent-reach** does not answer. A concept: nothing is built by this card.
+
+    ![The note beside a verdict, from someone who may not direct agents](analysis/users-and-identity/verdict-note.svg)
+
+    **Base (today).** Your verdict and its note are written on the card together, and an agent is handed both at once.
+
+    **A, the note is held.**
+    - The verdict is written on the card. The note is kept by the board until someone who may direct agents passes it on.
+    - An agent sees a rejection and not its reason.
+
+    **B, written with the verdict.**
+    - The note is part of the decision and is written with it.
+    - Deciding carries the right to say why, on that card and nowhere else. Their words anywhere else stay held.
+
+    **Why B.** A verdict without its reason gives an agent nothing to act on, and a rejection read alone is acted on wrongly. The person was given the power to decide that card, which already moves agents.
+
+    **Earlier verdicts checked.**
+    - **words-without-agent-reach** (A) holds such a person's words. It was asked of comments and messages. Under it a verdict's note could be read either way, which is why this is asked.
+
+    It does not decide this.
+
 ## Auto-approved: spot-check
 
 ### Releases
@@ -26,52 +77,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
-
-### People and sign-in
-
-- [x] **person-profile-where** — Replaces: public-name-where-declared. Your words are the base now: a person has a profile (names, emails, git handles, chat usernames such as Slack, preferences), of which the short name on their lines is one field. What is left to choose is where that profile is kept and who writes it. A: with each board, beside what the person may do there; its admin writes it. B: once, with the server, written by the person; each board keeps only their groups and what they may do. C: as B, and the part that is public anyway (short name, display name, git handles) is also a committed file of the project. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#A person's profile]]
-  [2026-11-21 17:39] agent — Posted for the board task `app/users-and-identity`, from your note on **public-name-where-declared**: "We will probably have a mapping of names / emails / git handles / communication usernames and preferences (for example slack user)." A concept: nothing is built by this card.
-
-    ![Where a person's profile is kept](analysis/users-and-identity/profile-where.svg)
-
-    **Base (today).** No person is recorded. The one name is `owner`, fixed in the code.
-
-    **What a profile holds, under every option.**
-    - **Short name** (`ana`): the name on every line they write. It is in git, so everyone sees it.
-    - **Display name**: how pages show them.
-    - **Sign-ins**: which sign-in is this person. There can be several.
-    - **Emails**: a notice by mail, and matching a commit's author to a person.
-    - **Git handles**: whose commit a save of theirs is authored as.
-    - **Chat usernames** (Slack): where a notice is sent.
-    - **Preferences**: which notices, by which way.
-
-    What a person may do is not in it. That stays each board's, as you decided.
-
-    **A, with each board.**
-    - A board keeps a whole profile beside each person's groups and what they may do. One store, one page.
-    - A person on three boards has three profiles. A Slack name changed is changed on each.
-    - The board's admin writes it.
-
-    **B, once, with the server.**
-    - The server keeps one profile for each person. The person writes their own, and an admin can.
-    - A board keeps only their groups and what they may do, and refers to the profile.
-    - Who someone is, is kept apart from what they may do, as signing in is.
-
-    **C, and its public part in git.**
-    - Everything in B.
-    - The short name, the display name and the git handles are also a committed file of the project, so a clone reads whose lines are whose with no server.
-    - A new person is a landing as well as a row.
-
-    **Under every option** a line carries the short name and nothing else, emails and chat usernames are in no repository, and no agent or plugin is handed them.
-
-    **Why B.** A profile is the person's, and they are one person on every board the server holds. What B leaves open is C's reason: a project served from two servers can give `ana` to two people. C's file can be added when a project is in fact served from two places, with nothing in B lost.
-
-    **Earlier verdicts checked.**
-    - **people-kept-where** (B), with your note: "This is a board specific setting. There could even be multiple boards for the same project where people have different permissions." That keeps what a person may do with each board. Your note then says some id is not in the database only; it does not say where the rest of a person's record is kept, which is this card.
-    - **sign-in-service-shipped** (B) says how a person signs in. A profile names their sign-ins and is not one.
-
-    Neither decides this.
-  [2026-11-21 17:40] owner · approved — B
 
 ### Task timeline
 
@@ -506,6 +511,51 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
+- [r] **person-profile-where** — Replaces: public-name-where-declared. Your words are the base now: a person has a profile (names, emails, git handles, chat usernames such as Slack, preferences), of which the short name on their lines is one field. What is left to choose is where that profile is kept and who writes it. A: with each board, beside what the person may do there; its admin writes it. B: once, with the server, written by the person; each board keeps only their groups and what they may do. C: as B, and the part that is public anyway (short name, display name, git handles) is also a committed file of the project. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#A person's profile]]
+  [2026-11-21 17:39] agent — Posted for the board task `app/users-and-identity`, from your note on **public-name-where-declared**: "We will probably have a mapping of names / emails / git handles / communication usernames and preferences (for example slack user)." A concept: nothing is built by this card.
+
+    ![Where a person's profile is kept](analysis/users-and-identity/profile-where.svg)
+
+    **Base (today).** No person is recorded. The one name is `owner`, fixed in the code.
+
+    **What a profile holds, under every option.**
+    - **Short name** (`ana`): the name on every line they write. It is in git, so everyone sees it.
+    - **Display name**: how pages show them.
+    - **Sign-ins**: which sign-in is this person. There can be several.
+    - **Emails**: a notice by mail, and matching a commit's author to a person.
+    - **Git handles**: whose commit a save of theirs is authored as.
+    - **Chat usernames** (Slack): where a notice is sent.
+    - **Preferences**: which notices, by which way.
+
+    What a person may do is not in it. That stays each board's, as you decided.
+
+    **A, with each board.**
+    - A board keeps a whole profile beside each person's groups and what they may do. One store, one page.
+    - A person on three boards has three profiles. A Slack name changed is changed on each.
+    - The board's admin writes it.
+
+    **B, once, with the server.**
+    - The server keeps one profile for each person. The person writes their own, and an admin can.
+    - A board keeps only their groups and what they may do, and refers to the profile.
+    - Who someone is, is kept apart from what they may do, as signing in is.
+
+    **C, and its public part in git.**
+    - Everything in B.
+    - The short name, the display name and the git handles are also a committed file of the project, so a clone reads whose lines are whose with no server.
+    - A new person is a landing as well as a row.
+
+    **Under every option** a line carries the short name and nothing else, emails and chat usernames are in no repository, and no agent or plugin is handed them.
+
+    **Why B.** A profile is the person's, and they are one person on every board the server holds. What B leaves open is C's reason: a project served from two servers can give `ana` to two people. C's file can be added when a project is in fact served from two places, with nothing in B lost.
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B), with your note: "This is a board specific setting. There could even be multiple boards for the same project where people have different permissions." That keeps what a person may do with each board. Your note then says some id is not in the database only; it does not say where the rest of a person's record is kept, which is this card.
+    - **sign-in-service-shipped** (B) says how a person signs in. A profile names their sign-ins and is not one.
+
+    Neither decides this.
+  [2026-11-21 17:40] owner · approved — B
+  [2026-11-21 17:41] agent — Recorded, B: one profile for each person, kept with the server and written by them; a board keeps only their groups and what they may do. Written in [[analysis/users-and-identity#A person's profile]]. One cost the card stated and you accepted with B: a short name is unique on one server, so a project served from two could give one name to two people; the committed file of C can be added if that comes.
+  [2026-11-21 17:41] agent · resolved
 - [r] **owning-group-how-named** — A card or a task is owned by a group, as you said. Something must say which group. A: whoever posts it writes the group on it. B: the board reads it from where the thing is (a card's document folder, a task's area), and nothing is written. C: the place gives the group, and a name written on the card overrides it. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Which group a thing belongs to]]
   [2026-11-21 17:32] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "there can be an engineering group -> people there would get 'notified' and assigned to resolve." A concept: nothing is built by this card.
 

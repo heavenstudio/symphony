@@ -257,24 +257,71 @@ What follows:
 - **The server's own pages** (the list of projects, the machine's releases) show a person only
   the boards they are on, and what is the machine's alone only to its person.
 
+### Where public names are declared
+
+The short name is one field of something larger. The owner, rejecting
+[the card that asked this](../DECISIONS.md#public-name-where-declared): "We will probably have a
+mapping of names / emails / git handles / communication usernames and preferences (for example
+slack user). So this may be become more complex then proposed". So the question is not where a
+list of names is declared, but where a person's whole record is kept
+([below](#a-persons-profile)).
+
+### A person's profile
+
+A person's profile is what the Symphony knows of who they are, apart from what they may do:
+
+| Field | What it is for | Who may see it |
+| --- | --- | --- |
+| short name (`ana`) | the name on every line they write, on a card, in a comment, on a thread | everyone; it is in git |
+| display name | how pages show them | everyone on the board |
+| sign-ins | which sign-in service's subject is this person; there can be several | the board's admins |
+| emails | a notice by mail; matching a commit's author to a person | the person and admins |
+| git handles | whose commit a save of theirs is authored as; whose commits are theirs | everyone; they are in git already |
+| chat usernames (Slack) | where a notice is sent | the person and admins |
+| preferences | which notices, by which way | the person |
+
+What a person may do (their groups, their powers) is not in the profile. It is each board's
+([its card](../DECISIONS.md#people-kept-where)).
+
+Kept once, with the server, and written by the person
+([its card](../DECISIONS.md#person-profile-where), B).
+
+- **The server keeps one profile for each person**: in the machine folder on a machine, in the
+  platform's own store on a hosted board. The person writes their own, and an admin can.
+- **A board keeps only that person's groups and powers**, and refers to the profile. Who someone
+  is, is kept apart from what they may do, as signing in is.
+- **A line carries the short name and nothing else.** A name once used is never given to
+  another. Emails and chat usernames are in no repository, and no agent or plugin is handed
+  them.
+- **The lines already written as `owner` stay**, and a machine with nobody named keeps writing
+  as `owner`.
+
+What follows:
+
+- **The server now keeps people**, where the first round had it keep none: who they are, never
+  what they may do. Being in the server's list gives nothing, as a board that has not added a
+  person is not there for them.
+- **A short name is unique on one server.** A project served from two servers can give `ana` to
+  two people. The option not taken, the public part of a profile as a committed file of the
+  project, answers that, and can be added when a project is in fact served from two places.
+- **A person's git handles are how a save of theirs is authored**, and how a commit made outside
+  the Symphony is read as theirs.
+
 ### Where people are kept
 
-With the board, and in no repository ([its card](../DECISIONS.md#people-kept-where)).
+What a person may do is kept with the board, and in no repository
+([its card](../DECISIONS.md#people-kept-where)). Who they are is their profile's, above.
 
 - **The list is a board's own.** Its people, their groups and their powers are rows of that
   board, beside its tasks: in the git common dir's database on a machine, in the hosted
   database on a hosted board. An admin of the board changes them from a People page or a
   command, and the board keeps each change in a log.
 - **Two boards differ.** A person can decide on one board and only read another, of the same
-  project or not. The server keeps no list of people: it asks each board about the person the
-  sign-in service named.
+  project or not.
 - **A clone holds nobody's sign-in.** A service's subject for a person never leaves the board.
-- **The public name is the part that is not the board's alone.** It is written where the record
-  is: on a card's line and in a comment, which are files in git, and on a thread. So it outlives
-  the board's row for the person, and it is read in every clone and by every board of the
-  project. That asks two things of it: one name means one person for the whole project, and a
-  name once used is never given to another. Where a project declares its names so that every
-  board reads them alike is a [later round's](#later-rounds).
+- **The short name is the part that is in git.** It is written where the record is: on a card's
+  line and in a comment, which are files, and on a thread. So it outlives the board's row for
+  the person.
 - **With nobody named** on a board, the person at the machine holds every power there, as today.
   The first person named is the first moment anything differs.
 
@@ -396,66 +443,54 @@ What follows:
 - **Deciding is not speaking.** A verdict is the record itself: it is written on its card in the
   file, where every agent reads it. So a person who decides and may not direct agents still
   moves agents by what they decide. Whether such a person's note beside a verdict is held like
-  their other words is a [later round's](#later-rounds).
+  their other words is [asked](#the-note-beside-a-verdict).
 
 ## This round
 
-One choice, a card: where a person's profile is kept.
+Two choices, each a card. Both are about what the powers cover.
 
-### Where public names are declared
+### Who acts on a task
 
-The short name is one field of something larger. The owner, rejecting
-[the card that asked this](../DECISIONS.md#public-name-where-declared): "We will probably have a
-mapping of names / emails / git handles / communication usernames and preferences (for example
-slack user). So this may be become more complex then proposed". So the question is not where a
-list of names is declared, but where a person's whole record is kept
-([below](#a-persons-profile)).
+**Base.** The owner files a task from the page, moves it, ranks it and cancels it. Agents act on
+tasks by the roles they hold there.
 
-### A person's profile
+[What the owner becomes](#what-the-owner-becomes) gives five powers and does not say which of
+them covers a task's acts.
 
-**Base.** No person is recorded. The one name is `owner`, fixed in the code.
+![Who may file, move, rank and cancel a task](users-and-identity/task-acts.svg)
 
-A person's profile is what the Symphony knows of who they are, apart from what they may do:
+- **A, part of deciding.** The members of the group that owns a task move, rank and cancel it,
+  as they approve it. Anyone who may speak files one, which goes to the group its place gives.
+- **B, a power of its own.** A sixth power, to manage tasks: whoever holds it files, moves, ranks
+  and cancels any task on the board. The owning group still decides its cards and approves its
+  tasks. A person can then run a board's tasks without deciding anything on it.
 
-| Field | What it is for | Who may see it |
-| --- | --- | --- |
-| short name (`ana`) | the name on every line they write, on a card, in a comment, on a thread | everyone; it is in git |
-| display name | how pages show them | everyone on the board |
-| sign-ins | which sign-in service's subject is this person; there can be several | the board's admins |
-| emails | a notice by mail; matching a commit's author to a person | the person and admins |
-| git handles | whose commit a save of theirs is authored as; whose commits are theirs | everyone; they are in git already |
-| chat usernames (Slack) | where a notice is sent | the person and admins |
-| preferences | which notices, by which way | the person |
+Under both, starting an agent on a task needs the power to direct agents, approving a task is
+deciding, and agents keep their own roles.
 
-What a person may do (their groups, their powers) is not in the profile. It is each board's
-([its card](../DECISIONS.md#people-kept-where)).
+**Recommended: A.** A task's order and its end are decisions about the work, and the group that
+owns the work makes them. B fits a team with someone who plans and does not decide; it costs a
+sixth power to give, and two people who can each say what is next.
 
-The choice is where the profile is kept and who writes it.
+### The note beside a verdict
 
-![Where a person's profile is kept](users-and-identity/profile-where.svg)
+**Base.** The owner's verdict and its note are written on the card together, and an agent is
+handed both at once.
 
-- **A, with each board.** A board keeps a whole profile beside each person's groups and powers.
-  One store and one page. A person on three boards has three profiles, and a Slack name changed
-  is changed on each. A board's admin writes it.
-- **B, once, with the server.** The server keeps one profile for each person: in the machine
-  folder on a machine, in the platform's own store on a hosted board. The person writes their
-  own, and an admin can. A board keeps only that person's groups and powers, and refers to the
-  profile. Who someone is, is kept apart from what they may do, as signing in is.
-- **C, and its public part in git.** As B, and the part that is public anyway (the short name,
-  the display name, the git handles) is also a committed file of the project. Every clone then
-  reads whose lines are whose with no server, and two servers of one project cannot give one
-  name to two people. A new person is a landing as well as a row.
+A person may decide and not direct agents. Their verdict is written on the card in the file,
+where agents read it. [Their other words are held](#words-without-agent-reach). The choice is
+what happens to the note they write beside the verdict.
 
-Under every option a line carries the short name and nothing else, a name once used is never
-given to another, emails and chat usernames are in no repository, and no agent or plugin is
-handed them. The lines already written as `owner` stay, and a machine with nobody named keeps
-writing as `owner`.
+![The note beside a verdict, from someone who may not direct agents](users-and-identity/verdict-note.svg)
 
-**Recommended: B.** A profile is the person's, and they are one person on every board the
-server holds. It is also the same line the owner drew for signing in: who someone is on one
-side, what they may do on the other. What B leaves open is C's reason: a project served from two
-servers can give `ana` to two people. C's file answers that when a project is in fact served
-from two places, and nothing in B is lost by adding it then.
+- **A, the note is held.** The verdict is written; the note is kept by the board until someone
+  who may direct agents passes it on. An agent sees a rejection and not its reason.
+- **B, written with the verdict.** The note is part of the decision and is written with it.
+  Deciding carries the right to say why, on that card and nowhere else.
+
+**Recommended: B.** A verdict without its reason gives an agent nothing to act on, and a
+rejection read alone is acted on wrongly. The person was given the power to decide that card,
+which already moves agents. Their words anywhere else stay held.
 
 ## Sessions
 
@@ -534,10 +569,8 @@ admin. The first person named is the first moment anything differs.
 
 Not carded yet.
 
-- What each power covers exactly, and the task board's acts: who files a task, moves, ranks or
-  cancels one.
-- A person who decides and may not direct agents: whether the note beside their verdict is held
-  like their other words.
+- What each power covers beyond a task's acts: who changes a board's map of places, who hands a
+  thing to another group.
 - How a person's line reads in a document and on a thread.
 - A profile's notices: which a person gets, by which way (mail, Slack), and what a chat plugin
   is handed to send one.
