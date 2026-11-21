@@ -1243,8 +1243,11 @@ impl Run<'_> {
 
     /// GitHub's auto-merge turned on for the bound pull request at the request's head, by the
     /// method and text a merge of it is asked by ([`Run::merge`]): it merges once every check
-    /// the branch requires passes. A pull request GitHub can merge already takes none and is
-    /// answered `mergeable`, for the land to ask the merge itself.
+    /// the branch requires passes. One on already by that method and text is left as it is; one
+    /// on by another (armed at an earlier head, or before its curated text was written) is
+    /// turned off and on again, as GitHub merges by the text it was armed with. A pull request
+    /// GitHub can merge already takes none and is answered `mergeable`, for the land to ask the
+    /// merge itself.
     fn arm(&mut self, request: &Value) -> Result<Value, Stopped> {
         let (slug, head) = (text(request, "slug"), text(request, "head"));
         let imported = import(request);
@@ -1295,10 +1298,24 @@ impl Run<'_> {
             self.ready(&host, &slug, &pull, &now)?;
         }
         let armed = json!({"state": "armed", "pull": pull.number, "head": head});
-        if now["auto_merge"]["merge_method"] == json!(method) {
-            return Ok(armed);
-        }
         let (title, message) = self.commit_text(&slug, &head, &pull, imported.as_ref());
+        let on = &now["auto_merge"];
+        if on.is_object() {
+            // GitHub merges by the text it was armed with, which names the head and the curated
+            // title of that time: on by this method and this text, it is left as it is.
+            if on["merge_method"] == json!(method)
+                && on["commit_title"] == json!(title)
+                && on["commit_message"] == json!(message)
+            {
+                return Ok(armed);
+            }
+            // By another: turned off, then on again below. One turned off whose arming fails
+            // or is lost is left off, which the next run reads and arms.
+            let off = self.unarm(&host, &slug, &pull, &now)?;
+            if off["state"] != json!("disarmed") {
+                return Ok(off);
+            }
+        }
         let query = "mutation($id: ID!, $method: PullRequestMergeMethod!, $head: GitObjectID!, \
                      $headline: String!, $body: String!) { enablePullRequestAutoMerge(input: \
                      {pullRequestId: $id, mergeMethod: $method, expectedHeadOid: $head, \
