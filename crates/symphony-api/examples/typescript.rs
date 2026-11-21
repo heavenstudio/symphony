@@ -112,6 +112,7 @@ fn constants() -> String {
         ("RUNS_DAYS", api::RUNS_DAYS.to_string()),
         ("SCHEMA_UPDATES_PATH", text(api::SCHEMA_UPDATES_PATH)),
         ("VERSION_HEADER", text(api::VERSION_HEADER)),
+        ("GETTING_STARTED", text(api::GETTING_STARTED)),
         ("VERDICT_TASKS", text(api::VERDICT_TASKS)),
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
         ("UPLOAD_MAX_BYTES", api::UPLOAD_MAX_BYTES.to_string()),
