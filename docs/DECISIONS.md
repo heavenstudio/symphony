@@ -5,11 +5,59 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
+## Auto-approved: spot-check
+
+### Releases
+
+- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
+  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
+
+    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
+
+    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
+
+    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
+
+    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
+
+    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
+
+    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
+  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
+
+## Waiting on an agent
 
 ### People and sign-in
 
-- [ ] **sign-in-service-shipped** — Follows identity-provider-how-added, where you chose B: signing in is done by a separate program, the server's plugin, outside the Symphony's core. You added that it could use OAuth 2 and hand over signed header data, which the core only verifies. What is left to choose is what the Symphony ships of that program. A: nothing; it ships the core's check and the format, and a project puts an OAuth 2 proxy it already has in front. B: as A, and it also ships a sign-in service of its own, which any other can replace. C: the service stands beside the server, not in front; the browser signs in there once and carries a signed token. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the Symphony ships for signing in]]
+- [x] **group-answer-settles** — Replaces: group-card-who-decides. The same choice, as authorization alone: it is about people the board already knows, however they signed in, and no sign-in service has a part in it. A card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
+  [2026-11-21 17:29] agent — Posted for the board task `app/users-and-identity`. You approved A on **group-card-who-decides** at 17:22 and rejected the card at 17:25 for mixing authentication with authorization. Your note says where signing in belongs and nothing about whose answer settles a card, so A is not carried and the choice is asked again. A concept: nothing is built by this card.
+
+    ![Speaking, deciding and directing agents are three separate things](analysis/users-and-identity/people-and-agents.svg)
+
+    **Base (today).** One owner. Whatever you answer decides, and a later word of yours overrides an earlier one.
+
+    **A, any one member.**
+    - Every member is told and has the card in their queue.
+    - The first answer decides, under that member's name, and the card leaves the others' queues.
+    - A later word from any member overrides it, as your own later word does today. Both stay in the card's history.
+    - A member can take a card. That shows the others who is on it, and locks nothing.
+
+    **B, the one member it is assigned to.**
+    - The card goes to one member: whoever takes it first, or the next in turn.
+    - Only that member's answer decides. The others comment.
+    - If that member is away, the card waits until someone hands it to another.
+
+    A group of one is the same under both, so this machine sees neither.
+
+    **Why A.** Nothing waits on a person who is away, and no rule is needed for handing a card on. B puts one accountable name on a decision before it is made; under A the name is there once it is made.
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B) says where people are kept, per board. It does not say who in a group decides.
+    - **revision-bound-project-guards** (B) covers an approval that must be several people's. This card is about one answer being enough, and whose.
+
+    Neither decides this.
+  [2026-11-21 17:32] owner · approved — A
+- [x] **sign-in-service-shipped** — Follows identity-provider-how-added, where you chose B: signing in is done by a separate program, the server's plugin, outside the Symphony's core. You added that it could use OAuth 2 and hand over signed header data, which the core only verifies. What is left to choose is what the Symphony ships of that program. A: nothing; it ships the core's check and the format, and a project puts an OAuth 2 proxy it already has in front. B: as A, and it also ships a sign-in service of its own, which any other can replace. C: the service stands beside the server, not in front; the browser signs in there once and carries a signed token. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the Symphony ships for signing in]]
   [2026-11-21 17:29] agent — Base: today the Symphony ships nothing for signing in. This Mac's server asks Tailscale whether an address is a machine of the tailnet, and reads nothing about whose.
 
     **What your words settle, under every option.** Signing in is one thing and what a person may do is another: ![Signing in is outside the core; what a person may do is the board's](analysis/users-and-identity/authn-authz.svg)
@@ -41,55 +89,7 @@ their dated history work is in [REVIEW](REVIEW.md).
     - **people-kept-where** (B) keeps people with the board. It says what a person may do, not how they sign in.
 
     None decides this.
-- [ ] **group-answer-settles** — Replaces: group-card-who-decides. The same choice, as authorization alone: it is about people the board already knows, however they signed in, and no sign-in service has a part in it. A card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
-  [2026-11-21 17:29] agent — Posted for the board task `app/users-and-identity`. You approved A on **group-card-who-decides** at 17:22 and rejected the card at 17:25 for mixing authentication with authorization. Your note says where signing in belongs and nothing about whose answer settles a card, so A is not carried and the choice is asked again. A concept: nothing is built by this card.
-
-    ![Speaking, deciding and directing agents are three separate things](analysis/users-and-identity/people-and-agents.svg)
-
-    **Base (today).** One owner. Whatever you answer decides, and a later word of yours overrides an earlier one.
-
-    **A, any one member.**
-    - Every member is told and has the card in their queue.
-    - The first answer decides, under that member's name, and the card leaves the others' queues.
-    - A later word from any member overrides it, as your own later word does today. Both stay in the card's history.
-    - A member can take a card. That shows the others who is on it, and locks nothing.
-
-    **B, the one member it is assigned to.**
-    - The card goes to one member: whoever takes it first, or the next in turn.
-    - Only that member's answer decides. The others comment.
-    - If that member is away, the card waits until someone hands it to another.
-
-    A group of one is the same under both, so this machine sees neither.
-
-    **Why A.** Nothing waits on a person who is away, and no rule is needed for handing a card on. B puts one accountable name on a decision before it is made; under A the name is there once it is made.
-
-    **Earlier verdicts checked.**
-    - **people-kept-where** (B) says where people are kept, per board. It does not say who in a group decides.
-    - **revision-bound-project-guards** (B) covers an approval that must be several people's. This card is about one answer being enough, and whose.
-
-    Neither decides this.
-
-## Auto-approved: spot-check
-
-### Releases
-
-- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
-  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
-
-    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
-
-    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
-
-    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
-
-    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
-
-    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
-
-    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
-  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
-
-## Waiting on an agent
+  [2026-11-21 17:31] owner · approved — B
 
 ### Task timeline
 
