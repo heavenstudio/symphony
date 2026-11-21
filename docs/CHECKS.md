@@ -417,8 +417,10 @@ commit holds the source alone, `just client-update`'s distribution put back as m
 headless browser acceptance and the board's `perf` and `child_guard` targets
 ([the board guide](../crates/tasks/AGENTS.md)) among them. It is the release run's, and no task's.
 `just release` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
-folder (`../symphony-wt/release`), and judges the commit by that alone: it builds and tests nothing
-of the projects this machine serves, whose own gates meet a change when they take a release.
+folder (`../symphony-wt/release`), and judges the commit by that alone, with a check of who
+bypasses the default branch's rules after it where the project names one
+([RELEASES](RELEASES.md#who-bypasses-the-rules-again)): it builds and tests nothing of the
+projects this machine serves, whose own gates meet a change when they take a release.
 Where the project names `[releases] hosted`, the same `just verify` of the same commit runs on
 GitHub's runners instead, a job for each step, and the run reads its result, files its reds and
 tags here; what GitHub does not answer is verified here

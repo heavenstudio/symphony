@@ -2,13 +2,14 @@
 //! this repository's own build binary, which no project is given. A run takes main's tip as
 //! fetched from the remote, the commit a project can fetch, into a clean checkout of its own
 //! outside the repository's folder ([`place`]) and runs the full verification there: a release is
-//! judged by checks this repository owns, never by a consuming project's suite. Every red check,
-//! and a run that stopped short of deciding, is a task on the board ([`board`]); when every check
-//! is green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it
-//! holds ([`notes`]) and pushes that one tag (where the project names a command that verifies on
-//! GitHub's machines, the full verification is asked of it in place of the checkout, and run there
-//! when it gives no result: [`hosted`]), asks for its GitHub Release where the project names a
-//! command for one ([`github`]), then installs it on the machine ([`install`]),
+//! judged by checks this repository owns, never by a consuming project's suite, and, where the
+//! project names one, by a check of who bypasses its default branch's rules ([`rulesets`]). Every
+//! red check, and a run that stopped short of deciding, is a task on the board ([`board`]); when
+//! every check is green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`])
+//! with what it holds ([`notes`]) and pushes that one tag (where the project names a command that
+//! verifies on GitHub's machines, the full verification is asked of it in place of the checkout,
+//! and run there when it gives no result: [`hosted`]), asks for its GitHub Release where the
+//! project names a command for one ([`github`]), then installs it on the machine ([`install`]),
 //! moves each registered project's board to its schema under the writer rule and points `current`
 //! at it ([`refresh`]), writing no project's checkout. `--commit COMMIT` does the same out of
 //! cycle for a commit already on the remote's main and past the newest release. A run of main's
@@ -56,6 +57,7 @@ mod receipts;
 mod record;
 mod refresh;
 mod rerun;
+mod rulesets;
 mod schedule;
 mod span;
 mod steps;
@@ -120,7 +122,9 @@ options:
                         in the project's agent worktrees folder)
   --check NAME=COMMAND  a check, run in that checkout with sh -c; repeat for each, in order
                         (default: verify=just verify). One that lists its steps in the folder
-                        SYMPHONY_CHECK_STEPS names is told by them, a red each
+                        SYMPHONY_CHECK_STEPS names is told by them, a red each. The check
+                        rulesets, the command [releases] rulesets names run in the main
+                        checkout, follows them
   --commit COMMIT       out of cycle: the same checks on COMMIT, which must be on the remote's main
                         and past the newest release
   --no-push             tag the release here, push nothing
@@ -378,7 +382,8 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         );
         return 0;
     }
-    let checks = match checks_of(parsed.values("--check")) {
+    let rulesets = rulesets::step(&repo.main, &repo.project.releases.rulesets);
+    let checks = match checks_of(parsed.values("--check"), rulesets) {
         Ok(checks) => checks,
         Err(problem) => return refuse(err, USAGE, "release", &problem),
     };
@@ -641,9 +646,14 @@ fn far_push(root: &Path, remote: &str) -> Option<String> {
     })
 }
 
-/// The checks `--check NAME=COMMAND` names, in order; [`VERIFY`] when none does. A name keyed as
-/// one of the release run's own reds ([`board::RUN`], a refresh's) is not a check's.
-fn checks_of<'a>(given: impl Iterator<Item = &'a str>) -> Result<Vec<Step>, String> {
+/// The checks `--check NAME=COMMAND` names, in order, [`VERIFY`] when none does, then `rulesets`,
+/// the check `[releases] rulesets` makes when it names a command ([`rulesets`]). A name keyed as
+/// one of the release run's own reds ([`board::RUN`], a refresh's) is not a check's, and neither
+/// is the name of `rulesets` while it runs.
+fn checks_of<'a>(
+    given: impl Iterator<Item = &'a str>,
+    rulesets: Option<Step>,
+) -> Result<Vec<Step>, String> {
     let mut checks: Vec<Step> = Vec::new();
     for check in given {
         let Some((name, command)) = check.split_once('=') else {
@@ -665,6 +675,15 @@ fn checks_of<'a>(given: impl Iterator<Item = &'a str>) -> Result<Vec<Step>, Stri
     }
     if checks.is_empty() {
         checks.push(Step::shell(VERIFY.0, VERIFY.1));
+    }
+    if let Some(rulesets) = rulesets {
+        if (checks.iter()).any(|known| board::key(&known.name) == board::key(&rulesets.name)) {
+            return Err(format!(
+                "--check {:?} takes the name of the check [releases] rulesets names",
+                rulesets.name
+            ));
+        }
+        checks.push(rulesets);
     }
     Ok(checks)
 }
@@ -2780,9 +2799,9 @@ mod tests {
     #[test]
     fn checks_are_named_once_each_and_default_to_the_full_verify() {
         let none: [&str; 0] = [];
-        let default = checks_of(none.into_iter()).unwrap();
+        let default = checks_of(none.into_iter(), None).unwrap();
         assert_eq!(default, [Step::shell("verify", "just verify")]);
-        let given = checks_of(["a=true", "b=echo x=y"].into_iter()).unwrap();
+        let given = checks_of(["a=true", "b=echo x=y"].into_iter(), None).unwrap();
         assert_eq!(
             given,
             [Step::shell("a", "true"), Step::shell("b", "echo x=y")]
@@ -2794,9 +2813,40 @@ mod tests {
             (&["a=true", "A=false"][..], "is named twice"),
             (&["Run=true"][..], "the release run keeps for its own reds"),
         ] {
-            let said = checks_of(bad.iter().copied()).unwrap_err();
+            let said = checks_of(bad.iter().copied(), None).unwrap_err();
             assert!(said.contains(why), "{bad:?}: {said}");
         }
+    }
+
+    #[test]
+    fn the_rulesets_check_runs_after_the_checks_given_and_takes_its_name_from_them() {
+        let rulesets = || {
+            let command = ["symphony-github", "rulesets", "--verify"].map(String::from);
+            rulesets::step(Path::new("/main"), &command)
+        };
+        let check = Step::shell("rulesets", "cd /main && symphony-github rulesets --verify");
+        let none: [&str; 0] = [];
+        assert_eq!(
+            checks_of(none.into_iter(), rulesets()).unwrap(),
+            [Step::shell("verify", "just verify"), check.clone()]
+        );
+        assert_eq!(
+            checks_of(["a=true"].into_iter(), rulesets()).unwrap(),
+            [Step::shell("a", "true"), check]
+        );
+        // Named by hand while the project names it: refused, as two checks of one name are.
+        for clash in ["rulesets=true", "Rulesets=true"] {
+            let said = checks_of([clash].into_iter(), rulesets()).unwrap_err();
+            assert!(
+                said.contains("takes the name of the check [releases] rulesets names"),
+                "{said}"
+            );
+        }
+        // While the project names none, it is a name like any other.
+        assert_eq!(
+            checks_of(["rulesets=true"].into_iter(), None).unwrap(),
+            [Step::shell("rulesets", "true")]
+        );
     }
 
     #[test]

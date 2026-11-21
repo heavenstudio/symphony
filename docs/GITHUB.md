@@ -15,7 +15,7 @@ It is a program of its own (`crates/symphony-github`). It reaches the board thro
 must remember in the folder the board names for it. No other package of the workspace builds with
 it, which `crates/symphony-github/tests/boundary.rs` holds. Nothing starts it but an operator,
 a land where the project's `[land] delivery` names it, and a release run where its `[releases]
-github` does: there is no schedule, no webhook and no page that runs it. The design it follows, and what of
+github` or `[releases] rulesets` does: there is no schedule, no webhook and no page that runs it. The design it follows, and what of
 that design is not built, is [the proposal](analysis/github-integration.md).
 
 ## Turning it on
@@ -181,7 +181,8 @@ otherwise the `tasks` beside `symphony-github` or the one on `PATH`.
   bypass lists among them, with the gh CLI of someone who administers the repository, says each
   and judges [the protection](#the-protection-a-delivery-needs) on them; `--verify` keeps [who
   bypasses each](#who-bypasses-the-rules) where it holds. It writes nothing to GitHub, and exits 0
-  only where the protection holds.
+  only where the protection holds. A release run runs `rulesets --verify` where the project's
+  `[releases] rulesets` names it ([again at each release](#who-bypasses-the-rules)).
 - **`deliver VERB --request FILE`** answers one verb of [a land's delivery](#delivering-a-land).
   A land runs it; an operator has no reason to.
 - **`release --request FILE`** answers a release run with
@@ -572,7 +573,12 @@ zones). Adding a bypass actor, taking one out and changing a ruleset's enforceme
 ruleset changed in any of those ways since its verification holds nobody, and the delivery is
 refused, naming the command, until it is verified again; one never verified holds nobody the same
 way. Setup verifies once ([the steps](GITHUB_SETUP.md#delivery-by-pull-request)), and
-whoever changes a ruleset verifies it again: nothing verifies on its own, and no land does.
+whoever changes a ruleset verifies it again. Where the project's `symphony.toml` names
+`[releases] rulesets = ["symphony-github", "rulesets", "--verify"]`, each release run verifies
+again too, with the gh of whoever runs the release, as a check of the run
+([RELEASES](RELEASES.md#who-bypasses-the-rules-again)): a ruleset changed in a way that keeps the
+policy is taken again from that run on, and one that does not is a red of the run, filed with
+each thing missing. Nothing else verifies, and no land does.
 
 **What these reads establish, and what they do not.**
 

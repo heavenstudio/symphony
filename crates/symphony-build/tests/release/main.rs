@@ -30,6 +30,7 @@ mod refresh;
 mod regenerated;
 mod releases;
 mod renamed;
+mod rulesets;
 mod steps;
 mod stops;
 

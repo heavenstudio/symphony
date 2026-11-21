@@ -132,6 +132,15 @@ fn announced(what: &str, said: &std::sync::mpsc::Receiver<String>) -> Result<Str
 /// or the queue draws from the server under its ghost, as one the device has no copy for does.
 const NO_STORE: &str = "Object.defineProperty(window, 'indexedDB', { value: undefined });";
 
+/// The width the window leaves a page beside its scrollbar, as a script's expression: the root's,
+/// which the root's scrollbar gutter (`scrollbar-gutter: stable`, styles/board.css) narrows
+/// whether or not the page scrolls, as it does the page's fixed controls. Chrome draws a classic
+/// scrollbar, 15 px of every width, or an overlay one, none, as the machine's settings choose
+/// (macOS's automatic scroll bars are classic while a mouse is attached), so what fills the window
+/// is this wide, never `innerWidth`; nor `document.documentElement.clientWidth`, which leaves the
+/// gutter out only while the page scrolls.
+const PAGE_WIDTH: &str = "document.documentElement.getBoundingClientRect().width";
+
 /// Hold, from the page's first script on, every timer of the asks' retry the page sets
 /// ([`symphony_web_tests::RETRY_MS`]: a failed read of a document's questions or of the chat's
 /// thread asked again), none of them ever run, so a case says whether a read that answered left

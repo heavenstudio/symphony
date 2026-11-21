@@ -315,6 +315,49 @@ and `--status` are what they are without the step
 Its tests ask a stand-in for the adapter (`crates/symphony-build/tests/release/github.rs`); the
 adapter's own ask a GitHub repository held in memory. Neither reaches GitHub.
 
+## Who bypasses the rules, again
+
+Where a project's lands are delivered by pull request, who may bypass the default branch's rules
+is verified by someone who administers the repository, with their gh CLI, and a delivery takes
+that verification only while no ruleset changed since ([GITHUB](GITHUB.md#who-bypasses-the-rules)).
+`[releases] rulesets` in `symphony.toml` has each release run verify it again, as a check of the
+run: `rulesets = ["symphony-github", "rulesets", "--verify"]`, named where the adapter's settings
+publish pull requests. The key is the project's word alone: the run never reads
+`symphony-github.toml` to decide whether to verify. With no command named it runs nothing for
+it, and the run has no such check; this repository's `symphony.toml` names none
+(`crates/symphony-build/src/release/rulesets.rs`).
+
+- **What runs.** The command, as the check `rulesets`, after the checks the run was given (`just
+  verify`, or each `--check`): in the main checkout, as [`[releases] github`'s
+  command](#a-github-release) is, so a program named by a relative path is the same for both. Its
+  record and its red say it as `cd MAIN && COMMAND…`. The adapter reads the rulesets with the gh
+  of whoever runs the release (the owner's, on the schedule and in a land's run), and where the
+  policy holds it keeps what it read: a ruleset changed since its last verification, in a way
+  that keeps the policy, is taken again by every delivery after that run. No package here builds
+  with the adapter, which is run as a program.
+- **Its verdict** is its exit status, as any check's: 0 is green. Anything else is red: the
+  policy does not hold, the rulesets were not read whole (gh not signed in as someone who
+  administers the repository, or GitHub not answering), the command could not be run or was
+  still running at the run's time. A red is filed as any red is (`tests/release-red-rulesets`,
+  its text the adapter's lines, each thing missing among them), and nothing is tagged, pushed or
+  refreshed: the commit is held as the release candidate ([step 5](#the-release-run)). Its fix is
+  an administrator's on GitHub, never a commit, so its task is answered by being cancelled, saying
+  where; the candidate's rerun runs the check again, as a red always reruns, and the run that
+  finds it green closes its task. A green of it is carried by a rerun of the same tree, as any
+  check's green is ([the release candidate](#the-release-candidate)). A command named while the
+  adapter's settings do not publish pull requests answers that it is turned off and exits 1: a
+  setting to put right, red and saying so, never a green passed over, until the project turns
+  delivery on or leaves the key out. A run told to stop while it runs stops it, as it stops any
+  check.
+- **Not done.** Nothing verifies between runs: a ruleset changed after one stops every delivery
+  until it is verified again, by hand or by the next run. `--check NAME=COMMAND` names the run's
+  other checks and never this one: `--check rulesets=…` while the project names a command is
+  refused.
+
+Its tests run a stand-in for the adapter (`crates/symphony-build/tests/release/rulesets.rs`); the
+adapter's own verify through a gh that answers what a repository held in memory answers a person.
+Neither reaches GitHub.
+
 ## The release run
 
 `just release` (`symphony-build release`, `crates/symphony-build/src/release.rs`) cuts the
@@ -392,6 +435,8 @@ project is given and neither the library nor the shipped `symphony` compiles
    `release NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its
    output to a log of its own. It runs in a process group of its own and inherits no descriptor of
    the run's, its lock included (below); what its group still runs when it ends is killed with it.
+   Where the project names `[releases] rulesets`, the check `rulesets` runs after the others, its
+   command in the main checkout ([who bypasses the rules](#who-bypasses-the-rules-again)).
 
    **On GitHub's machines.** Where the project names `[releases] hosted`, the full verification is
    asked of GitHub's runners in place of this checkout, and its jobs are the steps below; what
@@ -1552,6 +1597,8 @@ orchestrator's acts, and `just release --github` for the releases tagged before 
 Naming a command in `[releases] hosted` and saying `verification = "hosted"` in the adapter's
 settings, which together move a release's verification to GitHub's machines, are the owner's
 word; once they are said, each run asks there without asking anyone.
+Naming a command in `[releases] rulesets` is the owner's word as well, as every run then reads the
+repository's rulesets with the gh of whoever runs it.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
 retries are an orchestrator's acts as well: `just release --rerun`, once every red of it is
 answered and no landing has started its rerun (a red answered outside this repository, say), and
