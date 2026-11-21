@@ -1217,6 +1217,20 @@ fn releases(file: &FileRead) -> SettingsEntry {
             ),
             file.setting(
                 &["releases"],
+                "hosted",
+                "The command that verifies a run on GitHub's machines",
+                SettingKind::List,
+                "none",
+            ),
+            file.setting(
+                &["releases"],
+                "hosted_every_minutes",
+                "Least minutes between the starts of two hosted runs",
+                number,
+                &Releases::HOSTED_EVERY_MINUTES.to_string(),
+            ),
+            file.setting(
+                &["releases"],
                 "candidate_reruns",
                 "Red reruns a release candidate takes",
                 number,
