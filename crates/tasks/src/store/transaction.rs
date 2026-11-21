@@ -121,7 +121,14 @@ impl Store {
                 // whole-board copy (its staging and its swap) and a rebind are held to the store's
                 // own schema, a reader's too.
                 let ahead = self.reader && matches!(run, Run::Guarded { .. });
-                schema::guard_vars(&mut vars, self.schema, ahead, &self.refusal, REFUSED);
+                schema::guard_vars(
+                    &mut vars,
+                    self.schema,
+                    ahead,
+                    &self.refusal,
+                    &self.steps_taken(body, run),
+                    REFUSED,
+                );
                 (
                     schema::GUARD,
                     matches!(run, Run::Guarded { dispatch: true }),
@@ -155,6 +162,30 @@ impl Store {
                 let answer = on_postgres(client, twin, &vars, !guard.is_empty())?;
                 committed();
                 Ok(answer)
+            }
+        }
+    }
+}
+
+impl Store {
+    /// What a write run as `run` takes of the board's additive steps ([`schema::Steps`]): a
+    /// whole-board copy, its staging and a rebind exactly the store's own; an ordinary write at
+    /// least the highest step whose table its statement, as it is sent, names on either engine
+    /// ([`schema::needs`]). Whatever a word misses the database refuses itself, before anything
+    /// of the transaction is written: an undefined table on a STRICT board, an undefined field.
+    fn steps_taken(&self, body: &Statement, run: Run) -> schema::Steps {
+        let board = &self.refusal.board;
+        match run {
+            Run::Staging | Run::Own => schema::Steps::exactly(self.additions, board, self.schema),
+            Run::Guarded { .. } | Run::Unguarded => {
+                let texts = std::iter::once(body.surreal.as_ref()).chain(body.postgres_text());
+                let needed = texts
+                    .filter_map(|text| schema::needs(text, &self.added))
+                    .max_by_key(|(_, step)| *step);
+                match needed {
+                    Some((table, step)) => schema::Steps::naming(table, step, board, self.schema),
+                    None => schema::Steps::any(),
+                }
             }
         }
     }
@@ -365,3 +396,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "transaction_tests.rs"]
+mod guard_tests;

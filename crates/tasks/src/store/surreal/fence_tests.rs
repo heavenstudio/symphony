@@ -213,3 +213,118 @@ fn the_fence_reads_a_file_as_its_program_alone() {
         assert!(!outside(inside), "{inside}");
     }
 }
+
+/// A row of an open table ([`crate::schema::OPEN`]) may hold a field of an additive step this build
+/// does not know, which its writes keep: no statement replaces one whole (`UPSERT` or `UPDATE` with
+/// `CONTENT` or `REPLACE`), which would drop it. A `CREATE … CONTENT` makes a row, and drops
+/// nothing; PostgreSQL's twins set named columns, and keep the rest.
+#[test]
+fn no_statement_replaces_a_row_of_an_open_table_whole() {
+    let root = sources().join("store/surreal");
+    let mut files = Vec::new();
+    walk(&root, &mut files);
+    assert!(files.len() > 30, "the statements are read: {}", files.len());
+    let mut strays = Vec::new();
+    for path in files {
+        let relative = path
+            .strip_prefix(&root)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        if tests_alone(&relative) {
+            continue;
+        }
+        let text = fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = program(&text).into_iter().map(|(_, line)| line).collect();
+        for (table, statement) in whole_row_writes(&lines.join("\n")) {
+            strays.push(format!(
+                "src/store/surreal/{relative}: {table}: {statement}"
+            ));
+        }
+    }
+    assert!(
+        strays.is_empty(),
+        "a row of an open table written whole (set its fields by name, as `UPSERT … SET`):\n{}",
+        strays.join("\n")
+    );
+}
+
+#[test]
+fn a_whole_row_write_is_found_by_its_words_in_any_quoting_across_lines() {
+    let found = |text: &str| -> Vec<&str> {
+        whole_row_writes(text)
+            .into_iter()
+            .map(|(table, _)| table)
+            .collect()
+    };
+    assert_eq!(
+        found("FOR $r IN $add { UPSERT type::record('role', [$slug, $r.handle]) CONTENT $r; };"),
+        ["role"]
+    );
+    assert_eq!(
+        found("UPDATE task:x\n    REPLACE { slug: 'x' } RETURN NONE;"),
+        ["task"]
+    );
+    assert_eq!(
+        found("UPSERT `task_session`:[$s, $h] CONTENT $row;"),
+        ["task_session"]
+    );
+    assert_eq!(
+        found("upsert ⟨link⟩:x CONTENT {};"),
+        Vec::<&str>::new(),
+        "statements are upper case"
+    );
+    // A row made, a row set by its fields, and a table no build reads past are not.
+    assert!(found("CREATE type::record('task', $slug) CONTENT { slug: $slug };").is_empty());
+    assert!(found("UPSERT type::record('role', $id) SET since = $now RETURN NONE;").is_empty());
+    assert!(found("UPSERT type::record('writer', [$host, $path]) CONTENT { a: 1 };").is_empty());
+    assert!(found("UPSERT workflow:['active'] CONTENT { kind: 'active' };").is_empty());
+    // Its end is its `;`: a later statement's CONTENT is not its.
+    assert!(found("UPDATE task SET n = 1;\nCREATE task:y CONTENT {};").is_empty());
+    // A word that only contains a table's name names no table.
+    assert!(found("UPSERT tasks:x CONTENT {};\nUPSERT task_links:y CONTENT {};").is_empty());
+    assert!(found("LAST_UPDATE role CONTENT;").is_empty());
+}
+
+/// Each statement of `text` that writes a row whole on an open table, with the table it names
+/// before its `CONTENT` or `REPLACE`, and the statement on one line.
+fn whole_row_writes(text: &str) -> Vec<(&'static str, String)> {
+    let mut found = Vec::new();
+    for head in ["UPSERT", "UPDATE"] {
+        for start in whole_words(text, head) {
+            let end = text[start..]
+                .find(';')
+                .map_or(text.len(), |end| start + end);
+            let statement = &text[start..end];
+            let body = ["CONTENT", "REPLACE"]
+                .iter()
+                .filter_map(|word| whole_words(statement, word).next())
+                .min();
+            let Some(body) = body else { continue };
+            let named = |table: &&&str| {
+                statement[..body]
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .any(|word| word == **table)
+            };
+            if let Some(table) = crate::schema::OPEN.iter().find(named) {
+                found.push((
+                    *table,
+                    statement.split_whitespace().collect::<Vec<_>>().join(" "),
+                ));
+            }
+        }
+    }
+    found
+}
+
+/// Where `word` stands in `text` as a whole word.
+fn whole_words<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
+    let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    text.match_indices(word)
+        .map(|(at, _)| at)
+        .filter(move |at| {
+            !text[..*at].chars().next_back().is_some_and(part)
+                && !text[at + word.len()..].chars().next().is_some_and(part)
+        })
+}
