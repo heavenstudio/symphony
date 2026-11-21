@@ -304,7 +304,34 @@ const OPTIONS = {
   a: { name: "A", what: "Said, not drawn", card: "time", summary: ["role", "round"], timeline: "words" },
   b: { name: "B", what: "A cost row by round", card: "under", summary: ["role"], timeline: "row" },
   c: { name: "C", what: "Cost on the role lanes", card: "under", summary: ["round"], timeline: "lanes" },
+  t: { name: "", what: "The cost after the time", card: "time", summary: [], timeline: "after" },
 };
+const said = (opt) => (opt.name ? `Option ${opt.name}, ${opt.what.toLowerCase()}` : opt.what);
+
+// ---- The cost after the time: what each stage stretch's role spent in its round -----------------
+// A stretch's round is one more than the reviews started before it. An in-progress stretch carries
+// the executor's calls of its round, with what was spent while the task was reserved, before the
+// claim; a review stretch its reviewer's calls of the round it opens, and the executor's of that
+// round when no in-progress stretch follows (fixes made while an approving review ran). The record
+// keeps a row's first and last call, not each call's time, so a row is never split: calls made
+// past a stretch's edge stay with the stretch of their round. Ready and done stretches carry none.
+const roundOf = (s) => 1 + rounds.filter((r) => r.from <= s.from + 1).length;
+function costOf(s) {
+  const n = roundOf(s);
+  let rows = [];
+  if (s.status === "in_progress") {
+    rows = ROWS.filter((r) => r.round === n && (r.role === "executor" || r.role === "reserved"));
+  } else if (s.status === "review") {
+    rows = ROWS.filter((r) => r.round === n && r.role === "reviewer");
+    const fixes = stages.some((t) => t.status === "in_progress" && roundOf(t) === n);
+    if (!fixes) rows = rows.concat(ROWS.filter((r) => r.round === n && r.role === "executor"));
+  }
+  if (!rows.length) return null;
+  const sum = (k) => rows.reduce((t, r) => t + r[k], 0);
+  return { rows, dollars: sum("dollars"), calls: sum("calls"), tokens: sum("tokens"), first: Math.min(...rows.map((r) => r.first)), last: Math.max(...rows.map((r) => r.last)) };
+}
+const stageWord = (s) => s.status.replaceAll("_", " ");
+const roleOf = (r) => (r.role === "reserved" ? "reserved, before the claim" : r.role === "executor" ? "executor keen-swift-85" : "reviewer gilded-gecko-838");
 
 // ---- The board card -------------------------------------------------------------------------------
 function card(opt, phone) {
@@ -321,17 +348,22 @@ function card(opt, phone) {
   };
   return `<section class="column-wrap"><h3 class="sec">On the board</h3><div class="column">${one(ours)}${one(other)}</div></section>`;
 }
-function foot(phone) {
-  return `<section class="foot"><h3 class="sec">At the page's foot</h3><p>Nothing. The section <i>Tokens and estimated cost</i> and its table are gone: the total is beside the time, the figures are in the timeline, and what the table said besides is in the total's words when it is pointed at, tapped or focused:</p>
-    <p class="said"><b>${money(TOTAL)}</b>, ${estimate} (${kinds}); ${amount(TOKENS)} tokens in ${COST.total.tokens.calls} calls.</p></section>`;
+function foot(opt) {
+  const where = opt.timeline === "after"
+    ? "the total follows the task's time, each stretch's cost follows its time in the timeline"
+    : "the total is beside the time, the figures are in the timeline";
+  return `<section class="foot"><h3 class="sec">At the page's foot</h3><p>Nothing. The section <i>Tokens and estimated cost</i> and its table are gone: ${where}, and what the table said besides is in the total's words when it is pointed at, tapped or focused:</p>
+    <p class="said"><b>${money(TOTAL)}</b>, ${estimate}${opt.timeline === "after" ? `: ${roleSplit(byRole)}` : ""} (${kinds}); ${amount(TOKENS)} tokens in ${COST.total.tokens.calls} calls.</p></section>`;
 }
 
 // ---- The timeline's head: the total beside the time, and the summary under it ----------------------
 function head(opt, phone) {
-  const cost = `<span class="money" title="${esc(`${estimate} (${kinds})`)}">${money(TOTAL)}</span> estimated`;
+  const after = opt.timeline === "after";
+  const cost = `<span class="money" title="${esc(`${estimate} (${kinds})`)}">${money(TOTAL)}</span>${after ? "" : " estimated"}`;
+  const all = after ? `${took(END - START)} in all ${cost}` : `${took(END - START)} in all · ${cost}`;
   const first = phone
-    ? `${took(END - START)} in all · ${cost}<br>${rounds.length} review rounds · ${DATA.bounces} bounces · machine ${took(machine)}`
-    : `${took(END - START)} in all · ${cost} · ${rounds.length} review rounds · ${DATA.bounces} bounces · machine ${took(machine)}, queued 0 m`;
+    ? `${all}<br>${rounds.length} review rounds · ${DATA.bounces} bounces · machine ${took(machine)}`
+    : `${all} · ${rounds.length} review rounds · ${DATA.bounces} bounces · machine ${took(machine)}, queued 0 m`;
   let html = `<p class="totals">${first}</p>`;
   if (opt.summary.includes("role")) html += `<p class="spent">Cost by role: ${byRole.map((r) => `${r.role} <b>${money(r.dollars)}</b>`).join(" · ")}</p>`;
   if (opt.summary.includes("round")) html += `<p class="spent">Cost by round: ${COST_ROUNDS.map((r) => `${r.short} <b>${money(r.dollars)}</b>`).join(" · ")}</p>`;
@@ -395,11 +427,20 @@ function wide(opt, view) {
   // Stage.
   {
     let s = "";
-    for (const st of stages) {
-      if (st.status === "done" || !vis(st.from, st.to ?? END)) continue;
-      const text = st.status === "ready" ? `ready ${took(st.to - st.from)}` : st.status === "in_progress" ? took(st.to - st.from) : "";
-      s += segHtml(st.from, st.to ?? END, tone(st.status), text, "", 7, 26);
-    }
+    stages.forEach((st, i) => {
+      if (st.status === "done" || !vis(st.from, st.to ?? END)) return;
+      let text = st.status === "ready" ? `ready ${took(st.to - st.from)}` : st.status === "in_progress" ? took(st.to - st.from) : "";
+      if (opt.timeline === "after") {
+        // The product's label, its word and time or the time alone where only that fits, with the
+        // stretch's cost after the time where both fit.
+        const length = took((st.to ?? END) - st.from);
+        const c = costOf(st);
+        const tail = c ? ` ${money(c.dollars)}` : "";
+        const [, w] = clip(st.from, st.to ?? END);
+        text = [`${stageWord(st)} ${length}${tail}`, `${length}${tail}`, length].find((t) => w > t.length * 6.6 + 14) ?? "";
+      }
+      s += segHtml(st.from, st.to ?? END, tone(st.status), text, view.focusStage === i ? "focus" : "", 7, 26);
+    });
     tops.stage = y;
     laneHtml.push(`<div class="lane"><span class="name"><b>Stage</b></span><span class="track" style="height:${LANE}px">${s}</span></div>`);
     y += LANE + 1;
@@ -500,6 +541,14 @@ function wide(opt, view) {
   }
   // What a pointer resting on a part, or the focus on it, says of its cost.
   let chip = "";
+  if (view.focusStage !== null && view.focusStage !== undefined) {
+    // A stretch pointed at, tapped or focused: its time, its cost, whose calls and when they ran.
+    const st = stages[view.focusStage], c = costOf(st), to = st.to ?? END;
+    const ax = x(st.from);
+    const who = c.rows.length > 1 ? c.rows.map((r) => `${roleOf(r)} ${money(r.dollars)}`).join(" · ") : roleOf(c.rows[0]);
+    const text = `<b>${esc(stageWord(st)[0].toUpperCase() + stageWord(st).slice(1))}${st.status === "review" ? ` ${st.round}` : ""}, ${took(to - st.from)} ${money(c.dollars)}</b>, ${clock(st.from)}–${clock(to)}: ${who}, its model calls ${clock(c.first)}–${clock(c.last)}, ${amount(c.tokens)} tokens in ${c.calls} calls, estimated`;
+    chip = `<span class="chip" style="left:${152 + ax}px;top:${tops.stage + LANE + 2}px;transform:translate(${ax > W - 460 ? "-100%" : "-12px"},0)">${text}</span>`;
+  }
   if (view.focus) {
     const r = COST_ROUNDS.find((c) => c.n === view.focus);
     const anchorTop = opt.timeline === "row" ? tops.cost - 6 : tops.reviewer - 6;
@@ -510,10 +559,11 @@ function wide(opt, view) {
   const hours = `<div class="hours">${ticks.map((t) => `<span class="hour" style="left:${t.x}px"></span>`).join("")}</div>`;
   html += `<div class="lanes">${hours}${lanesHtml}${laneHtml.join("")}${over}${chip}</div>`;
   const costKey = opt.timeline === "row" ? `<li><i style="background:color-mix(in srgb,var(--cost) 22%,transparent);border:1px solid var(--cost)"></i>a round's cost, from its first model call to its last</li>`
-    : opt.timeline === "lanes" ? `<li><i style="height:5px;background:var(--cost)"></i>a role's model calls in a round, first to last, and what they cost</li>` : "";
+    : opt.timeline === "lanes" ? `<li><i style="height:5px;background:var(--cost)"></i>a role's model calls in a round, first to last, and what they cost</li>`
+    : opt.timeline === "after" ? `<li>$ after a stretch's time: what its role's model calls in that round cost, estimated</li>` : "";
   html += `<ul class="legend"><li><i style="background:color-mix(in srgb,var(--primary) 30%,transparent);border:1px solid var(--primary)"></i>worked or ran</li>${costKey}<li><i style="background:color-mix(in srgb,var(--like) 70%,transparent)"></i>green run</li><li><i style="background:color-mix(in srgb,var(--dislike) 70%,transparent)"></i>red run</li><li><i style="width:2px;height:8px;background:var(--muted-foreground)"></i>message</li><li><i style="background:var(--card);border-left:1px dashed var(--muted-foreground);border-right:1px dashed var(--muted-foreground);width:12px"></i>quiet stretch skipped</li><li><i style="background:none;border-top:4px solid var(--like);height:0"></i>gate met</li><li><i style="background:none;border-top:4px dotted var(--question);height:0"></i>gate missing</li>${opt.timeline === "words" ? "" : "<li>no build or test has a cost of its own: tokens are kept by session</li>"}</ul>`;
-  app.innerHTML = `<p class="mock-note">Option ${opt.name}, ${esc(opt.what.toLowerCase())}: a mockup drawn from ${DATA.slug}'s recorded timeline and its recorded tokens, on the approved timeline (quiet stretches skipped). Costs are estimates at API list prices read ${COST.prices}. Nothing here is built.</p>
-    <div class="top">${card(opt, false)}${foot(false)}</div><h2>Timeline</h2><section class="panel">${html}</section>`;
+  app.innerHTML = `<p class="mock-note">${esc(said(opt))}: a mockup drawn from ${DATA.slug}'s recorded timeline and its recorded tokens, on the approved timeline (quiet stretches skipped). Costs are estimates at API list prices read ${COST.prices}. Nothing here is built.</p>
+    <div class="top">${card(opt, false)}${foot(opt)}</div><h2>Timeline</h2><section class="panel">${html}</section>`;
 }
 
 // ---- The phone list ------------------------------------------------------------------------------
@@ -540,10 +590,16 @@ function phone(opt, view) {
     }
     return parts.length ? ` · <span class="money">${parts.join(" ")}</span>` : "";
   };
+  // The cost after the time: a stage row's time, then its stretch's cost.
+  const afterTime = (s) => {
+    if (opt.timeline !== "after") return "";
+    const c = costOf(s);
+    return c ? ` ${money(c.dollars)}` : "";
+  };
   for (const s of stages) {
     if (s.status === "done") { rows.push({ t: s.from, k: 0, html: `<li class="stage" style="--c:var(--like)"><span class="t">${clock(s.from)}</span><span class="dot"></span><span class="lbl">Done</span><span></span></li>` }); continue; }
     const name = s.status === "ready" ? "Ready" : s.status === "in_progress" ? "In progress · keen-swift-85" : `Review, round ${s.round} · gilded-gecko-838`;
-    rows.push({ t: s.from, k: 0, html: `<li class="stage" style="--c:var(--${tone(s.status)})"><span class="t">${clock(s.from)}</span><span class="dot"></span><span class="lbl">${name}</span><span class="len">${took((s.to ?? END) - s.from)}${stageCost(s)}</span><span></span><span></span><span class="pbar" style="width:${Math.min(100, 8 + ((s.to ?? END) - s.from) / 250)}%"></span></li>` });
+    rows.push({ t: s.from, k: 0, html: `<li class="stage" style="--c:var(--${tone(s.status)})"><span class="t">${clock(s.from)}</span><span class="dot"></span><span class="lbl">${name}</span><span class="len">${took((s.to ?? END) - s.from)}${afterTime(s)}${stageCost(s)}</span><span></span><span></span><span class="pbar" style="width:${Math.min(100, 8 + ((s.to ?? END) - s.from) / 250)}%"></span></li>` });
   }
   for (const r of roles) if (r.role === "orchestrator") rows.push({ t: r.from, k: 1, html: `<li class="msg"><span class="t">${clock(r.from)}</span><span class="dia"></span><span class="lbl">Orchestrator: ${esc(r.by)}</span><span></span></li>` });
   for (const m of messages) rows.push({ t: m.at, k: 2, html: `<li class="msg"><span class="t">${clock(m.at)}</span><span class="dia"></span><span class="lbl">${esc(m.sender)} → ${esc(m.recipient ?? "Everyone on task")}</span><span></span></li>` });
@@ -570,17 +626,22 @@ function phone(opt, view) {
   // the cost's summary lines sit above them, and the box grows by their height.
 
   const box = view.all ? top + list + foot : `<div class="pbox">${top}<div class="pclip">${list}</div>${foot}</div>`;
-  document.getElementById("app").innerHTML = `<p class="mock-note">Option ${opt.name}, ${esc(opt.what.toLowerCase())}: a mockup from ${DATA.slug}'s recorded timeline and tokens. Costs are estimates. Nothing here is built.</p>
+  document.getElementById("app").innerHTML = `<p class="mock-note">${esc(said(opt))}: a mockup from ${DATA.slug}'s recorded timeline and tokens. Costs are estimates. Nothing here is built.</p>
     <div class="top">${card(opt, true)}</div><h2>Timeline</h2><section class="panel">${box}</section>`;
 }
 
-// ---- Views: #a, #b, #c wide; -phone for a phone; -focus for a part pointed at -----------------------
+// ---- Views: #t the design, #a, #b, #c the first options, wide; -phone for a phone, -all its whole
+// list; -zoom the second day's work; -focus a part pointed at --------------------------------------
 function start() {
-  const key = location.hash.slice(1) || "b";
+  const key = location.hash.slice(1) || "t";
   const [letter, ...rest] = key.split("-");
-  const opt = OPTIONS[letter] ?? OPTIONS.b;
-  const view = { from: START, to: END, all: rest.includes("all"), focus: null, focusReview: null };
-  if (rest.includes("focus")) { view.focus = 4; view.focusReview = 3; }
+  const opt = OPTIONS[letter] ?? OPTIONS.t;
+  const view = { from: START, to: END, all: rest.includes("all"), focus: null, focusReview: null, focusStage: null };
+  if (rest.includes("zoom")) { view.from = rounds[2].from - 900; view.to = END; }
+  if (rest.includes("focus")) {
+    if (opt.timeline === "after") view.focusStage = stages.findIndex((s) => s.status === "review" && s.round === 5);
+    else { view.focus = 4; view.focusReview = 3; }
+  }
   if (rest.includes("phone")) { document.documentElement.classList.add("phone"); phone(opt, view); }
   else { document.documentElement.classList.remove("phone"); wide(opt, view); }
 }
