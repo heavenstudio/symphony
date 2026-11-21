@@ -169,7 +169,7 @@ tools: `crates/symphony/tests/hooks/own_names.rs` fails on an old state or tool 
 outside the fences it lists, each with its reason (a past incident's record in
 `docs/history/`), and on the first consuming project's name, in any spelling or identifier
 built from it, in a tracked file's text or path: say "the consuming project". It passes over
-the owner's own dated lines under a card of a register, saved as they said them, and judges
+the owner's own dated lines under a card, wherever it sits, saved as they said them, and judges
 every other line. The state folders are named once, in `crates/tasks/src/folders.rs`.
 
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
