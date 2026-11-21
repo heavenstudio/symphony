@@ -49,6 +49,21 @@ fn what_judged_is_said_with_the_run_or_with_why_it_was_this_machine() {
         here.said(),
         "verify verified here, not on GitHub: unavailable: GitHub answered 503"
     );
+    // A run the hosted clock started is judged by no one then, and its record says so and reads.
+    let nowhere = Hosted::nowhere("verify", "unavailable: GitHub answered 503");
+    assert!(!nowhere.there());
+    assert_eq!(
+        nowhere.said(),
+        "verify not verified: unavailable: GitHub answered 503; the hosted clock's run verifies \
+         nothing here"
+    );
+    let kept = serde_json::to_value(&nowhere).unwrap();
+    assert_eq!(
+        kept,
+        json!({"check": "verify", "judged": "nowhere",
+               "why": "unavailable: GitHub answered 503"})
+    );
+    assert_eq!(serde_json::from_value::<Hosted>(kept).unwrap(), nowhere);
     let there = Hosted {
         judged: "GitHub".into(),
         run: Some("https://github.com/o/n/actions/runs/1".into()),

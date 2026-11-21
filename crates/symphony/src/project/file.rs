@@ -299,8 +299,9 @@ impl Default for FileLand {
 
 /// The `[releases]` table: how often the Symphony's own release run cuts a release besides each day's,
 /// whether a green release refreshes the machine and publishes on crates.io, the command that
-/// publishes its GitHub Release, the one that verifies a commit on GitHub's machines and the one
-/// that verifies who bypasses the default branch's rules
+/// publishes its GitHub Release, the one that verifies a commit on GitHub's machines, how often a
+/// run starts while that one is named, and the command that verifies who bypasses the default
+/// branch's rules
 /// (docs/RELEASES.md).
 #[derive(Deserialize)]
 #[serde(default)]
@@ -310,6 +311,7 @@ pub(super) struct FileReleases {
     pub(super) publish: bool,
     pub(super) github: Vec<String>,
     pub(super) hosted: Vec<String>,
+    pub(super) hosted_every_minutes: u32,
     pub(super) rulesets: Vec<String>,
     pub(super) candidate_reruns: u32,
     pub(super) candidate_hours: u32,
@@ -325,6 +327,7 @@ impl Default for FileReleases {
             publish: false,
             github: Vec::new(),
             hosted: Vec::new(),
+            hosted_every_minutes: super::Releases::HOSTED_EVERY_MINUTES,
             rulesets: Vec::new(),
             candidate_reruns: super::Releases::CANDIDATE_RERUNS,
             candidate_hours: super::Releases::CANDIDATE_HOURS,
