@@ -50,8 +50,10 @@
 //! * nothing in it is left behind: no tracked change, no untracked file, and no ignored file beyond
 //!   caches and root verify logs. Regenerable `.target/`, `symphony/.target/` (and beside each a
 //!   seed's staging, `.target.seed.PID`, or a clear's, `.target.clear.PID`), `symphony/build/`
-//!   and `.codex/hooks*` go with it. Once its work is finished (every task tied to it done or
-//!   cancelled, or none), its other caches go too, and what git ignores under the project's
+//!   and `.codex/hooks*` go with it, and so does what the project itself names
+//!   (`[board] sweep_disposable` of the main checkout's manifest, [`crate::project::disposable`]:
+//!   another stack's dependency and build folders). Once its work is finished (every task tied to
+//!   it done or cancelled, or none), its other caches go too, and what git ignores under the project's
 //!   artifacts folder (`[project] artifacts` of the main checkout's manifest, `artifacts/` when it
 //!   names none, [`crate::project::artifacts`]: the evidence its thread names, a test's leftovers)
 //!   is moved into the main checkout's `FOLDER/swept/NAME/` ([`aside`]) right before git removes
@@ -914,7 +916,19 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
     let documents = checkout
         .as_deref()
         .map_or_else(|| vec![String::new()], crate::project::documents_at);
-    let verdicts = verdicts::Verdicts::new(root, o.dry_run, artifacts.as_deref(), documents);
+    // The ignored paths the project itself names as going with a merged worktree, read from the
+    // main checkout's file as the artifacts folder is, so a branch cannot name its own.
+    let disposable = checkout
+        .as_deref()
+        .map(crate::project::disposable)
+        .unwrap_or_default();
+    let verdicts = verdicts::Verdicts::new(
+        root,
+        o.dry_run,
+        artifacts.as_deref(),
+        documents,
+        disposable.clone(),
+    );
     for (number, (entry, path)) in trees.iter().zip(&paths).enumerate() {
         if o.only.as_ref().is_some_and(|only| !only.contains(path)) {
             continue;
@@ -1021,6 +1035,7 @@ pub fn sweep(root: &Path, here: &Path, store: &Store, o: &Options) -> Result<Swe
             let kept_in = Evidence {
                 checkout: checkout.as_deref(),
                 folder: artifacts.as_deref(),
+                disposable: &disposable,
             };
             let went = match remove(root, listed, entry, store, o, kept_in, held)? {
                 Removal::Went(went) => went,
@@ -1243,6 +1258,8 @@ enum Removal {
 struct Evidence<'a> {
     checkout: Option<&'a Path>,
     folder: Option<&'a str>,
+    /// The ignored paths the project names as going with a merged worktree, which are no evidence.
+    disposable: &'a [String],
 }
 
 /// Remove `path` if it is still at `head` with nothing left behind; git checks cleanliness again
@@ -1292,7 +1309,7 @@ fn remove(
     let Some(finished) = board_frees(store, &paths, path, branch, unbound, |_| false)? else {
         return Ok(Removal::Changed);
     };
-    if !git::left_behind(path, finished, kept_in.folder).is_empty() {
+    if !git::left_behind_with(path, finished, kept_in.folder, kept_in.disposable).is_empty() {
         return Ok(Removal::Changed);
     }
     (o.pause)("checked", &shown);
@@ -1386,7 +1403,7 @@ fn remove(
     if board_frees(store, &paths, &at, branch, unbound, |_| false)? != Some(finished) {
         return Ok(Removal::Changed);
     }
-    if !git::left_behind(path, finished, kept_in.folder).is_empty() {
+    if !git::left_behind_with(path, finished, kept_in.folder, kept_in.disposable).is_empty() {
         return Ok(Removal::Changed);
     }
     // The processes are asked here alone (and by a dry run, which stops before this): theirs is

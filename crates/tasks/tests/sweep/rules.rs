@@ -686,6 +686,52 @@ fn caches_and_verify_output_do_not_protect_it() {
 }
 
 #[test]
+fn what_the_project_names_as_disposable_goes_and_is_kept_where_it_names_none() {
+    // Another stack's dependency and build folders: git ignores them and the board's own list
+    // does not know them, so only the project can say a checkout makes them again.
+    let r = Repo::new();
+    let ignore = std::fs::read_to_string(r.root.join(".gitignore")).unwrap();
+    write(
+        &r.root,
+        ".gitignore",
+        &format!("{ignore}node_modules/\ndist/\n*.tsbuildinfo\n"),
+    );
+    git(&r.root, &["commit", "-qam", "another stack's ignore rules"]);
+    let wt = r.detached("node");
+    for path in [
+        "node_modules/left-pad/index.js",
+        "web/node_modules/left-pad/index.js",
+        "web/dist/app.js",
+        "tsconfig.tsbuildinfo",
+    ] {
+        write(&wt, path, "x\n");
+    }
+    let said = r.sweep();
+    r.assert_kept(&wt, &said);
+    assert!(said.contains("node_modules/"), "{said}");
+    // Named in the main checkout's project file, they go, though the verdict that kept the
+    // worktree was saved: it was read with other patterns.
+    write(
+        &r.root,
+        "symphony.toml",
+        "[board]\nsweep_disposable = [\"node_modules/\", \"*/node_modules/\", \"*/dist/\", \"*.tsbuildinfo\"]\n",
+    );
+    git(&r.root, &["add", "symphony.toml"]);
+    git(
+        &r.root,
+        &["commit", "-qm", "the project's disposable paths"],
+    );
+    // What it does not name still keeps a worktree: a local setting beside them.
+    let settings = r.detached("node-settings");
+    write(&settings, "node_modules/left-pad/index.js", "x\n");
+    write(&settings, ".claude/settings.local.json", "{}\n");
+    let said = r.sweep();
+    r.assert_removed(&wt, &said);
+    r.assert_kept(&settings, &said);
+    assert!(!said.contains("node_modules/"), "{said}");
+}
+
+#[test]
 fn a_dead_claude_lock_goes() {
     let r = Repo::new();
     let wt = r.detached("dead-lock");

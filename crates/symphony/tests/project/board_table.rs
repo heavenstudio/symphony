@@ -96,6 +96,43 @@ fn the_board_table_names_when_the_pipeline_alarm_raises_and_none_takes_the_board
 }
 
 #[test]
+fn the_board_table_takes_the_disposable_paths_the_sweep_takes_and_refuses_the_rest() {
+    // The board reads the patterns itself; the project refuses what the board would not take.
+    let root =
+        std::env::temp_dir().join(format!("symphony-sweep-disposable-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let text = "[board]\nsweep_disposable = [\"node_modules/\", \"*/dist/\"]\n";
+    assert!(parsed(text).is_ok(), "{text}");
+    std::fs::write(root.join("symphony.toml"), text).unwrap();
+    assert_eq!(
+        symphony_board::project::disposable(&root),
+        ["node_modules/", "*/dist/"]
+    );
+    for (value, why) in [
+        ("[\"*\"]", "names nothing of its own"),
+        ("[\"/dist/\"]", "starts with `/`"),
+        ("[\"../dist/\"]", "`.` or `..` part"),
+        ("[\"dist/\", \"\"]", "is empty"),
+    ] {
+        let text = format!("[board]\nsweep_disposable = {value}\n");
+        let said = refused(&text);
+        assert!(
+            said.contains("[board] sweep_disposable: "),
+            "{text}: {said}"
+        );
+        assert!(said.contains(why), "{text}: {said}");
+        // And the board, reading the same file, takes none of it.
+        std::fs::write(root.join("symphony.toml"), &text).unwrap();
+        assert!(
+            symphony_board::project::disposable(&root).is_empty(),
+            "{text}"
+        );
+    }
+    assert!(refused("[board]\nsweep_disposable = \"dist/\"\n").contains("sweep_disposable"));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn the_board_table_takes_the_cap_on_what_the_sweep_sets_aside_as_the_board_reads_it() {
     // The board reads the cap itself; the project takes what it takes and refuses what it refuses.
     for (text, gb) in [

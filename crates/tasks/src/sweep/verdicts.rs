@@ -38,14 +38,23 @@ struct Inputs {
     /// The project's document folders the owner's answers were read in.
     #[serde(default)]
     documents: Vec<String>,
+    /// The ignored paths the project named as disposable when the verdict was read.
+    #[serde(default)]
+    disposable: Vec<String>,
+}
+
+/// What of the main checkout's project file a verdict is read with.
+struct Settings<'a> {
+    artifacts: Option<&'a str>,
+    documents: &'a [String],
+    disposable: &'a [String],
 }
 
 impl Inputs {
     fn read(
         entry: &git::Listed,
         finished: bool,
-        artifacts: Option<&str>,
-        documents: &[String],
+        settings: &Settings<'_>,
         policy: &Policy,
     ) -> Option<Self> {
         let admin = git::admin(&entry.path)?;
@@ -64,8 +73,9 @@ impl Inputs {
             head_file: stamp(&admin.join("HEAD"))?,
             commondir,
             config: policy.config.clone(),
-            artifacts: artifacts.map(str::to_string),
-            documents: documents.to_vec(),
+            artifacts: settings.artifacts.map(str::to_string),
+            documents: settings.documents.to_vec(),
+            disposable: settings.disposable.to_vec(),
         })
     }
 }
@@ -128,6 +138,8 @@ pub(super) struct Verdicts {
     /// The project's document folders, where the owner's answers are written
     /// ([`crate::project::documents`]).
     documents: Vec<String>,
+    /// The ignored paths the project names as disposable ([`crate::project::disposable`]).
+    disposable: Vec<String>,
     policy: OnceCell<Option<Policy>>,
 }
 
@@ -137,24 +149,25 @@ impl Verdicts {
         dry_run: bool,
         artifacts: Option<&str>,
         documents: Vec<String>,
+        disposable: Vec<String>,
     ) -> Self {
         Self {
             dry_run,
             root: root.into(),
             artifacts: artifacts.map(str::to_string),
             documents,
+            disposable,
             policy: OnceCell::new(),
         }
     }
 
     fn inputs(&self, entry: &git::Listed, finished: bool, policy: &Policy) -> Option<Inputs> {
-        Inputs::read(
-            entry,
-            finished,
-            self.artifacts.as_deref(),
-            &self.documents,
-            policy,
-        )
+        let settings = Settings {
+            artifacts: self.artifacts.as_deref(),
+            documents: &self.documents,
+            disposable: &self.disposable,
+        };
+        Inputs::read(entry, finished, &settings, policy)
     }
 
     pub fn read(&self, entry: &git::Listed, finished: bool) -> Verdict {
@@ -194,7 +207,12 @@ impl Verdicts {
     ) -> Verdict {
         let began = SystemTime::now();
         let inputs = policy.and_then(|policy| self.inputs(entry, finished, policy));
-        let mut status = git::file_status(&entry.path, finished, self.artifacts.as_deref());
+        let mut status = git::file_status(
+            &entry.path,
+            finished,
+            self.artifacts.as_deref(),
+            &self.disposable,
+        );
         let mut owner = Vec::new();
         if status
             .left

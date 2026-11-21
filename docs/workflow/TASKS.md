@@ -2505,7 +2505,10 @@ into main as COMMIT by pull request #N` where a merged one says `merged into mai
 rule below holds for them as for any other. The sweep deletes no retained head, no receipt and
 no branch of the remote.
 Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
-build output and caches, and holds no owner verdict no commit has (an owner's dated line under a
+build output and caches (the board's own list, and the ignored paths the project names in
+`[board] sweep_disposable` of the main checkout's `symphony.toml`, where its stack keeps its
+dependencies and builds elsewhere, such as `node_modules/`), and holds no owner verdict no commit
+has (an owner's dated line under a
 card, in a document of the project's entrypoint folders, that its HEAD does not hold; a worktree
 whose documents git cannot read for one is kept, saying so). No live work holds it when no
 live or stale session is bound to it (a subagent's session is bound to its own `agent-ID`
