@@ -61,7 +61,7 @@ LET $new_title = IF $retitle {{ $title }} ELSE {{ $task.title }};
 LET $new_body = IF $rewrite {{ $body }} ELSE {{ $task.body }};
 FOR $link IN $links {{
     UPSERT type::record('link', [$slug, 'doc', $link])
-        CONTENT {{ slug: $slug, kind: 'doc', target: $link }} RETURN NONE;
+        SET slug = $slug, kind = 'doc', target = $link RETURN NONE;
 }};
 UPDATE type::record('task', $slug) SET title = $new_title, body = $new_body, version += 1 RETURN NONE;
 IF $task.title != $new_title {{

@@ -1204,6 +1204,13 @@ verification of one commit ([its card](DECISIONS.md#release-main-judged-in-steps
   once neither does. A second one does not wait for `current` to name a release serving the
   first's schema: the board may then stand more than one schema ahead of the machine's server
   until a release at its schema is `current`.
+- **A landing of an additive step** raises no `VERSION` ([the contract](CHECKS.md#the-board-is-a-contract)):
+  it owes no `board` note and starts no run of its own, as every build of the contract, the
+  machine's server among them, keeps reading and writing the board. Main's build adds the step to
+  this repository's board at its first command after the landing; a consuming project's board
+  takes it from a build that may move it there (its `just tasks migrate`), its other builds using
+  the board as it is meanwhile. A release's install says the additive steps it serves
+  (`RELEASE serves board schema N with its 2 additive steps, …`).
 
 ### The hosted clock
 

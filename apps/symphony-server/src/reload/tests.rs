@@ -1719,6 +1719,7 @@ fn a_reload_hands_over_only_to_a_release_installed_whole_by_its_own_folder() {
             commit: "abc",
             serves: release::Serves {
                 schema: symphony_board::SCHEMA,
+                additions: symphony_board::schema::ADDITIONS,
                 protocol: version,
                 tasks_api: version,
                 pin: symphony::machine::PIN,

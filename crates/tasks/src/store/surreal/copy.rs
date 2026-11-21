@@ -52,9 +52,14 @@ pub(in crate::store) fn define_staged(staging: &str, tables: &[&str]) -> String 
     staging_request(&define)
 }
 
-/// `$rows` into `table`'s staging table.
+/// `$rows` into `table`'s staging table, defined again first if another copy removed it meanwhile:
+/// the board is STRICT, so an undefined table takes no row, and the swap's count of what each
+/// staging table holds is what refuses a copy whose staging was taken ([`swap`]).
 pub(in crate::store) fn insert_staged(staging: &str, table: &str) -> String {
-    staging_request(&format!("INSERT INTO {staging}_{table} $rows RETURN NONE;"))
+    staging_request(&format!(
+        "DEFINE TABLE IF NOT EXISTS {staging}_{table} SCHEMALESS;\n\
+         INSERT INTO {staging}_{table} $rows RETURN NONE;"
+    ))
 }
 
 /// The names of `tables`' staging tables.
@@ -65,16 +70,18 @@ pub(in crate::store) fn staged(staging: &str, tables: &[&str]) -> Vec<String> {
 }
 
 /// The copy's one transaction: each of `tables`' staging tables found holding the rows the copy
-/// sent it (`$sent`, a count a table), else refused before anything is written, as the database
-/// makes a staging table again for rows sent after another copy removed it and the swap would
-/// otherwise put in a part of the board; then each table emptied and filled from its staging
+/// sent it (`$sent`, a count a table), else refused before anything is written, as a staging
+/// request defines its table again for rows sent after another copy removed it
+/// ([`insert_staged`]) and the swap would otherwise put in a part of the board; then each table emptied and filled from its staging
 /// table, which is removed, the caches of the board it replaces dropped, the counters set to `$last` and
 /// `$last_ts` (messages), `$last_task` and `$last_ask`, and the board's recovery generation
 /// replaced ([`super::recovery::REBIND`]), which is its answer: the numbers and versions the copy
 /// gives name other tasks than the ones a token was read on, in the same transaction or not at
-/// all.
-pub(in crate::store) fn swap(staging: &str, tables: &[&str]) -> String {
-    let mut swap = String::new();
+/// all. The database `database` is made STRICT again in it, as a board put back by other means
+/// than a move may have lost that ([`super::opening::strict`]).
+pub(in crate::store) fn swap(staging: &str, tables: &[&str], database: &str) -> String {
+    let mut swap = super::opening::strict(database);
+    swap.push('\n');
     // Each sender's last word goes with the messages, before them, so their deletion
     // finds no word to look past; the copied messages' events name them again.
     swap.push_str("LET $there = object::keys((INFO FOR DB).tables);\n");

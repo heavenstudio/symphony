@@ -1,4 +1,4 @@
-use super::{parse, read};
+use super::{parse, read, read_exact};
 use crate::execution::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Dispatch, Ending, Identity, Lease,
     Pending, Pin, Relation, Row, State,
@@ -441,6 +441,90 @@ fn the_shapes_no_row_holds_read_as_from_value_reads_them() {
     for value in [json!({"a": 1}), json!({"a": "s"}), json!(null)] {
         agree::<std::collections::HashMap<String, u8>>(value);
     }
+}
+
+#[test]
+fn an_open_tables_row_reads_past_a_field_it_does_not_know_and_reads_alone_refuses_it() {
+    use crate::rows::{Dump, RoleRow, TaskRow, WorkflowRow};
+    let role = json!({"slug": "a", "handle": "h", "role": "executor", "since": 1.0});
+    let mut ahead = role.clone();
+    ahead["fixture_note"] = json!({"kept": [1, null]});
+    // Through the store's reader, at the top, in a list and inside another struct, as it is read
+    // without the field.
+    let (objects, values) = both::<RoleRow>(ahead.clone());
+    assert_eq!(objects.unwrap(), read::<RoleRow>(&role).unwrap());
+    assert_eq!(
+        values.unwrap_err(),
+        "unknown field `fixture_note`, expected one of `slug`, `handle`, `role`, `since`, `expires`"
+    );
+    let rows: Vec<RoleRow> = read(&json!([role, ahead])).unwrap();
+    assert_eq!(rows[0], rows[1]);
+    let held: (Vec<RoleRow>, i64) = read(&json!([[ahead], 3])).unwrap();
+    assert_eq!(held.0[0], rows[0]);
+    // Read exactly, as a copy reads the board, it is refused at every depth: in a list, a tuple,
+    // an option, a map's value and a variant's, and the dump's own tables.
+    #[derive(Debug, Derived)]
+    enum Holding {
+        Role(#[allow(dead_code)] RoleRow),
+    }
+    let refused = "unknown field `fixture_note`, expected one of `slug`, `handle`, `role`, `since`, `expires`";
+    assert_eq!(read_exact::<RoleRow>(&role).unwrap(), rows[0]);
+    assert_eq!(
+        read_exact::<RoleRow>(&ahead).unwrap_err().to_string(),
+        refused
+    );
+    let deep = [
+        json!([role, ahead]),
+        json!([[ahead], 3]),
+        json!({"role": ahead}),
+        json!({"Role": ahead}),
+        json!({"roles": [role, ahead]}),
+    ];
+    let exactly = [
+        read_exact::<Vec<RoleRow>>(&deep[0]).map(drop),
+        read_exact::<(Vec<Option<RoleRow>>, i64)>(&deep[1]).map(drop),
+        read_exact::<std::collections::BTreeMap<String, RoleRow>>(&deep[2]).map(drop),
+        read_exact::<Holding>(&deep[3]).map(drop),
+        read_exact::<Dump>(&deep[4]).map(drop),
+    ];
+    for (value, exactly) in deep.iter().zip(exactly) {
+        assert_eq!(exactly.unwrap_err().to_string(), refused, "{value}");
+    }
+    read::<(Vec<Option<RoleRow>>, i64)>(&deep[1]).unwrap();
+    read::<std::collections::BTreeMap<String, RoleRow>>(&deep[2]).unwrap();
+    read::<Holding>(&deep[3]).unwrap();
+    assert_eq!(
+        read::<Dump>(&deep[4]).unwrap().roles,
+        [rows[0].clone(), rows[0].clone()]
+    );
+    // An alias the struct names is handed to it: SurrealDB's `sid` for a task's `id`.
+    let task = json!({"sid": 7, "slug": "sim/jump", "title": "Jump", "status": "ready",
+        "created_by": "owner", "created": 1.0, "updated": 2.0, "fixture_note": "x"});
+    let read_task: TaskRow = read(&task).unwrap();
+    assert_eq!((read_task.id, read_task.slug.as_str()), (7, "sim/jump"));
+    assert!(
+        read_exact::<TaskRow>(&task)
+            .unwrap_err()
+            .to_string()
+            .starts_with("unknown field `fixture_note`")
+    );
+    // The rest refuse it through either reader: a closed table's row and the dump itself.
+    let record = json!({"key": ["active"], "kind": "active", "body": {}, "at": 1.0, "extra": 1});
+    let (objects, values) = both::<WorkflowRow>(record);
+    assert!(objects.unwrap_err().starts_with("unknown field `extra`"));
+    assert!(values.unwrap_err().starts_with("unknown field `extra`"));
+    let dump = json!({"roles": [], "fixture_table": []});
+    let (objects, values) = both::<Dump>(dump);
+    assert!(
+        objects
+            .unwrap_err()
+            .starts_with("unknown field `fixture_table`")
+    );
+    assert!(
+        values
+            .unwrap_err()
+            .starts_with("unknown field `fixture_table`")
+    );
 }
 
 /// A map's key as a derived unit enum reads it.

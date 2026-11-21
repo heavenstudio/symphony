@@ -285,7 +285,7 @@ impl Store {
         counters: Value,
     ) -> Result<String, Error> {
         let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
-        let swap = sql::swap(staging, &names);
+        let swap = sql::swap(staging, &names, self.db.database());
         let sent: serde_json::Map<String, Value> = (tables.iter())
             .map(|(table, rows)| ((*table).to_string(), json!(rows.len())))
             .collect();
@@ -349,11 +349,18 @@ impl Store {
     /// value agrees with its saved JSON: jsonb alone expands exponents and forgets negative zero.
     /// Every task-field setter updates `copied_fields` at the assigned path; replacements do not
     /// inherit the old value's spelling. A copy replaces the text, and task deletion removes it.
+    ///
+    /// Refused on a board of its contract with other additive steps than its own, whose tables and
+    /// fields it would leave out ([`Store::with_own_steps`]).
     pub fn dump(&self) -> Result<Dump, Error> {
+        self.with_own_steps(|| self.dump_read())
+    }
+
+    fn dump_read(&self) -> Result<Dump, Error> {
         let dump = || both(sql::DUMP, Pg::read(postgres::copy::DUMP.as_str()));
         let mut dump: Dump = if self.db.is_postgresql() {
             let (mut dump, copied): (Dump, Vec<(String, String, Value)>) =
-                self.retrying(|| self.transact(dump(), json!({})))?;
+                read_strictly(self.retrying(|| self.transact(dump(), json!({})))?)?;
             for (slug, original, normalized) in copied {
                 let original: Value = serde_json::from_str(&original)
                     .map_err(|e| Error::Db(format!("copied fields: {e}")))?;
@@ -371,7 +378,7 @@ impl Store {
             }
             dump
         } else {
-            self.retrying(|| self.transact(dump(), json!({})))?
+            read_strictly(self.retrying(|| self.transact(dump(), json!({})))?)?
         };
         // The execution tables' rows in the order of their ids, and each row's fields in one order
         // at every depth, as the two databases neither return rows nor order a document's fields
@@ -401,6 +408,14 @@ impl Store {
         }
         Ok(dump)
     }
+}
+
+/// `read`, the board's rows as the dump reads them, as a `T`, refused where a row holds a field the
+/// dump does not know, which a copy of it would drop: read exactly ([`crate::objects::read_exact`]),
+/// where the store's answers hand an open table's row only its own ([`crate::rows::open_row`]).
+fn read_strictly<T: serde::de::DeserializeOwned>(read: Value) -> Result<T, Error> {
+    crate::objects::read_exact(&read)
+        .map_err(|why| Error::Refused(format!("the board's rows are not the dump's: {why}")))
 }
 
 /// The tables a move of the board to another engine carries beside the dump's

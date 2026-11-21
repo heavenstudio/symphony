@@ -58,6 +58,7 @@ fn installed(tree: &Tree, name: &str, pin: u32, schema: i64) -> PathBuf {
             commit: "0123abcd",
             serves: Serves {
                 schema,
+                additions: 0,
                 protocol: version,
                 tasks_api: version,
                 pin,
