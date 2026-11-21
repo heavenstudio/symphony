@@ -562,9 +562,9 @@ fn a_lagging_writer_holds_every_board_and_current_until_it_is_rebuilt() {
              writer seen there in the last week is behind {RELEASE}'s schema 19: {}",
             this_writer()
         )) && out.contains(
-            " ago); rebuild each at schema 19 and run it once, which records it, then an \
-             orchestrator's `just release --refresh` moves it (`just symphony-cli \
-             release-notes` in the project says what taking the release asks of it)\n"
+            " ago); rebuild each at schema 19 and run it once, which records it, then the \
+             Symphony moves it (`just symphony-cli release-notes` in the project says what \
+             taking the release asks of it)\n"
         ),
         "{out}"
     );

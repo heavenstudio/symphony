@@ -694,6 +694,33 @@ red only when COMMIT holds the commit that red was found on, so an urgent fix fr
 leaves it open. It holds no release candidate and runs whatever one is held; a release of it that
 the candidate does not descend from drops the candidate ([below](#its-bounds)).
 
+## On GitHub's runners
+
+`.github/workflows/release-verify.yml` runs one commit's own `just verify` on GitHub's macOS
+runners, a job for each step that commit's `tools/verify.sh` names, the tests one job with their
+`nextest-setup`. It is the first part of the design [its card](DECISIONS.md#release-run-on-github)
+approved, whose [analysis](analysis/release-pipeline.md#the-hosted-run-on-github) says the rest.
+`just release` does not start it: the release run verifies on this machine, as above.
+
+- **Started by hand alone**, for a full commit: `gh workflow run release-verify.yml -f
+  commit=COMMIT`. Its first job refuses an input that is not the full commit it checked out (a
+  branch, a tag or a short commit), and lists the steps; no other job runs before it. It starts on
+  no push, pull request or clock.
+- **It writes nothing.** It is given no secret, its token reads the repository's contents alone and
+  is left in no checkout, and each action it takes is pinned by a commit, so it tags, pushes and
+  publishes nothing.
+- **Each job** checks the commit out with its history, installs by Homebrew what no pin of the tree
+  holds (just, fnm, and PostgreSQL 18 and 16 as [PROJECT_FILE](PROJECT_FILE.md#board) and
+  [POSTGRESQL](POSTGRESQL.md#a-hosted-board) install them), takes the toolchain and Node by the
+  tree's own pins, names the runner image's Chrome with `SYMPHONY_CHROME`, and says the machine and
+  the versions no pin holds. It runs `just verify STEP` with no recorder (`TASKS_RECORDER=off`),
+  says the swap used, the pages swapped out, the disk left and the build folder's size after it,
+  and uploads its `build/verify` folder, the step's log, its line of `steps.tsv` and the tests'
+  lanes' logs, however the step ended.
+
+`crates/symphony-build/tests/hosted_workflow.rs` holds the file to those bounds, each refusal on a
+variant of it, and runs its two scripts as GitHub runs them.
+
 ## The release candidate
 
 A release may never come if each run judges main's tip: a red's fix lands with everything else
