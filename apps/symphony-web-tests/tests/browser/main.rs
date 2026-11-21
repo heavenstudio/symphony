@@ -128,9 +128,18 @@ fn announced(what: &str, said: &std::sync::mpsc::Receiver<String>) -> Result<Str
     .unwrap_or_else(|stall| Err(stall.to_string()))
 }
 /// A page script that leaves the page no IndexedDB, as a browser without one: the client cache's
-/// store misses every read and keeps nothing (`assets/cache.js`), so a return visit to the board
+/// store misses every read and keeps nothing (`shell/cache.ts`), so a return visit to the board
 /// or the queue draws from the server under its ghost, as one the device has no copy for does.
 const NO_STORE: &str = "Object.defineProperty(window, 'indexedDB', { value: undefined });";
+
+/// The width the window leaves a page beside its scrollbar, as a script's expression: the root's,
+/// which the root's scrollbar gutter (`scrollbar-gutter: stable`, styles/board.css) narrows
+/// whether or not the page scrolls, as it does the page's fixed controls. Chrome draws a classic
+/// scrollbar, 15 px of every width, or an overlay one, none, as the machine's settings choose
+/// (macOS's automatic scroll bars are classic while a mouse is attached), so what fills the window
+/// is this wide, never `innerWidth`; nor `document.documentElement.clientWidth`, which leaves the
+/// gutter out only while the page scrolls.
+const PAGE_WIDTH: &str = "document.documentElement.getBoundingClientRect().width";
 
 /// Hold, from the page's first script on, every timer of the asks' retry the page sets
 /// ([`symphony_web_tests::RETRY_MS`]: a failed read of a document's questions or of the chat's
@@ -195,7 +204,7 @@ fn the_ask_poll_hold_keeps_a_retry_left_waiting_and_lets_a_cleared_one_go() {
 /// A page script that keeps every idle callback the page asks for, none run by the browser, until
 /// the test runs them ([`RUN_IDLE`]): `window.idle` holds them. The shell asks the idle browser
 /// for its warm-up and its read-ahead in the task that marks the page ready
-/// (`data-navigation=ready`, shell.js), and for nothing where the browser saves data or its link
+/// (`data-navigation=ready`, shell.ts), and for nothing where the browser saves data or its link
 /// is too slow: so a page that is ready has asked for every one it will, and one that asked for
 /// none warms and reads nothing, with no window to wait through to see it.
 const HOLD_IDLE: &str =

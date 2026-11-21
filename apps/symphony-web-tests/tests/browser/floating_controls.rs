@@ -28,12 +28,13 @@ fn settle(page: &mut Chrome) {
 }
 
 /// The dock and the controls it holds: whether it spans the window's foot, which fixed controls
-/// stick out of it, which a click at their middle would miss, and which overlap each other.
+/// stick out of it, which a click at their middle would miss, and which overlap each other. The
+/// window is as wide as it leaves the page beside its scrollbar ([`super::PAGE_WIDTH`]).
 const DOCK: &str = r#"(() => {
     const name = control => control.id || control.className;
     const dock = document.querySelector('.frame-dock')?.getBoundingClientRect();
     if (!dock) return 'no dock';
-    const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+    const width = document.documentElement.getBoundingClientRect().width, height = document.documentElement.clientHeight;
     const controls = [...document.querySelectorAll('.frame-pending, #quick-open, .doc-toc')]
         .filter(control => getComputedStyle(control).position === 'fixed' && control.getBoundingClientRect().width > 0);
     const boxes = controls.map(control => [control, control.getBoundingClientRect()]);
@@ -88,11 +89,12 @@ const UNDER_DOCK: &str = "(() => {const box=document.querySelector('a.go').getBo
 
 /// What the window's foot draws with nothing but the chat button to hold: whether the dock's bar
 /// draws, whether a pending bar is there, and whether the "+" sits alone in the window's corner,
-/// at the dock's lift.
+/// at the dock's lift, the window as wide as it leaves the page beside its scrollbar
+/// ([`super::PAGE_WIDTH`]).
 const BARE: &str = r#"(() => {
     const dock = document.querySelector('.frame-dock')?.getBoundingClientRect();
     const open = document.querySelector('#quick-open').getBoundingClientRect();
-    const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+    const width = document.documentElement.getBoundingClientRect().width, height = document.documentElement.clientHeight;
     return {
         bar: !!dock && dock.width > 0 && dock.height > 0,
         pending: document.querySelector('.frame-pending') !== null,

@@ -68,7 +68,8 @@ pub struct Stamp {
     pub standing: Standing,
     /// Its reader's line, or the assessment's reason for a waiver.
     pub detail: String,
-    /// What it stands on: the recorded runs' ids, or the thread's line.
+    /// What it stands on: the recorded runs' ids, the thread's line, or the cards the owner
+    /// approved (`card:NAME`).
     pub evidence: Vec<String>,
     /// Missing because what it reads is red at the head (a command's newest run there failed),
     /// not because it is not given yet: what the check of it says fails, and no later write but
@@ -216,10 +217,15 @@ pub fn snapshot(
                 .map(|line| format!("thread:{line}"))
                 .into_iter()
                 .collect(),
-            needs::OWNER => (read::owner(thread, head).line)
-                .map(|line| format!("thread:{line}"))
-                .into_iter()
-                .collect(),
+            needs::OWNER => {
+                let reading = read::owner_at(thread, head, main);
+                (reading
+                    .line
+                    .map(|line| format!("thread:{line}"))
+                    .into_iter())
+                .chain(reading.cards.iter().map(|card| format!("card:{card}")))
+                .collect()
+            }
             _ => Vec::new(),
         }
     };

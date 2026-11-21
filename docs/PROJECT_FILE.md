@@ -357,6 +357,7 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `review_alarm_hours` | `4` | the hours review must stay over the ratio to raise it |
 | `review_alarm_clear_hours` | `1` | the hours review must stay at or under it to clear it |
 | `swept_cap_gb` | `5` | the gigabytes the evidence kept of removed worktrees may hold before the sweep asks for a check by hand |
+| `stale_writer_hours` | `24` | the hours a build that wrote the board, on this machine, may go without running before it holds no move of the board to a release, unless it is a build the project runs now: one a link in its main checkout's `.target/bin` names ([RELEASES](RELEASES.md#the-refresh)); a whole number over 0 |
 | `postgresql` | discover `postgres` on `PATH` | an explicit absolute folder of the machine's PostgreSQL programs takes precedence over discovery; the server of a board whose home names PostgreSQL starts it ([DECISIONS](DECISIONS.md#postgresql-binary-source)) |
 | `external_postgresql` | none: the board is the machine's own | `[board.external_postgresql]`, where a hosted board's PostgreSQL is and the budget of its connections, as below |
 | `machine_wip` | none | `[board.machine_wip.MACHINE]`, advice per machine, as below |
@@ -494,5 +495,6 @@ other project runs.
 | `refresh` | `true` | whether a green release refreshes the machine |
 | `publish` | `false` | whether a green release, once pushed, publishes on crates.io each package whose version it lacks ([RELEASES](RELEASES.md#packages-on-cratesio)) |
 | `github` | none | the command a green release, once pushed, asks for its GitHub Release, run as `COMMAND… --request FILE`: `["symphony-github", "release"]` names the GitHub adapter's; with none, no program is run ([RELEASES](RELEASES.md#a-github-release)) |
+| `rulesets` | none | the command each run runs after its checks as the check `rulesets`, in the main checkout, red unless it exits 0: `["symphony-github", "rulesets", "--verify"]` verifies again who bypasses the default branch's rules, where the adapter's settings publish pull requests; with none, the run has no such check ([RELEASES](RELEASES.md#who-bypasses-the-rules-again)) |
 | `candidate_reruns` | `3` | the red reruns a release candidate takes before it is dropped |
 | `candidate_hours` | `24` | the hours a release candidate is held before it is dropped |

@@ -194,7 +194,6 @@ impl World {
             release: &self.release,
             kept: shape.kept,
             pointed: !shape.unpointed,
-            held: shape.held,
             ends: &[],
             front,
             writes: if shape.unsure {
@@ -236,14 +235,12 @@ impl World {
     }
 }
 
-/// What a refresh did besides its boards: `current` as it named it, whether it pointed it and why
-/// not, whether the board is this repository's, and whether the server's list cannot say yet if it
-/// writes it.
+/// What a refresh did besides its boards: `current` as it named it, whether it pointed it, whether
+/// the board is this repository's, and whether the server's list cannot say yet if it writes it.
 #[derive(Default)]
 struct Shape {
     kept: Option<i64>,
     unpointed: bool,
-    held: Option<&'static str>,
     ours: bool,
     unsure: bool,
 }
@@ -430,20 +427,6 @@ fn an_update_waits_without_a_release_serving_it_or_a_server_and_a_failed_move_fa
     assert_eq!(
         lines,
         ["updates: alpha@19 waits: no server answers on this machine to write it"]
-    );
-    // A board waiting on another's move waits too.
-    let waiting = End::Waiting("the move of beta's board failed".into());
-    let lines = world.refresh(
-        &fakes,
-        Some(18),
-        Some(waiting),
-        front(7, RELEASE, 19),
-        Some(false),
-        NOW,
-    );
-    assert_eq!(
-        lines,
-        ["updates: alpha@19 waits: its board waits for the boards that hold every move"]
     );
     assert!(fakes.ours.slugs().is_empty());
     // Its own move failed: a failure though no server answers, its board's schema unread.
@@ -992,12 +975,12 @@ fn this_repositorys_board_ahead_of_every_release_waits_for_one_and_one_written_a
 }
 
 #[test]
-fn an_open_update_its_board_moved_past_ends_and_a_held_current_is_why_it_failed() {
+fn an_open_update_its_board_moved_past_ends_and_a_current_not_pointed_leaves_the_server_behind() {
     let world = World::new(19);
     let fakes = Fakes::default();
-    let held = Shape {
+    // `current` could not be pointed (the install's red): the server stays behind the board.
+    let unpointed = Shape {
         unpointed: true,
-        held: Some("current is not pointed: beta holds the release"),
         ..Shape::default()
     };
     let lines = world.refresh_as(
@@ -1007,15 +990,16 @@ fn an_open_update_its_board_moved_past_ends_and_a_held_current_is_why_it_failed(
         front(7, RELEASE, 18),
         None,
         NOW,
-        &held,
+        &unpointed,
     );
     assert!(
-        lines[0].starts_with(
-            "updates: alpha@19 failed: current is not pointed: beta holds the release; filed "
-        ),
+        lines[0].starts_with(&format!(
+            "updates: alpha@19 failed: the machine's server, the release {RELEASE} at schema 18, \
+             does not write its board at schema 19; filed "
+        )),
         "{lines:?}"
     );
-    // Behind its goal with current held, the line says both.
+    // Behind its goal, the line says where it stays.
     let behind = World::new(19);
     let lines = behind.refresh_as(
         &fakes,
@@ -1024,13 +1008,11 @@ fn an_open_update_its_board_moved_past_ends_and_a_held_current_is_why_it_failed(
         front(7, RELEASE, 18),
         None,
         NOW,
-        &held,
+        &unpointed,
     );
     assert!(
-        lines[0].starts_with(
-            "updates: alpha@19 failed: its board is at schema 18, not moved to 19: current is not \
-             pointed: beta holds the release; "
-        ),
+        lines[0]
+            .starts_with("updates: alpha@19 failed: its board is at schema 18, not moved to 19; "),
         "{lines:?}"
     );
     // The board moved on past it: ended, its task closed.

@@ -126,7 +126,8 @@ task's evidence it and `tasks api` go by
 ([TASKS](../../docs/TASKS.md#a-land-delivered-by-a-pull-request)).
 `covering.rs` with `store/work/covered.rs` is a close covered by another landing
 ([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
-the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `gates.rs` with
+the stamps' catalogue and readers, `stamps/posted.rs` the cards a branch posted that the `owner`
+stamp's reader reads ([TASKS](../../docs/TASKS.md#needed-stamps)), `gates.rs` with
 `store/work/gates.rs` and `cli/commands/gate.rs` a task's gate decisions, which `land/needs.rs`
 reads ([TASKS](../../docs/TASKS.md#gate-decisions)), `red.rs` the red mark.
 

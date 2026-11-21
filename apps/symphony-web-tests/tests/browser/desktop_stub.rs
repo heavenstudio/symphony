@@ -1,4 +1,4 @@
-//! The desktop app's one script in a server's pages (`apps/symphony-desktop/src/notification.js`):
+//! The desktop app's one script in a server's pages (`apps/symphony-desktop/src/notification.ts`):
 //! notifications read as denied, so home, which tells the owner from the background when the count
 //! rises, tells them nothing in the app's window, which tells them itself, and throws nothing.
 
@@ -8,7 +8,7 @@ use super::tabs::{self, HEARD, Tab};
 use super::{chrome, site};
 
 /// The script the app runs before every page it shows.
-const STUB: &str = include_str!("../../../symphony-desktop/src/notification.js");
+const STUB: &str = include_str!("../../../symphony-desktop/src/notification.ts");
 
 /// Run before the page: every error and unhandled rejection it throws, by its message.
 const THROWN: &str = r"(() => {

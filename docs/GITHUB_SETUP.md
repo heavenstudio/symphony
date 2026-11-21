@@ -206,6 +206,12 @@ nothing, until steps 7 and 8 are done.
    ([who bypasses the rules](GITHUB.md#who-bypasses-the-rules)). Any change to a ruleset, its
    bypass list or its enforcement, stops every delivery until it is verified again.
 
+   On the Symphony's own repository, whose release run is the one there is, each release run can
+   verify it again: commit `rulesets = ["symphony-github", "rulesets", "--verify"]` to the
+   `[releases]` table of `symphony.toml` ([RELEASES](RELEASES.md#who-bypasses-the-rules-again)).
+   The run starts that program by name, so it is on the `PATH` of whoever starts the release run,
+   whose gh is signed in as above. A run where the policy does not hold is red, and files it.
+
 A repository that imports an upstream ([delivering an import](GITHUB.md#delivering-an-import))
 differs in three places: its merge settings allow merge commits beside squash; the ruleset
 names Merge beside Squash, and no ruleset requires a linear history; and the settings add
