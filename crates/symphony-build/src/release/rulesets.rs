@@ -14,6 +14,7 @@
 use std::path::Path;
 
 use super::checks::Step;
+use super::rerun::quoted;
 
 /// The check's name: what its log, its record and its red task are named by.
 pub(crate) const NAME: &str = "rulesets";
@@ -23,25 +24,15 @@ pub(crate) fn step(main: &Path, command: &[String]) -> Option<Step> {
     if command.is_empty() {
         return None;
     }
-    let words: Vec<String> = command.iter().map(|word| word_of(word)).collect();
+    let words: Vec<String> = command.iter().map(|word| quoted(word)).collect();
     Some(Step::shell(
         NAME,
         &format!(
             "cd {} && {}",
-            word_of(&main.to_string_lossy()),
+            quoted(&main.to_string_lossy()),
             words.join(" ")
         ),
     ))
-}
-
-/// `text` as one word of `sh`: as it is when every character is one no shell reads, else quoted.
-fn word_of(text: &str) -> String {
-    let plain = !text.is_empty()
-        && (text.chars()).all(|c| c.is_ascii_alphanumeric() || "-_./=:@%+,".contains(c));
-    if plain {
-        return text.to_string();
-    }
-    format!("'{}'", text.replace('\'', r"'\''"))
 }
 
 #[cfg(test)]
@@ -71,25 +62,6 @@ mod tests {
                 "cd /projects/symphony && symphony-github rulesets --verify"
             )
         );
-    }
-
-    #[test]
-    fn a_word_a_shell_reads_is_quoted_and_every_other_kept_as_it_is() {
-        for (text, said) in [
-            ("symphony-github", "symphony-github"),
-            ("--branch=main", "--branch=main"),
-            ("/a/b_c/d.e:f@g%h+i,j", "/a/b_c/d.e:f@g%h+i,j"),
-            ("", "''"),
-            ("Night Shift", "'Night Shift'"),
-            ("it's", r"'it'\''s'"),
-            ("$HOME", "'$HOME'"),
-            ("a;b", "'a;b'"),
-            ("*", "'*'"),
-            ("~", "'~'"),
-            ("é", "'é'"),
-        ] {
-            assert_eq!(word_of(text), said, "{text:?}");
-        }
     }
 
     #[test]

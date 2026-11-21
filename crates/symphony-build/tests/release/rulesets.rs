@@ -255,7 +255,10 @@ fn answered_outside(fixture: &Fixture, slug: &str) {
 #[test]
 fn a_command_that_cannot_run_or_an_adapter_unavailable_or_turned_off_is_red_and_says_why() {
     for (script, code, why) in [
-        (None, 127, "/nowhere/symphony-github"),
+        // The shell's own line from the log (`sh: /nowhere/symphony-github: No such file or
+        // directory`, or dash's `not found`): the red's Command line names the program with no
+        // colon after it.
+        (None, 127, "/nowhere/symphony-github: "),
         (
             Some("echo 'not read whole, nothing kept: gh api repos/o/n: HTTP 503'; exit 1"),
             1,
