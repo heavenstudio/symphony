@@ -222,6 +222,26 @@ pub(super) fn unmark(folder: &Path, slug: &str) {
     let _ = fs::remove_file(mark(folder, slug));
 }
 
+/// Whether `said`, a refusal and the head it was made at, is new for `slug`: not the last one said
+/// on its thread, which it is from now on. Kept in the lands' `folder` beside its journal and
+/// beyond it, as `SLUG.said`, so what holds a journal in hand writes nothing over it.
+pub(super) fn said(folder: &Path, slug: &str, said: &str) -> bool {
+    let path = folder.join(format!("{}{SAID}", super::file_stem(slug)));
+    if fs::read_to_string(&path).is_ok_and(|last| last == said) {
+        return false;
+    }
+    let _ = fs::write(&path, said);
+    true
+}
+
+/// `slug`'s last refusal said forgotten ([`said`]): its delivery ended, landed or cancelled.
+pub(super) fn unsaid(folder: &Path, slug: &str) {
+    let _ = fs::remove_file(folder.join(format!("{}{SAID}", super::file_stem(slug))));
+}
+
+/// The ending of the file a task's last refusal said is kept in ([`said`]).
+const SAID: &str = ".said";
+
 /// The watcher started detached from the main checkout `main` where none runs and `env` starts one
 /// ([`enabled`]): the line saying it started, or none where one runs already or none starts.
 pub fn watch_start(env: &Env, main: &Path) -> Option<String> {
@@ -896,6 +916,7 @@ impl Landing<'_> {
     fn cancelled(&mut self, journal: Option<Journal>) -> Result<String, Stop> {
         let slug = self.slug;
         unmark(&self.folder, slug);
+        unsaid(&self.folder, slug);
         let Some(journal) = journal else {
             return Ok(format!("{slug} is cancelled: nothing to close"));
         };

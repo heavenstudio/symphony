@@ -1039,7 +1039,8 @@ impl Landing<'_> {
         let (said, why) = state(&answer);
         match said {
             "armed" => {
-                let first = journal.stage != Stage::Armed;
+                // Said once an arming: not again at each publication its merge stays armed through.
+                let first = !journal.armed;
                 journal.stage = Stage::Armed;
                 journal.armed = true;
                 journal.green = if eligible {
@@ -2016,6 +2017,7 @@ impl Landing<'_> {
         }
         Journal::drop_in(&self.folder, slug);
         super::dispatch::unmark(&self.folder, slug);
+        super::dispatch::unsaid(&self.folder, slug);
         Ok(line)
     }
 }

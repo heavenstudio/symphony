@@ -2706,7 +2706,10 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   an arming and has not answered a disarm since: a publication between keeps it so, as the host
   keeps its merge armed across a push, and one that stopped before the host answered its arming
   again (an answer lost, a host away) has its pull request read every round, whatever its checks
-  said, and is published and armed again. A task whose evidence does not
+  said, and is published and armed again. A refusal a round stops at (a head refused at the head,
+  an arming refused) holds until what it names changes, so it is said on the thread once at the
+  branch's head, however many rounds read it again (`SLUG.said` in the lands' folder keeps the
+  last one said, by a land, a dispatch or a round). A task whose evidence does not
   stand yet costs it no read of the host, which merges nothing while eligible is pending; it reads
   its evidence again, so a write no command dispatches for (the owner's through the Symphony, a run
   recorded at the head) is published at its next round. One whose evidence stands has its pull

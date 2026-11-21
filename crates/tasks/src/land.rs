@@ -1216,7 +1216,7 @@ fn landing(
         named: false,
         transport,
         delivery,
-        dispatch: matches!(mode, Mode::Dispatch),
+        mode,
         out,
     };
     let landed = match mode {
@@ -1870,9 +1870,10 @@ struct Landing<'a> {
     transport: Option<&'a dyn delivery::Transport>,
     /// `[land] delivery` ([`delivery::command`]): empty where the land merges here and pushes.
     delivery: Vec<String>,
-    /// Whether it is a dispatch ([`dispatch`]), which runs detached with its lines in its log
-    /// alone: what stops it is said on the task's thread as well ([`Landing::refuse`]).
-    dispatch: bool,
+    /// What it is: a land; a dispatch ([`dispatch`]), which runs detached with its lines in its
+    /// log alone, so what stops it is said on the task's thread as well; or a watcher's round,
+    /// which says a refusal on the thread once at a head ([`Landing::refuse`]).
+    mode: Mode,
     out: &'a mut dyn Write,
 }
 
@@ -1991,7 +1992,7 @@ impl Landing<'_> {
     /// do; the stop it makes.
     fn refuse(&self, refusal: Refusal) -> Stop {
         if !refusal.thread || !self.task {
-            if self.dispatch && self.task {
+            if matches!(self.mode, Mode::Dispatch) && self.task {
                 // Nobody reads a dispatch's log: a task its dispatch left undelivered says so.
                 let slug = self.slug;
                 self.post(
@@ -2003,6 +2004,13 @@ impl Landing<'_> {
                     Some("@orchestrator"),
                 );
             }
+            return Stop::Refused(refusal.line);
+        }
+        // A watcher round stops where the last one did until what stopped it changes: what it
+        // refuses is said once at the branch's head, whoever said it first (a land, a dispatch).
+        let tip = rev(&self.main, &format!("refs/heads/{}", self.slug)).unwrap_or_default();
+        let new = dispatch::said(&self.folder, self.slug, &format!("{tip} {}", refusal.line));
+        if !new && matches!(self.mode, Mode::Watch(_)) {
             return Stop::Refused(refusal.line);
         }
         let slug = self.slug;

@@ -382,6 +382,11 @@ fn a_head_or_evidence_changed_with_no_dispatch_is_published_again_by_the_watcher
     );
     assert_eq!(host.verbs()[2..], ["publish", "arm"]);
     assert_eq!(host.request("publish")["snapshot"]["eligible"], true);
+    // Armed through it: the thread heard its dispatch once, at the first arming.
+    let dispatches = (r.board.said(SLUG).iter())
+        .filter(|line| line.contains(&format!("land {SLUG}: dispatched ")))
+        .count();
+    assert_eq!(dispatches, 1);
     // Its next round finds it merged.
     let (said, line, _) = watched(&r, &host, dispatch::seconds(), 2, &[]);
     assert!(said.contains(&format!("landed {SLUG} on main")), "{said}");
@@ -1036,6 +1041,73 @@ fn a_first_dispatch_that_stops_before_it_binds_is_said_and_made_by_the_next_disp
     assert!(host.is_armed());
     let kept = journal(&r, SLUG);
     assert_eq!((kept.stage, kept.armed), (Stage::Armed, true));
+}
+
+/// The posts on `slug`'s thread that hold `text`.
+fn posts(r: &Repo, slug: &str, text: &str) -> usize {
+    (r.board.said(slug).iter())
+        .filter(|line| line.contains(text))
+        .count()
+}
+
+#[test]
+fn a_refusal_a_watcher_round_stops_at_is_said_once_at_a_head_however_many_rounds_read_it() {
+    // A new head refused at the head: one that changes a generator's outputs, as an executor
+    // committing the built client during review does.
+    let (r, bare) = delivering();
+    project_file(
+        &r,
+        &format!(
+            "{DELIVERS}generators = [{{ name = \"the client\", outputs = \"dist/\", command = \
+             [\"true\"] }}]\n"
+        ),
+    );
+    git(&r.root, &["push", "-q", "origin", "main"]);
+    let (people, wt, _) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare);
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    assert!(host.is_armed());
+    write(&wt, "dist/app.js", "built\n");
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", "its own build"]);
+    let refused = "changes 1 generated path (dist/app.js)";
+    let (said, line, rested) = watched(&r, &host, dispatch::seconds(), 3, &[]);
+    assert_eq!(line, "1 armed at the host after 3 round(s)", "{said}");
+    assert_eq!(rested, 3);
+    assert_eq!(
+        said.matches(refused).count(),
+        3,
+        "each round reads it: {said}"
+    );
+    assert_eq!(posts(&r, SLUG, refused), 1, "said once on the thread");
+    assert_eq!(
+        host.verbs()[..2],
+        ["publish", "arm"],
+        "nothing published since"
+    );
+    // Another head refused: said again, once.
+    write(&wt, "dist/app.js", "built again\n");
+    git(&wt, &["commit", "-qam", "its own build again"]);
+    watched(&r, &host, dispatch::seconds(), 2, &[]);
+    assert_eq!(posts(&r, SLUG, refused), 2, "once a head");
+
+    // An arming refused after its publication, the merge armed before: the task stays watched
+    // and is published again each round, and its refusal is said once.
+    let (r, bare) = delivering();
+    let (people, _, tip) = pending(&r, SLUG, "sim/jump.gd");
+    let mut host = Host::new(&r, &bare);
+    dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    host.arms = Arms::Refuses("policy");
+    host.waits();
+    approve(&r, SLUG, &format!("{tip}: reads well"));
+    let refused = "refused to arm pull request #3 of";
+    let (said, line, _) = watched(&r, &host, dispatch::seconds(), 3, &[]);
+    assert_eq!(line, "1 armed at the host after 3 round(s)", "{said}");
+    assert_eq!(said.matches(refused).count(), 3, "{said}");
+    assert_eq!(posts(&r, SLUG, refused), 1, "said once on the thread");
+    let arms = host.verbs().iter().filter(|verb| *verb == "arm").count();
+    assert_eq!(arms, 4, "the dispatch's, then one a round");
+    assert!(journal(&r, SLUG).watched());
 }
 
 // -- what a dispatch leaves alone ------------------------------------------------------------------
