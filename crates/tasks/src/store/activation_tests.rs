@@ -344,7 +344,9 @@ fn an_activation_moves_the_boards_marker_and_a_board_read_carries_its_generation
 fn a_return_moves_the_boards_marker_and_a_board_read_carries_no_generation() {
     for backend in BACKENDS {
         let f = Fixture::on(backend, Seed::default());
-        f.store.activate_workflow(&mapped(), &Host::local()).unwrap();
+        f.store
+            .activate_workflow(&mapped(), &Host::local())
+            .unwrap();
         assert_eq!(f.store.clock_board().unwrap().workflow_generation, Some(1));
         let marker = f.store.marker().unwrap();
         assert_eq!(
