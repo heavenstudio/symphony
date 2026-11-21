@@ -1564,7 +1564,9 @@ mod tests {
         );
         assert_eq!(
             said(theirs),
-            said(io::Error::from_raw_os_error(spawnp_answers(code, found, darwin))),
+            said(io::Error::from_raw_os_error(spawnp_answers(
+                code, found, darwin
+            ))),
             "{case}: std"
         );
     }
