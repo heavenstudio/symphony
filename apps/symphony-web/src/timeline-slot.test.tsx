@@ -56,9 +56,15 @@ function aPage(shell: Record<string, unknown> = {}, notice: { remove: () => void
 
 /** A chunk's host that draws its task and what its part holds, and says it drew 212.4 px on a
  * phone. */
-function DrawnHost({ slug, part, onDrawn }: HostProps) {
+function DrawnHost({ slug, part, tokens, onDrawn }: HostProps) {
   onDrawn?.(false, 212.4);
-  return <i data-slug={slug} data-part={JSON.stringify(part.value ?? null)} />;
+  return (
+    <i
+      data-slug={slug}
+      data-part={JSON.stringify(part.value ?? null)}
+      data-tokens={tokens === undefined ? undefined : JSON.stringify(tokens)}
+    />
+  );
 }
 
 /** The slot's module afresh, its chunk not imported yet: one per test of the loader. */
@@ -215,10 +221,10 @@ describe("the timeline's box", () => {
       ".tl-box:has(.tl-failed) {\n  height: auto;\n  min-height: var(--tl-narrow);\n}",
     );
     expect(style).toContain("  .tl-box:has(.tl-failed) {\n    min-height: var(--tl-wide);\n  }\n}");
-    // On a phone, a box that holds every step grows with a run's row a tap focused, never under
-    // its height; one that clips keeps it.
+    // On a phone, a box that holds every step grows with a row a tap focused, or with the words
+    // of the total's cost, never under its height; one that clips keeps it for a row.
     expect(style).toContain(
-      "@media (max-width: 899.98px) {\n  .tl-box:has(.tl-drawn:not(.tl-clipped) .tl-sub:focus) {\n    height: auto;\n    min-height: var(--tl-narrow);\n  }\n}",
+      "@media (max-width: 899.98px) {\n  .tl-box:has(.tl-drawn:not(.tl-clipped) .tl-row:focus, .tl-cost:focus) {\n    height: auto;\n    min-height: var(--tl-narrow);\n  }\n}",
     );
     // The timeline is laid out where the shell put its root, which the box still holds.
     expect(style).toContain('.tl-box > [id="timeline-root"]:not([hidden]) {');
@@ -384,20 +390,23 @@ describe("the timeline's chunk", () => {
         status: 200,
         ok: true,
         headers: { get: () => null },
-        json: async () => ({ now: 7 }),
+        json: async () => (url.includes("task-tokens") ? { total: 3 } : { now: 7 }),
       } as unknown as Response;
     });
     vi.doMock("./timeline", () => ({ TimelineHost: DrawnHost }));
     const slot = await aSlot();
     // The store and the part the slot's own module names, not this file's copies.
     const { Parts, PartsContext } = await import("./parts");
-    const { timelinePart } = await import("./task-live");
+    const { timelinePart, tokensPart } = await import("./task-live");
     const mount = new AbortController();
     const parts = new Parts(mount.signal);
     const part = timelinePart("", "tools/new");
     parts.open(part);
     await until(() => expect(parts.shown(part).answered).toBe(true));
     expect(asked).toEqual(["/api/task-timeline?slug=tools%2Fnew"]);
+    // The box asks for the task's tokens beside its timeline: before they come the timeline is
+    // handed none, and draws without.
+    const spent = tokensPart("", "tools/new");
     const inPage = () =>
       renderToStaticMarkup(
         <PartsContext.Provider value={parts}>
@@ -417,6 +426,16 @@ describe("the timeline's chunk", () => {
     // With the chunk come, the box asks for nothing more.
     expect(react.effects.at(-1)?.()).toBeUndefined();
     expect(asked).toHaveLength(1);
+    // The tokens, once their part answered, are handed on as the server sent them.
+    parts.open(spent);
+    await until(() => expect(parts.shown(spent).answered).toBe(true));
+    expect(asked).toEqual([
+      "/api/task-timeline?slug=tools%2Fnew",
+      "/api/task-tokens?slug=tools%2Fnew",
+    ]);
+    expect(inPage()).toContain(
+      'data-part="{&quot;now&quot;:7}" data-tokens="{&quot;total&quot;:3}"></i>',
+    );
     mount.abort();
   });
 });

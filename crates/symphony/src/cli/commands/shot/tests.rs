@@ -26,6 +26,7 @@ fn a_bare_shot_takes_the_desktop_viewport_and_twenty_seconds() {
             view: View::Size(1440, 900),
             full_page: false,
             scheme: None,
+            clock: None,
             report: false,
             attach: false,
             steps: Vec::new(),
@@ -130,6 +131,42 @@ fn the_view_options_read_as_given() {
 }
 
 #[test]
+fn a_clock_is_whole_seconds_since_1970_the_last_one_given() {
+    let none = shot(&["about:blank", "--out", "x.png"]);
+    assert_eq!(none.clock, None);
+    let held = shot(&["about:blank", "--out", "x.png", "--clock", "1772443800"]);
+    assert_eq!(held.clock, Some(1_772_443_800));
+    // The first second and the last a page's Date holds.
+    assert_eq!(
+        shot(&["about:blank", "--out", "x.png", "--clock", "0"]).clock,
+        Some(0)
+    );
+    let last = shot(&["about:blank", "--out", "x.png", "--clock=8640000000000"]);
+    assert_eq!(last.clock, Some(8_640_000_000_000));
+    let twice = shot(&[
+        "about:blank",
+        "--out",
+        "x.png",
+        "--clock",
+        "1",
+        "--clock",
+        "2",
+    ]);
+    assert_eq!(twice.clock, Some(2));
+}
+
+#[test]
+fn the_held_clock_is_one_script_naming_its_moment_in_milliseconds() {
+    let script = held_clock(1_772_443_800);
+    assert!(script.contains("const at = 1772443800 * 1000;"), "{script}");
+    assert!(
+        script.starts_with("(() => {") && script.ends_with("})()"),
+        "{script}"
+    );
+    assert!(!script.contains('\n'), "{script}");
+}
+
+#[test]
 fn help_is_no_shot() {
     assert_eq!(read(&args(&["--help"])).unwrap(), None);
     assert_eq!(read(&args(&["http://h/", "-h"])).unwrap(), None);
@@ -193,6 +230,26 @@ fn a_command_line_it_cannot_run_is_refused_naming_the_argument() {
         (
             &["http://h/", "--out", "a", "--scheme", "sepia"],
             "argument --scheme: invalid choice: \"sepia\"",
+        ),
+        (
+            &["http://h/", "--out", "a", "--clock", "soon"],
+            "argument --clock: invalid SECS \"soon\"",
+        ),
+        (
+            &["http://h/", "--out", "a", "--clock", "1.5"],
+            "argument --clock: invalid SECS \"1.5\"",
+        ),
+        (
+            &["http://h/", "--out", "a", "--clock", "+5"],
+            "argument --clock: invalid SECS \"+5\"",
+        ),
+        (
+            &["http://h/", "--out", "a", "--clock", "-5"],
+            "argument --clock: invalid SECS \"-5\"",
+        ),
+        (
+            &["http://h/", "--out", "a", "--clock", "8640000000001"],
+            "argument --clock: invalid SECS \"8640000000001\"",
         ),
         (
             &["http://h/", "--out", "a", "--pause", "1.5"],
