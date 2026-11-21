@@ -222,6 +222,7 @@ agents run as subagents of the session you opened.
 - [Taking a release](RELEASES.md#taking-a-release): moving to a newer Symphony.
 - [Setting up GitHub](GITHUB_SETUP.md): issues as proposals, a landing delivered as a pull
   request. Optional.
-- [The plugin protocol](PLUGIN_PROTOCOL.md): a project's own card kinds, pages and theme.
+- [Writing a plugin and a theme](PLUGIN_WRITING.md): a project's own card kinds, pages and
+  theme, from a first plugin to its component on a page.
 - [The Mac app](../apps/symphony-desktop/README.md): the servers you follow in the dock and the
   menu bar.
