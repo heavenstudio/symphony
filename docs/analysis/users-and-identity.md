@@ -33,6 +33,8 @@ Read at `59538b83e`. The links name the modules and documents read.
   does that, with OAuth 2, and hands the Symphony signed data saying who the person is. The core
   only verifies it ([how](#how-a-provider-plugs-in)). The Symphony ships one such service, and
   any other that signs the same way replaces it.
+- **Not on a board, a person cannot see it exists.** That holds for a machine of the tailnet
+  under another login as for a hosted visitor ([decided](#a-tailnet-machine-under-another-login)).
 - **A machine with one person changes in nothing.** With nobody named on a board, the person at
   the machine holds everything there, as today.
 
@@ -225,6 +227,36 @@ What follows:
 The two other ways drawn for the card, the check alone and a service beside the server, are in
 [the pictures](users-and-identity/sign-in-a.svg) [kept with it](users-and-identity/sign-in-c.svg).
 
+### A tailnet machine under another login
+
+It is that login's person, with what each board gives them, and a board that has not added them
+does not exist for them. The owner, on [the card that asked](../DECISIONS.md#tailnet-peer-before-named):
+"it should be using the auth and authorization stuff so that is not owner, but the persons role
+in the board. In case they are not added to a board, they should not be able to interact with
+it or see it exists at all".
+
+- **Tailscale says who.** A machine of the tailnet reaches the server as today, and the server
+  reads whose machine it is. Nobody reaching it over the tailnet is `owner` for being there.
+- **Each board says what.** The person has what that board gives them: their groups and powers
+  there.
+- **A board that has not added them is not there.** It is in no list they are shown, and its
+  pages, its documents and its threads answer them as a project the server does not hold. The
+  answer does not tell a board they are not on from one that does not exist.
+- **This holds for every way in**, a hosted board's sign-in service as much as Tailscale: not
+  being on a board is the same as the board not being there.
+
+What follows:
+
+- **A machine under the Mac's own login is its person**, the owner's phone among them, with
+  nothing set up. On a board with nobody named that person holds everything, as today.
+- **A colleague's laptop sees nothing** until a board adds them, where today it writes as the
+  owner. That is the one thing that changes on a machine with one person, and it changes when
+  the login is first read.
+- **A machine with no login** (a tagged node) is nobody's, and sees nothing unless a board adds
+  the node itself.
+- **The server's own pages** (the list of projects, the machine's releases) show a person only
+  the boards they are on, and what is the machine's alone only to its person.
+
 ### Where people are kept
 
 With the board, and in no repository ([its card](../DECISIONS.md#people-kept-where)).
@@ -368,9 +400,7 @@ What follows:
 
 ## This round
 
-Two choices, each a card. A person is more than a name on a line, so something must say where
-their profile is kept. And on a machine Tailscale is the sign-in service, so something must say
-what a machine under another person's login may do before a board names them.
+One choice, a card: where a person's profile is kept.
 
 ### Where public names are declared
 
@@ -427,42 +457,14 @@ side, what they may do on the other. What B leaves open is C's reason: a project
 servers can give `ana` to two people. C's file answers that when a project is in fact served
 from two places, and nothing in B is lost by adding it then.
 
-### A tailnet machine under another login
-
-**Base.** Any machine the tailnet answers for reaches the server and writes as the owner: the
-owner's phone, and equally a colleague's laptop or a machine shared into the tailnet. Whose
-machine it is, is in Tailscale's answer and is not read
-([the picture](#what-the-symphony-has-today)).
-
-Once the login is read, a machine under the Mac's own login is its person, as today. The choice
-is what a machine under another login may do before a board has named that person.
-
-![A tailnet machine under someone else's login](users-and-identity/tailnet-peer.svg)
-
-- **A, as today.** It keeps writing as the owner until a board names its first person. Nothing
-  changes for anyone until then, and what is open today stays open.
-- **B, nothing until named.** It is refused, with a page saying whose machine the server is and
-  that a board must name them. A board that names that login's person lets them in, to that
-  board.
-- **C, reads until named.** It reads every board the server holds and writes nothing.
-
-A machine with no login (a tagged node) is treated as the other login's machine is. With nobody
-else in the tailnet the three are the same.
-
-**Recommended: B.** A leaves a colleague's laptop deciding the owner's cards for as long as
-nobody is named, which on a one-person machine is always. C shows every project on the machine
-to the whole tailnet, which a board's own list was meant to decide. B changes nothing for one
-person and their own machines, and it is the only one of the three under which being in a
-tailnet gives nothing by itself.
-
 ## Sessions
 
 - **On a machine's server**, none are added. A request from the machine is the machine's
   person. A request from the tailnet is the login Tailscale names for its address, asked as
   today and kept for the 30 seconds the gate already keeps it. A peer under the machine's own
   login is the same person, so a phone keeps working with nothing set up. A peer under another
-  login is that person, admitted to a board only once it names them. A tagged node has no login
-  and is admitted only where a board names the node.
+  login is that person, and sees only the boards that have added them
+  ([above](#a-tailnet-machine-under-another-login)).
 - **On a hosted board**, the session is the sign-in service's. The adapter verifies the signed header on
   every request, ends a stream when the assertion expires, and binds its request-forgery token
   to the session and the project, all as [hosted ingress](hosted-ingress.md#browser-behavior)
@@ -499,8 +501,8 @@ Each step can ship alone, and a machine with one person sees none of them.
 1. **The actor seam.** Every write takes an actor. The local host supplies the local owner, and
    every line reads as it does today.
 2. **Tailscale's login read.** The gate keeps who a peer is. A peer under the machine's own
-   login is its person. What a peer under another login may do before a board names them is
-   [asked](#a-tailnet-machine-under-another-login).
+   login is its person. A peer under another login is that login's person, and until a board
+   adds them the server shows them nothing.
 3. **People, groups and powers on a board.** The rows, the People page, names on lines.
 4. **Ownership.** A card and a task have their group, from the board's map of places or a name
    written on them; queues and notices follow it, and any member's answer settles what the

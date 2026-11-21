@@ -74,37 +74,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ## Waiting on an agent
 
-### People and sign-in
-
-- [-] **tailnet-peer-before-named** — Today any machine in your tailnet writes as you, a colleague's laptop as much as your phone. Once the server reads whose machine it is, your own machines stay you. What is left to choose is what a machine under someone else's Tailscale login may do before a board has named that person. A: as today, it writes as the owner until a board names its first person. B: nothing; it is refused until a board names them. C: it reads every board and writes nothing. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#A tailnet machine under another login]]
-  [2026-11-21 17:37] agent — Posted for the board task `app/users-and-identity`. On a machine Tailscale is the sign-in service (**sign-in-service-shipped**, B), so this is what its word is used for. A concept: nothing is built by this card.
-
-    ![A tailnet machine under someone else's login](analysis/users-and-identity/tailnet-peer.svg)
-
-    **Base (today).** The server asks Tailscale only whether an address is a machine of the tailnet. Any such machine reaches every project and writes as `owner`. Tailscale's answer also says whose machine it is, and that part is not read.
-
-    **A, as today.**
-    - A machine under another login keeps writing as the owner until a board names its first person.
-    - Nothing changes for anyone until then. What is open today stays open.
-
-    **B, nothing until named.**
-    - It is refused, with a page saying whose server this is and that a board must name them.
-    - A board that names that login's person lets them in, to that board.
-
-    **C, reads until named.**
-    - It reads every board the server holds and writes nothing.
-
-    **Under every option** a machine under this Mac's own login, your phone among them, is you with nothing set up. A machine with no login (a tagged node) is treated as someone else's is. If nobody else is in your tailnet, the three are the same.
-
-    **Why B.** A leaves a colleague's laptop able to decide your cards for as long as nobody is named, which on a one-person machine is always. C shows every project on this Mac to the whole tailnet. B changes nothing for you and your own machines, and under it being in a tailnet gives nothing by itself.
-
-    **Earlier verdicts checked.**
-    - **sign-in-service-shipped** (B) and **identity-provider-how-added** (B) say how a person is known. They do not say what a known person nobody has named may do.
-    - **people-kept-where** (B) lets a board say what a named person may do. It says nothing of a person no board names.
-
-    None decides this.
-  [2026-11-21 17:39] owner · rejected — A, but it should be using the auth and authorization stuff so that is not owner, but the persons role in the board. In case they are not added to a board, they should not be able to interact with it or see it exists at all
-
 ### Task timeline
 
 - [x] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
@@ -146,6 +115,35 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
+- [-] **tailnet-peer-before-named** — Today any machine in your tailnet writes as you, a colleague's laptop as much as your phone. Once the server reads whose machine it is, your own machines stay you. What is left to choose is what a machine under someone else's Tailscale login may do before a board has named that person. A: as today, it writes as the owner until a board names its first person. B: nothing; it is refused until a board names them. C: it reads every board and writes nothing. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#A tailnet machine under another login]]
+  [2026-11-21 17:37] agent — Posted for the board task `app/users-and-identity`. On a machine Tailscale is the sign-in service (**sign-in-service-shipped**, B), so this is what its word is used for. A concept: nothing is built by this card.
+
+    ![A tailnet machine under someone else's login](analysis/users-and-identity/tailnet-peer.svg)
+
+    **Base (today).** The server asks Tailscale only whether an address is a machine of the tailnet. Any such machine reaches every project and writes as `owner`. Tailscale's answer also says whose machine it is, and that part is not read.
+
+    **A, as today.**
+    - A machine under another login keeps writing as the owner until a board names its first person.
+    - Nothing changes for anyone until then. What is open today stays open.
+
+    **B, nothing until named.**
+    - It is refused, with a page saying whose server this is and that a board must name them.
+    - A board that names that login's person lets them in, to that board.
+
+    **C, reads until named.**
+    - It reads every board the server holds and writes nothing.
+
+    **Under every option** a machine under this Mac's own login, your phone among them, is you with nothing set up. A machine with no login (a tagged node) is treated as someone else's is. If nobody else is in your tailnet, the three are the same.
+
+    **Why B.** A leaves a colleague's laptop able to decide your cards for as long as nobody is named, which on a one-person machine is always. C shows every project on this Mac to the whole tailnet. B changes nothing for you and your own machines, and under it being in a tailnet gives nothing by itself.
+
+    **Earlier verdicts checked.**
+    - **sign-in-service-shipped** (B) and **identity-provider-how-added** (B) say how a person is known. They do not say what a known person nobody has named may do.
+    - **people-kept-where** (B) lets a board say what a named person may do. It says nothing of a person no board names.
+
+    None decides this.
+  [2026-11-21 17:39] owner · rejected — A, but it should be using the auth and authorization stuff so that is not owner, but the persons role in the board. In case they are not added to a board, they should not be able to interact with it or see it exists at all
+  [2026-11-21 17:40] agent — Applied as you said, with no new card: "it should be using the auth and authorization stuff so that is not owner, but the persons role in the board. In case they are not added to a board, they should not be able to interact with it or see it exists at all". A tailnet machine is its login's person, with what each board gives them; a board that has not added them answers as a project the server does not hold, and is in no list they see. Your own machines stay you. One consequence: a colleague's laptop, which writes as you today, sees nothing from the day the login is read until a board adds them. Written in [[analysis/users-and-identity#A tailnet machine under another login]].
 - [-] **public-name-where-declared** — You said a person needs an id outside the database, to sign their comments and decisions. That is a short public name (`ana`), written on lines that are files in git. Something must say that `ana` is a name and whose. A: a committed file of the project lists the names and nothing else; each board keeps privately which sign-in a name belongs to. B: each board keeps its own names and nothing is committed. C: the name is taken from the sign-in itself, such as the part of an email before the @. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where public names are declared]]
   [2026-11-21 17:32] agent — Posted for the board task `app/users-and-identity`, from your note on **people-kept-where**: "There should however be some 'non db id' in use to identify people in their comments and interactions (who decided things for example). So there will be some information that isn't the the DB only." A concept: nothing is built by this card.
 
