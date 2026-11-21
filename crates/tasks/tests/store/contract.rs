@@ -285,6 +285,28 @@ on_both! {
         newer.create(&NewTask::new("sim/after", "After the move", "owner")).unwrap();
     }
 
+    fn a_board_not_made_yet_has_no_additive_step_and_the_read_of_them_makes_nothing(
+        backend: Backend
+    ) {
+        // `tasks migrate` reads the steps a board has before it opens it to write, on a board that
+        // may not be made: SurrealDB answers no record, PostgreSQL no table.
+        let db = backend.database();
+        let reader = Store::unchecked_on(
+            db.another(),
+            Box::new(|| NOW),
+            Box::new(|_| false),
+            HOST,
+            &Opening::read(),
+        );
+        assert_eq!(reader.additions().unwrap(), 0);
+        assert_eq!(reader.board_version().unwrap(), None);
+        // Its steps read once the board is made by a build that has one: the least of the board's
+        // and its own, so a build without the step reads none.
+        let made = open(&db, &Opening::write().at(one_on()));
+        assert_eq!((made.additions().unwrap(), reader.additions().unwrap()), (1, 0));
+        assert_eq!(additions(&db), Some(1));
+    }
+
     fn the_rule_before_the_contract_keeps_its_names_and_works_beside_additive_steps(
         backend: Backend
     ) {

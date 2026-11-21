@@ -89,6 +89,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_statements_postgresql_text_is_each_part_it_sends_and_a_read_of_lists_has_none() {
+        let texts = |postgres: Option<Pg<'static>>| -> Vec<String> {
+            let statement = Statement {
+                surreal: "RETURN NONE;".into(),
+                postgres,
+            };
+            statement
+                .postgres_text()
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        };
+        assert_eq!(texts(Some(Pg::read("v->'slug'"))), ["v->'slug'"]);
+        assert_eq!(texts(Some(Pg::Simple("SELECT 1;".into()))), ["SELECT 1;"]);
+        assert_eq!(
+            texts(Some(Pg::Within(5, "BEGIN NULL; END".into()))),
+            ["BEGIN NULL; END"]
+        );
+        assert_eq!(
+            texts(Some(Pg::script("BEGIN NULL; END"))),
+            ["BEGIN NULL; END"]
+        );
+        assert_eq!(
+            texts(Some(Pg::script_then("BEGIN NULL; END", "v->'slug'"))),
+            ["BEGIN NULL; END", "v->'slug'"]
+        );
+        let none: [&str; 0] = [];
+        assert_eq!(texts(Some(Pg::Nothing)), none);
+        assert_eq!(
+            texts(Some(super::super::postgres::listed("t", "task", "slug"))),
+            none
+        );
+        assert_eq!(texts(None), none);
+    }
+
+    #[test]
     fn an_unpaired_statement_is_refused_at_the_call_site_before_it_can_be_sent() {
         let statement = Statement::from("RETURN NONE;");
         let at = Location::caller();
