@@ -61,8 +61,9 @@ postmortem (the root cause, how it would recur, what would prevent it); it block
 The smallest thing that solves the problem in front of us. A problem met once is solved once: an
 agent runs the commands or a throwaway script, says on the thread what it ran and what came of
 it, and stops, with no committed tool, tests, review round or task of its own. Code is committed
-only for what will run again, and guarded only against what has happened or plainly will. Whoever
-files, starts or reviews work refuses the larger form.
+only for what will run again, and guarded only against what has happened or plainly will; a
+script that has done its one job is deleted, never hardened. Whoever files, starts or reviews
+work refuses the larger form.
 
 ### `workflow/question-the-task-first`
 
@@ -83,9 +84,10 @@ fix instead (`tests/no-test-fails-on-load`). A budget or a cap, a red's or any t
 only by its orchestrator's decision recorded on the task (`just tasks gate`,
 [TASKS](docs/TASKS.md#gate-decisions)), once the cut came first. While a run holds a release
 candidate, a red's fix starts at the local branch `release-candidate`, never at main, merges
-that branch and never main before review, and commits the client its own sources make when it
-changes what the client is built from. Its task's text says so, and the rest (a land a pull
-request delivers, a red covered by another landing or fixed outside this repository) is
+that branch and never main before review (once the candidate advanced to a delivered head it
+is rebased onto it instead, never merging it), and commits the client its own sources make
+when it changes what the client is built from. Its task's text says so, and the rest (a red
+covered by another landing or fixed outside this repository) is
 [RELEASES](docs/RELEASES.md#the-release-candidate).
 
 ### `workflow/shared-data-lands-first`
@@ -135,8 +137,9 @@ No code sleeps or waits by a number: a wait is for its event (a channel's messag
 exit, a socket's answer, a page's event, the reader's press). A number drives only a debounce, a
 throttle, a retry with backoff, a deadline that bounds a wait for an event, a clock's tick, or a
 check for an event its watcher can drop, each through a named helper: in Rust
-`test_time::wait::until` in a test and `apps/symphony-server/src/backstop.rs` in the server; in
-the client `src/timing.ts` and, in its unit tests, `src/testing.ts`. A deadline on the wait
+`test_time::wait::until` in a test and `apps/symphony-server/src/backstop.rs` in the server,
+with the others `git grep 'code/no-timed-waits'` lists; in the client `src/timing.ts` and, in
+its unit tests, `src/testing.ts`. A deadline on the wait
 itself (`recv_timeout`, `tokio::time::timeout`) needs no helper, unless nothing ends the wait
 but a stop: that is a sleep the lint cannot see, and a reviewer refuses it.
 
@@ -190,8 +193,8 @@ fixed in the code.
 
 A test that would pass with the change reverted, judged by reading it, is replaced or deleted. A
 check that missed its fault or hung instead of reporting is repaired, with a test of the case it
-missed, never narrowed. Quote a measurement only after showing its meter moves, more than once,
-with no other agent loading the machine.
+missed and every case of that shape, never narrowed. Quote a measurement only after showing its
+meter moves, more than once, with no other agent loading the machine.
 
 ## Review and the owner
 
@@ -219,8 +222,9 @@ document's content or how a page looks.
 
 A question only the owner can answer is written where it lasts before an agent waits on it: on
 its task (`just tasks say SLUG "…" --to owner`) or as a card question
-(`just symphony-cli reply PATH SLUG "…" --question`). A terminal question is never the only
-copy, an answer given in the terminal is recorded there, and silence is not an answer.
+(`just symphony-cli reply PATH SLUG "…" --question`). A terminal or chat question is never the
+only copy; a follow-up reuses it, an answer given in the terminal is recorded there, and silence
+is not an answer.
 
 ### `review/auto-approve-what-is-decided`
 
@@ -307,8 +311,9 @@ or put the text in a file. What it reads and misses is its module doc
 
 Anything an agent runs works beside the same thing in another worktree: no fixed path two runs
 both write, no fixed port or name, no lock (`just symphony --port 0`, a scratch board, a
-temporary machine folder). Only a truly single resource is serialised, under a lock named for
-it. The git stash is shared too: commit to your branch instead.
+temporary machine folder). State shared by design, such as the board in the git common dir, is
+correct as it is, and only a truly single resource is serialised, under a lock named for it.
+The git stash is shared too: commit to your branch instead.
 
 ### `tools/the-machine-is-shared`
 

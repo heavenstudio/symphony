@@ -2,7 +2,7 @@
 name: apply-review
 description: Apply the owner's review verdicts to the design docs. Use after the owner has reviewed in the Symphony (`just symphony`) — answers every open note in docs/DECISIONS.md, turns rejections into new proposal cards, and rewrites documents that disagree with a verdict under the project's workflow. Trigger on "apply my review", "I made decisions", "I left comments", or /apply-review.
 ---
-<!-- symphony-stamp: 764ec4a06d4ac6ec files=SKILL.md,rewrite-brief.md -->
+<!-- symphony-stamp: 7fb516913bed7943 files=SKILL.md,rewrite-brief.md -->
 
 # Apply the owner's review
 
@@ -52,8 +52,9 @@ way step 3 answers a note; a chat message (💬 Send) is conversation, never a v
    - A card that is asked opens with what changes for the owner in one or two plain sentences,
      before any option.
 5. **Find the documents that disagree.** Start from the `[[FILE#Heading]]` links on rejected and
-   noted cards, then search `docs/` for the rejected concepts. Data files and review records are
-   evidence: list them as disagreeing, and do not rewrite them unless the owner asks.
+   noted cards, then search `docs/` for the rejected concepts. Data files, review records and
+   `docs/analysis/` are evidence: list them as disagreeing, and do not rewrite them unless the
+   owner asks.
 6. **Rewrite the affected documents** by [rewrite-brief.md](rewrite-brief.md) and the project's
    instructions. Where the project permits delegation, assign disjoint file groups with their
    verdicts, each with an explicit scope, validation and commit boundary; register updates stay

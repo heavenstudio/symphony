@@ -6,16 +6,14 @@ server it starts in `symphony/tasks/` in the git common dir, and the binaries `t
 The workspace, the Cargo wrapper and the toolchain pin are
 [the root guide's](../../AGENTS.md#rust).
 
-This guide is what to know before changing the crate: where each job lives, the invariants a change
-keeps, and how to test against a scratch board. What the board does is [TASKS](../../docs/TASKS.md);
-how a module does it is that module's own doc. A behaviour a change makes is said in the TASKS
-section that owns it or in its module's doc, not here: this guide changes when a job moves or an
-invariant does.
+What the board does is [TASKS](../../docs/TASKS.md), and how a module does it is that module's
+own doc: a behaviour a change makes is said there, and this guide changes only when a job moves
+or an invariant does.
 
 ## Where each job lives
 
-Paths are under `src/` unless they say otherwise. Every module's doc says what it holds, and each
-folder's `mod.rs` or same-named file names its parts: this map says only where to start. The test
+Paths are under `src/` unless they say otherwise, and each folder's `mod.rs` or same-named file
+names its parts. The test
 targets are the folders of `tests/` with a `main.rs` that says what each holds (`store`, `cli`,
 `server`, `sweep`, `launch`, `perf`, `hosted`, `child_guard`) and the files `consumer_api.rs`,
 `launcher.rs`, `links.rs` and `raw_fence.rs`.
@@ -28,7 +26,8 @@ targets are the folders of `tests/` with a `main.rs` that says what each holds (
 - **The recorder and the runs**: `cli/recorder.rs` (`tasks run`), `runs.rs`, `runs/`,
   `run_logs.rs`, `recording.rs`, `cli/machine_work/`
   ([MACHINE_WORK](../../docs/MACHINE_WORK.md), [RUNS](../../docs/RUNS.md)).
-- **Tokens and their cost**: `usage.rs`, `usage/`, `store/spending.rs`. An edit of the price table
+- **Tokens and their cost**: `usage.rs`, `usage/`, `store/spending.rs` (`agent_beat_in` and
+  `Beat` stay as consumers call them). An edit of the price table
   `usage/prices.toml` is read as the builds read it by
   `just test-rs -p symphony-board --lib usage::price`.
 - **The store**: `store/` is `Store` (`work/` the task writes, `messages.rs`, `asks.rs`,
@@ -105,12 +104,16 @@ a newer board, and a change keeps what it reads:
 
 - A new table, or a new field on one, is a step's; a closed table changes only by a breaking
   step. The open tables (`schema::OPEN`) are written by named fields, never replaced whole
-  (`store/surreal/fence_tests.rs`), and each row struct refuses a field it does not know.
+  (`store/surreal/fence_tests.rs`). Each row struct refuses a field it does not know, and the
+  store's reader hands an open table's row only the fields it names (`rows::open_row`,
+  `objects::read`), so an older build reads past a field an additive step adds; the whole-board
+  dump alone reads exactly.
 - No task field an older reader would refuse: the board's own fields go under `fields._board`,
   written only by their own writers, and a hold is a record, never a field.
 - A new meaning goes in a field older binaries ignore and keep, beside the old one, which keeps
-  its meaning (an orchestrator's `seen`, `statuses` and PULL entries; a launch record's
-  `claude_session`, whose Codex ids are prefixed `codex:`). Callback addresses, chat ownership,
+  its meaning (an orchestrator's `seen`, `statuses` and PULL entries), and an old column keeps
+  its old reading (a launch record's `claude_session` holds Claude ids as before, and Codex ids
+  prefixed `codex:`). Callback addresses, chat ownership,
   delivery state and bindings live in the schemaless callback tables, not on `session`.
 - With an older dispatcher interleaving, no entry an orchestrator hears is lost and no line is
   said twice (`store/pull_account.rs`; `tests/store/mixed_dispatchers.rs`,
@@ -178,7 +181,9 @@ A write is never sent to the database again; only a request whose text proves it
 more (`rpc/read.rs`). A dispatcher whose lease was taken while it built sends nothing
 (`store/dispatcher.rs`; `tests/store/slow_builds.rs`); a recipient's observation is checkpointed
 with the events it queued, before anything is sent; a failed send is a retry, so a line may repeat
-but is never lost; a post under a key is made once (`Store::say_keyed`). The UDS transport sends
+but is never lost; a post under a key is made once (`Store::say_keyed`). Every event line is
+flattened before it enters the envelope, but owner chat's payload, which keeps its reply lines
+(`store/callbacks.rs`). The UDS transport sends
 only the SDK user envelope: no authentication token, and no claim to be the receiver's child.
 
 ### A hosted board's refusals carry no secret
@@ -295,7 +300,8 @@ test run under a recipe or a land is not red or green by what it inherits.
 The `perf` target is the board at the live one's scale: the plan check of every statement a
 per-write, per-recipient or per-tick path sends, and each command's CPU within a bound
 (`tests/perf/main.rs`). Only the release run runs it, so a change to the board's queries, its
-indexes or the api runs it by hand: `just test-rs -p symphony-board --test perf`.
+indexes or the api runs it by hand: `just test-rs -p symphony-board --test perf`
+(`SYMPHONY_PERF_TASKS=PATH` times another `tasks` build on the same board).
 `tests/child_guard` is the release run's alone. `examples/board_load.rs` is the store's meter: a
 change of the store, its settings or its engine runs it on both sides the same day, against
 [the store's baseline](../../docs/analysis/board-store-baseline.md). An example's tests run only

@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: dfd01cd2a991be6e files=SKILL.md -->
+<!-- symphony-stamp: 9745e41313e0e6ee files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -57,8 +57,8 @@ land by how an executor carries the work: [fast bug fixes](../work/start.md#fast
      replaced.
 6. Choose a supported launch method under project policy: an in-process agent, a headless run,
    or `just tasks launch SLUG --kind claude|codex` for work that needs a terminal or outlives
-   your session. Pass the model `just tasks limits` names for the role. Never run tests in
-   another agent's terminal.
+   your session. Pass the model `just tasks limits` names for the role, and its required
+   effort. Never run tests in another agent's terminal.
 7. A full-session worker registers its own callback; an in-process one never binds its
    parent's, and reads its inbox between steps. When a headless run ends, read its task's thread
    before resuming its recorded conversation.

@@ -57,9 +57,8 @@ published are [RELEASES](docs/RELEASES.md#packages-on-cratesio)'s.
 
 Use `just lint-rs` (which runs `just client-lint` too), `just test-rs`, `just symphony-ui-dist`
 and `just symphony-ui-dev` from this folder; `tools/cargo.sh` runs ordinary Cargo in this
-workspace. A task's gate is the tests closest to what it changed and `just lint-rs`, posted as
-evidence (RULES.md `workflow/evidence-is-the-gate`, [CHECKS](docs/CHECKS.md)). `just verify` is
-the release run's alone, never a task's.
+workspace. A task's gate is RULES.md `workflow/evidence-is-the-gate`
+([CHECKS](docs/CHECKS.md)); `just verify` is the release run's alone, never a task's.
 
 - A build or test goes through `tools/record.sh`, as the recipes do, so the board records it for
   the task its session holds ([MACHINE_WORK](docs/MACHINE_WORK.md#recording-builds-and-tests)).
@@ -102,11 +101,9 @@ A tool that is absent or incompatible fails with setup guidance; no hosted GitHu
 - The client build: Git, Bash and jq.
 - Board fixtures: lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`).
 - The board's server tests (`just test-rs -p symphony-board --test server`): PostgreSQL 18 or
-  later, from `[board] postgresql` or the first `postgres` on `PATH`, with `initdb`, `pg_ctl` and
-  `psql` beside it ([the setup](docs/PROJECT_FILE.md#board)).
-- The hosted board's check (`just hosted-check`): PostgreSQL 16's programs as well (Homebrew's
-  `postgresql@16` keg, or `SYMPHONY_POSTGRESQL_16`) and `openssl`
-  ([POSTGRESQL](docs/POSTGRESQL.md#a-hosted-board)).
+  later with its programs beside it ([the setup](docs/PROJECT_FILE.md#board)).
+- The hosted board's check (`just hosted-check`): PostgreSQL 16's programs as well, and
+  `openssl` ([POSTGRESQL](docs/POSTGRESQL.md#a-hosted-board)).
 - The release run's tests: cargo-nextest, provisioned by its own `nextest-setup` step; focused
   `just test-rs` uses Cargo and needs none.
 
@@ -122,9 +119,7 @@ consuming project's.
   project: say "the consuming project" (`crates/symphony/tests/hooks/own_names.rs` fails on
   either).
 - **Board commands** run as `just tasks … --as HANDLE`: that shape binds a subagent's tool calls
-  as its heartbeat, and no allow rule passes a command with an env prefix. `just tasks limits`
-  prints the limits and each role's model with where each came from. A full session registers its
-  own callback early (`just tasks callback --as HANDLE`); an in-process agent reads its inbox.
+  as its heartbeat, and no allow rule passes a command with an env prefix.
 - **Models and limits are settings**: `[agents] launch`, `[agents.models]` and `[limits]` in
   `symphony.toml`, a machine's own choice in `symphony.local.toml`
   ([TASKS](docs/TASKS.md#limits-and-models),
@@ -135,7 +130,7 @@ consuming project's.
   settings the Symphony already reads, with the words here that repeat them and nothing else,
   lands on `just settings-check` green at its tip, which is its `tests` stamp. A value that is a
   command or a program, or that decides what lands or where the board is kept, keeps `review`
-  ([which](docs/PROJECT_FILE.md#the-settings-check), [TASKS](docs/TASKS.md#needed-stamps)).
+  ([the check](docs/PROJECT_FILE.md#the-settings-check), [which keys](docs/TASKS.md#needed-stamps)).
 - **Landing by pull request.** Nobody runs a land and nobody pushes `main`, the owner included
   (`[land] delivery`, [GITHUB_SETUP](docs/GITHUB_SETUP.md#delivery-by-pull-request)). A task's
   move to review dispatches it: its branch pushed, its pull request opened, its evidence written
@@ -187,10 +182,9 @@ copy alone.
 
 - **What an agent is told, and where.** A launch prompt is the skill, the slug and the handle.
   What is one task's alone goes in its brief or on its thread. What holds for every task is
-  standing and committed: a rule in [RULES.md](RULES.md), guidance here, in a package's guide or
-  in [CHECKS](docs/CHECKS.md), and what one role alone needs in `project.md` beside that role's
-  installed skill (`.agents/skills/work/project.md`, `.agents/skills/review-task/project.md`,
-  `.agents/skills/task-orchestrator/project.md`), which init never writes.
+  committed: a rule in [RULES.md](RULES.md), guidance here, in a package's guide or in
+  [CHECKS](docs/CHECKS.md), and what one role alone needs in `project.md` beside that role's
+  installed skill (`.agents/skills/ROLE/project.md`), which init never writes.
 - **Prompts.** The allow rules pass the board and reply recipes (`just tasks`, `just agent-send`,
   `just symphony-status`, `just symphony-reply`, `just symphony-ask`) and `just land` with no
   prompt; `just symphony` and `just symphony-cli` ask first, and so does any command with an env
@@ -201,18 +195,16 @@ copy alone.
   consumer's landing ([CHECKS](docs/CHECKS.md#the-recipes-a-text-names)); the docs audit and
   `crates/symphony/tests/hooks/named_recipes.rs` fail on any other.
 - **Hooks.** `symphony hook tasks-beat` makes a session's tool calls its heartbeat and never
-  refuses one. `symphony hook memory-guard` refuses a write into an agent's memory folder
-  (RULES.md `memory-lives-in-the-repo`).
+  refuses one; `symphony hook memory-guard` is RULES.md `memory-lives-in-the-repo`.
 
 ### Looking at a page
 
 `just symphony-cli shot URL --out FILE.png` opens URL in a private headless Chrome, waits until
-the page has drawn, runs the steps given in order (`--click CSS`, `--type CSS=TEXT`, `--key NAME`,
-`--hover CSS`, `--eval JS`, `--pause MS`, `--shot FILE.png`) and saves the PNG; `--phone`,
-`--size WxH`, `--full-page` and `--scheme dark` set the view, `--report` prints what went wrong
-on the page, and `--help` says the rest. A capture with no step only reads, so the live board
-(`http://127.0.0.1:8765/symphony/tasks`) is fair to shoot. A picture kept as a task's evidence is
-saved under the artifacts folder in the task's slug and attached (`--attach`, or
+the page has drawn, runs the steps given in order and saves the PNG; `--help` lists the steps
+and the views (`--phone`, `--scheme dark`, `--full-page`), and `--report` prints what went wrong
+on the page. A capture with no step only reads, so the live board
+(`http://127.0.0.1:8765/symphony/tasks`) is fair to shoot. A picture kept as a task's evidence
+is saved under the artifacts folder in the task's slug and attached (`--attach`, or
 `just symphony-cli attach FILE…`), which prints the line the thread post carries: a path in a
 worktree leads nowhere once the sweep moves it.
 

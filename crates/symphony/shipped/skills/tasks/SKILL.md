@@ -61,7 +61,8 @@ CALLBACK …
 - `BLOCKED` is an observation of a launched session you oversee, waiting at a prompt: inspect
   its terminal before acting, then answer the prompt there or stop the session.
 - `MSG … from board` tells an orchestrator that a post to its executor reached nobody, with the
-  `just tasks restore SLUG HANDLE` line when its terminal was closed.
+  `just tasks restore SLUG HANDLE` line when its terminal was closed: restore it, or hand the
+  work on.
 - `CALLBACK` names a failed delivery; the event stays in the inbox.
 
 Who is doing what, with each agent's task, worktree, session and state, is
@@ -80,9 +81,7 @@ Who is doing what, with each agent's task, worktree, session and state, is
 ## Review and assess
 
 A reviewer works by the [review-task](../review-task/SKILL.md) skill and an assessor by the
-[assess-task](../assess-task/SKILL.md) skill, each on the task itself, never a subtask. Their
-whole prompts are `/review-task SLUG HANDLE` and `/assess-task SLUG HANDLE` (Codex: `$` in place
-of `/`).
+[assess-task](../assess-task/SKILL.md) skill, each on the task itself, never a subtask.
 
 ## Orchestrate (orchestrator)
 

@@ -51,8 +51,9 @@ way step 3 answers a note; a chat message (💬 Send) is conversation, never a v
    - A card that is asked opens with what changes for the owner in one or two plain sentences,
      before any option.
 5. **Find the documents that disagree.** Start from the `[[FILE#Heading]]` links on rejected and
-   noted cards, then search `docs/` for the rejected concepts. Data files and review records are
-   evidence: list them as disagreeing, and do not rewrite them unless the owner asks.
+   noted cards, then search `docs/` for the rejected concepts. Data files, review records and
+   `docs/analysis/` are evidence: list them as disagreeing, and do not rewrite them unless the
+   owner asks.
 6. **Rewrite the affected documents** by [rewrite-brief.md](rewrite-brief.md) and the project's
    instructions. Where the project permits delegation, assign disjoint file groups with their
    verdicts, each with an explicit scope, validation and commit boundary; register updates stay

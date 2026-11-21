@@ -5,10 +5,9 @@ mounts. It reads the server's JSON API, whose wire types are `crates/symphony-ap
 server code or inserts server-rendered HTML: no HTML fragment crosses that boundary. Its browser
 tests are a package of their own, `apps/symphony-web-tests`.
 
-This guide is what to know before changing the client: where each job lives, the rules a change
-keeps, and how it is built and tested. How a module works is its own header comment, and a
-behaviour a change makes is said there or in the document that owns the page, not here: this guide
-changes when a job moves or a rule does, and quotes no measured figure, which its test prints.
+How a module works is its own header comment, and a behaviour a change makes is said there or
+in the document that owns the page: this guide changes only when a job moves or a rule does,
+and quotes no measured figure, which its test prints.
 
 ## Where each job lives
 
@@ -111,7 +110,10 @@ Each is one a lint or a test does not hold by itself, or names the one that does
   (`styles/controls-theme.css` maps them); a hover that moves or raises a thing sits under
   `(hover: hover) and (pointer: fine)`.
 - **A chunk imported later imports nothing of its kind's own** (the timeline, a task's tokens and
-  attempts): one that did splits the kind's entry in two, a file more on every first visit.
+  attempts): one that did splits the kind's entry in two, a file more on every first visit. It
+  brings its own sheet as `?inline` and puts it in the page, as the build links no chunk's sheet
+  and a plain CSS import there builds and never loads; when its import fails it asks the shell's
+  `gone()` before offering Retry (`task-page.tsx`).
 - **A change to `styles/board.css`'s tokens or `styles/frame.css` is copied to the server's
   copies** (`apps/symphony-server/src/`); `crates/symphony/tests/packages.rs` fails until it is.
 - **A dependency added is argued on its task's thread first.** The pins are the latest stable
@@ -146,8 +148,12 @@ coverage; `just lint-rs` runs it.
 - **Hand-written code is TypeScript**, strict, in two programs: what a page runs
   (`tsconfig.json`), which knows no Node, and what Node runs (`tsconfig.node.json`).
   `typescript-only.sh` refuses a JavaScript file anywhere in the checkout outside the client's
-  distribution. The shell, the Node scripts and the Mac app's `notification.ts` use only syntax a
-  type erases (no `enum`, `namespace` or parameter property): `shell/strip.ts` refuses the rest.
+  distribution. The shell and the Node scripts use only syntax a type erases (no `enum`,
+  `namespace` or parameter property), which Node's stripper refuses otherwise (`shell/strip.ts`
+  for the shell). The Mac app's `notification.ts` has no TypeScript syntax at all
+  ([its guide](../symphony-desktop/AGENTS.md), `src/notification-stub.test.ts`).
+- **`@types/node`** stays on the line of the Node `.node-version` names, read by
+  `tsconfig.node.json` alone.
 
 ## The wire types
 
@@ -156,8 +162,9 @@ from `crates/symphony-api`, and `just client-lint` fails when the committed file
 Rust prints. The cases hold the TypeScript that carries a Rust function (`CARRIED` in the crate's
 `typescript` example) to the Rust: when one of those functions changes, port the change to the
 TypeScript it names, with cases that show it, and only then run `just client-wire`; a function the
-client comes to carry is added to `CARRIED` with its cases. Running `just client-wire` alone
-silences the check without the port, which a reviewer reads the file's diff for.
+client comes to carry is added to `CARRIED` with its cases. The check cannot see a port left
+undone by `just client-wire` run alone, a change in a helper `CARRIED` does not list, or an
+input no case lists: a reviewer reads the file's diff for those.
 
 ## The tests
 
@@ -189,8 +196,6 @@ The scripts' comments say the rest. What a change keeps:
   ([the root guide](../../AGENTS.md#the-clients-distribution)).
 - **A dependency's licence other than MIT refuses packaging** (`notices.sh`), until this step
   selects its licence explicitly.
-- The build needs Git, Bash, jq, the pinned Node and a Rust toolchain for the publisher; the
-  server embeds the files and needs no Node to run.
 
 ## The dev server
 
@@ -198,8 +203,8 @@ The scripts' comments say the rest. What a change keeps:
 loaded again on each save: Vite's dev server on loopback at PORT (0 for any), over a Symphony
 server of your own on port SERVER, which `just symphony --port 0` starts and prints. It refuses
 8765, the shared server's, as either port. The shared stylesheet it shows is the server's build's,
-so an edit under `src/styles/` shows once `just symphony-ui-dist` has built it. A reload, not
-React's Fast Refresh, which would be a dependency more. `src/dev-server.ts` says the rest.
+so an edit under `src/styles/` shows once `just symphony-ui-dist` has built it.
+`src/dev-server.ts` says the rest.
 
 ## Adding a page kind
 
