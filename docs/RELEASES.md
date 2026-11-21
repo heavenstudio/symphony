@@ -765,7 +765,8 @@ job for each step that commit's `tools/verify.sh` names, the tests one job with 
 - **Started for a full commit alone**, by a `workflow_dispatch`: the release run's, or a person's
   `gh workflow run release-verify.yml -f commit=COMMIT`. Its first job refuses an input that is
   not the full commit it checked out (a branch, a tag or a short commit), and lists the steps; no
-  other job runs before it. It starts on no push, pull request or clock.
+  other job runs before it. It starts on no push, pull request or clock of GitHub's: the release
+  run alone dispatches it, [the hosted clock](#the-hosted-clock)'s too.
 - **It writes nothing.** It is given no secret, its token reads the repository's contents alone and
   is left in no checkout, and each action it takes is pinned by a commit, so it tags, pushes and
   publishes nothing.
@@ -826,7 +827,8 @@ waits for its answer within the run's time.
   a run that is not believed, an artifact that does not open, and a run that ended `success` and
   listed no step are no red of the commit. The run says so (`verify verified here, not on
   GitHub: WHY`), verifies here as a project without the command does, and its record says which
-  judged and why.
+  judged and why. The one run that does not is a run [the hosted clock](#the-hosted-clock)
+  started: it verifies nothing here, and ends `unjudged`.
 - **The run's time.** The command is told the time the run has left. When that ends while GitHub
   is waited for, whether the run stops the command or the command answers `late` first, the check
   is red as any check stopped at the run's time is, nothing is verified here, and the workflow
@@ -1053,16 +1055,31 @@ as a new release candidate.
 ### Main while it is open
 
 While a candidate is open no run checks main's tip: a `--due` whose candidate waits for a red says
-so (`next run: held for the release candidate …`) and runs nothing, and so does a scheduled run or
+so (`next run: held for the release candidate …`) and runs nothing, by the count or by
+[the hosted clock](#the-hosted-clock), and so does a scheduled run or
 `just release`, which exits 0 recording no run; `--rerun` is refused. The count resumes once it
 ends: after its release, from that release, so a busy day's landings start a run of main's tip at
 the next landing; after a drop, at once.
 
 ## The cadence
 
-Tasks land fast, so a release run also starts once a given number of them have landed, whatever
-the hour, and its green release refreshes the server and its projects
-(`crates/symphony-build/src/release/cadence.rs`):
+Tasks land fast, so a release run also starts by what has landed, whatever the hour, and its green
+release refreshes the server and its projects (`crates/symphony-build/src/release/cadence.rs`).
+How often is paced by what a run costs where it is verified:
+
+- **On this machine, by a count of landings.** A run's verification here is hours of a machine the
+  agents share, so one starts only once a given number of tasks have landed. The count is this
+  machine's one control, and nothing below adds a run verified here to it.
+- **On GitHub's runners, by a clock as well.** Where the project has its releases verified there
+  ([on GitHub's runners](#on-githubs-runners)), a run's verification is off this machine, so
+  main's tip is also run on a clock ([the hosted clock](#the-hosted-clock), which says what each
+  such run still costs here).
+
+Nothing ticks for either: each landing asks (`--due`), and a run starts when one of them is due.
+Neither starts a run after each landing, or a run of some of the checks: a run is the whole
+verification of one commit ([its card](DECISIONS.md#release-main-judged-in-steps)).
+
+### The count
 
 - **The count** is `[releases] every_landings` in `symphony.toml`, 20 unless the project says. `0`
   turns the cadence off, and then only the scheduled run or `just release` releases.
@@ -1163,6 +1180,64 @@ the hour, and its green release refreshes the server and its projects
   once neither does. A second one does not wait for `current` to name a release serving the
   first's schema: the board may then stand more than one schema ahead of the machine's server
   until a release at its schema is `current`.
+
+### The hosted clock
+
+A project that names `[releases] hosted` has a second reason for `--due` to start a run of main's
+tip, short of the count: `[releases] hosted_every_minutes` have passed since the last run started.
+
+- **The interval** is the least time between the starts of two runs, 30 minutes unless the
+  project says. A run holds the run's one lock from the build of its tip, through GitHub's
+  verification, to the end of its install and refresh, and a run in progress starts no other. So a
+  run longer than the interval is followed by the next at the first landing after it ends: the
+  runs are back to back, and every interval shorter than a whole run behaves alike. The interval
+  spaces the runs out only when it is longer than one. `0` turns the clock off, and so does
+  `every_landings = 0`, with the rest of the cadence; a project that names no `hosted` command has
+  no clock at all.
+- **Two runs at once are not built.** A run of an hour started every half hour would be two
+  workflow runs at a time on GitHub, the second started while this machine still waits for the
+  first. The one lock allows one run, so main's tip is judged at most once per run's length.
+- **What a run costs this machine.** Its verification runs on GitHub; the rest is here. Before it
+  asks GitHub, every due run brings the run's checkout to the tip and builds `symphony-build`
+  there ([the trigger](#the-count)), a run that ends unjudged included. A green run then tags and
+  refreshes the machine as any release does: the release build of the install, about 11 minutes
+  of this machine's processors ([status](#status) shows one), each board's move and the server's
+  reload, unless `[releases] refresh` is off. With the clock on, that is up to one such build and,
+  when green, one install for each run's length, where the count alone asks for one per 20
+  landings.
+- **Counted from** the start of the newest release run on record, whatever it came to: green, red,
+  unjudged (below) or stopped short. A refresh and an out-of-cycle release are not counted from,
+  as they judge nothing of main's tip. With no run on record the first landing starts one.
+- **A tip judged already starts none.** The tip of the line is judged when it is the commit the
+  count starts after: the newest release, or a later run that checked something. Then nothing runs
+  until it moves, however long ago the last run started.
+- **The landing is the tick.** The tip moves by a landing, and each landing's `--due` reads the
+  clock with the count, with git and the records alone. Nothing runs on a timer here, and the
+  workflow starts on no clock of GitHub's. So the last landing of a burst, landed within the
+  interval of a run's start, waits for the next landing, the count, the scheduled run or
+  `just release --due`.
+- **Its run is verified on GitHub's runners or not at all.** It is the release run whole, as the
+  count's: its checkout, its record, a red filed and held as the release candidate, a green tagged,
+  published and the machine refreshed. Only its verification differs: where GitHub gives no result
+  of it ([when GitHub does not answer](#on-githubs-runners)), nothing is verified here. The run
+  says so (`verify not verified: WHY; the hosted clock's run verifies nothing here`) and ends
+  `unjudged`: recorded with why, exit 0, no red filed and none closed, no tag, and not counted
+  from by the count, which goes on to its own run. The clock asks again once the interval has
+  passed since that run's start, so GitHub out of reach is asked once an interval and never at
+  every landing. A check GitHub's runners do not serve (one named with `--check`) ends such a run
+  the same way before anything runs; the check `rulesets`, a read of the repository's rulesets,
+  runs as in any run.
+- **The count comes first.** At the count the run is the count's, and is verified here where
+  GitHub gives no result, as before. So is the rerun of a release candidate whose reds are
+  answered and the run a dropped one makes due: the clock starts neither.
+- **Never while a release candidate is open.** The candidate holds the clock as it holds the count
+  ([main while it is open](#main-while-it-is-open)): a red run of the clock's holds its commit as
+  the candidate, and no run of main's tip starts until it ends.
+- **What it says.** `--due` and `--status` add a line under the count's two, `hosted clock: every
+  30 min on GitHub's runners; …`: the run it counts from and the minute from which a landing
+  starts a run, `due` once the interval has passed, that the tip is judged already, or what comes
+  first (a run in progress, the release candidate, the count's run). The record names what started
+  the run (`cause`: `the hosted clock, every 30 min: the run ID started …; 3 landings since …`).
 
 ## The refresh
 
@@ -1597,7 +1672,8 @@ named, `just release --refresh` and `just release --github` for a release left p
 orchestrator's acts, and `just release --github` for the releases tagged before is the owner's.
 Naming a command in `[releases] hosted` and saying `verification = "hosted"` in the adapter's
 settings, which together move a release's verification to GitHub's machines, are the owner's
-word; once they are said, each run asks there without asking anyone.
+word; once they are said, each run asks there without asking anyone, and a land's `--due` starts
+[the hosted clock](#the-hosted-clock)'s runs as it starts the count's.
 Naming a command in `[releases] rulesets` is the owner's word as well, as every run then reads the
 repository's rulesets with the gh of whoever runs it.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
@@ -1673,7 +1749,9 @@ schema updates: 1 open, 4 served (ledger /machine/updates.json)
   served symphony@19 2026-11-20 10:12: 2 h 7 min from its board reaching it, 11 min 3 s of it after a release serving it; times from reached by schema-seen.log, served by the server's hand-off, release-2026-11-20 by release-2026-11-20's manifest, written by its install
 ```
  The next run is `due` once the count is reached, or the release
-candidate's rerun or drop makes it so, `held for the release candidate` while a red of it waits,
+candidate's rerun or drop makes it so, and where the project has [the hosted
+clock](#the-hosted-clock) a third line says what that waits for (`hosted clock: …`); a run of it
+that GitHub gave no result of is the last run as `unjudged`, with why. The next run is `held for the release candidate` while a red of it waits,
 `in progress` while a run holds the lock, or `off` when `every_landings` is 0. It reads the record
 and this checkout's tags and refs, fetches nothing and writes nothing, so a land the candidate has
 not been settled with yet is the next count's or run's to read.

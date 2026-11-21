@@ -1276,9 +1276,9 @@ options:
     ),
     (
         "land",
-        r#"usage: just tasks land [-h] [--as ACTOR] slug
+        r#"usage: just tasks land [-h] [--as ACTOR] [--dispatch] [--watch] [slug]
 "#,
-        r#"usage: just tasks land [-h] [--as ACTOR] slug
+        r#"usage: just tasks land [-h] [--as ACTOR] [--dispatch] [--watch] [slug]
 
 Land the task's branch, named as its slug, on the default branch once every
 stamp it needs stands on the branch's tip: its assessment's on the tip it read,
@@ -1291,7 +1291,8 @@ worktree of its own, main's side of each generated path kept, and checked by
 origin (unless [land] push = false), the task closes with its `landed` line,
 and the regenerator starts. It runs only as `just land SLUG`, whose recipe
 sets the marker it needs, and never where the project's own `land` recipe
-replaces it.
+replaces it. Under [land] delivery the host merges by a pull request instead:
+the task's move to review dispatches it, and the watcher closes it once merged.
 
 positional arguments:
   slug
@@ -1299,6 +1300,11 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+  --dispatch  publish the task's head and its evidence to its pull request and
+              arm the host's merge of it, whatever the evidence says; a move to
+              review starts it detached under [land] delivery
+  --watch     read every task armed at the host each [land] watch_seconds,
+              closing what merged, until none is armed; a dispatch starts it
 "#,
     ),
     (

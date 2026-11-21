@@ -19,6 +19,11 @@
 //! believed, an archive does not open) is no red of the commit: [`Judged::Here`] says why, and the
 //! run verifies here as a project without the adapter does. The run's time ending while the
 //! adapter waits is a check stopped at the run's time, as any is.
+//!
+//! A run the hosted clock started (docs/RELEASES.md, "The cadence") is the one run that verifies
+//! nothing here: what GitHub does not judge of it is judged by no one ([`Hosted::nowhere`]), and
+//! the run ends [`UNJUDGED`], a result that is no red, files nothing and is asked for again once
+//! the clock's interval has passed.
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -42,12 +47,16 @@ const ARTIFACT: &str = "verify-";
 /// The folder a job's artifact holds, as the paths its list names say it.
 const FOLDER: &str = "/build/verify/";
 
-/// What judged a check: GitHub's run, or this machine after GitHub could not.
+/// What a run the hosted clock started comes to when GitHub's runners judged nothing of its commit:
+/// its record's result, neither green nor red.
+pub(crate) const UNJUDGED: &str = "unjudged";
+
+/// What judged a check: GitHub's run, this machine after GitHub could not, or no one.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Hosted {
     /// The check.
     pub(crate) check: String,
-    /// `GitHub` or `here`.
+    /// `GitHub`, `here` or `nowhere`.
     pub(crate) judged: String,
     /// The workflow run that judged it: its page, attempt and the commit whose workflow file it
     /// ran.
@@ -57,7 +66,7 @@ pub(crate) struct Hosted {
     pub(crate) attempt: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) workflow_commit: Option<String>,
-    /// Why this machine judged it, where it did.
+    /// Why this machine judged it, or no one did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) why: Option<String>,
 }
@@ -75,6 +84,15 @@ impl Hosted {
         }
     }
 
+    /// The check `check` judged by no one, for `why`: GitHub gave no result of it, and the run
+    /// that asked verifies nothing here.
+    pub(crate) fn nowhere(check: &str, why: &str) -> Hosted {
+        Hosted {
+            judged: "nowhere".into(),
+            ..Hosted::here(check, why)
+        }
+    }
+
     /// Whether GitHub's run judged it.
     pub(crate) fn there(&self) -> bool {
         self.judged == "GitHub"
@@ -86,6 +104,11 @@ impl Hosted {
         match &self.run {
             Some(run) if self.there() => format!("{} verified on GitHub ({run})", self.check),
             _ if self.there() => format!("{} asked of GitHub: {}", self.check, why()),
+            _ if self.judged == "nowhere" => format!(
+                "{} not verified: {}; the hosted clock's run verifies nothing here",
+                self.check,
+                why()
+            ),
             _ => format!("{} verified here, not on GitHub: {}", self.check, why()),
         }
     }

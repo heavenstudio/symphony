@@ -547,6 +547,8 @@ fn journal(r: &Repo, receipt: &Receipt, stage: Stage) {
         squash: merged.then(|| receipt.squash.clone()),
         held: None,
         import: None,
+        green: None,
+        armed: false,
     }
     .write(&lands(r))
     .unwrap();

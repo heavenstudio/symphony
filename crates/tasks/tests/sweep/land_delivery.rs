@@ -16,6 +16,7 @@ use symphony_board::land::{Stop, evidence, land, land_by};
 use symphony_board::stamps::{Catalogue, Needs};
 
 mod candidate;
+mod dispatched;
 mod generated;
 mod import;
 
@@ -177,6 +178,21 @@ enum Merges {
     Closes,
 }
 
+/// How the host answers an arming of its own merge.
+#[derive(Clone, Copy, PartialEq)]
+enum Arms {
+    /// As GitHub does: `mergeable` where the pull request could merge now (its eligible published
+    /// passing, no red check of another's), else armed.
+    AsGitHub,
+    /// Armed whatever its checks say: a repository whose other required checks are pending.
+    Always,
+    /// Refused, for this kind of reason.
+    Refuses(&'static str),
+}
+
+/// What the host's own merge, armed, merges by: the title and the method it was armed with.
+type Armed = Option<(String, String)>;
+
 /// A verb, and what runs when it is asked.
 type Hook<'r> = (&'static str, Box<dyn FnOnce() + 'r>);
 
@@ -197,6 +213,19 @@ struct Host<'r> {
     says_head: Option<String>,
     /// Fields laid over a verb's answer, whatever the host did.
     says: RefCell<Vec<(&'static str, Value)>>,
+    arms: Arms,
+    /// Its own merge, armed: merged by itself at the next read once the eligible published at
+    /// the pull request's head passes and no check of another's is red, as GitHub merges seconds
+    /// after the check it waits on turns green.
+    armed: RefCell<Armed>,
+    /// Whether the evidence last published says it stands.
+    eligible: RefCell<bool>,
+    /// The checks of another's that are red at its head, `{"name", "conclusion"}`.
+    foreign: RefCell<Vec<Value>>,
+    /// What GitHub says of whether it merges: `blocked`, or `dirty` in conflict with main.
+    mergeable_state: RefCell<&'static str>,
+    /// A check of another's the rules require is still pending at its head: nothing merges.
+    waiting: RefCell<bool>,
 }
 
 impl<'r> Host<'r> {
@@ -211,6 +240,59 @@ impl<'r> Host<'r> {
             before: RefCell::default(),
             says_head: None,
             says: RefCell::default(),
+            arms: Arms::AsGitHub,
+            armed: RefCell::default(),
+            eligible: RefCell::default(),
+            foreign: RefCell::default(),
+            mergeable_state: RefCell::new("blocked"),
+            waiting: RefCell::default(),
+        }
+    }
+
+    fn arming(mut self, arms: Arms) -> Self {
+        self.arms = arms;
+        self
+    }
+
+    /// Whether its own merge is armed now.
+    fn is_armed(&self) -> bool {
+        self.armed.borrow().is_some()
+    }
+
+    /// From now on a check of another's is red at its head (a CI the repository adds).
+    fn red_check(&self, name: &str) {
+        (self.foreign.borrow_mut()).push(json!({"name": name, "conclusion": "failure"}));
+    }
+
+    /// From now on a check of another's the rules require stays pending: it merges nothing.
+    fn waits(&self) {
+        *self.waiting.borrow_mut() = true;
+    }
+
+    /// From now on GitHub reports the pull request in conflict with main.
+    fn conflicts(&self) {
+        *self.mergeable_state.borrow_mut() = "dirty";
+    }
+
+    /// Someone closes the pull request without a merge.
+    fn close_by_hand(&self) {
+        self.pull.borrow_mut().2 = true;
+        *self.armed.borrow_mut() = None;
+    }
+
+    /// Its own merge made, where it is armed and nothing holds it.
+    fn merge_on_green(&self) {
+        let (head, merged, closed) = self.pull.borrow().clone();
+        let held = !*self.eligible.borrow()
+            || *self.waiting.borrow()
+            || !self.foreign.borrow().is_empty()
+            || *self.mergeable_state.borrow() == "dirty";
+        let armed = self.armed.borrow().clone();
+        if let (Some(head), None, false, false, Some((title, method))) =
+            (head, merged, closed, held, armed)
+        {
+            let made = self.merge(&head, &title, &method);
+            self.pull.borrow_mut().1 = Some(made);
         }
     }
 
@@ -304,6 +386,7 @@ impl Transport for Host<'_> {
                 let pushed = format!("{head}:refs/heads/{slug}");
                 git(&self.r.root, &["push", "-q", "origin", &pushed]);
                 self.pull.borrow_mut().0 = Some(head.to_string());
+                *self.eligible.borrow_mut() = request["snapshot"]["eligible"] == json!(true);
                 let mut published = json!({
                     "state": "published",
                     "repository": {"id": 7, "name": "owner/name"},
@@ -335,14 +418,57 @@ impl Transport for Host<'_> {
                     }
                 }
             }
+            "arm" => {
+                let (_, merged, closed) = self.pull.borrow().clone();
+                let could = *self.eligible.borrow() && self.foreign.borrow().is_empty();
+                match (merged, closed, self.arms) {
+                    (Some(_), ..) => json!({"state": "merged"}),
+                    (None, true, _) => json!({"state": "closed"}),
+                    (None, false, Arms::Refuses(kind)) => {
+                        json!({"state": "refused", "kind": kind, "why": format!("no: {kind}")})
+                    }
+                    // Armed already, as the program answers it, asking nothing again.
+                    (None, false, _) if self.is_armed() => json!({"state": "armed"}),
+                    (None, false, Arms::AsGitHub) if could => json!({"state": "mergeable"}),
+                    (None, false, _) => {
+                        let (title, method) = (&request["title"], &request["method"]);
+                        *self.armed.borrow_mut() = Some((
+                            title.as_str().unwrap().to_string(),
+                            method.as_str().unwrap().to_string(),
+                        ));
+                        json!({"state": "armed"})
+                    }
+                }
+            }
+            "disarm" | "close" => {
+                let merged = self.pull.borrow().1.is_some();
+                if merged {
+                    json!({"state": "merged"})
+                } else {
+                    *self.armed.borrow_mut() = None;
+                    if verb == "close" {
+                        self.pull.borrow_mut().2 = true;
+                        json!({"state": "closed"})
+                    } else {
+                        json!({"state": "disarmed"})
+                    }
+                }
+            }
             "result" => {
+                self.merge_on_green();
                 let (head, merged, closed) = self.pull.borrow().clone();
                 let state = match (&merged, closed) {
                     (Some(_), _) => "merged",
                     (None, true) => "closed",
                     (None, false) => "open",
                 };
-                json!({"state": state, "head": head, "sha": merged, "base": "main", "repository": 7})
+                let open = state == "open";
+                json!({
+                    "state": state, "head": head, "sha": merged, "base": "main", "repository": 7,
+                    "auto_merge": self.is_armed() && open,
+                    "mergeable_state": *self.mergeable_state.borrow(),
+                    "foreign": if open { self.foreign.borrow().clone() } else { Vec::new() },
+                })
             }
             "landed" => json!({"state": "noted", "said": "its issue is closed"}),
             other => panic!("no verb {other}"),
@@ -494,7 +620,10 @@ fn a_ready_task_is_squashed_by_its_pull_request_and_the_checkout_follows() {
     let host = Host::new(&r, &bare);
     let (said, result) = landed(&r, SLUG, &people.orch, &host);
     let line = result.unwrap();
-    assert_eq!(host.verbs(), ["publish", "merge", "result", "landed"]);
+    assert_eq!(
+        host.verbs(),
+        ["publish", "arm", "merge", "result", "landed"]
+    );
     // What was published is the evidence the api answers: one reading.
     let published: evidence::Snapshot =
         serde_json::from_value(host.request("publish")["snapshot"].clone()).unwrap();
@@ -931,7 +1060,7 @@ fn a_merge_the_host_refuses_leaves_the_task_open_and_names_who_acts() {
                 &tip[..7]
             )
         );
-        assert_eq!(host.verbs(), ["publish", "merge", "result"]);
+        assert_eq!(host.verbs(), ["publish", "arm", "merge", "result"]);
         assert_nothing_landed(&r, &bare, &before);
         let post = r.board.store.thread(SLUG).unwrap().pop().unwrap();
         assert_eq!(post.recipient.as_deref(), Some(to));
@@ -973,7 +1102,7 @@ fn a_merge_whose_answer_was_lost_is_adopted_from_the_pull_request_and_asked_once
     let line = result.unwrap();
     assert_eq!(
         host.verbs(),
-        ["publish", "merge", "result", "result", "landed"]
+        ["publish", "arm", "merge", "result", "result", "landed"]
     );
     assert!(
         said.starts_with(&format!(
@@ -1263,7 +1392,7 @@ fn a_merge_given_no_usable_answer_whose_pull_request_is_still_open_is_asked_agai
 fn bound<'r>(r: &'r Repo, bare: &Path, people: &People) -> Host<'r> {
     let host = Host::new(r, bare).merging(Merges::Refuses("checks"));
     landed(r, SLUG, &people.orch, &host).1.unwrap_err();
-    assert_eq!(host.verbs(), ["publish", "merge", "result"]);
+    assert_eq!(host.verbs(), ["publish", "arm", "merge", "result"]);
     assert_eq!(host.request("publish")["snapshot"]["eligible"], true);
     host
 }
@@ -1289,7 +1418,7 @@ fn evidence_withdrawn_at_a_bound_head_is_published_as_blocking_before_the_land_r
         let (said, result) = landed(&r, SLUG, &people.orch, &host);
         result.unwrap_err();
         // The pull request is read, then told: the head as it is and a snapshot that blocks.
-        assert_eq!(host.verbs()[3..], ["result", "publish"], "{withdrawn}");
+        assert_eq!(host.verbs()[4..], ["result", "publish"], "{withdrawn}");
         let published = host.request("publish");
         assert_eq!(published["head"], now.as_str(), "{withdrawn}");
         assert_eq!(published["snapshot"]["eligible"], false, "{withdrawn}");
@@ -1314,7 +1443,7 @@ fn evidence_withdrawn_at_a_bound_head_is_published_as_blocking_before_the_land_r
         assert_nothing_landed(&r, &bare, &before);
         // Asked again as it is: told again, which the command answers by finding what stands.
         landed(&r, SLUG, &people.orch, &host).1.unwrap_err();
-        assert_eq!(host.verbs()[5..], ["result", "publish"], "{withdrawn}");
+        assert_eq!(host.verbs()[6..], ["result", "publish"], "{withdrawn}");
     }
 }
 
@@ -1327,8 +1456,8 @@ fn evidence_that_stands_at_a_bound_head_is_published_once_by_the_delivery_itself
     let (_, result) = landed(&r, SLUG, &people.orch, &host);
     result.unwrap();
     assert_eq!(
-        host.verbs()[3..],
-        ["result", "publish", "merge", "result", "landed"]
+        host.verbs()[4..],
+        ["result", "publish", "arm", "merge", "result", "landed"]
     );
     assert_eq!(host.request("publish")["snapshot"]["eligible"], true);
 }
@@ -1352,7 +1481,7 @@ fn a_bound_pull_request_merged_since_it_was_read_as_open_is_adopted_or_held_neve
         "{line}"
     );
     assert_eq!(
-        host.verbs()[3..],
+        host.verbs()[4..],
         ["result", "result", "landed"],
         "no publication, no merge"
     );
@@ -1424,7 +1553,7 @@ fn a_bound_pull_request_merged_since_it_was_read_as_open_is_adopted_or_held_neve
         );
         assert!(line.contains(said), "{case}: {line}");
         assert_eq!(
-            host.verbs()[3..],
+            host.verbs()[4..],
             ["result"],
             "{case}: nothing published, nothing merged"
         );
@@ -1585,6 +1714,8 @@ fn a_run_cut_short_after_the_board_closed_the_task_closes_and_dispatches_nothing
         squash: Some(squash.clone()),
         held: None,
         import: None,
+        green: None,
+        armed: false,
     };
     // Killed after the board's write and before the journal said closed: the line is found.
     journal(Stage::Reconciled).write(&lands(&r)).unwrap();
@@ -1624,7 +1755,7 @@ fn evidence_that_changes_while_it_is_published_is_published_again_or_refused_nev
     result.unwrap();
     assert_eq!(
         host.verbs(),
-        ["publish", "publish", "merge", "result", "landed"]
+        ["publish", "publish", "arm", "merge", "result", "landed"]
     );
     assert!(
         said.contains("its evidence changed while it was published; publishing it again"),
@@ -1954,6 +2085,8 @@ fn a_slug_filed_again_at_the_very_head_delivered_before_is_refused_as_delivered(
         squash: None,
         held: None,
         import: None,
+        green: None,
+        armed: false,
     };
     for other in [journal(&first, 3), journal(&receipt.parent, 2)] {
         other.write(&lands(&r)).unwrap();
@@ -2149,6 +2282,8 @@ fn a_delivery_proved_again_after_a_run_cut_short_keeps_the_receipt_it_has_and_la
         squash: None,
         held: None,
         import: None,
+        green: None,
+        armed: false,
     };
     journal.write(&lands(&r)).unwrap();
     let (said, result) = landed(&r, SLUG, &people.orch, &host);
