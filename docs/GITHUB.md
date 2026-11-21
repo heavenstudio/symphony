@@ -337,7 +337,11 @@ evidence, and it reads no board for it.
   answered. GitHub lists a check a few seconds after it takes it, so one not listed yet is read
   again after rests of 1, 2, 4 and 8 s, well inside the time the land gives the program, and
   nothing is written again; one still not listed then is answered `unavailable`, and the next run
-  finds what was written.
+  finds what was written. GitHub also moves a pull request that is open already to a head pushed
+  a few seconds after the push, so one still at the head it was read at before the push is read
+  again after the same rests, once the checks stand, and `published` names the head pushed; one
+  that has not moved then is answered `unavailable`, and the next run reads it first. A head
+  that is neither, as someone else pushed, is answered as it is, and the land refuses it.
 - **`arm`** reads the protection again, refusing as `publish` does, then turns on GitHub's
   auto-merge of the bound pull request at the head it is given (`expectedHeadOid`), by the method
   and commit text `merge` would ask for. GitHub then merges it itself once every check the branch
