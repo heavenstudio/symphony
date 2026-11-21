@@ -20,6 +20,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 use symphony_board::rows::{Dump, TaskRow};
 use symphony_board::rpc::Client;
+use symphony_board::server::Storage;
 use symphony_board::sys::{self, Command};
 use symphony_board::{NAMESPACE, Store};
 
@@ -150,6 +151,16 @@ pub fn program() -> PathBuf {
         .map_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_tasks")), PathBuf::from)
 }
 
+/// How the suite's server keeps its data: as the board's, with a memtable that holds the copy of
+/// this board, one transaction (it does not fit the board's own 256 MiB), whatever the machine's
+/// memory is. Left to SurrealKV, the memtable is a share of that memory, too small on a machine of
+/// 7 GiB.
+const STORAGE: Storage = Storage {
+    memtable: MEMTABLE_MIB << 20,
+    ..Storage::BOARD
+};
+const MEMTABLE_MIB: u64 = 1024;
+
 impl Board {
     fn make() -> Board {
         // Only the private cleanup worker receives this record path. It exercises the same
@@ -163,8 +174,13 @@ impl Board {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("ps"), "").unwrap();
         let engine = format!("surrealkv://{}", dir.join("data").display());
-        let (addr, server) = store::launch_on(&store::surreal(), &dir.join("surreal.log"), &engine)
-            .unwrap_or_else(|why| panic!("the suite's server did not come up: {why:?}"));
+        let (addr, server) = store::launch_under(
+            &store::surreal(),
+            &dir.join("surreal.log"),
+            &engine,
+            Some(STORAGE),
+        )
+        .unwrap_or_else(|why| panic!("the suite's server did not come up: {why:?}"));
         let pid = server.server.expect("a server up has said its process");
         let quiet = cpu::Quiet::new("the board's server", pid, SETTLE);
         let store = Store::with(
