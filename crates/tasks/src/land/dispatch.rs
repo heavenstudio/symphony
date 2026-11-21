@@ -423,7 +423,10 @@ pub fn watch(
             ));
         }
         round += 1;
-        let slugs: Vec<&str> = journals.iter().map(|journal| journal.slug.as_str()).collect();
+        let slugs: Vec<&str> = journals
+            .iter()
+            .map(|journal| journal.slug.as_str())
+            .collect();
         told.keep(&slugs);
         for journal in journals {
             let task = store.get(&journal.slug).ok();

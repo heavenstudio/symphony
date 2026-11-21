@@ -1423,8 +1423,14 @@ fn a_round_that_comes_to_the_same_writes_nothing_to_the_watchers_log() {
     let said = String::from_utf8(out).unwrap();
     let stood: Vec<&str> = said.lines().collect();
     assert_eq!(stood.len(), 2, "four rounds, two states: {said}");
-    assert!(stood[0].contains("its evidence standing for 0 min"), "{said}");
-    assert!(stood[1].contains("its evidence standing for 1 min"), "{said}");
+    assert!(
+        stood[0].contains("its evidence standing for 0 min"),
+        "{said}"
+    );
+    assert!(
+        stood[1].contains("its evidence standing for 1 min"),
+        "{said}"
+    );
 }
 
 #[test]
