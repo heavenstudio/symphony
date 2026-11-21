@@ -1705,7 +1705,13 @@ fn until_live(case: &Case, handle: &str, work: &Path) {
     test_time::until_true(format!("{handle} read live"), backstop, || {
         health(case, handle) == "live"
     })
-    .unwrap_or_else(|stall| panic!("{stall}: it reads {}; {}", health(case, handle), holds(work)));
+    .unwrap_or_else(|stall| {
+        panic!(
+            "{stall}: it reads {}; {}",
+            health(case, handle),
+            holds(work)
+        )
+    });
 }
 
 /// An orchestrator, and two workers the board last saw [`GONE`] ago, each executing a task of its
@@ -1747,7 +1753,10 @@ fn executor(case: &Case, slug: &str) -> &'static str {
 fn a_session_reads_live_while_its_own_recorded_run_goes_on_and_ages_from_its_end() {
     let case = Case::new();
     let (orchestrator, [(worker, quiet), (other, beside)]) = two_gone_quiet(&case);
-    assert_eq!((health(&case, &worker), health(&case, &other)), ("lost", "lost"));
+    assert_eq!(
+        (health(&case, &worker), health(&case, &other)),
+        ("lost", "lost")
+    );
     assert_eq!(orphaned(&case, &orchestrator), [beside, quiet]);
     let folders = Folders::new("recorder-session-seen");
     let (release, pid) = (folders.dir.join("release"), folders.dir.join("pid"));
@@ -1763,7 +1772,10 @@ fn a_session_reads_live_while_its_own_recorded_run_goes_on_and_ages_from_its_end
     until_live(&case, &worker, &folders.work);
     assert_eq!(executor(&case, quiet), "live");
     assert_eq!(orphaned(&case, &orchestrator), [beside]);
-    assert_eq!((health(&case, &other), executor(&case, beside)), ("lost", "lost"));
+    assert_eq!(
+        (health(&case, &other), executor(&case, beside)),
+        ("lost", "lost")
+    );
     // Its end is said too, whenever it comes: seen long ago again, it is seen as the run ends.
     unseen(&case, &worker);
     assert_eq!(health(&case, &worker), "lost");
@@ -1776,7 +1788,10 @@ fn a_session_reads_live_while_its_own_recorded_run_goes_on_and_ages_from_its_end
     assert_eq!(health(&later(LIVE_SECONDS), &worker), "live");
     assert_eq!(health(&later(LIVE_SECONDS + 1.0), &worker), "stale");
     let gone = later(crate::common::GONE);
-    assert_eq!((health(&gone, &worker), executor(&gone, quiet)), ("lost", "lost"));
+    assert_eq!(
+        (health(&gone, &worker), executor(&gone, quiet)),
+        ("lost", "lost")
+    );
     assert_eq!(orphaned(&gone, &orchestrator), [beside, quiet]);
 }
 
@@ -1807,7 +1822,10 @@ fn a_run_whose_recorder_died_keeps_its_session_live_no_longer() {
     assert!(alive(written_pid(&pid)), "its command runs on");
     let gone = ago(&case, -crate::common::GONE);
     assert_eq!(health(&ago(&case, -LIVE_SECONDS - 1.0), &worker), "stale");
-    assert_eq!((health(&gone, &worker), executor(&gone, quiet)), ("lost", "lost"));
+    assert_eq!(
+        (health(&gone, &worker), executor(&gone, quiet)),
+        ("lost", "lost")
+    );
     assert_eq!(orphaned(&gone, &orchestrator), [beside, quiet]);
     fs::write(&release, "").unwrap();
     assert!(started.wait().unwrap().success());
