@@ -782,7 +782,7 @@ pub fn audit(root: &Path) -> Result {
         undrawn_cards(&text, rel, &mut result);
         let file = project.file(rel);
         if symphony && recipes::audited(&file) {
-            naming.push((file, 1, text));
+            naming.push((file, 1, prose_alone(&text)));
         }
     }
     if symphony {
@@ -791,6 +791,23 @@ pub fn audit(root: &Path) -> Result {
             .extend(recipes_named(root, tracked.as_ref(), naming));
     }
     result
+}
+
+/// `text` with each line of a record emptied, every other line where it was: a card's own lines,
+/// wherever the card sits ([`crate::register::carded`]), and a register region's. A card says what
+/// was proposed and decided, as the records under `docs/` do, never what to run now.
+fn prose_alone(text: &str) -> String {
+    use crate::register::{REGION_END, REGION_START, carded};
+    let lines: Vec<&str> = text.split('\n').collect();
+    let carded = carded(&lines);
+    let mut region = false;
+    let mut kept = Vec::with_capacity(lines.len());
+    for (line, card) in lines.iter().zip(carded) {
+        region |= line.trim() == REGION_START;
+        kept.push(if region || card { "" } else { line });
+        region &= line.trim() != REGION_END;
+    }
+    kept.join("\n")
 }
 
 /// The errors of the recipes the Symphony's own checkout at `root` names: in its documents (`texts`,
