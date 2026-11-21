@@ -62,7 +62,7 @@ fn names(trie: &[u8]) -> Vec<String> {
         if terminal != 0 {
             found.push(String::from_utf8_lossy(&name).into_owned());
         }
-        at += terminal;
+        at = at.saturating_add(terminal);
         let Some(&children) = trie.get(at) else {
             continue;
         };
