@@ -24,6 +24,13 @@
 //! A TCP socket kept across spawns is close-on-fork once [`connect`] has made it, and close-on-exec
 //! from just after it exists.
 //!
+//! A start that fails answers the error std's answers, with one difference, on macOS before 26:
+//! a name with a slash the kernel refuses for its path (ENOTDIR, ELOOP, ENAMETOOLONG: a directory
+//! to start from that is a file, a path through one) fails here with the kernel's error, as std
+//! fails it on macOS 26 and on Linux, where std's is ENOENT. std starts such a name with
+//! `posix_spawnp`, which answered ENOENT for every path it did not find, searched for or not, up to
+//! Libc-1698 (macOS 15) and hands the kernel's refusal on since Libc-1725 (macOS 26).
+//!
 //! A pipe's first ends are not close-on-exec until a second call, and a std child keeps each
 //! descriptor not close-on-exec at its spawn for its life: a std spawn in a binary that uses the
 //! helpers takes [`spawning`] for its spawn alone ([`Spawning`]), so it never starts in that gap.
@@ -1495,6 +1502,64 @@ mod tests {
         }
     }
 
+    /// The first number of a kernel release as `uname` writes it (`24.6.0` is 24).
+    fn darwin_major(release: &str) -> Option<u32> {
+        release.split('.').next()?.parse().ok()
+    }
+
+    /// This system's Darwin major version, `None` where it is not macOS.
+    fn darwin() -> Option<u32> {
+        if !cfg!(target_os = "macos") {
+            return None;
+        }
+        // SAFETY: utsname is plain data, for which all zeroes is a value.
+        let mut name: libc::utsname = unsafe { std::mem::zeroed() };
+        // SAFETY: uname writes NUL-terminated text into the struct it is handed.
+        assert_eq!(unsafe { libc::uname(&raw mut name) }, 0);
+        // SAFETY: uname NUL-terminated the release within its array.
+        let release = unsafe { std::ffi::CStr::from_ptr(name.release.as_ptr()) };
+        darwin_major(release.to_str().unwrap())
+    }
+
+    /// What std answers for a name with a slash the kernel refused with `code`, started outside
+    /// its fork path, on Darwin `darwin` (`None` for another system). Its start is `posix_spawnp`,
+    /// which up to Libc-1698 (macOS 15, Darwin 24) runs such a name through its search's reading
+    /// of a refusal, where a path not found (ENOTDIR, ELOOP, ENAMETOOLONG) ends as ENOENT, and
+    /// since Libc-1725 (macOS 26, Darwin 25) hands on the refusal of a name it did not search for.
+    fn spawnp_answers(code: libc::c_int, darwin: Option<u32>) -> libc::c_int {
+        match code {
+            libc::ENOTDIR | libc::ELOOP | libc::ENAMETOOLONG
+                if darwin.is_some_and(|major| major < 25) =>
+            {
+                libc::ENOENT
+            }
+            _ => code,
+        }
+    }
+
+    /// Both starts failed, this one with the kernel's `code` and std's with what its
+    /// `posix_spawnp` makes of that on Darwin `darwin`: the same error wherever that hands it on.
+    fn refused_by_the_kernel(
+        case: &str,
+        (theirs, ours): (io::Result<Output>, io::Result<Output>),
+        code: libc::c_int,
+        darwin: Option<u32>,
+    ) {
+        let said = |e: io::Error| (e.kind(), e.raw_os_error(), e.to_string());
+        let ours = ours.expect_err(case);
+        let theirs = theirs.expect_err(case);
+        assert_eq!(
+            said(ours),
+            said(io::Error::from_raw_os_error(code)),
+            "{case}"
+        );
+        assert_eq!(
+            said(theirs),
+            said(io::Error::from_raw_os_error(spawnp_answers(code, darwin))),
+            "{case}: std"
+        );
+    }
+
     #[test]
     fn output_answers_as_std_does_for_arguments_environment_directory_and_exit() {
         let tmp = Tmp::new("contract");
@@ -1618,12 +1683,8 @@ mod tests {
                 "missing directory",
                 both!("/bin/sh", |c| c.current_dir(tmp.0.join("absent"))),
             ),
-            // A directory it cannot enter is the answer for a name with a slash and on std's fork
-            // path; std's other path searches and reads it as every name missing.
-            (
-                "directory a file",
-                both!("/bin/sh", |c| c.current_dir(&file)),
-            ),
+            // A directory it cannot enter is the answer on std's fork path; std's other path
+            // searches and reads it as every name missing.
             (
                 "directory a file, cleared",
                 both!("true", |c| c.env_clear().current_dir(&file)),
@@ -1645,17 +1706,45 @@ mod tests {
         ] {
             assert!(same(case, result).is_none(), "{case} started");
         }
-        // A path through a file is the kernel's own refusal here, ENOTDIR. std's is that too
-        // where the system's `posix_spawnp` hands a path's refusal on, and ENOENT where it answers
-        // one refusal for every path not found (Libc before macOS 26).
-        let (theirs, ours) = both!(file.join("sh"));
-        let ours = ours.expect_err("path through a file started");
-        let theirs = theirs.expect_err("std started a path through a file");
-        assert_eq!(ours.raw_os_error(), Some(libc::ENOTDIR), "{ours}");
-        assert!(
-            matches!(theirs.raw_os_error(), Some(libc::ENOTDIR | libc::ENOENT)),
-            "std: {theirs}"
-        );
+        // A name with a slash whose path the kernel refuses: the kernel's error here, and std's
+        // too wherever its `posix_spawnp` hands that on.
+        for (case, result) in [
+            ("path through a file", both!(file.join("sh"))),
+            (
+                "directory a file",
+                both!("/bin/sh", |c| c.current_dir(&file)),
+            ),
+        ] {
+            refused_by_the_kernel(case, result, libc::ENOTDIR, darwin());
+        }
+    }
+
+    /// Each refusal of a path is ENOENT from the `posix_spawnp` of a Libc before macOS 26 and the
+    /// kernel's own from a later one or another system's; every other refusal is the kernel's on
+    /// all of them. A release is read by its first number, and one that has none is no Darwin.
+    #[test]
+    fn std_answers_a_refused_path_by_its_libc() {
+        for path in [libc::ENOTDIR, libc::ELOOP, libc::ENAMETOOLONG] {
+            for before in [0, 23, 24] {
+                assert_eq!(spawnp_answers(path, Some(before)), libc::ENOENT);
+            }
+            for since in [None, Some(25), Some(26)] {
+                assert_eq!(spawnp_answers(path, since), path);
+            }
+        }
+        for kept in [libc::ENOENT, libc::EACCES, libc::E2BIG, libc::ENOEXEC] {
+            for darwin in [None, Some(24), Some(25)] {
+                assert_eq!(spawnp_answers(kept, darwin), kept);
+            }
+        }
+        assert_eq!(darwin_major("24.6.0"), Some(24));
+        assert_eq!(darwin_major("25.6.0"), Some(25));
+        assert_eq!(darwin_major("25"), Some(25));
+        for none in ["", ".1", "x.1", "-1.0", "24a.0"] {
+            assert_eq!(darwin_major(none), None, "{none:?}");
+        }
+        // This system's: a Darwin's on macOS, where the answer differs, and none elsewhere.
+        assert_eq!(darwin().is_some(), cfg!(target_os = "macos"));
     }
 
     /// A name exec refuses earlier along `PATH` (a file it may not run, a folder, a `#!` line whose
