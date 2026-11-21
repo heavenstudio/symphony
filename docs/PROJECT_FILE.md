@@ -20,7 +20,35 @@ name = "Lamp Shop"
 launch = { default = "claude", model = "opus" }
 ```
 
-This page lists every key the Symphony reads (`crates/symphony/src/project/file.rs`, `board.rs`
+## A first file
+
+A new project needs none of this page to start. With no `symphony.toml` the project is named
+after its folder, its documents are `docs/` served at `/<id>/docs/`, its register is
+`docs/DECISIONS.md`, tasks land on `main` by the default landing, and a launch starts Codex. A
+first file usually says three things: the project's name and the segment of its address, and the
+agent its sessions are.
+
+```toml
+[project]
+name = "Lamp Shop"
+id = "lamp-shop"
+
+[agents]
+launch = { default = "claude" }
+```
+
+`just symphony-cli settings-check` checks it ([below](#the-settings-check)). The tables a project
+reaches for next are [`[[entrypoints]]`](#entrypoints) (which folders are served),
+[`[agents.models]`](#agentsmodels) (the model each role runs on), [`[limits]`](#limits) (how much
+runs at once) and [`[verdicts]`](#verdicts) with [`[land]`](#land) (what a landing checks).
+[`[workflow]`](#workflow), [`[board.external_postgresql]`](#boardexternal_postgresql) and
+[`[releases]`](#releases) are for a custom delivery workflow, a hosted board and the Symphony's own
+release run: most projects never write them.
+
+A command a key holds (`on_review`, `on_land`, `[verdicts] check`, a generator's `command`) is a
+list of words, `["just", "check"]`, never one line of shell.
+
+The rest of this page lists every key the Symphony reads (`crates/symphony/src/project/file.rs`, `board.rs`
 and `theme.rs`, a generator's in `crates/tasks/src/land.rs` and a stamp's in
 `crates/tasks/src/stamps.rs`): a test,
 `crates/symphony/tests/project/reference.rs`, fails on a key this page lacks or one the code does
@@ -95,86 +123,6 @@ overrides, the file and the line (`symphony.local.toml [limits] machine_agents, 
 file, and with `all` and `--agent` the launch agent and its model too, making the file when it is
 not there; nothing is landed for it.
 
-## `[workflow]`
-
-This table is a project's custom delivery workflow, strict, read by
-`symphony::project::workflow::candidate`. Project loading accepts one the local host supports and
-refuses any other with `unsupported_activation`, naming what it needs: a capability no grant of
-the host names, a guard no committed approval authority attests
-([below](#workflow_authorities)) or a route around one, an adapter, or what durable attempts,
-landing adapters or accepted outputs bring. The board activates the workflow the project's default branch commits, with its
-`[[workflow_mappings]]`, and moves its tasks by its edges alone (`just tasks workflow`).
-Omission retains the current board behavior and selects built-in definition v1 in the candidate
-reader. Candidate parsing never changes a board. The [workflow reference](WORKFLOW.md) documents
-every nested field, validation, activation and admission.
-
-All fields below are required when the candidate table is present; lists may be empty only
-where validation allows it. Unknown fields and variants refuse the candidate.
-
-| Key | Default | What it sets |
-| --- | --- | --- |
-| `format` | required | definition format version, currently `1` |
-| `initial` | required | initial `{ phase, state }` pair |
-| `task_kinds` | required | nonempty list of supported stable task-kind IDs |
-| `phases` | required | phase IDs, labels, display/phone order and column membership |
-| `states` | required | coordination-state IDs and labels |
-| `positions` | required | valid pairs and their staffing, slot, dependency, outcome and recovery declarations |
-| `edges` | required | typed routes, authority requirements, inputs, guards and effects |
-| `capabilities` | required | declared host capability IDs; declarations grant no authority |
-| `adapters` | required | declared host adapter IDs; declarations supply no adapter |
-| `guards` | required | policy requirements by stable ID and the adapter whose approval authority attests them |
-
-## `[[workflow_mappings]]`
-
-Where a task goes when a newly committed `[workflow]` no longer declares the pair it stands at
-(or the pair it resumes to when blocked). Each entry names a removed pair and a pair the workflow
-declares, and no pair is mapped twice; a pair the workflow still declares is never remapped, as an
-ID keeps its meaning (rename it instead). A task the board's existing writers kept starts from
-built-in v1's pair of its status ([WORKFLOW](WORKFLOW.md#activation-and-mappings)).
-
-Mappings in a file with no `[workflow]` map onto built-in v1, the board's own writers: each
-names a pair v1 does not declare and one it does. They say where each task goes when a project
-that ran a custom workflow drops it ([WORKFLOW](WORKFLOW.md#returning-to-the-boards-own-writers)),
-and a board with no workflow active reads them and does nothing.
-
-| Key | Default | What it sets |
-| --- | --- | --- |
-| `from` | required | the removed `{ phase, state }` pair |
-| `to` | required | the declared `{ phase, state }` pair a task there goes to |
-
-## `[[workflow_authorities]]`
-
-The approval authorities whose signed word meets the workflow's guards, one for each adapter its
-guards name ([WORKFLOW](WORKFLOW.md#guards)). A guard is a decision the project keeps in its own
-approval ledger; the board never holds that ledger and never decides a guard. What it asks of a
-project, in plain words:
-
-- **It holds a signing key.** The project runs an authority over its ledger that holds an
-  Ed25519 signing key and signs, with it, each observation of the ledger's state and each
-  attestation that a guard holds for one operation. The secret half stays with that authority:
-  never in the repository, the board or a request.
-- **It commits the public half here**, as `ed25519:` and the key's 32 bytes in lowercase hex,
-  with the adapter it answers for and the issuer it signs as. The board verifies every
-  observation and attestation by the key the default branch commits, and by nothing else.
-- **A changed key is a new generation.** Changing a key, an issuer or an authority is a commit of
-  this file, which activates a new generation of the workflow: every attestation made for the
-  previous one stops at once, and the new key goes on from the ledger state the board last
-  accepted.
-- **It names itself by `[project] id`.** An attestation names the project it is for by the id this
-  file commits, which a project with an authority must write: an id taken from a folder's name or
-  a machine's registry could differ between machines, and could match another project's.
-
-An authority with no `[workflow]`, for an adapter the workflow does not declare, named twice,
-with no issuer or a key that does not read is refused by name, and a guard with no authority
-committed for its adapter leaves the workflow unsupported.
-
-| Key | Default | What it sets |
-| --- | --- | --- |
-| `adapter` | required | the adapter of the workflow's `adapters` this authority answers for |
-| `issuer` | required | the name the authority signs as, which its observations and attestations repeat |
-| `contract` | required | the attestation contract it speaks, `1` in this release |
-| `key` | required | the public half of its signing key, `ed25519:` and 64 lowercase hex digits |
-
 ## `[project]`
 
 | Key | Default | What it sets |
@@ -189,7 +137,7 @@ committed for its adapter leaves the workflow unsupported.
 ## `[[entrypoints]]`
 
 Each table serves one folder at one URL. With none written, one keeps the convention: `docs/` at
-`/docs/`, Markdown, `docs/history` listed but never read as documents. A key not listed here
+`/docs/`, Markdown and HTML, `docs/history` listed but never read as documents. A key not listed here
 refuses the file, as a misspelt one would change what is served.
 
 | Key | Default | What it sets |
@@ -228,7 +176,7 @@ neither serves no `.html` file, as its patterns serve none they leave out.
 
 | Key | Default | What it sets |
 | --- | --- | --- |
-| `crates` | `[]` | the project's plugins, by crate name: a host linking them, or a process of their own ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md)) |
+| `crates` | `[]` | the project's plugins, each by the name its plugin declares: a host linking them, or a process of their own ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md)) |
 | `process` | none | `[plugins.process]`: a plugin's name, then the command that starts its process, run in the project's root |
 | `timing` | `false` | record each plugin call's time ([PLUGIN_CALLS](PLUGIN_CALLS.md)) |
 | `loopback` | `false` | send each call through a JSON round trip inside the process, and record both times |
@@ -359,7 +307,7 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `guide` | `TASKS.md` | the board's guide: the links and pictures in task messages resolve from it |
 | `on_review` | `[]`: none | the command started, detached from the main checkout, when a task moves to review, with its slug, branch and tip appended |
 | `on_land` | `[]`: none | the command started once `just land` closed a task, with its slug and merge appended |
-| `orchestrator_slots` | none: no cap | the open tasks an orchestrator holds before the board refuses it new work; `[limits]` wins |
+| `orchestrator_slots` | none: no cap | the tasks in progress an orchestrator holds before the board refuses it new work; `[limits]` wins |
 | `review_alarm_ratio` | `2` | review over this many times the work in progress raises the pipeline alarm ([TASKS](TASKS.md#the-pipeline-alarm)) |
 | `review_alarm_hours` | `4` | the hours review must stay over the ratio to raise it |
 | `review_alarm_clear_hours` | `1` | the hours review must stay at or under it to clear it |
@@ -372,8 +320,10 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `slot_locks` | none | the folder of the project's test-slot locks, which the agents view probes; under `.git/`, the git common dir |
 | `assessments` | none: an assessment is refused | the folder of the project's landing assessments; under `.git/`, the git common dir |
 
-PostgreSQL setup requires version 18 or later, installed by the machine's package manager.
-Without an explicit `postgresql`, discovery takes the first executable `postgres` on `PATH`;
+A project's board needs no PostgreSQL: it runs on the SurrealDB `symphony init` fetches
+([getting started](GETTING_STARTED.md#2-set-the-project-up)). Only a board whose home names
+PostgreSQL uses what follows. Its setup requires version 18 or later, installed by the machine's
+package manager. Without an explicit `postgresql`, discovery takes the first executable `postgres` on `PATH`;
 `initdb`, `pg_ctl` and `psql` must be executable in the same folder. On a Mac with Homebrew:
 
 ```sh
@@ -389,7 +339,7 @@ a board uses PostgreSQL once its home names it ([POSTGRESQL](POSTGRESQL.md)).
 
 ## `[board.external_postgresql]`
 
-Where a hosted board's PostgreSQL is, for a build with the `hosted-postgresql` feature
+Not usable yet: no command reaches a hosted board. Where a hosted board's PostgreSQL is, for a build with the `hosted-postgresql` feature
 ([POSTGRESQL](POSTGRESQL.md#a-hosted-board)); every build reads and judges the table, so the
 settings check says the same anywhere. It holds no credential: each `_env` key is the name of a
 variable of the process's environment, never a value, and a URL, a password or a key written
@@ -490,6 +440,87 @@ stands is its reader's, which no key sets. A key not listed here refuses the cat
 | `applies` | the Symphony's own | where an assessor needs it, as `just tasks stamps` prints it |
 | `skips` | the Symphony's own | where an assessor leaves it out |
 | `waivable` | `true` for `pictures`, `false` for the rest | whether a gate decision may waive it for one tip ([TASKS](TASKS.md#gate-decisions)); `true` on `tests`, `review` or `owner` refuses the catalogue, as they are never waived |
+
+## `[workflow]`
+
+Advanced: a project that keeps the board's own workflow writes none of the three workflow tables.
+This table is a project's custom delivery workflow, strict, read by
+`symphony::project::workflow::candidate`. Project loading accepts one the local host supports and
+refuses any other with `unsupported_activation`, naming what it needs: a capability no grant of
+the host names, a guard no committed approval authority attests
+([below](#workflow_authorities)) or a route around one, an adapter, or what durable attempts,
+landing adapters or accepted outputs bring. The board activates the workflow the project's default branch commits, with its
+`[[workflow_mappings]]`, and moves its tasks by its edges alone (`just tasks workflow`).
+Omission retains the current board behavior and selects built-in definition v1 in the candidate
+reader. Candidate parsing never changes a board. The [workflow reference](WORKFLOW.md) documents
+every nested field, validation, activation and admission.
+
+All fields below are required when the candidate table is present; lists may be empty only
+where validation allows it. Unknown fields and variants refuse the candidate.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `format` | required | definition format version, currently `1` |
+| `initial` | required | initial `{ phase, state }` pair |
+| `task_kinds` | required | nonempty list of supported stable task-kind IDs |
+| `phases` | required | phase IDs, labels, display/phone order and column membership |
+| `states` | required | coordination-state IDs and labels |
+| `positions` | required | valid pairs and their staffing, slot, dependency, outcome and recovery declarations |
+| `edges` | required | typed routes, authority requirements, inputs, guards and effects |
+| `capabilities` | required | declared host capability IDs; declarations grant no authority |
+| `adapters` | required | declared host adapter IDs; declarations supply no adapter |
+| `guards` | required | policy requirements by stable ID and the adapter whose approval authority attests them |
+
+## `[[workflow_mappings]]`
+
+Where a task goes when a newly committed `[workflow]` no longer declares the pair it stands at
+(or the pair it resumes to when blocked). Each entry names a removed pair and a pair the workflow
+declares, and no pair is mapped twice; a pair the workflow still declares is never remapped, as an
+ID keeps its meaning (rename it instead). A task the board's existing writers kept starts from
+built-in v1's pair of its status ([WORKFLOW](WORKFLOW.md#activation-and-mappings)).
+
+Mappings in a file with no `[workflow]` map onto built-in v1, the board's own writers: each
+names a pair v1 does not declare and one it does. They say where each task goes when a project
+that ran a custom workflow drops it ([WORKFLOW](WORKFLOW.md#returning-to-the-boards-own-writers)),
+and a board with no workflow active reads them and does nothing.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `from` | required | the removed `{ phase, state }` pair |
+| `to` | required | the declared `{ phase, state }` pair a task there goes to |
+
+## `[[workflow_authorities]]`
+
+The approval authorities whose signed word meets the workflow's guards, one for each adapter its
+guards name ([WORKFLOW](WORKFLOW.md#guards)). A guard is a decision the project keeps in its own
+approval ledger; the board never holds that ledger and never decides a guard. What it asks of a
+project, in plain words:
+
+- **It holds a signing key.** The project runs an authority over its ledger that holds an
+  Ed25519 signing key and signs, with it, each observation of the ledger's state and each
+  attestation that a guard holds for one operation. The secret half stays with that authority:
+  never in the repository, the board or a request.
+- **It commits the public half here**, as `ed25519:` and the key's 32 bytes in lowercase hex,
+  with the adapter it answers for and the issuer it signs as. The board verifies every
+  observation and attestation by the key the default branch commits, and by nothing else.
+- **A changed key is a new generation.** Changing a key, an issuer or an authority is a commit of
+  this file, which activates a new generation of the workflow: every attestation made for the
+  previous one stops at once, and the new key goes on from the ledger state the board last
+  accepted.
+- **It names itself by `[project] id`.** An attestation names the project it is for by the id this
+  file commits, which a project with an authority must write: an id taken from a folder's name or
+  a machine's registry could differ between machines, and could match another project's.
+
+An authority with no `[workflow]`, for an adapter the workflow does not declare, named twice,
+with no issuer or a key that does not read is refused by name, and a guard with no authority
+committed for its adapter leaves the workflow unsupported.
+
+| Key | Default | What it sets |
+| --- | --- | --- |
+| `adapter` | required | the adapter of the workflow's `adapters` this authority answers for |
+| `issuer` | required | the name the authority signs as, which its observations and attestations repeat |
+| `contract` | required | the attestation contract it speaks, `1` in this release |
+| `key` | required | the public half of its signing key, `ed25519:` and 64 lowercase hex digits |
 
 ## `[releases]`
 

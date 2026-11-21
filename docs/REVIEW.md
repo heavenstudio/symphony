@@ -1,17 +1,13 @@
 # Concept review
 
-The standalone workspace provides the generic board and document commands.
-Verification, certificates and the landing/stamp recipes in the workflow examples
-are supplied by a consuming project; no project gate executable or standalone
-landing backend is bundled here. See the workspace [command ownership](../AGENTS.md#command-ownership).
-
 How design and concept work gets validated before more of it is made. The
 owner reads in a local web app and every verdict is written into the markdown
 itself; agents read the verdicts back with one command. Nothing leaves the
 repository, and git history is the audit trail.
 
-
-Commands shown use the consuming project's recipes and board connection.
+The commands shown are the recipes `symphony init` installs in a project
+([the commands](COMMANDS.md)); [getting started](GETTING_STARTED.md) walks a
+first card from its line in a register to its verdict.
 
 ## Two commands
 
@@ -27,9 +23,7 @@ and `--json` gives the same board as data.
 
 The product references describe [reading a document](product/DOCUMENT.md) and
 [using a card's verdict editor](product/CARDS.md). The app serves any file under the project, so a concept
-page's images, SVGs and galleries under `artifacts/` show inline, and once
-in-game captures exist under `artifacts/concept-renders/` they show the same
-way. It writes verdicts under `docs/` (and the owner's approval to land an owner-tier branch, in the landing store),
+page's images, SVGs and galleries under `artifacts/` show inline. It writes verdicts under `docs/` (and the owner's approval to land an owner-tier branch, in the landing store),
 and keeps queue-view preferences under `artifacts/review-order/`. It listens on every interface but answers
 only this machine and tailnet peers `tailscale whois` confirms (403 otherwise). The markdown holds the
 owner's answers; view preferences never become verdicts.
@@ -177,6 +171,30 @@ lists the proposals they rest on, one line each, as a checklist:
   [2026-09-24] owner · approved — at least 21. Number could vary.
   [2026-09-24] agent — Recorded as a floor.
 ```
+
+A register is a Markdown file whose cards stand between two comments, each
+under the heading of its [group](#groups). A whole register with one new card:
+
+```markdown
+# Decisions
+
+<!-- register:start -->
+## Needs your decision
+
+- [ ] **lamp-count** — Sell twelve lamps at launch, or twenty? Approve and say A or B in the note, or comment.
+<!-- register:end -->
+```
+
+A card's line starts at column 0 with its marker and its slug in bold. Without
+the two comments its slug reads as a slug in prose, which the lint refuses
+([below](#slugs-in-prose)); under no group heading the card is counted and
+listed in the queue, but its page draws it as a list item with no verdict
+editor, until `just symphony-status --tidy` regroups the register and writes
+the headings. A topic heading (`### Releases`) under a group's heading sorts
+its cards; a card under none is filed under *General*. The project's register
+is `DECISIONS.md` in its first entrypoint's folder unless
+[the project file](PROJECT_FILE.md#project) names another, and any document
+may hold a register of its own.
 
 | marker | meaning |
 |---|---|
@@ -349,7 +367,7 @@ information its judgement call needs, and nothing more (`RULES.md`
 - Low-level detail the decision does not need (benchmark method, rigs, per-run
   numbers, gate thresholds) goes in a linked log or analysis file.
 - Pictures where the thing judged is visual (pictures, UI, models, renders), shown
-  rather than described; a gameplay mechanic is fine as well-written text. A
+  rather than described; a rule or a behaviour is fine as well-written text. A
   card's picture is a file committed beside its document under `docs/`, so every
   clone and GitHub show it: never a path into the ignored artifacts folder, and
   never an owner's upload, which is for a thread. Every picture is on disk and

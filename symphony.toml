@@ -22,19 +22,26 @@ assessor = "haiku"
 [verdicts]
 check = ["just", "symphony-cli", "docs-audit", "--check"]
 
-# A land is its merge, its move and its push alone (docs/TASKS.md, the default landing): it runs
-# no check (`check = false`; the docs audit is evidence at the tip, run on main's tip by the
-# regenerator after each round, and part of the release run's `just verify`) and no generator. What
-# the regenerator a land starts makes of main's newest tip
-# (`just tasks regenerate`): the client distribution the server embeds, rebuilt and committed only
-# when `just client-check` finds it differs from a fresh build, then checked again, and landed as
-# one commit. Its key (`keys`, beside the generators, where a Symphony older than keys leaves it out
-# and still reads this file) is the hash of the client's package
-# (tools/client-key.sh): a tip whose key and committed distribution passed before builds nothing. Its outputs are the paths it owns: a land
-# keeps main's side of them, so no branch's own distribution lands. The land pushes main to origin
-# as its last step (`push`, on by default), and so does the regenerator.
+# A land is delivered by a pull request on GitHub (docs/TASKS.md, a land delivered by a pull
+# request): a task's move to review, and each write after it that can change its evidence,
+# dispatches it through `delivery`, the GitHub program built in the main checkout
+# (.target/bin/symphony-github, docs/GITHUB_SETUP.md; its settings are symphony-github.toml).
+# It pushes the task's branch, opens its pull request, writes its evidence there as checks and
+# arms GitHub's auto-merge; GitHub squashes it into main once symphony/eligible is green, and the
+# board closes the task and fast-forwards the main checkout. A land runs no check of its own
+# (`check = false`, which delivery requires; the docs audit is evidence at the tip, run on main's
+# tip by the regenerator after each round, and part of the release run's `just verify`) and no
+# generator. What the regenerator a land starts makes of main's newest tip (`just tasks
+# regenerate`): the client distribution the server embeds, rebuilt only when `just client-check`
+# finds it differs from a fresh build, then checked again, and committed on a branch of its own as
+# the task generated/outputs-at-TIP-COMMIT, delivered as any task. Its key (`keys`, beside the
+# generators, where a Symphony older than keys leaves it out and still reads this file) is the
+# hash of the client's package (tools/client-key.sh): a tip whose key and committed distribution
+# passed before builds nothing. Its outputs are the paths it owns: a land refuses a branch that
+# changes them, so no branch's own distribution lands.
 [land]
 check = false
+delivery = [".target/bin/symphony-github", "deliver"]
 generators = [
   { name = "the client distribution", outputs = "apps/symphony-server/client/public/", command = ["sh", "-c", "just client-check || { just client-update && just client-check; }"] },
 ]
@@ -51,7 +58,8 @@ guide = "docs/TASKS.md"
 # the shipped `symphony`'s.
 on_land = [".target/bin/symphony-build", "release", "--due"]
 # PostgreSQL 18 or later is discovered on PATH; [board] postgresql can name an absolute bin
-# folder instead (docs/PROJECT_FILE.md). Only scratch boards and their tests start it so far.
+# folder instead (docs/PROJECT_FILE.md). This repository's board is on PostgreSQL since
+# 2026-11-21 (docs/analysis/board-pg-cutover.md).
 
 # A release run every 20 landings, and a green release's refresh of the machine (docs/RELEASES.md).
 [releases]
