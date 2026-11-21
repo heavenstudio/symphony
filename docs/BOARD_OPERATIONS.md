@@ -801,8 +801,8 @@ holds that line as `rollback`, written at once when it starts and when it ends, 
 warns of it first. The next store that opens the board, accepted or recovered, clears it.
 
 **A board replaying its log** cannot be reached until the start replaying it is through, the
-server's own, run apart from its reads, or another's it waited on ([the store and its server
-lives](#the-store-and-its-server)). While the server's reach of the board is refused for one, every page's
+server's own, run apart from its reads, or another's it waited on ([the store and its
+server](#the-store-and-its-server)). While the server's reach of the board is refused for one, every page's
 notice and the picker say, in place of the dispatch's words, that the board is starting: its
 store's log, of the size the start measured, is replayed in a private server before the board's
 server starts (a log of gigabytes takes minutes), and the board answers once that is through

@@ -553,7 +553,7 @@ In the app, a card slug named in a card (after *Replaces:*, or in bold in an age
 
 Where the app keeps what the sections above describe, and the routes its pages save by.
 
-**The Later order.** The server stores this per-owner order in its root's `artifacts/review-order/postponed.json`, shared by
+**The Later order.** The server stores the Later order, one for each owner, in its root's `artifacts/review-order/postponed.json`, shared by
 the phone and laptop and retained across restarts. Main and branch decisions share that order and the
 next card; their document writes still go to the selected worktree. `POST /api/postpone` takes `path`, `slug` and an `action` of
 `later`, `undo` or `seen`; a visit records progress without rescanning documents or refreshing an unchanged

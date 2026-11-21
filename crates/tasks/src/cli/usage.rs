@@ -1102,8 +1102,8 @@ outside the database. A live board that reads below it went back: its store
 lost what was written since, and every command that opens it refuses it,
 `tasks migrate` included (exit 1 here). The owner, and only the owner,
 accepts a board older on purpose (a fresh store, a restore they chose) with
---accept, naming the schema it holds: docs/BOARD_OPERATIONS.md, A board that went back,
-says how to recover one first.
+--accept, naming the schema it holds: docs/BOARD_OPERATIONS.md, A board that
+went back, says how to recover one first.
 
 options:
   -h, --help         show this help message and exit

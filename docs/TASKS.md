@@ -3303,18 +3303,6 @@ record and its hour files, and each warning: [BOARD_OPERATIONS](BOARD_OPERATIONS
 `tasks api`, the board's methods as JSON for a program rather than a person, a versioned
 contract: [BOARD_API](BOARD_API.md#the-tasks-api).
 
-#### What a program outside the board keeps
-
-[BOARD_API](BOARD_API.md#what-a-program-outside-the-board-keeps).
-
-#### The evidence of a task at its head
-
-[BOARD_API](BOARD_API.md#the-evidence-of-a-task-at-its-head).
-
-#### A task a custom workflow holds
-
-[BOARD_API](BOARD_API.md#a-task-a-custom-workflow-holds).
-
 ### The agents API
 
 `GET /api/agents` and `just tasks agents --json`, who is doing what, with the rules a port
