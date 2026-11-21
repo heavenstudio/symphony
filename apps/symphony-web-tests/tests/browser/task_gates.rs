@@ -624,7 +624,7 @@ fn task_page_gates_are_read_as_the_page_mounts_however_far_below_the_screen() {
 const BRIEF: &str =
     "Math.round(document.querySelector('.task-body').getBoundingClientRect().top + scrollY)";
 
-/// Forget every page this device kept (`assets/cache.js`), beside the page's own connection: the
+/// Forget every page this device kept (`shell/cache.ts`), beside the page's own connection: the
 /// next open reads the server's page before it draws.
 const FORGET_KEPT: &str = r#"(async () => {
     const db = await new Promise(resolve => {

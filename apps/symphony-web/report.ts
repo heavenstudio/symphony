@@ -1,6 +1,7 @@
 // `report.sh OUT` (`npm.sh run report -- OUT`): the bundle report of the build in OUT, what each
 // kind makes a browser fetch and its bytes, as built and gzipped at the server's level. What it
-// says is src/bundle-report.ts's, typed and tested; this is the Node around it.
+// says is src/bundle-report.ts's, typed and tested; this is the Node around it, which the pinned
+// Node runs as it is, stripping its types.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -21,6 +22,6 @@ try {
   });
   process.stdout.write(report);
 } catch (error) {
-  console.error(`symphony-web: no bundle report of ${out}: ${error.message}`);
+  console.error(`symphony-web: no bundle report of ${out}: ${(error as Error).message}`);
   process.exit(2);
 }

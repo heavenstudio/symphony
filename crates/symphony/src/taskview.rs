@@ -775,7 +775,7 @@ fn fields(
 
 #[cfg(test)]
 #[path = "taskview/page_tests.rs"]
-mod page_tests;
+pub(crate) mod page_tests;
 
 #[cfg(test)]
 #[path = "taskview/agents_tests.rs"]

@@ -1,6 +1,6 @@
 //! A first visit to a kind of the web client (apps/symphony-web) asks for its entry and the chunks
 //! that entry imports together: the shell preloads them beside the entry (`imports` in its
-//! manifest, assets/shell.js `initialize`), so React and the frame do not wait for the entry to
+//! manifest, shell/shell.ts `initialize`), so React and the frame do not wait for the entry to
 //! come and be read first, a round trip a phone over a tailnet pays. The entry's import then
 //! takes each preloaded chunk: no chunk is asked for twice. A move into a kind keeps the page
 //! before shown, its header with it, until the kind's entry is in, and preloads only the chunks no

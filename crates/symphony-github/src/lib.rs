@@ -7,7 +7,8 @@
 //! nothing runs it but an operator: `preview` shows what a reconcile would do, and `reconcile`
 //! does the preview it is handed by digest ([`reconcile`]). `deliver` answers a land delivered by
 //! a pull request (`[land] delivery`, [`deliver`]), which the land runs and no one else, and
-//! reads the repository's protection before it does ([`preflight`]). `release` answers the release
+//! reads the repository's protection before it does ([`preflight`]); `rulesets` verifies who
+//! bypasses it, with the gh CLI of someone who administers the repository ([`rulesets`]). `release` answers the release
 //! run with a GitHub Release for a tag it pushed ([`release`]).
 
 #![forbid(unsafe_code)]
@@ -23,6 +24,7 @@ pub mod plan;
 pub mod preflight;
 pub mod reconcile;
 pub mod release;
+pub mod rulesets;
 pub mod state;
 pub mod transport;
 

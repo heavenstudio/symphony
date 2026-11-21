@@ -1,5 +1,5 @@
-//! Read ahead (docs/analysis/client-cache.md, "Read ahead"; `ahead` in assets/shell.js and
-//! assets/cache.js). Once a page has drawn, its feed is open and the browser is idle, the first
+//! Read ahead (docs/analysis/client-cache.md, "Read ahead"; `ahead` in shell/shell.ts and
+//! shell/cache.ts). Once a page has drawn, its feed is open and the browser is idle, the first
 //! eight task and document links it shows on the screen are read into this device's cache one
 //! after another, after every read of the page's own, at the lowest priority and marked as a
 //! prefetch, and kept unvisited: a task whole (its page and its thread's newest page), a document

@@ -333,7 +333,18 @@ plain words:
   `unknown`) with the ledger facts a pass rests on and the reasons for another, the epoch and
   generation it was decided at, and its time: issued no more than 30 s ahead of the clock of the
   machine that decides, whatever clock a caller pins for the board (`TASKS_NOW`), expiring at most
-  900 s after it was issued, on that clock too. The caller gives it with the operation.
+  900 s after it was issued, on that clock too. The caller gives it with the operation, or, from
+  the app, the host asks for it.
+- **The app asks for it.** A plugin the project selects may answer for the authority by its
+  adapter ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#approval-authorities)). When the owner takes a
+  guarded edge from the app with no attestation given, the Symphony asks that authority for each
+  guard, for the operation the request names, the project the activation recorded and the owner,
+  ten seconds at most, and gives the board what it answered unchanged: the board verifies it as
+  below, so the plugin adds no trust. An authority that errs, panics or does not answer in time
+  refuses the operation as `guard_unavailable`, naming the guard and why, and moves nothing; a
+  guard no plugin answers is refused as one taken with no attestation. Nothing is kept: each
+  operation asks again. The board's command line links no plugin and takes the attestation as a
+  file (`--attestation FILE`).
 
 The board accepts an observation only signed by the committed key, under the observation's own
 domain (a signature over an attestation's bytes is none), from an authority the active

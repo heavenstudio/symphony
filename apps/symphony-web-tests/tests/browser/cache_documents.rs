@@ -99,7 +99,7 @@ pub(super) fn draws(chrome: &mut Chrome, texts: &[&str]) {
 
 /// Wait until this device keeps the bodies of the fixture document's sections saying each of
 /// `texts`. A page keeps what it read in a transaction of the store's after it draws it, and the
-/// store aborts every transaction open when the page goes away (`pagehide`, `assets/cache.js`): a
+/// store aborts every transaction open when the page goes away (`pagehide`, `shell/cache.ts`): a
 /// visit left as soon as it drew keeps nothing of what was not committed yet. Its sections part is
 /// kept again for each change of the bodies held, so only what it holds, not when it was kept,
 /// tells the last of them in.
