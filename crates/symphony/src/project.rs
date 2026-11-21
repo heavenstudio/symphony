@@ -808,6 +808,12 @@ impl Project {
         if let Some(upstream) = land.upstream.take() {
             upstream.judged()?;
         }
+        if land.watch_seconds == 0 {
+            return Err("[land] watch_seconds is 0: the watcher rests between its rounds".into());
+        }
+        if land.merge_within_minutes == 0 {
+            return Err("[land] merge_within_minutes is 0: a host is given time to merge".into());
+        }
         if !v.generators.is_empty() && v.land.is_empty() {
             return Err(
                 "[verdicts] generators need a land command: a generated branch never moves the \
