@@ -6,20 +6,41 @@ use std::path::Path;
 use std::process::Output;
 use std::time::{Duration, Instant};
 
-use super::group::{Bound, Failed, output_until};
+use super::group::{Bound, Failed, fed_until, output_until};
 
 /// How long one git command may run, unless the run's own time ends sooner.
 pub(super) const GIT_BOUND: Duration = Duration::from_secs(15 * 60);
 
+#[cfg(test)]
+thread_local! {
+    /// The git commands this thread started ([`run`]), for a test that bounds a read by their
+    /// count rather than its time.
+    static RAN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many git commands this thread has started.
+#[cfg(test)]
+pub(super) fn ran() -> usize {
+    RAN.with(std::cell::Cell::get)
+}
+
 /// `git ARGS` in `dir` run to its end within [`GIT_BOUND`] and `bound`, on the repository `dir` is
 /// in alone: no repository, index or tree the release run's own starter named, as a hook's or a
 /// worktree's environment may ([`symphony::children::git`]).
-fn run(dir: &Path, args: &[&str], bound: Bound<'_>) -> Result<Output, String> {
+/// With `input`, that is written to its stdin ([`fed_until`]).
+fn run(dir: &Path, args: &[&str], input: Option<&str>, bound: Bound<'_>) -> Result<Output, String> {
+    #[cfg(test)]
+    RAN.with(|ran| ran.set(ran.get() + 1));
     let mut git = symphony::children::git();
     git.args(args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0");
-    output_until(&mut git, bound.sooner(GIT_BOUND)).map_err(|failed| match failed {
+    let bound = bound.sooner(GIT_BOUND);
+    match input {
+        None => output_until(&mut git, bound),
+        Some(input) => fed_until(&mut git, input.as_bytes().to_vec(), bound),
+    }
+    .map_err(|failed| match failed {
         Failed::Io(e) => format!("cannot run git in {}: {e}", dir.display()),
         Failed::Late(took) => format!(
             "git {} in {} did not end within {} s and was stopped",
@@ -44,7 +65,18 @@ pub(super) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
 
 /// [`git`], stopped when `bound` ends, if that is before [`GIT_BOUND`].
 pub(super) fn git_until(dir: &Path, args: &[&str], bound: Bound<'_>) -> Result<String, String> {
-    let done = run(dir, args, bound)?;
+    said(dir, args, run(dir, args, None, bound)?)
+}
+
+/// [`git`], `input` written to its stdin: for a command that reads what it is asked of there, as
+/// `cat-file --batch-check` and `log --stdin` do, however many names that is.
+pub(super) fn git_fed(dir: &Path, args: &[&str], input: &str) -> Result<String, String> {
+    let bound = Bound::until(Instant::now() + GIT_BOUND);
+    said(dir, args, run(dir, args, Some(input), bound)?)
+}
+
+/// What `git ARGS`, ended as `done`, printed, or what it said when it failed.
+fn said(dir: &Path, args: &[&str], done: Output) -> Result<String, String> {
     if done.status.success() {
         return Ok(String::from_utf8_lossy(&done.stdout)
             .trim_end_matches('\n')
@@ -102,6 +134,7 @@ pub(super) fn is_ancestor(dir: &Path, ancestor: &str, descendant: &str) -> Resul
     let done = run(
         dir,
         &["merge-base", "--is-ancestor", ancestor, descendant],
+        None,
         Bound::until(Instant::now() + GIT_BOUND),
     )?;
     match done.status.code() {
