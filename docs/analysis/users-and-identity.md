@@ -145,7 +145,7 @@ the user's auth data. […] this should be some plugin that happens outside of t
 symphony just relies on that service to get info on who the person is. Which could be signed
 header data."
 
-- **A person** is what a sign-in service vouched for: the service's name and its subject for them (an
+- **A person** is a [profile](#a-persons-profile): what a sign-in service vouched for, the service's name and its subject for them (an
   email, an id), which stay private to the board, and a short **public name** chosen for them
   (`ana`), which is what a line in a document or on a thread carries. A subject can be handed to
   someone else later, as an email is, so a board names the service and the subject together and
@@ -368,45 +368,64 @@ What follows:
 
 ## This round
 
-Two choices, each a card. A person's name is on every line they write, so something must say
-whose name is whose. And on a machine Tailscale is the sign-in service, so something must say
+Two choices, each a card. A person is more than a name on a line, so something must say where
+their profile is kept. And on a machine Tailscale is the sign-in service, so something must say
 what a machine under another person's login may do before a board names them.
 
 ### Where public names are declared
 
-**Base.** One name, `owner`, fixed in the code. An agent's handle is made up by the board it
-registers on and is unique there.
+The short name is one field of something larger. The owner, rejecting
+[the card that asked this](../DECISIONS.md#public-name-where-declared): "We will probably have a
+mapping of names / emails / git handles / communication usernames and preferences (for example
+slack user). So this may be become more complex then proposed". So the question is not where a
+list of names is declared, but where a person's whole record is kept
+([below](#a-persons-profile)).
 
-A person's public name is on every line they write: on a card, in a comment, on a thread. Those
-are files in git, so the name is read in every clone and by every board of the project, and it
-outlives the board's row for the person ([above](#where-people-are-kept)). The choice is where it
-is said that `ana` is a name and whose.
+### A person's profile
 
-![Where a person's public name is declared](users-and-identity/public-name.svg)
+**Base.** No person is recorded. The one name is `owner`, fixed in the code.
 
-- **A, a file of the project.** A committed list of names and nothing else: no sign-in, no
-  group, no power. Each board keeps, privately, which sign-in a name belongs to and what that
-  person may do there. Every board and every clone reads one list, and a name that is retired
-  stays in it, so it is never given again. A new name is a landing.
-- **B, each board's own.** A board keeps its names with its people, and nothing is committed. It
-  is the least to build and is enough while a project has one board. With two, nothing stops
-  each giving `ana` to a different person, and a line signed `ana` may then be either.
-- **C, taken from the sign-in.** The name is made from what the provider says: the part of an
-  email before the `@`, or the provider's own handle. Nothing is declared, and one person is one
-  name on every board under the same provider. But part of a sign-in is then committed, two
-  people can come out as one name, an address handed to someone new gives them an old name, and
-  a change of provider renames everybody.
+A person's profile is what the Symphony knows of who they are, apart from what they may do:
 
-Under every option a name once used is never given to another, the lines already written as
-`owner` stay as they are, and a machine with nobody named keeps writing as `owner`.
+| Field | What it is for | Who may see it |
+| --- | --- | --- |
+| short name (`ana`) | the name on every line they write, on a card, in a comment, on a thread | everyone; it is in git |
+| display name | how pages show them | everyone on the board |
+| sign-ins | which sign-in service's subject is this person; there can be several | the board's admins |
+| emails | a notice by mail; matching a commit's author to a person | the person and admins |
+| git handles | whose commit a save of theirs is authored as; whose commits are theirs | everyone; they are in git already |
+| chat usernames (Slack) | where a notice is sent | the person and admins |
+| preferences | which notices, by which way | the person |
 
-**Recommended: A.** The record is the project's, so the list of who may be named in it is the
-project's too. A name gives no power, so landing one lets nobody in: the board still decides
-what `ana` may do, and a name no board has tied to a sign-in is nobody. Its cost is that a
-person cannot write on a board until a landing has added their name. An admin adding a person
-from the People page would file that landing, and the person reads meanwhile. A group's name,
-where one is written on a card ([above](#which-group-a-thing-belongs-to)), is declared the same
-way.
+What a person may do (their groups, their powers) is not in the profile. It is each board's
+([its card](../DECISIONS.md#people-kept-where)).
+
+The choice is where the profile is kept and who writes it.
+
+![Where a person's profile is kept](users-and-identity/profile-where.svg)
+
+- **A, with each board.** A board keeps a whole profile beside each person's groups and powers.
+  One store and one page. A person on three boards has three profiles, and a Slack name changed
+  is changed on each. A board's admin writes it.
+- **B, once, with the server.** The server keeps one profile for each person: in the machine
+  folder on a machine, in the platform's own store on a hosted board. The person writes their
+  own, and an admin can. A board keeps only that person's groups and powers, and refers to the
+  profile. Who someone is, is kept apart from what they may do, as signing in is.
+- **C, and its public part in git.** As B, and the part that is public anyway (the short name,
+  the display name, the git handles) is also a committed file of the project. Every clone then
+  reads whose lines are whose with no server, and two servers of one project cannot give one
+  name to two people. A new person is a landing as well as a row.
+
+Under every option a line carries the short name and nothing else, a name once used is never
+given to another, emails and chat usernames are in no repository, and no agent or plugin is
+handed them. The lines already written as `owner` stay, and a machine with nobody named keeps
+writing as `owner`.
+
+**Recommended: B.** A profile is the person's, and they are one person on every board the
+server holds. It is also the same line the owner drew for signing in: who someone is on one
+side, what they may do on the other. What B leaves open is C's reason: a project served from two
+servers can give `ana` to two people. C's file answers that when a project is in fact served
+from two places, and nothing in B is lost by adding it then.
 
 ### A tailnet machine under another login
 
@@ -517,8 +536,9 @@ Not carded yet.
   cancels one.
 - A person who decides and may not direct agents: whether the note beside their verdict is held
   like their other words.
-- How a person's line reads in a document and on a thread, and who authors the commit of a
-  person's save.
+- How a person's line reads in a document and on a thread.
+- A profile's notices: which a person gets, by which way (mail, Slack), and what a chat plugin
+  is handed to send one.
 - Queues and notices per person and per group.
 - Shared agents: whose machine and credits host them, what a host may limit, and how an agent on
   another machine proves its handle to a board.

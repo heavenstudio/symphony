@@ -9,6 +9,48 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
+- [ ] **person-profile-where** — Replaces: public-name-where-declared. Your words are the base now: a person has a profile (names, emails, git handles, chat usernames such as Slack, preferences), of which the short name on their lines is one field. What is left to choose is where that profile is kept and who writes it. A: with each board, beside what the person may do there; its admin writes it. B: once, with the server, written by the person; each board keeps only their groups and what they may do. C: as B, and the part that is public anyway (short name, display name, git handles) is also a committed file of the project. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#A person's profile]]
+  [2026-11-21 17:39] agent — Posted for the board task `app/users-and-identity`, from your note on **public-name-where-declared**: "We will probably have a mapping of names / emails / git handles / communication usernames and preferences (for example slack user)." A concept: nothing is built by this card.
+
+    ![Where a person's profile is kept](analysis/users-and-identity/profile-where.svg)
+
+    **Base (today).** No person is recorded. The one name is `owner`, fixed in the code.
+
+    **What a profile holds, under every option.**
+    - **Short name** (`ana`): the name on every line they write. It is in git, so everyone sees it.
+    - **Display name**: how pages show them.
+    - **Sign-ins**: which sign-in is this person. There can be several.
+    - **Emails**: a notice by mail, and matching a commit's author to a person.
+    - **Git handles**: whose commit a save of theirs is authored as.
+    - **Chat usernames** (Slack): where a notice is sent.
+    - **Preferences**: which notices, by which way.
+
+    What a person may do is not in it. That stays each board's, as you decided.
+
+    **A, with each board.**
+    - A board keeps a whole profile beside each person's groups and what they may do. One store, one page.
+    - A person on three boards has three profiles. A Slack name changed is changed on each.
+    - The board's admin writes it.
+
+    **B, once, with the server.**
+    - The server keeps one profile for each person. The person writes their own, and an admin can.
+    - A board keeps only their groups and what they may do, and refers to the profile.
+    - Who someone is, is kept apart from what they may do, as signing in is.
+
+    **C, and its public part in git.**
+    - Everything in B.
+    - The short name, the display name and the git handles are also a committed file of the project, so a clone reads whose lines are whose with no server.
+    - A new person is a landing as well as a row.
+
+    **Under every option** a line carries the short name and nothing else, emails and chat usernames are in no repository, and no agent or plugin is handed them.
+
+    **Why B.** A profile is the person's, and they are one person on every board the server holds. What B leaves open is C's reason: a project served from two servers can give `ana` to two people. C's file can be added when a project is in fact served from two places, with nothing in B lost.
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B), with your note: "This is a board specific setting. There could even be multiple boards for the same project where people have different permissions." That keeps what a person may do with each board. Your note then says some id is not in the database only; it does not say where the rest of a person's record is kept, which is this card.
+    - **sign-in-service-shipped** (B) says how a person signs in. A profile names their sign-ins and is not one.
+
+    Neither decides this.
 - [ ] **tailnet-peer-before-named** — Today any machine in your tailnet writes as you, a colleague's laptop as much as your phone. Once the server reads whose machine it is, your own machines stay you. What is left to choose is what a machine under someone else's Tailscale login may do before a board has named that person. A: as today, it writes as the owner until a board names its first person. B: nothing; it is refused until a board names them. C: it reads every board and writes nothing. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#A tailnet machine under another login]]
   [2026-11-21 17:37] agent — Posted for the board task `app/users-and-identity`. On a machine Tailscale is the sign-in service (**sign-in-service-shipped**, B), so this is what its word is used for. A concept: nothing is built by this card.
 
@@ -59,41 +101,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ## Waiting on an agent
 
-### People and sign-in
-
-- [-] **public-name-where-declared** — You said a person needs an id outside the database, to sign their comments and decisions. That is a short public name (`ana`), written on lines that are files in git. Something must say that `ana` is a name and whose. A: a committed file of the project lists the names and nothing else; each board keeps privately which sign-in a name belongs to. B: each board keeps its own names and nothing is committed. C: the name is taken from the sign-in itself, such as the part of an email before the @. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where public names are declared]]
-  [2026-11-21 17:32] agent — Posted for the board task `app/users-and-identity`, from your note on **people-kept-where**: "There should however be some 'non db id' in use to identify people in their comments and interactions (who decided things for example). So there will be some information that isn't the the DB only." A concept: nothing is built by this card.
-
-    ![Where a person's public name is declared](analysis/users-and-identity/public-name.svg)
-
-    **Base (today).** One name, `owner`, fixed in the code.
-
-    **A, a file of the project.**
-    - A committed list of names and nothing else: no sign-in, no group, nothing a person may do.
-    - Each board keeps, privately, which sign-in a name belongs to and what that person may do there.
-    - Every board and every clone reads one list. A retired name stays in it, so it is never given again.
-    - A new name is a landing. Adding a person from a People page would file it, and the person reads meanwhile.
-
-    **B, each board's own.**
-    - A board keeps its names with its people. Nothing is committed.
-    - The least to build, and enough while a project has one board.
-    - With two boards, each can give `ana` to a different person, and a line signed `ana` may be either.
-
-    **C, taken from the sign-in.**
-    - The name is made from what the sign-in service says. Nothing is declared.
-    - Part of a sign-in is then committed. Two people can come out as one name, an address handed to someone new gives them an old name, and a change of service renames everybody.
-
-    **Under every option** a name once used is never given to another, the lines already written as `owner` stay, and a machine with nobody named keeps writing as `owner`.
-
-    **Why A.** The record is the project's, so the list of who may be named in it is the project's too. A name gives no power, so landing one lets nobody in: the board still decides what `ana` may do. You spoke of several boards for one project, which is where B breaks.
-
-    **Earlier verdicts checked.**
-    - **people-kept-where** (B) keeps people, groups and what each may do with the board and in no repository, and your note adds that some id is not in the database only. It does not say where that id is declared. A commits a name alone, none of what B keeps out of a repository.
-    - **sign-in-service-shipped** (B) says how a person signs in, not what they are called in the record.
-
-    Neither decides this.
-  [2026-11-21 17:37] owner · rejected — We will probably have a mapping of names / emails / git handles / communication usernames and preferences (for example slack user). So this may be become more complex then proposed
-
 ### Task timeline
 
 - [x] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
@@ -135,6 +142,39 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ### People and sign-in
 
+- [-] **public-name-where-declared** — You said a person needs an id outside the database, to sign their comments and decisions. That is a short public name (`ana`), written on lines that are files in git. Something must say that `ana` is a name and whose. A: a committed file of the project lists the names and nothing else; each board keeps privately which sign-in a name belongs to. B: each board keeps its own names and nothing is committed. C: the name is taken from the sign-in itself, such as the part of an email before the @. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where public names are declared]]
+  [2026-11-21 17:32] agent — Posted for the board task `app/users-and-identity`, from your note on **people-kept-where**: "There should however be some 'non db id' in use to identify people in their comments and interactions (who decided things for example). So there will be some information that isn't the the DB only." A concept: nothing is built by this card.
+
+    ![Where a person's public name is declared](analysis/users-and-identity/public-name.svg)
+
+    **Base (today).** One name, `owner`, fixed in the code.
+
+    **A, a file of the project.**
+    - A committed list of names and nothing else: no sign-in, no group, nothing a person may do.
+    - Each board keeps, privately, which sign-in a name belongs to and what that person may do there.
+    - Every board and every clone reads one list. A retired name stays in it, so it is never given again.
+    - A new name is a landing. Adding a person from a People page would file it, and the person reads meanwhile.
+
+    **B, each board's own.**
+    - A board keeps its names with its people. Nothing is committed.
+    - The least to build, and enough while a project has one board.
+    - With two boards, each can give `ana` to a different person, and a line signed `ana` may be either.
+
+    **C, taken from the sign-in.**
+    - The name is made from what the sign-in service says. Nothing is declared.
+    - Part of a sign-in is then committed. Two people can come out as one name, an address handed to someone new gives them an old name, and a change of service renames everybody.
+
+    **Under every option** a name once used is never given to another, the lines already written as `owner` stay, and a machine with nobody named keeps writing as `owner`.
+
+    **Why A.** The record is the project's, so the list of who may be named in it is the project's too. A name gives no power, so landing one lets nobody in: the board still decides what `ana` may do. You spoke of several boards for one project, which is where B breaks.
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B) keeps people, groups and what each may do with the board and in no repository, and your note adds that some id is not in the database only. It does not say where that id is declared. A commits a name alone, none of what B keeps out of a repository.
+    - **sign-in-service-shipped** (B) says how a person signs in, not what they are called in the record.
+
+    Neither decides this.
+  [2026-11-21 17:37] owner · rejected — We will probably have a mapping of names / emails / git handles / communication usernames and preferences (for example slack user). So this may be become more complex then proposed
+  [2026-11-21 17:39] agent — Redone from your note: a person has a profile (names, emails, git handles, chat usernames such as Slack, preferences), and the short name on their lines is one field of it. The analysis lists what each field is for and who may see it: [[analysis/users-and-identity#A person's profile]]. Replaced by **person-profile-where**, which asks what your words leave open: where the profile is kept and who writes it.
 - [-] **group-card-who-decides** — Replaces: owner-with-several-people. Your comment is the base now: a card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
   [2026-11-21 10:22] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "C, but it could be 'group owned'. […] there can be an engineering group -> people there would get 'notified' and assigned to resolve." A concept: nothing is built by this card.
 
