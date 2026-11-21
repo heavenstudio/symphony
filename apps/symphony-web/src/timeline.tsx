@@ -11,6 +11,10 @@
 // keeps the height the page gave it: the latest steps that fit show, a read that adds a step moves
 // nothing outside it, and "Show all" lets it grow. Wide (from 900 px, where the lanes replace the
 // list) it grows to hold every lane, with no "Show all".
+//
+// The task's tokens are another part of the page (task-live.ts's `tokensPart`), which the box
+// hands on as it came: once read, the task's estimated cost follows its total time and each stage
+// stretch's its own (timeline-cost.ts); until then, and for a task with none, no cost is drawn.
 
 import {
   type CSSProperties,
@@ -29,6 +33,7 @@ import { whenShown } from "./feed";
 import type { Shown as Answer } from "./parts";
 import { Failure, said } from "./request";
 import STYLE from "./timeline.css?inline";
+import { carried, costFigure, readTaskTokens, tookTokens, totalWords } from "./timeline-cost";
 import { address, endpointLane, historyWords, messagesOf } from "./timeline-history";
 import {
   type Bar,
@@ -41,6 +46,7 @@ import {
   lanes as laneLayout,
   legendStates,
   lookClass,
+  machineSeconds,
   nextRead,
   placeTotals,
   type Row,
@@ -52,13 +58,15 @@ import {
   type Shown,
   showAll,
   stops,
+  took,
+  totalParts,
   totals,
 } from "./timeline-layout";
 import { MessagePanel, type MessageSelection, type ThreadAccess } from "./timeline-messages";
 // biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: readAgain reads the timeline again each period while the task is open, where the feed's event of a change, or a clock tick for the times shown, is the wait
 import { sleep } from "./timing";
 import { NOT_IN_TIME } from "./trouble";
-import type { TaskTimeline, TimelineMessage } from "./wire";
+import type { TaskTimeline, TaskTokens, TimelineMessage } from "./wire";
 import { fixed } from "./words";
 
 /** The id of the page's box the timeline is drawn in (timeline-slot.tsx's, not imported here). */
@@ -259,6 +267,9 @@ const percent = (value: number) => `${fixed(value, 2)}%`;
 export interface Stops {
   active: number;
   focus(index: number, title: string): void;
+  /** Words shown as the detail for what has the focus outside the lanes' parts (the total's
+   * cost), which leave with it. */
+  say(detail: string): void;
   blur(): void;
   key(event: KeyboardEvent<HTMLElement>, index: number, count: number): void;
 }
@@ -279,6 +290,7 @@ export function stopsOf(
       choose(index);
       tell(title);
     },
+    say: tell,
     blur() {
       tell("");
     },
@@ -342,6 +354,9 @@ function BarView({ bar, word }: { bar: Bar; word: [string, string] | null }) {
 /** A build's or a test's row: a tap (or a script) puts the focus on it, in no tab order, the lanes'
  * parts being the keyboard's; while it has it, the style sheet shows all of the run under its bar. */
 const isRun = (row: Row) => row.sub && !row.event;
+/** A row a tap says all of: a run's, and a stage's that carries a cost, whose words say whose
+ * calls it was and when they ran. */
+const isTold = (row: Row) => isRun(row) || row.cost !== undefined;
 
 function RowView({
   row,
@@ -353,7 +368,7 @@ function RowView({
   wide: boolean;
 }) {
   const kind = !row.sub ? "tl-row" : row.event ? "tl-row tl-sub tl-event" : "tl-row tl-sub";
-  const run = isRun(row);
+  const told = isTold(row);
   return (
     <>
       {row.day !== null && <li className="tl-day">{row.day}</li>}
@@ -361,7 +376,7 @@ function RowView({
         className={kind}
         style={style({ "--c": `var(--${row.tone})` })}
         title={row.title}
-        tabIndex={run ? -1 : undefined}
+        tabIndex={told ? -1 : undefined}
       >
         <span className="tl-at">{row.at}</span>
         <span className="tl-mark" aria-hidden="true" />
@@ -379,9 +394,11 @@ function RowView({
         ) : (
           <span className="tl-label">{row.label}</span>
         )}
-        {row.took !== null && <span className="tl-took">{row.took}</span>}
+        {(row.took !== null || row.cost !== undefined) && (
+          <span className="tl-took">{[row.took, row.cost].filter(Boolean).join(" ")}</span>
+        )}
         {row.bar !== null && <BarView bar={row.bar} word={row.word} />}
-        {run && (
+        {told && (
           <span className="tl-facts" aria-hidden="true">
             {row.title}
           </span>
@@ -637,6 +654,8 @@ function LanesView({
 
 export interface DrawnProps {
   timeline: TaskTimeline;
+  /** The task's tokens, once read; none before, or where the read gave none. */
+  tokens?: TaskTokens | null | undefined;
   /** The reader asked to see all of it (a phone's "Show all"). */
   all: boolean;
   /** Its steps overflow the box. */
@@ -661,6 +680,7 @@ export interface DrawnProps {
  */
 export function TimelineDrawn({
   timeline,
+  tokens,
   all,
   clipped,
   detail,
@@ -671,27 +691,71 @@ export function TimelineDrawn({
   wide = false,
 }: DrawnProps) {
   const [first, machine] = totals(timeline);
+  const [length, rest] = totalParts(timeline);
+  // A task that took no tokens says no cost anywhere, and draws as one whose tokens are not read.
+  const spent = tokens && tookTokens(tokens) ? tokens : null;
+  const costs = spent
+    ? {
+        stages: carried(timeline.stages, spent.rows, timeline.slug),
+        prices: spent.cost.prices,
+      }
+    : undefined;
+  const words = spent ? totalWords(spent) : "";
   // The clock's time at each phase and state, apart from the machine's on runs.
   const places = [
     ["Phases", placeTotals(timeline, "phase")],
     ["States", placeTotals(timeline, "state")],
   ] as const;
   const note = keptNote(timeline);
-  const steps = rowLayout(timeline);
-  const drawn = laneLayout(timeline);
+  const steps = rowLayout(timeline, costs);
+  const drawn = laneLayout(timeline, costs);
   const running = timeline.runs.some((run) => run.result === "running");
   return (
     <div className={drawnClass(all, clipped)} data-selected={selection?.selected ?? undefined}>
       <div className="tl-head">
         <p className="tl-totals">
-          <span>{first}</span>
+          {spent ? (
+            <span>
+              {`${length} `}
+              {/* The task's estimated cost after its time; its words say the rest: in the legend's
+                  place wide, under the totals on a phone, while it has the focus. */}
+              <span
+                className="tl-cost"
+                role="img"
+                // biome-ignore lint/a11y/noNoninteractiveTabindex: a part whose words its focus shows, by key or tap, as the lanes' parts are
+                tabIndex={0}
+                title={words}
+                aria-label={words}
+                onFocus={() => at.say(words)}
+                onBlur={() => at.blur()}
+              >
+                {costFigure(spent.cost)}
+              </span>
+              <span className="tl-rest tl-wide">{rest}</span>
+            </span>
+          ) : (
+            <span>{first}</span>
+          )}
+          {/* A phone's second line with a cost on the first, which leaves the rounds no room there:
+              the rounds and bounces, then the machine's time. */}
+          {spent && (
+            <span className="tl-machine tl-narrow">
+              {rest.slice(" · ".length)}
+              {machine !== null && ` · machine ${took(machineSeconds(timeline))}`}
+            </span>
+          )}
           {machine !== null && (
             <>
-              <span className="tl-machine tl-narrow">{`Machine ${machine}`}</span>
+              {!spent && <span className="tl-machine tl-narrow">{`Machine ${machine}`}</span>}
               <span className="tl-machine tl-wide">{` · machine ${machine}`}</span>
             </>
           )}
         </p>
+        {spent && (
+          <p className="tl-note tl-cost-said" aria-hidden="true">
+            {words}
+          </p>
+        )}
         {places.map(
           ([name, spent]) =>
             spent !== null && <p key={name} className="tl-totals">{`${name}: ${spent}`}</p>,
@@ -754,6 +818,7 @@ export function TimelineDrawn({
 
 export interface ViewProps {
   timeline: TaskTimeline;
+  tokens?: TaskTokens | null | undefined;
   /** Told each draw's height at its width (wide or not), unless the reader asked to see all. */
   onDrawn?: ((wide: boolean, natural: number) => void) | undefined;
   thread?: ThreadAccess | undefined;
@@ -764,7 +829,13 @@ export interface ViewProps {
  * The timeline drawn and measured: after each draw, each crossing of 900 px and each "Show all"
  * or "Show the latest", whether its steps overflow the box, and the height it took.
  */
-export function TimelineView({ timeline, onDrawn, thread, details }: ViewProps): JSX.Element {
+export function TimelineView({
+  timeline,
+  tokens,
+  onDrawn,
+  thread,
+  details,
+}: ViewProps): JSX.Element {
   const [selected, setSelected] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
@@ -886,6 +957,7 @@ export function TimelineView({ timeline, onDrawn, thread, details }: ViewProps):
     <>
       <TimelineDrawn
         timeline={projected}
+        tokens={tokens}
         selection={selection}
         wide={typeof innerWidth !== "undefined" && isWide()}
         all={all}
@@ -906,6 +978,9 @@ export interface HostProps {
   details?: HTMLElement | null | undefined;
   /** The timeline's part as the page's store shows it: the server's answer as it came. */
   part: Answer<unknown>;
+  /** The task's tokens as the server sent them (the page's `tokensPart`), once they came: an
+   * answer this client cannot read draws no cost. */
+  tokens?: unknown;
   /** Asks the page's store to read the part again. */
   read: () => Promise<unknown>;
   /** Told each draw's natural height at its width, for the task's next visit. */
@@ -921,6 +996,7 @@ export interface HostProps {
 export function TimelineHost({
   slug,
   part,
+  tokens,
   read,
   onDrawn,
   thread,
@@ -937,6 +1013,7 @@ export function TimelineHost({
     [part.value, part.error, part.missing, clock],
   );
   const every = nextRead(shown);
+  const spent = useMemo(() => (tokens == null ? null : readTaskTokens(tokens)), [tokens]);
   const asked = useRef(read);
   asked.current = read;
   useLayoutEffect(putStyle, []);
@@ -962,7 +1039,13 @@ export function TimelineHost({
     );
   }
   return (
-    <TimelineView timeline={shown.timeline} onDrawn={onDrawn} thread={thread} details={details} />
+    <TimelineView
+      timeline={shown.timeline}
+      tokens={spent}
+      onDrawn={onDrawn}
+      thread={thread}
+      details={details}
+    />
   );
 }
 

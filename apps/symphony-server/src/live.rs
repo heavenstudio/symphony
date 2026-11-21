@@ -617,7 +617,8 @@ impl Hub {
     /// page (a task page asks for its task, its offer and its history) and of every page after it go
     /// on its connections, never opening the board anew: finding its server, asking `ps` and `lsof`
     /// that it is that, and reading its schema. Reads wait while one opens it. A failed opening
-    /// keeps its error until its retry deadline ([`retry`]); requests never reset that deadline.
+    /// keeps its error until its retry deadline ([`retry`]); requests never reset that deadline. One
+    /// refused while the board is held is tried again by the first request after its release.
     pub(crate) fn reader(&self) -> Result<Arc<symphony_board::Store>, String> {
         let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(store) = &kept.store {
@@ -628,8 +629,9 @@ impl Hub {
         }
         match kept
             .retry
-            .run(&self.retry_clock, || (self.connect_reader)(&self.root))
-        {
+            .run_unless_released(&self.retry_clock, &|| self.board_held(), || {
+                (self.connect_reader)(&self.root)
+            }) {
             Some(Ok(store)) => {
                 let store = Arc::new(store);
                 kept.store = Some(Arc::clone(&store));

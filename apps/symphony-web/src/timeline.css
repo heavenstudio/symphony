@@ -29,6 +29,23 @@
 .tl-head .tl-note {
   margin-bottom: var(--sp-2);
 }
+/* The task's estimated cost, after its time: the figure the eye looks for, and a part the focus
+   shows the words of, in the legend's place wide and under the totals on a phone. */
+.tl-cost {
+  color: var(--foreground);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  border-radius: 3px;
+}
+.tl-cost:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.tl-head .tl-cost-said {
+  display: none;
+  overflow-wrap: anywhere;
+}
 .tl-machine.tl-narrow {
   display: block;
 }
@@ -97,10 +114,10 @@
   font-size: 0.8125rem;
 }
 /* A run's row a tap put the focus on says all of it under its bar: its command, its wait and its
-   run time apart. The row grows: in a box that clips, upward, the rows under it kept in place and
-   the totals giving it their room; in one that holds every step, the box with it
-   (timeline-slot.css). */
-.tl-sub:focus {
+   run time apart; a stage's that carries a cost, whose calls it was and when they ran. The row
+   grows: in a box that clips, upward, the rows under it kept in place and the totals giving it
+   their room; in one that holds every step, the box with it (timeline-slot.css). */
+.tl-row:focus {
   outline: none;
   border-radius: 6px;
   background: color-mix(in srgb, var(--primary) 14%, transparent);
@@ -108,7 +125,7 @@
 .tl-facts {
   display: none;
 }
-.tl-sub:focus .tl-facts {
+.tl-row:focus .tl-facts {
   grid-column: 1 / -1;
   display: block;
   margin-top: 4px;
@@ -233,9 +250,16 @@
     background: linear-gradient(var(--card), transparent);
     pointer-events: none;
   }
-  /* A run's row a tap focused in a box that clips grows upward into the room of the totals above
-     the steps, which come back with the focus gone: its words need the room more. */
-  .tl-clipped:has(.tl-sub:focus) .tl-head {
+  /* A row a tap focused in a box that clips grows upward into the room of the totals above the
+     steps, which come back with the focus gone: its words need the room more. */
+  .tl-clipped:has(.tl-row:focus) .tl-head {
+    display: none;
+  }
+  /* The total's cost a tap focused says its words under the totals, the steps giving them room. */
+  .tl-totals:has(.tl-cost:focus) + .tl-cost-said {
+    display: block;
+  }
+  .tl-clipped:has(.tl-cost:focus) .tl-list {
     display: none;
   }
 }
@@ -549,7 +573,8 @@
   .tl-machine.tl-narrow {
     display: none;
   }
-  .tl-machine.tl-wide {
+  .tl-machine.tl-wide,
+  .tl-rest.tl-wide {
     display: inline;
   }
   .tl-legend .tl-wide {
