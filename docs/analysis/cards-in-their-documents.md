@@ -225,6 +225,10 @@ landings, for a list the app can draw from the cards themselves.
   `reports-and-monitoring.md`. An agent reading an analysis reads its card's history with it, which
   is the history of the choice the analysis argues.
 - **Headings.** An analysis ends with the register's group heading and a topic, as this page does.
+- **The queue's order.** The queue takes document folders in turn, oldest first in each. While few
+  cards are in analyses (A), each comes near the top against all of the register's: this card,
+  alone in `analysis`, is first in the queue today. Under B and C almost every card is in
+  `analysis`, so the queue is oldest first, the catch-all's cards taken in turn with them.
 - **A clone.** Under B a clone shows each card in its document, and the list only in the app.
 
 ## The card
