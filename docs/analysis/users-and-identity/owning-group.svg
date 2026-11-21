@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="512" viewBox="0 0 760 512" role="img" aria-labelledby="title desc">
+<title id="title">Which group owns a card or a task</title>
+<desc id="desc">Three ways a card or a task gets the group that owns it. Under A whoever posts it writes the group on it, and one with none goes to the board&#x27;s default group. Under B the board reads the group from where the thing is: a card from its document&#x27;s folder, a task from the first part of its name, and nothing is written on it. Under C the place gives the group and a name written on the card overrides it. Recommended: C.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.both{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip);marker-start:url(#tail)}
+.no{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M10,0 L0,5 L10,10 z"/></marker></defs>
+<rect class="page" width="760" height="512"/>
+<text class="t" x="24" y="34">Which group owns a card or a task</text>
+<rect class="card" x="24" y="60" width="232" height="336" rx="8"/>
+<text class="h" x="38" y="86">A: written on it</text>
+<text class="m" x="38" y="106">by whoever posts it</text>
+<rect class="inner" x="38" y="122" width="204" height="50" rx="5"/>
+<text class="mono" x="48" y="142">card: new-palette</text>
+<text class="mono blue" x="48" y="161">group: design</text>
+<rect class="inner" x="38" y="182" width="204" height="50" rx="5"/>
+<text class="mono" x="48" y="202">card: retry-limit</text>
+<text class="m" x="48" y="221">no group written</text>
+<text class="m" x="48" y="262">goes to the board&#x27;s</text>
+<text class="m" x="48" y="281">default group</text>
+<text class="red" x="48" y="322">Agents post most cards,</text>
+<text class="red" x="48" y="341">and each must pick right.</text>
+<rect class="card" x="264" y="60" width="232" height="336" rx="8"/>
+<text class="h" x="278" y="86">B: read from where it is</text>
+<text class="m" x="278" y="106">nothing written on it</text>
+<rect class="inner" x="278" y="122" width="204" height="50" rx="5"/>
+<text class="mono" x="288" y="142">docs/design/…</text>
+<text class="blue" x="288" y="161">the design group</text>
+<rect class="inner" x="278" y="182" width="204" height="50" rx="5"/>
+<text class="mono" x="288" y="202">docs/engineering/…</text>
+<text class="blue" x="288" y="221">the engineering group</text>
+<rect class="inner" x="278" y="242" width="204" height="50" rx="5"/>
+<text class="mono" x="288" y="262">task tools/…</text>
+<text class="blue" x="288" y="281">the engineering group</text>
+<text class="red" x="288" y="322">A design question in an</text>
+<text class="red" x="288" y="341">engineering page goes to</text>
+<text class="red" x="288" y="360">the wrong people.</text>
+<rect class="card" x="504" y="60" width="232" height="336" rx="8"/>
+<text class="h" x="518" y="86">C: the place, unless named</text>
+<text class="m" x="518" y="106">recommended</text>
+<rect class="new" x="518" y="122" width="204" height="50" rx="5"/>
+<text class="mono" x="528" y="142">docs/design/…</text>
+<text class="blue" x="528" y="161">the design group</text>
+<rect class="new" x="518" y="182" width="204" height="69" rx="5"/>
+<text class="mono" x="528" y="202">docs/engineering/…</text>
+<text class="mono blue" x="528" y="221">group: design</text>
+<text class="blue" x="528" y="240">the design group</text>
+<text class="m" x="528" y="281">The card shows which of</text>
+<text class="m" x="528" y="300">the two gave its group.</text>
+<rect class="card" x="24" y="418" width="712" height="70" rx="8"/>
+<text x="40" y="444">Under every option any member can hand a thing to another group, and the board says</text>
+<text x="40" y="466">who did. With one group on a board, all three are the same and nothing is written.</text>
+</svg>

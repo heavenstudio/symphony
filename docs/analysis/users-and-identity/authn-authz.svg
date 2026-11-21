@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="512" viewBox="0 0 760 512" role="img" aria-labelledby="title desc">
+<title id="title">Signing in is outside the core; what a person may do is the board&#x27;s</title>
+<desc id="desc">Two separate questions with a signed message between them. Outside the core, a sign-in service authenticates a person, with OAuth 2 against Google, GitHub or a company, and keeps the password exchange, the client secret and the session. It hands the Symphony signed data saying who the person is. The core only verifies that data: the signature against a key in the server&#x27;s settings, that it is fresh and that it was made for this server. It learns who is asking and nothing else. Then the board, which is the Symphony&#x27;s own, says what that person may do there: their public name, their groups, and whether they may speak, decide or direct agents. The service gives no rights and the board proves no identity.</desc>
+<style>
+:root{--background:#fbfaf7;--foreground:#1d1c1a;--muted-foreground:#6b6862;--border:#e4e0d8;--primary:#2f5d9e;--dislike:#b3392b;--question:#946a00;--card:#ffffff;--muted:rgba(127,127,127,.07)}
+@media (prefers-color-scheme:dark){:root{--background:#161513;--foreground:#e8e4dc;--muted-foreground:#a19c93;--border:#2c2a26;--primary:#7fa7e0;--dislike:#e57a6a;--question:#e0b84c;--card:#1d1c19;--muted:rgba(255,255,255,.04)}}
+text{font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;font-size:14px;fill:var(--foreground)}
+.page{fill:var(--background)}
+.card{fill:var(--card);stroke:var(--border)}
+.inner{fill:var(--muted);stroke:var(--border)}
+.hot{fill:none;stroke:var(--dislike);stroke-width:1.5}
+.new{fill:none;stroke:var(--primary);stroke-width:1.5}
+.m{fill:var(--muted-foreground)}
+.b{font-weight:600}
+.h{font-size:15px;font-weight:600}
+.t{font-size:17px;font-weight:600}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.red{fill:var(--dislike)}
+.blue{fill:var(--primary)}
+.arrow{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip)}
+.both{stroke:var(--muted-foreground);stroke-width:1.5;fill:none;marker-end:url(#tip);marker-start:url(#tail)}
+.no{stroke:var(--dislike);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.tipfill{fill:var(--muted-foreground)}
+</style>
+<defs><marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M0,0 L10,5 L0,10 z"/></marker><marker id="tail" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="tipfill" d="M10,0 L0,5 L10,10 z"/></marker></defs>
+<rect class="page" width="760" height="512"/>
+<text class="t" x="24" y="34">Signing in is outside the core; what a person may do is the board&#x27;s</text>
+<rect class="card" x="24" y="60" width="232" height="336" rx="8"/>
+<text class="h" x="38" y="86">Outside the core</text>
+<text class="m" x="38" y="106">authentication: who are you?</text>
+<rect class="new" x="38" y="122" width="204" height="69" rx="5"/>
+<text class="b" x="48" y="142">A sign-in service</text>
+<text x="48" y="161">a plugin of the server,</text>
+<text x="48" y="180">never of a project</text>
+<rect class="inner" x="38" y="201" width="204" height="50" rx="5"/>
+<text x="48" y="221">OAuth 2 with Google,</text>
+<text x="48" y="240">GitHub or a company</text>
+<text class="m" x="48" y="281">It keeps the secret</text>
+<text class="m" x="48" y="300">and the session.</text>
+<text class="blue" x="48" y="341">Hands over signed data:</text>
+<text class="blue" x="48" y="360">who, for whom, until when</text>
+<rect class="card" x="264" y="60" width="232" height="336" rx="8"/>
+<text class="h" x="278" y="86">The Symphony&#x27;s core</text>
+<text class="m" x="278" y="106">verifies, and nothing more</text>
+<rect class="inner" x="278" y="122" width="204" height="50" rx="5"/>
+<text x="288" y="142">the signature, by a key</text>
+<text x="288" y="161">in the server&#x27;s settings</text>
+<rect class="inner" x="278" y="182" width="204" height="50" rx="5"/>
+<text x="288" y="202">fresh, and made for</text>
+<text x="288" y="221">this server</text>
+<text class="m" x="288" y="262">No sign-in page, no</text>
+<text class="m" x="288" y="281">password, no secret.</text>
+<text class="red" x="288" y="322">Unsigned, stale or made</text>
+<text class="red" x="288" y="341">for another: refused.</text>
+<rect class="card" x="504" y="60" width="232" height="336" rx="8"/>
+<text class="h" x="518" y="86">The board</text>
+<text class="m" x="518" y="106">authorization: what may you do?</text>
+<rect class="new" x="518" y="122" width="204" height="50" rx="5"/>
+<text class="b" x="528" y="142">The Symphony&#x27;s own</text>
+<text x="528" y="161">kept with each board</text>
+<rect class="inner" x="518" y="182" width="204" height="50" rx="5"/>
+<text x="528" y="202">public name: ana</text>
+<text x="528" y="221">groups: design</text>
+<rect class="inner" x="518" y="242" width="204" height="50" rx="5"/>
+<text x="528" y="262">may speak, decide,</text>
+<text x="528" y="281">direct agents</text>
+<text class="m" x="528" y="322">Not on this board:</text>
+<text class="m" x="528" y="341">may do nothing.</text>
+<rect class="card" x="24" y="418" width="712" height="70" rx="8"/>
+<text x="40" y="444">The service gives no rights, and the board proves no identity. Either can be replaced</text>
+<text x="40" y="466">without the other. A machine with one person needs no service: it is its own person.</text>
+</svg>
