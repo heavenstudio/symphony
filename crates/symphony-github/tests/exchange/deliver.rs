@@ -581,6 +581,109 @@ fn a_check_not_listed_within_the_bound_stops_unavailable_and_is_not_written_agai
     d.assert_no_token();
 }
 
+/// A second head of [`SLUG`], pushed to the pull request its first one opened.
+const NEXT: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+/// `verb` (`arm` or `merge`) of pull request `pull` at `head`, squashed.
+fn at(d: &Delivery, verb: &str, pull: i64, head: &str) -> Value {
+    d.ask(
+        verb,
+        &json!({
+            "verb": verb, "slug": SLUG, "by": "amber-fox-1", "head": head,
+            "repository": 77, "pull": pull, "method": "squash",
+            "title": "sim/jump: the private title", "body": "the private brief",
+        }),
+    )
+}
+
+#[test]
+fn a_head_pushed_to_an_open_pull_request_is_published_once_github_moved_it_there() {
+    // Moved by the second read of the pull request, and by the last one the bound allows.
+    for late in [1, 2, deliver::READ_BACK.len()] {
+        let d = Delivery::new("deliver-head-late", "");
+        let pull = d.publish(&snapshot(HEAD, "met", "r1"))["pull"]["number"].clone();
+        assert!(d.rested.borrow().is_empty(), "one opened after its push");
+        d.rig.github.move_late(late, None);
+        let answer = d.publish(&snapshot(NEXT, "met", "r1"));
+        assert_eq!(answer["state"], "published", "moved late by {late}");
+        assert_eq!(answer["head"], NEXT, "moved late by {late}: {answer}");
+        assert_eq!(answer["pull"]["number"], pull);
+        assert_eq!(*d.rested.borrow(), deliver::READ_BACK[..late]);
+        assert_eq!(d.rig.github.pulls().len(), 1);
+        assert_eq!(d.rig.github.checks(NEXT).len(), 5);
+    }
+}
+
+#[test]
+fn a_pull_request_not_moved_within_the_bound_stops_unavailable_and_is_read_first_next() {
+    let d = Delivery::new("deliver-head-unmoved", "");
+    d.publish(&snapshot(HEAD, "met", "r1"));
+    d.rig.github.move_late(5, None);
+    let answer = d.publish(&snapshot(NEXT, "met", "r1"));
+    assert_eq!(
+        answer,
+        json!({
+            "state": "unavailable",
+            "why": "pull request #100 is still at aaaaaaa, not the head bbbbbbb pushed to its \
+                    branch, read again for 15 s: the next run reads it first",
+        })
+    );
+    assert_eq!(*d.rested.borrow(), deliver::READ_BACK);
+    let writes = d.writes();
+    // The next run finds it moved and the checks standing: nothing is written or rested for.
+    let answer = d.publish(&snapshot(NEXT, "met", "r1"));
+    assert_eq!(answer["state"], "published", "{answer}");
+    assert_eq!(answer["head"], NEXT);
+    assert_eq!(d.writes(), writes);
+    assert_eq!(d.rested.borrow().len(), deliver::READ_BACK.len());
+    d.assert_no_token();
+}
+
+#[test]
+fn a_head_someone_else_pushed_is_answered_as_it_is_and_never_as_the_one_pushed() {
+    let other = "c".repeat(40);
+    // There at the first read after the push, and after two reads at the head before.
+    for late in [0, 2] {
+        let d = Delivery::new("deliver-head-other", "");
+        d.publish(&snapshot(HEAD, "met", "r1"));
+        d.rig.github.move_late(late, Some(&other));
+        let answer = d.publish(&snapshot(NEXT, "met", "r1"));
+        // What the land refuses: a publication at another head than its tip.
+        assert_eq!(answer["state"], "published", "{answer}");
+        assert_eq!(answer["head"], json!(other), "late by {late}");
+        assert_eq!(*d.rested.borrow(), deliver::READ_BACK[..late]);
+        // And nothing is armed or merged at the head asked for.
+        for verb in ["arm", "merge"] {
+            let refused = at(&d, verb, 100, NEXT);
+            assert_eq!(refused["kind"], "head", "{verb}: {refused}");
+        }
+        assert_eq!(d.rig.github.pulls()[0]["state"], "open");
+    }
+}
+
+#[test]
+fn arm_and_merge_after_a_publish_see_the_head_it_pushed() {
+    for verb in ["arm", "merge"] {
+        let d = Delivery::new("deliver-head-then", "");
+        (d.rig.github).set_repository(&json!({"allow_auto_merge": true}));
+        d.publish(&snapshot(HEAD, "met", "r1"));
+        d.rig.github.move_late(2, None);
+        // While GitHub has not moved it, either refuses the head pushed, as it does any other.
+        d.remote.push(NEXT, SLUG).unwrap();
+        let refused = at(&d, verb, 100, NEXT);
+        assert_eq!(
+            (&refused["state"], &refused["kind"]),
+            (&json!("refused"), &json!("head")),
+            "{verb}: {refused}"
+        );
+        // A publish answers once it is there, so what the land asks next sees it.
+        assert_eq!(d.publish(&snapshot(NEXT, "met", "r1"))["head"], NEXT);
+        let answer = at(&d, verb, 100, NEXT);
+        let done = if verb == "arm" { "mergeable" } else { "merged" };
+        assert_eq!(answer["state"], done, "{verb}: {answer}");
+    }
+}
+
 #[test]
 fn a_rewritten_check_is_read_again_while_github_still_lists_what_it_said_before() {
     let d = Delivery::new("deliver-rewritten-late", "");

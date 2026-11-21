@@ -16,7 +16,9 @@
 //!   as a draft is marked ready); and writes one check for the assessment, one for each stamp
 //!   and `symphony/eligible`, then reads them back as written by the one App the settings name,
 //!   again after each of [`READ_BACK`]'s rests while one is not listed yet, with nothing written
-//!   again. Each check passes, is neutral (a stamp waived), fails (a stamp red at the head, or
+//!   again. A pull request open already is then read again the same way while it is still at the
+//!   head it was at before the push, as GitHub moves it a few seconds after ([`Run::moved`]), so
+//!   `published` names the head pushed. Each check passes, is neutral (a stamp waived), fails (a stamp red at the head, or
 //!   evidence that stood there withdrawn) or is pending ([`Conclusion`]): a check run still in
 //!   progress, which holds a required check and so GitHub's merge until it completes. A check
 //!   that stands is found by its name and what it says, so a second run writes none;
@@ -71,9 +73,11 @@ pub const ASSESSMENT: &str = "symphony/assessment";
 /// The evidence's shape this build writes checks of (`symphony_board::land::evidence::VERSION`).
 pub const SNAPSHOT: u64 = 1;
 /// The rests between two reads of a head's checks while one written is not listed yet, as
-/// GitHub lists a check a few seconds after it takes it: 15 s in all, so the read back ends well
-/// inside the network bound the land runs this program in (300 s at most), and a check that never
-/// shows is answered `unavailable` here rather than cut short there.
+/// GitHub lists a check a few seconds after it takes it, and then between two reads of a pull
+/// request still at the head it was at before a push, as GitHub moves it a few seconds after:
+/// 15 s for each, so both end well inside the network bound the land runs this program in (300 s
+/// at most), and a check that never shows or a head that never moves is answered `unavailable`
+/// here rather than cut short there.
 pub const READ_BACK: [Duration; 4] = [
     Duration::from_secs(1),
     Duration::from_secs(2),
@@ -81,12 +85,12 @@ pub const READ_BACK: [Duration; 4] = [
     Duration::from_secs(8),
 ];
 
-/// A delivery's rest between two reads of the checks it wrote ([`READ_BACK`]), as nothing of
-/// GitHub's tells when it lists them.
+/// A delivery's rest between two reads of the checks it wrote or of the pull request it pushed
+/// to ([`READ_BACK`]), as nothing of GitHub's tells when it lists the ones or moves the other.
 pub fn rest(wait: Duration) {
     #[expect(
         clippy::disallowed_methods,
-        reason = "the named helper of RULES.md code/no-timed-waits for a retry with backoff: a delivery's read back of the checks it wrote"
+        reason = "the named helper of RULES.md code/no-timed-waits for a retry with backoff: a delivery's read back of the checks it wrote and of the head it pushed"
     )]
     std::thread::sleep(wait);
 }
@@ -901,6 +905,7 @@ impl Run<'_> {
             Some(_) => self.upstream(&host, request, id)?,
             None => Value::Null,
         };
+        let before = self.before(&host, &snapshot)?;
         (remote.push(&head, &snapshot.slug)).map_err(|why| {
             refused(format!(
                 "{} was not pushed to the branch {} of {name}: {}",
@@ -936,16 +941,62 @@ impl Run<'_> {
             self.ready(&host, &snapshot.slug, &pull, &now)?;
         }
         self.stand(&snapshot, id)?;
+        let at = self.moved(&host, &pull, &head, before, &now["head"]["sha"])?;
         let mut published = json!({
             "state": "published",
             "repository": {"id": id, "name": name},
             "pull": {"number": pull.number, "url": pull.url},
-            "head": now["head"]["sha"],
+            "head": at,
         });
         if !upstream.is_null() {
             published["upstream"] = upstream;
         }
         Ok(published)
+    }
+
+    /// The head the pull request bound to the task of `snapshot` already is at, read before a
+    /// push to its branch, which GitHub moves it from a little after; none where none is bound.
+    fn before(&self, host: &Host<'_>, snapshot: &Snapshot) -> Result<Option<Value>, Stopped> {
+        let kept = (self.state.pulls.get(&snapshot.slug)).filter(|kept| kept.task == snapshot.task);
+        let Some(kept) = kept else {
+            return Ok(None);
+        };
+        let was = host.read(&format!("/pulls/{}", kept.number), "the pull request")?;
+        Ok(Some(was["head"]["sha"].clone()))
+    }
+
+    /// The head pull request `pull` is at once GitHub moved it to the `head` pushed to its branch,
+    /// which it does a few seconds after the push: one read at `first` after it, where that is
+    /// the head it was at `before` (with none read, as for one not bound yet, whatever `first`
+    /// is), is read again after each of [`READ_BACK`]'s rests while it is still there. A head
+    /// that is neither, as someone else pushed, is answered as it is, for the land to refuse.
+    fn moved(
+        &self,
+        host: &Host<'_>,
+        pull: &Pull,
+        head: &str,
+        before: Option<Value>,
+        first: &Value,
+    ) -> Result<Value, Stopped> {
+        let before = before.unwrap_or_else(|| first.clone());
+        let mut rests = READ_BACK.iter();
+        let mut at = first.clone();
+        while at == before && at != json!(head) {
+            let Some(wait) = rests.next() else {
+                return Err(unavailable(format!(
+                    "pull request #{} is still at {}, not the head {} pushed to its branch, read \
+                     again for {} s: the next run reads it first",
+                    pull.number,
+                    at.as_str().map_or_else(|| "no commit".into(), short),
+                    short(head),
+                    READ_BACK.iter().sum::<Duration>().as_secs()
+                )));
+            };
+            (self.ctx.rest)(*wait);
+            let now = host.read(&format!("/pulls/{}", pull.number), "the pull request")?;
+            at = now["head"]["sha"].clone();
+        }
+        Ok(at)
     }
 
     /// Evidence that blocks, said on a branch whose policy does not hold: its checks written on
