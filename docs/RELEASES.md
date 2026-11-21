@@ -1071,9 +1071,9 @@ How often is paced by what a run costs where it is verified:
   agents share, so one starts only once a given number of tasks have landed. The count is this
   machine's one control, and nothing below adds a run verified here to it.
 - **On GitHub's runners, by a clock as well.** Where the project has its releases verified there
-  ([on GitHub's runners](#on-githubs-runners)), a run costs this machine its checkout and its
-  wait, so main's tip is also run on an interval set from how long a run there takes
-  ([the hosted clock](#the-hosted-clock)).
+  ([on GitHub's runners](#on-githubs-runners)), a run's verification is off this machine, so
+  main's tip is also run on a clock ([the hosted clock](#the-hosted-clock), which says what each
+  such run still costs here).
 
 Nothing ticks for either: each landing asks (`--due`), and a run starts when one of them is due.
 Neither starts a run after each landing, or a run of some of the checks: a run is the whole
@@ -1186,11 +1186,25 @@ verification of one commit ([its card](DECISIONS.md#release-main-judged-in-steps
 A project that names `[releases] hosted` has a second reason for `--due` to start a run of main's
 tip, short of the count: `[releases] hosted_every_minutes` have passed since the last run started.
 
-- **The interval** is set from how long a run on GitHub's runners takes, about half of it: 30
-  minutes unless the project says, for a run of about an hour. The run's own lock still holds, so
-  two runs never overlap here: a run that outlasts the interval is followed by the next at the
-  first landing after it ends. `0` turns the clock off, and so does `every_landings = 0`, with the
-  rest of the cadence; a project that names no `hosted` command has no clock at all.
+- **The interval** is the least time between the starts of two runs, 30 minutes unless the
+  project says. A run holds the run's one lock from the build of its tip, through GitHub's
+  verification, to the end of its install and refresh, and a run in progress starts no other. So a
+  run longer than the interval is followed by the next at the first landing after it ends: the
+  runs are back to back, and every interval shorter than a whole run behaves alike. The interval
+  spaces the runs out only when it is longer than one. `0` turns the clock off, and so does
+  `every_landings = 0`, with the rest of the cadence; a project that names no `hosted` command has
+  no clock at all.
+- **Two runs at once are not built.** A run of an hour started every half hour would be two
+  workflow runs at a time on GitHub, the second started while this machine still waits for the
+  first. The one lock allows one run, so main's tip is judged at most once per run's length.
+- **What a run costs this machine.** Its verification runs on GitHub; the rest is here. Before it
+  asks GitHub, every due run brings the run's checkout to the tip and builds `symphony-build`
+  there ([the trigger](#the-count)), a run that ends unjudged included. A green run then tags and
+  refreshes the machine as any release does: the release build of the install, about 11 minutes
+  of this machine's processors ([status](#status) shows one), each board's move and the server's
+  reload, unless `[releases] refresh` is off. With the clock on, that is up to one such build and,
+  when green, one install for each run's length, where the count alone asks for one per 20
+  landings.
 - **Counted from** the start of the newest release run on record, whatever it came to: green, red,
   unjudged (below) or stopped short. A refresh and an out-of-cycle release are not counted from,
   as they judge nothing of main's tip. With no run on record the first landing starts one.

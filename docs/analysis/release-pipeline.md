@@ -290,10 +290,12 @@ tasks land:
   always under a run's load, and no run is added beside it.
 - **On GitHub**, where [the hosted run](#the-hosted-run-on-github) is on, a run of main's tip
   starts on a clock set from how long a run there takes, which the trial measured at 49 minutes
-  (workflow run 44903375883): a run of an hour started about every half hour. It is the whole run
+  (workflow run 44903375883). The example of a run of an hour started every half hour, two at
+  once, is not built: one run at a time holds the release's lock, so the interval is the least
+  time between two starts and a run longer than it is followed by the next. It is the whole run
   on one commit, never a partial round, a tip already judged starts none, and a run it starts
   verifies nothing on this machine ([RELEASES](../RELEASES.md#the-hosted-clock), which says what
-  was built: a landing is the tick, and the run's one lock keeps two from overlapping).
+  was built and what each run still costs this machine: a landing is the tick).
 - **A red** of such a run is a red of main as any other, naming the landings since the last
   green run, fewer than today's because the runs are closer.
 

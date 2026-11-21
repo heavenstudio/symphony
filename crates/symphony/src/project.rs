@@ -314,8 +314,8 @@ pub struct Releases {
 impl Releases {
     /// The landings a release run waits for unless the project says: the owner's 20.
     pub const EVERY_LANDINGS: u32 = 20;
-    /// The minutes between the starts of two runs of the hosted clock unless the project says:
-    /// about half an hour, for a run there of about an hour.
+    /// The least minutes between the starts of two runs of the hosted clock unless the project
+    /// says; one run at a time holds the release's lock, so a longer run is followed by the next.
     pub const HOSTED_EVERY_MINUTES: u32 = 30;
     /// The red reruns a release candidate may take unless the project says.
     pub const CANDIDATE_RERUNS: u32 = 3;
