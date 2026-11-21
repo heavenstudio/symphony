@@ -18,7 +18,7 @@ fn starts(name: &str) -> String {
 }
 
 /// A line `m` that may say a status changed: a verdict, or the system line of a move, a claim, a
-/// block by a cancelled dependency or its end, and `more`.
+/// block by a cancelled dependency or the end of a block, and `more`.
 fn step(more: &str) -> String {
     format!(
         "m.kind IN ('system', 'verdict') AND (m.kind = 'verdict' OR {} OR {} OR {} OR {}{more})",
@@ -68,11 +68,13 @@ pub(in crate::store) fn waits_before() -> Pg<'static> {
 }
 
 /// A page of each thread's lines that may have taken it into review: a move (`moved_in`), or the
-/// end of a block that returns it there (`unblocked_in`).
+/// end of a block that returns it there (`unblock`, holding `back_in`).
 pub(in crate::store) fn into_review() -> Pg<'static> {
     page_query(&format!(
-        "m.kind = 'system' AND (right(m.text, length(v ->> 'moved_in')) = v ->> 'moved_in' OR {})",
-        starts("unblocked_in")
+        "m.kind = 'system' AND (right(m.text, length(v ->> 'moved_in')) = v ->> 'moved_in' \
+        OR ({} AND {}))",
+        starts("unblock"),
+        holds("back_in")
     ))
 }
 

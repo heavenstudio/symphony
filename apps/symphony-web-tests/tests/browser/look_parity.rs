@@ -121,7 +121,7 @@ fn track_styles(browser: &mut super::chrome::Chrome) {
 }
 
 fn painted_layout(browser: &mut super::chrome::Chrome) {
-    // shell.js awaits the current module's links before mounting it; this reads that state
+    // shell.ts awaits the current module's links before mounting it; this reads that state
     // from the page, so a sheet that never loaded fails here rather than at a style read.
     assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.readyState === 'complete' && document.querySelectorAll('link[rel=stylesheet]').length > 0 && [...document.querySelectorAll('link[rel=stylesheet]')].every(link=>link.sheet !== null)", SHOWN),"navigation and stylesheets must finish before measuring the page");
     // The first frame resolves styles/layout; the next runs after that frame painted.

@@ -116,7 +116,7 @@ export const RETRY = "Retry loading the timeline";
 /** The notice's id. */
 const FAILURE = "timeline-error";
 
-/** The shell's (shell/shell.js `reviewShell`): whether the page's build is gone and the page
+/** The shell's (shell/shell.ts `reviewShell`): whether the page's build is gone and the page
  * loads again, and a failed load's notice with its retry. */
 interface Shell {
   gone(): Promise<boolean>;

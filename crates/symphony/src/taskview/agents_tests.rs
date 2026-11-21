@@ -293,3 +293,65 @@ fn the_agents_views_hc_probe_runs_without_the_starters_session() {
         assert_eq!(line, "unset|unset|unset|unset|unset");
     }
 }
+
+#[test]
+fn a_tasks_tokens_are_its_and_its_subtasks_tally_and_one_with_none_has_none() {
+    use symphony_board::NewTask;
+    use symphony_board::usage::{Prices, Spent, Tally, Tokens};
+    let f = Fixture::empty();
+    let (orch, exe, sub) = (
+        f.session("orchestrator"),
+        f.session("worker"),
+        f.session("worker"),
+    );
+    f.task_with(NewTask::new("sim/jump", "Jump", &orch));
+    f.task_with(NewTask {
+        parent: Some("sim/jump".into()),
+        ..NewTask::new("sim/jump/fix", "Fix", &orch)
+    });
+    f.task_with(NewTask::new("sim/quiet", "Quiet", &orch));
+    f.store.claim("sim/jump", &exe).unwrap();
+    f.store.claim("sim/jump/fix", &sub).unwrap();
+    let spent = |model: &str, n: u64| Spent {
+        model: model.into(),
+        speed: "standard".into(),
+        tokens: Tokens {
+            input: n,
+            output: n,
+            calls: 1,
+            ..Tokens::default()
+        },
+    };
+    for (key, handle, model) in [("a", &exe, "claude-opus-5-5"), ("b", &sub, "gpt-x")] {
+        assert!(f.store.bind_agent(key, handle, false).unwrap());
+        let beat = symphony_board::Beat::default();
+        f.store
+            .agent_beat_spending(key, &beat, None, None, &[spent(model, 100)])
+            .unwrap();
+    }
+    let tokens = super::tokens(&f.store, "sim/jump").unwrap();
+    let rows = f.store.spent_on(&["sim/jump", "sim/jump/fix"]).unwrap();
+    let prices = Prices::embedded();
+    let tally: symphony_api::TaskTokens =
+        serde_json::from_value(Tally::at(&rows, prices).json(&[], prices)).unwrap();
+    assert_eq!(tokens, tally);
+    assert_eq!(tokens.total.calls, 2, "its subtask's calls with its own");
+    assert_eq!(tokens.cost.unpriced.len(), 1);
+    let quiet = super::tokens(&f.store, "sim/quiet").unwrap();
+    assert_eq!(quiet.total, symphony_api::AgentTokens::default());
+    assert!(quiet.by_role.is_empty() && quiet.by_round.is_empty());
+    assert_eq!(quiet.cost.prices, prices.read);
+    assert!(super::tokens(&f.store, "sim/none").is_err(), "no such task");
+    // A card's figure is its page's, all told; a task that took none, or none at all, has none.
+    let asked = ["sim/jump", "sim/quiet", "sim/none"].map(String::from);
+    let costs = super::costs(&f.store, &asked).unwrap();
+    assert_eq!(costs.prices, prices.read);
+    assert_eq!(
+        costs.costs,
+        [symphony_api::TaskCost {
+            slug: "sim/jump".into(),
+            dollars: tokens.cost.dollars,
+            unpriced: true,
+        }]
+    );
+}

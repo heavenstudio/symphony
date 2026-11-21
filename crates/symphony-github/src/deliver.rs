@@ -6,16 +6,16 @@
 //!
 //! `publish` and `merge` first read the protection of the base branch ([`crate::preflight`]) and
 //! refuse where it does not hold a delivery to its evidence; evidence that blocks is still
-//! said there, by its checks alone on the pull request already bound. Who bypasses the rules is
-//! read with a third token, the policy token, which goes to [`crate::preflight::Reader`] and
-//! nowhere else: no verb here sends it with anything but that one read.
+//! said there, by its checks alone on the pull request already bound. Every request carries the
+//! one App's token, which administers nothing: who else bypasses the rules is what was verified
+//! by someone who does ([`crate::rulesets`]), taken while each ruleset is unchanged since.
 //!
 //! - `publish` pushes the head to the branch named as the task, never forced and only to an
 //!   `origin` that names the repository the settings do; finds the pull request of that branch
 //!   before it opens one, as a draft; and writes one check for the assessment, one for each stamp and
-//!   `symphony/eligible`, with the checks' own token, then reads them back as written by the one
-//!   App the settings name. A check that stands is found by its name and what it says, so a
-//!   second run writes none; `symphony/eligible` is written last when it passes and first when
+//!   `symphony/eligible`, then reads them back as written by the one App the settings name, again after each of [`READ_BACK`]'s rests while one is not listed
+//!   yet, with nothing written again. A check that stands is found by its name and what it says,
+//!   so a second run writes none; `symphony/eligible` is written last when it passes and first when
 //!   it fails, so it never passes over a stamp not yet written.
 //! - `merge` asks GitHub once to squash the bound pull request at the head it is given
 //!   (`sha`, which GitHub refuses a merge of any other head by), after reading that it is not
@@ -36,10 +36,10 @@
 //! none, its slug: never a brief, a thread or the title the land hands over. No token is in
 //! an argument, a URL, an environment variable, the journal, the state or a line said here.
 
-use crate::config::{Config, PullRequests, Repository, Role};
+use crate::config::{Config, PullRequests, Repository};
 use crate::github::clean_title;
 use crate::mint;
-use crate::preflight::{self, Operation, Reader, Wanted};
+use crate::preflight::{self, Operation, Wanted};
 use crate::reconcile::{Context, Outcome};
 use crate::state::{Binding, Entry, Event, Pull, State, Store};
 use crate::transport::{Failure, Request, Transport};
@@ -48,6 +48,7 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 /// The check that says every other stands: the one a branch's protection requires.
 pub const ELIGIBLE: &str = "symphony/eligible";
@@ -55,6 +56,26 @@ pub const ELIGIBLE: &str = "symphony/eligible";
 pub const ASSESSMENT: &str = "symphony/assessment";
 /// The evidence's shape this build writes checks of (`symphony_board::land::evidence::VERSION`).
 pub const SNAPSHOT: u64 = 1;
+/// The rests between two reads of a head's checks while one written is not listed yet, as
+/// GitHub lists a check a few seconds after it takes it: 15 s in all, so the read back ends well
+/// inside the network bound the land runs this program in (300 s at most), and a check that never
+/// shows is answered `unavailable` here rather than cut short there.
+pub const READ_BACK: [Duration; 4] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+];
+
+/// A delivery's rest between two reads of the checks it wrote ([`READ_BACK`]), as nothing of
+/// GitHub's tells when it lists them.
+pub fn rest(wait: Duration) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the named helper of RULES.md code/no-timed-waits for a retry with backoff: a delivery's read back of the checks it wrote"
+    )]
+    std::thread::sleep(wait);
+}
 
 /// The project's own git, as far as a delivery uses it.
 pub trait Remote {
@@ -389,14 +410,10 @@ pub(crate) fn bound(
     }
 }
 
-/// What makes the requests that carry `role`'s token, made first where the settings give its
+/// What makes the requests that carry the App's token, made first where the settings give its
 /// file an App ([`crate::mint`]).
-pub(crate) fn connect(
-    ctx: &Context<'_>,
-    config: &Config,
-    role: Role,
-) -> Result<Box<dyn Transport>, Stopped> {
-    let token = mint::token(ctx, config, role).map_err(|stop| match stop {
+pub(crate) fn connect(ctx: &Context<'_>, config: &Config) -> Result<Box<dyn Transport>, Stopped> {
+    let token = mint::token(ctx, config).map_err(|stop| match stop {
         mint::Stop::Refused(why) => refused(why),
         mint::Stop::Unavailable(why) => unavailable(why),
     })?;
@@ -433,8 +450,8 @@ impl Run<'_> {
         });
     }
 
-    fn connect(&self, role: Role) -> Result<Box<dyn Transport>, Stopped> {
-        connect(self.ctx, &self.config, role)
+    fn connect(&self) -> Result<Box<dyn Transport>, Stopped> {
+        connect(self.ctx, &self.config)
     }
 
     /// The repository as GitHub names it now, which must be the one the state is bound to.
@@ -449,21 +466,10 @@ impl Run<'_> {
         let wanted = Wanted {
             repository: id,
             base,
-            checks_app: self.config.checks_app_id.unwrap_or_default(),
-            landing_app: self.config.landing_app_id.unwrap_or_default(),
+            app: self.config.app_id.unwrap_or_default(),
             operation: Operation::of(self.config.upstream_id.is_some()),
         };
-        // The policy token is read anew each time, and sent nowhere but through the reader.
-        let read = match self.connect(Role::Policy) {
-            Ok(transport) => {
-                let reader = Reader::new(transport.as_ref(), self.repository.clone());
-                preflight::check(host, &reader, &wanted)
-            }
-            Err(stopped) if stopped["state"] == json!("refused") => {
-                Err(preflight::unread(&wanted, &text(&stopped, "why")))
-            }
-            Err(stopped) => Err(stopped),
-        };
+        let read = preflight::check(host, &self.state.rulesets, &wanted);
         match read {
             Ok(policy) => {
                 self.journal(Event::Ack, "policy", slug, &policy.digest, json!(base));
@@ -486,7 +492,7 @@ impl Run<'_> {
     }
 
     /// The upstream an import of `request` is of, held to what the settings pin, read now with the
-    /// merging token `host` carries: the repository at the request's address is the one of
+    /// App's token `host` carries: the repository at the request's address is the one of
     /// `upstream_id`, not the one bound (`id`), and its history is taken into this repository only
     /// where that makes nothing private public. Its number and name.
     fn upstream(&self, host: &Host<'_>, request: &Value, id: i64) -> Result<Value, Stopped> {
@@ -514,7 +520,7 @@ impl Run<'_> {
             (301, _) => return Err(refused(format!("the upstream {said} moved (301)"))),
             (status, _) => {
                 return Err(refused(format!(
-                    "the upstream {said} is not readable with the merging token ({status})"
+                    "the upstream {said} is not readable with the App's token ({status})"
                 )));
             }
         };
@@ -625,8 +631,8 @@ impl Run<'_> {
 
     /// The checks of `wanted` on `head`, written where they do not stand and read back.
     fn stand(&self, wanted: &[Check], head: &str, slug: &str) -> Result<(), Stopped> {
-        let app = self.config.checks_app_id.unwrap_or_default();
-        let transport = self.connect(Role::Checks)?;
+        let app = self.config.app_id.unwrap_or_default();
+        let transport = self.connect()?;
         let host = Host {
             transport: transport.as_ref(),
             repository: self.repository.clone(),
@@ -693,13 +699,23 @@ impl Run<'_> {
                 }
             }
         }
-        let after = ours(&host.read(&listing, "the checks of the head")?)?;
-        match wanted.iter().find(|check| !standing(&after, check)) {
-            Some(check) => Err(unavailable(format!(
-                "the check {} does not read back on {head} as App {app} wrote it",
-                check.name
-            ))),
-            None => Ok(()),
+        // GitHub lists a check a little after it takes it: one not listed yet is read again,
+        // after each of READ_BACK's rests, and nothing is written again.
+        let mut rests = READ_BACK.iter();
+        loop {
+            let after = ours(&host.read(&listing, "the checks of the head")?)?;
+            let Some(check) = wanted.iter().find(|check| !standing(&after, check)) else {
+                return Ok(());
+            };
+            let Some(wait) = rests.next() else {
+                return Err(unavailable(format!(
+                    "the check {} does not read back on {head} as App {app} wrote it, read again \
+                     for {} s",
+                    check.name,
+                    READ_BACK.iter().sum::<Duration>().as_secs()
+                )));
+            };
+            (self.ctx.rest)(*wait);
         }
     }
 
@@ -741,7 +757,7 @@ impl Run<'_> {
                 self.repository.full_name()
             )));
         }
-        let transport = self.connect(Role::Landing)?;
+        let transport = self.connect()?;
         let host = Host {
             transport: transport.as_ref(),
             repository: self.repository.clone(),
@@ -907,7 +923,7 @@ impl Run<'_> {
                 "a merge is of one whole commit: a task's squashed, an import's by a merge commit",
             ));
         }
-        let transport = self.connect(Role::Landing)?;
+        let transport = self.connect()?;
         let host = Host {
             transport: transport.as_ref(),
             repository: self.repository.clone(),
@@ -1000,7 +1016,7 @@ impl Run<'_> {
     }
 
     fn result(&mut self, request: &Value) -> Result<Value, Stopped> {
-        let transport = self.connect(Role::Landing)?;
+        let transport = self.connect()?;
         let host = Host {
             transport: transport.as_ref(),
             repository: self.repository.clone(),
@@ -1037,7 +1053,7 @@ impl Run<'_> {
         let Some(number) = issue.filter(|_| self.config.close_issues) else {
             return Ok(noted(String::new()));
         };
-        let transport = self.connect(Role::Landing)?;
+        let transport = self.connect()?;
         let host = Host {
             transport: transport.as_ref(),
             repository: self.repository.clone(),
@@ -1178,11 +1194,15 @@ pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome 
         return Err(format!("no branch is named {base:?}"));
     }
     let folder = ctx.board.state_folder().map_err(|e| e.said().to_string())?;
-    let bound = match Store::existing(&folder) {
-        Some(store) => store.state()?.and_then(|state| state.binding),
+    let kept = match Store::existing(&folder) {
+        Some(store) => store.state()?,
         None => None,
     };
-    let transport = match connect(ctx, &config, Role::Landing) {
+    let verified = (kept.as_ref())
+        .map(|state| state.rulesets.clone())
+        .unwrap_or_default();
+    let bound = kept.and_then(|state| state.binding);
+    let transport = match connect(ctx, &config) {
         Ok(transport) => transport,
         Err(answer) => return stopped(out, &answer),
     };
@@ -1197,32 +1217,25 @@ pub fn preflight(ctx: &Context<'_>, base: &str, out: &mut dyn Write) -> Outcome 
             Err(answer) => return stopped(out, &answer),
         },
     };
+    let app = config.app_id.unwrap_or_default();
     let _ = writeln!(
         out,
-        "{} (id {id}{}), {base}: checks from App {}, merged by App {}, bypass lists read by App {}",
+        "{} (id {id}{}), {base}: checks written and merged by App {app}, who else bypasses the \
+         rules as verified",
         repository.full_name(),
         if bound.is_some() {
             ", as bound here"
         } else {
             ", bound to nothing here yet"
         },
-        config.checks_app_id.unwrap_or_default(),
-        config.landing_app_id.unwrap_or_default(),
-        config.policy_app_id.unwrap_or_default()
     );
     let wanted = Wanted {
         repository: id,
         base,
-        checks_app: config.checks_app_id.unwrap_or_default(),
-        landing_app: config.landing_app_id.unwrap_or_default(),
+        app,
         operation: Operation::of(config.upstream_id.is_some()),
     };
-    let policy = match connect(ctx, &config, Role::Policy) {
-        Ok(policy) => policy,
-        Err(answer) => return stopped(out, &answer),
-    };
-    let reader = Reader::new(policy.as_ref(), repository.clone());
-    match preflight::check(&host, &reader, &wanted) {
+    match preflight::check(&host, &verified, &wanted) {
         Ok(policy) => {
             let _ = writeln!(
                 out,

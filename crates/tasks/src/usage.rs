@@ -151,7 +151,7 @@ pub struct Tally {
 }
 
 /// The roles a tally lists first, in this order.
-const ROLE_ORDER: [&str; 4] = ["executor", "reviewer", "reserved", "orchestrator"];
+pub const ROLE_ORDER: [&str; 4] = ["executor", "reviewer", "reserved", "orchestrator"];
 
 impl Tally {
     /// `rows` summed, at the prices every build embeds.

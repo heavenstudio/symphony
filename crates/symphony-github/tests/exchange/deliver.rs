@@ -7,23 +7,18 @@ use crate::{Rig, TOKEN};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use symphony_github::credential::Secret;
 use symphony_github::deliver::{self, Remote};
 use symphony_github::reconcile::Context;
 use symphony_github::state::{Mapping, Origin};
 use symphony_github::transport::{Failure, Request, Response, Transport};
 
-/// The token of the GitHub App that writes the checks.
-pub(crate) const CHECKS: &str = "ghs_fixtureCHECKS0123456789abcdefSECRET";
-/// That App's number.
+/// The number of the one GitHub App, whose token the settings' `token_file` holds: it pushes,
+/// writes the checks and merges.
 pub(crate) const APP: i64 = 42;
-/// The number of the GitHub App that merges, whose token the settings' `token_file` holds.
-pub(crate) const LANDING: i64 = 43;
-/// The token of the GitHub App that reads who bypasses the rules, and that App's number.
-pub(crate) const POLICY: &str = "ghs_fixturePOLICY0123456789abcdefSECRET";
-pub(crate) const READER: i64 = 44;
 pub(crate) const SLUG: &str = "sim/jump";
 pub(crate) const HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -87,44 +82,59 @@ pub(crate) struct Delivery {
     pub(crate) starts: bool,
     /// The program that signs a GitHub App's JWT.
     pub(crate) openssl: &'static str,
+    /// Each rest its runs asked for between two reads, none of which waited.
+    pub(crate) rested: RefCell<Vec<Duration>>,
 }
 
-fn settings(checks: &std::path::Path, policy: &std::path::Path, more: &str) -> String {
-    format!(
-        "pull_requests = \"publish\"\nchecks_token_file = \"{}\"\nchecks_app_id = {APP}\n\
-         landing_app_id = {LANDING}\npolicy_token_file = \"{}\"\npolicy_app_id = {READER}\n{more}",
-        checks.display(),
-        policy.display()
-    )
+/// The fake gh's script, written once for every test: it answers from the folder it is linked
+/// from. macOS checks an executable newly written at its first run, which takes a good part of a
+/// second; a link to one already run is not checked again.
+fn gh_script() -> &'static Path {
+    static SCRIPT: OnceLock<PathBuf> = OnceLock::new();
+    SCRIPT.get_or_init(|| {
+        let text = "#!/bin/sh\nf=\"$(dirname \"$0\")/$(printf %s \"$4\" | tr -c 'A-Za-z0-9' '_').json\"\n\
+                    if [ \"$1 $2 $3\" != \"api -H Accept: application/vnd.github+json\" ]; then \
+                    echo \"gh: not a read: $*\" >&2; exit 2; fi\n\
+                    if [ -f \"$f\" ]; then cat \"$f\"; else echo 'gh: Not Found (HTTP 404)' >&2; \
+                    exit 1; fi\n";
+        let script = Path::new(env!("CARGO_TARGET_TMPDIR")).join("symphony-github-gh");
+        if std::fs::read_to_string(&script).ok().as_deref() != Some(text) {
+            // Written beside and moved in whole, as another test run may be running it.
+            let written = script.with_extension(std::process::id().to_string());
+            std::fs::write(&written, text).unwrap();
+            std::fs::set_permissions(&written, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::rename(&written, &script).unwrap();
+        }
+        script
+    })
+}
+
+fn settings(more: &str) -> String {
+    format!("pull_requests = \"publish\"\napp_id = {APP}\n{more}")
 }
 
 /// What makes a request as the App whose token it carries.
 fn connect(github: &Arc<Fake>) -> impl Fn(Secret) -> Result<Box<dyn Transport>, String> + use<> {
     let github = Arc::clone(github);
     move |token: Secret| -> Result<Box<dyn Transport>, String> {
-        let app = match token.expose() {
-            CHECKS => APP,
-            TOKEN => LANDING,
-            POLICY => READER,
-            _ => 0,
-        };
+        let app = if token.expose() == TOKEN { APP } else { 0 };
         Ok(Box::new(As(Arc::clone(&github), app)))
     }
 }
 
 impl Delivery {
-    /// A delivery to a repository protected as one needs it.
+    /// A delivery to a repository protected as one needs it, its rulesets verified.
     pub(crate) fn new(name: &str, more: &str) -> Delivery {
+        let delivery = Delivery::unverified(name, more);
+        delivery.verify().ok();
+        delivery
+    }
+
+    /// The same, its rulesets never verified.
+    pub(crate) fn unverified(name: &str, more: &str) -> Delivery {
         let rig = Rig::off(name);
-        rig.github.protect(APP, LANDING);
-        rig.github.shown_to(READER);
-        let checks = rig.dir.0.join("secret/checks");
-        let policy = rig.dir.0.join("secret/policy");
-        for (file, token) in [(&checks, CHECKS), (&policy, POLICY)] {
-            std::fs::write(file, format!("{token}\n")).unwrap();
-            std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600)).unwrap();
-        }
-        rig.enable(&settings(&checks, &policy, more));
+        rig.github.protect(APP);
+        rig.enable(&settings(more));
         let remote = Pushes {
             url: "git@github.com:o/n.git".into(),
             github: Arc::clone(&rig.github),
@@ -139,15 +149,61 @@ impl Delivery {
             connect,
             starts: false,
             openssl: "openssl",
+            rested: RefCell::default(),
         }
     }
 
-    pub(crate) fn checks_file(&self) -> PathBuf {
-        self.rig.dir.0.join("secret/checks")
+    /// A gh CLI whose `api PATH` answers what GitHub answers a person now, who administers the
+    /// repository: its answers written again at each call, from the fake as it is then, beside a
+    /// link to the one script ([`gh_script`]).
+    pub(crate) fn gh(&self) -> PathBuf {
+        let dir = self.rig.dir.0.join("gh");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut paths = vec![
+            "repos/o/n".to_string(),
+            "repos/o/n/rules/branches/main?per_page=100&page=1".to_string(),
+        ];
+        paths.extend(
+            (self.rig.github.ruleset_ids().iter()).map(|id| format!("repos/o/n/rulesets/{id}")),
+        );
+        let name = |path: &str| -> String {
+            path.chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect()
+        };
+        for path in &paths {
+            let read = self.rig.github.person_reads(&format!("/{path}"));
+            if read.status == 200 {
+                std::fs::write(dir.join(format!("{}.json", name(path))), &read.body).unwrap();
+            }
+        }
+        let gh = dir.join("gh");
+        std::os::unix::fs::symlink(gh_script(), &gh).unwrap();
+        gh
     }
 
-    pub(crate) fn policy_file(&self) -> PathBuf {
-        self.rig.dir.0.join("secret/policy")
+    /// `rulesets ARGS` run with [`Delivery::gh`], holding [`crate::starting`] while it starts gh
+    /// unless the test holds it.
+    pub(crate) fn rulesets(&self, args: &[&str]) -> crate::Ran {
+        let _alone = (!self.starts).then(crate::starting);
+        let gh = self.gh();
+        let mut all = vec!["rulesets"];
+        all.extend_from_slice(args);
+        crate::run_gh(
+            &all,
+            &self.rig.board,
+            &self.rig.settings,
+            &self.connect,
+            self.rig.now.get(),
+            vec![self.rig.dir.0.join("repository")],
+            gh.to_str().unwrap(),
+        )
+    }
+
+    /// `rulesets --verify`, as who administers the repository runs it at setup.
+    pub(crate) fn verify(&self) -> crate::Ran {
+        self.rulesets(&["--verify"])
     }
 
     /// `symphony-github ARGS`, each request made as the App whose token it carries.
@@ -174,6 +230,8 @@ impl Delivery {
             now: self.rig.now.get(),
             repository: vec![self.rig.dir.0.join("repository")],
             openssl: self.openssl,
+            gh: "gh",
+            rest: &|wait| self.rested.borrow_mut().push(wait),
         };
         let mut out = Vec::new();
         let _alone = (!self.starts).then(crate::no_start);
@@ -220,9 +278,9 @@ impl Delivery {
             .collect()
     }
 
-    /// Neither token is in anything said, kept or asked for by its address.
+    /// The token is in nothing said, kept or asked for by its address.
     pub(crate) fn assert_no_token(&self) {
-        self.assert_none_of(&[TOKEN, CHECKS, POLICY]);
+        self.assert_none_of(&[TOKEN]);
     }
 
     /// None of `secrets` is in anything said, kept or asked for by its address.
@@ -446,6 +504,77 @@ fn a_lost_answer_is_looked_for_before_anything_is_made_again() {
 }
 
 #[test]
+fn checks_github_lists_a_little_late_are_read_again_and_never_written_again() {
+    // Listed from the second read after the writes, and from the last one the bound allows.
+    for late in 1..=deliver::READ_BACK.len() {
+        let d = Delivery::new("deliver-late", "");
+        d.rig.github.list_late(late);
+        let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+        assert_eq!(
+            answer["state"], "published",
+            "listed late by {late}: {answer}"
+        );
+        assert_eq!(*d.rested.borrow(), deliver::READ_BACK[..late]);
+        assert_eq!(
+            d.rig.github.listings(HEAD),
+            late + 2,
+            "the read before the writes, and one after each rest and before the first"
+        );
+        let writes = d.writes();
+        assert_eq!(
+            writes.len(),
+            6,
+            "a pull request and five checks: {writes:?}"
+        );
+        assert_eq!(d.rig.github.checks(HEAD).len(), 5);
+    }
+}
+
+#[test]
+fn a_check_not_listed_within_the_bound_stops_unavailable_and_is_not_written_again() {
+    let d = Delivery::new("deliver-unlisted", "");
+    let bound = deliver::READ_BACK.len() + 1;
+    d.rig.github.list_late(bound);
+    let answer = d.publish(&snapshot(HEAD, "met", "r1"));
+    assert_eq!(
+        answer,
+        json!({
+            "state": "unavailable",
+            "why": format!(
+                "the check symphony/assessment does not read back on {HEAD} as App {APP} wrote \
+                 it, read again for 15 s"
+            ),
+        })
+    );
+    assert_eq!(*d.rested.borrow(), deliver::READ_BACK);
+    assert_eq!(d.rig.github.listings(HEAD), 1 + bound);
+    let writes = d.writes();
+    assert_eq!(writes.len(), 6, "each written once: {writes:?}");
+    // The next run reads them standing and writes nothing.
+    assert_eq!(
+        d.publish(&snapshot(HEAD, "met", "r1"))["state"],
+        "published"
+    );
+    assert_eq!(d.writes(), writes);
+    assert_eq!(d.rested.borrow().len(), deliver::READ_BACK.len());
+    d.assert_no_token();
+}
+
+#[test]
+fn a_rewritten_check_is_read_again_while_github_still_lists_what_it_said_before() {
+    let d = Delivery::new("deliver-rewritten-late", "");
+    d.publish(&snapshot(HEAD, "met", "r1"));
+    let before = d.writes().len();
+    d.rig.github.list_late(2);
+    let answer = d.publish(&snapshot(HEAD, "missing", "r2"));
+    assert_eq!(answer["state"], "published", "{answer}");
+    assert_eq!(*d.rested.borrow(), deliver::READ_BACK[..2]);
+    let rewritten = d.writes().split_off(before);
+    assert_eq!(rewritten.len(), 5, "each rewritten once: {rewritten:?}");
+    assert!(names(&d.rig.github.checks(HEAD)).contains(&("symphony/eligible", "failure")));
+}
+
+#[test]
 fn evidence_that_changed_rewrites_its_checks_the_failing_verdict_first() {
     let d = Delivery::new("deliver-changed", "");
     d.publish(&snapshot(HEAD, "met", "r1"));
@@ -499,9 +628,9 @@ fn only_the_named_apps_checks_count_and_no_other_token_writes_them() {
         .map(|(.., app)| app)
         .collect();
     assert_eq!(eligible, [99, APP]);
-    // The checks' token a person's: GitHub takes no check of it, and nothing says published.
+    // The token a person's: GitHub takes no check of it, and nothing says published.
     let d = Delivery::new("deliver-person", "");
-    std::fs::write(d.checks_file(), "ghp_aPersonsOtherToken\n").unwrap();
+    std::fs::write(&d.rig.token_file, "ghp_aPersonsOtherToken\n").unwrap();
     let answer = d.publish(&snapshot(HEAD, "met", "r1"));
     assert_eq!(answer["state"], "refused", "{answer}");
     assert!(
@@ -512,8 +641,8 @@ fn only_the_named_apps_checks_count_and_no_other_token_writes_them() {
         "{answer}"
     );
     assert_eq!(d.rig.github.checks(HEAD).len(), 0);
-    // A checks' token others can read is not read at all.
-    std::fs::set_permissions(d.checks_file(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    // A token others can read is not read at all.
+    std::fs::set_permissions(&d.rig.token_file, std::fs::Permissions::from_mode(0o644)).unwrap();
     let answer = d.publish(&snapshot(HEAD, "met", "r1"));
     assert!(
         answer["why"]

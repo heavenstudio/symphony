@@ -211,13 +211,15 @@ which the `current` the refresh then points takes on) or was built at the releas
 the only writers behind are a release's own, its migrate runs with `--leave-behind`, naming them.
 A line on this host whose program is gone from its path, nothing there or a file written since
 the line's last possible write, is not counted, and is left behind the same way
-([a writer gone from its path](RELEASES.md#the-refresh)).
-Any other writer behind holds the release: the refresh names each to rebuild, moves no board of
-any project and leaves `current` where it was, until each is rebuilt and run once and the
-refresh's retry moves them all. Every board is snapshotted before the first moves; a migrate that
-fails stops the rest, the boards moved before it staying at the release's schema until the retry
-finishes the others ([RELEASES](RELEASES.md#the-refresh)). A release that keeps the schema
-`current` names moves no board.
+([a writer gone from its path](RELEASES.md#the-refresh)); so is one whose program is no build the
+project runs now (none its main checkout's `.target/bin` links name) and that has not run for
+longer than the project's `[board] stale_writer_hours`, a day by default.
+Any other writer behind holds that board alone: the refresh names each to rebuild and leaves that
+board where it was, until each is rebuilt and run once and a later refresh, or the machine's
+server's next round, moves it. No board holds another or `current`: each board is snapshotted
+just before its own move, and a migrate that fails is that board's red alone
+([RELEASES](RELEASES.md#the-refresh)). A release that keeps the schema `current` names moves only
+a board left behind it.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
@@ -1866,9 +1868,30 @@ The task returns to its recorded stage; work from `in_progress` without an execu
 `ready`. A block without a recorded stage returns to `ready`, or `in_progress` with an executor.
 Resuming work respects the slot cap and retries on dispatch when a slot frees. The move is
 recorded once on the thread and reaches the current orchestrator through native STATUS/PULL
-delivery. Dispatch also reconciles a completion whose writer stopped before delivery. Decision,
-check, parked and unknown blocks stay blocked; cancelled or missing prerequisites never satisfy
-a task block.
+delivery. Dispatch also reconciles a completion whose writer stopped before delivery. Cancelled or
+missing prerequisites never satisfy a task block.
+
+The owner's word ends the two blocks that wait on the owner, the same way: back to the recorded
+stage, under the slot cap, the move recorded once and told as STATUS. A `decision:NAME` block ends
+once card NAME carries the owner's verdict that decides it, approved, rejected or dismissed, in an
+owner's line dated in or after the minute the block was recorded, on any page's copy of the card:
+main's documents or a branch's, so whichever checkout the owner's save wrote, main's or the
+worktree of the task that posted it, committed or not. The owner's newest verdict there is the
+card's: a question, or the card set back to pending, ends nothing. Its line names the card and the
+verdict, `unblocked: the owner decided NAME (reject); back to in_progress`, so the executor acts on
+what the card says a reject does. An owner's line since the block that decides nothing (a
+message, a question) leaves it blocked and is posted once on the task's thread to
+`@orchestrator`, with its card, stamp and words. A `check:owner` hold, the default landing's, ends
+once an owner's approve on the task's thread names the tip of its branch (`refs/heads/SLUG`), as
+the land's `owner` stamp reads it: `unblocked: the owner approved 1a2b3c4; back to review`; an
+approve of another commit ends nothing. The machine's one server judges both on its board clock,
+from the cards its pages hold and the board it read that tick (`crates/symphony/src/decided.rs`):
+a save needs no hook, as the page that reads the saved document again brings the line to the next
+tick, and a verdict written while no server ran, or saved by another build, is read at the first
+tick that reads the documents. The move is fenced on the block the server read
+(`Store::resume_judged`): a move or a block anew in between, the owner's or a session's, wins. A
+private server, and a board no server reaches, leave them blocked until the one server runs.
+Other check, parked and unknown blocks stay blocked.
 
 **The line.** Each open task waits on one thing, said as `KIND · WHO · WHY` since the time it took
 its status (`crates/tasks/src/waits_on.rs`), KIND one of:
@@ -2120,7 +2143,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   `@orchestrator`, holds the task blocked from review (`Store::hold_blocked_on`, keeping its
   slot, on `check:owner`, the owner's approve of the tip, which reads as his decision: [what a
   task waits on](#what-a-task-waits-on)), or leaves it done by its approve, until the owner approves the tip
-  on the task's page. A stamp a [gate decision](#gate-decisions) waived for the tip is not
+  on the task's page, which returns a held task to review by itself, told as its STATUS. A stamp a [gate decision](#gate-decisions) waived for the tip is not
   needed there; a raise one gave must be carried in its file at the tip. A land of a task that needed no review says on its landing line the stamps and the
   whole tip they stood on (`landed SLUG on main at MERGE; its needs (tests) stood at SHA`),
   the commit it vouched for, as an approve names one.
@@ -2580,7 +2603,13 @@ A land keeps a journal of the delivery in the lands' folder, written before each
    [what the regenerator made](#what-the-generators-make-delivered-by-a-pull-request), as is one
    that merges a commit the remote default does not hold and is not
    [an import of the upstream](#an-import-delivered-by-a-pull-request): another history, which a
-   squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). A task that is not
+   squash would flatten ([UPSTREAM_DOWNSTREAM](UPSTREAM_DOWNSTREAM.md)). The refusal of
+   generated outputs tells `@executor` to put them back as the default branch has them, but for a
+   release candidate's fix, a head that holds `release-candidate` and beyond it no commit the
+   remote default holds: that head keeps the outputs its own sources make, approved naming it,
+   and the branch delivers a merge of the default branch that keeps the default branch's
+   ([RELEASES](RELEASES.md#the-release-candidate)). With a candidate held that the head does not
+   hold, the refusal says how a fix of it is rebased first. A task that is not
    eligible at its head is refused before anything is published.
 2. **Eligible.** `publish` makes the head and its evidence public and answers the pull request,
    which the task is bound to from then on. The evidence is read again: of another revision, it is
@@ -3869,7 +3898,37 @@ total beside it; each `tokens` is `{"input", "cache_write_5m", "cache_write_1h",
 (`landed SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1
 51.5k, round 2 20.1k), $0.08 estimated at API list prices read 2026-11-16`), each amount with
 its unit, so no number in it reads as a commit. A copy of the board carries the rows
-(`Dump.usages`). The pages draw none of it yet.
+(`Dump.usages`).
+
+The pages draw the same figures, each with the day its prices were read and as an estimate, never
+money spent ([What the tokens cost](#what-the-tokens-cost)):
+
+- **A task's page** has *Tokens and estimated cost* last, under its thread, closed until opened, which
+  reads `/api/task-tokens?slug=SLUG` (`show --json`'s `tokens` without its `rows`) and draws the
+  total with its kinds, a table by role and one by review round, and the models no price was found
+  for; a task with none says *No tokens recorded for this task.* and draws no table.
+- **A board card** shows its task's cost all told, its subtasks' with it, beside its slug (`$1.23`,
+  `$1.23+` where some tokens had no price, `unpriced` where none had, its title saying the rest),
+  read apart from the board's
+  listings, which carry none of it: the cards drawn in one turn are asked for together
+  (`/api/task-costs?slugs=[…]`, at most `TASK_COSTS_MOST`, 200, a read: `Store::spent_under`, one
+  round trip), each once until its record changes, so no heartbeat that adds tokens reads again.
+  A task with none shows no figure.
+- **The Agents page** gives each agent its tokens and cost under its line, from the agents API.
+- **Reports** has *Tokens and cost*: the cost and the tokens of each hour, day or week by role
+  (orchestrators, executors, reviewers and the rest), and below them the window's own: tokens and
+  cost all told, each top-level task landed in the window priced once with its subtasks (the
+  median and the ten dearest, each a link to its page), and the review rounds after the first
+  against the first rounds, from the [day files](analysis/reports-and-monitoring.md#the-day-files).
+  An hour's tokens are what the board's `usage` gained between two hourly roll-ups, shared among
+  the hours between them by time: an hour no two roll-ups span is a gap, never a zero.
+
+`just tasks stats` ends with the same reading of its window's day files: tokens and cost by day
+and role, the landed tasks' median and ten dearest, and the review rounds against the first, a
+day no two roll-ups span saying `no record`; `--json` carries it as `tokens`: `prices`, `per_day`
+(each `day` with its `by_role`, `null` for no record), and `landed` (`tasks`, `without`,
+`median_dollars`, `dearest`, `first_round`, `later_rounds`, `again`). Without day files (a private server's board, or a board that
+`TASKS_SERVER` names) it says there are none and prints the rest.
 
 The table moves the board to schema 19, which a build on schema 18 reads unharmed (the
 Symphony, the shared server among them): it opens a board one schema ahead to read
@@ -4045,6 +4104,14 @@ to its `MOVE` line, so the executor and reviewer stop at once (the owner's `done
 an approve verdict, which says no more). The thread keeps every line as written. Post milestones only, address what someone must act on, never
 acknowledge a message, and never repeat a post on a subtask and its parent.
 A session without a channel keeps `just tasks inbox`.
+
+In the Symphony an agent's post or verdict, a task's brief and an ask's answer are drawn as a
+document's body is: bold, italics, inline code, links, lists, tables, fenced code, pictures,
+`[[wiki links]]`, a card named in bold and `[[name:argument]]` components all show. Raw HTML
+does not: `Vec<String>`, `<TokensPart key=x>` or a `<details>` named in a post is the words
+typed, drawn once, never an element or a notice of unsupported content, as in a card's note
+(`convert_post`, `crates/symphony/src/render/markdown.rs`). The owner's words are the text typed,
+but for a line naming a file they attached, which shows the file.
 
 The owner reads the board and every thread in the Symphony, sends messages
 to anyone on a task, changes its priority from p0 to p4 and cancels open tasks.

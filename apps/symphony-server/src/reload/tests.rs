@@ -183,7 +183,7 @@ fn client_fingerprint_and_events_cover_assets_config_and_transitive_crates() {
     for (file, client) in [
         ("symphony/apps/symphony-web/src/kinds/board.tsx", true),
         ("symphony/apps/symphony-web/src/styles/frame.css", true),
-        ("symphony/apps/symphony-web/shell/shell.js", true),
+        ("symphony/apps/symphony-web/shell/shell.ts", true),
         ("symphony/apps/symphony-web/package.json", true),
         ("symphony/apps/symphony-web/package-lock.json", true),
         ("symphony/apps/symphony-web/vite.config.ts", true),
@@ -355,7 +355,7 @@ fn idle_source_watch_follows_build_inputs_and_recovers_an_incomplete_graph() {
         ("symphony/apps/symphony-server/src/api.rs", true),
         ("symphony/apps/symphony-web/src/kinds/board.tsx", true),
         ("symphony/apps/symphony-web/src/styles/frame.css", true),
-        ("symphony/apps/symphony-web/shell/shell.js", true),
+        ("symphony/apps/symphony-web/shell/shell.ts", true),
         ("symphony/apps/symphony-web/package-lock.json", true),
         ("symphony/apps/symphony-web/vite.config.ts", true),
         ("symphony/apps/symphony-web/build.sh", true),

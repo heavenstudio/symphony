@@ -22,7 +22,7 @@ function shown(selector: string): HTMLElement | null {
 
 /**
  * Whether the focus is in the sheet `within` as the panel draws it, not in the shell's stand-in for
- * it while the panel loads (`#panel-loading`, assets/shell.js), which carries the same id.
+ * it while the panel loads (`#panel-loading`, shell/shell.ts), which carries the same id.
  */
 function focusIn(within: string): boolean {
   const active = document.activeElement;
@@ -46,7 +46,7 @@ function focusShown(selectors: readonly string[]): boolean {
 /**
  * Focus the first of `selectors` to show and take it, trying for a second while the panel draws.
  * The first try waits for the task that opened it to end: the shell takes its loading sheet down
- * once the panel is up (assets/shell.js), and the focus would go with it. The tries end once the
+ * once the panel is up (shell/shell.ts), and the focus would go with it. The tries end once the
  * focus is in the sheet `within`, wherever the reader put it: a sheet shown before its tries run is
  * one the reader can already press a tab or a field of, and a later try would take that away.
  */

@@ -3,7 +3,7 @@
 //! address is that repository and not the one delivered to, and its history makes nothing private
 //! public; and everything else squashed as a task, whatever it asks.
 
-use crate::deliver::{APP, Delivery, HEAD, LANDING, SLUG, snapshot};
+use crate::deliver::{APP, Delivery, HEAD, SLUG, snapshot};
 use crate::github::Fault;
 use serde_json::{Value, json};
 
@@ -18,11 +18,11 @@ const PINNED: i64 = 88;
 /// A delivery to a repository that imports from `up/stream`: the settings pin it, the default
 /// branch permits merge commits beside squash, and both repositories are public.
 fn importing(name: &str) -> Delivery {
-    let d = Delivery::new(name, &format!("upstream_id = {PINNED}\n"));
-    permits(&d, &["merge", "squash"]);
+    let d = Delivery::unverified(name, &format!("upstream_id = {PINNED}\n"));
     d.rig
         .github
         .set_repository(&json!({"allow_merge_commit": true, "private": false}));
+    permits(&d, &["merge", "squash"]).ok();
     upstream(
         &d,
         json!({"id": PINNED, "full_name": "up/stream", "private": false}),
@@ -30,10 +30,11 @@ fn importing(name: &str) -> Delivery {
     d
 }
 
-/// The default branch's rule that nobody bypasses permitting `methods`, as protected otherwise.
-fn permits(d: &Delivery, methods: &[&str]) {
+/// The default branch's rule that nobody bypasses permitting `methods`, as protected otherwise,
+/// and what verifying its rulesets said: they are kept where the policy holds.
+fn permits(d: &Delivery, methods: &[&str]) -> crate::Ran {
     let github = &d.rig.github;
-    github.protect(APP, LANDING);
+    github.protect(APP);
     github.set_ruleset(
         1,
         &json!({"rules": [
@@ -46,6 +47,7 @@ fn permits(d: &Delivery, methods: &[&str]) {
             {"type": "deletion"},
         ]}),
     );
+    d.verify()
 }
 
 /// What `up/stream` says of itself from now.
@@ -181,7 +183,7 @@ fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anyt
         (
             "https://github.com/no/where",
             Box::new(|_| {}),
-            "the upstream no/where is not readable with the merging token (404)",
+            "the upstream no/where is not readable with the App's token (404)",
         ),
         (
             URL,
@@ -216,7 +218,14 @@ fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anyt
         ),
         (
             URL,
-            Box::new(|d| permits(d, &["squash"])),
+            Box::new(|d| {
+                // Verified while the settings pinned no upstream, as a task's policy: a
+                // verification keeps nothing of one that does not hold, as this one for an import.
+                let task = format!("pull_requests = \"publish\"\napp_id = {APP}\n");
+                d.rig.enable(&task);
+                permits(d, &["squash"]).ok();
+                d.rig.enable(&format!("{task}upstream_id = {PINNED}\n"));
+            }),
             "main permits these merge methods: squash; a delivery takes exactly: merge, squash",
         ),
     ];
@@ -231,9 +240,9 @@ fn an_import_the_settings_or_the_upstream_do_not_bear_out_is_refused_before_anyt
 #[test]
 fn an_import_into_itself_or_of_other_evidence_is_refused_and_private_into_private_is_not() {
     // The repository delivered to is no upstream of its own.
-    let d = Delivery::new("import-self", "upstream_id = 77\n");
-    permits(&d, &["merge", "squash"]);
+    let d = Delivery::unverified("import-self", "upstream_id = 77\n");
     (d.rig.github).set_repository(&json!({"allow_merge_commit": true, "private": false}));
+    permits(&d, &["merge", "squash"]).ok();
     assert_eq!(
         not_pushed(
             &d,
