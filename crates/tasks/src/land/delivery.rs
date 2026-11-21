@@ -281,13 +281,23 @@ impl Journal {
     }
 
     /// Whether the watcher reads it: its merge armed at the host and nothing here settling it
-    /// yet, the stage short of a merge asked and no person holding it. One whose last publication
-    /// stopped before the host answered its arming again ([`Stage::Prepared`] or
-    /// [`Stage::Eligible`]) is among them: the host may merge it all the same.
+    /// yet, the stage short of a merge asked and no person holding it; or its land past the merge
+    /// asked and not ended ([`Journal::settling`]). One whose last publication stopped before the
+    /// host answered its arming again ([`Stage::Prepared`] or [`Stage::Eligible`]) is among the
+    /// armed: the host may merge it all the same.
     pub fn watched(&self) -> bool {
-        (self.armed || self.stage == Stage::Armed)
-            && self.held.is_none()
-            && matches!(self.stage, Stage::Prepared | Stage::Eligible | Stage::Armed)
+        self.settling()
+            || ((self.armed || self.stage == Stage::Armed)
+                && self.held.is_none()
+                && self.stage < Stage::MergeRequested)
+    }
+
+    /// Whether its land went past the merge asked and did not end, no person holding it: a run
+    /// cut short between the host's merge and the journal dropped (the board lost, a crash, a
+    /// reboot), which only the land's tail gone on with finishes ([`Landing::resumed`]). The
+    /// watcher runs it each round until it does ([`super::dispatch`]).
+    pub fn settling(&self) -> bool {
+        self.held.is_none() && self.stage >= Stage::MergeRequested
     }
 }
 
@@ -403,7 +413,7 @@ impl Journal {
     }
 
     /// Where it stands, in a few words.
-    fn said(&self) -> String {
+    pub(super) fn said(&self) -> String {
         let pull = (self.binding.as_ref()).map_or_else(String::new, |b| {
             format!(", pull request #{} of {}", b.pull, b.name)
         });
@@ -2018,6 +2028,7 @@ impl Landing<'_> {
         Journal::drop_in(&self.folder, slug);
         super::dispatch::unmark(&self.folder, slug);
         super::dispatch::unsaid(&self.folder, slug);
+        super::dispatch::unstopped(&self.folder, slug);
         Ok(line)
     }
 }

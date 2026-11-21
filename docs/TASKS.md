@@ -2718,8 +2718,17 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   recorded at the head) is published at its next round. One whose evidence stands has its pull
   request read: merged, the commit is proved and the task closed from review or done alike, the
   checkout fast-forwarded and `[board] on_land` and the regenerator started, as a land closes one
-  ([above](#a-land-delivered-by-a-pull-request)). A merge no watcher saw (a reboot) is settled by
-  the next dispatch or `just land SLUG`.
+  ([above](#a-land-delivered-by-a-pull-request)). A task whose merge a run asked for or found and
+  whose land did not end (the board lost between the host's merge and the close, a crash) is the
+  watcher's as well, armed or not: each round goes on from where its journal stands, as a land run
+  again does, the task closed once and what follows a land started once, and the watcher does not
+  end while one is there. A round that cannot finish it (the board or the host away, the main
+  checkout dirty or diverged) says why in `watch.log`, once while the reason is the same, and the
+  next tries again; one still not
+  finished `[land] merge_within_minutes` after the first round that stopped is said once on the
+  thread to `@orchestrator`, naming `just land SLUG`. One held for a person stays held, read by no
+  round. A merge no watcher saw (a reboot, which ends the watcher) is settled by the next dispatch
+  or `just land SLUG`, and a watcher any arming starts finishes every such journal it finds.
 - **A merge that does not come**, once the evidence stood (before, the task is in review and its
   evidence says what is missing). The host's merge is turned off first, so a check that passes
   later merges nothing behind the board, and one line says why, to `@orchestrator`:
