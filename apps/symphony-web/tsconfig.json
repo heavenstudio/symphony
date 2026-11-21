@@ -18,5 +18,12 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "shell/cache.ts", "shell/shell.ts", "../symphony-desktop/src/notification.ts"],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/testing.ts",
+    "src/unit-run.ts",
+    "src/dev-server.ts"
+  ]
 }

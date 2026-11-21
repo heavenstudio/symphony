@@ -3,7 +3,7 @@
 //! to it brings the sections above it near, and they draw after it, taller than the ghosts they
 //! replace (a picture in each, and in each card's history). On a first visit and on a move in place
 //! from another document, on a desk and a phone. The landing is held by the shell
-//! (`land`, assets/shell.js); here the sections' reads are held until the page has landed, so
+//! (`land`, shell/shell.ts); here the sections' reads are held until the page has landed, so
 //! they draw after it on any machine, and the device keeps no copy of them ([`NO_STORE`]): the
 //! shell's read-ahead of the other document's links would otherwise put the card's sections on it
 //! before the reads are held. A reader who scrolls away during the landing, by a wheel or a
