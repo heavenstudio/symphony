@@ -742,6 +742,35 @@ fn a_merge_whose_land_stopped_before_its_close_is_closed_by_the_watcher_and_a_he
 }
 
 #[test]
+fn a_merge_asked_for_that_the_host_never_made_goes_back_to_the_armed_and_is_no_stop() {
+    let (r, bare) = delivering();
+    let (people, _, _) = ready(&r, SLUG);
+    let (host, green) = armed_green(&r, &bare, &people);
+    let base = head(&bare, "main");
+    // A run that asked for the merge and stopped; the host holds the pull request open, a check
+    // of another's its rules require still pending.
+    host.waits();
+    let mut cut = journal(&r, SLUG);
+    cut.stage = Stage::MergeRequested;
+    cut.write(&lands(&r)).unwrap();
+    let (said, line, _) = watched(&r, &host, green, 1, &[]);
+    assert_eq!(line, "1 armed at the host after 1 round(s)", "{said}");
+    assert!(
+        said.contains(&format!("of {SLUG} is still open: nothing merged")),
+        "{said}"
+    );
+    assert_eq!(posts(&r, SLUG, "is still open: nothing merged"), 1);
+    let kept = journal(&r, SLUG);
+    assert_eq!((kept.stage, kept.armed), (Stage::Eligible, true));
+    assert!(
+        !(lands(&r).join(format!("{}.stopped", file_stem(SLUG)))).exists(),
+        "not a land a round could not finish"
+    );
+    assert_eq!(head(&bare, "main"), base);
+    assert!(landings(&r, SLUG).is_empty());
+}
+
+#[test]
 fn a_round_that_cannot_finish_a_land_tries_again_and_says_so_once_past_the_bound() {
     let (r, bare) = delivering();
     let (people, _, _) = ready(&r, SLUG);
