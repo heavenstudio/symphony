@@ -168,62 +168,7 @@ fn attach(store: &Store, c: &mut Context) -> Result<(), Stop> {
 pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let p = c.parsed;
     match p.command.as_str() {
-        "callback" => {
-            let actor = c.actor()?;
-            // Checked first and kept last: an address it refuses, or a registration the board
-            // refuses, changes nothing, the session's address included.
-            let web = p
-                .get("session_url")
-                .map(crate::session_url::checked)
-                .transpose()
-                .map_err(Stop::Refused)?;
-            let keep_web = |c: &mut Context<'_>| -> Result<(), Stop> {
-                if let Some(url) = &web {
-                    let kept = store.set_session_url(&actor, url.as_deref().unwrap_or(""))?;
-                    c.say(&format!(
-                        "SESSION URL {actor} {}",
-                        kept.as_deref().unwrap_or("none")
-                    ));
-                }
-                Ok(())
-            };
-            let address = if p.flag("off") {
-                None
-            } else {
-                p.get("address")
-                    .map(str::to_string)
-                    .or_else(|| {
-                        c.env
-                            .var("CLAUDE_CODE_MESSAGING_SOCKET")
-                            .map(|path| format!("uds:{path}"))
-                    })
-                    .or_else(|| c.env.var("CODEX_THREAD_ID").map(|id| format!("codex:{id}")))
-            };
-            if !p.flag("off") && address.is_none() {
-                if web.is_some() {
-                    return keep_web(c);
-                }
-                return Err(Stop::Refused("no native callback detected; pass an address, use inbox for an in-process subagent, or --off to unregister".into()));
-            }
-            // Through `just tasks`, which an agent runs unasked, a Codex thread is the caller's own:
-            // the board writes it into the handle's launch record for a restore to resume.
-            if let Some(address) = address.as_deref() {
-                crate::launch::own_thread(c.env, address).map_err(Stop::Refused)?;
-            }
-            store.callback_in(
-                &actor,
-                address.as_deref(),
-                p.flag("chat"),
-                p.flag("if_free"),
-                c.env.var("HC_TERMINAL_ID"),
-            )?;
-            keep_web(c)?;
-            c.say(&format!(
-                "CALLBACK {actor} {}",
-                address.as_deref().unwrap_or("none — inbox fallback")
-            ));
-            c.say(&chat_line(store.chat_seat()?));
-        }
+        "callback" => callback(store, c)?,
         "register" => {
             // Checked before the session exists, so a refused address registers nothing.
             let web = p
@@ -239,36 +184,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             c.say(&session.row.handle);
         }
         "attach" => attach(store, c)?,
-        "agents" => {
-            let probes = probes::machine(c.env);
-            let view = describe(store, &probes, store.now(), p.flag("all"))?;
-            if p.flag("json") {
-                c.say(&serde_json::to_string_pretty(&view.json()).expect("JSON values serialize"));
-                return Ok(());
-            }
-            let lines = table(&view);
-            if lines.is_empty() {
-                c.say(if p.flag("all") {
-                    "no agents"
-                } else {
-                    "no agents (--all adds the sessions that left)"
-                });
-            }
-            for line in lines {
-                c.say(&line);
-            }
-            let down: Vec<&str> = [("hc", view.herdr), ("slots", view.slots)]
-                .iter()
-                .filter(|(_, asked)| !asked)
-                .map(|(name, _)| *name)
-                .collect();
-            if !down.is_empty() {
-                c.say(&format!(
-                    "(probe unavailable: {}; states come from the board alone)",
-                    down.join(", ")
-                ));
-            }
-        }
+        "agents" => agents(store, c)?,
         "list" => list::run(store, c)?,
         "asks" => asks::run(store, c)?,
         "search" => super::search::run(store, c)?,
@@ -347,36 +263,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             c.say(&format!("{slug} is {}", t.status));
             finish::after_finish(store, c, &t);
         }
-        "claim" => {
-            let (slug, actor) = (c.arg("slug"), c.actor()?);
-            // A task a custom workflow holds is claimed through its one edge that gives the
-            // executor's role, at the revision read now (docs/WORKFLOW.md, "Operations").
-            if crate::store::workflow::position_held(&store.get(&slug)?.fields) {
-                let principal = crate::workflow::agent_session(&actor);
-                let host = crate::workflow::Host::local();
-                let role = symphony_api::workflow::Role::Executor;
-                let taken = store.claim_by_workflow(&slug, &principal, &host, role)?;
-                let at = &taken.next.snapshot.at;
-                c.say(&format!(
-                    "claimed {slug} ({}): it is at {}/{}, workflow revision {}; its edges: `just \
-                     tasks workflow actions {slug}`",
-                    taken.transition, at.phase, at.state, taken.next.snapshot.task_revision
-                ));
-                return Ok(());
-            }
-            let t = store.claim(&slug, &actor)?;
-            // Only a top-level task's slug is the branch that lands: a slice works on its parent's
-            // branch, and an instruction subtask's slug is never one.
-            let lands = crate::on_review::delivery_task(t.parent.as_deref(), t.instruction);
-            c.say(&if lands {
-                format!(
-                    "claimed {0}: its work goes on the branch {0}, which the land takes",
-                    t.slug
-                )
-            } else {
-                format!("claimed {}", t.slug)
-            });
-        }
+        "claim" => claim(store, c)?,
         "reserve" => {
             let t = store.reserve(&c.arg("slug"), &c.actor()?, RESERVE_SECONDS)?;
             c.say(&format!("reserved {}", t.slug));
@@ -440,93 +327,11 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             }
         }
         "finish" => panes::finish(store, c)?,
-        "land" => {
-            use crate::land::dispatch;
-            let slug = c.arg("slug");
-            crate::land::admit(c.env).map_err(Stop::Refused)?;
-            let line = if p.flag("watch") {
-                if !slug.is_empty() || p.flag("dispatch") {
-                    return Err(Stop::Refused(
-                        "tasks land --watch takes no slug and no --dispatch: it reads every task \
-                         armed at the host"
-                            .into(),
-                    ));
-                }
-                let watching = dispatch::Watching {
-                    transport: None,
-                    clock: &dispatch::seconds,
-                    rest: &dispatch::rest,
-                    rounds: None,
-                };
-                dispatch::watch(store, c.env, &mut *c.out, &watching).map_err(Stop::Refused)?
-            } else if slug.is_empty() {
-                return Err(Stop::Refused(
-                    "tasks land takes the slug of the task it lands, or --watch".into(),
-                ));
-            } else {
-                let actor = c.actor()?;
-                let landed = if p.flag("dispatch") {
-                    crate::land::dispatch(store, c.env, &slug, &actor, &mut *c.out)
-                } else {
-                    crate::land::land(store, c.env, &slug, &actor, c.program, &mut *c.out)
-                };
-                landed.map_err(|stop| match stop {
-                    crate::land::Stop::Refused(why) => Stop::Refused(why),
-                    crate::land::Stop::Board(error) => Stop::from(error),
-                })?
-            };
-            c.say(&line);
-        }
-        "regenerate" => {
-            use crate::land::regenerate;
-            if p.flag("status") || p.flag("wait") {
-                let (env, wait) = (c.env, p.flag("wait"));
-                let mut said = false;
-                let standing = regenerate::settled(env, regenerate::WAITING, &mut |standing| {
-                    if wait && !said {
-                        c.say(&format!("waiting: {}", standing.line));
-                        said = true;
-                    }
-                    wait
-                })
-                .map_err(Stop::Refused)?;
-                if !standing.current {
-                    return Err(Stop::Refused(standing.line));
-                }
-                c.say(&standing.line);
-            } else {
-                regenerate::admit(c.env).map_err(Stop::Refused)?;
-                let line = regenerate::run(store, c.env, &mut *c.out).map_err(Stop::Refused)?;
-                c.say(&line);
-            }
-        }
+        "land" => land(store, c)?,
+        "regenerate" => regenerate(store, c)?,
         "show" => show(store, c)?,
         "who" => who(store, c)?,
-        "inbox" => {
-            let me = c.actor()?;
-            let messages = store.inbox(&me)?;
-            for m in &messages {
-                c.say(&event(m));
-            }
-            if messages.is_empty() {
-                store.touch(&me)?;
-            } else {
-                let ids: Vec<i64> = messages.iter().map(|m| m.id).collect();
-                store.ack(&me, &ids)?;
-            }
-            let callbacks = store.callback_inbox(&me)?;
-            for (key, text) in &callbacks {
-                c.say(&super::attach::PaneWatch::delivery_text(key, text));
-            }
-            store.ack_callbacks(
-                &me,
-                &callbacks
-                    .into_iter()
-                    .map(|(key, _)| key)
-                    .collect::<Vec<_>>(),
-            )?;
-            trigger::hourly(c.env, &c.env.cwd);
-        }
+        "inbox" => inbox(store, c)?,
         "pull" => {
             let me = c.actor()?;
             for line in super::pull::heard_now(store, c.env, &me)?.lines() {
@@ -545,31 +350,262 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             c.say("left");
             trigger::trigger(c.env, &c.env.cwd, &format!("{me} left"), None);
         }
-        "export" => {
-            let named = p.or("out", EXPORT_PATH).to_string();
-            // Through `just tasks`, which an agent runs unasked, the snapshot stays in the project.
-            let marked = c.env.var(crate::confine::MARKER).is_some();
-            let path = crate::confine::checked(marked, &c.env.cwd, Path::new(&named))
-                .map_err(Stop::Refused)?;
-            // ...and replaces only an earlier snapshot, never a file of the project's own.
-            if marked && path.symlink_metadata().is_ok() && !snapshot(&path) {
-                return Err(Stop::Refused(format!(
-                    "{named} holds something other than an earlier snapshot: the board recipe, \
-                     which an agent runs unasked, replaces only a file whose first line is \
-                     `{SNAPSHOT_TITLE}`, and the binary run by itself anything"
-                )));
-            }
-            let text = export_markdown(&store.tasks(None)?, store.now());
-            let written = path
-                .parent()
-                .map_or(Ok(()), std::fs::create_dir_all)
-                .and_then(|()| std::fs::write(&path, text));
-            written.map_err(|e| Stop::Refused(format!("cannot write {named}: {e}")))?;
-            c.say(&format!("wrote {named}"));
-        }
+        "export" => export(store, c)?,
         // The parser knows no other command (`beat` and `api` never come here).
         other => return Err(Stop::Refused(format!("no command {other}"))),
     }
+    Ok(())
+}
+
+/// `callback`: the session's native address registered, taken off (`--off`) or left as it is,
+/// and its web address kept; then who hears the owner's chat.
+fn callback(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let p = c.parsed;
+    let actor = c.actor()?;
+    // Checked first and kept last: an address it refuses, or a registration the board
+    // refuses, changes nothing, the session's address included.
+    let web = p
+        .get("session_url")
+        .map(crate::session_url::checked)
+        .transpose()
+        .map_err(Stop::Refused)?;
+    let keep_web = |c: &mut Context<'_>| -> Result<(), Stop> {
+        if let Some(url) = &web {
+            let kept = store.set_session_url(&actor, url.as_deref().unwrap_or(""))?;
+            c.say(&format!(
+                "SESSION URL {actor} {}",
+                kept.as_deref().unwrap_or("none")
+            ));
+        }
+        Ok(())
+    };
+    let address = if p.flag("off") {
+        None
+    } else {
+        p.get("address")
+            .map(str::to_string)
+            .or_else(|| {
+                c.env
+                    .var("CLAUDE_CODE_MESSAGING_SOCKET")
+                    .map(|path| format!("uds:{path}"))
+            })
+            .or_else(|| c.env.var("CODEX_THREAD_ID").map(|id| format!("codex:{id}")))
+    };
+    if !p.flag("off") && address.is_none() {
+        if web.is_some() {
+            return keep_web(c);
+        }
+        return Err(Stop::Refused("no native callback detected; pass an address, use inbox for an in-process subagent, or --off to unregister".into()));
+    }
+    // Through `just tasks`, which an agent runs unasked, a Codex thread is the caller's own:
+    // the board writes it into the handle's launch record for a restore to resume.
+    if let Some(address) = address.as_deref() {
+        crate::launch::own_thread(c.env, address).map_err(Stop::Refused)?;
+    }
+    store.callback_in(
+        &actor,
+        address.as_deref(),
+        p.flag("chat"),
+        p.flag("if_free"),
+        c.env.var("HC_TERMINAL_ID"),
+    )?;
+    keep_web(c)?;
+    c.say(&format!(
+        "CALLBACK {actor} {}",
+        address.as_deref().unwrap_or("none — inbox fallback")
+    ));
+    c.say(&chat_line(store.chat_seat()?));
+    Ok(())
+}
+
+/// `agents`: the board's sessions with what the machine says of each, as a table or `--json`.
+fn agents(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let p = c.parsed;
+    let probes = probes::machine(c.env);
+    let view = describe(store, &probes, store.now(), p.flag("all"))?;
+    if p.flag("json") {
+        c.say(&serde_json::to_string_pretty(&view.json()).expect("JSON values serialize"));
+        return Ok(());
+    }
+    let lines = table(&view);
+    if lines.is_empty() {
+        c.say(if p.flag("all") {
+            "no agents"
+        } else {
+            "no agents (--all adds the sessions that left)"
+        });
+    }
+    for line in lines {
+        c.say(&line);
+    }
+    let down: Vec<&str> = [("hc", view.herdr), ("slots", view.slots)]
+        .iter()
+        .filter(|(_, asked)| !asked)
+        .map(|(name, _)| *name)
+        .collect();
+    if !down.is_empty() {
+        c.say(&format!(
+            "(probe unavailable: {}; states come from the board alone)",
+            down.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+/// `claim SLUG`: the executor's role taken, through its workflow's edge where a custom workflow
+/// holds the task.
+fn claim(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let (slug, actor) = (c.arg("slug"), c.actor()?);
+    // A task a custom workflow holds is claimed through its one edge that gives the
+    // executor's role, at the revision read now (docs/WORKFLOW.md, "Operations").
+    if crate::store::workflow::position_held(&store.get(&slug)?.fields) {
+        let principal = crate::workflow::agent_session(&actor);
+        let host = crate::workflow::Host::local();
+        let role = symphony_api::workflow::Role::Executor;
+        let taken = store.claim_by_workflow(&slug, &principal, &host, role)?;
+        let at = &taken.next.snapshot.at;
+        c.say(&format!(
+            "claimed {slug} ({}): it is at {}/{}, workflow revision {}; its edges: `just \
+             tasks workflow actions {slug}`",
+            taken.transition, at.phase, at.state, taken.next.snapshot.task_revision
+        ));
+        return Ok(());
+    }
+    let t = store.claim(&slug, &actor)?;
+    // Only a top-level task's slug is the branch that lands: a slice works on its parent's
+    // branch, and an instruction subtask's slug is never one.
+    let lands = crate::on_review::delivery_task(t.parent.as_deref(), t.instruction);
+    c.say(&if lands {
+        format!(
+            "claimed {0}: its work goes on the branch {0}, which the land takes",
+            t.slug
+        )
+    } else {
+        format!("claimed {}", t.slug)
+    });
+    Ok(())
+}
+
+/// `land SLUG`, `land SLUG --dispatch` and `land --watch`: the default landing, its last line said.
+fn land(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let p = c.parsed;
+    use crate::land::dispatch;
+    let slug = c.arg("slug");
+    crate::land::admit(c.env).map_err(Stop::Refused)?;
+    let line = if p.flag("watch") {
+        if !slug.is_empty() || p.flag("dispatch") {
+            return Err(Stop::Refused(
+                "tasks land --watch takes no slug and no --dispatch: it reads every task \
+                 armed at the host"
+                    .into(),
+            ));
+        }
+        let watching = dispatch::Watching {
+            transport: None,
+            clock: &dispatch::seconds,
+            rest: &dispatch::rest,
+            rounds: None,
+        };
+        dispatch::watch(store, c.env, &mut *c.out, &watching).map_err(Stop::Refused)?
+    } else if slug.is_empty() {
+        return Err(Stop::Refused(
+            "tasks land takes the slug of the task it lands, or --watch".into(),
+        ));
+    } else {
+        let actor = c.actor()?;
+        let landed = if p.flag("dispatch") {
+            crate::land::dispatch(store, c.env, &slug, &actor, &mut *c.out)
+        } else {
+            crate::land::land(store, c.env, &slug, &actor, c.program, &mut *c.out)
+        };
+        landed.map_err(|stop| match stop {
+            crate::land::Stop::Refused(why) => Stop::Refused(why),
+            crate::land::Stop::Board(error) => Stop::from(error),
+        })?
+    };
+    c.say(&line);
+    Ok(())
+}
+
+/// `regenerate`: the regenerator run, or with `--status` or `--wait` where it stands, refused
+/// while what it made is not current.
+fn regenerate(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let p = c.parsed;
+    use crate::land::regenerate;
+    if p.flag("status") || p.flag("wait") {
+        let (env, wait) = (c.env, p.flag("wait"));
+        let mut said = false;
+        let standing = regenerate::settled(env, regenerate::WAITING, &mut |standing| {
+            if wait && !said {
+                c.say(&format!("waiting: {}", standing.line));
+                said = true;
+            }
+            wait
+        })
+        .map_err(Stop::Refused)?;
+        if !standing.current {
+            return Err(Stop::Refused(standing.line));
+        }
+        c.say(&standing.line);
+    } else {
+        regenerate::admit(c.env).map_err(Stop::Refused)?;
+        let line = regenerate::run(store, c.env, &mut *c.out).map_err(Stop::Refused)?;
+        c.say(&line);
+    }
+    Ok(())
+}
+
+/// `inbox`: the actor's unread messages and queued callbacks said and acknowledged.
+fn inbox(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let me = c.actor()?;
+    let messages = store.inbox(&me)?;
+    for m in &messages {
+        c.say(&event(m));
+    }
+    if messages.is_empty() {
+        store.touch(&me)?;
+    } else {
+        let ids: Vec<i64> = messages.iter().map(|m| m.id).collect();
+        store.ack(&me, &ids)?;
+    }
+    let callbacks = store.callback_inbox(&me)?;
+    for (key, text) in &callbacks {
+        c.say(&super::attach::PaneWatch::delivery_text(key, text));
+    }
+    store.ack_callbacks(
+        &me,
+        &callbacks
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>(),
+    )?;
+    trigger::hourly(c.env, &c.env.cwd);
+    Ok(())
+}
+
+/// `export`: the board's snapshot written as Markdown to `--out`, else [`EXPORT_PATH`].
+fn export(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let p = c.parsed;
+    let named = p.or("out", EXPORT_PATH).to_string();
+    // Through `just tasks`, which an agent runs unasked, the snapshot stays in the project.
+    let marked = c.env.var(crate::confine::MARKER).is_some();
+    let path =
+        crate::confine::checked(marked, &c.env.cwd, Path::new(&named)).map_err(Stop::Refused)?;
+    // ...and replaces only an earlier snapshot, never a file of the project's own.
+    if marked && path.symlink_metadata().is_ok() && !snapshot(&path) {
+        return Err(Stop::Refused(format!(
+            "{named} holds something other than an earlier snapshot: the board recipe, \
+             which an agent runs unasked, replaces only a file whose first line is \
+             `{SNAPSHOT_TITLE}`, and the binary run by itself anything"
+        )));
+    }
+    let text = export_markdown(&store.tasks(None)?, store.now());
+    let written = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(&path, text));
+    written.map_err(|e| Stop::Refused(format!("cannot write {named}: {e}")))?;
+    c.say(&format!("wrote {named}"));
     Ok(())
 }
 
