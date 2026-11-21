@@ -372,12 +372,6 @@ impl Render {
         self.section_fragments(text, doc_path, false, false)
     }
 
-    /// The native client draws card threads separately and derives source lines from section.start
-    /// plus data-line-offset. Moving a block therefore leaves its content hash unchanged.
-    pub fn client_sections(&self, text: &str, doc_path: &str) -> Vec<Section> {
-        self.section_fragments(text, doc_path, true, false)
-    }
-
     /// The same pipeline with semantic component/wiki markers retained for `blocks::parse`.
     /// These fragments are internal parser input, never a wire representation.
     pub fn typed_sections(&self, text: &str, doc_path: &str) -> Vec<Section> {

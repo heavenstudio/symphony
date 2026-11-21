@@ -635,24 +635,6 @@ pub fn agents(store: &symphony_board::Store, root: &Path) -> Result<symphony_api
     agents_probed(store, &symphony_board::cli::probes::machine(&env), None)
 }
 
-pub fn agents_in(
-    store: &symphony_board::Store,
-    root: &Path,
-    common: Option<&Path>,
-    board: &symphony_board::Board,
-) -> Result<symphony_api::Agents, String> {
-    agents_in_observed(
-        store,
-        root,
-        common,
-        board,
-        symphony_board::cli::machine_work::Evidence {
-            local_host: symphony_board::sys::hostname(),
-            snapshot: Default::default(),
-        },
-    )
-}
-
 /// A clock tick supplies its single trusted native observation; HTTP consumers reuse this view.
 pub fn agents_in_observed(
     store: &symphony_board::Store,
