@@ -337,11 +337,23 @@ fn flow_chunk() -> String {
     let board = module(dist(), "board").script;
     let script = std::fs::read_to_string(dist().join(board.trim_start_matches('/')))
         .expect("the board's script");
-    let start = script
-        .find("flow-")
+    // A chunk's name alone, `flow-` and its hash then `.js`: a class name such as `flow-failed`,
+    // a stylesheet of the chunk's or a word ending in `flow` (`workflow-…`) is passed over.
+    let named = |start: usize| {
+        if start > 0 && script.as_bytes()[start - 1].is_ascii_alphanumeric() {
+            return None;
+        }
+        let rest = &script[start + "flow-".len()..];
+        let hash = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(rest.len());
+        (hash > 0 && rest[hash..].starts_with(".js"))
+            .then(|| &script[start..start + "flow-".len() + hash + ".js".len()])
+    };
+    let chunk = (script.match_indices("flow-"))
+        .find_map(|(start, _)| named(start))
         .expect("the board imports the workflow's chunk");
-    let end = start + script[start..].find(".js").expect("its name") + 3;
-    format!("/assets/{}", &script[start..end])
+    format!("/assets/{chunk}")
 }
 
 #[test]
