@@ -49,6 +49,16 @@ pub(crate) fn unborne(receipt: &Receipt, line: &str) -> String {
     )
 }
 
+/// Whether `name` can be asked of git among the others' ([`Receipts::proof`]) without costing
+/// them their answers; one that cannot is left out of the ask, and names no commit there, so the
+/// receipt giving it alone is unproved. A name of more than one line would shift every answer
+/// after it. A reflog or upstream form (`@{u}`, `@{push}`, `HEAD@{99}`) ends git where it has no
+/// upstream or no such entry, before it answers any name after it. The land writes neither: it
+/// records the commits git gave it in full.
+fn asked_alone(name: &str) -> bool {
+    !name.contains(['\n', '\0']) && !name.contains("@{")
+}
+
 /// The receipts kept in a repository.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Receipts {
@@ -107,16 +117,17 @@ impl Receipts {
     /// whatever their number. One `cat-file --batch-check` names in full the commit that each
     /// squash, head and parent a receipt gives names, if any. One `log --stdin` then walks every
     /// commit those squashes and parents hold, with its parents and its tree. Nothing is known
-    /// where git cannot say, and so nothing is borne out, as [`Receipts::proved`] says.
+    /// where git cannot say, and so nothing is borne out, as [`Receipts::proved`] says; a name
+    /// git cannot be asked beside the others ([`asked_alone`]) names nothing here, whatever it
+    /// would name alone.
     pub(crate) fn proof(&self, root: &Path) -> Proof {
         if self.is_empty() {
             return Proof::default();
         }
-        // A name of more than one line would shift every answer after it, and names no commit.
         let mut names: Vec<&str> = (self.all.iter())
             .flat_map(|receipt| [&receipt.squash, &receipt.head, &receipt.parent])
             .map(String::as_str)
-            .filter(|name| !name.contains(['\n', '\0']))
+            .filter(|name| asked_alone(name))
             .collect();
         names.sort_unstable();
         names.dedup();
@@ -598,5 +609,67 @@ pub(crate) mod tests {
         let from = crate::release::git::ran();
         assert!(!unknown.proof(&root).proved(&two));
         assert_eq!(crate::release::git::ran() - from, 1);
+    }
+
+    /// A receipt naming a reflog or upstream form, which ends git's one answering of every name
+    /// where it has no upstream or no such entry, is unproved alone: every other receipt is
+    /// proved as before, in the same two processes.
+    #[test]
+    fn a_receipt_naming_a_reflog_or_upstream_form_is_unproved_and_the_others_stand() {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let one = deliver(&root, "tools/one", "main");
+        let two = deliver(&root, "tools/two", &one.head);
+        let three = deliver(&root, "tools/three", "main");
+        let squashed = |slug: &str, squash: &str| Receipt {
+            slug: slug.into(),
+            squash: squash.into(),
+            ..three.clone()
+        };
+        let upstream = squashed("odd/upstream", "@{u}");
+        let reflog = squashed("odd/reflog", "HEAD@{99}");
+        // One whose head or base is such a name keeps what its other names say.
+        let headed = Receipt {
+            head: "@{push}".into(),
+            ..two.clone()
+        };
+        let based = Receipt {
+            parent: "main@{upstream}".into(),
+            ..three.clone()
+        };
+        let cases = [
+            one.clone(),
+            upstream.clone(),
+            headed.clone(),
+            reflog.clone(),
+            three.clone(),
+            based.clone(),
+        ];
+        let receipts = Receipts::of(cases.to_vec());
+        let from = crate::release::git::ran();
+        let proof = receipts.proof(&root);
+        assert_eq!(crate::release::git::ran() - from, 2, "one ask, one walk");
+        let at_once: Vec<bool> = cases.iter().map(|receipt| proof.proved(receipt)).collect();
+        assert_eq!(at_once, [true, false, true, false, true, false]);
+        // Each is what git says of it alone, where git ends on these names too.
+        let alone: Vec<bool> = (cases.iter())
+            .map(|receipt| Receipts::proved(&root, receipt))
+            .collect();
+        assert_eq!(at_once, alone);
+        // What landed before is still read: a head so named is in no repository, and is left out.
+        assert_eq!(receipts.landed_before(&proof, &three), [one.head.as_str()]);
+        assert!(receipts.landed_before(&proof, &upstream).len() == 1);
+        // A reflog name git would answer is left out all the same, and so unproved here.
+        let answered = squashed("odd/answered", "HEAD@{0}");
+        assert!(Receipts::proved(&root, &answered));
+        let with = Receipts::of(vec![one.clone(), answered.clone()]);
+        let proof = with.proof(&root);
+        assert!(proof.proved(&one) && !proof.proved(&answered));
+        for name in ["@{u}", "HEAD@{99}", "main@{push}", "a\nb", "a\0b"] {
+            assert!(!asked_alone(name), "{name:?}");
+        }
+        for name in [one.squash.as_str(), "tools/one^0", "squashed", "", "@", "a{b}"] {
+            assert!(asked_alone(name), "{name:?}");
+        }
     }
 }
