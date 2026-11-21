@@ -412,7 +412,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let t = store.verdict(&slug, &c.actor()?, &c.arg("verdict"), &c.arg("text"))?;
             // Done is not landed: an approve says what lands it, a subtask's the task it is under.
             c.say(&match (t.status.as_str(), t.parent.as_deref()) {
-                ("done", None) => crate::land::approved(c.env, &slug),
+                ("done", None) => crate::land::approved_task(c.env, &t),
                 ("done", Some(parent)) => format!(
                     "{slug} is approved: done on the board; its work lands when the task it is \
                      under, {parent}, does"

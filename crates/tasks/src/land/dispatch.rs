@@ -34,7 +34,7 @@
 //! the board sets on what it starts: a move is not a land, but what it starts publishes and arms
 //! only what the land would.
 
-use super::delivery::{self, Journal, Stage, Transport};
+use super::delivery::{self, Binding, Journal, Stage, Transport};
 use super::{FOLDER, GIT_VARS, Landing, RECIPE, Refusal, Stop, short};
 use crate::cli::Env;
 use crate::sweep::git::rev;
@@ -101,6 +101,17 @@ fn delivering(cwd: &Path) -> Option<PathBuf> {
     let main = trigger::main_checkout(&common)?.to_path_buf();
     let command = delivery::command(&main).ok()?;
     (!command.is_empty()).then_some(main)
+}
+
+/// Where the project `cwd` is in delivers by pull request ([`delivering`]): the pull request
+/// `slug` is bound to, as its journal names it, none before a dispatch bound one. None where the
+/// land merges here.
+pub fn bound(cwd: &Path, slug: &str) -> Option<Option<Binding>> {
+    let main = delivering(cwd)?;
+    let journal = lands(&main)
+        .ok()
+        .and_then(|folder| Journal::read(&folder, slug));
+    Some(journal.and_then(|journal| journal.binding))
 }
 
 /// The `tasks` a detached child of `env` runs: a test's `TASKS_BIN`, else this one, else the main

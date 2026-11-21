@@ -668,15 +668,56 @@ fn no_branch(main: &Path, slug: &str, default: &str, approved: &str) -> String {
 /// not on the default branch until it lands, and the line that lands it: `just land SLUG --as
 /// HANDLE`, the Symphony's default landing, or the `land` recipe of the project's own that replaces
 /// it ([`own_land`]). Outside a checkout, or where the justfile cannot be read for it, the default
-/// landing is named.
+/// landing is named. What an approve of a task says is [`approved_task`], which says this
+/// wherever the host does not merge it.
 pub fn approved(env: &Env, slug: &str) -> String {
+    let (main, default) = lands_on(env);
+    approved_here(env, slug, main.as_deref(), &default)
+}
+
+/// What a verdict that approved `task` says, run where `env` runs. Where the project delivers by
+/// pull request ([`dispatch::bound`]) and the task is one the delivery takes
+/// ([`on_review::delivery_task`]), nobody lands it: the host merges its pull request, named once
+/// its dispatch bound one, and the board closes the task, `just land` being only what settles it
+/// by hand. Anywhere else, a project whose `land` is a recipe of its own included, it is
+/// [`approved`]'s line.
+pub fn approved_task(env: &Env, task: &Task) -> String {
+    let slug = &task.slug;
+    let (main, default) = lands_on(env);
+    let bound = (main.as_deref())
+        .filter(|_| on_review::delivery_task(task.parent.as_deref(), task.instruction))
+        .and_then(|main| Some((main, dispatch::bound(main, slug)?)))
+        .filter(|(main, _)| !matches!(own_land(main, env), Ok(Some(_))))
+        .map(|(_, bound)| bound);
+    let Some(bound) = bound else {
+        return approved_here(env, slug, main.as_deref(), &default);
+    };
+    let pull = bound.map_or_else(
+        || "its pull request, bound by its dispatch,".into(),
+        |b| format!("pull request #{} of {} ({})", b.pull, b.name, b.url),
+    );
+    format!(
+        "{slug} is approved: done on the board, not on {default} until the host merges it; the \
+         host merges {pull} once its checks pass, and the board closes the task; `just land \
+         {slug} --as HANDLE` only settles it by hand"
+    )
+}
+
+/// The main checkout of the repository `env` runs in, none outside one, and the default branch
+/// its settings name, as a line says it.
+fn lands_on(env: &Env) -> (Option<PathBuf>, String) {
     let main = crate::git::common_dir(&env.cwd)
         .ok()
         .and_then(|common| trigger::main_checkout(&common).map(Path::to_path_buf));
     let default = (main.as_deref())
         .and_then(|main| Settings::of(main).ok())
         .map_or_else(|| "the default branch".into(), |s| s.default_branch);
-    let how = match main.and_then(|main| own_land(&main, env).ok().flatten()) {
+    (main, default)
+}
+
+/// [`approved`]'s line for a land made here, on `default` of the main checkout `main`.
+fn approved_here(env: &Env, slug: &str, main: Option<&Path>, default: &str) -> String {
+    let how = match main.and_then(|main| own_land(main, env).ok().flatten()) {
         Some(justfile) => format!(
             "the `land` recipe of the project's own lands it ({}): `just land {slug}`",
             justfile.display()

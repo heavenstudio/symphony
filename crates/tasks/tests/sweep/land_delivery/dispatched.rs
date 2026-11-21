@@ -1618,3 +1618,59 @@ fn the_land_command_takes_a_slug_or_watch_alone() {
         "{err}"
     );
 }
+
+/// `slug`, filed here where it is not yet, claimed and in review with no branch, then
+/// approved by a fresh reviewer through the command line: what the approve printed.
+fn approved_line(r: &Repo, slug: &str) -> String {
+    let (exe, reviewer) = (r.board.session("worker"), r.board.session("reviewer"));
+    let store = &r.board.store;
+    if store.get(slug).is_err() {
+        r.task(slug);
+        store.claim(slug, &exe).unwrap();
+        store.move_to(slug, "review", &exe).unwrap();
+    }
+    store.take_role(slug, &reviewer, "reviewer").unwrap();
+    let off = [("TASKS_DISPATCH", "off")];
+    let (code, out, err) = tasks(r, &reviewer, &["verdict", slug, "approve", "fine"], &off);
+    assert_eq!(code, 0, "{out}{err}");
+    out
+}
+
+#[test]
+fn an_approve_says_the_host_merges_it_naming_its_pull_request_once_bound() {
+    let (r, bare) = delivering();
+    // Bound by its dispatch at review: the pull request its journal names.
+    let (people, ..) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare).arming(Arms::Always);
+    dispatched(&r, SLUG, &people.orch, &host).1.unwrap();
+    assert_eq!(
+        approved_line(&r, SLUG),
+        format!(
+            "{SLUG} is approved: done on the board, not on main until the host merges it; the \
+             host merges pull request #3 of owner/name (https://example.test/owner/name/pull/3) \
+             once its checks pass, and the board closes the task; `just land {SLUG} --as HANDLE` \
+             only settles it by hand\n"
+        )
+    );
+    // Not bound yet (its dispatch has not published it): no pull request to name.
+    assert_eq!(
+        approved_line(&r, "sim/walk"),
+        "sim/walk is approved: done on the board, not on main until the host merges it; the \
+         host merges its pull request, bound by its dispatch, once its checks pass, and the \
+         board closes the task; `just land sim/walk --as HANDLE` only settles it by hand\n"
+    );
+    // A journal that does not read as its own binds nothing.
+    fs::write(Journal::path(&lands(&r), "sim/run"), "{").unwrap();
+    assert!(approved_line(&r, "sim/run").contains("its pull request, bound by its dispatch,"));
+    // A project whose `land` is a recipe of its own keeps its line: `just land` runs that recipe
+    // in the Symphony's place.
+    write(&r.root, "justfile", "land *ARGS:\n    @echo its own\n");
+    assert_eq!(
+        approved_line(&r, "sim/fall"),
+        format!(
+            "sim/fall is approved: done on the board, not on main until it lands; the `land` \
+             recipe of the project's own lands it ({}): `just land sim/fall`\n",
+            r.root.join("justfile").display()
+        )
+    );
+}
