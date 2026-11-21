@@ -1614,7 +1614,6 @@ mod tests {
                 both!("true", |c| c.env("PATH", &shut)),
             ),
             ("a directory", both!(&tmp.0)),
-            ("path through a file", both!(file.join("sh"))),
             (
                 "missing directory",
                 both!("/bin/sh", |c| c.current_dir(tmp.0.join("absent"))),
@@ -1646,6 +1645,17 @@ mod tests {
         ] {
             assert!(same(case, result).is_none(), "{case} started");
         }
+        // A path through a file is the kernel's own refusal here, ENOTDIR. std's is that too
+        // where the system's `posix_spawnp` hands a path's refusal on, and ENOENT where it answers
+        // one refusal for every path not found (Libc before macOS 26).
+        let (theirs, ours) = both!(file.join("sh"));
+        let ours = ours.expect_err("path through a file started");
+        let theirs = theirs.expect_err("std started a path through a file");
+        assert_eq!(ours.raw_os_error(), Some(libc::ENOTDIR), "{ours}");
+        assert!(
+            matches!(theirs.raw_os_error(), Some(libc::ENOTDIR | libc::ENOENT)),
+            "std: {theirs}"
+        );
     }
 
     /// A name exec refuses earlier along `PATH` (a file it may not run, a folder, a `#!` line whose

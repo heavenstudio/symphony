@@ -233,7 +233,9 @@ on the three kit packages and five helpers, with all features and each manifest'
 It compares each with the latest eligible published version from crates.io, including the current
 version when already published. Removals, added constructor arguments and other detected breaks
 require a major; additive changes require the tool's minor where applicable. There is no
-`--release-type` override. A missing baseline, failed download or failed rustdoc build is red.
+`--release-type` override. A missing baseline, failed download or failed rustdoc build is red;
+a check that ended because crates.io's index did not answer it (a connection reset or timed out)
+is run again, three runs at most, and red if the third ends so.
 The product's five packages, below 1.0, keep their consumer guards instead.
 
 `tools/semver.sh` fetches the checksum-pinned upstream executable for Intel or ARM macOS or glibc
@@ -246,8 +248,8 @@ rustdoc JSON are cached by the tool in that build folder's `semver-checks/`.
 Release verification already needs crates.io for the source comparison and does not run wholly
 offline. The semver step likewise retrieves its baseline from crates.io on a cold cache: HTTPS
 access and the dependencies of both versions are required. The caches avoid repeated builds;
-offline release verification is not supported. A registry lookup or baseline build that fails is
-red. No vendored rustdoc snapshot needs updating at each publication. The checker does not
+offline release verification is not supported. A baseline build that fails is red, and so is a
+registry lookup that fails in each of the launcher's three runs. No vendored rustdoc snapshot needs updating at each publication. The checker does not
 compare arbitrary argument, return or field types, serialization behaviour or the two-release
 consumer migration rule. It also permits a new non-exhaustive enum variant in a patch; this
 project requires a minor for a vocabulary addition. The typed guards and review still hold these

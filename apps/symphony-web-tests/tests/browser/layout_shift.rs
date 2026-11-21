@@ -692,11 +692,14 @@ fn a_task_holds_still_while_its_thread_loads() {
 }
 
 /// A phone's first visit to a task of another shape, the page's answer drawn before the gates':
-/// it scores 0.1399. The board task `app/task-first-visit-holds-still` brings it down to
-/// `CLS_LIMIT`; until then it only goes down.
+/// it scores 0.1399 on the machine the limit was measured on. The limit only goes down, and no
+/// task brings it to `CLS_LIMIT`: `app/task-first-visit-holds-still`, which would have, was
+/// cancelled on the owner's verdict (2026-11-17). A hosted macOS runner scored the visit 0.1556,
+/// over the limit (run 44919502531); the limit is not raised for it, and the board task
+/// `app/phone-task-page-holds-still-on-chrome-158` answers it.
 const PHONE_PAGE_FIRST_LIMIT: f64 = 0.14;
-/// The same visit with the gates' answer drawn before the page's: it scores 0.0636. The board
-/// task `app/task-first-visit-holds-still` brings it down to `CLS_LIMIT`.
+/// The same visit with the gates' answer drawn before the page's: it scores 0.0636 there and
+/// 0.0689 on that runner, and its limit stands as the other's does.
 const PHONE_GATES_FIRST_LIMIT: f64 = 0.064;
 
 /// What a first visit to a task of another shape than the outline's guess scores less than: on a

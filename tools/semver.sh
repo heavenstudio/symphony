@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# cargo-semver-checks, pinned for rust-toolchain.toml's Rust. With arguments, run its check;
+# cargo-semver-checks, pinned for rust-toolchain.toml's Rust. With arguments, run its check, again
+# where crates.io's index did not answer;
 # without them, print the executable's path. Sourcing defines functions without running them.
 # Each worktree keeps its own tool under CARGO_TARGET_DIR (else .target), never on the owner's
 # PATH. Downloads are checksum-verified before an atomic rename; concurrent callers may fetch
@@ -90,7 +91,40 @@ main() {
     name="$(platform_name "$(uname -s)" "$(uname -m)")" || return 2
     binary="$(ensure "$target/tools/cargo-semver-checks" "$name")" || return 2
     if [ "$#" -eq 0 ]; then printf '%s\n' "$binary"; return; fi
-    exec "$binary" semver-checks "$@"
+    checked "$target/tools/cargo-semver-checks/said.$$" "$binary" semver-checks "$@"
+}
+
+# What the checker says when crates.io's index did not answer it: a connection reset or timed out,
+# nothing of the packages it compares.
+UNREAD='failed to retrieve index of crate versions from registry'
+
+# Run the checker, its streams and status its own, and again where it ended on the registry's
+# index unread: three runs at most, the last one's status the answer. Any other failure is the
+# answer at once. $1 is a file of this run's own for what the checker said, removed after.
+checked() {
+    local said="$1" attempt status
+    shift
+    for attempt in 1 2 3; do
+        status=0
+        once "$said" "$@" || status=$?
+        if [ "$status" -eq 0 ] || [ "$attempt" -eq 3 ] || ! grep -qF "$UNREAD" "$said"; then
+            break
+        fi
+        refuse "crates.io's index did not answer run $attempt of 3; running the check again"
+    done
+    rm -f "$said"
+    return "$status"
+}
+
+# One run: its output where it was going, what it said on stderr copied to $1, its status.
+once() {
+    local said="$1"
+    shift
+    if { "$@" 2>&1 1>&3 | tee "$said" >&2; } 3>&1; then
+        return 0
+    else
+        return "${PIPESTATUS[0]}"
+    fi
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi
