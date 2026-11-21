@@ -397,13 +397,17 @@ pointer.
 
 A document under `docs/` describes intent, behaviour and options, and a guide (`AGENTS.md`,
 `RULES.md`, a package's `AGENTS.md` or `README.md`) states each rule and its reason in plain words.
-The owner's exact words and the dated history of who decided what, and when, live in the decision
-register (`docs/DECISIONS.md`, each card's dated lines) and on task threads; a document whose
-reason matters links its card, `[its card](DECISIONS.md#SLUG)`
-([REVIEW](docs/REVIEW.md#slugs-in-prose)). The register and `docs/history/` are the records that
-keep them: the words the guides and documents once quoted are in
+The owner's exact words and the dated history of who decided what, and when, live on the cards,
+each card's dated lines, and on task threads. A card sits at the place in its document where the
+thing it decides is said, never in a section at the document's end, and in the decision register
+(`docs/DECISIONS.md`) only when no document says it
+([REVIEW](docs/REVIEW.md#where-a-card-is-written)). The prose around a card says how things are,
+and where the reason matters it links the card, `[its card](#SLUG)` on its own page and
+`[its card](FILE.md#SLUG)` on another ([REVIEW](docs/REVIEW.md#slugs-in-prose)). The cards and
+`docs/history/` are the records that keep them: the words the guides and documents once quoted are in
 [owner-words](docs/history/owner-words.md). `crates/symphony/tests/hooks/owner_words.rs` fails on
-the owner's words in a guide or a document in the shapes the guides gave them: the owner, the
+the owner's words in a guide or in a document outside a card's own lines, in the shapes the guides
+gave them: the owner, the
 owner's, or the owner's word or rule followed by a date, or a straight quote mark right after
 `owner's` or `the owner:`. Any other shape, a curly quote or an attribution in other words,
 passes it, and a reviewer reads for that.

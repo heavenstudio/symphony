@@ -208,8 +208,9 @@ none did; a missing stamp, a conflict or a red goes back on the thread, naming w
 ([the default landing](docs/TASKS.md#the-default-landing)). An orchestrator starts the assessor
 when it files a task and each time it moves to review, before any reviewer, and lands a task
 without asking the owner: `just land` runs with no permission prompt, and the stamps standing on
-the tip decide it. A decision the owner must make is a card in [DECISIONS](docs/DECISIONS.md),
-not a question in chat.
+the tip decide it. A decision the owner must make is a card at the place in its document where
+the thing it decides is said ([REVIEW](docs/REVIEW.md#where-a-card-is-written)), not a question in
+chat.
 
 **Releases.** A land starts a release run (`just release`, below) once `[releases]
 every_landings` tasks (20) have landed since the last release or run ([the

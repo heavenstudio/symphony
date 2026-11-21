@@ -339,7 +339,8 @@ but never a blank line. One rule, two places:
 
 - the docs audit, in the Symphony's own checkout alone (its project file names it `symphony`, and
   it holds the lists), judges its documents, the Markdown under `docs/` but the decision register
-  (`docs/DECISIONS.md`), `docs/analysis/` and `docs/history/`, which are records; and, of the files
+  (`docs/DECISIONS.md`), `docs/analysis/` and `docs/history/`, which are records, as are a card's
+  own lines wherever it sits in a document, which it passes over; and, of the files
   git's index holds (so a new one once added), every file of what it delivers, under
   `crates/symphony/shipped/` (the skills, the Codex rules and the recipes), and its guides, each
   `AGENTS.md`, `README.md` and `RULES.md` at the root or in a package under `crates/` or `apps/`.
