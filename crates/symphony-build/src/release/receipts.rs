@@ -668,7 +668,14 @@ pub(crate) mod tests {
         for name in ["@{u}", "HEAD@{99}", "main@{push}", "a\nb", "a\0b"] {
             assert!(!asked_alone(name), "{name:?}");
         }
-        for name in [one.squash.as_str(), "tools/one^0", "squashed", "", "@", "a{b}"] {
+        for name in [
+            one.squash.as_str(),
+            "tools/one^0",
+            "squashed",
+            "",
+            "@",
+            "a{b}",
+        ] {
             assert!(asked_alone(name), "{name:?}");
         }
     }
