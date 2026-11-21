@@ -189,6 +189,30 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
     );
     assert!(refused("[releases]\ngithub = [\" \", \"release\"]\n").contains("names no command"));
     assert!(refused("[releases]\ngithub = \"symphony-github\"\n").contains("github"));
+    // Who bypasses the rules is verified again by the command the project names, and by none
+    // unsaid.
+    assert!(parsed("").unwrap().releases.rulesets.is_empty());
+    assert!(
+        (parsed("[releases]\nrulesets = []\n")
+            .unwrap()
+            .releases
+            .rulesets)
+            .is_empty(),
+        "an empty command is none"
+    );
+    assert_eq!(
+        parsed("[releases]\nrulesets = [\"symphony-github\", \"rulesets\", \"--verify\"]\n")
+            .unwrap()
+            .releases
+            .rulesets,
+        ["symphony-github", "rulesets", "--verify"]
+    );
+    let blank = refused("[releases]\nrulesets = [\"\", \"rulesets\"]\n");
+    assert!(
+        blank.contains("[releases] rulesets names no command"),
+        "{blank}"
+    );
+    assert!(refused("[releases]\nrulesets = \"symphony-github\"\n").contains("rulesets"));
 }
 
 #[test]
