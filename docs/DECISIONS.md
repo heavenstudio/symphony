@@ -5,6 +5,90 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### People and sign-in
+
+- [ ] **group-card-who-decides** — Replaces: owner-with-several-people. Your comment is the base now: a card or a task is owned by a group (engineering, design) or by one person, and its members are told. What is left to choose is whose answer settles a card its group owns. A: any one member; the first answer decides and a later one from any member overrides it. B: the one member it is assigned to; the others comment. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Who in a group decides]]
+  [2026-11-21 10:22] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "C, but it could be 'group owned'. […] there can be an engineering group -> people there would get 'notified' and assigned to resolve." A concept: nothing is built by this card.
+
+    ![Speaking, deciding and directing agents are three separate things](analysis/users-and-identity/people-and-agents.svg)
+
+    **Base (today).** One owner. Whatever you answer decides, and a later word of yours overrides an earlier one.
+
+    **A, any one member.**
+    - Every member is told and has the card in their queue.
+    - The first answer decides, under that member's name, and the card leaves the others' queues.
+    - A later word from any member overrides it, as your own later word does today. Both stay in the card's history.
+    - A member can take a card. That shows the others who is on it, and locks nothing.
+
+    **B, the one member it is assigned to.**
+    - The card goes to one member: whoever takes it first, or the next in turn.
+    - Only that member's answer decides. The others comment.
+    - If that member is away, the card waits until someone hands it to another.
+
+    A group of one is the same under both, so this machine sees neither.
+
+    **Why A.** Nothing waits on a person who is away, and no rule is needed for handing a card on. B puts one accountable name on a decision before it is made; under A the name is there once it is made.
+
+    **I read "notified and assigned to resolve" two ways**, which is why this is asked: the group is assigned and anyone in it resolves (A), or one member is (B).
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B) says where people are kept, per board. It does not say who in a group decides.
+    - **revision-bound-project-guards** (B) covers an approval that must be several people's. This card is about one answer being enough, and whose.
+
+    Neither decides this.
+- [ ] **words-without-agent-reach** — You said speaking and directing agents are different settings: someone may comment anywhere without starting an agent. What is left to choose is whether an agent ever sees the words of such a person. A: no, until someone who may direct agents passes them on; until then people see them and no agent does. B: yes; they start no agent, but an agent that works there later reads them with everything else. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/users-and-identity#Words without agent reach]]
+  [2026-11-21 10:22] agent — Posted for the board task `app/users-and-identity`, from your comment on the analysis: "there could be a role that allows people to comment in any place they want, including the board tasks, but that doesn't automatically trigger an execution from an agent." A concept: nothing is built by this card.
+
+    **Base (today).** Everything you write that waits on an answer is handed to an agent at once: a comment in a document, a note on a card, a message on a task. A comment is also written into the document's file, where any agent working there reads it.
+
+    **A, nothing until someone passes them on.**
+    - Their words show on the page to everyone, and the people concerned are told.
+    - The board keeps them. They are not written into the document's file, and no agent is handed them.
+    - Someone who may direct agents passes a comment on with one press. From then it is treated as yours are today, under both names.
+
+    **B, everything, but it wakes nobody.**
+    - Their words are saved as yours are today, with their name.
+    - No agent is started for them.
+    - An agent working there later, for someone else, reads them. Its instructions tell it to act only on the words of people who may direct agents.
+
+    **What each costs.**
+    - **A:** comments live in a second place until they are passed on, so a clone shows them only afterwards.
+    - **B:** someone without the setting can still steer an agent, by writing an instruction where one will read it. The setting then decides when an agent starts, not whose words it follows.
+
+    **Why A.** On a board with guests, B leaves it to each agent to ignore what it has read. A makes it the board's rule.
+
+    **A's limit.** On this machine an agent can open the board's database by itself, as it can open anything of yours. A promises only that the Symphony hands such words to no agent.
+
+    **Earlier verdicts checked.**
+    - **owner-asks-place** (A) says where your open asks are shown. It was decided for one owner and says nothing of a person whose words are not an ask.
+    - **hosted-ingress-boundary** (B) passes a visitor's permissions to the server's handlers. It names no such permission.
+
+    Neither decides this.
+- [ ] **identity-provider-how-added** — Replaces: identity-provider-plug. The same choice, with pictures. An identity provider does one thing: it tells the server who is asking. What that person may do is the board's to say. You expected the provider to be a plugin; the choice is how one is added. A: providers are part of the server, and the Symphony ships two. B: a provider is a separate program the server asks, which anyone writes; it is the server's plugin, never a project's. C: the Symphony signs people in itself, with Google or GitHub. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a provider plugs in]]
+  [2026-11-21 10:22] agent — Base: today, the server asks only whether a browser's address is this machine or a machine of the tailnet. Whose machine it is, is not read. ![Today: everyone the gate lets in writes as the one owner](analysis/users-and-identity/today.svg)
+
+    **What a provider is, under every option.** The first box below. It says who is asking, and gives no rights: ![Proposed: first who is asking, then what they hold on this board](analysis/users-and-identity/request.svg)
+  [2026-11-21 10:22] agent — Posted for the board task `app/users-and-identity`, with the pictures your rejection of **identity-provider-plug** asked for: "this needs some diagrams to be understood". A concept: nothing is built by this card. Where the provider sits under each option: ![Providers are part of the server, under A](analysis/users-and-identity/provider-a.svg) ![A provider is a program of its own, under B](analysis/users-and-identity/provider-b.svg) ![The Symphony signs people in itself, under C](analysis/users-and-identity/provider-c.svg)
+
+    **A, part of the server.** A person is signed in before the request arrives, by Tailscale or by a company's proxy. The server only reads the result. The Symphony ships those two providers, draws no sign-in page and keeps no password, secret or session. Another provider needs a new build of the server.
+
+    **B, a program of its own.** As A, but the reading is done by a separate program the server asks for each request. Anyone writes one, in any language, and swaps it without a new server. The Symphony must then keep that program's contract stable, on the path every request takes, and a second process holds secrets.
+
+    **C, the Symphony signs people in itself.** Nothing in front. The server draws the sign-in page, sends the person to Google or GitHub, and keeps a session for each browser and a secret of its own. It is the most code, all of it the kind where a mistake lets someone in.
+
+    **Why not a project's plugin, under any option.** A project's plugins are named in its `symphony.toml`. Whoever lands a change to that file would choose who everyone is.
+
+    **Why A.** It covers the two places a Symphony runs today, with no secret or session to keep. B's contract is A's seam with a process boundary added, so nothing built for A is lost when a third provider is in fact needed.
+
+    **Earlier verdicts checked.**
+    - **people-kept-where** (B) keeps people with the board. It says what a person may do, not how the server learns who they are.
+    - **hosted-ingress-boundary** (B) put the hosted checks in an adapter inside the server. It does not say whether the Symphony ships providers, opens the adapter to other programs or signs people in itself.
+    - **desktop-client** (A) left a hosted server's login to a later card, which is this one.
+
+    None decides this.
+
 ## Auto-approved: spot-check
 
 ### Releases
@@ -53,6 +137,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     None of them decides this.
   [2026-11-21 09:49] owner · rejected — Added a comment in the analysis page that better describes the vision, use it to understand or reformulate this decision.
+  [2026-11-21 10:22] agent — Replaced by **group-card-who-decides**. The analysis is rewritten from your comment there: a group, or one person, owns a card or a task and its members are told; speaking, deciding and directing agents are separate settings; agents are personal or shared. What your comment leaves open is two cards: **group-card-who-decides** (whose answer settles a card its group owns) and **words-without-agent-reach** (what an agent sees of the words of someone who may not direct agents).
 - [-] **identity-provider-plug** — You expected the identity provider to be a plugin. It should be replaceable, and it cannot be a project's plugin: a project's plugins are named in `symphony.toml`, so whoever lands a change to that file would choose who everyone is. The choice is how a provider is added. A: it is part of the server, chosen where the server is started; the Symphony ships two (Tailscale's login for a machine, a signing proxy's header for a hosted board), and draws no sign-in page. B: a provider is a program of its own that the server's settings name, as a process plugin is; anyone writes one. C: the Symphony signs people in itself, with Google or GitHub. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a provider plugs in]]
   [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
 
@@ -70,6 +155,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **hosted-ingress-boundary** (B) put the hosted checks in an adapter inside the server, against a separate gateway. It does not say whether the Symphony ships providers, opens the adapter to other programs or signs people in itself. **desktop-client** (A) left a hosted server's login to a later card, which is this one. **consumer-contract-versioning** (B) keeps a project's code outside the library; under A and B a host's own provider stays the host's. None decides this.
   [2026-11-21 09:49] owner · rejected — this needs some diagrams to be understood
+  [2026-11-21 10:22] agent — Replaced by **identity-provider-how-added**: the same three options, each with a picture, after one of today and one of where a provider sits in a request. The pictures are in the analysis too.
 - [x] **people-kept-where** — With several people, the Symphony must keep a list of who they are and what each may do, and someone must be able to change it. Where it is kept decides who that someone is. A: in the project's `symphony.toml`, committed; a change is a landing. B: with the server and in no repository (the machine folder here, a hosted board's protected store); an admin changes it from a People page. C: in the identity provider; its groups are read as roles. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where people are kept]]
   [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
 
@@ -85,6 +171,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **hosted-ingress-boundary** (B) has the hosted adapter pass permissions to the handlers, and its analysis says trust settings never come from a document a visitor can edit. That is the reasoning behind B here, and it was said of a hosted board alone: it does not decide where a machine's server, or the product, keeps people. **revision-bound-project-guards** (B) commits a project's authority key in its file. That is a key that checks a signature, not a list of people. Neither decides this.
   [2026-11-21 09:48] owner · approved — B. This is a board specific setting. There could even be multiple boards for the same project where people have different permissions. There should however be some "non db id" in use to identify people in their comments and interactions (who decided things for example). So there will be some information that isn't the the DB only.
+  [2026-11-21 10:22] agent — Recorded, B as you narrowed it: "This is a board specific setting. There could even be multiple boards for the same project where people have different permissions." The list is each board's own (its people, their groups and what each may do, kept with that board's tasks), not one list for the server, so two boards can differ. "There should however be some 'non db id' in use to identify people": that is the short public name (ana), written on a card's line, in a comment and on a thread, so it is in git and outlives the board's row. It follows that one name means one person across a project's boards and is never given to another. Where a project declares its names is a later card. The analysis says all this under Where people are kept.
 
 ### Task timeline
 

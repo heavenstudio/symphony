@@ -1,30 +1,37 @@
 # Users and identity
 
-Several people on one board, each signed in through an identity provider, with roles that say
-what each may do. This is a concept: it questions the idea against what the Symphony has, says
-the shape that fits, and puts its choices to the owner a few at a time
-([the first round](#the-first-round)). Nothing here is built, and nothing is built from it but by
-a task filed from an approved card.
+Several people on one board, each signed in through an identity provider, in groups that own
+what waits to be decided, with what each may do said apart: speak, decide, direct agents. This is
+a concept: it questions the idea against what the Symphony has, says the shape that fits, and
+puts its choices to the owner a few at a time ([this round](#this-round)). Nothing here is built,
+and nothing is built from it but by a task filed from an approved card.
 
 Read at `59538b83e`. The links name the modules and documents read.
 
 ## The answer in short
 
 - **The Symphony has a place where the owner sits, and no person.** Every browser the server
-  admits writes as the one sender `owner`. Who that browser belongs to is never read.
-- **The hosted work already verifies a visitor, and then has nobody for them to be.** Its writes
-  stop at a dispatch that refuses by default, because the board, the documents and the plugins
-  know one actor.
-- **So the work is one seam and three small things on it.** The seam: every write carries who
-  made it, where a constant stands today. On it: a person, a short list of roles, and a provider
-  that tells the server who is asking.
-- **A provider is pluggable, and not a project's plugin.** It belongs to the server that is
-  started, not to a project's file: whoever can land a change to that file would otherwise choose
-  who everyone is.
-- **A machine with one person changes in nothing.** With no people named, the person at the
-  machine is the owner of every project it serves, as today.
+  admits writes as the one sender `owner`. Who that browser belongs to is never read
+  ([the picture](#what-the-symphony-has-today)).
+- **People are a board's.** Who is on a board, in which groups and with what powers is kept with
+  that board and in no repository, so two boards can hold different people
+  ([its card](../DECISIONS.md#people-kept-where)). What a document carries of a person is a short
+  public name.
+- **A group owns what waits to be decided.** A card or a task names the group, or the one person,
+  it belongs to. Its members are told, and they resolve it.
+- **Three things one owner does today come apart.** Speaking to people, deciding, and directing
+  agents are held separately. Anyone on a board speaks to anyone, anywhere; that alone starts no
+  agent.
+- **Agents are personal or shared.** A personal agent runs on its person's machine and credits
+  and answers only them. A shared agent is the board's, and works for whoever may direct agents.
+- **A provider only says who is asking.** It belongs to the server, is replaceable, and gives no
+  power: the board's list does ([the picture](#the-shape-proposed)).
+- **A machine with one person changes in nothing.** With nobody named on a board, the person at
+  the machine holds everything there, as today.
 
 ## What the Symphony has today
+
+![Today: everyone the gate lets in writes as the one owner](users-and-identity/today.svg)
 
 | What | How it is today | Where |
 | --- | --- | --- |
@@ -38,6 +45,8 @@ Read at `59538b83e`. The links name the modules and documents read.
 | A plugin | Trusted code of the project, selected by its `symphony.toml`, drawing blocks. Its calls carry no person. | [PLUGIN_PROTOCOL](../PLUGIN_PROTOCOL.md) |
 | Settings | The committed project file changes by a landing. One machine's preferences are `symphony.local.toml`. The server's own state (its registry of projects, its releases) is the machine folder. | [PROJECT_FILE](../PROJECT_FILE.md) |
 | Notices and the queue | Kept per recipient, and the board knows one recipient, `owner`. | [the desktop design](desktop-client.md) |
+| What the owner says to an agent | Every word of the owner's that waits on an agent is an ask the board holds until an agent answers: a verdict with a note, a message on a card, a comment in a document, a message on a thread. It is delivered to a listening agent at once. | [TASKS](../TASKS.md#asks) |
+| A board | One for a project, in its repository's git common dir, or hosted in a PostgreSQL of the platform's. | [TASKS](../TASKS.md#where-it-lives), [POSTGRESQL](../POSTGRESQL.md#a-hosted-board) |
 
 Three things follow that the documents do not say in one place:
 
@@ -72,23 +81,25 @@ here protects one thing, a person or a program arriving **over the network**, an
 claims nothing more. An agent keeps to its role because the board's rules and its own
 instructions say so, as today.
 
-### The owner is three things
+### The owner is four things
 
-What the guides call the owner is, read closely, three things in one word:
+What the guides call the owner is, read closely, four things in one word:
 
 - **Someone at the page.** Today a place, not a person.
-- **A set of powers.** Deciding a card; the approve that is the `owner` stamp; cancelling,
-  moving and ranking tasks; speaking on any thread; filing a task.
+- **The one who decides.** A card's verdict; the approve that is the `owner` stamp; cancelling,
+  moving and ranking tasks.
+- **The one agents answer.** Every word of the owner's that waits on an agent is an ask, held
+  until one answers, and delivered at once. To speak is to set an agent to work.
 - **One voice in the record.** `owner ·` on a card's line, `owner` as a thread's sender. The
   rules read that voice: only the owner approves a card, an approved card decides a later one,
   and a worktree holding an owner's line no commit has is never removed.
 
-With several people the three come apart. Someone at the page is a **person** a provider
-vouches for. The powers are a **role** that person holds on a project. The voice stays one, the
-owner's, and gains a name beside it. What the role is, and how many may hold it, is the first
-choice ([below](#what-the-owner-becomes)).
+With several people the four come apart. Someone at the page is a **person** a provider vouches
+for. Deciding belongs to the **group** a thing is owned by. Being answered by agents is a power of
+its own, which a person can lack while still speaking everywhere. The voice gains a name
+([what the owner becomes](#what-the-owner-becomes)).
 
-A fourth thing is the owner's by another road and stays outside this concept: what is done in a
+A fifth thing is the owner's by another road and stays outside this concept: what is done in a
 terminal on the machine. Restarting the shared server, a release run by hand, pointing `current`
 back, holding the board's database, removing a snapshot. The machine's account decides those,
 not a sign-in, and no page offers them.
@@ -104,119 +115,189 @@ cannot be that, for three reasons:
   trust settings never come from a document a visitor can edit.
 - **One server serves many projects.** A person signs in to the server once. A provider per
   project would ask them once for each, and two projects could disagree about who they are.
+  What differs from board to board is what a person holds there, never who they are.
 - **A plugin answers after admission.** The provider's answer is what admits a request, before
   any project is opened.
 
 Pluggable it should be: the server must not be tied to one company's sign-in. The seam exists as
-`hosted::Host`, whose `identity` and `authorize` are the provider and the grants. What remains
+`hosted::Host`, whose `identity` and `authorize` are the provider and the board's list. What remains
 open is how far it opens ([below](#how-a-provider-plugs-in)).
 
 ## The shape proposed
 
+![Proposed: first who is asking, then what they hold on this board](users-and-identity/request.svg)
+
+A request is asked two separate things. The server's provider says who sent it. The board's own
+list says what that person holds there. Neither does the other's part.
+
 - **A person** is what a provider vouched for: the provider's name and its subject for them (an
-  email, an id), which are private to the server, and a short public name chosen for them
+  email, an id), which stay private to the board, and a short **public name** chosen for them
   (`ana`), which is what a line in a document or on a thread carries. A subject can be handed to
-  someone else later, as an email is, so a grant names the provider and the subject together and
-  is removed when the person leaves.
-- **A role** is a named set of capabilities, the thing a workflow's edges already ask for. Four
-  are proposed, and their exact powers are a later round's card:
-
-  | Role | Held | May |
-  | --- | --- | --- |
-  | reader | on a project | read its documents, board and threads |
-  | member | on a project | read; comment and ask; speak on a thread; file a task; attach files |
-  | owner | on a project | a member's; decide a card; give the `owner` stamp; cancel, move and rank tasks |
-  | admin | on the server | say who is a person here and what they hold; change what the settings page offers |
-
-  The admin's role is the server's and the other three are a project's, which is today's line
-  between what is done at the machine and what is said on the board. A project's own workflow
-  can still name capabilities of its own (a design lead, say), granted the same way.
-- **A grant** gives a person a role. Without one a person is admitted to nothing, and an unknown
-  project and a refused one answer alike.
-- **A provider** tells the server who sent a request, or that it cannot tell. It gives no role.
+  someone else later, as an email is, so a board names the provider and the subject together and
+  removes the person when they leave.
+- **A group** is a named set of a board's people: engineering, design. It is what a card or a
+  task is owned by, and what a power is given to.
+- **A power** is one thing a person may do on a board, given to them or to a group they are in
+  ([below](#what-the-owner-becomes)).
+- **A provider** tells the server who sent a request, or that it cannot tell. It gives no power.
 - **The actor seam** is the one change everything else stands on: every write the server makes
   takes the actor who asked for it (a person and what they hold) where the constant `owner`
   stands today. The local host supplies the person at the machine, so its lines read as they do
   now. The hosted host supplies the visitor it verified, and its saves can then go through the
-  same code as local ones, with their grants checked first.
-
-## The first round
-
-Three choices, each a card. They are the ones every later question rests on.
-
-### What the owner becomes
-
-**Base.** One owner, unnamed: the rules say "the owner" and the record says `owner`.
-
-- **A, one owner for a project.** Exactly one person holds the role. Others join as members and
-  readers. The rules stand word for word. A member's lines carry a name, and the owner's need
-  none.
-- **B, a role a few people hold.** Any one holder decides a card, gives the stamp and moves a
-  task, and their line says who (`owner ana · approved`). A later word of any holder overrides an
-  earlier one, as the owner's own later word does today, and both stay in the card's history.
-  "Waiting on you" is one queue for the holders; each keeps their own Later. A project with one
-  holder is A.
-- **C, owners by area.** A card or a task names who decides it (design, engineering), and each
-  person's queue holds only theirs. It needs an area on every card, a rule for a card with none,
-  and a queue per person.
-
-> [!comment] C, but it could be "group owned". As mentioned, there can be an engineering group -> people there would get "notified" and assigned to resolve. There's also certainly a different setting for when an agent can be interact with. For example, there could be a role that allows people to comment in any place they want, including the board tasks, but that doesn't automatically trigger an execution from an agent. On the other hand, there could be a group or a person that holds the ability to interact with agents, even if those are not "their agents" (meaning not running under their token "credits" or even computer resources. And there's certainly those agents that are personal and run in your own computer for example that only you can interact with them. However interactions between people should be possible in any place.
-
-An approval that must be several people's (two of three, a named sign-off) is not offered: a
-workflow guard is that, kept in the project's own ledger
-([its card](../DECISIONS.md#revision-bound-project-guards)).
-
-**Recommended: B.** It is A for anyone who wants A, and it does not make a project choose
-between adding a second decider and breaking its rules. Its cost over A is a name on the
-owner's lines and the rule for two holders who disagree, which is the rule a single owner
-changing their mind already follows. C answers a team with real areas, which nothing asks for
-yet, and it can be added over B later as a way of sorting B's one queue.
+  same code as local ones, with what they hold checked first.
 
 ### Where people are kept
 
-**Base.** Nowhere: no person is recorded. The nearest things are the server's registry of
-projects in the machine folder and a workflow authority's public key in the project file.
+With the board, and in no repository ([its card](../DECISIONS.md#people-kept-where)).
 
-- **A, in the project file.** `symphony.toml` names each person and their role. A change is a
-  landing, reviewed and in git's history, and every machine reads the same list. But each
-  person's sign-in subject is committed, in a repository that may be public; whoever can land a
-  change can make themselves an owner; and a person is added one landing at a time.
-- **B, with the server, in no repository.** On a machine, a file in the machine folder beside
-  the registry. On a hosted board, the deployment's protected store, whose first admin the
-  deployment names. An admin changes it from a People page or a command, and each change is kept
-  in a log of its own. A clone holds nobody's sign-in, and the public name is all a document
-  carries. Each server has its own list, which is right: each is its own door.
-- **C, in the provider.** Groups kept there (`symphony-owners`) are read as roles and the
-  Symphony keeps no list. The reading of group to role still has to be kept under A or B, each
-  provider says groups its own way, and the first provider proposed, Tailscale, gives a login and
-  no group.
+- **The list is a board's own.** Its people, their groups and their powers are rows of that
+  board, beside its tasks: in the git common dir's database on a machine, in the hosted
+  database on a hosted board. An admin of the board changes them from a People page or a
+  command, and the board keeps each change in a log.
+- **Two boards differ.** A person can decide on one board and only read another, of the same
+  project or not. The server keeps no list of people: it asks each board about the person the
+  provider named.
+- **A clone holds nobody's sign-in.** A provider's subject never leaves the board.
+- **The public name is the part that is not the board's alone.** It is written where the record
+  is: on a card's line and in a comment, which are files in git, and on a thread. So it outlives
+  the board's row for the person, and it is read in every clone and by every board of the
+  project. That asks two things of it: one name means one person for the whole project, and a
+  name once used is never given to another. Where a project declares its names so that every
+  board reads them alike is a [later round's](#later-rounds).
+- **With nobody named** on a board, the person at the machine holds every power there, as today.
+  The first person named is the first moment anything differs.
 
-**Recommended: B.** Who may enter is the server's question, asked before any project is opened,
-and the hosted design already keeps such settings out of what a visitor can edit. C can come
-later as one more way to fill B's list.
+### What the owner becomes
+
+![Speaking, deciding and directing agents are three separate things](users-and-identity/people-and-agents.svg)
+
+**A group owns what waits to be decided.** Each card and each task is owned by a group, or by one
+person. Its members are told when it is posted, it sits in their queue, and they are the ones
+who resolve it. Where a rule says "the owner" of a card or a task, it reads as "whoever owns it":
+a member of the owning group. A project that sets nothing up has one group with one person in
+it, and every rule reads as it does now.
+
+**What a person may do is said in separate powers**, each given to a group or to a person:
+
+| Power | What it lets a person do | Who has it today |
+| --- | --- | --- |
+| read | see the board, its documents and its threads | everyone the gate admits |
+| speak | write to people anywhere: a comment in a document, a message on a card, a message on a task's thread | the owner |
+| decide | resolve what their group owns: a card's verdict, the approve that is the `owner` stamp | the owner |
+| direct agents | have their words reach the board's shared agents and start work, though those agents are not theirs | the owner |
+| administer | say who is on the board, in which groups and with what powers | whoever holds the machine |
+
+Two things follow from holding them apart:
+
+- **People talk everywhere.** Anyone who may speak writes under anything on the board, and the
+  people it concerns are told. Speaking never starts an agent by itself.
+- **Directing agents is its own power.** Someone can comment on every task and set no agent to
+  work. Someone else can set the board's agents to work without those agents running on their
+  credits or their machine.
+
+An approval that must be several people's (two of three, a named sign-off) is not a power here: a
+workflow guard is that, kept in the project's own ledger
+([its card](../DECISIONS.md#revision-bound-project-guards)).
+
+> [!comment] C, but it could be "group owned". As mentioned, there can be an engineering group -> people there would get "notified" and assigned to resolve. There's also certainly a different setting for when an agent can be interact with. For example, there could be a role that allows people to comment in any place they want, including the board tasks, but that doesn't automatically trigger an execution from an agent. On the other hand, there could be a group or a person that holds the ability to interact with agents, even if those are not "their agents" (meaning not running under their token "credits" or even computer resources. And there's certainly those agents that are personal and run in your own computer for example that only you can interact with them. However interactions between people should be possible in any place.
+> > [!resolved] This section and Agents beside people are rewritten from it: groups own cards and tasks and their members are told; speaking, deciding and directing agents are separate powers; agents are personal or shared; people speak everywhere. The two choices it leaves open are carded: **group-card-who-decides** (whether any member's answer decides, or the one member it is assigned to) and **words-without-agent-reach** (what an agent sees of the words of someone who may not direct agents).
+
+## This round
+
+Three choices, each a card. The first two come from [what the owner
+becomes](#what-the-owner-becomes); the third is the provider's, asked again with its pictures.
+
+### Who in a group decides
+
+**Base.** One owner: whatever they answer decides, and a later word of theirs overrides an
+earlier one.
+
+A card owned by a group reaches every member. The choice is whose answer settles it.
+
+- **A, any one member.** Every member is told and has it in their queue. The first answer
+  decides, under that member's name, and the card leaves the others' queues. A later word from
+  any member overrides it, as the owner's own later word does today, and both stay in the card's
+  history. A member can take a card, which shows the others who is on it and locks nothing.
+- **B, the one member it is assigned to.** A card goes to one member: whoever takes it first, or
+  the next in turn. Only that member's answer decides; the others comment. A card whose member
+  is away waits until someone hands it to another.
+
+A group of one is the same under both, so a machine with one person sees neither.
+
+**Recommended: A.** Nothing waits on a person who is away, and it needs no rule for handing a
+card on. Taking a card gives B's "this one is mine" without B's lock. B fits a team that wants
+one accountable name on each decision before it is made; under A the name is there too, once it
+is made.
+
+### Words without agent reach
+
+**Base.** Every word of the owner's that waits on an answer is handed to an agent at once: a
+comment in a document, a note on a card, a message on a thread. A comment is also written into
+the document's file, where any agent working there reads it.
+
+Speaking and directing agents are separate powers. The choice is what an agent sees of the words
+of someone who may speak and may not direct agents.
+
+- **A, nothing until someone passes them on.** Their words are shown on the page to everyone, and
+  the people concerned are told. The board keeps them; they are not written into the document's
+  file, and no agent is handed them or reads them in a thread. A person who may direct agents
+  passes a comment on with one press. From then it is an ask as today, under both names, and is
+  written into the file.
+- **B, everything, but it wakes nobody.** Their words are saved as the owner's are today, in the
+  file or on the thread, with their name. No agent is started for them. An agent that works
+  there later, for someone else, reads them with the rest. Its instructions say to act only on
+  the words of people who may direct agents.
+
+What each costs:
+
+- **A** needs comments in a second place, the board, until they are passed on, so a clone shows
+  them only afterwards. On a machine an agent could still open the board's database by itself:
+  what A promises is that the Symphony hands such words to no agent.
+- **B** is today's save with a name added. But a person without the power can still steer an
+  agent, by writing an instruction where one will read it. The power then decides when an agent
+  starts, not whose words it follows, and only the agent's instructions stand between the two.
+
+**Recommended: A.** On a board with guests, B makes directing agents a matter of how well an
+agent follows its instructions. A makes it the board's own rule.
 
 ### How a provider plugs in
 
-**Base.** The local server asks Tailscale whether an address is a node, and nothing else. The
-hosted seam is a Rust trait a consuming host implements; no provider ships.
+**Base.** The local server asks Tailscale whether an address is a machine of the tailnet, and
+nothing else ([the picture](#what-the-symphony-has-today)). The hosted seam is a Rust trait a
+consuming host implements; no provider ships.
 
-What the server would trust under every option: where a request came from (this machine is its
-own person), and a provider's verified word. Never a name in a request's body, a header a hop it
-has not verified set, an email's domain, or a handle someone claims.
+Whatever is chosen, the provider's part is the first box of [the picture
+above](#the-shape-proposed): it says who is asking and nothing more. The server would trust
+where a request came from (this machine is its own person) and a provider's verified word. Never
+a name in a request's body, a header a hop it has not verified set, an email's domain, or a
+handle someone claims.
 
-- **A, part of the server, chosen where it is started.** The Symphony ships two: Tailscale's
-  login for a machine's server, and a signing proxy's header for a hosted one (the kind the
-  hosted design read). A host with another need implements the Rust seam, as today. The Symphony
-  draws no sign-in page and keeps no password, secret or session: the provider signed the person
-  in before the request arrived.
-- **B, a program of its own.** A provider is a binary the server's settings name, asked over a
-  versioned line, as a process plugin and an execution adapter are. Anyone writes one, in any
-  language, and replaces it without a new server. It adds a contract the Symphony must keep
-  stable across releases, on the path every request takes, and a second process holding
-  secrets.
-- **C, the Symphony signs people in itself.** A sign-in page, an OpenID Connect exchange with
-  Google or GitHub, a client secret, session cookies and sign-out. It needs no proxy in front. It
-  is the most code, all of it the kind where a mistake is a break-in.
+**A, part of the server, chosen where it is started.**
+
+![A: providers are part of the server](users-and-identity/provider-a.svg)
+
+The Symphony ships two: Tailscale's login for a machine's server, and a signing proxy's header
+for a hosted one (the kind the hosted design read). A host with another need implements the Rust
+seam, as today. The Symphony draws no sign-in page and keeps no password, secret or session: the
+provider signed the person in before the request arrived.
+
+**B, a program of its own.**
+
+![B: a provider is a program of its own](users-and-identity/provider-b.svg)
+
+A provider is a binary the server's settings name, asked over a versioned line, as a process
+plugin and an execution adapter are. Anyone writes one, in any language, and replaces it without
+a new server. This is the option that is a plugin in the plain sense: the server's, though, and
+never a project's. It adds a contract the Symphony must keep stable across releases, on the path
+every request takes, and a second process holding secrets.
+
+**C, the Symphony signs people in itself.**
+
+![C: the Symphony signs people in itself](users-and-identity/provider-c.svg)
+
+A sign-in page, an OpenID Connect exchange with Google or GitHub, a client secret, session
+cookies and sign-out. It needs no proxy in front. It is the most code, all of it the kind where
+a mistake is a break-in.
 
 A `[plugins]` entry in the project file is not offered, for [the reasons
 above](#an-identity-provider-as-a-plugin).
@@ -231,8 +312,8 @@ is lost.
   person. A request from the tailnet is the login Tailscale names for its address, asked as
   today and kept for the 30 seconds the gate already keeps it. A peer under the machine's own
   login is the same person, so a phone keeps working with nothing set up. A peer under another
-  login is that person, admitted only by a grant. A tagged node has no login and is admitted
-  only by a grant naming the node.
+  login is that person, admitted to a board only once it names them. A tagged node has no login
+  and is admitted only where a board names the node.
 - **On a hosted board**, the session is the proxy's. The adapter verifies the signed header on
   every request, ends a stream when the assertion expires, and binds its request-forgery token
   to the session and the project, all as [hosted ingress](hosted-ingress.md#browser-behavior)
@@ -244,20 +325,26 @@ its own: a cookie, a store, expiry and sign-out.
 ## Agents beside people
 
 An agent stays an agent: a principal of its own kind, which no claim turns into a person, so it
-never decides a card, gives the `owner` stamp or takes an edge that waits for a person. Two
-things are added once there are people:
+never decides a card, gives the `owner` stamp or takes an edge that waits for a person. With
+people on a board there are two kinds:
 
-- **A sponsor.** Each session records the person it works for: the one at the machine that
-  started it, passed down from an orchestrator to the agents it starts. On one machine every
-  session's sponsor is the same person and nothing changes. The execution design already keeps
-  the two apart, as the acting principal and the initiator.
-- **No more than its sponsor.** An agent can do nothing on a project its sponsor could not. A
-  reader's agent reads.
+- **A personal agent** is one a person starts on their own machine, under their own credits.
+  Only that person directs it. On the board it may do no more than they may: a reader's agent
+  reads. Others see what it posts and speak under it; their words reach its person, not the
+  agent.
+- **A shared agent** is the board's: the orchestrators, executors and reviewers staffed for its
+  tasks. It runs on a host, a machine and credits somebody offers the board. Anyone who may
+  direct agents directs it, whoever hosts it. It keeps two names apart: the person whose word it
+  is acting on, and its host. It does no more than the person whose word it acts on may. The
+  execution design already keeps such a pair, as the acting principal and the initiator.
 
-Left for a later round: how an agent on another machine proves its handle to a shared board (a
-credential a person issues, as the hosted execution design expects of its host), and whether a
-review must come from another person's agent. Today's rule asks for a fresh session, not another
-sponsor.
+On one machine with one person every agent is both at once: started by them, on their machine,
+directed by them. Nothing changes there.
+
+Left for a later round: who hosts a board's shared agents and what a host may limit, how an
+agent on another machine proves its handle to a board (a credential a person issues, as the
+hosted execution design expects of its host), and whether a review must come from an agent
+another person directed. Today's rule asks for a fresh session, not another person.
 
 ## The way from one owner
 
@@ -266,39 +353,50 @@ Each step can ship alone, and a machine with one person sees none of them.
 1. **The actor seam.** Every write takes an actor. The local host supplies the local owner, and
    every line reads as it does today.
 2. **Tailscale's login read.** The gate keeps who a peer is. A peer under the machine's own
-   login is its person. Whether a peer under another login keeps today's reach until a list
-   exists is a later card.
-3. **People and roles.** The store, the grants, the People page, names on lines.
-4. **The hosted provider.** The signing proxy's header verified, and hosted saves through the
+   login is its person. Whether a peer under another login keeps today's reach until a board
+   names somebody is a later card.
+3. **People, groups and powers on a board.** The rows, the People page, names on lines.
+4. **Ownership.** A card and a task name their group, and queues and notices follow it.
+5. **Speaking apart from directing agents.** A person's words reach people always, and agents
+   only by the power.
+6. **The hosted provider.** The signing proxy's header verified, and hosted saves through the
    same writes as local ones.
-5. **Agents' sponsors**, then a shared board's agent credentials.
+7. **Shared agents' hosts**, then a board's agent credentials.
 
-With no people named, the person at the machine holds `owner` on every project and is the
-server's admin. The first grant to someone else is the first moment anything differs.
+With nobody named on a board, the person at the machine holds every power there and is its
+admin. The first person named is the first moment anything differs.
 
 ## The other two concepts
 
 - **A settings page** (`app/settings-page`). A saved change to the project file is a landing
   today, filed as the owner's task. With people it is filed as the task of the person who saved,
-  and needs what any change of that file needs. What a machine alone decides, and turning an
-  integration on, is the admin's. A setting that holds a command the server runs should not be
-  an admin's to set from another machine at all: that would be running programs on the machine
-  from a browser. The People page is that page's neighbour, at the server and not under a
-  project.
+  and needs what any change of that file needs. A board's people, groups and powers are that
+  page's neighbour: a People page of the board, for its admins, which changes rows of the board
+  and no file. A setting that holds a command the server runs should not be anyone's to set from
+  another machine at all: that would be running programs on the machine from a browser.
 - **Blueprints** (`app/blueprints`). A blueprint may carry a workflow that names capabilities (a
-  design lead, an art director) and so the roles a kind of project expects. It carries no
-  person, no grant and no provider: those are a server's, and a project taken from a blueprint
-  starts with whoever its server already knows.
+  design lead, an art director) and the groups a kind of project expects (engineering, design).
+  It carries no person and no provider: people are a board's, and a project taken from a
+  blueprint starts with its groups empty but for whoever made it.
 
 ## Later rounds
 
-Not carded yet. Each waits on the first round.
+Not carded yet. Each waits on this round.
 
-- The four roles, and exactly what a member may do: file a task, move their own, rank?
-- How a person's line reads in a document and on a thread, and who authors the commit of a
-  person's save.
-- A tailnet peer under another login, before any list exists: today's reach, or none.
-- Whose queue a card is in, and notices aimed at a named person.
-- Agents: sponsors, a shared board's credentials, and review across people.
+- Which group a card or a task belongs to: written on it by whoever posts it, or read from where
+  it is (the queue already sorts cards by their document's folder, such as design and
+  engineering), and the group of one that names none.
+- What each power covers exactly, and the task board's acts: who files a task, moves, ranks or
+  cancels one.
+- How a person's line reads in a document and on a thread, where the public names of a project
+  are declared so that two boards and every clone read them alike, and who authors the commit of
+  a person's save.
+- A tailnet peer under another login, before a board names anybody: today's reach, or none.
+- Queues and notices per person and per group.
+- Shared agents: whose machine and credits host them, what a host may limit, and how an agent on
+  another machine proves its handle to a board.
+- Whether a review must come from an agent another person directed.
 - What a plugin is told about the person who asked.
 - Removing a person: their open asks, their unanswered cards, their agents' sessions.
+- Several boards for one project: nothing proposed here ties people to a project, and what else
+  a second board needs is a concept of its own.
