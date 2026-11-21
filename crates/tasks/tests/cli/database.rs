@@ -385,7 +385,7 @@ fn a_replay_whose_server_cannot_be_told_is_said_as_such_and_refuses_the_next_com
          server it names has ended and `ps` lists no server on the data. The next command asks \
          again, and settles the record once `ps` can tell. Should it never, remove the record by \
          hand once `ps -ww -axo pid,command` lists no `surreal start` on surrealkv://{data} \
-         (docs/TASKS.md, Stuck servers)",
+         (docs/BOARD_OPERATIONS.md, Stuck servers)",
         record.display()
     );
     let (code, out, _) = alpha.run(&["database"]);

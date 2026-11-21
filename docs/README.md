@@ -15,6 +15,9 @@ the evidence behind decisions are under [Design and history](#design-and-history
 
 ## Operation and setup
 
+- [Operating the board](BOARD_OPERATIONS.md) — the board's store and the schema contract between
+  its builds, which build moves a live board, who writes it, its server, snapshots and holds, what
+  the command may write, stuck servers, a board that went back or was copied, and board health.
 - [PostgreSQL board lifecycle](POSTGRESQL.md) — scratch engine identity, server selection,
   holds, snapshots, recovery and space reclamation.
 - [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
@@ -48,6 +51,8 @@ the evidence behind decisions are under [Design and history](#design-and-history
   records; custom workflow activation remains unavailable.
 - [Checks](CHECKS.md) — what a task in this repository proves before review, and the release run's
   full verification.
+- [The board's JSON APIs](BOARD_API.md) — `tasks api`, the board's methods as a versioned JSON
+  contract for a program, and the agents API with what a callback and the PULL digest push.
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
   setting, the seams it answers, its process, its commands, a register read in one request, the
   line, each call's minor, the versions and the wire's shape.
