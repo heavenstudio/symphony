@@ -339,7 +339,7 @@ pub fn page(
 }
 
 /// What the model calls of the task `slug` took, its subtasks' with them, and their estimated
-/// cost at the prices this build embeds: `tasks show --json`'s `tokens` without its rows, from
+/// cost at the prices this build embeds: `tasks show --json`'s `tokens`, its rows with them, from
 /// the same two reads, so the page's figures are that command's.
 pub fn tokens(
     store: &symphony_board::Store,
@@ -352,7 +352,7 @@ pub fn tokens(
     let spent = store.spent_on(&slugs)?;
     let prices = symphony_board::usage::Prices::embedded();
     let tally = symphony_board::usage::Tally::at(&spent, prices);
-    serde_json::from_value(tally.json(&[], prices))
+    serde_json::from_value(tally.json(&spent, prices))
         .map_err(|e| symphony_board::Error::Db(format!("a task's tokens do not read: {e}")))
 }
 

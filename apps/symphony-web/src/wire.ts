@@ -1127,11 +1127,43 @@ export type TaskTokens = {
    * calls of a session that worked no task.
    */
   by_round: Array<RoundTokens>;
+  /**
+   * The rows the sums are of, which a task's timeline puts each on the stretch its calls were
+   * made for; none from a server that sends none.
+   */
+  rows: Array<TokenRow>;
 };
 
 export type RoleTokens = { role: string; tokens: AgentTokens; cost: AgentCost };
 
 export type RoundTokens = { round: number; tokens: AgentTokens; cost: AgentCost };
+
+export type TokenRow = {
+  handle: string;
+  /**
+   * The task its calls were made on: the page's task, or one of its subtasks.
+   */
+  slug: string;
+  /**
+   * Its role on the task (`executor`, `reviewer`, `reserved` while it held the task reserved
+   * before its claim), else the session's kind.
+   */
+  role: string;
+  model: string;
+  speed: string;
+  /**
+   * 1 and the moves into review its task's thread held when the calls were made, so round 1 is
+   * the work up to the first review; 0 for a session that worked no task.
+   */
+  round: number;
+  tokens: AgentTokens;
+  cost: AgentCost;
+  /**
+   * When the first and the last of its calls were recorded, server seconds.
+   */
+  first: number;
+  last: number;
+};
 
 export type TaskCosts = {
   /**
