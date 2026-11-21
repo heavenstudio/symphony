@@ -535,6 +535,38 @@ fn a_disarm_made_and_an_arming_lost_or_refused_leaves_it_off_for_the_next_run_to
     assert_eq!(format!("{} {:?}", last.kind, last.event), "arm Unknown");
     assert_eq!(d.arm(100, &next)["state"], "armed");
     assert_eq!(mutations(&d).len(), 3);
+    // The arming never carried out, its answer GitHub's own failure: not known, auto-merge off.
+    let d = rearmed("armed-again-unanswered");
+    d.rig.github.fault("POST", "/graphql", Fault::Pass);
+    d.rig
+        .github
+        .fault("POST", "/graphql", Fault::Status(502, Vec::new()));
+    let answer = d.arm(100, &next);
+    assert_eq!(answer["state"], "unavailable", "{answer}");
+    assert_eq!(d.rig.github.pulls()[0]["auto_merge"], Value::Null);
+    let journal: Vec<String> = (d.rig.journal().iter())
+        .map(|entry| format!("{} {:?}", entry.kind, entry.event))
+        .collect();
+    assert_eq!(
+        journal[journal.len() - 4..],
+        ["disarm Intent", "disarm Ack", "arm Intent", "arm Unknown"],
+        "{journal:?}"
+    );
+    // The next run arms it: one enable, at the new head with its text.
+    assert_eq!(d.arm(100, &next)["state"], "armed");
+    let sent = mutations(&d);
+    assert_eq!(sent.len(), 4, "{sent:?}");
+    assert!(
+        sent[3]["query"]
+            .as_str()
+            .unwrap()
+            .contains("enablePullRequestAutoMerge(input:")
+    );
+    assert_eq!(sent[3]["variables"]["head"], json!(next));
+    assert_eq!(
+        armed_text(&d).1,
+        json!(format!("Squashed from {next} by pull request #100."))
+    );
     // The disarm itself refused: the first arming stands, said as a disarm says it.
     let d = rearmed("armed-again-held");
     d.rig

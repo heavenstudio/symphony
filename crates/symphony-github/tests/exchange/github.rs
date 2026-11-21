@@ -704,12 +704,16 @@ impl Inner {
             if pull["mergeable_state"] == json!("clean") && self.broken(&head).is_none() {
                 return error("Pull request is in clean status");
             }
-            self.pulls[at]["auto_merge"] = json!({
-                "enabled_by": {"login": format!("app-{acting}[bot]")},
-                "merge_method": variables["method"].as_str().unwrap_or_default().to_lowercase(),
-                "commit_title": variables["headline"], "commit_message": variables["body"],
-            });
-            self.pulls[at]["armed_by"] = json!(acting);
+            // On already, GitHub answers with no error and keeps the method and text it has.
+            if !self.pulls[at]["auto_merge"].is_object() {
+                self.pulls[at]["auto_merge"] = json!({
+                    "enabled_by": {"login": format!("app-{acting}[bot]")},
+                    "merge_method":
+                        variables["method"].as_str().unwrap_or_default().to_lowercase(),
+                    "commit_title": variables["headline"], "commit_message": variables["body"],
+                });
+                self.pulls[at]["armed_by"] = json!(acting);
+            }
             return answer(
                 200,
                 &json!({"data": {"enablePullRequestAutoMerge":
