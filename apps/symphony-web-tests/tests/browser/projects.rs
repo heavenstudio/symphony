@@ -7,8 +7,8 @@
 //! provides; `gamma`, in the one case that registers it, serves its documents at its root.
 use super::{
     HOME_FIRST_VISIT_BYTES, PAGE_WIDTH, SHOWN, TASKS_FIRST_VISIT_BYTES, binaries, chrome,
-    chrome::Chrome,
-    completed_requests, dist, needed_bytes, owner_controls::ScratchBoard, ping_bytes,
+    chrome::Chrome, completed_requests, dist, needed_bytes, owner_controls::ScratchBoard,
+    ping_bytes,
 };
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
