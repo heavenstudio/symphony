@@ -247,7 +247,7 @@ fn a_cards_own_lines_are_told_from_the_prose_around_it() {
             true, true, true, // two cards with no line between them, to the text's end
         ]
     );
-    assert_eq!(carded(&lines("")), [] as [bool; 0]);
+    assert_eq!(carded(&lines("")), Vec::<bool>::new());
     assert_eq!(carded(&lines("no card\n")), [false]);
 }
 
