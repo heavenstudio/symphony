@@ -90,6 +90,9 @@ still await implementation; its approval alone does not make it current app beha
 - [The release pipeline, redesigned](analysis/release-pipeline.md) — a night of red release runs
   read by run, a pre-certified CI proposal checked against the stamps, and the options with
   what was chosen of them, a hosted run on GitHub among them.
+- [A Settings page](analysis/settings-page.md) — a concept: where a project's settings live
+  now, what on and off mean for its integrations and tools, and a page that shows what is in
+  force and writes the preferences alone.
 - [Naming inventory and superseded plan](analysis/own-names.md) — historical naming evidence,
   with pointers to the current naming rules and state paths.
 - [History](history/README.md) — retained records and superseded measurements.
