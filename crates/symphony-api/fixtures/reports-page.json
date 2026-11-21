@@ -65,6 +65,63 @@
         "writes": 5088,
         "write_p90_ms": 11.0
       },
+      "spend": [
+        {
+          "role": "executor",
+          "tokens": {
+            "input": 1200,
+            "cache_write_5m": 40000,
+            "cache_write_1h": 0,
+            "cache_read": 900000,
+            "output": 30000,
+            "calls": 120
+          },
+          "cost": {
+            "dollars": 1.46,
+            "input": 0.01,
+            "cache_write_5m": 0.25,
+            "cache_write_1h": 0.0,
+            "cache_read": 0.45,
+            "output": 0.75,
+            "unpriced": [],
+            "prices": "2026-11-16"
+          }
+        },
+        {
+          "role": "reviewer",
+          "tokens": {
+            "input": 10,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "cache_read": 2000,
+            "output": 500,
+            "calls": 2
+          },
+          "cost": {
+            "dollars": 0.0,
+            "input": 0.0,
+            "cache_write_5m": 0.0,
+            "cache_write_1h": 0.0,
+            "cache_read": 0.0,
+            "output": 0.0,
+            "unpriced": [
+              {
+                "model": "gpt-x",
+                "speed": "standard",
+                "tokens": {
+                  "input": 10,
+                  "cache_write_5m": 0,
+                  "cache_write_1h": 0,
+                  "cache_read": 2000,
+                  "output": 500,
+                  "calls": 2
+                }
+              }
+            ],
+            "prices": "2026-11-16"
+          }
+        }
+      ],
       "workflow": {
         "phases": [
           { "id": "build", "label": "Build", "hours": 20.5 },
@@ -107,7 +164,8 @@
         "load_1m": null,
         "load_15m": null
       },
-      "health": null
+      "health": null,
+      "spend": null
     }
   ],
   "first": 1799280000.0,
@@ -121,5 +179,102 @@
   ],
   "unread": [
     "/repo/.git/symphony/health/2027-01-15.jsonl: not a regular file"
-  ]
+  ],
+  "landed": {
+    "tasks": 1,
+    "without": 1,
+    "median": 1.46,
+    "dearest": [
+      {
+        "slug": "sim/jump",
+        "at": 1799920000.0,
+        "tokens": {
+          "input": 1210,
+          "cache_write_5m": 40000,
+          "cache_write_1h": 0,
+          "cache_read": 902000,
+          "output": 30500,
+          "calls": 122
+        },
+        "cost": {
+          "dollars": 1.46,
+          "input": 0.01,
+          "cache_write_5m": 0.25,
+          "cache_write_1h": 0.0,
+          "cache_read": 0.45,
+          "output": 0.75,
+          "unpriced": [
+            {
+              "model": "gpt-x",
+              "speed": "standard",
+              "tokens": {
+                "input": 10,
+                "cache_write_5m": 0,
+                "cache_write_1h": 0,
+                "cache_read": 2000,
+                "output": 500,
+                "calls": 2
+              }
+            }
+          ],
+          "prices": "2026-11-16"
+        }
+      }
+    ],
+    "first_round": {
+      "tokens": {
+        "input": 1200,
+        "cache_write_5m": 40000,
+        "cache_write_1h": 0,
+        "cache_read": 900000,
+        "output": 30000,
+        "calls": 120
+      },
+      "cost": {
+        "dollars": 1.46,
+        "input": 0.01,
+        "cache_write_5m": 0.25,
+        "cache_write_1h": 0.0,
+        "cache_read": 0.45,
+        "output": 0.75,
+        "unpriced": [],
+        "prices": "2026-11-16"
+      }
+    },
+    "later_rounds": {
+      "tokens": {
+        "input": 10,
+        "cache_write_5m": 0,
+        "cache_write_1h": 0,
+        "cache_read": 2000,
+        "output": 500,
+        "calls": 2
+      },
+      "cost": {
+        "dollars": 0.0,
+        "input": 0.0,
+        "cache_write_5m": 0.0,
+        "cache_write_1h": 0.0,
+        "cache_read": 0.0,
+        "output": 0.0,
+        "unpriced": [
+          {
+            "model": "gpt-x",
+            "speed": "standard",
+            "tokens": {
+              "input": 10,
+              "cache_write_5m": 0,
+              "cache_write_1h": 0,
+              "cache_read": 2000,
+              "output": 500,
+              "calls": 2
+            }
+          }
+        ],
+        "prices": "2026-11-16"
+      }
+    },
+    "again": 1
+  },
+  "prices": "2026-11-16"
 }

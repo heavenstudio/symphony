@@ -71,6 +71,73 @@ pub struct Agent {
     pub cost: Option<AgentCost>,
 }
 
+/// The route of a task's tokens: `GET` [`TASK_TOKENS_PATH`]`?slug=SLUG` answers a [`TaskTokens`].
+pub const TASK_TOKENS_PATH: &str = "/api/task-tokens";
+
+/// The route of the estimated cost of the cards a board drew: `GET`
+/// [`TASK_COSTS_PATH`]`?slugs=JSON_LIST`, at most [`TASK_COSTS_MOST`] slugs, answers
+/// [`TaskCosts`] from one read of the board.
+pub const TASK_COSTS_PATH: &str = "/api/task-costs";
+/// The most slugs one ask of [`TASK_COSTS_PATH`] names.
+pub const TASK_COSTS_MOST: usize = 200;
+
+/// What the tasks a board asked for cost, each with its subtasks, as their pages tell it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct TaskCosts {
+    /// The day the API list prices every figure is estimated at were read.
+    pub prices: String,
+    /// Each task asked for that took any tokens, by its slug; one that took none is left out.
+    pub costs: Vec<TaskCost>,
+}
+
+/// One task's tokens' estimated cost, its subtasks' with it: its page's figure all told.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct TaskCost {
+    pub slug: String,
+    /// In US dollars, at API list prices: never money spent.
+    pub dollars: f64,
+    /// Whether some of its tokens were of a model the price table names no price for, in no dollar.
+    #[serde(default)]
+    pub unpriced: bool,
+}
+
+/// What a task's model calls took, its subtasks' with them, as its board's heartbeat recorded
+/// them, and what they cost, estimated at API list prices: `tasks show --json`'s `tokens`
+/// without its rows. A task with none recorded has zero `total` and no role or round.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct TaskTokens {
+    pub total: AgentTokens,
+    pub cost: AgentCost,
+    /// By role, executor first.
+    #[serde(default)]
+    pub by_role: Vec<RoleTokens>,
+    /// By review round, the first first: round 1 is the work up to the first review, round 0 the
+    /// calls of a session that worked no task.
+    #[serde(default)]
+    pub by_round: Vec<RoundTokens>,
+}
+
+/// A role's part of a task's tokens.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct RoleTokens {
+    pub role: String,
+    pub tokens: AgentTokens,
+    pub cost: AgentCost,
+}
+
+/// A review round's part of a task's tokens.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct RoundTokens {
+    pub round: u32,
+    pub tokens: AgentTokens,
+    pub cost: AgentCost,
+}
+
 /// What tokens cost, estimated at the API list prices of the board's price table, in US dollars of
 /// each kind and all told: the board's `usage::Cost`. Tokens of a model the table has no price for
 /// are in no dollar figure, but listed apart.

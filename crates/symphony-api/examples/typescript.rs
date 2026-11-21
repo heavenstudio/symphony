@@ -121,6 +121,9 @@ fn constants() -> String {
             api::QUICK_TASK_TITLE_MAX.to_string(),
         ),
         ("TASK_ACTION_ROUTE", text(api::TASK_ACTION_ROUTE)),
+        ("TASK_TOKENS_PATH", text(api::TASK_TOKENS_PATH)),
+        ("TASK_COSTS_PATH", text(api::TASK_COSTS_PATH)),
+        ("TASK_COSTS_MOST", api::TASK_COSTS_MOST.to_string()),
         ("TASK_GATES_PATH", text(api::TASK_GATES_PATH)),
         ("TASK_TIMELINE_PATH", text(api::TASK_TIMELINE_PATH)),
         ("TASK_DIFF_PATH", text(api::TASK_DIFF_PATH)),
@@ -210,6 +213,9 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         // Reports'.
         declared::<api::Grain>(cfg),
         declared::<api::report_page::ReportMark>(cfg),
+        declared::<api::report_page::LandedSpend>(cfg),
+        declared::<api::report_page::LandedTask>(cfg),
+        declared::<api::report_page::Spend>(cfg),
         // The Runs page's, its schema updates too.
         declared::<api::RunsPage>(cfg),
         declared::<api::RunPage>(cfg),
@@ -255,6 +261,11 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::AgentTokens>(cfg),
         declared::<api::AgentCost>(cfg),
         declared::<api::AgentUnpriced>(cfg),
+        declared::<api::TaskTokens>(cfg),
+        declared::<api::RoleTokens>(cfg),
+        declared::<api::RoundTokens>(cfg),
+        declared::<api::TaskCosts>(cfg),
+        declared::<api::TaskCost>(cfg),
         declared::<api::SessionGo>(cfg),
         declared::<api::AgentFocus>(cfg),
         declared::<api::AgentScreen>(cfg),
@@ -1357,6 +1368,7 @@ fn samples() -> Value {
     samples.extend(agents_samples());
     samples.insert("reports".into(), json!(reports()));
     samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
+    samples.extend(tokens_samples());
     samples.insert("blocks".into(), json!(blocks()));
     samples.extend(
         documents()
@@ -1364,6 +1376,30 @@ fn samples() -> Value {
             .map(|(name, value)| (name.to_owned(), value)),
     );
     Value::Object(samples)
+}
+
+/// A task's tokens and the cards' costs, as [`samples`] holds them.
+fn tokens_samples() -> serde_json::Map<String, Value> {
+    let costs = api::TaskCosts {
+        prices: "2026-11-16".into(),
+        costs: vec![
+            api::TaskCost {
+                slug: "w/a".into(),
+                dollars: 12.345,
+                unpriced: false,
+            },
+            api::TaskCost {
+                slug: "w/b".into(),
+                dollars: 0.0,
+                unpriced: true,
+            },
+        ],
+    };
+    serde_json::Map::from_iter([
+        ("taskTokens".into(), json!(task_tokens())),
+        ("emptyTaskTokens".into(), json!(api::TaskTokens::default())),
+        ("taskCosts".into(), json!(costs)),
+    ])
 }
 
 /// The task board's reads, as [`samples`] holds them: its listings, the machines' work and the
@@ -2158,6 +2194,108 @@ fn reports() -> api::ReportsPage {
             changed: vec!["settings".into()],
         }],
         unread: vec!["/repo/.git/symphony/reports/2026-11-08.json: not read".into()],
+        landed: Some(api::report_page::LandedSpend {
+            tasks: 2,
+            without: 1,
+            median: Some(1.5),
+            dearest: vec![{
+                let api::report_page::Spend { tokens, cost } = spend(2.0, false);
+                api::report_page::LandedTask {
+                    slug: "sim/jump".into(),
+                    at: MONDAY + 7_200.0,
+                    tokens,
+                    cost,
+                }
+            }],
+            first_round: spend(2.0, false),
+            later_rounds: spend(1.0, true),
+            again: 1,
+        }),
+        prices: "2026-11-16".into(),
+    }
+}
+
+/// A task's tokens as its page reads them: two roles, two rounds and a model with no price.
+fn task_tokens() -> api::TaskTokens {
+    let (executor, reviewer) = (spend(2.0, true), spend(1.0, false));
+    let mut total = executor.tokens;
+    let tokens = reviewer.tokens;
+    total.input += tokens.input;
+    total.cache_write_5m += tokens.cache_write_5m;
+    total.cache_write_1h += tokens.cache_write_1h;
+    total.cache_read += tokens.cache_read;
+    total.output += tokens.output;
+    total.calls += tokens.calls;
+    let cost = api::AgentCost {
+        dollars: 3.0,
+        input: 0.02,
+        cache_write_5m: 0.5,
+        cache_write_1h: 0.1,
+        cache_read: 0.9,
+        output: 1.48,
+        ..executor.cost.clone()
+    };
+    api::TaskTokens {
+        total,
+        cost,
+        by_role: vec![
+            api::RoleTokens {
+                role: "executor".into(),
+                tokens: executor.tokens,
+                cost: executor.cost.clone(),
+            },
+            api::RoleTokens {
+                role: "reviewer".into(),
+                tokens: reviewer.tokens,
+                cost: reviewer.cost.clone(),
+            },
+        ],
+        by_round: vec![
+            api::RoundTokens {
+                round: 1,
+                tokens: executor.tokens,
+                cost: executor.cost,
+            },
+            api::RoundTokens {
+                round: 2,
+                tokens: reviewer.tokens,
+                cost: reviewer.cost,
+            },
+        ],
+    }
+}
+
+/// Tokens worth `dollars` at API list prices, with tokens of a model the table has no price for
+/// where `unpriced`.
+fn spend(dollars: f64, unpriced: bool) -> api::report_page::Spend {
+    let tokens = api::AgentTokens {
+        input: 10,
+        cache_write_5m: 2_000,
+        cache_write_1h: 300,
+        cache_read: 90_000,
+        output: 1_500,
+        calls: 4,
+    };
+    api::report_page::Spend {
+        tokens,
+        cost: api::AgentCost {
+            dollars,
+            input: 0.01,
+            cache_write_5m: 0.25,
+            cache_write_1h: 0.05,
+            cache_read: 0.45,
+            output: dollars - 0.76,
+            unpriced: if unpriced {
+                vec![api::AgentUnpriced {
+                    model: "gpt-x".into(),
+                    speed: "standard".into(),
+                    tokens,
+                }]
+            } else {
+                Vec::new()
+            },
+            prices: "2026-11-16".into(),
+        },
     }
 }
 
@@ -2165,20 +2303,7 @@ fn reports() -> api::ReportsPage {
 fn report_bucket(start: f64) -> api::ReportBucket {
     use api::agent_activity::{Gauge, Level, RoleLevel};
     use api::report_page::{BucketAgents, BucketFlow, BucketHealth, BucketVerdicts, BucketWaits};
-    use api::reports::{ByStatus, DecisionCounts, GitCounts, Spread};
-    fn all<T: Copy>(n: T) -> ByStatus<T> {
-        ByStatus {
-            backlog: n,
-            blocked: n,
-            cancelled: n,
-            concept: n,
-            design: n,
-            done: n,
-            in_progress: n,
-            ready: n,
-            review: n,
-        }
-    }
+    use api::reports::{DecisionCounts, GitCounts, Spread};
     let spread = Some(Spread {
         n: 2,
         median: 60.0,
@@ -2194,10 +2319,10 @@ fn report_bucket(start: f64) -> api::ReportBucket {
         end: start + 86_400.0,
         rolled: 24,
         flow: Some(BucketFlow {
-            held: all(1),
-            entered: all(2),
+            held: every_status(1),
+            entered: every_status(2),
             done: Some(3),
-            task_hours: all(1.5),
+            task_hours: every_status(1.5),
             unclaimed_hours: 0.5,
             bounces: 1,
             landed: 2,
@@ -2252,6 +2377,10 @@ fn report_bucket(start: f64) -> api::ReportBucket {
             unanswered: 1,
             ..BucketHealth::default()
         }),
+        spend: Some(vec![
+            role_spend("executor", spend(2.0, false)),
+            role_spend("reviewer", spend(1.0, true)),
+        ]),
         workflow: Some(api::reports::PlacedHours {
             phases: vec![
                 spent("build", "Build", 30.5),
@@ -2265,12 +2394,37 @@ fn report_bucket(start: f64) -> api::ReportBucket {
     }
 }
 
+/// `n` for every status, as [`report_bucket`]'s counts by status are.
+fn every_status<T: Copy>(n: T) -> api::reports::ByStatus<T> {
+    api::reports::ByStatus {
+        backlog: n,
+        blocked: n,
+        cancelled: n,
+        concept: n,
+        design: n,
+        done: n,
+        in_progress: n,
+        ready: n,
+        review: n,
+    }
+}
+
 /// The task-hours spent in the phase or state `id`, named `label`.
 fn spent(id: &str, label: &str, hours: f64) -> api::reports::Spent {
     api::reports::Spent {
         id: id.into(),
         label: label.into(),
         hours,
+    }
+}
+
+/// `role`'s tokens in a period and their estimated cost, `spend`'s.
+fn role_spend(role: &str, spend: api::report_page::Spend) -> api::report_page::RoleSpend {
+    let api::report_page::Spend { tokens, cost } = spend;
+    api::report_page::RoleSpend {
+        role: role.into(),
+        tokens,
+        cost,
     }
 }
 

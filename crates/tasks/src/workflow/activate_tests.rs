@@ -83,10 +83,15 @@ pub(crate) fn custom(text: &str) -> Custom {
             project_blob: blob,
         })
         .unwrap();
+    let authorities = crate::workflow::authorities(text, Some(&definition)).unwrap();
     Custom {
         definition,
         revision,
         mappings,
+        project: (!authorities.is_empty())
+            .then(|| crate::workflow::attested_project(text))
+            .flatten(),
+        authorities,
     }
 }
 
@@ -107,6 +112,7 @@ fn standing(slug: &str, status: &str) -> Standing {
         roles: Vec::new(),
         accepted: None,
         attempts: Vec::new(),
+        retired: 0,
     }
 }
 
@@ -172,15 +178,60 @@ fn a_definition_needing_what_this_release_cannot_run_is_unsupported() {
         );
     let definition = written(&guarded).unwrap().0.unwrap();
     let mut host = Host::local();
-    assert_eq!(
-        supported(&definition, &host),
-        Err("unsupported adapter: approvals".into())
-    );
+    let unattested = "unsupported guard: approved (its adapter approvals needs an approval \
+                      authority committed in [[workflow_authorities]])";
+    assert_eq!(supported(&definition, &host), Err(unattested.into()));
     host.adapters.push("approvals".into());
+    assert_eq!(supported(&definition, &host), Err(unattested.into()));
+    // An authority committed for its adapter makes the guard one this release answers.
+    let attested = crate::workflow::guard::tests::guarded();
+    assert_eq!(
+        supported_with(&attested.definition, &Host::local(), &attested.authorities),
+        Ok(())
+    );
+    // Its authorities bind the project the workflow names, and refuse a workflow naming none.
+    assert_eq!(bound(&attested), Ok(()));
+    for project in [None, Some(" ".to_string())] {
+        let unbound = Custom {
+            project,
+            ..attested.clone()
+        };
+        assert!(bound(&unbound).unwrap_err().contains("names none"));
+        assert_eq!(
+            bound(&Custom {
+                authorities: Vec::new(),
+                ..unbound
+            }),
+            Ok(())
+        );
+    }
+    let mut later = attested.authorities.clone();
+    later[0].contract = 2;
     assert!(
-        supported(&definition, &host)
+        supported_with(&attested.definition, &Host::local(), &later)
             .unwrap_err()
-            .starts_with("unsupported guard: approved")
+            .contains("contract 2")
+    );
+    // A guarded pair a route reaches around its guard is refused before anything else runs.
+    let mut around = attested.definition.definition().clone();
+    let mut shortcut = around
+        .edges
+        .iter()
+        .find(|e| e.id == "accept")
+        .unwrap()
+        .clone();
+    shortcut.id = "shortcut".into();
+    shortcut.from = Pair {
+        phase: "build".into(),
+        state: "working".into(),
+    };
+    shortcut.guards.clear();
+    around.edges.push(shortcut);
+    let around = Validated::new(around).expect("a valid graph, if not a supported one");
+    assert!(
+        supported_with(&around, &Host::local(), &attested.authorities)
+            .unwrap_err()
+            .starts_with("unguarded route: edge shortcut enters verify/accepted under no guard")
     );
 }
 
@@ -234,6 +285,56 @@ fn parent_integration_and_adapters_are_unsupported() {
     assert_eq!(
         supported(&landed, &Host::local()),
         Err("unsupported edge accept: a dependency on landed".into())
+    );
+}
+
+#[test]
+fn a_guard_on_an_edge_its_adapter_prepares_or_finalizes_refuses_the_activation() {
+    let attested = crate::workflow::guard::tests::guarded();
+    let mut lander = Host::local();
+    lander.adapters.push("lander".into());
+    // `submit` prepares, the only edge into verify/awaiting, so guarding it guards the pair;
+    // `accept` finalizes, keeping the outcome its terminal pair needs.
+    for (id, operation, effect) in [
+        (
+            "submit",
+            symphony_api::workflow::Operation::PrepareExternal,
+            Effect::Prepare {
+                adapter: "lander".into(),
+            },
+        ),
+        (
+            "accept",
+            symphony_api::workflow::Operation::ConfirmExternal,
+            Effect::Finalize {
+                adapter: "lander".into(),
+            },
+        ),
+    ] {
+        let mut definition = attested.definition.definition().clone();
+        definition.adapters.push("lander".into());
+        // A confirm completes a pair that asks for no covered close.
+        for position in &mut definition.positions {
+            position.completion = symphony_api::workflow::Completion::None;
+        }
+        let edge = (definition.edges.iter_mut()).find(|e| e.id == id).unwrap();
+        edge.guards = vec!["approved".into()];
+        edge.operation = operation;
+        edge.human_wait = false;
+        edge.effects.push(effect);
+        let adapted = Validated::new(definition).expect("a valid graph, if not a supported one");
+        assert_eq!(
+            supported_with(&adapted, &lander, &attested.authorities),
+            Err(format!(
+                "unsupported edge {id}: a guard on an edge its adapter prepares or finalizes, \
+                 which takes no attestation yet"
+            ))
+        );
+    }
+    // The same edge with no adapter's effect stays supported.
+    assert_eq!(
+        supported_with(&attested.definition, &lander, &attested.authorities),
+        Ok(())
     );
 }
 
@@ -664,6 +765,8 @@ fn a_reactivation_moves_only_what_changes_and_fences_the_rest() {
         definition: Validated::new(definition.clone()).unwrap(),
         revision: old.revision.clone(),
         mappings: text_mapping.clone(),
+        authorities: Vec::new(),
+        project: None,
     };
     let placed = plan(
         &new,
@@ -690,6 +793,8 @@ fn a_reactivation_moves_only_what_changes_and_fences_the_rest() {
         definition: Validated::new(projected).unwrap(),
         revision: old.revision.clone(),
         mappings: text_mapping.clone(),
+        authorities: Vec::new(),
+        project: None,
     };
     let projected = plan(
         &new,
@@ -722,6 +827,8 @@ fn a_reactivation_moves_only_what_changes_and_fences_the_rest() {
         definition: Validated::new(restaffed).unwrap(),
         revision: old.revision.clone(),
         mappings: text_mapping,
+        authorities: Vec::new(),
+        project: None,
     };
     assert!(
         plan(
@@ -765,6 +872,8 @@ fn an_activation_carries_an_accepted_output_supersedes_it_where_none_stands_and_
             definition: Validated::new(definition).unwrap(),
             revision: old.revision.clone(),
             mappings,
+            authorities: Vec::new(),
+            project: None,
         };
         plan(
             &new,
@@ -899,6 +1008,7 @@ fn reopened(placing: &Placing, status: &str, roles: &[(&str, &str)]) -> Result<T
         left: "done",
         status,
         roles: &roles,
+        retired: 0,
     };
     placing.reopened(&task, &by(), 7.0)
 }
@@ -959,5 +1069,452 @@ fn a_reopening_the_active_workflow_cannot_place_is_refused_naming_the_pair() {
     assert_eq!(
         reopened(&placing(&[]), "nowhere", &[]).unwrap_err(),
         "sim/a has the status nowhere, which is no board status"
+    );
+}
+
+/// TWO's pairs mapped back onto built-in v1.
+pub(crate) const BACK: &str = r#"
+[[workflow_mappings]]
+from = { phase = "build", state = "available" }
+to = { phase = "ready", state = "available" }
+[[workflow_mappings]]
+from = { phase = "build", state = "working" }
+to = { phase = "in_progress", state = "working" }
+[[workflow_mappings]]
+from = { phase = "build", state = "blocked" }
+to = { phase = "blocked", state = "waiting" }
+[[workflow_mappings]]
+from = { phase = "verify", state = "awaiting" }
+to = { phase = "review", state = "awaiting_review" }
+[[workflow_mappings]]
+from = { phase = "verify", state = "accepted" }
+to = { phase = "done", state = "completed" }
+"#;
+
+fn back() -> Vec<Mapping> {
+    written(BACK).unwrap().1
+}
+
+/// A task TWO holds at `phase`/`state`, at workflow revision 2 of generation 1.
+fn held_at(slug: &str, status: &str, phase: &str, state: &str) -> Standing {
+    Standing {
+        position: Some(TaskPosition {
+            phase: phase.into(),
+            state: state.into(),
+            resume: None,
+            generation: 1,
+            revision: 2,
+            digest: "d".repeat(64),
+            manual: None,
+        }),
+        ..standing(slug, status)
+    }
+}
+
+fn returned(mappings: &[Mapping], tasks: &[Standing]) -> Result<Plan, String> {
+    let two = custom(TWO);
+    returning(two.definition.definition(), mappings, tasks, 2, &by(), 60.0)
+}
+
+#[test]
+fn a_return_sends_each_held_task_to_its_mapped_built_in_pair_and_status() {
+    let mut blocked = held_at("sim/blocked", "blocked", "build", "blocked");
+    blocked.position.as_mut().unwrap().resume = Some(pair("build", "working"));
+    let mut reviewed = held_at("sim/reviewed", "review", "verify", "awaiting");
+    reviewed.roles = vec![
+        ("amber".into(), "executor".into(), true),
+        ("birch".into(), "reviewer".into(), true),
+    ];
+    let tasks = [
+        held_at("sim/ready", "ready", "build", "available"),
+        held_at("sim/working", "in_progress", "build", "working"),
+        blocked,
+        reviewed,
+        held_at("sim/accepted", "done", "verify", "accepted"),
+        // An open task with no position is the board's writers' already: only fenced.
+        standing("sim/stray", "ready"),
+    ];
+    let plan = returned(&back(), &tasks).unwrap();
+    assert_eq!(plan.kept, vec![("sim/stray".to_string(), 3)]);
+    let moved: Vec<(&str, Pair, Option<Pair>, &str)> = (plan.moved.iter())
+        .map(|m| {
+            let t = &m.transition;
+            (
+                t.slug.as_str(),
+                t.to.clone(),
+                t.resume.clone(),
+                t.status.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        moved,
+        vec![
+            ("sim/ready", pair("ready", "available"), None, "ready"),
+            (
+                "sim/working",
+                pair("in_progress", "working"),
+                None,
+                "in_progress"
+            ),
+            (
+                "sim/blocked",
+                pair("blocked", "waiting"),
+                Some(pair("in_progress", "working")),
+                "blocked"
+            ),
+            // Its reviewer holds it: the board reads it at built-in v1's held review.
+            ("sim/reviewed", pair("review", "held"), None, "review"),
+            ("sim/accepted", pair("done", "completed"), None, "done"),
+        ]
+    );
+    let first = &plan.moved[0];
+    assert_eq!((first.version, first.expected), (3, 2));
+    let t = &first.transition;
+    assert_eq!((t.id.as_str(), t.revision), ("sim/ready@3", 3));
+    assert_eq!(t.from, Some(pair("build", "available")));
+    assert_eq!((t.generation, t.activation), (2, Some(2)));
+    assert_eq!(t.digest, crate::workflow::DEFAULT);
+    assert_eq!((t.edge.as_deref(), t.at), (None, 60.0));
+}
+
+#[test]
+fn a_return_keeps_a_pair_built_in_v1_declares_and_drops_a_resume_pair_off_a_block() {
+    // A definition that kept v1's ready/available needs no mapping for it.
+    let mut definition = custom(TWO).definition.definition().clone();
+    let mut kept = definition.positions[0].clone();
+    kept.at = pair("ready", "available");
+    definition.positions.push(kept);
+    let mut ready = held_at("sim/ready", "ready", "ready", "available");
+    // A resume pair on a task that does not return blocked is dropped, unmapped or not.
+    ready.position.as_mut().unwrap().resume = Some(pair("nowhere", "known"));
+    let plan = returning(&definition, &[], &[ready], 2, &by(), 60.0).unwrap();
+    let t = &plan.moved[0].transition;
+    assert_eq!(
+        (t.to.clone(), t.resume.clone()),
+        (pair("ready", "available"), None)
+    );
+}
+
+#[test]
+fn a_return_is_refused_whole_on_a_pair_or_resume_pair_nothing_maps() {
+    assert_eq!(
+        returned(&[], &[held_at("sim/ready", "ready", "build", "available")]),
+        Err(
+            "workflow_mappings: sim/ready is at build/available, which the workflow no longer \
+             declares; map it to a pair it declares"
+                .into()
+        )
+    );
+    let mut mappings = back();
+    mappings.retain(|m| m.from != pair("build", "working"));
+    let mut blocked = held_at("sim/blocked", "blocked", "build", "blocked");
+    blocked.position.as_mut().unwrap().resume = Some(pair("build", "working"));
+    assert_eq!(
+        returned(
+            &mappings,
+            &[held_at("sim/a", "ready", "build", "available"), blocked]
+        ),
+        Err(
+            "workflow_mappings: sim/blocked resumes to build/working, which the workflow no \
+             longer declares; map it to a pair it declares"
+                .into()
+        )
+    );
+    // A position its own workflow does not declare is the board's fault, and said.
+    assert_eq!(
+        returned(&back(), &[held_at("sim/lost", "ready", "deploy", "queued")]),
+        Err("sim/lost is at deploy/queued, which its workflow does not declare".into())
+    );
+}
+
+#[test]
+fn a_return_never_fabricates_an_outcome_satisfaction_or_completion() {
+    let onto = |from: Pair, to: Pair| {
+        let mut mappings = back();
+        mappings.retain(|m| m.from != from);
+        mappings.push(Mapping { from, to });
+        mappings
+    };
+    let working = [held_at("sim/working", "in_progress", "build", "working")];
+    assert_eq!(
+        returned(
+            &onto(pair("build", "working"), pair("done", "completed")),
+            &working
+        ),
+        Err(
+            "sim/working would stand at done/completed with the outcome Success that \
+             build/working does not record; a mapping never fabricates one"
+                .into()
+        )
+    );
+    assert!(
+        returned(
+            &onto(pair("build", "working"), pair("done", "approved")),
+            &working
+        )
+        .unwrap_err()
+        .contains("with its dependants satisfied that build/working does not record")
+    );
+    assert!(
+        returned(
+            &onto(pair("build", "working"), pair("cancelled", "cancelled")),
+            &working
+        )
+        .unwrap_err()
+        .contains("with the outcome Cancellation")
+    );
+    // What the task has it keeps: accepted work returns as approved or completed.
+    let accepted = held_at("sim/accepted", "done", "verify", "accepted");
+    let plan = returned(
+        &onto(pair("verify", "accepted"), pair("done", "approved")),
+        &[accepted],
+    )
+    .unwrap();
+    assert_eq!(plan.moved[0].transition.to, pair("done", "approved"));
+}
+
+#[test]
+fn a_return_is_refused_for_a_live_holder_the_boards_writers_would_not_keep() {
+    let mut ready = held_at("sim/ready", "ready", "build", "available");
+    ready.roles = vec![
+        ("idle".into(), "reserved".into(), true),
+        ("olive".into(), "orchestrator".into(), true),
+        ("amber".into(), "executor".into(), true),
+    ];
+    assert_eq!(
+        returned(&back(), &[ready.clone()]),
+        Err(
+            "sim/ready is held by amber as its executor, and it would return to ready, where \
+             the board's own writers keep no executor; a live holder stands in for a live \
+             attempt, which drains first (release it, or let its work finish)"
+                .into()
+        )
+    );
+    // A holder that is lost holds nothing, and its row is the board's writers' to recover.
+    ready.roles[2].2 = false;
+    assert!(returned(&back(), &[ready]).is_ok());
+    // A live executor returns with its work, a live reviewer with its review.
+    let mut working = held_at("sim/working", "in_progress", "build", "working");
+    working.roles = vec![("amber".into(), "executor".into(), true)];
+    assert!(returned(&back(), &[working.clone()]).is_ok());
+    working.roles = vec![("birch".into(), "reviewer".into(), true)];
+    assert!(
+        returned(&back(), &[working])
+            .unwrap_err()
+            .starts_with("sim/working is held by birch as its reviewer")
+    );
+    // A blocked task keeps the holder the status it resumes to keeps.
+    let mut blocked = held_at("sim/blocked", "blocked", "build", "blocked");
+    blocked.roles = vec![("amber".into(), "executor".into(), true)];
+    assert!(returned(&back(), &[blocked.clone()]).is_ok());
+    blocked.position.as_mut().unwrap().resume = Some(pair("build", "available"));
+    assert!(
+        returned(&back(), &[blocked])
+            .unwrap_err()
+            .contains("it would return to blocked, where the board's own writers keep no executor")
+    );
+}
+
+#[test]
+fn the_boards_writers_keep_an_executor_through_review_and_a_reviewer_in_review() {
+    for (status, executor, reviewer) in [
+        ("backlog", false, false),
+        ("concept", true, false),
+        ("design", true, false),
+        ("ready", false, false),
+        ("in_progress", true, false),
+        ("review", true, true),
+        ("done", false, false),
+        ("cancelled", false, false),
+    ] {
+        assert_eq!(keeps(status, None, "executor"), executor, "{status}");
+        assert_eq!(keeps(status, None, "reviewer"), reviewer, "{status}");
+        assert!(keeps(status, None, "orchestrator") && keeps(status, None, "reserved"));
+        assert_eq!(
+            keeps("blocked", Some(status), "executor"),
+            executor,
+            "{status}"
+        );
+    }
+    assert!(keeps("blocked", None, "executor") && keeps("blocked", None, "reviewer"));
+}
+
+#[test]
+fn a_task_a_return_retired_continues_its_workflow_revisions() {
+    let two = custom(&format!("{TWO}{MAPPED}"));
+    let mut back_again = standing("sim/ready", "ready");
+    back_again.retired = 3;
+    let plan = planned(&two, None, &[back_again]).unwrap();
+    let moved = &plan.moved[0];
+    // It has no position, so its write fences on none; its revision is the next all the same.
+    assert_eq!((moved.expected, moved.transition.revision), (0, 4));
+    assert_eq!(moved.transition.id, "sim/ready@4");
+
+    let roles = Vec::new();
+    let task = Reopening {
+        slug: "sim/a",
+        left: "done",
+        status: "review",
+        roles: &roles,
+        retired: 3,
+    };
+    let placed = placing(&[]).reopened(&task, &by(), 7.0).unwrap();
+    assert_eq!((placed.id.as_str(), placed.revision), ("sim/a@4", 4));
+}
+
+/// TWO with its submit edge guarded by `approved`: verify/awaiting is a pair only that guard
+/// lets a task into, and every open status mapped.
+fn guarded_review() -> Custom {
+    let attested = crate::workflow::guard::tests::guarded();
+    let mut definition = attested.definition.definition().clone();
+    for edge in definition.edges.iter_mut() {
+        edge.guards = match edge.id.as_str() {
+            "submit" => vec!["approved".into()],
+            _ => Vec::new(),
+        };
+    }
+    Custom {
+        definition: Validated::new(definition).unwrap(),
+        ..custom(&format!(
+            "{}{MAPPED}",
+            crate::workflow::guard::tests::guarded_text(7)
+        ))
+    }
+}
+
+#[test]
+fn an_activation_never_places_or_maps_a_task_past_a_guard() {
+    let guarded = guarded_review();
+    let refused = planned(&guarded, None, &[standing("sim/review", "review")]).unwrap_err();
+    assert_eq!(
+        refused,
+        "sim/review would stand at verify/awaiting, which only edges guarded by approved enter; \
+         activation never takes a task past a guard: map it to a pair before it"
+    );
+    // A task elsewhere is placed as before.
+    assert!(planned(&guarded, None, &[standing("sim/ready", "ready")]).is_ok());
+    // A blocked task that would resume past the guard is refused as well.
+    let mut definition = guarded.definition.definition().clone();
+    for edge in definition.edges.iter_mut() {
+        edge.guards = match edge.id.as_str() {
+            "claim" => vec!["approved".into()],
+            _ => Vec::new(),
+        };
+    }
+    let resuming = Custom {
+        definition: Validated::new(definition).unwrap(),
+        ..guarded.clone()
+    };
+    let mut blocked = standing("sim/blocked", "blocked");
+    blocked.blocked_from = Some("in_progress".into());
+    let refused = planned(&resuming, None, &[blocked]).unwrap_err();
+    assert!(
+        refused.contains("would resume to build/working"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_task_already_past_a_guard_stays_there_only_under_the_same_guards() {
+    let guarded = guarded_review();
+    let at_awaiting = |digest: &str| TaskPosition {
+        phase: "verify".into(),
+        state: "awaiting".into(),
+        resume: None,
+        generation: 1,
+        revision: 2,
+        digest: digest.into(),
+        manual: None,
+    };
+    let mut verify = standing("sim/verify", "review");
+    verify.position = Some(at_awaiting(&guarded.revision.digest));
+    // The same guards before and after: it stood there under them, and stays.
+    let kept = plan(
+        &guarded,
+        Some(guarded.definition.definition()),
+        std::slice::from_ref(&verify),
+        2,
+        &by(),
+        60.0,
+    )
+    .unwrap();
+    assert_eq!(kept.kept, vec![("sim/verify".to_string(), 3)]);
+    // Under a previous workflow that did not guard it, it never met the guard: refused.
+    let unguarded = custom(&format!("{TWO}{MAPPED}"));
+    let refused = plan(
+        &guarded,
+        Some(unguarded.definition.definition()),
+        &[verify],
+        2,
+        &by(),
+        60.0,
+    )
+    .unwrap_err();
+    assert!(
+        refused.contains("would stand at verify/awaiting"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_reopened_task_is_never_placed_past_a_guard() {
+    let guarded = guarded_review();
+    let placing = Placing {
+        definition: guarded.definition.definition().clone(),
+        mappings: guarded.mappings.clone(),
+        generation: 4,
+        digest: "d".repeat(64),
+    };
+    let refused = reopened(&placing, "review", &[]).unwrap_err();
+    assert!(
+        refused.starts_with(
+            "sim/a would reopen at verify/awaiting, which only edges guarded by approved enter"
+        ),
+        "{refused}"
+    );
+    assert!(reopened(&placing, "ready", &[]).is_ok());
+}
+
+#[test]
+fn the_board_takes_no_guarded_edge_and_no_exhausted_retry_bound_passes_a_guard() {
+    use crate::workflow::guard::tests::guarding_edge;
+    use crate::workflow::recover::attempt_tests::attempts;
+    let attesters = [crate::workflow::guard::tests::attester(7)];
+    // A guard on the automatic edge: the board brings no attestation to meet it.
+    let automatic_guarded = custom(&guarding_edge(&attempts(false), "rework"));
+    let d = automatic_guarded.definition.definition();
+    let rework = (d.edges.iter()).find(|e| e.id == "rework").unwrap();
+    assert_eq!(
+        automatic(d, rework, &Host::local()),
+        Some("an automatic edge is guarded, and the board brings no attestation to meet its guard")
+    );
+    let definition = &automatic_guarded.definition;
+    assert!(supported_with(definition, &Host::local(), &attesters).is_err());
+    // A retry bound exhausted to a pair only a guarded edge enters reaches it unguarded: the board
+    // sends the task there as a recovery, no edge taken. Here a person escalates a check to
+    // verify/stuck under the guard, where the bound also sends it.
+    let unstick = "  { id = \"unstick\",";
+    let escalate = "  { id = \"escalate\", label = \"Escalate\", from = { phase = \"verify\", state = \
+         \"checking\" }, to = { phase = \"verify\", state = \"stuck\" }, operation = \"advance\", \
+         authority = [{ kind = \"project_capability\", capability = \"owner\" }], inputs = [], \
+         dependencies = \"none\", guards = [], effects = [{ kind = \"slot\", policy = \"release\" }], \
+         automatic = false, human_wait = false },\n";
+    let escalating = attempts(false).replacen(unstick, &format!("{escalate}{unstick}"), 1);
+    assert_ne!(escalating, attempts(false), "the escalate edge is added");
+    let exhausting = custom(&guarding_edge(&escalating, "escalate"));
+    assert_eq!(
+        crate::workflow::guard::coverage(exhausting.definition.definition()),
+        Err(
+            "unguarded route: the retry bound of edge rework sends a task to verify/stuck once \
+             exhausted, which edge escalate enters under approved"
+                .into()
+        )
+    );
+    // Exhausted to where it stood, past no guard, the bound passes.
+    let staying = custom(&guarding_edge(&attempts(false), "accept"));
+    assert_eq!(
+        crate::workflow::guard::coverage(staying.definition.definition()),
+        Ok(())
     );
 }

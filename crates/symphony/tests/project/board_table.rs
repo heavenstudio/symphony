@@ -113,6 +113,36 @@ fn the_board_table_takes_the_cap_on_what_the_sweep_sets_aside_as_the_board_reads
 }
 
 #[test]
+fn the_board_table_takes_the_hours_a_build_no_longer_run_holds_a_move_as_the_writer_rule_reads_them()
+ {
+    // The writer rule reads the bound itself; the project takes what it takes and refuses what it
+    // refuses, the rule reading anything it refuses as its default.
+    let tree = super::Tree::new();
+    let root = tree.root.clone();
+    for (text, hours) in [
+        ("", symphony::machine::writers::UNUSED_HOURS),
+        ("[board]\nstale_writer_hours = 48\n", 48),
+        ("[board]\nstale_writer_hours = 1\n", 1),
+    ] {
+        assert!(parsed(text).is_ok(), "{text}");
+        std::fs::write(root.join("symphony.toml"), text).unwrap();
+        assert_eq!(
+            symphony::machine::writers::Runs::of(&root).hours,
+            hours,
+            "{text}"
+        );
+    }
+    for value in ["0", "-1", "1.5", "\"24\""] {
+        let text = format!("[board]\nstale_writer_hours = {value}\n");
+        assert!(refused(&text).contains("stale_writer_hours"), "{text}");
+    }
+    assert!(
+        refused("[board]\nstale_writer_hours = 0\n")
+            .contains("[board] stale_writer_hours is 0; it is a whole number of hours over 0")
+    );
+}
+
+#[test]
 fn the_board_table_takes_the_folder_of_the_machines_postgresql_as_the_board_reads_it() {
     // The board reads the folder itself; the project takes what it takes and refuses what it
     // refuses: a folder of the machine's, so absolute, never one inside the project.

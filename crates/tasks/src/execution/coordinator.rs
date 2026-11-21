@@ -152,7 +152,8 @@ impl<'a> Coordinator<'a> {
 
     /// Attempt `id`'s ending proposed to the workflow that holds its task, once one of this
     /// coordinator's own writes ended it: what the board refuses (its task moved since, no action
-    /// answers it) stays on the attempt, and moves nothing.
+    /// answers a cancel) stays on the attempt and moves nothing, and the board says a failure
+    /// nothing can answer once on its task's thread.
     fn observe(&self, id: &str) -> Result<(), Refusal> {
         match self.store.observe_attempt(id, &self.host) {
             Ok(_) | Err(Error::Refused(_)) => Ok(()),

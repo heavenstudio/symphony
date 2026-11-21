@@ -229,14 +229,15 @@ fn scratch(exe: &Path, args: &[String], database: &str, asks: &Path) -> i32 {
 const SERVES: &str = "--serves";
 
 /// What this build serves, as one line of JSON: the plugin protocol it speaks
-/// (docs/PLUGIN_PROTOCOL.md), the board schema it reads and writes and its Symphony pin
-/// (`symphony::machine::PIN`). A release's install asks the server it built, never the sources,
+/// (docs/PLUGIN_PROTOCOL.md), the board schema it reads and writes with its additive steps on it
+/// (`symphony_board::schema::ADDITIONS`) and its Symphony pin (`symphony::machine::PIN`). A release's install asks the server it built, never the sources,
 /// and writes the answer in the release's manifest (docs/RELEASES.md, "The install").
 pub fn serves() -> String {
     let protocol = symphony_plugin::protocol::PROTOCOL;
     serde_json::json!({
         "protocol": {"major": protocol.major, "minor": protocol.minor},
         "schema": symphony_board::SCHEMA,
+        "additions": symphony_board::schema::ADDITIONS,
         "pin": symphony::machine::PIN,
     })
     .to_string()

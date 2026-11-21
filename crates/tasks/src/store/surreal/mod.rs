@@ -24,6 +24,7 @@ pub(in crate::store) mod dispatcher;
 pub(in crate::store) mod effects;
 pub(in crate::store) mod execution;
 pub(in crate::store) mod fields;
+pub(in crate::store) mod guard;
 pub(in crate::store) mod history;
 pub(in crate::store) mod launches;
 pub(in crate::store) mod messages;

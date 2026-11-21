@@ -54,7 +54,7 @@ project's pin ([when a landing owes one](docs/CHECKS.md#what-a-landing-tells-a-c
   route in every link and on the wire. Its reads, saves and commits name the file `Project::file`
   maps it to, and every walk goes through `Project::walk`, so what an entrypoint leaves out is
   never listed or read. The Symphony's own routes (`symphony_api::SYMPHONY_ROUTES`, which
-  `assets/shell.js` repeats) win over every entrypoint.
+  `apps/symphony-web/shell/shell.ts` repeats) win over every entrypoint.
 - **The one server** serves every project the machine folder's registry holds, each under
   `/<id>/`. It is the server of the release installed on the machine (`current`) while every
   registered project's plugins answer from a process, which any host serves, and a project's build
@@ -115,11 +115,13 @@ stylesheet every page shares) and publishes its bundle, one shell and one
 `builds.json` under
 `apps/symphony-server/client/public/`, which the server package embeds at build time. A branch
 commits no distribution, whatever it changed: the regenerator a land starts rebuilds it from
-main's newest tip and lands it as a commit of its own ([TASKS](docs/TASKS.md#the-regenerator)),
-so a task builds the client for its tests and pictures and puts the distribution back
-(`git checkout -- apps/symphony-server/client/public`). The one exception is a release
-candidate's fix that changes what the client is built from: no regenerator builds the candidate,
-so that branch commits the distribution its own sources make, and the land keeps main's side of it
+main's newest tip and delivers it as a task of its own, `generated/outputs-at-TIP-COMMIT`
+([TASKS](docs/TASKS.md#what-the-generators-make-delivered-by-a-pull-request)), and a land refuses
+a branch that changes it, so a task builds the client for its tests and pictures and puts the
+distribution back (`git checkout -- apps/symphony-server/client/public`). The one exception is a
+release candidate's fix that changes what the client is built from: no regenerator builds the
+candidate, so the head its approve names commits the distribution its own sources make, and the
+branch then merges main once, keeping main's side of it, and delivers that second head
 ([RELEASES](docs/RELEASES.md#the-release-candidate)). `just client-check` rebuilds into a
 separate folder and compares every path and byte with the committed distribution. How the build
 stays the same from any checkout, and the builds a distribution keeps, is [the client's
@@ -166,8 +168,9 @@ standing rules in [RULES.md](RULES.md).
 tools: `crates/symphony/tests/hooks/own_names.rs` fails on an old state or tool name
 outside the fences it lists, each with its reason (a past incident's record in
 `docs/history/`), and on the first consuming project's name, in any spelling or identifier
-built from it, in a tracked file's text or path: say "the consuming project". The state
-folders are named once, in `crates/tasks/src/folders.rs`.
+built from it, in a tracked file's text or path: say "the consuming project". It passes over
+the owner's own dated lines under a card of a register, saved as they said them, and judges
+every other line. The state folders are named once, in `crates/tasks/src/folders.rs`.
 
 **Memory lives in the repository.** Nothing goes in an agent's own memory folder
 (`~/.claude/projects/…/memory/`): what must outlast a session is guidance here or in a
@@ -192,27 +195,36 @@ model `just tasks limits` names for the role (a subagent otherwise inherits its 
 model). A resumed agent keeps the model it started on. The work-in-progress limits are settings
 the same way, in `[limits]`.
 
-**Landing and pushing main.** An orchestrator lands an approved task with `just land SLUG --as
-HANDLE`, never a merge by hand: it merges, closes the task and pushes `main` to `origin` as its
-last step, without asking each time: the push is part of the land. The push fetches first,
-merges what `origin/main` gained, never forces, and pushes no other branch and no tag; one that
-fails leaves the landing done here and names the command to retry, and a land interrupted is run
-again, which finishes it. A land here takes seconds: with `[land] check = false` it runs no check,
-the docs audit being evidence at the tip, and it keeps main's side of the client distribution a
-branch changed, which the regenerator it starts detached rebuilds and lands after
-([TASKS](docs/TASKS.md#the-regenerator)). It lands a task once
-every stamp it needs stands on its tip: the stamps its assessor wrote from the catalogue
-(`just tasks stamps`), on the tip it read, a fresh reviewer's approve naming the tip alone where
-none did; a missing stamp, a conflict or a red goes back on the thread, naming who gives it
-([the default landing](docs/TASKS.md#the-default-landing)). An orchestrator starts the assessor
-when it files a task and each time it moves to review, before any reviewer, and lands a task
-without asking the owner: `just land` runs with no permission prompt, and the stamps standing on
-the tip decide it. A decision the owner must make is a card in [DECISIONS](docs/DECISIONS.md),
-not a question in chat.
+**Landing by pull request.** This repository's tasks land through pull requests on
+`heavenstudio/symphony` (`[land] delivery`,
+[GITHUB_SETUP](docs/GITHUB_SETUP.md#delivery-by-pull-request)), and nobody pushes `main`, the
+owner included: its ruleset refuses every update but GitHub's squash of a pull request whose
+`symphony/eligible` check is green. Nobody runs a land either. A task's move to review dispatches
+it, detached from the main checkout: its branch pushed, its pull request opened, its evidence
+written there as checks and GitHub's auto-merge armed; each later assessment, verdict, gate
+decision or move writes the checks again. Once every stamp it needs stands on its head (the stamps
+its assessor wrote from the catalogue, `just tasks stamps`, on the head it read, and a fresh
+reviewer's approve naming the head alone where none did), `symphony/eligible` turns green, GitHub
+squashes it within seconds, and the board closes the task, fast-forwards the main checkout and
+starts `[board] on_land` and the regenerator
+([a land dispatched at review](docs/TASKS.md#a-land-dispatched-at-review)). A dispatch that
+stops, another check's red, a conflict or a pull request closed unmerged is said on the thread to
+`@orchestrator`, naming what follows; `just land SLUG --as HANDLE`, which needs no permission
+prompt, dispatches by hand a task that reached done before these settings landed, or one whose
+merge did not come. What dispatches is the main checkout's `.target/bin/symphony-github`, a build
+of main put there by hand (`tools/cargo.sh build -p symphony-github`, then copied): nothing
+rebuilds it, so a change to the program is built and put there again once it lands. An
+orchestrator starts the assessor when it files a task and each time it moves to review, before any
+reviewer: a task nobody assessed at its head waits in review with its checks pending, and nothing
+merges it. A decision the owner must make is a card in [DECISIONS](docs/DECISIONS.md), not a
+question in chat.
 
 **Releases.** A land starts a release run (`just release`, below) once `[releases]
 every_landings` tasks (20) have landed since the last release or run ([the
-cadence](docs/RELEASES.md#the-cadence)), and a green release refreshes the machine: the release
+cadence](docs/RELEASES.md#the-cadence)), or, where `[releases] hosted` has the release verified
+on GitHub's runners, once `hosted_every_minutes` passed since the last run started, that run
+verifying nothing here ([the hosted clock](docs/RELEASES.md#the-hosted-clock)), and a green
+release refreshes the machine: the release
 installed in the machine folder ([the install](docs/RELEASES.md#the-install)), each registered
 project's board moved to its schema once every writer seen there in the last week is on the
 release, `current` pointed at it, and the machine's server following `current` by its own reload
@@ -223,11 +235,11 @@ or `--commit` by hand, installing its schedule and turning `[releases] publish` 
 owner's call; an orchestrator reruns `just release --refresh` without asking once what a refresh
 left red, or left to a project, is put right ([who runs it](docs/RELEASES.md#who-runs-it)).
 The one exception is the run that follows a landing that moves the board's schema, which the
-orchestrator who landed it starts at once without asking
+task's orchestrator starts at once without asking, once the board's landed line is on its thread
 ([the cadence](docs/RELEASES.md#the-cadence)).
 A schema move never waits for the owner: when this board is at a schema the release `current`
 names does not serve, the refresh of a green release serving it points `current` forward itself
-([the forward move](docs/RELEASES.md#the-refresh)). Where one did not, its failed update's task
+([the refresh](docs/RELEASES.md#the-refresh)). Where one did not, its failed update's task
 filed ([an update](docs/RELEASES.md#an-update)), an orchestrator points `current` forward at that
 release at once, without asking, and says so on that task's thread; another project's pages then
 save nothing until its board moves, which its own update's task tells. Restarting the shared

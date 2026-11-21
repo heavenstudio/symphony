@@ -1196,10 +1196,22 @@ fn authority_insert_all_matches_the_standard_set_length_and_reports_cost() {
 #[test]
 fn workflow_mappings_are_a_known_key_checked_against_the_workflow() {
     let mapped = "[[workflow_mappings]]\nfrom = { phase = \"ready\", state = \"available\" }\nto = { phase = \"build\", state = \"available\" }\n";
+    // With no [workflow] the mappings map onto built-in v1, the board's own writers: a pair it
+    // declares is never remapped, and one it does not maps to one it does.
     assert!(
         Project::parse(Path::new("/tmp/demo"), mapped)
             .unwrap_err()
-            .contains("workflow_mappings: no [workflow] to map onto")
+            .contains("workflow_mappings: ready/available is still declared")
+    );
+    let back = "[[workflow_mappings]]\nfrom = { phase = \"build\", state = \"available\" }\nto = { phase = \"ready\", state = \"available\" }\n";
+    assert!(Project::parse(Path::new("/tmp/demo"), back).is_ok());
+    assert!(
+        Project::parse(
+            Path::new("/tmp/demo"),
+            &back.replace("\"ready\"", "\"deploy\"")
+        )
+        .unwrap_err()
+        .contains("names a destination the workflow does not declare")
     );
     assert!(
         Project::parse(Path::new("/tmp/demo"), &format!("{CUSTOM}{mapped}"))
@@ -1218,7 +1230,85 @@ fn workflow_mappings_are_a_known_key_checked_against_the_workflow() {
     tree.write("symphony.toml", mapped);
     Project::of(&tree.root);
     let problem = Project::problem(&tree.root).unwrap();
-    assert!(problem.contains("no [workflow] to map onto"), "{problem}");
+    assert!(
+        problem.contains("ready/available is still declared"),
+        "{problem}"
+    );
+    assert!(!problem.contains("unknown"), "{problem}");
+}
+
+/// The Ed25519 base point: a key that reads, whose secret no test needs.
+const AUTHORITY_KEY: &str =
+    "ed25519:5866666666666666666666666666666666666666666666666666666666666666";
+
+#[test]
+fn workflow_authorities_are_a_known_key_committed_for_a_guarded_workflow_and_its_project() {
+    let owned = CUSTOM
+        .replace("capabilities = [\"accept\"]", "capabilities = [\"owner\"]")
+        .replace("capability = \"accept\"", "capability = \"owner\"");
+    let root = Path::new("/tmp/demo");
+    Project::parse(root, &owned).expect("the owner's workflow is supported");
+    let guarded = owned
+        .replacen("adapters = []", "adapters = [\"approvals\"]", 1)
+        .replacen(
+            "guards = []",
+            "guards = [{ id = \"approved\", adapter = \"approvals\" }]",
+            1,
+        )
+        .replacen(
+            "dependencies = \"none\", guards = []",
+            "dependencies = \"none\", guards = [\"approved\"]",
+            1,
+        );
+    let authority = |adapter: &str, key: &str| {
+        format!(
+            "[[workflow_authorities]]\nadapter = \"{adapter}\"\nissuer = \"ledger\"\n\
+             contract = 1\nkey = \"{key}\"\n"
+        )
+    };
+    let project = "[project]\nid = \"demo\"\n";
+    let unattested = Project::parse(root, &guarded).unwrap_err();
+    assert!(
+        unattested.contains("unsupported_activation: unsupported guard: approved"),
+        "{unattested}"
+    );
+    let anonymous = format!("{guarded}{}", authority("approvals", AUTHORITY_KEY));
+    assert!(
+        Project::parse(root, &anonymous)
+            .unwrap_err()
+            .contains("[project] id names none")
+    );
+    let committed = format!(
+        "{guarded}{project}{}",
+        authority("approvals", AUTHORITY_KEY)
+    );
+    Project::parse(root, &committed).expect("a guard with its authority committed is supported");
+    let elsewhere = format!(
+        "{guarded}{project}{}",
+        authority("elsewhere", AUTHORITY_KEY)
+    );
+    assert!(
+        Project::parse(root, &elsewhere)
+            .unwrap_err()
+            .contains("elsewhere is no adapter the workflow declares")
+    );
+    let unread = format!("{guarded}{project}{}", authority("approvals", "rsa:00"));
+    assert!(
+        Project::parse(root, &unread)
+            .unwrap_err()
+            .contains("not ed25519:HEX")
+    );
+    let alone = authority("approvals", AUTHORITY_KEY);
+    assert!(
+        Project::parse(root, &alone)
+            .unwrap_err()
+            .contains("workflow_authorities: no [workflow] to guard")
+    );
+    let tree = tree::Tree::new();
+    tree.write("symphony.toml", &alone);
+    Project::of(&tree.root);
+    let problem = Project::problem(&tree.root).unwrap();
+    assert!(problem.contains("no [workflow] to guard"), "{problem}");
     assert!(!problem.contains("unknown"), "{problem}");
 }
 
@@ -1253,10 +1343,20 @@ fn the_project_file_reads_its_workflow_as_the_board_does_and_names_what_it_refus
         mappings.starts_with("symphony.toml: workflow_mappings: "),
         "{mappings}"
     );
-    // Both are settings the Symphony knows, whatever they hold.
-    for text in ["workflow = 1\n", "workflow_mappings = []\n"] {
+    let authorities = parse("workflow_authorities = \"none\"\n").unwrap_err();
+    assert!(
+        authorities.starts_with("symphony.toml: workflow_authorities: "),
+        "{authorities}"
+    );
+    // Each is a setting the Symphony knows, whatever it holds.
+    for text in [
+        "workflow = 1\n",
+        "workflow_mappings = []\n",
+        "workflow_authorities = 1\n",
+    ] {
         let refused = parse(text).err().unwrap_or_default();
         assert!(!refused.contains("the Symphony knows"), "{refused}");
     }
     assert!(parse("workflow_mappings = []\n").is_ok());
+    assert!(parse("workflow_authorities = []\n").is_ok());
 }

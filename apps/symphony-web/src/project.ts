@@ -210,7 +210,7 @@ export function crumbs(view: ProjectView, path: string): string[] {
 /**
  * `key` as the project's pages keep it in the browser: the machine's one server's projects share
  * its origin, so each key takes the project's id first; a server of its own keeps it as it is.
- * shell.js's `stored` is the same rule.
+ * shell.ts's `stored` is the same rule.
  */
 export function stored(view: ProjectView, key: string): string {
   const id = (view.base ?? "").replace(/^\/+/, "");

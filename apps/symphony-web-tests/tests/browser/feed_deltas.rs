@@ -255,6 +255,12 @@ fn a_live_update_to_one_card_draws_only_that_card_and_its_column() {
         "the page's React tree was never heard"
     );
     let from = page.eval("window.__commits.length");
+    // The stand-in answers each column's read with its one listing, which never carries the rename
+    // as the server's would, and a column read replays only the events heard since it began: one
+    // that begins after the delta (a column that mounts near the screen late, or a read tried
+    // again) draws the card back with its old title. Held until the delta's commit is read, so only
+    // the delta draws the card and its new title stays.
+    site.hold_route("/api/task-board", true);
     push_fields(
         &site,
         4183,
@@ -273,6 +279,7 @@ fn a_live_update_to_one_card_draws_only_that_card_and_its_column() {
         "{:?}",
         page.eval(&format!("window.__commits.slice({from})"))
     );
+    site.hold_route("/api/task-board", false);
     // The stable column action still opens Cancelled after a live update and returns to stages.
     page.reveal("#column-done");
     page.eval(

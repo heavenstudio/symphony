@@ -1,7 +1,7 @@
 // A select field, drawn as the chat's was (the copied components' deferred select): the
 // page draws its trigger, and opening it asks the overlay module, this client's persistent kind
 // `overlay`, which the shell loads on a first use or ahead once the page is idle, for its popup
-// (`window.reviewOverlay`, shell.js).
+// (`window.reviewOverlay`, shell.ts).
 // The request is data and one callback, which the popup answers with the value chosen, or nothing
 // once it closes. The shell answers nothing for a field whose page it leaves.
 

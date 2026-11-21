@@ -1,6 +1,7 @@
 // The approved waiting board's presentation. The server supplies complete counts and pages;
 // these helpers place and order live changes by the same waiting-column contract.
 import { useEffect, useState } from "react";
+import { useCardCost } from "./card-costs";
 import { href } from "./project";
 import { slugOrder } from "./task";
 import { markTasksReady, statusWords } from "./taskcard";
@@ -154,6 +155,7 @@ export function Ends({ text }: { text: string }) {
 export function WaitCard({ task, now }: { task: Task; now: number }) {
   useEffect(markTasksReady);
   const [open, setOpen] = useState(false);
+  const cost = useCardCost(task.slug, task.updated);
   const kind = waitKind(task);
   const finished = ["done", "cancelled"].includes(task.status);
   const since = finished ? task.updated : waitSince(task);
@@ -195,6 +197,11 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
       </a>
       <div className="waiting-slug">
         <code>{shown(task.slug)}</code>
+        {cost !== undefined && (
+          <span className="card-cost" title={cost.title}>
+            {cost.said}
+          </span>
+        )}
         <span className="prio">{`p${task.priority}`}</span>
         <button
           type="button"

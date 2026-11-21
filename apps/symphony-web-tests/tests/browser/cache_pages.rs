@@ -156,17 +156,16 @@ pub(super) fn keeps(chrome: &mut Chrome, parts: &[&str]) {
     );
 }
 
-/// The store as the shell carries it.
-const STORE: &str = include_str!("../../../symphony-web/shell/cache.js");
-
 /// This origin's store opened before a page's first visit, in a page of the site's without the
 /// client (`/api/pending`, a read no test here counts): the store keeps a scratch item, asked again
 /// until it answers, and forgets it. A fresh profile's first open makes the database against the
 /// store's 500 ms deadline, which a loaded machine can miss, and the page then keeps nothing, as
-/// it should (`assets/cache.js`); with the database made, the page's own open makes nothing.
+/// it should (`shell/cache.ts`); with the database made, the page's own open makes nothing.
 pub(super) fn store_opened(chrome: &mut Chrome, site: &Site) {
     chrome.open(&site.url("/api/pending"));
-    chrome.eval(&format!("(async () => {{ {STORE}\n return null; }})()"));
+    // The store as the shell carries it, its types stripped.
+    let store = crate::assets::store();
+    chrome.eval(&format!("(async () => {{ {store}\n return null; }})()"));
     let format = symphony_api::CACHE_FORMAT;
     let keep = format!(
         r#"window.symphonyCache.keep({format}, "warm", "task:warm", "task", "page", "", {{}}, undefined, false)"#

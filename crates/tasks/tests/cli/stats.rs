@@ -16,6 +16,10 @@ use symphony_board::sys::local_minute;
 mod proxy;
 
 const H: f64 = 3600.0;
+/// The tokens' line of `stats` on a board `TASKS_SERVER` names with no folder of day files named,
+/// as every board of these tests is: its last.
+const NO_DAY_FILES: &str = "Tokens: no day file read (a board TASKS_SERVER names keeps no reports \
+                            unless SYMPHONY_REPORTS names their folder)\n";
 /// When the window's tasks are made: ten days after the old one.
 const START: f64 = NOW + 10.0 * 86_400.0;
 
@@ -163,7 +167,7 @@ Done per day, local time (each top-level task done now, once, on the day of its 
   sim/c                        blocked     42.0 h
 Blocked: 1, median 42.0 h there
 Ready with no executor: 1, median 48.0 h there
-",
+{NO_DAY_FILES}",
         days.concat()
     );
     assert_eq!(later.ok("", &["stats", "--days", "3"]), wanted);
@@ -278,7 +282,7 @@ fn stats_of_an_empty_board_and_a_window_of_no_days() {
     assert_eq!(
         c.ok("", &["stats", "--days", "1"]),
         format!(
-            "Stats: 0 top-level tasks made in the last 1 days; every figure is theirs but done per day\nDone 0\nDone per day, local time (each top-level task done now, once, on the day of its last close in the last 1 days, whenever it was made):\n  {before}  0\n  {today}  0\nBlocked: 0\nReady with no executor: 0\n"
+            "Stats: 0 top-level tasks made in the last 1 days; every figure is theirs but done per day\nDone 0\nDone per day, local time (each top-level task done now, once, on the day of its last close in the last 1 days, whenever it was made):\n  {before}  0\n  {today}  0\nBlocked: 0\nReady with no executor: 0\n{NO_DAY_FILES}"
         )
     );
     let refused = c.run_as("", &["stats", "--days", "0"], "");
@@ -726,13 +730,13 @@ fn stats_gives_each_arms_tasks_done_lead_review_and_bounces() {
     let later = at(&experiment(), START, 12.0);
     let said = later.ok("", &["stats", "--days", "1"]);
     assert!(
-        said.ends_with(
+        said.ends_with(&format!(
             "\nArms (the tasks filed with --arm; lead and review are the medians of the done):
   control      tasks 2 · done 2 · lead 9.0 h · review 5.0 h · bounces 1
   later        tasks 1 · done 0 · lead - · review - · bounces 0
   no-review    tasks 2 · done 1 · lead 3.0 h · review 1.0 h · bounces 2
-"
-        ),
+{NO_DAY_FILES}"
+        )),
         "{said}"
     );
     // The window's own figures count every task, the one on no arm too.
@@ -851,4 +855,173 @@ fn list_reads_when_tasks_took_their_status_in_one_request_however_many_it_lists(
     assert_eq!(reads(&few_requests), 1);
     assert_eq!(reads(&many_requests), 1);
     assert_eq!(few_requests.len(), many_requests.len());
+}
+
+/// What `beat` hands the board: `n` of each kind of `model`, `n * 1000` read from the cache.
+fn spent(model: &str, n: u64) -> symphony_board::usage::Spent {
+    symphony_board::usage::Spent {
+        model: model.into(),
+        speed: "standard".into(),
+        tokens: symphony_board::usage::Tokens {
+            input: n,
+            cache_write_5m: n,
+            cache_write_1h: n,
+            cache_read: n * 1000,
+            output: n,
+            calls: n,
+        },
+    }
+}
+
+/// The acceptance's fixture: `sim/jump` worked by an executor on a priced model and one the price
+/// table lacks (round 1), reviewed (round 2) and landed, the day's roll-up run before the first
+/// token and after the landing as the shared server runs it. `show --json`, the task page's route
+/// (its wire type), `stats --json` and its text then say the same tokens and estimated cost.
+#[test]
+fn show_the_task_route_and_stats_say_the_same_tokens_and_cost() {
+    let c = Case::new();
+    let d = day_start(NOW);
+    let t = |hours: f64| at(&c, d, hours);
+    let folder = std::env::temp_dir().join(format!(
+        "symphony-stats-tokens-{}-{}",
+        std::process::id(),
+        c.env.vars["TASKS_DATABASE"]
+    ));
+    let roll = |hours: f64| {
+        let now = d + hours * H;
+        let read = t(hours).store().report_records(d).unwrap();
+        let before = symphony_board::reports::read(&folder, &symphony_api::run_day(d)).unwrap();
+        let gained = (before.as_ref())
+            .and_then(|file| Some((file.usage.as_ref()?, file.read)))
+            .map(|(base, from)| {
+                symphony_board::reports::spend::gained(base, from, &read.usage, now)
+            })
+            .unwrap_or_default();
+        let mut day = report_day("sim", d, now, now, &read);
+        symphony_board::reports::spend::fill(&mut day, &read.usage, before.as_ref(), &gained);
+        symphony_board::reports::write(&folder, &day).unwrap();
+    };
+    let (orch, exe, rev) = (
+        t(0.5).register("orchestrator"),
+        t(0.5).register("worker"),
+        t(0.5).register("reviewer"),
+    );
+    t(0.5).ok(&orch, &["create", "sim/jump", "Jump"]);
+    t(0.5).ok(&exe, &["claim", "sim/jump"]);
+    roll(0.75);
+    let store = t(1.0).store();
+    assert!(store.bind_agent("exec", &exe, false).unwrap());
+    assert!(store.bind_agent("rev", &rev, false).unwrap());
+    let beat = |hours: f64, key: &str, spent: &[symphony_board::usage::Spent]| {
+        (t(hours).store())
+            .agent_beat_spending(key, &symphony_board::Beat::default(), None, None, spent)
+            .unwrap()
+    };
+    beat(
+        1.0,
+        "exec",
+        &[spent("claude-opus-5-5", 3), spent("gpt-x", 2)],
+    );
+    t(2.0).ok(&exe, &["move", "sim/jump", "review"]);
+    t(2.0).ok(&rev, &["role", "sim/jump", "reviewer"]);
+    beat(2.5, "rev", &[spent("claude-opus-5-5", 1)]);
+    t(3.0).ok(&rev, &["verdict", "sim/jump", "approve", "fine"]);
+    (t(3.5).store())
+        .landed(
+            "sim/jump",
+            &orch,
+            "landed sim/jump on main at 3e0c661",
+            false,
+            &["done"],
+        )
+        .unwrap();
+    roll(4.0);
+    let mut shown: Value =
+        serde_json::from_str(&t(5.0).ok("", &["show", "sim/jump", "--json"])).unwrap();
+    let mut tokens = shown["tokens"].take();
+    assert_eq!(tokens["by_role"].as_array().unwrap().len(), 2);
+    assert_eq!(tokens["by_round"].as_array().unwrap().len(), 2);
+    assert_eq!(tokens["cost"]["unpriced"][0]["model"], "gpt-x");
+    tokens.as_object_mut().unwrap().remove("rows");
+    // The task page's route answers this, read into its wire type and written back the same.
+    let wire: symphony_api::TaskTokens = serde_json::from_value(tokens.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&wire).unwrap(), tokens);
+    let mut with_files = t(5.0);
+    with_files.env.vars.insert(
+        "SYMPHONY_REPORTS".into(),
+        folder.to_string_lossy().into_owned(),
+    );
+    let stats: Value =
+        serde_json::from_str(&with_files.ok("", &["stats", "--days", "1", "--json"])).unwrap();
+    let told = &stats["tokens"];
+    assert_eq!(told["prices"], tokens["cost"]["prices"]);
+    let today = &told["per_day"][0];
+    assert_eq!(today["day"], symphony_api::run_day(d).as_str());
+    assert_eq!(
+        today["by_role"], tokens["by_role"],
+        "the day's tokens by role, from the hours the roll-ups told, are the task's"
+    );
+    let landed = &told["landed"];
+    assert_eq!(
+        (landed["tasks"].as_u64(), landed["without"].as_u64()),
+        (Some(1), Some(0))
+    );
+    let dearest = &landed["dearest"][0];
+    assert_eq!(dearest["slug"], "sim/jump");
+    assert_eq!(
+        (&dearest["tokens"], &dearest["cost"]),
+        (&tokens["total"], &tokens["cost"])
+    );
+    assert_eq!(landed["median_dollars"], tokens["cost"]["dollars"]);
+    let round = |n: usize| &tokens["by_round"][n];
+    assert_eq!(
+        (
+            &landed["first_round"]["tokens"],
+            &landed["first_round"]["cost"]
+        ),
+        (&round(0)["tokens"], &round(0)["cost"])
+    );
+    assert_eq!(
+        (
+            &landed["later_rounds"]["tokens"],
+            &landed["later_rounds"]["cost"]
+        ),
+        (&round(1)["tokens"], &round(1)["cost"])
+    );
+    assert_eq!(landed["again"], 1);
+    // The text says each figure is an estimate, with the day of the prices, and what had none.
+    let text = with_files.ok("", &["stats", "--days", "1"]);
+    let prices = tokens["cost"]["prices"].as_str().unwrap();
+    for said in [
+        format!("estimate at API list prices read {prices}, never money spent"),
+        "An hour's tokens are what the board's usage gained between two roll-ups, shared among \
+         the hours between them by time"
+            .to_string(),
+        "no price for gpt-x 2k tokens, in no figure".to_string(),
+        "Cost per landed task: 1 landed with tokens recorded, median".to_string(),
+        "1 of 1 went past their first round".to_string(),
+    ] {
+        assert!(text.contains(&said), "{said:?} not in {text}");
+    }
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn stats_without_day_files_says_so_and_prints_the_rest() {
+    let c = pipeline();
+    let mut empty = at(&c, START, 20.0);
+    let folder = std::env::temp_dir().join(format!("symphony-stats-none-{}", std::process::id()));
+    empty.env.vars.insert(
+        "SYMPHONY_REPORTS".into(),
+        folder.to_string_lossy().into_owned(),
+    );
+    let text = empty.ok("", &["stats"]);
+    assert!(text.contains("Done per day"), "{text}");
+    assert!(text.contains("Tokens: no day file in these days"), "{text}");
+    let json: Value = serde_json::from_str(&empty.ok("", &["stats", "--json"])).unwrap();
+    assert_eq!(json["tokens"]["per_day"], json!([]));
+    assert_eq!(json["tokens"]["landed"]["median_dollars"], Value::Null);
+    // A board TASKS_SERVER names, with no folder named, keeps none: said, never an error.
+    let unnamed = at(&c, START, 20.0).ok("", &["stats"]);
+    assert!(unnamed.contains("Tokens: no day file read ("), "{unnamed}");
 }

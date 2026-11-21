@@ -316,7 +316,7 @@ impl Coordinator<'_> {
             .execution_artifacts(id)?
             .into_iter()
             .map(|value| {
-                serde_json::from_value(value["artifact"].clone()).map_err(|e| {
+                crate::objects::read(&value["artifact"]).map_err(|e| {
                     Refusal::Board(crate::Error::Db(format!(
                         "an execution artifact not in the board's shape: {e}"
                     )))

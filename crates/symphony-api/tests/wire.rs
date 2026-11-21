@@ -412,6 +412,20 @@ fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
     let placed = page.buckets[0].workflow.as_ref().unwrap();
     assert_eq!((placed.phases.len(), placed.states.len()), (3, 3));
     assert_eq!(page.buckets[1].workflow, None);
+    // A period's tokens by role, an unpriced model's in no dollar; a period no roll-up told has
+    // none (unknown, never none spent), and the window's landed tasks are priced at one date.
+    let spend = page.buckets[0].spend.as_ref().unwrap();
+    assert_eq!(
+        spend.iter().map(|r| r.role.as_str()).collect::<Vec<_>>(),
+        ["executor", "reviewer"]
+    );
+    assert_eq!(spend[1].cost.unpriced[0].model, "gpt-x");
+    assert_eq!(page.buckets[1].spend, None);
+    let landed = page.landed.as_ref().unwrap();
+    assert_eq!((landed.tasks, landed.without, landed.again), (1, 1, 1));
+    assert_eq!(landed.median, Some(1.46));
+    assert_eq!(landed.dearest[0].slug, "sim/jump");
+    assert_eq!(page.prices, "2026-11-16");
     let old: symphony_api::report_page::ReportMark =
         serde_json::from_str(r#"{"at":1.0,"commit":"c","subject":"s"}"#).unwrap();
     assert_eq!(old.changed, Vec::<String>::new());
@@ -422,6 +436,7 @@ fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
         (empty.buckets.len(), empty.first, empty.marks.len()),
         (0, None, 0)
     );
+    assert_eq!((empty.landed, empty.prices.as_str()), (None, ""));
     for (word, grain) in [
         ("hour", Grain::Hour),
         ("day", Grain::Day),

@@ -486,3 +486,81 @@ fn schema_19_gains_reservation_storage_and_keeps_existing_reservations(backend: 
     }
 }
 }
+
+on_both! {
+/// Schema 25's workflow table took six kinds; this build's step adds `authority` and `admission`
+/// to the board's check, keeps what the board held, and on PostgreSQL alters the check no more
+/// once it holds every kind, as each alter takes the table's exclusive lock.
+fn schema_26_gains_the_guards_kinds_and_alters_the_check_once(backend: Backend) {
+    let db = board(backend);
+    let six = "'active', 'definition', 'activation', 'event', 'receipt', 'intent'";
+    let authority = |db: &Database| -> Result<(), symphony_board::rpc::DbError> {
+        match db {
+            Database::SurrealDb(client) => client
+                .query(
+                    "CREATE workflow:['authority', 'approvals'] CONTENT { kind: 'authority', \
+                     body: { epoch: 'e1', generation: 1, state: 's1' }, at: 1.0 } RETURN NONE;",
+                    json!({}),
+                )
+                .map(drop),
+            Database::PostgreSql(client) => client
+                .simple(
+                    "INSERT INTO workflow (id, kind, body, at) VALUES \
+                     ('[\"authority\", \"approvals\"]', 'authority', \
+                     '{\"epoch\": \"e1\", \"generation\": 1, \"state\": \"s1\"}', 1.0)",
+                )
+                .map(drop),
+        }
+    };
+    // The predecessor's catalogue: its check of six kinds.
+    match &db {
+        Database::SurrealDb(client) => {
+            client
+                .query(
+                    &format!("DEFINE FIELD OVERWRITE kind ON workflow TYPE string ASSERT $value IN [{six}];"),
+                    json!({}),
+                )
+                .unwrap();
+        }
+        Database::PostgreSql(client) => {
+            client
+                .simple(&format!(
+                    "ALTER TABLE workflow DROP CONSTRAINT workflow_kind_check, \
+                     ADD CONSTRAINT workflow_kind_check CHECK (kind IN ({six}))"
+                ))
+                .unwrap();
+        }
+    }
+    assert!(authority(&db).is_err(), "the predecessor's check refuses the kind");
+    let this = Schema::this_build().version();
+    let behind = || {
+        Raw::of(&db)
+            .row("meta", "schema")
+            .set(json!({"version": this - 1}))
+            .unwrap();
+    };
+    behind();
+    let upgraded = opened(again(&db), &Opening::write()).unwrap();
+    assert_eq!(version(&db), Some(this));
+    authority(&db).unwrap();
+    assert_eq!(upgraded.get("old/one").unwrap().title, "Made at this version");
+    if let Database::PostgreSql(client) = &db {
+        let check = || {
+            client
+                .simple(
+                    "SELECT oid::text FROM pg_constraint \
+                     WHERE conrelid = 'workflow'::regclass AND conname = 'workflow_kind_check'",
+                )
+                .unwrap()[0]
+                .value()
+                .unwrap()
+                .to_string()
+        };
+        let first = check();
+        behind();
+        opened(again(&db), &Opening::write()).unwrap();
+        assert_eq!(version(&db), Some(this));
+        assert_eq!(check(), first, "a check holding every kind is not made again");
+    }
+}
+}

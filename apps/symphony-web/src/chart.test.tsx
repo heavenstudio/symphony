@@ -81,6 +81,20 @@ describe("a figure's words", () => {
     ["hours", 12.3, "12.3h"],
     ["hours", 3, "3h"],
     ["load", 6.5, "6.5"],
+    ["tokens", 950, "950"],
+    ["tokens", 12_345, "12.3k"],
+    ["tokens", 4_500_000, "4.5M"],
+    ["tokens", 2_000_000_000, "2G"],
+    ["dollars", 1.25, "$1.25"],
+    ["dollars", 0.004, "$0"],
+    ["dollars", 12.5, "$12.50"],
+    ["dollars", 8.2, "$8.20"],
+    ["dollars", 0.4, "$0.40"],
+    ["dollars", 20, "$20"],
+    ["dollars", 19.999, "$20"],
+    ["dollars", 0.01, "$0.01"],
+    ["dollars", 999.5, "$999.50"],
+    ["dollars", 1_234, "$1.2k"],
     // An empty sum of floats is negative zero, and a tiny negative rounds to it.
     ["mean", -0, "0"],
     ["count", -0.001, "0"],
@@ -141,6 +155,12 @@ describe("a chart's scale", () => {
     expect(step("count", 2.2)).toBe(5);
     expect(step("mean", 0.3)).toBe(0.5);
     expect(step("load", 0.9)).toBe(1);
+    // Tokens step by whole ones, as a count does; dollars by a cent at least.
+    expect(step("tokens", 0.3)).toBe(1);
+    expect(step("tokens", 2_200_000)).toBe(2_500_000);
+    expect(step("dollars", 0.001)).toBe(0.01);
+    expect(step("dollars", 0.3)).toBe(0.5);
+    expect(scaleOf(chart("dollars", [series("d", "bar", [0, 0])])).ticks).toEqual([0, 0.01]);
   });
 
   it("gives a hidden series no room, so the rest fill the plot", () => {

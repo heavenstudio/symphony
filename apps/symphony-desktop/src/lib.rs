@@ -32,5 +32,6 @@ pub use address::Server;
 pub mod testing;
 
 /// The script every page the app shows runs before its own: the Notification API, its permission
-/// always denied, so a page's own notice never doubles the app's.
-pub const NOTIFICATION_STUB: &str = include_str!("notification.js");
+/// always denied, so a page's own notice never doubles the app's. TypeScript with no syntax of its
+/// own, so the page runs it as it is written.
+pub const NOTIFICATION_STUB: &str = include_str!("notification.ts");

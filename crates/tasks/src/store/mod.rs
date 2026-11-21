@@ -36,6 +36,7 @@ mod depends;
 mod dispatcher;
 pub(crate) mod execution;
 mod fields;
+pub(crate) mod guard;
 mod history;
 mod kept;
 mod launches;
@@ -75,7 +76,7 @@ use statement::{Statement, both};
 use surreal::reading::{native_bounds, reading};
 use surreal::session_read;
 
-pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
+pub(crate) use crate::stages::BLOCK_LINE;
 pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, ChatSeat, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
@@ -257,6 +258,12 @@ pub struct Store {
     limits: crate::limits::Held,
     /// The schema version this store writes, which every write's [`schema::GUARD`] checks.
     schema: i64,
+    /// How many additive steps on that contract it has ([`schema::ADDED`]): a whole-board copy's
+    /// and a rebind's guard holds the board to exactly these.
+    additions: i64,
+    /// Each table its additive steps define, with the step: a write naming one is refused on a
+    /// board without that step ([`schema::needs`]).
+    added: std::sync::Arc<[(String, i64)]>,
     /// What a write on a board at another version is refused with, naming the board's project.
     refusal: schema::Refusal,
     /// Whether `TASKS_SERVER` named the board's server, so the command that reaches the board again
@@ -846,6 +853,7 @@ impl Store {
             left: &task.status,
             status,
             roles: &roles,
+            retired: workflow::retired(&task.fields),
         };
         placing
             .reopened(&reopening, &principal, view.now)
@@ -1029,6 +1037,7 @@ enum Sessions {
 }
 
 /// Why one try of a call ended without its result.
+#[derive(Debug)]
 enum Failure {
     /// The board moved under it: read and decide again.
     Again,

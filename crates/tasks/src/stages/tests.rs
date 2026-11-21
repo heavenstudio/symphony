@@ -287,6 +287,54 @@ fn a_cancelled_prerequisite_blocks_and_gives_the_status_back() {
 }
 
 #[test]
+fn the_owners_word_ending_a_block_gives_the_status_back() {
+    let lines = [
+        sys(1, 0.0, "created by owner"),
+        sys(2, 1.0, "orch moved it ready → blocked"),
+        sys(
+            3,
+            4.0,
+            "unblocked: the owner decided layout (approve); back to ready",
+        ),
+    ];
+    let found = stages(facts("ready", 4.0), &lines, at(5.0));
+    assert_eq!(
+        found.stages,
+        vec![stage("ready", 0.0, 2.0, 2), stage("blocked", 1.0, 3.0, 1)]
+    );
+    assert_eq!(found.current_since, at(4.0));
+}
+
+#[test]
+fn a_block_ending_line_is_read_by_its_last_back_to() {
+    use crate::stages::{unblocked_line, unblocked_to};
+    for (text, to) in [
+        (UNBLOCK_LINE.to_string() + "ready", Some("ready")),
+        (
+            UNBLOCK_LINE.to_string() + "in_progress (its block line recorded no earlier status)",
+            Some("in_progress"),
+        ),
+        (
+            unblocked_line("the owner decided layout (dismiss)", "review"),
+            Some("review"),
+        ),
+        (
+            unblocked_line("the owner approved 1a2b3c4", "review"),
+            Some("review"),
+        ),
+        ("unblocked: nothing named".to_string(), None),
+        ("blocked: back to ready".to_string(), None),
+        ("orch said unblocked: x; back to ready".to_string(), None),
+    ] {
+        assert_eq!(unblocked_to(&text), to, "{text}");
+    }
+    assert_eq!(
+        unblocked_line("the owner decided layout (approve)", "ready"),
+        "unblocked: the owner decided layout (approve); back to ready"
+    );
+}
+
+#[test]
 fn an_unblock_line_with_its_reason_still_names_its_status() {
     let lines = [
         sys(1, 1.0, "blocked: cancelled dependencies: sim/a"),

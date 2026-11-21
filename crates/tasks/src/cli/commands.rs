@@ -412,7 +412,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             let t = store.verdict(&slug, &c.actor()?, &c.arg("verdict"), &c.arg("text"))?;
             // Done is not landed: an approve says what lands it, a subtask's the task it is under.
             c.say(&match (t.status.as_str(), t.parent.as_deref()) {
-                ("done", None) => crate::land::approved(c.env, &slug),
+                ("done", None) => crate::land::approved_task(c.env, &t),
                 ("done", Some(parent)) => format!(
                     "{slug} is approved: done on the board; its work lands when the task it is \
                      under, {parent}, does"
@@ -420,6 +420,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 (status, _) => format!("{slug} is {status}"),
             });
             finish::after_finish(store, c, &t);
+            finish::poke(c, &slug);
         }
         "say" => {
             let to = p.get("to").map(recipient);
@@ -440,14 +441,40 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "finish" => panes::finish(store, c)?,
         "land" => {
-            let actor = c.actor()?;
+            use crate::land::dispatch;
             let slug = c.arg("slug");
             crate::land::admit(c.env).map_err(Stop::Refused)?;
-            let line = crate::land::land(store, c.env, &slug, &actor, c.program, &mut *c.out)
-                .map_err(|stop| match stop {
+            let line = if p.flag("watch") {
+                if !slug.is_empty() || p.flag("dispatch") {
+                    return Err(Stop::Refused(
+                        "tasks land --watch takes no slug and no --dispatch: it reads every task \
+                         armed at the host"
+                            .into(),
+                    ));
+                }
+                let watching = dispatch::Watching {
+                    transport: None,
+                    clock: &dispatch::seconds,
+                    rest: &dispatch::rest,
+                    rounds: None,
+                };
+                dispatch::watch(store, c.env, &mut *c.out, &watching).map_err(Stop::Refused)?
+            } else if slug.is_empty() {
+                return Err(Stop::Refused(
+                    "tasks land takes the slug of the task it lands, or --watch".into(),
+                ));
+            } else {
+                let actor = c.actor()?;
+                let landed = if p.flag("dispatch") {
+                    crate::land::dispatch(store, c.env, &slug, &actor, &mut *c.out)
+                } else {
+                    crate::land::land(store, c.env, &slug, &actor, c.program, &mut *c.out)
+                };
+                landed.map_err(|stop| match stop {
                     crate::land::Stop::Refused(why) => Stop::Refused(why),
                     crate::land::Stop::Board(error) => Stop::from(error),
-                })?;
+                })?
+            };
             c.say(&line);
         }
         "regenerate" => {

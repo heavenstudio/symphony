@@ -12,6 +12,13 @@
 //! remote's main as this checkout last fetched or pushed it (its own default branch when it has no
 //! such ref), the release tags here, the receipts and the run records, with git and the files
 //! alone: it fetches, builds and writes nothing.
+//!
+//! The hosted clock ([`Clock`]) is a second reason for a run, only where the project has its
+//! releases verified on GitHub's runners (`[releases] hosted`): short of the count, a run on main's
+//! tip is due once `[releases] hosted_every_minutes` passed since the last run started, unless that
+//! tip is the commit last judged. Nothing ticks: a landing's count asks, as for the count itself.
+//! Such a run verifies nothing on this machine ([`Cadence::clocked`]), so the count stays what
+//! decides this machine's load.
 
 use std::path::Path;
 
@@ -20,7 +27,7 @@ use symphony_board::sys::pid_alive;
 
 use super::git::{commit, git, short};
 use super::receipts::{self, Receipts};
-use super::record::{self, Run, Running, local};
+use super::record::{self, Run, Running, age, local};
 use super::tags::Release;
 
 /// A landing: the merge's commit and the slug it landed ([`landing_slug`], the one reading of a
@@ -200,6 +207,52 @@ pub(crate) enum Hold {
     Dropped { why: String },
 }
 
+/// The hosted clock: how often a run of main's tip starts while the release is verified on GitHub's
+/// runners, whatever has landed.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Clock {
+    /// `[releases] hosted_every_minutes`, above 0.
+    pub(crate) every: u32,
+    /// Now, as the count was asked.
+    pub(crate) now: f64,
+    /// The release run on record that started last, whatever it came to: its id and when.
+    pub(crate) last: Option<(String, f64)>,
+}
+
+impl Clock {
+    /// The clock of `every` minutes at `now`, counted from the newest start among `runs`: a release
+    /// run's, never a refresh's or an out-of-cycle release's, which judge nothing of main's tip.
+    pub(crate) fn of(every: u32, now: f64, runs: &[Run]) -> Clock {
+        let last = (runs.iter())
+            .filter(|run| run.kind == "release")
+            .max_by(|a, b| a.started_at.total_cmp(&b.started_at))
+            .map(|run| (run.id.clone(), run.started_at));
+        Clock { every, now, last }
+    }
+
+    /// When the interval since the last run's start ends; none with no run on record.
+    fn ends(&self) -> Option<f64> {
+        (self.last.as_ref()).map(|(_, started)| started + f64::from(self.every) * 60.0)
+    }
+
+    /// Whether the interval has passed: at its end, or with no run on record.
+    fn passed(&self) -> bool {
+        self.ends().is_none_or(|ends| self.now >= ends)
+    }
+
+    /// The last run and how long ago it started, as a cause and a line say it.
+    fn last_said(&self) -> String {
+        match &self.last {
+            Some((id, started)) => format!(
+                "the run {id} started {} ({})",
+                local(*started),
+                age(self.now, *started)
+            ),
+            None => "no run is on record".into(),
+        }
+    }
+}
+
 /// Where the cadence stands.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Cadence {
@@ -215,19 +268,46 @@ pub(crate) struct Cadence {
     pub(crate) running: Option<Running>,
     /// What a release candidate holds, when one does.
     pub(crate) held: Option<Hold>,
+    /// The hosted clock, where the project's releases are verified on GitHub's runners.
+    pub(crate) clock: Option<Clock>,
 }
 
 impl Cadence {
+    /// Whether enough have landed for the count's run.
+    fn counted(&self) -> bool {
+        self.landings.len() >= usize::try_from(self.every).unwrap_or(usize::MAX)
+    }
+
+    /// Whether the line's tip is the commit last judged: the newest release, or a later run that
+    /// checked something.
+    pub(crate) fn judged(&self) -> bool {
+        self.since.commit() == Some(self.tip.as_str())
+    }
+
     /// Whether a run starts now: the cadence is on, no run holds the lock, and a release
-    /// candidate's rerun is due, or one was dropped, or none is open and enough have landed.
+    /// candidate's rerun is due, or one was dropped, or none is open and enough have landed or the
+    /// hosted clock says so ([`Cadence::clocked`]).
     pub(crate) fn due(&self) -> bool {
         self.every > 0
             && self.running.is_none()
             && match &self.held {
                 Some(Hold::Waiting { .. }) => false,
                 Some(Hold::Answered { .. } | Hold::Dropped { .. }) => true,
-                None => self.landings.len() >= usize::try_from(self.every).unwrap_or(usize::MAX),
+                None => self.counted() || self.clocked(),
             }
+    }
+
+    /// Whether the hosted clock alone starts a run now: the cadence is on, no run holds the lock,
+    /// no release candidate holds anything of it, the count is not reached, the tip is not judged
+    /// yet and the clock's interval has passed since the last run started. Its run is verified on
+    /// GitHub's runners or not at all: the count's run alone may be verified here.
+    pub(crate) fn clocked(&self) -> bool {
+        self.every > 0
+            && self.running.is_none()
+            && self.held.is_none()
+            && !self.counted()
+            && !self.judged()
+            && self.clock.as_ref().is_some_and(Clock::passed)
     }
 
     /// What starts a run it makes due, as its record keeps it.
@@ -242,6 +322,16 @@ impl Cadence {
                 format!("the release candidate {}'s reds answered{last}", short(tip))
             }
             Some(Hold::Dropped { why }) => format!("the release candidate dropped: {why}"),
+            None if self.clocked() => {
+                let clock = self.clock.as_ref();
+                format!(
+                    "the hosted clock, every {} min: {}; {} landings since {}{last}",
+                    clock.map_or(0, |clock| clock.every),
+                    clock.map(Clock::last_said).unwrap_or_default(),
+                    self.landings.len(),
+                    self.since.said()
+                )
+            }
             _ => format!(
                 "{} landings since {}{last}",
                 self.landings.len(),
@@ -268,6 +358,13 @@ impl Cadence {
             }
             _ => {}
         }
+        if self.clocked() {
+            return format!(
+                "release: due: the hosted clock: a run on {}'s tip starts, verified on GitHub's \
+                 runners or not at all\n",
+                self.line
+            );
+        }
         match self.since {
             Since::Start => format!(
                 "release: due: the first count, {} landings from {}'s start with no release and no \
@@ -279,7 +376,42 @@ impl Cadence {
         }
     }
 
-    /// The two lines `--status` and `--due` say: what has landed, and what the next run waits for.
+    /// What the hosted clock waits for, as its line says it after `hosted clock: `; none while the
+    /// project has no clock or the cadence is off.
+    fn clock_said(&self) -> Option<String> {
+        let clock = self.clock.as_ref().filter(|_| self.every > 0)?;
+        let every = format!("every {} min on GitHub's runners", clock.every);
+        Some(if self.running.is_some() {
+            format!("{every}; it waits for the run in progress")
+        } else if self.held.is_some() {
+            format!("{every}; the release candidate comes first")
+        } else if self.judged() {
+            format!(
+                "{every}; {}'s tip ({}) is judged already: no run until it moves",
+                self.line,
+                short(&self.tip)
+            )
+        } else if self.counted() {
+            format!("{every}; the count's run is due first")
+        } else if let Some(ends) = clock.ends().filter(|_| !clock.passed()) {
+            format!(
+                "{every}; {}: the first landing from {} starts a run of {}'s tip",
+                clock.last_said(),
+                local(ends),
+                self.line
+            )
+        } else {
+            format!(
+                "due, {every}; {}: the next landing starts a run of {}'s tip, or `just release \
+                 --due`",
+                clock.last_said(),
+                self.line
+            )
+        })
+    }
+
+    /// The lines `--status` and `--due` say: what has landed, what the next run waits for and,
+    /// where the project has one, what the hosted clock waits for.
     pub(crate) fn lines(&self) -> String {
         let count = self.landings.len();
         let last = self
@@ -337,6 +469,9 @@ impl Cadence {
             }
         };
         text.push_str(&format!("next run: {next}\n"));
+        if let Some(clock) = self.clock_said() {
+            text.push_str(&format!("hosted clock: {clock}\n"));
+        }
         text
     }
 }
@@ -354,8 +489,13 @@ pub(crate) fn line_of(root: &Path, remote: &str, branch: &str) -> Result<(String
 }
 
 /// The cadence of the repository at `root`, whose release run records are in `folder`, with `releases`
-/// here newest first, counting every `every` landings on `remote`'s `branch`, and what a release
-/// candidate `held` of it.
+/// here newest first, counting every `every` landings on `remote`'s `branch`, what a release
+/// candidate `held` of it, and the hosted clock where the project has one: its minutes
+/// (`symphony::project::Releases::hosted_clock`) and now.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "where the count is read and what it is counted by, each named once by its caller"
+)]
 pub(crate) fn of(
     root: &Path,
     folder: &Path,
@@ -364,6 +504,7 @@ pub(crate) fn of(
     remote: &str,
     branch: &str,
     held: Option<Hold>,
+    clock: Option<(u32, f64)>,
 ) -> Result<Cadence, String> {
     let (line, tip) = line_of(root, remote, branch)?;
     let runs = record::read(folder);
@@ -378,6 +519,7 @@ pub(crate) fn of(
         landings,
         running,
         held,
+        clock: clock.map(|(every, now)| Clock::of(every, now, &runs)),
     })
 }
 
@@ -516,6 +658,7 @@ mod tests {
             slept: 0.0,
             inputs: None,
             environment: None,
+            hosted: Vec::new(),
         }
     }
 
@@ -749,6 +892,7 @@ mod tests {
                 .collect(),
             running,
             held: None,
+            clock: None,
         }
     }
 
@@ -880,6 +1024,221 @@ mod tests {
             held(dropped(), 20, 1).starts(),
             "release: due: the release candidate was dropped, so a run on origin/main's tip starts\n"
         );
+    }
+
+    /// The cadence of 20 with `count` landed, its tip not judged, and a clock of 30 minutes whose
+    /// last run started `ago` minutes before now (none on record with none).
+    fn clocked(count: usize, ago: Option<f64>) -> Cadence {
+        const NOW: f64 = 1_800_000_000.0;
+        Cadence {
+            clock: Some(Clock {
+                every: 30,
+                now: NOW,
+                last: ago.map(|ago| ("r0".to_string(), NOW - ago * 60.0)),
+            }),
+            ..cadence(20, count, None)
+        }
+    }
+
+    fn a_run() -> Running {
+        Running {
+            version: record::VERSION,
+            id: "r1".into(),
+            kind: "release".into(),
+            pid: 7,
+            started_at: 1_800_000_000.0,
+            until: 1_800_003_600.0,
+            check: None,
+        }
+    }
+
+    #[test]
+    fn the_hosted_clock_starts_a_run_once_its_interval_passed_since_the_last_run_started() {
+        assert!(!clocked(3, Some(29.9)).due(), "short of the interval");
+        assert!(clocked(3, Some(30.0)).due(), "at the interval");
+        assert!(clocked(3, Some(30.0)).clocked());
+        assert!(clocked(3, Some(600.0)).due());
+        assert!(clocked(3, None).clocked(), "no run on record: at once");
+        // Whatever landed: a tip moved by a commit that is no landing is not judged either.
+        assert!(clocked(0, Some(45.0)).clocked());
+        // Without a clock the same count starts nothing.
+        assert!(!cadence(20, 3, None).due());
+        assert!(!cadence(20, 3, None).clocked());
+    }
+
+    #[test]
+    fn the_hosted_clock_starts_no_run_of_a_tip_judged_already() {
+        let mut judged = clocked(0, Some(600.0));
+        judged.since = Since::Run {
+            id: "r0".into(),
+            result: "red".into(),
+            commit: judged.tip.clone(),
+        };
+        assert!(judged.judged());
+        assert!(!judged.clocked() && !judged.due());
+        assert!(
+            judged.lines().ends_with(
+                "hosted clock: every 30 min on GitHub's runners; origin/main's tip \
+                 (tttttttttttt) is judged already: no run until it moves\n"
+            ),
+            "{}",
+            judged.lines()
+        );
+        judged.since = Since::Release {
+            name: "release-2026-11-12".into(),
+            commit: judged.tip.clone(),
+        };
+        assert!(!judged.due(), "released is judged");
+    }
+
+    #[test]
+    fn the_hosted_clock_gives_way_to_a_run_a_candidate_the_count_and_the_cadence_turned_off() {
+        // A run in progress is never doubled.
+        let busy = Cadence {
+            running: Some(a_run()),
+            ..clocked(3, Some(45.0))
+        };
+        assert!(!busy.clocked() && !busy.due());
+        assert!(
+            busy.lines().ends_with(
+                "hosted clock: every 30 min on GitHub's runners; it waits for the run in \
+                 progress\n"
+            ),
+            "{}",
+            busy.lines()
+        );
+        // No run of main's tip while a release candidate is open, and its rerun or its drop's run
+        // is its own, never the clock's: it may be verified here.
+        for (hold, due) in [
+            (
+                Hold::Waiting {
+                    tip: "c".repeat(40),
+                    reds: vec!["tests/release-red-verify".into()],
+                },
+                false,
+            ),
+            (
+                Hold::Answered {
+                    tip: "c".repeat(40),
+                },
+                true,
+            ),
+            (Hold::Dropped { why: "why".into() }, true),
+        ] {
+            let held = Cadence {
+                held: Some(hold),
+                ..clocked(3, Some(45.0))
+            };
+            assert_eq!(held.due(), due, "{held:?}");
+            assert!(!held.clocked(), "{held:?}");
+            assert!(
+                held.lines().ends_with(
+                    "hosted clock: every 30 min on GitHub's runners; the release candidate \
+                     comes first\n"
+                ),
+                "{}",
+                held.lines()
+            );
+            assert!(!held.cause().contains("clock"), "{}", held.cause());
+        }
+        // At the count the run is the count's, which may be verified here.
+        let counted = clocked(20, Some(45.0));
+        assert!(counted.due() && !counted.clocked());
+        assert_eq!(
+            counted.cause(),
+            "20 landings since release-2026-11-12 (aaaaaaaaaaaa), the last tools/task-0"
+        );
+        assert_eq!(
+            counted.starts(),
+            "release: due: a run on origin/main's tip starts\n"
+        );
+        assert!(
+            (counted.lines()).ends_with(
+                "hosted clock: every 30 min on GitHub's runners; the count's run is due first\n"
+            ),
+            "{}",
+            counted.lines()
+        );
+        // The cadence off turns the clock off with it, and says nothing of it.
+        let off = Cadence {
+            every: 0,
+            ..clocked(3, Some(45.0))
+        };
+        assert!(!off.due() && !off.clocked());
+        assert!(!off.lines().contains("hosted clock"), "{}", off.lines());
+        assert!(!cadence(20, 3, None).lines().contains("hosted clock"));
+    }
+
+    #[test]
+    fn the_hosted_clock_says_what_it_waits_for_what_started_its_run_and_that_nothing_runs_here() {
+        const NOW: f64 = 1_800_000_000.0;
+        let waiting = clocked(3, Some(12.0));
+        let started = local(NOW - 12.0 * 60.0);
+        assert_eq!(
+            waiting.lines().lines().last().unwrap(),
+            format!(
+                "hosted clock: every 30 min on GitHub's runners; the run r0 started {started} \
+                 (12 min ago): the first landing from {} starts a run of origin/main's tip",
+                local(NOW + 18.0 * 60.0)
+            )
+        );
+        let due = clocked(3, Some(45.0));
+        let started = local(NOW - 45.0 * 60.0);
+        assert_eq!(
+            due.lines().lines().last().unwrap(),
+            format!(
+                "hosted clock: due, every 30 min on GitHub's runners; the run r0 started \
+                 {started} (45 min ago): the next landing starts a run of origin/main's tip, or \
+                 `just release --due`"
+            )
+        );
+        assert_eq!(
+            due.cause(),
+            format!(
+                "the hosted clock, every 30 min: the run r0 started {started} (45 min ago); 3 \
+                 landings since release-2026-11-12 (aaaaaaaaaaaa), the last tools/task-0"
+            )
+        );
+        assert_eq!(
+            due.starts(),
+            "release: due: the hosted clock: a run on origin/main's tip starts, verified on \
+             GitHub's runners or not at all\n"
+        );
+        let first = clocked(0, None);
+        assert_eq!(
+            first.cause(),
+            "the hosted clock, every 30 min: no run is on record; 0 landings since \
+             release-2026-11-12 (aaaaaaaaaaaa)"
+        );
+        assert!(
+            first.lines().ends_with(
+                "hosted clock: due, every 30 min on GitHub's runners; no run is on record: the \
+                 next landing starts a run of origin/main's tip, or `just release --due`\n"
+            ),
+            "{}",
+            first.lines()
+        );
+    }
+
+    #[test]
+    fn the_hosted_clock_counts_from_the_newest_release_run_started_whatever_it_came_to() {
+        let at = |id: &str, kind: &str, result: &str, started: f64| Run {
+            kind: kind.into(),
+            started_at: started,
+            ..run_on(id, "", result, false)
+        };
+        assert_eq!(Clock::of(30, 100.0, &[]).last, None);
+        let runs = [
+            at("newest", "release", "unjudged", 90.0),
+            at("older", "release", "green", 50.0),
+            at("refresh", "refresh", "green", 95.0),
+            at("urgent", "out-of-cycle", "green", 99.0),
+        ];
+        let clock = Clock::of(30, 100.0, &runs);
+        assert_eq!(clock.last, Some(("newest".to_string(), 90.0)));
+        assert_eq!((clock.every, clock.now), (30, 100.0));
+        assert!(!clock.passed());
+        assert!(Clock::of(30, 90.0 + 1800.0, &runs).passed());
     }
 
     #[test]

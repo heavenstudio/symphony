@@ -123,21 +123,44 @@ pub(crate) fn convert(text: &str) -> String {
     html(root, &options, HashSet::new())
 }
 
+/// What a post is read with: a document's [`options`], with its raw HTML written as the text it is.
+fn post_options() -> Options<'static> {
+    let mut options = options();
+    options.render.escape = true;
+    options
+}
+
+/// A post's text as its parse reads it: every line that would open an HTML block a paragraph's
+/// ([`unblocked`]), so the Markdown after it is read, and `#Title` spaced as a document's.
+fn post_text(text: &str, options: &Options<'_>) -> String {
+    spaced_headings(&unblocked(text.to_string(), options), options)
+}
+
+/// An agent's post outside a document (a task's message or brief, an ask's answer) as HTML: read
+/// as [`convert`] reads a document, but raw HTML in it is the words typed (`Vec<String>`,
+/// `<TokensPart key=x>`, `</div>`, a `<details>` named in prose), never markup, as in a note
+/// ([`convert_note`]); its line breaks and headings are a document's.
+pub(crate) fn convert_post(text: &str) -> String {
+    let options = post_options();
+    let arena = Arena::new();
+    let root = parse_document(&arena, &post_text(text, &options), &options);
+    html(root, &options, HashSet::new())
+}
+
 /// A card's note as HTML, read as [`convert`] reads a document but for what a note is not: each line
 /// break in it is one (a blank line still a paragraph gap), no line of it is a heading
 /// ([`unheaded`]), and raw HTML in it is the words typed (`Vec<String>`, `<b>`), never markup.
 pub(crate) fn convert_note(text: &str) -> String {
-    let mut options = options();
+    let mut options = post_options();
     options.render.hardbreaks = true;
-    options.render.escape = true;
     let arena = Arena::new();
     let root = parse_document(&arena, &unblocked(unheaded(text), &options), &options);
     html(root, &options, HashSet::new())
 }
 
-/// `text` with the `<` that begins each HTML block escaped, until it has none: in a note such a line
-/// (`<div>`, `<!-- … -->`, a tag alone) is words, and read as a paragraph's its lines keep their
-/// breaks. An escape can let a later line begin a block of its own, so it parses again.
+/// `text` with the `<` that begins each HTML block escaped, until it has none: in a note or a post
+/// such a line (`<div>`, `<!-- … -->`, a tag alone) is words, and read as a paragraph's its lines
+/// keep their breaks. An escape can let a later line begin a block of its own, so it parses again.
 fn unblocked(mut text: String, options: &Options<'_>) -> String {
     loop {
         let arena = Arena::new();
@@ -254,19 +277,19 @@ pub(crate) struct Part {
     pub(crate) html: String,
     /// Where the next part begins: the text's end when this part reaches it.
     pub(crate) next: usize,
-    /// Whether this part is the whole text, converted as [`convert`] converts it.
+    /// Whether this part is the whole text, converted as [`convert_post`] converts it.
     pub(crate) whole: bool,
 }
 
-/// The blocks of `text` from the one holding `from`, as many as `limit` holds (one at least), as
-/// HTML, and where the next part begins. One parse of the whole text decides every part: a part
-/// renders that parse's nodes, so a reference resolves wherever its definition sits, a fence of any
-/// kind holds its lines, a list keeps its numbering and spacing, and a heading the id the whole
-/// gives it. A block longer than `block` is cut between its parts ([`cut`]), never inside a line,
-/// and at the same places whatever `from` and `limit` are, so the parts of a text read with one
-/// `block` meet with no gap and no repeat. `at(n)` is where the 0-based line `n` of `text` begins
-/// in the measure of `from`, `limit`, `block` and `end`, the text's length in it: a part begins
-/// only where a line does.
+/// The blocks of the post `text` ([`convert_post`]) from the one holding `from`, as many as
+/// `limit` holds (one at least), as HTML, and where the next part begins. One parse of the whole
+/// text decides every part: a part renders that parse's nodes, so a reference resolves wherever its
+/// definition sits, a fence of any kind holds its lines, a list keeps its numbering and spacing,
+/// and a heading the id the whole gives it. A block longer than `block` is cut between its parts
+/// ([`cut`]), never inside a line, and at the same places whatever `from` and `limit` are, so the
+/// parts of a text read with one `block` meet with no gap and no repeat. `at(n)` is where the
+/// 0-based line `n` of `text` begins in the measure of `from`, `limit`, `block` and `end`, the
+/// text's length in it: a part begins only where a line does.
 pub(crate) fn convert_part(
     text: &str,
     at: &dyn Fn(usize) -> usize,
@@ -282,9 +305,10 @@ pub(crate) fn convert_part(
             whole: false,
         };
     }
-    let options = options();
+    let options = post_options();
     let arena = Arena::new();
-    let root = parse_document(&arena, &spaced_headings(text, &options), &options);
+    // The escapes the post's reading adds sit inside its lines, so its lines are `text`'s.
+    let root = parse_document(&arena, &post_text(text, &options), &options);
     let size = |lines: Sourcepos| {
         at(lines.end.line).saturating_sub(at(lines.start.line.saturating_sub(1)))
     };
@@ -334,7 +358,7 @@ pub(crate) fn convert_part(
     }
 }
 
-/// A leaf of a cut text: a block or an inline whole, or some lines of a code or HTML block, with
+/// A leaf of a cut text: a block or an inline whole, or some lines of a code block, with
 /// the containers it sits in (lists, items, quotes, and a paragraph with its emphasis and links),
 /// outermost first.
 struct Piece<'a> {
@@ -346,7 +370,7 @@ struct Piece<'a> {
 
 enum What<'a> {
     Block(Node<'a>),
-    /// Lines of a code or HTML block: a range of the bytes of its literal.
+    /// Lines of a code block: a range of the bytes of its literal.
     Literal(Node<'a>, Range<usize>),
 }
 
@@ -360,7 +384,7 @@ impl<'a> What<'a> {
 
 /// The pieces of `block`, which sits in `within`, in order: the block whole when its lines take at
 /// most `longest` by `size`, else its parts, each cut the same way: a list's items, an item's or a
-/// quote's blocks, a code or HTML block's lines, and a paragraph's lines ([`inline_pieces`]). Any
+/// quote's blocks, a code block's lines, and a paragraph's lines ([`inline_pieces`]). Any
 /// other block is never cut.
 fn cut<'a>(
     block: Node<'a>,
@@ -394,15 +418,6 @@ fn cut<'a>(
         NodeValue::CodeBlock(code) => {
             let first = lines.start.line + usize::from(code.fenced);
             literal_lines(block, &code.literal, first, lines.end.line, &mut piece);
-        }
-        NodeValue::HtmlBlock(html) => {
-            literal_lines(
-                block,
-                &html.literal,
-                lines.start.line,
-                lines.end.line,
-                &mut piece,
-            );
         }
         NodeValue::Paragraph if block.first_child().is_some() => {
             let inner: Vec<Node<'a>> = within.iter().copied().chain([block]).collect();
@@ -463,7 +478,7 @@ fn inline_pieces<'a>(
     }
 }
 
-/// A piece for each line of the `literal` of a code or HTML block, whose first line is the text's
+/// A piece for each line of the `literal` of a code block, whose first line is the text's
 /// line `first` and whose last is at most `last`.
 fn literal_lines<'a>(
     block: Node<'a>,
@@ -565,27 +580,24 @@ fn container_copy<'a>(container: Node<'a>, held: Node<'a>) -> AstNode<'a> {
     AstNode::from(value)
 }
 
-/// The literal of a code or HTML block, taken out of it.
+/// The literal of a code block, taken out of it.
 fn take_literal(block: Node<'_>) -> String {
     match &mut block.data_mut().value {
         NodeValue::CodeBlock(code) => std::mem::take(&mut code.literal),
-        NodeValue::HtmlBlock(html) => std::mem::take(&mut html.literal),
         _ => String::new(),
     }
 }
 
-/// `lines` added to the literal of a code or HTML block.
+/// `lines` added to the literal of a code block.
 fn push_literal(block: Node<'_>, lines: &str) {
-    match &mut block.data_mut().value {
-        NodeValue::CodeBlock(code) => code.literal.push_str(lines),
-        NodeValue::HtmlBlock(html) => html.literal.push_str(lines),
-        _ => {}
+    if let NodeValue::CodeBlock(code) = &mut block.data_mut().value {
+        code.literal.push_str(lines);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{convert_note, unheaded};
+    use super::{convert_note, convert_post, unheaded};
 
     #[test]
     fn only_lines_that_would_make_a_heading_are_escaped_and_code_is_left_alone() {
@@ -642,6 +654,22 @@ mod tests {
             "<p>Vec&lt;String&gt; and &lt;b&gt;raw&lt;/b&gt;<br />\n<code>&lt;i&gt;</code></p>\n\
              <p>&lt;div&gt;<br />\nblock<br />\n&lt;/div&gt;</p>\n\
              <blockquote>\n<p>&lt;!-- said --&gt;</p>\n</blockquote>\n\
+             <p><a href=\"https://example.com\">https://example.com</a></p>\n"
+        );
+    }
+
+    #[test]
+    fn raw_html_in_a_post_is_its_words_and_its_markdown_a_documents() {
+        assert_eq!(
+            convert_post(
+                "#Title\n\nVec<String> and <b>raw</b>\n`<i>`\n\n<div>\nblock **bold**\n</div>\n\n\
+                 > <!-- said -->\n\n<TokensPart key=x/>\n\n<https://example.com>"
+            ),
+            "<h1 id=\"title\">Title</h1>\n\
+             <p>Vec&lt;String&gt; and &lt;b&gt;raw&lt;/b&gt;\n<code>&lt;i&gt;</code></p>\n\
+             <p>&lt;div&gt;\nblock <strong>bold</strong>\n&lt;/div&gt;</p>\n\
+             <blockquote>\n<p>&lt;!-- said --&gt;</p>\n</blockquote>\n\
+             <p>&lt;TokensPart key=x/&gt;</p>\n\
              <p><a href=\"https://example.com\">https://example.com</a></p>\n"
         );
     }

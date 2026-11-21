@@ -4,7 +4,7 @@
 # crate.
 [package]
 name = "symphony-plugin"
-version = "1.0.1"
+version = "1.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = true
@@ -20,9 +20,9 @@ include = ["src/**", "README.md", "LICENSE"]
 
 [dependencies]
 # The block vocabulary a plugin renders to and the data its seams return (`vocabulary`).
-symphony-blocks = { path = "../symphony-blocks", version = "1.0.1" }
+symphony-blocks = { path = "../symphony-blocks", version = "1.1.0" }
 # The docs checks' trait and the reading of a project's docs/ it is given.
-symphony-docs = { path = "../symphony-docs", version = "1.0.1" }
+symphony-docs = { path = "../symphony-docs", version = "1.1.0" }
 # The protocol's requests and answers (`protocol`): each seam's call as serde data.
 serde = { version = "1", features = ["derive"] }
 # The protocol's lines, written and read by a plugin's process (`serve`) and its host: a line's

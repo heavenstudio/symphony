@@ -175,7 +175,11 @@ fn regular(dir: &Path, tip: &str, paths: &[String]) -> Result<Vec<String>, Strin
 /// Git's own merge of `ours` and `theirs` in `dir`, nothing checked out: its tree, which holds
 /// conflict markers where both changed a text and one side's version of any other conflict, and
 /// the paths it leaves in conflict, sorted, each once.
-fn merged(dir: &Path, ours: &str, theirs: &str) -> Result<(String, Vec<String>), String> {
+pub(crate) fn merged(
+    dir: &Path,
+    ours: &str,
+    theirs: &str,
+) -> Result<(String, Vec<String>), String> {
     let args = [
         "merge-tree",
         "--write-tree",

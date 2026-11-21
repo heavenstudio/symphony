@@ -1,22 +1,22 @@
-//! The client cache's store (assets/cache.js) in a real browser: a kept read comes back under its
-//! format and project, another format clears it, and the approved caps, the age rule and the
-//! order decide what goes: the tasks opened last, the documents visited most
-//! (docs/analysis/client-cache.md, "What is kept"; the owner's additions on the board task
-//! perf/client-cache/build), and a read ahead asks at the lowest priority, marked as a prefetch and
-//! naming its tag, keeping what it is sent unvisited; a page going away aborts the transactions
-//! it has open and keeps again once back. The page loads the store alone,
-//! so no release build is needed. The page's clock is set by each step (`t.at`), and V8's precise
-//! coverage of the store is reported once every case has run.
+//! The client cache's store (shell/cache.ts, served here as `/assets/cache.js`) in a real
+//! browser: a kept read comes back under its format and project, another format clears it, and the
+//! approved caps, the age rule and the order decide what goes: the tasks opened last, the documents
+//! visited most (docs/analysis/client-cache.md, "What is kept"; the owner's additions on the board
+//! task perf/client-cache/build), and a read ahead asks at the lowest priority, marked as a
+//! prefetch and naming its tag, keeping what it is sent unvisited; a page going away aborts the
+//! transactions it has open and keeps again once back. The page loads the store alone, its types
+//! stripped ([`store`]), so no release build is needed. The page's clock is set by each step
+//! (`t.at`), and V8's precise coverage of the store is reported once every case has run.
 
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
+use crate::assets::store;
 use crate::chrome::Chrome;
 use crate::common;
 use crate::site::Site;
 
-const STORE: &str = include_str!("../../../symphony-web/shell/cache.js");
 const DAY: u64 = 86_400_000;
 const MB: u64 = 1_000_000;
 
@@ -88,7 +88,7 @@ fn pages() -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("assets")).unwrap();
-    std::fs::write(dir.join("assets/cache.js"), STORE).unwrap();
+    std::fs::write(dir.join("assets/cache.js"), store()).unwrap();
     std::fs::write(
         dir.join("index.html"),
         format!(
@@ -1101,7 +1101,7 @@ fn coverage(chrome: &mut Chrome) -> Vec<bool> {
         })
         .collect();
     assert!(!scripts.is_empty(), "no coverage of the store: {taken}");
-    let mut ran = vec![false; STORE.len()];
+    let mut ran = vec![false; store().len()];
     for script in scripts {
         for (at, counted) in counts(script).into_iter().enumerate() {
             ran[at] |= counted > 0;
@@ -1126,11 +1126,12 @@ fn counts(script: &Value) -> Vec<u64> {
         })
         .collect();
     // Outer ranges first, so an inner block's count overrides its function's. The store is ASCII
-    // (a host test holds it so), so V8's UTF-16 offsets are its byte offsets.
+    // (shell/strip.test.ts holds it so), so V8's UTF-16 offsets are its byte offsets.
     ranges.sort_by_key(|&(start, end, _)| (start, std::cmp::Reverse(end)));
-    let mut counts = vec![0_u64; STORE.len()];
+    let length = store().len();
+    let mut counts = vec![0_u64; length];
     for (start, end, count) in ranges {
-        counts[start.min(STORE.len())..end.min(STORE.len())].fill(count);
+        counts[start.min(length)..end.min(length)].fill(count);
     }
     counts
 }
@@ -1143,7 +1144,7 @@ fn report(ran: &[bool]) {
     let mut never = Vec::new();
     let mut entered = Vec::new();
     let mut offset = 0;
-    for (number, line) in STORE.split_inclusive('\n').enumerate() {
+    for (number, line) in store().split_inclusive('\n').enumerate() {
         let code = line.trim();
         let start = offset;
         offset += line.len();
@@ -1165,7 +1166,7 @@ fn report(ran: &[bool]) {
         }
     }
     eprintln!(
-        "cache.js coverage: {} code lines, {whole} ran whole, {} in part, {} never; in part, what never ran: {part:?}; never: {never:?}",
+        "cache.ts coverage: {} code lines, {whole} ran whole, {} in part, {} never; in part, what never ran: {part:?}; never: {never:?}",
         whole + part.len() + never.len(),
         part.len(),
         never.len()

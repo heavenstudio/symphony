@@ -1,7 +1,7 @@
 //! Where each stamp stands at a tip, by its reader (docs/analysis/needed-stamps.md, "The default
-//! catalogue"): [`tests`] from the recorder's runs, [`pictures`] and [`owner`] from the task's
-//! thread, and [`names`], by which each of them, and the task page's review gate, knows that a line
-//! names the tip. A stamp stands on the commit its evidence names alone: evidence naming another,
+//! catalogue"): [`tests`] from the recorder's runs, [`pictures`] from the task's thread, [`owner_at`]
+//! from the thread and the cards the task's branch posted ([`super::posted`]), and [`names`], by
+//! which each of them, and the task page's review gate, knows that a line names the tip. A stamp stands on the commit its evidence names alone: evidence naming another,
 //! a merge of the default branch included, is stale and reads not met, naming the commit it
 //! stood on. [`needed`] says which stamps a task needs at a tip, from its assessment and the
 //! catalogue.
@@ -13,9 +13,11 @@
 //! it built and ran nothing, so it is neither a red nor a green at its commit, and what the command
 //! showed there before it still stands.
 
+use super::posted::{self, Posted};
 use super::{Catalogue, Needs, short};
 use crate::Message;
 use crate::cli::machine_work::recorded::{Phase, Record, Step};
+use std::path::Path;
 
 /// The route the owner's uploads are served under, `<sha256>.<ext>` after it, whatever the
 /// project's artifacts folder is called: the Symphony's `uploads::ROUTE`.
@@ -42,6 +44,9 @@ pub struct Reading {
     pub detail: String,
     /// The thread's line that holds what it read.
     pub line: Option<i64>,
+    /// The cards whose owner's approve it stood on, by name, where it stands on cards the task's
+    /// branch posted rather than a line of the thread ([`owner_at`]).
+    pub cards: Vec<String>,
 }
 
 /// Whether `text` names `tip`, a whole commit id: one of its words that may name a commit
@@ -254,7 +259,7 @@ pub fn tests(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Reading
         at: last.ended_at.or(Some(began(last))),
         commit: Some(tip.to_string()),
         detail,
-        line: None,
+        ..Reading::default()
     };
     let reds: Vec<(&str, String)> = (newest.iter())
         .filter(|run| run.state == Step::Finished)
@@ -356,6 +361,7 @@ fn newest<'a>(
         commit: commit.map(str::to_string),
         detail: String::new(),
         line: Some(post.id),
+        cards: Vec::new(),
     };
     Some((post, reading))
 }
@@ -369,9 +375,59 @@ pub fn owner_approves(post: &Message) -> bool {
     post.sender == OWNER && post.kind != "system" && first.eq_ignore_ascii_case(APPROVE)
 }
 
-/// The `owner` stamp at `tip`, from the task's `thread`: met by the owner's approve naming the tip
-/// ([`owner_approves`]), which its page posts (`approve FULL_SHA`) or the owner writes; not met
-/// while the newest names another commit or none, or there is none.
+/// The `owner` stamp at `tip`, the one reader every caller goes by: met by the owner's approve
+/// naming the tip on the task's `thread` ([`owner`]), else by the owner's approve of every card the
+/// task's branch posted, with nothing but the owner's lines and merges of the default branch after
+/// it, read from git in the main checkout `main` ([`posted::read`]).
+pub fn owner_at(thread: &[Message], tip: &str, main: &Path) -> Reading {
+    owner_with(thread, tip, || posted::read(main, tip))
+}
+
+/// [`owner_at`], what the cards the branch posted say asked of `posted` only where the thread
+/// names no approve of the tip: for a reader that keeps it for a tip ([`posted::read`] asks git).
+/// Met by the cards, it says so, naming them; where a commit after their approve keeps them from
+/// standing, the thread's reading says which.
+pub fn owner_with(thread: &[Message], tip: &str, posted: impl FnOnce() -> Posted) -> Reading {
+    let reading = owner(thread, tip);
+    if reading.met {
+        return reading;
+    }
+    match posted() {
+        Posted::Nothing => reading,
+        Posted::Approved { cards } => Reading {
+            met: true,
+            by: Some(OWNER.into()),
+            at: None,
+            commit: Some(tip.to_string()),
+            detail: format!("Approved by the owner on {}, at {}", on(&cards), short(tip)),
+            line: None,
+            cards,
+        },
+        Posted::Changed { cards, commit } => Reading {
+            detail: format!(
+                "{}; the owner's approve of {} came before {}, which changes more than the \
+                 owner's lines",
+                reading.detail,
+                on(&cards),
+                short(&commit)
+            ),
+            ..reading
+        },
+    }
+}
+
+/// `cards` as a reading names them: `card NAME`, `cards NAME, OTHER`.
+pub fn on(cards: &[String]) -> String {
+    match cards {
+        [card] => format!("card {card}"),
+        _ => format!("cards {}", cards.join(", ")),
+    }
+}
+
+/// The `owner` stamp at `tip` from the task's `thread` alone: met by the owner's approve naming the
+/// tip ([`owner_approves`]), which its page posts (`approve FULL_SHA`) or the owner writes; not met
+/// while the newest names another commit or none, or there is none. [`owner_at`] reads the cards the
+/// task posted beside it.
 pub fn owner(thread: &[Message], tip: &str) -> Reading {
     let approves = thread.iter().filter(|post| owner_approves(post));
     let at_tip = short(tip);

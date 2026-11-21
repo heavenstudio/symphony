@@ -36,7 +36,7 @@ impl Drop for Process {
 }
 
 /// `child`'s exit code once it has ended, with the backstop of `seconds` (a stall alone reaches it).
-fn ended_within(child: &mut Child, seconds: u64) -> Option<i32> {
+pub(crate) fn ended_within(child: &mut Child, seconds: u64) -> Option<i32> {
     test_time::until(
         "the release run ended",
         test_time::backstop(Duration::from_secs(seconds)),

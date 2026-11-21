@@ -22,8 +22,8 @@
 //!   Otherwise its store is snapshotted just before its move ([`super::moving`]), then the
 //!   release's own `tasks migrate` (`releases/RELEASE/bin/tasks`, named by the machine folder and
 //!   the release, never by a board's record) runs in its main checkout, `--leave-behind` where the
-//!   only writers behind are a release's own or gone, within its bound, and its schema is read
-//!   again.
+//!   only writers behind are a release's own, gone or unused ([`super::writers`]), within its
+//!   bound, and its schema is read again.
 //! - **The ledger.** The same update, by its identity: its failure is recorded and posted on its
 //!   task only when what holds it changed since the last one said, the refresh's included
 //!   ([`super::writers::steady`]); the move stamps when its board reached the schema; and once a
@@ -42,7 +42,7 @@ use symphony_board::sys::Command;
 
 use super::moving::{self, KEPT_SNAPSHOTS, UNSET};
 use super::updates::{self, Failure, Ledger, Stamp, Task, TaskBoard, Update};
-use super::writers::{self, Lagging};
+use super::writers;
 use super::{Registry, release};
 
 /// The file in the release run's record folder (`symphony_board::folders::RELEASE`) that names the
@@ -339,21 +339,15 @@ impl Board<'_> {
             Err(error) => return Judged::Held(format!("{error}: nothing was moved")),
         };
         let now = host.now();
-        let Lagging { own, behind, gone } = writers::lagging(lines, self.target, now, self.machine);
-        if !behind.is_empty() {
-            return Judged::Held(writers::holding(
-                live,
-                &behind,
-                self.release,
-                self.target,
-                &gone,
-                now,
-            ));
+        let runs = writers::Runs::of(self.root);
+        let lagging = writers::lagging(lines, self.target, now, self.machine, &runs);
+        if !lagging.behind.is_empty() {
+            return Judged::Held(lagging.holding(live, self.release, self.target, now));
         }
         let moves = Judged::Moves {
             live,
-            leave: !own.is_empty() || !gone.is_empty(),
-            gone: writers::not_counted(&gone, now),
+            leave: lagging.leaves(),
+            gone: lagging.not_counted(now),
         };
         // A release pins no PostgreSQL: the board's is the machine's own, which no move replaces.
         match home.backend() {

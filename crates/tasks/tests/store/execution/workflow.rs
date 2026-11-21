@@ -8,11 +8,14 @@
 
 use super::*;
 use std::collections::BTreeMap;
-use symphony_api::workflow::{OperationRequest, Pair, Source};
-use symphony_board::Store;
-use symphony_board::workflow::{
-    Custom, Host, Transition, Trigger, agent_session, board_service, local_owner, written,
+use symphony_api::workflow::{
+    Definition, Dependency, OperationRequest, Pair, RecoveryAction, Slot, Source,
 };
+use symphony_board::workflow::{
+    Custom, Host, Mapping, Transition, Trigger, Validated, agent_session, board_service,
+    local_owner, written,
+};
+use symphony_board::{NewTask, Store};
 
 /// An executor's failed attempt moves its task back to available, its role let go.
 const MOVE: &str = r#"{ target = { phase = "build", state = "available" }, manual = false, slot = "release", release_role = true, release_reservation = true }"#;
@@ -20,11 +23,17 @@ const MOVE: &str = r#"{ target = { phase = "build", state = "available" }, manua
 const STAY: &str =
     r#"{ manual = true, slot = "retain", release_role = false, release_reservation = false }"#;
 
+/// The task `OTHER_TASK` depends on in [`waiting`].
+const PREREQUISITE: &str = "sim/base";
+
 /// `attempts.toml`, an executor's failed attempt answered by `failure`.
 fn attempts(failure: &str) -> Custom {
     let text = include_str!("attempts.toml").replace("@FAILURE@", failure);
     let (definition, mappings) = written(&text).unwrap();
-    let definition = definition.unwrap();
+    revised(definition.unwrap(), mappings)
+}
+
+fn revised(definition: Validated, mappings: Vec<Mapping>) -> Custom {
     let revision = definition
         .revision(Source {
             commit: "1".repeat(40),
@@ -35,6 +44,53 @@ fn attempts(failure: &str) -> Custom {
         definition,
         revision,
         mappings,
+        authorities: Vec::new(),
+        project: None,
+    }
+}
+
+/// [`attempts`] with the automatic edge `rework` waiting on its task's prerequisites being done,
+/// and a failed check at `verify/checking` answered by `checking` (none: it declares no recovery).
+fn gated(failure: &str, checking: Option<RecoveryAction>) -> Custom {
+    let Custom {
+        definition,
+        mappings,
+        ..
+    } = attempts(failure);
+    let mut definition: Definition = definition.definition().clone();
+    let rework = (definition.edges.iter_mut())
+        .find(|e| e.id == "rework")
+        .unwrap();
+    rework.dependencies = Dependency::Done;
+    let at = (definition.positions.iter_mut())
+        .find(|p| p.at == pair("verify", "checking"))
+        .unwrap();
+    match checking {
+        Some(action) => at.recovery.as_mut().unwrap().attempt_failure = action,
+        None => at.recovery = None,
+    }
+    revised(Validated::new(definition).unwrap(), mappings)
+}
+
+/// A check's failure at `verify/checking` that sends its task back to build.
+fn back_to_build() -> RecoveryAction {
+    RecoveryAction {
+        target: Some(pair("build", "available")),
+        manual: false,
+        slot: Slot::Release,
+        release_role: false,
+        release_reservation: false,
+    }
+}
+
+/// A check's failure at `verify/checking` that stays there for a person, as `attempts.toml` says.
+fn stays() -> RecoveryAction {
+    RecoveryAction {
+        target: None,
+        manual: true,
+        slot: Slot::Retain,
+        release_role: false,
+        release_reservation: false,
     }
 }
 
@@ -45,6 +101,40 @@ fn under(backend: Backend, custom: &Custom) -> Fixture {
     f.task(OTHER_TASK);
     f.store.activate_workflow(custom, &Host::local()).unwrap();
     f
+}
+
+/// [`under`], with `OTHER_TASK` depending on [`PREREQUISITE`], open.
+fn waiting(backend: Backend, custom: &Custom) -> Fixture {
+    let f = Fixture::on(backend, Seed::default().session("amber-heron"));
+    f.task(TASK);
+    f.task(PREREQUISITE);
+    f.task_with(NewTask {
+        depends: vec![PREREQUISITE.into()],
+        ..NewTask::new(OTHER_TASK, "Jump departure", "owner")
+    });
+    f.store.activate_workflow(custom, &Host::local()).unwrap();
+    f
+}
+
+/// `slug` claimed and submitted by amber-heron, to be checked.
+fn to_check(f: &Fixture, slug: &str) {
+    let amber = agent_session("amber-heron");
+    take(&f.store, slug, &amber, "claim");
+    take(&f.store, slug, &amber, "submit");
+    assert_eq!(at(f, slug), pair("verify", "checking"));
+}
+
+/// [`PREREQUISITE`] built and accepted: done, by its workflow.
+fn prerequisite_done(f: &Fixture) {
+    to_check(f, PREREQUISITE);
+    take(&f.store, PREREQUISITE, &local_owner(), "accept");
+}
+
+/// The thread's lines that say nothing answers attempt `id`'s failure.
+fn unanswered(f: &Fixture, slug: &str, id: &str) -> Vec<String> {
+    (recoveries(f, slug).into_iter())
+        .filter(|line| line.contains(&format!("attempt {id} ")) && line.contains("nothing answers"))
+        .collect()
 }
 
 fn pair(phase: &str, state: &str) -> Pair {
@@ -432,5 +522,168 @@ on_both! {
             crate::common::refused(f.store.apply_operation(&owner, &Host::local(), &request)),
             "unsupported_writer: edge rework is automatic: the board takes it, never a caller"
         );
+    }
+
+    fn a_failed_check_whose_rework_waits_on_a_dependency_waits_on_a_person_and_spends_no_retry(backend: Backend) {
+        let custom = gated(MOVE, Some(stays()));
+        let f = waiting(backend, &custom);
+        let fake = Fake::default();
+        let c = proposing(&f, &fake);
+        to_check(&f, OTHER_TASK);
+        let check = failed_check(&c, &fake, OTHER_TASK, "check-1");
+        // Admission refused the board's take of rework: the position's own action answers it.
+        let stayed = f.store.workflow_position(OTHER_TASK).unwrap().unwrap();
+        assert_eq!(stayed.at(), pair("verify", "checking"));
+        let manual = stayed.manual.clone().expect("a person decides");
+        assert_eq!((manual.trigger, manual.manual), (Trigger::AttemptFailure, true));
+        let all = transitions(&f, OTHER_TASK);
+        let answer = all.last().unwrap().clone();
+        assert_eq!(
+            (answer.edge.as_deref(), answer.key.clone(), answer.principal.clone()),
+            (None, Some(format!("attempt/{}", check.id)), board_service("recovery"))
+        );
+        assert_eq!(
+            recoveries(&f, OTHER_TASK),
+            [format!(
+                "the board's recovery ({OTHER_TASK}@{revision}): checker attempt {id} failed; stays at \
+                 verify/checking, workflow revision {revision}; it waits on a person's recovery \
+                 (`just tasks workflow actions {OTHER_TASK}`); the board could not take rework: \
+                 dependency: {OTHER_TASK} depends on {PREREQUISITE}, which is at build/available",
+                revision = answer.revision,
+                id = check.id
+            )]
+        );
+        // A repeat answers the one transition, and says nothing more.
+        for _ in 0..2 {
+            assert_eq!(f.store.observe_attempt(&check.id, &Host::local()).unwrap(), Some(answer.clone()));
+        }
+        assert_eq!(transitions(&f, OTHER_TASK), all);
+        assert_eq!(recoveries(&f, OTHER_TASK).len(), 1);
+        // The fallback was no take of the board's: once the prerequisite is done, its next two
+        // failures each take rework within its bound of two.
+        prerequisite_done(&f);
+        for round in 2..=3 {
+            if round == 3 {
+                to_check(&f, OTHER_TASK);
+            }
+            let check = failed_check(&c, &fake, OTHER_TASK, &format!("check-{round}"));
+            assert_eq!(at(&f, OTHER_TASK), pair("build", "available"), "round {round}");
+            let reworked = transitions(&f, OTHER_TASK).last().unwrap().clone();
+            assert_eq!(
+                (reworked.edge.as_deref(), reworked.key),
+                (Some("rework"), Some(format!("attempt/{}", check.id)))
+            );
+        }
+    }
+
+    fn a_failed_check_whose_rework_waits_on_a_dependency_moves_by_the_positions_action(backend: Backend) {
+        let custom = gated(MOVE, Some(back_to_build()));
+        let f = waiting(backend, &custom);
+        let fake = Fake::default();
+        let c = proposing(&f, &fake);
+        to_check(&f, OTHER_TASK);
+        let check = failed_check(&c, &fake, OTHER_TASK, "check-1");
+        assert_eq!(at(&f, OTHER_TASK), pair("build", "available"));
+        assert_eq!(f.store.get(OTHER_TASK).unwrap().status, "ready");
+        let moved = transitions(&f, OTHER_TASK).last().unwrap().clone();
+        assert_eq!((moved.edge.as_deref(), moved.from.clone()), (None, Some(pair("verify", "checking"))));
+        assert_eq!(moved.recovery.as_ref().map(|r| (r.trigger, r.manual)), Some((Trigger::AttemptFailure, false)));
+        let line = recoveries(&f, OTHER_TASK).last().unwrap().clone();
+        assert!(
+            line.contains(&format!("checker attempt {} failed; verify/checking → build/available", check.id))
+                && line.ends_with("; the board could not take rework: dependency: sim/land depends on sim/base, which is at build/available"),
+            "{line}"
+        );
+        assert_eq!(f.store.observe_attempt(&check.id, &Host::local()).unwrap(), Some(moved));
+        assert_eq!(recoveries(&f, OTHER_TASK).len(), 1);
+    }
+
+    fn a_failure_nothing_can_answer_is_said_on_its_thread_once_and_that_answers_it(backend: Backend) {
+        // verify/checking declares no recovery: with rework refused, nothing can answer a check.
+        let custom = gated(MOVE, None);
+        let f = waiting(backend, &custom);
+        let fake = Fake::default();
+        let c = proposing(&f, &fake);
+        to_check(&f, OTHER_TASK);
+        let checking = transitions(&f, OTHER_TASK);
+        let check = failed_check(&c, &fake, OTHER_TASK, "check-1");
+        assert_eq!(transitions(&f, OTHER_TASK), checking, "nothing moved");
+        assert!(f.store.workflow_position(OTHER_TASK).unwrap().unwrap().manual.is_none());
+        let said = [format!(
+            "the board's recovery: checker attempt {id} failed, and nothing answers it: the board \
+             could not take rework (dependency: {OTHER_TASK} depends on {PREREQUISITE}, which is at \
+             build/available), nor its position's attempt_failure action (explicit_action_required: \
+             verify/checking declares no attempt_failure recovery: {OTHER_TASK} stays as it was); a \
+             person does (`just tasks workflow actions {OTHER_TASK}`)",
+            id = check.id
+        )];
+        assert_eq!(unanswered(&f, OTHER_TASK, &check.id), said);
+        // A repeat says nothing more, and the line stays its answer once rework could be taken.
+        assert_eq!(f.store.observe_attempt(&check.id, &Host::local()).unwrap(), None);
+        prerequisite_done(&f);
+        assert_eq!(f.store.observe_attempt(&check.id, &Host::local()).unwrap(), None);
+        assert_eq!(transitions(&f, OTHER_TASK), checking);
+        assert_eq!(unanswered(&f, OTHER_TASK, &check.id), said);
+    }
+
+    fn a_failure_where_no_action_is_declared_is_said_once_and_a_cancel_there_stays_silent(backend: Backend) {
+        let custom = attempts(MOVE);
+        let f = under(backend, &custom);
+        let fake = Fake::default();
+        let c = proposing(&f, &fake);
+        // build/available has no automatic edge and declares no recovery.
+        let failed = c.admit(&owner_grant(), asked(TASK).request_key("k1")).unwrap();
+        let resource = started(&c, &failed.id);
+        fake.runtime(&resource, RuntimeState::Failed);
+        answered(c.step(&failed.id));
+        let said = [format!(
+            "the board's recovery: attempt {id} of amber-heron's executor failed, and nothing answers \
+             it: explicit_action_required: build/available declares no attempt_failure recovery: \
+             {TASK} stays as it was; a person does (`just tasks workflow actions {TASK}`)",
+            id = failed.id
+        )];
+        assert_eq!(unanswered(&f, TASK, &failed.id), said);
+        assert_eq!(f.store.observe_attempt(&failed.id, &Host::local()).unwrap(), None);
+        assert_eq!(unanswered(&f, TASK, &failed.id), said);
+        assert_eq!(transitions(&f, TASK).len(), 1, "its placement alone");
+        // A cancel that took there is no failure: refused as before, and said nowhere.
+        let cancelled = c.admit(&owner_grant(), asked(TASK).request_key("k2")).unwrap();
+        c.cancel(&owner_grant(), &cancelled.id).unwrap();
+        assert!(
+            crate::common::refused(f.store.observe_attempt(&cancelled.id, &Host::local()))
+                .starts_with("explicit_action_required: build/available declares no cancellation_acknowledged")
+        );
+        assert!(recoveries(&f, TASK).iter().all(|line| !line.contains(&cancelled.id)));
+    }
+
+    fn a_refused_take_whose_task_moved_meanwhile_moves_nothing_and_says_nothing(backend: Backend) {
+        let custom = gated(MOVE, Some(stays()));
+        let f = waiting(backend, &custom);
+        let fake = Fake::default();
+        // A host that grants the board no recovery: the coordinator's own proposal moves nothing.
+        let c = coordinator(&f, &fake).with_workflow(Host::default());
+        to_check(&f, OTHER_TASK);
+        let check = failed_check(&c, &fake, OTHER_TASK, "check-1");
+        let checking = transitions(&f, OTHER_TASK);
+        // The owner accepts the task between the board's decision and its take of rework.
+        let other = f.other();
+        let late = f.late(move || take(&other, OTHER_TASK, &local_owner(), "accept"));
+        let pinned = checking.last().unwrap().revision;
+        // Admission's own read refuses the take as stale: no fallback, no line.
+        assert_eq!(
+            crate::common::refused(late.observe_attempt(&check.id, &Host::local())),
+            format!(
+                "stale_task: {OTHER_TASK} is at verify/accepted (workflow revision {}), not \
+                 verify/checking (revision {pinned})",
+                pinned + 1
+            )
+        );
+        assert_eq!(at(&f, OTHER_TASK), pair("verify", "accepted"));
+        assert_eq!(transitions(&f, OTHER_TASK).len(), checking.len() + 1, "the accept alone");
+        assert!(recoveries(&f, OTHER_TASK).is_empty(), "{:?}", recoveries(&f, OTHER_TASK));
+        // Asked again, the decision itself finds its pin stale: still nothing.
+        let again = crate::common::refused(f.store.observe_attempt(&check.id, &Host::local()));
+        assert!(again.contains(&format!("where attempt {} was admitted", check.id)), "{again}");
+        assert!(recoveries(&f, OTHER_TASK).is_empty());
     }
 }

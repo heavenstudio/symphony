@@ -529,3 +529,133 @@ pub struct ManualRecovery {
     pub holder: String,
     pub role: String,
 }
+
+/// The attestation contract this release reads: an [`Attestation`] or [`Observation`] naming
+/// another is refused, as is a committed authority that asks for another.
+pub const ATTESTATION_CONTRACT: u32 = 1;
+
+/// What a project's approval authority signs: the bytes of a JSON [`Attestation`] or
+/// [`Observation`], exactly as signed, and its Ed25519 signature over them, in lowercase hex.
+/// The board verifies the signature against the public key the project commits for that
+/// authority, then reads the payload; a signature establishes who said it, never that it is
+/// still current.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Signed {
+    pub payload: String,
+    pub signature: String,
+}
+
+vocabulary!(Attested as "WorkflowAttested" {
+    Pass,
+    Refuse,
+    Unknown
+});
+
+/// The principal an attestation covers, as the host authenticated it: its kind (`agent`,
+/// `human`, `service`), its issuer and its subject.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Attestee {
+    pub kind: String,
+    pub issuer: String,
+    pub subject: String,
+}
+
+/// A project authority's answer for one guard of one operation: whose authority, at which of its
+/// epochs and generations; the exact operation it covers (project, task, guard, edge, the
+/// workflow revision and activation, the task's revision and pair, the input revisions and the
+/// principal); its result with the ledger facts it rests on; and when it holds. It approves
+/// nothing by itself: the board admits an operation only while every binding is still the
+/// board's and the authority's generation is the one the board accepted.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Attestation {
+    pub contract: u32,
+    pub adapter: String,
+    pub issuer: String,
+    pub epoch: String,
+    pub generation: u64,
+    pub project: String,
+    pub task: String,
+    pub guard: String,
+    pub edge: String,
+    /// The digest of the workflow revision it covers.
+    pub workflow: String,
+    pub activation_generation: u64,
+    pub task_revision: u64,
+    pub at: Pair,
+    /// Each input named once: a name given twice refuses the attestation, where a map read
+    /// keeps the last, so what it binds never depends on which of the two a reader keeps.
+    #[serde(deserialize_with = "named_once")]
+    pub input_revisions: std::collections::BTreeMap<String, String>,
+    pub principal: Attestee,
+    pub result: Attested,
+    /// The authority's references to the decisions it rests on: required for a pass.
+    pub facts: Vec<String>,
+    pub reasons: Vec<String>,
+    /// Seconds since the Unix epoch.
+    pub issued_at: f64,
+    pub expires_at: f64,
+}
+
+/// An authority's state as the board accepted it: its epoch, its generation in that epoch and the
+/// digest of its decisions at that generation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityState {
+    pub epoch: String,
+    pub generation: u64,
+    pub state: String,
+}
+
+/// A project authority's report that its decisions moved (an approval, a rejection, a
+/// withdrawal, a lost approver): its new epoch, generation and decision digest, and the state the
+/// board accepted before it, none for an authority the board has accepted nothing from. The board
+/// accepts it only from that state, so no generation is lowered and no gap is passed over.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Observation {
+    pub contract: u32,
+    pub adapter: String,
+    pub issuer: String,
+    pub epoch: String,
+    pub generation: u64,
+    pub state: String,
+    pub previous: Option<AuthorityState>,
+    pub at: f64,
+}
+
+/// A map of text to text, refused when it names a key twice.
+fn named_once<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<std::collections::BTreeMap<String, String>, D::Error> {
+    struct Once;
+    impl<'de> serde::de::Visitor<'de> for Once {
+        type Value = std::collections::BTreeMap<String, String>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a map naming each input once")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut named = std::collections::BTreeMap::new();
+            while let Some((name, revision)) = map.next_entry::<String, String>()? {
+                match named.entry(name) {
+                    std::collections::btree_map::Entry::Vacant(at) => {
+                        at.insert(revision);
+                    }
+                    std::collections::btree_map::Entry::Occupied(at) => {
+                        let twice = format!("input {} is named twice", at.key());
+                        return Err(serde::de::Error::custom(twice));
+                    }
+                }
+            }
+            Ok(named)
+        }
+    }
+    deserializer.deserialize_map(Once)
+}

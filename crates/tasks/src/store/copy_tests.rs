@@ -2,11 +2,57 @@
 //! at its staging: staged at the reader's schema, its swap is refused on a board a migration moved
 //! one schema on meanwhile, though that step keeps the reader writing, and the board, its rows and
 //! its recovery generation are as they were. On SurrealDB, whose copy is staged across requests;
-//! PostgreSQL's is one request, held as staging is.
+//! PostgreSQL's is one request, held as staging is. On PostgreSQL a copy held past its limit is
+//! ended by the server and leaves the board as it was.
 
 use super::*;
-use crate::store_fixture::{Backend, HOST, NOW};
-use crate::{NewTask, Opening, Schema, Standing};
+use crate::store_fixture::{Backend, Fixture, HOST, NOW, Seed};
+use crate::{Database, NewTask, Opening, Schema, Standing};
+
+/// A copy still running at its limit is ended by the server, in the server's own words, and does
+/// not replace the board once nothing holds it: it is held at its first insert by a lock the test
+/// holds until the copy has answered. The limit is the test's (2 s), and the store's client waits
+/// on the server as long as any board's does, so a loaded machine's slow start of a backend, the
+/// store's opening and the server's late word all wait rather than fail.
+#[test]
+fn a_postgresql_copy_held_past_its_limit_is_ended_by_the_server_and_leaves_the_board() {
+    let seed = Seed::default()
+        .session("amber-heron")
+        .task("sim/jump", "ready")
+        .task("sim/land", "review");
+    let f = Fixture::on(Backend::PostgreSql, seed.clone());
+    let Database::PostgreSql(holder) = f.other_database() else {
+        panic!("this board is on PostgreSQL");
+    };
+    holder
+        .simple(
+            "CREATE FUNCTION fixture_held() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN PERFORM pg_advisory_xact_lock(7); RETURN NULL; END $$; \
+             CREATE TRIGGER fixture_held BEFORE INSERT ON task \
+             FOR EACH STATEMENT EXECUTE FUNCTION fixture_held(); \
+             SELECT pg_advisory_lock(7);",
+        )
+        .unwrap();
+    let generation = f.store.recovery_generation().unwrap();
+    let other = seed
+        .clone()
+        .task("sim/orbit", "ready")
+        .session("brisk-finch");
+    let ended = f
+        .store
+        .copy_limited(&other.dump, |_| Duration::from_secs(2));
+    holder.simple("SELECT pg_advisory_unlock(7)").unwrap();
+    match ended {
+        Err(Error::Db(why)) => assert_eq!(
+            why,
+            "the copy did not finish in 2 s and was ended, the board left as it was: it had \
+             copied no table and was at the 3 of task"
+        ),
+        other => panic!("expected the server to end the held copy, got {other:?}"),
+    }
+    assert_eq!(f.store.dump().unwrap(), seed.dump);
+    assert_eq!(f.store.recovery_generation().unwrap(), generation);
+}
 
 #[test]
 fn a_readers_copy_staged_at_its_schema_is_refused_its_swap_on_a_board_a_declared_step_moved_on() {

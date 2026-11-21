@@ -243,8 +243,10 @@ impl Parser<'_> {
                         spans: self.spans(std::slice::from_ref(node)),
                     }];
                 }
+                // The element is said where it stands, by its name alone: what it holds is drawn
+                // once, after it, never inside the notice as well.
                 return vec![
-                    self.unknown(tag, node.plain()),
+                    self.unknown(tag, String::new()),
                     self.container(
                         ContainerKind::Div,
                         Presentation::default(),

@@ -1,6 +1,6 @@
 //! Computed styles and real input against the release client. API fixtures supply content only;
 //! hover, focus, layout and component markup are all the production client and stylesheets.
-use super::{SHOWN, assets::module, chrome, common, dist, site};
+use super::{SHOWN, assets::module, at_page_width, chrome, common, dist, site};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -121,7 +121,7 @@ fn track_styles(browser: &mut super::chrome::Chrome) {
 }
 
 fn painted_layout(browser: &mut super::chrome::Chrome) {
-    // shell.js awaits the current module's links before mounting it; this reads that state
+    // shell.ts awaits the current module's links before mounting it; this reads that state
     // from the page, so a sheet that never loaded fails here rather than at a style read.
     assert!(browser.wait_for("document.documentElement.dataset.navigation === 'ready' && document.readyState === 'complete' && document.querySelectorAll('link[rel=stylesheet]').length > 0 && [...document.querySelectorAll('link[rel=stylesheet]')].every(link=>link.sheet !== null)", SHOWN),"navigation and stylesheets must finish before measuring the page");
     // The first frame resolves styles/layout; the next runs after that frame painted.
@@ -299,9 +299,10 @@ fn document_titles_share_the_contents_column_and_folding_returns_the_full_width(
     );
     browser.eval("document.querySelector('.doc-toc summary').click()");
     assert!(browser.wait_for("!document.querySelector('.doc-toc details').open", SHOWN));
-    // A vertical scrollbar consumes viewport width; folding must release the entire contents
-    // column within that viewport, keeping exactly the two 24 px page gutters.
-    assert_eq!(browser.eval("(() => { const head=document.querySelector('.doc-head').getBoundingClientRect(), body=document.querySelector('.doc-body').getBoundingClientRect(); return {head:head.x,body:body.x,gutters:document.documentElement.clientWidth-body.width}; })()"),json!({"head":24,"body":24,"gutters":48}));
+    // A vertical scrollbar consumes viewport width, scrolling or not; folding must release the
+    // entire contents column within the width it leaves the page (`PAGE_WIDTH`), keeping exactly
+    // the two 24 px page gutters.
+    assert_eq!(browser.eval(&at_page_width("width => { const head=document.querySelector('.doc-head').getBoundingClientRect(), body=document.querySelector('.doc-body').getBoundingClientRect(); return {head:head.x,body:body.x,gutters:width-body.width}; }")),json!({"head":24,"body":24,"gutters":48}));
     let mut plain = responses();
     plain.get_mut("/api/document").unwrap()["document"]["cards"] = json!([]);
     let paragraphs = json!([

@@ -44,6 +44,8 @@ pub(crate) const READS: &[&str] = &[
     "/api/task-offer",
     symphony_api::TASK_GATES_PATH,
     symphony_api::TASK_TIMELINE_PATH,
+    symphony_api::TASK_TOKENS_PATH,
+    symphony_api::TASK_COSTS_PATH,
     symphony_api::TASK_DIFF_PATH,
     symphony_api::TASK_DIFF_FILE_PATH,
     "/api/task-history",
@@ -216,6 +218,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             | "/api/task-offer"
             | symphony_api::TASK_GATES_PATH
             | symphony_api::TASK_TIMELINE_PATH
+            | symphony_api::TASK_TOKENS_PATH
             | symphony_api::TASK_DIFF_PATH
             | symphony_api::TASK_DIFF_FILE_PATH
             | symphony_api::workflow::WORKFLOW_ACTIONS_PATH
@@ -655,6 +658,8 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         | "/api/task-offer"
         | symphony_api::TASK_GATES_PATH
         | symphony_api::TASK_TIMELINE_PATH
+        | symphony_api::TASK_TOKENS_PATH
+        | symphony_api::TASK_COSTS_PATH
         | "/api/task-history" => {
             let root = if scope.is_empty() {
                 hub.root.clone()
@@ -679,6 +684,13 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             let local = (agent_page || detail) && crate::session_go::local(shared, &request).await;
             let gates = path == symphony_api::TASK_GATES_PATH;
             let timeline = path == symphony_api::TASK_TIMELINE_PATH;
+            let tokens = path == symphony_api::TASK_TOKENS_PATH;
+            // The cards a board drew, a JSON list of at most TASK_COSTS_MOST slugs.
+            let costs = (path == symphony_api::TASK_COSTS_PATH).then(|| {
+                serde_json::from_str::<Vec<String>>(&query(&request, "slugs").unwrap_or_default())
+                    .ok()
+                    .filter(|slugs| slugs.len() <= symphony_api::TASK_COSTS_MOST)
+            });
             match crate::spawn::blocking(move || {
                 if agents {
                     // The agents and their work as the hub's board tick last read them: while the
@@ -757,6 +769,23 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                                 })
                                 .map_err(|e| unavailable(&e, ""))
                         })
+                    } else if tokens {
+                        symphony::taskview::tokens(&store, &slug)
+                            .map(|tokens| no_store(Json(tokens)))
+                            .map_err(task_failure)
+                    } else if let Some(slugs) = &costs {
+                        match slugs {
+                            Some(slugs) => symphony::taskview::costs(&store, slugs)
+                                .map(|costs| no_store(Json(costs)))
+                                .map_err(|e| unavailable(&e.to_string(), "")),
+                            None => Err((
+                                StatusCode::BAD_REQUEST,
+                                format!(
+                                    "slugs must be a JSON list of at most {} task slugs",
+                                    symphony_api::TASK_COSTS_MOST
+                                ),
+                            )),
+                        }
                     } else if brief {
                         store.get(&slug).map_err(task_failure).map(|record| {
                             let from = query_from.unwrap_or(0);

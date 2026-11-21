@@ -10,6 +10,10 @@ pages, and which follows every server it knows with its windows closed. The libr
 decision and is tested on the host; the binary (`src/bin/symphony-desktop.rs` and its `app.rs`,
 macOS alone) only draws them, and no test opens a window. `publish = false`.
 
+Hand-written code here is Rust, and TypeScript for what a page runs (`src/notification.ts`), never
+JavaScript: the web client's checks refuse a `.js` file here as anywhere in the checkout
+([its guide](../symphony-web/AGENTS.md#the-tools), `typescript-only.sh`).
+
 ## Where each job lives
 
 - `src/address.rs`: a server's address and the rule for one (`Server::parse`): `http://` alone,
@@ -43,9 +47,12 @@ macOS alone) only draws them, and no test opens a window. `publish = false`.
 - `src/cli.rs`: the command line, `symphony-desktop` (the app) and `symphony-desktop add URL`.
 - `src/main_menu.rs`: the menu bar, AppKit's standard items: macOS hands ⌘C, ⌘V, ⌘X, ⌘A, ⌘Z and
   ⌘Q to the menu bar before the page, so without its Edit and app menus a page takes none of them.
-- `src/notification.js`: the one script the app puts in a server's pages, before their own:
+- `src/notification.ts`: the one script the app puts in a server's pages, before their own:
   notifications read as denied, so a page never notifies beside the app. The app injects nothing
-  else (wry adds its own `window.ipc`, with no handler behind it), and no page calls the app.
+  else (wry adds its own `window.ipc`, with no handler behind it), and no page calls the app. It
+  goes in the page as it is written (`include_str!`), so it is TypeScript with no syntax of its
+  own, every type inferred, which the web client's `tsc` checks and a unit test there
+  (`src/notification-stub.test.ts`) holds plain.
 - `src/bin/symphony-desktop/app.rs`: one tao window and wry web view per server, hidden on close
   and kept alive; a reader thread per server; the menu bar; the dock badge and the menu-bar item
   (tray-icon's) with the total, its menu each server and project. Notices are a line on stderr

@@ -227,9 +227,9 @@ tools/task-gates-seam and tools/project-gates-everywhere (a project's gates), ap
 
 ## The data
 
-`board-design/board-data.js` is the board the pictures draw: the consuming project's open top-level
-tasks and the last day's done ones, read 2026-11-11 19:10 from the shared server's `/api/task-board`
-and each task's `/api/task-thread`, read only. The titles and slugs of the project's own product work
+`window.BOARD`, in each of the three option pages, is the board the pictures draw: the consuming
+project's open top-level tasks and the last day's done ones, read 2026-11-11 19:10 from the shared
+server's `/api/task-board` and each task's `/api/task-thread`, read only. The titles and slugs of the project's own product work
 were reworded in neutral terms on 2026-11-12; every status, age, priority, wait and review count is as
 read. The age is from each task's last status line; who a task waits
 on is from its roles and their health (a lost or left holder of the needed role reads on nobody), its

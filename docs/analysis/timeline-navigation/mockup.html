@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timeline navigation mockup</title>
+<style>
+/* A design mockup of a task's timeline, drawn from one task's recorded timeline (embedded below).
+   It reads and writes nothing; its controls change only this page. Tokens are the client's
+   (apps/symphony-web/src/styles/board.css). */
+:root { --background:#fbfaf7; --foreground:#1d1c1a; --muted-foreground:#6b6862; --border:#e4e0d8; --primary:#2f5d9e;
+  --like:#2e7d4f; --dislike:#b3392b; --question:#946a00; --decision:#4a3f9e; --resolved:#5f6b73; --auto:#1f7a8c;
+  --card:#ffffff; --muted:rgba(127,127,127,.07);
+  --font-sans:-apple-system, "Segoe UI", Helvetica, Arial, sans-serif; --fs-xs:.75rem; --fs-sm:.875rem; }
+@media (prefers-color-scheme: dark) {
+  :root { --background:#161513; --foreground:#e8e4dc; --muted-foreground:#a19c93; --border:#2c2a26; --primary:#7fa7e0;
+    --like:#6fc48f; --dislike:#e57a6a; --question:#e0b84c; --decision:#a89ce8; --resolved:#8f9aa3; --auto:#5cc4d6;
+    --card:#1d1c19; --muted:rgba(255,255,255,.04); }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--foreground); font: 15px/1.45 var(--font-sans); }
+main { max-width: 1440px; margin: 0 auto; padding: 16px 24px 32px; }
+h2 { font-size: 1.6rem; margin: 8px 0 12px; }
+.mock-note { margin: 0 0 12px; color: var(--muted-foreground); font-size: var(--fs-xs); }
+.panel { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px 24px 16px; }
+.totals { margin: 0 0 10px; color: var(--muted-foreground); font-size: var(--fs-sm); }
+.muted { color: var(--muted-foreground); }
+
+/* The toolbar: the view, its zoom, what it shows and the quiet stretches' switch. */
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 10px; font-size: var(--fs-sm); }
+.group { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.group button { font: inherit; color: inherit; background: transparent; border: 0; padding: 4px 12px; cursor: pointer; }
+.group button + button { border-left: 1px solid var(--border); }
+.group button[aria-pressed="true"] { background: color-mix(in srgb, var(--primary) 18%, transparent); color: var(--primary); font-weight: 600; }
+.range { font-variant-numeric: tabular-nums; }
+.skip { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.skip input { accent-color: var(--primary); margin: 0; }
+.hint { margin-left: auto; color: var(--muted-foreground); font-size: var(--fs-xs); }
+
+/* The overview: the whole task, the window shown on it. */
+.overview { position: relative; height: 30px; margin: 0 var(--end) 6px var(--name); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: var(--muted); }
+.overview .ov-stage { position: absolute; top: 4px; height: 7px; border-radius: 2px; background: color-mix(in srgb, var(--c) 55%, transparent); }
+.overview .ov-run { position: absolute; top: 15px; height: 10px; width: 1px; background: color-mix(in srgb, var(--c) 80%, transparent); }
+.overview .ov-dim { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--background) 62%, transparent); }
+.overview .ov-win { position: absolute; top: 0; bottom: 0; border: 2px solid var(--primary); border-radius: 4px; }
+.overview .ov-brk { position: absolute; top: 0; bottom: 0; width: 6px; background: var(--card); border-left: 1px dashed var(--muted-foreground); border-right: 1px dashed var(--muted-foreground); }
+
+/* The lanes: a name column, then a track per lane on one scale. */
+.lanes { --name: 152px; --end: 88px; position: relative; }
+.axis { position: relative; height: 22px; margin: 0 var(--end) 0 var(--name); }
+.tick-label { position: absolute; top: 0; transform: translateX(-50%); color: var(--muted-foreground); font-size: var(--fs-xs); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tick-label.day { color: var(--foreground); font-weight: 600; }
+.hours { position: absolute; left: var(--name); right: var(--end); top: 22px; bottom: 0; pointer-events: none; }
+.hour { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--border); }
+.lane { display: flex; border-bottom: 1px solid var(--border); position: relative; }
+.lane .name { flex: 0 0 var(--name); padding-right: 8px; display: flex; flex-direction: column; justify-content: center; font-size: var(--fs-sm); min-width: 0; }
+.lane .name b { font-weight: 600; }
+.lane .name small { color: var(--muted-foreground); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track { position: relative; flex: 1; margin-right: var(--end); min-width: 0; }
+.seg { position: absolute; box-sizing: border-box; min-width: 2px; padding: 0 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); border-radius: 5px; background: color-mix(in srgb, var(--c) 16%, transparent);
+  color: var(--c); font-size: var(--fs-xs); font-weight: 600; }
+.seg.hold { border-style: dashed; background: color-mix(in srgb, var(--c) 6%, transparent); color: var(--muted-foreground); }
+.after { position: absolute; font-size: var(--fs-xs); font-weight: 600; color: var(--c); white-space: nowrap; }
+.run { position: absolute; height: 14px; border-radius: 2px; background: color-mix(in srgb, var(--c) 70%, transparent); outline: 1px solid var(--card);
+  color: var(--card); font-size: 10.5px; font-weight: 600; line-height: 14px; padding: 0 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+@media (prefers-color-scheme: dark) { .run { color: #10100e; } }
+.notkept { position: absolute; top: 0; bottom: 0; border-right: 1px dashed var(--muted-foreground);
+  background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted-foreground) 22%, transparent) 0 2px, transparent 2px 7px); }
+.notkept span { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font-size: var(--fs-xs); color: var(--muted-foreground); background: var(--card); padding: 0 4px; white-space: nowrap; }
+.rail { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dotted color-mix(in srgb, var(--muted-foreground) 45%, transparent); }
+.mark { position: absolute; width: 2px; height: 8px; margin-left: -1px; background: color-mix(in srgb, var(--muted-foreground) 85%, transparent); border-radius: 1px; }
+.mark.sel { width: 3px; margin-left: -1.5px; background: var(--foreground); }
+.gate { display: flex; height: 18px; }
+.gate .name { flex: 0 0 var(--name); padding-left: 10px; color: var(--muted-foreground); font-size: var(--fs-xs); line-height: 18px; }
+.gate .track { height: 18px; }
+.g { position: absolute; top: 7px; height: 0; border-top: 4px solid var(--c); }
+.g.missing { border-top-style: dotted; }
+.brk { position: absolute; top: 0; bottom: 0; background: var(--card); z-index: 2; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.brk svg { position: absolute; top: 0; height: 100%; width: 6px; }
+.brk .brk-l { left: -3px; } .brk .brk-r { right: -3px; }
+.brk span { writing-mode: vertical-rl; transform: rotate(180deg); font-size: var(--fs-xs); color: var(--muted-foreground); white-space: nowrap; }
+.axis .brk-label { position: absolute; top: 0; transform: translateX(-50%); font-size: var(--fs-xs); font-weight: 600; color: var(--foreground); white-space: nowrap; background: var(--card); padding: 0 4px; }
+svg.arrows { position: absolute; left: var(--name); top: 0; pointer-events: none; z-index: 3; overflow: visible; }
+.guide { position: absolute; z-index: 3; border-left: 1px dashed var(--foreground); opacity: .55; }
+.chip { position: absolute; z-index: 4; background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: var(--fs-xs); white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 18px; list-style: none; padding: 0; margin: 12px 0 0; color: var(--muted-foreground); font-size: var(--fs-xs); }
+.legend i { display: inline-block; width: 18px; height: 8px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.details { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; font-size: var(--fs-sm); }
+.details h3 { font-size: var(--fs-sm); margin: 0 0 4px; }
+.details p { margin: 2px 0; }
+
+/* A phone: the list, a row per step, in the 240 px box until Show all. */
+.phone main { padding: 8px 16px 24px; }
+.plist { list-style: none; margin: 0; padding: 0; }
+.plist li { display: grid; grid-template-columns: 52px 18px 1fr auto; align-items: center; column-gap: 6px; min-height: 28px; font-size: 14px; }
+.plist .t { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
+.plist .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); justify-self: center; }
+.plist .dia { width: 8px; height: 8px; border: 1.5px solid var(--muted-foreground); transform: rotate(45deg); justify-self: center; }
+.plist .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plist .msg .lbl { color: var(--muted-foreground); font-size: 13px; }
+.plist .len { font-weight: 600; font-variant-numeric: tabular-nums; }
+.plist .stage { min-height: 44px; font-weight: 600; font-size: 15px; }
+.plist .stage .pbar { grid-column: 3 / 5; height: 7px; border-radius: 3px; background: var(--c); margin-top: -6px; }
+.plist .day { font-weight: 700; font-size: 13px; min-height: 24px; }
+.plist .red { color: var(--dislike); font-weight: 600; }
+.plist .quiet { grid-template-columns: 1fr; margin: 6px 0; padding: 8px 10px; border: 1px dashed var(--muted-foreground); border-radius: 8px; background: var(--muted); }
+.plist .quiet b { display: block; font-size: 14px; }
+.plist .quiet small { color: var(--muted-foreground); font-size: 12px; }
+.plist .kept .lbl { color: var(--muted-foreground); font-size: 13px; }
+.plist .kept .sw { width: 14px; height: 10px; justify-self: center; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted-foreground) 45%, transparent) 0 2px, transparent 2px 5px); border: 1px dashed var(--muted-foreground); }
+.pbox { height: 240px; display: flex; flex-direction: column; }
+.pbox .pclip { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px); mask-image: linear-gradient(to bottom, transparent, #000 28px); }
+.pfoot { display: flex; align-items: center; gap: 10px; padding-top: 8px; font-size: var(--fs-xs); color: var(--muted-foreground); }
+.pfoot button { margin-left: auto; font: inherit; font-size: 14px; color: var(--foreground); background: transparent; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; }
+.phone .panel { padding: 14px 14px 12px; }
+.phone .totals { font-size: 14px; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+const DATA = {"slug":"tools/workflow-revision-guards","offset":3600,"created":1795046965.4,"closed":1795145576.0,"now":1795146335.7,"runs_from":1795082998.2,"bounces":4,"history_complete":true,"stages":[["ready",1795046965.4,1795072112.5,0],["in_progress",1795072112.5,1795083775.8,0],["review",1795083775.8,1795084284.5,1],["in_progress",1795084284.5,1795086628.6,0],["review",1795086628.6,1795086861.8,2],["done",1795086861.8,1795132641.4,0],["review",1795132641.4,1795134886.9,3],["in_progress",1795134886.9,1795139051.0,0],["review",1795139051.0,1795139175.7,4],["in_progress",1795139175.7,1795143034.0,0],["review",1795143034.0,1795143318.2,5],["in_progress",1795143318.2,1795145545.4,0],["review",1795145545.4,1795145576.0,6],["done",1795145576.0,null,0]],"rounds":[[1,1795083775.8,1795083828.1,1795084284.5,"gilded-gecko-838","changes"],[2,1795086628.6,1795086628.6,1795086861.8,"gilded-gecko-838","approved"],[3,1795132641.4,1795132641.4,1795134886.9,"gilded-gecko-838","changes"],[4,1795139051.0,1795139051.0,1795139175.7,"gilded-gecko-838","changes"],[5,1795143034.0,1795143034.0,1795143318.2,"gilded-gecko-838","changes"],[6,1795145545.4,1795145545.4,1795145576.0,"gilded-gecko-838","approved"]],"roles":[["executor","keen-swift-85",1795072112.5,1795086861.8],["reviewer","gilded-gecko-838",1795083828.1,1795086861.8],["reviewer","gilded-gecko-838",1795132641.4,1795145576.0],["executor","keen-swift-85",1795132641.4,1795145576.0],["orchestrator","coral-badger-11",1795046966.0,1795047018.6],["orchestrator","hazel-merlin-755",1795047018.6,1795048258.6],["orchestrator","coral-badger-11",1795048258.6,1795086861.8],["orchestrator","coral-badger-11",1795132641.4,1795145576.0]],"messages":[[15091,1795071852.1,"hazel-merlin-755","coral-badger-11","msg","other","orchestrator"],[15103,1795072093.1,"coral-badger-11",null,"msg","orchestrator","other"],[15115,1795072117.5,"coral-badger-11","hazel-merlin-755","msg","orchestrator","other"],[15134,1795072406.0,"lunar-heron-49","keen-swift-85","msg","other","executor"],[15137,1795072452.3,"keen-swift-85","@orchestrator","msg","executor","orchestrator"],[15140,1795072496.1,"coral-badger-11","@executor","msg","orchestrator","executor"],[15163,1795072790.2,"coral-badger-11","@executor","msg","orchestrator","executor"],[15171,1795072861.4,"coral-badger-11","@executor","msg","orchestrator","executor"],[15205,1795073941.2,"keen-swift-85","coral-badger-11","msg","executor","orchestrator"],[15249,1795075951.1,"keen-swift-85","lunar-heron-49","msg","executor","other"],[15250,1795075959.7,"keen-swift-85","amber-hare-271","msg","executor","other"],[15254,1795076179.3,"lunar-heron-49","keen-swift-85","msg","other","executor"],[15256,1795076707.6,"keen-swift-85","lunar-heron-49","msg","executor","other"],[15257,1795076713.1,"keen-swift-85","amber-hare-271","msg","executor","other"],[15265,1795078032.2,"keen-swift-85","coral-badger-11","msg","executor","orchestrator"],[15266,1795078045.7,"coral-badger-11","@executor","msg","orchestrator","executor"],[15267,1795078226.8,"keen-swift-85","lucid-badger-8","msg","executor","other"],[15275,1795080910.6,"lucid-badger-8","keen-swift-85","msg","other","executor"],[15322,1795082181.7,"keen-swift-85","lucid-badger-8","msg","executor","other"],[15354,1795082818.7,"keen-swift-85","coral-badger-11","msg","executor","orchestrator"],[15356,1795082832.2,"lunar-heron-49","keen-swift-85","msg","other","executor"],[15386,1795083533.1,"keen-swift-85","lunar-heron-49","msg","executor","other"],[15387,1795083772.5,"keen-swift-85",null,"msg","executor","other"],[15389,1795083781.6,"keen-swift-85","coral-badger-11","msg","executor","orchestrator"],[15393,1795083834.8,"coral-badger-11","@reviewer","msg","orchestrator","reviewer"],[15396,1795084284.5,"gilded-gecko-838","@executor","verdict","reviewer","executor"],[15415,1795086623.2,"keen-swift-85","gilded-gecko-838","msg","executor","reviewer"],[15417,1795086633.1,"keen-swift-85","@orchestrator","msg","executor","orchestrator"],[15420,1795086777.1,"coral-badger-11","@reviewer","msg","orchestrator","reviewer"],[15425,1795086861.8,"gilded-gecko-838",null,"verdict","reviewer","other"],[15537,1795089636.8,"lucid-badger-8","keen-swift-85","msg","other","other"],[15538,1795089637.9,"board","@orchestrator","msg","other","orchestrator"],[15557,1795089906.2,"lunar-heron-49","keen-swift-85","msg","other","other"],[15558,1795089908.8,"board","@orchestrator","msg","other","orchestrator"],[15617,1795092833.2,"lucid-badger-8","keen-swift-85","msg","other","other"],[15618,1795092834.3,"board","@orchestrator","msg","other","orchestrator"],[15656,1795093228.0,"hazel-lark-531","@executor","msg","other","executor"],[15657,1795093234.0,"board","@orchestrator","msg","other","orchestrator"],[15667,1795093298.9,"russet-egret-885","@executor","msg","other","executor"],[15668,1795093304.8,"board","@orchestrator","msg","other","orchestrator"],[15673,1795093322.0,"coral-badger-11","@executor","msg","other","executor"],[15676,1795093393.2,"keen-swift-85","hazel-lark-531","msg","other","other"],[15678,1795093413.1,"keen-swift-85","@orchestrator","msg","other","orchestrator"],[16769,1795132649.5,"board","@executor","msg","other","executor"],[16770,1795132668.7,"board","@reviewer","msg","other","reviewer"],[16771,1795132686.7,"keen-swift-85","@orchestrator","msg","executor","orchestrator"],[16772,1795132691.4,"coral-badger-11","@executor","msg","orchestrator","executor"],[16899,1795134652.5,"board","@orchestrator","msg","other","orchestrator"],[16901,1795134886.9,"gilded-gecko-838","@executor","verdict","reviewer","executor"],[16902,1795134904.5,"coral-badger-11","@executor","msg","orchestrator","executor"],[16971,1795136801.8,"keen-swift-85","@orchestrator","msg","executor","orchestrator"],[17040,1795139048.0,"keen-swift-85","gilded-gecko-838","msg","executor","reviewer"],[17045,1795139106.1,"coral-badger-11","@executor","msg","orchestrator","executor"],[17062,1795139175.7,"gilded-gecko-838","@executor","verdict","reviewer","executor"],[17181,1795143023.0,"keen-swift-85","@reviewer","msg","executor","reviewer"],[17191,1795143318.2,"gilded-gecko-838","@executor","verdict","reviewer","executor"],[17299,1795145533.4,"keen-swift-85","@reviewer","msg","executor","reviewer"],[17303,1795145576.0,"gilded-gecko-838",null,"verdict","reviewer","other"],[17311,1795145680.4,"coral-badger-11",null,"msg","other","other"],[17313,1795145695.6,"coral-badger-11",null,"verdict","other","other"]],"runs":[["test","cargo test -p symphony-board --lib store::admission::guard_tests",1795082998.2,1795082998.2,1795083032.0,"green"],["test","cargo test -p symphony-board --test cli workflow",1795083052.3,1795083052.3,1795083078.8,"green"],["test","cargo test -p symphony-board --lib workflow::guard",1795083115.1,1795083115.2,1795083148.1,"green"],["build","cargo clippy -p symphony-board --all-targets",1795083156.9,1795083157.0,1795083176.6,"green"],["test","just test-rs -p symphony-board --test store",1795083181.9,1795083181.9,1795083515.9,"green"],["test","just test-rs -p symphony-board --lib",1795083182.0,1795083182.1,1795083264.9,"green"],["test","just test-rs -p symphony-board --test cli workflow",1795083271.9,1795083272.0,1795083273.7,"green"],["test","just test-rs -p symphony-board --test cli api",1795083273.9,1795083274.0,1795083286.4,"green"],["test","just test-rs -p symphony-app --test workflow --test project",1795083286.9,1795083287.0,1795083340.5,"green"],["test","just test-rs -p symphony-app --lib save::",1795083340.7,1795083340.9,1795083374.3,"green"],["test","just test-rs -p symphony-api",1795083374.5,1795083374.6,1795083388.9,"green"],["build","just lint-rs",1795083396.8,1795083396.9,1795083507.7,"green"],["test","just symphony-cli docs-audit --check",1795083507.9,1795083507.9,1795083518.3,"green"],["test","just symphony-cli status --lint",1795083518.5,1795083518.5,1795083518.8,"green"],["build","just size-check",1795083532.6,1795083532.7,1795083729.0,"green"],["test","cargo test -p symphony-board --lib store::admission::guard_tests",1795084436.0,1795084436.0,1795084470.6,"green"],["test","cargo test -p symphony-board --test cli workflow",1795084512.3,1795084512.4,1795084541.3,"green"],["build","cargo clippy -p symphony-api --all-targets",1795084567.0,1795084567.0,1795084570.6,"green"],["build","cargo clippy -p symphony-api --all-targets",1795084577.4,1795084577.5,1795084580.2,"green"],["test","cargo test -p symphony-board --lib workflow::guard::tests::a_payload_naming",1795084597.6,1795084597.6,1795084626.8,"green"],["test","cargo test -p symphony-board --lib workflow::guard::tests::a_guard_is_met_only",1795084649.5,1795084649.6,1795084673.8,"green"],["test","cargo test -p symphony-board --lib workflow::guard::tests::a_guard_is_met_only",1795084683.4,1795084683.4,1795084706.5,"red"],["test","cargo test -p symphony-board --lib store::admission::guard_tests::an_edge_two",1795084731.1,1795084731.2,1795084758.8,"green"],["test","cargo test -p symphony-board --lib store::admission::guard_tests",1795084802.6,1795084802.6,1795084842.6,"green"],["test","cargo test -p symphony-board --lib store::admission::guard_tests::two_first",1795084850.0,1795084850.1,1795084880.7,"green"],["test","cargo test -p symphony-board --lib store::admission::guard_tests::two_first",1795084880.8,1795084880.8,1795084884.5,"green"],["test","cargo test -p symphony-board --lib store::admission::guard_tests::a_first_observation",1795084936.7,1795084936.8,1795084994.2,"red"],["test","cargo test -p symphony-board --lib store::admission::guard_tests::a_first_observation",1795085013.7,1795085013.7,1795085045.9,"green"],["test","cargo test -p symphony-board --lib store::admission::guard_tests::a_first_observation",1795085052.0,1795085052.1,1795085089.7,"green"],["test","cargo test -p symphony-board --test cli workflow",1795085169.6,1795085169.7,1795085197.0,"red"],["test","cargo test -p symphony-board --test cli workflow",1795085205.0,1795085205.0,1795085214.1,"green"],["test","cargo test -p symphony-board --test cli api",1795085214.2,1795085214.2,1795085220.2,"green"],["test","cargo test -p symphony-board --lib workflow::",1795085266.4,1795085266.5,1795085303.3,"green"],["test","cargo test -p symphony-board --lib store::admission::guard_tests::a_workflow_committing",1795085318.3,1795085318.3,1795085360.7,"green"],["build","cargo clippy -p symphony-board -p symphony-api --all-targets",1795085370.1,1795085370.2,1795085398.9,"green"],["build","cargo clippy -p symphony-board -p symphony-api --all-targets",1795085412.1,1795085412.1,1795085426.0,"green"],["test","cargo test -p symphony-board --lib store::admission::guard_tests",1795085426.1,1795085426.1,1795085464.1,"green"],["test","just test-rs -p symphony-board --lib",1795085481.6,1795085481.7,1795085520.6,"green"],["test","just test-rs -p symphony-api",1795085481.7,1795085481.8,1795085498.3,"green"],["test","just test-rs -p symphony-board --test cli workflow",1795085498.4,1795085498.4,1795085529.4,"green"],["test","just test-rs -p symphony-board --test cli api",1795085529.5,1795085529.5,1795085535.6,"green"],["test","just test-rs -p symphony-board --test store",1795085542.2,1795085542.2,1795085936.7,"green"],["test","just test-rs -p symphony-app --test workflow",1795085542.2,1795085542.3,1795085594.7,"green"],["test","just test-rs -p symphony-app --test project",1795085594.7,1795085594.8,1795085605.9,"green"],["build","just lint-rs",1795085609.1,1795085609.2,1795085822.3,"green"],["test","just symphony-cli docs-audit --check",1795085829.3,1795085829.5,1795085842.9,"green"],["test","just symphony-cli status --lint",1795085843.0,1795085843.2,1795085843.9,"green"],["build","just size-check",1795085844.3,1795085844.5,1795086602.6,"green"],["build","cargo build -p symphony-board --all-targets",1795133003.7,1795133003.9,1795133011.9,"red"],["build","cargo build -p symphony-board --all-targets",1795133039.3,1795133039.5,1795133070.2,"red"],["build","cargo build -p symphony-board --all-targets",1795133086.5,1795133086.8,1795133124.8,"red"],["build","cargo build -p symphony-board -p symphony-app -p symphony-api --all-targets",1795133142.0,1795133142.3,1795133237.6,"red"],["build","cargo build -p symphony-board -p symphony-app -p symphony-api --all-targets",1795133245.5,1795133245.8,1795133307.9,"red"],["build","cargo build --workspace --all-targets",1795133315.8,1795133316.0,1795133502.3,"red"],["build","cargo build --workspace --all-targets",1795133522.5,1795133522.7,1795133644.3,"green"],["test","cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",1795133685.0,1795133685.2,1795133702.9,"red"],["test","cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",1795133709.9,1795133710.0,1795133759.4,"red"],["test","cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",1795133764.7,1795133765.0,1795133812.7,"red"],["test","cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",1795133824.6,1795133824.7,1795133864.8,"red"],["test","cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",1795133894.1,1795133894.3,1795133929.6,"red"],["test","cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",1795133940.0,1795133940.1,1795133968.1,"green"],["test","cargo test -p symphony-board --lib workflow::activate::tests::a_guard_on_an_edge",1795133973.2,1795133973.4,1795134013.2,"red"],["test","just test-rs -p symphony-board --test store catalogue",1795134023.4,1795134023.5,1795134083.8,"green"],["test","cargo test -p symphony-board --test store schema",1795134093.4,1795134093.5,1795134126.3,"green"],["build","cargo clippy --workspace --all-targets",1795134157.4,1795134157.6,1795134306.1,"green"],["test","cargo test -p symphony-board --lib",1795134309.6,1795134309.8,1795134441.4,"green"],["test","cargo test -p symphony-board --test cli workflow",1795134445.0,1795134445.3,1795134475.6,"green"],["test","cargo test -p symphony-board --test cli api",1795134475.8,1795134476.3,1795134498.1,"green"],["test","just test-rs -p symphony-board --test store",1795134526.2,1795134526.4,1795135101.9,"red"],["test","just test-rs -p symphony-board --lib",1795134526.7,1795134526.8,1795134721.3,"green"],["test","just test-rs -p symphony-board --test cli workflow",1795134721.4,1795134721.7,1795134730.3,"green"],["test","just test-rs -p symphony-board --test cli api",1795134730.3,1795134730.6,1795134751.9,"green"],["test","just test-rs -p symphony-api",1795134751.9,1795134752.1,1795134788.7,"green"],["test","just test-rs -p symphony-app --test workflow",1795134792.7,1795134792.8,1795134889.9,"green"],["test","just test-rs -p symphony-app --test project",1795134889.9,1795134890.1,1795134903.8,"green"],["test","just test-rs -p symphony-server --lib workflow",1795134903.9,1795134904.0,1795135054.8,"green"],["test","cargo test -p symphony-board --test store raw_fence",1795135137.1,1795135137.3,1795135138.3,"red"],["build","cargo build -p symphony-board --all-targets",1795135282.4,1795135282.5,1795135384.6,"green"],["test","cargo test -p symphony-board --lib workflow::guard::tests::a_guard_met_stands",1795135405.3,1795135405.5,1795135479.8,"green"],["test","cargo test -p symphony-board --lib store::admission::effects::tests::a_decision_revoked",1795135532.9,1795135533.0,1795135586.2,"green"],["test","cargo test -p symphony-board --lib store::admission::effects::tests::a_decision_revoked",1795135594.0,1795135594.1,1795135642.4,"red"],["test","cargo test -p symphony-board --test sweep a_decision_revoked",1795135679.2,1795135679.3,1795135762.0,"green"],["test","cargo test -p symphony-board --test sweep a_decision_revoked",1795135769.8,1795135770.0,1795135903.7,"red"],["test","cargo test -p symphony-board --test cli workflow",1795135962.6,1795135962.8,1795136073.8,"green"],["build","cargo clippy --workspace --all-targets",1795136088.8,1795136088.9,1795136171.5,"green"],["test","cargo test -p symphony-board --lib",1795136172.6,1795136172.8,1795136767.7,"green"],["test","cargo test -p symphony-board --test sweep land",1795136766.4,1795136766.6,1795137196.4,"green"],["test","just test-rs -p symphony-board --test store",1795137207.2,1795137207.3,1795137646.3,"red"],["test","just test-rs -p symphony-board --lib",1795137207.3,1795137207.4,1795137207.5,"red"],["test","just test-rs -p symphony-board --test sweep land",1795137207.6,1795137207.7,1795137207.8,"red"],["test","just test-rs -p symphony-board --test cli workflow",1795137207.9,1795137207.9,1795137208.0,"red"],["test","just test-rs -p symphony-board --test cli api",1795137208.1,1795137208.2,1795137208.2,"red"],["test","just test-rs -p symphony-api",1795137208.3,1795137208.4,1795137208.5,"red"],["test","just test-rs -p symphony-app --test workflow",1795137208.5,1795137208.6,1795137208.7,"red"],["test","just test-rs -p symphony-app --test project",1795137208.7,1795137208.8,1795137208.9,"red"],["test","just test-rs -p symphony-server --lib workflow",1795137209.0,1795137209.1,1795137209.2,"red"],["test","just symphony-cli docs-audit --check",1795137211.5,1795137211.6,1795137266.5,"green"],["test","just symphony-cli status --lint",1795137266.5,1795137266.6,1795137267.0,"green"],["test","just test-rs -p symphony-api",1795137273.4,1795137273.5,1795137276.2,"green"],["test","just test-rs -p symphony-board --lib",1795137286.5,1795137286.6,1795137405.9,"green"],["test","just test-rs -p symphony-board --test cli workflow",1795137406.0,1795137406.2,1795137412.4,"green"],["test","just test-rs -p symphony-board --test cli api",1795137412.5,1795137412.6,1795137426.3,"green"],["test","just test-rs -p symphony-app --test workflow",1795137426.4,1795137426.5,1795137432.4,"green"],["test","just test-rs -p symphony-app --test project",1795137432.4,1795137432.5,1795137443.4,"green"],["test","just test-rs -p symphony-server --lib workflow",1795137443.5,1795137443.6,1795137519.6,"green"],["test","just test-rs -p symphony-board --test sweep land",1795137519.7,1795137519.8,1795137685.3,"green"],["build","just lint-rs",1795137692.7,1795137692.8,1795137949.2,"green"],["build","just size-check",1795137949.9,1795137950.3,1795138699.8,"red"],["build","cargo build --workspace --all-targets",1795139210.9,1795139211.0,1795139386.1,"green"],["build","cargo build --workspace --all-targets",1795139711.1,1795139711.2,1795139765.5,"red"],["build","cargo build --workspace --all-targets",1795139787.1,1795139787.4,1795140039.3,"red"],["build","cargo build --workspace --all-targets",1795140051.8,1795140051.9,1795140074.4,"red"],["build","cargo build --workspace --all-targets",1795140097.8,1795140097.9,1795140123.4,"red"],["build","cargo build --workspace --all-targets",1795140136.1,1795140136.3,1795140176.8,"red"],["build","cargo build --workspace --all-targets",1795140183.0,1795140183.4,1795140247.0,"green"],["build","cargo clippy --workspace --all-targets",1795140273.0,1795140273.4,1795140554.2,"green"],["test","cargo test -p symphony-board --lib workflow::",1795140567.1,1795140567.2,1795140877.2,"green"],["test","cargo test -p symphony-board --lib -- the_board_takes_no_guarded",1795140937.9,1795140938.0,1795140952.1,"red"],["test","cargo test -p symphony-board --lib -- the_board_takes_no_guarded",1795140963.9,1795140964.2,1795140996.5,"red"],["test","cargo test -p symphony-board --lib -- the_board_takes_no_guarded",1795141017.5,1795141017.6,1795141018.2,"red"],["test","cargo test -p symphony-board --lib -- the_board_takes_no_guarded",1795141029.6,1795141029.7,1795141062.7,"green"],["build","cargo build -p symphony-board --all-targets",1795141194.3,1795141194.7,1795141258.7,"green"],["test","cargo test -p symphony-board --lib -- workflow::guard::tests::the_entry",1795141280.4,1795141280.5,1795141317.7,"green"],["test","cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",1795141365.2,1795141365.3,1795141395.2,"green"],["test","cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",1795141424.0,1795141424.1,1795141439.8,"red"],["test","cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",1795141443.2,1795141443.4,1795141480.6,"red"],["test","cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",1795141490.0,1795141490.1,1795141527.0,"red"],["test","cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",1795141547.5,1795141547.6,1795141583.8,"green"],["test","cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_rechecks",1795141593.3,1795141593.3,1795141626.7,"red"],["test","cargo test -p symphony-board --lib -- store::admission::effects::tests::a_dispatch_from_a_guarded",1795141648.5,1795141648.5,1795141681.7,"red"],["build","cargo clippy --workspace --all-targets",1795141713.6,1795141713.6,1795141750.5,"green"],["build","cargo clippy --workspace --all-targets",1795141762.3,1795141762.4,1795141775.1,"green"],["test","cargo test -p symphony-board --lib -- store::admission::effects workflow::guard",1795141775.2,1795141775.2,1795141809.7,"green"],["test","just test-rs -p symphony-board --lib",1795141831.5,1795141831.6,1795141850.7,"red"],["test","just test-rs -p symphony-board --test cli workflow",1795141831.6,1795141831.7,1795141851.0,"red"],["build","cargo build --workspace --all-targets",1795141882.6,1795141882.6,1795142014.5,"green"],["build","cargo clippy --workspace --all-targets",1795142017.5,1795142017.6,1795142065.7,"green"],["test","cargo test -p symphony-board --test cli api",1795142065.7,1795142065.8,1795142104.3,"green"],["test","just test-rs -p symphony-board --lib",1795142115.7,1795142115.8,1795142193.9,"green"],["test","just test-rs -p symphony-board --test cli workflow",1795142115.9,1795142115.9,1795142158.6,"green"],["test","just test-rs -p symphony-board --test cli api",1795142158.7,1795142158.8,1795142167.0,"green"],["test","just test-rs -p symphony-board --test launch attempts",1795142167.1,1795142167.2,1795142175.2,"green"],["test","just test-rs -p symphony-api",1795142175.2,1795142175.3,1795142186.3,"green"],["test","just test-rs -p symphony-app --test workflow",1795142186.4,1795142186.4,1795142215.6,"green"],["test","just test-rs -p symphony-board --test store",1795142194.0,1795142194.0,1795142574.5,"green"],["test","just test-rs -p symphony-app --test project",1795142215.6,1795142215.7,1795142228.9,"green"],["test","just test-rs -p symphony-app --lib project",1795142228.9,1795142229.0,1795142251.3,"green"],["test","just test-rs -p symphony-server --lib workflow",1795142251.3,1795142251.4,1795142321.0,"green"],["test","just test-rs -p symphony-board --test sweep land",1795142321.0,1795142321.5,1795142493.0,"green"],["build","just lint-rs",1795142582.0,1795142582.1,1795142749.6,"green"],["test","just symphony-cli docs-audit --check",1795142749.7,1795142749.8,1795142760.2,"green"],["test","just symphony-cli status --lint",1795142760.2,1795142760.3,1795142760.7,"green"],["build","just size-check",1795142760.9,1795142761.0,1795142995.4,"green"],["build","cargo build -p symphony-board",1795143369.5,1795143369.6,1795143401.4,"green"],["build","cargo build -p symphony-board --all-targets",1795143416.0,1795143416.1,1795143470.3,"green"],["test","cargo test -p symphony-board --lib -- a_resume_",1795143501.3,1795143501.5,1795143518.0,"red"],["test","cargo test -p symphony-board --lib -- a_resume_",1795143523.6,1795143523.6,1795143571.0,"green"],["test","cargo test -p symphony-board --lib -- store::admission::effects::tests::a_task_brought",1795143592.7,1795143592.7,1795143636.5,"green"],["test","cargo test -p symphony-board --lib -- store::admission::effects::tests::a_task_brought a_resume_returns",1795143641.9,1795143642.0,1795143681.7,"red"],["build","cargo clippy --workspace --all-targets",1795143703.1,1795143703.2,1795143771.7,"green"],["test","cargo test -p symphony-board --lib -- workflow:: store::admission",1795143771.7,1795143771.8,1795143921.2,"green"],["build","cargo clippy --workspace --all-targets",1795143933.6,1795143933.7,1795143953.0,"green"],["test","just test-rs -p symphony-board --lib",1795143968.0,1795143968.2,1795144098.6,"green"],["test","just test-rs -p symphony-board --test cli workflow",1795143968.4,1795143968.5,1795144087.4,"green"],["test","just test-rs -p symphony-board --test cli api",1795144087.4,1795144087.5,1795144096.9,"green"],["test","just test-rs -p symphony-board --test launch attempts",1795144096.9,1795144097.0,1795144104.6,"green"],["test","just test-rs -p symphony-board --test store",1795144098.6,1795144098.7,1795144879.3,"green"],["test","just test-rs -p symphony-api",1795144104.6,1795144104.7,1795144111.8,"green"],["test","just test-rs -p symphony-app --test workflow",1795144111.8,1795144111.9,1795144143.8,"green"],["test","just test-rs -p symphony-app --test project",1795144143.9,1795144144.0,1795144155.4,"green"],["test","just test-rs -p symphony-app --lib project",1795144155.5,1795144155.7,1795144181.6,"green"],["test","just test-rs -p symphony-server --lib workflow",1795144181.6,1795144181.7,1795144274.4,"green"],["test","just test-rs -p symphony-board --test sweep land",1795144274.5,1795144274.6,1795144663.3,"green"],["build","just lint-rs",1795144886.5,1795144886.6,1795145046.2,"green"],["test","just symphony-cli docs-audit --check",1795145046.2,1795145046.4,1795145065.6,"green"],["test","just symphony-cli status --lint",1795145065.6,1795145065.8,1795145066.3,"green"],["build","just size-check",1795145066.9,1795145067.1,1795145510.9,"green"]],"gates":[["review",[["missing",1795083775.8],["missing",1795084284.5],["met",1795086861.8],["missing",1795134886.9],["missing",1795139175.7],["missing",1795143318.2],["met",1795145576.0]]],["tests",[["met",1795145510.9]]]]};
+
+// ---- Time on the server's local clock -------------------------------------------------------
+const OFF = DATA.offset;
+const pad = (n) => String(n).padStart(2, "0");
+const loc = (t) => new Date((t + OFF) * 1000);
+const clock = (t) => { const d = loc(t); return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; };
+const day = (t) => { const d = loc(t); return `${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
+const took = (s) => {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return `${s} s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} m`;
+  const h = Math.floor(m / 60), mm = m % 60;
+  if (h < 24) return mm ? `${h} h ${mm} m` : `${h} h`;
+  const d = Math.floor(h / 24), hh = h % 24;
+  return hh ? `${d} d ${hh} h` : `${d} d`;
+};
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+// ---- The recorded snapshot, in named fields -------------------------------------------------
+const stages = DATA.stages.map(([status, from, to, round]) => ({ status, from, to, round }));
+const rounds = DATA.rounds.map(([round, from, taken, to, by, verdict]) => ({ round, from, taken, to, by, verdict }));
+const roles = DATA.roles.map(([role, by, from, to]) => ({ role, by, from, to }));
+const messages = DATA.messages.map(([id, at, sender, recipient, kind, fromLane, toLane]) => ({ id, at, sender, recipient, kind, fromLane, toLane }));
+const runs = DATA.runs.map(([phase, label, queued, started, ended, result]) => ({ phase, label, queued, started, ended, result }));
+const gates = DATA.gates.map(([name, states]) => ({ name, states: states.map(([state, from]) => ({ state, from })) }));
+const START = DATA.created;
+const END = Math.max(DATA.closed ?? DATA.now, ...messages.map((m) => m.at));
+
+// ---- Quiet stretches: the proposed rule -----------------------------------------------------
+// A stretch is quiet when, for at least QUIET_MIN, the task's own records hold nothing in it: no
+// run queued or running, no executor or reviewer role held, and no change (a stage, a role, a
+// round, a gate) or message at any instant in it. It is measured only where every record the
+// rule reads is kept across it (the recorder's runs from `runs_from`, a complete role history);
+// where one is not, the stretch is unknown and is never skipped.
+const QUIET_MIN = 3600;
+function stretches() {
+  const busy = [
+    ...runs.map((r) => [r.queued, r.ended ?? END]),
+    ...roles.filter((r) => r.role !== "orchestrator").map((r) => [r.from, r.to ?? END]),
+  ];
+  const instants = [
+    ...stages.flatMap((s) => [s.from, s.to]), ...rounds.flatMap((r) => [r.from, r.taken, r.to]),
+    ...roles.flatMap((r) => [r.from, r.to]), ...messages.map((m) => m.at),
+    ...gates.flatMap((g) => g.states.map((s) => s.from)),
+  ].filter((t) => t !== null && t !== undefined);
+  // Everything that is not quiet, as intervals; the gaps between them are the candidates.
+  const blocks = [...busy, ...instants.map((t) => [t, t])].sort((a, b) => a[0] - b[0]);
+  const out = [];
+  let reach = START;
+  for (const [a, b] of blocks) {
+    if (a - reach >= QUIET_MIN) out.push({ from: reach, to: a });
+    reach = Math.max(reach, b);
+  }
+  if (END - reach >= QUIET_MIN) out.push({ from: reach, to: END });
+  return out.map((s) => ({ ...s, known: DATA.history_complete && DATA.runs_from !== null && s.from >= DATA.runs_from }));
+}
+const STRETCHES = stretches();
+const QUIET = STRETCHES.filter((s) => s.known);
+
+// ---- The view: a window of real time, quiet stretches skipped or not ------------------------
+const BREAK = 36;
+function scaleFor(view, width) {
+  const skipped = view.skip ? QUIET.filter((q) => !view.open.has(q.from) && q.from >= view.from && q.to <= view.to) : [];
+  const shown = view.to - view.from - skipped.reduce((n, q) => n + (q.to - q.from), 0);
+  const perSecond = (width - skipped.length * BREAK) / shown;
+  const parts = [];
+  let t = view.from, x = 0;
+  for (const q of skipped) {
+    parts.push({ from: t, to: q.from, x, skip: false });
+    x += (q.from - t) * perSecond;
+    parts.push({ from: q.from, to: q.to, x, skip: true, q });
+    x += BREAK;
+    t = q.to;
+  }
+  parts.push({ from: t, to: view.to, x, skip: false });
+  const at = (time) => {
+    if (time <= view.from) return (time - view.from) * perSecond;
+    for (const p of parts) {
+      if (time <= p.to) return p.skip ? p.x + (BREAK * (time - p.from)) / (p.to - p.from) : p.x + (time - p.from) * perSecond;
+    }
+    return x + (time - t) * perSecond;
+  };
+  return { at, parts, perSecond, width, skipped };
+}
+
+// ---- Rows: a run takes the first row free when it is queued; only overlaps open another -------
+function rowsOf(list) {
+  const ends = [];
+  const placed = list.map((r) => {
+    let row = ends.findIndex((e) => e <= r.queued);
+    if (row < 0) { row = ends.length; ends.push(0); }
+    ends[row] = r.ended ?? END;
+    return row;
+  });
+  return [placed, Math.max(ends.length, 1)];
+}
+// A run's distinguishing words: no `just`, no flags, nothing after `--` but the filter.
+function words(run) {
+  const parts = run.label.split(/\s+/).filter((w) => w !== "just");
+  const kept = [];
+  for (let i = 0; i < parts.length; i++) {
+    const w = parts[i];
+    if (w === "--") continue;
+    if (w.startsWith("-")) continue;
+    kept.push(w);
+  }
+  return kept.join(" ");
+}
+const tone = (status) => ({ ready: "auto", in_progress: "primary", review: "question", done: "like", blocked: "dislike", cancelled: "resolved" })[status] ?? "resolved";
+const runTone = (r) => (r.result === "green" ? "like" : r.result === "red" ? "dislike" : "resolved");
+
+// ---- The wide view ---------------------------------------------------------------------------
+const LANE = 40, RAIL = 35, BOARD = 22, ROW = 20;
+function ticksFor(sc) {
+  const steps = [300, 600, 900, 1800, 3600, 7200, 10800, 14400, 21600, 43200, 86400];
+  const step = steps.find((s) => s * sc.perSecond >= 78) ?? 86400;
+  const out = [];
+  for (const p of sc.parts) {
+    if (p.skip) continue;
+    let t = Math.ceil((p.from + OFF) / step) * step - OFF;
+    for (; t <= p.to; t += step) {
+      const x = sc.at(t);
+      if (out.length && x - out[out.length - 1].x < 50) continue;
+      if (sc.skipped.some((q) => Math.abs(x - sc.at(q.from) - BREAK / 2) < 48 || (day(q.to) !== day(q.from) && x - sc.at(q.to) > -10 && x - sc.at(q.to) < 82))) continue;
+      const midnight = (t + OFF) % 86400 === 0;
+      out.push({ x, label: midnight ? day(t) : clock(t), day: midnight });
+    }
+  }
+  return out;
+}
+function zigzag(h, cls) {
+  let d = "M3 0"; for (let y = 0; y < h; y += 8) d += ` L6 ${y + 4} L0 ${y + 8}`;
+  return `<svg class="${cls}" viewBox="0 0 6 ${h}" preserveAspectRatio="none"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`;
+}
+function wide(view) {
+  const app = document.getElementById("app");
+  const W = Math.max(300, app.clientWidth - 48 - 48 - 152 - 88);
+  const sc = scaleFor(view, W);
+  const x = (t) => sc.at(t);
+  const vis = (a, b) => b >= view.from && a <= view.to;
+  const machine = runs.reduce((n, r) => n + ((r.ended ?? END) - (r.started ?? r.queued)), 0);
+  const whole = view.from === START && view.to === END;
+  const quietTotal = QUIET.reduce((n, q) => n + q.to - q.from, 0);
+  let html = `<p class="totals">${took(END - START)} in all · ${rounds.length} review rounds · ${DATA.bounces} bounces · machine ${took(machine)}, queued 0 m</p>`;
+  html += `<div class="bar"><span class="group"><button aria-pressed="${whole}" data-act="fit">Whole task</button><button data-act="out" aria-label="Zoom out">−</button><button data-act="in" aria-label="Zoom in">+</button></span>`;
+  html += `<span class="range">${day(view.from)} ${clock(view.from)} → ${day(view.to)} ${clock(view.to)} · ${took(view.to - view.from)}${whole ? "" : ` of ${took(END - START)}`}</span>`;
+  if (QUIET.length && !view.clock) html += `<label class="skip"><input type="checkbox" data-act="skip" ${view.skip ? "checked" : ""}> Skip quiet stretches <span class="muted">${QUIET.length} · ${took(quietTotal)}</span></label>`;
+  html += `<span class="hint">⌘/Ctrl + scroll zooms · Shift + scroll pans · drag across the hours to zoom to them</span></div>`;
+
+  // The overview, while a part of the task is shown.
+  let lanesHtml = "";
+  if (!whole) {
+    const ov = scaleFor({ from: START, to: END, skip: view.skip, open: view.open }, W);
+    let o = `<div class="overview" style="--name:152px;--end:88px">`;
+    for (const s of stages) if (s.status !== "done") o += `<span class="ov-stage" style="--c:var(--${tone(s.status)});left:${ov.at(s.from)}px;width:${Math.max(1, ov.at(s.to ?? END) - ov.at(s.from))}px"></span>`;
+    for (const r of runs) o += `<span class="ov-run" style="--c:var(--${runTone(r)});left:${ov.at(r.started ?? r.queued)}px"></span>`;
+    for (const q of ov.skipped) o += `<span class="ov-brk" style="left:${ov.at(q.from) + BREAK / 2 - 3}px"></span>`;
+    const a = ov.at(view.from), b = ov.at(view.to);
+    o += `<span class="ov-dim" style="left:0;width:${a}px"></span><span class="ov-dim" style="left:${b}px;right:0"></span><span class="ov-win" style="left:${a}px;width:${b - a}px"></span></div>`;
+    html += o;
+  }
+
+  // Axis.
+  const ticks = ticksFor(sc);
+  lanesHtml += `<div class="axis">${ticks.map((t) => `<span class="tick-label${t.day ? " day" : ""}" style="left:${t.x}px">${t.label}</span>`).join("")}`;
+  for (const q of sc.skipped) {
+    lanesHtml += `<span class="brk-label" style="left:${x(q.from) + BREAK / 2}px">+${took(q.to - q.from)}</span>`;
+    if (day(q.to) !== day(q.from)) lanesHtml += `<span class="tick-label day" style="left:${x(q.to) + 22}px;transform:none">${day(q.to)}</span>`;
+  }
+  lanesHtml += `</div>`;
+
+  // Lanes, with the y of each lane's rail for the arrow.
+  const rails = {};
+  let y = 22;
+  const laneHtml = [];
+  const marksIn = (key) => messages.filter((m) => (m.fromLane === key) && vis(m.at, m.at));
+  const markHtml = (list, railY) => list.map((m) => `<span class="mark${m.id === view.sel ? " sel" : ""}" title="#${m.id} ${esc(m.sender)} → ${esc(m.recipient ?? "Everyone on task")} · ${day(m.at)} ${clock(m.at)}" style="left:${x(m.at)}px;top:${railY - 4}px"></span>`).join("");
+  const clip = (from, to) => { const a = Math.max(-1, x(from)), b = Math.min(W + 1, x(to)); return [a, Math.max(2, b - a)]; };
+  const segHtml = (from, to, c, text, cls, top, h) => {
+    const [a, w] = clip(from, to);
+    const fits = text && w > text.length * 6.6 + 14;
+    return `<span class="seg ${cls}" style="--c:var(--${c});left:${a}px;width:${w}px;top:${top}px;height:${h}px;line-height:${h - 2}px">${fits ? esc(text) : ""}</span>`;
+  };
+  // Stage.
+  {
+    let s = "";
+    for (const st of stages) {
+      if (st.status === "done" || !vis(st.from, st.to ?? END)) continue;
+      const text = st.status === "ready" ? `ready ${took(st.to - st.from)}` : st.status === "in_progress" ? took(st.to - st.from) : "";
+      s += segHtml(st.from, st.to ?? END, tone(st.status), text, "", 7, 26);
+    }
+    laneHtml.push(`<div class="lane"><span class="name"><b>Stage</b></span><span class="track" style="height:${LANE}px">${s}</span></div>`);
+    y += LANE + 1;
+  }
+  // Roles.
+  const roleLane = (key, name, who, body) => {
+    rails[key] = y + RAIL;
+    laneHtml.push(`<div class="lane"><span class="name"><b>${name}</b><small>${esc(who)}</small></span><span class="track" style="height:${LANE}px">${body}<span class="rail" style="top:${RAIL}px"></span>${markHtml(marksIn(key), RAIL)}</span></div>`);
+    y += LANE + 1;
+  };
+  roleLane("orchestrator", "Orchestrator", "recorded role holds", roles.filter((r) => r.role === "orchestrator" && vis(r.from, r.to ?? END)).map((r) => segHtml(r.from, r.to ?? END, "resolved", r.by, "hold", 5, 24)).join(""));
+  roleLane("executor", "Executor", "keen-swift-85", stages.filter((s) => s.status === "in_progress" && vis(s.from, s.to ?? END)).map((s) => segHtml(s.from, s.to ?? END, "primary", `claimed ${took(s.to - s.from)}`, "", 5, 24)).join(""));
+  roleLane("reviewer", "Reviewer", "gilded-gecko-838", rounds.filter((r) => vis(r.from, r.to ?? END)).map((r) => {
+    let h = segHtml(r.from, r.to ?? END, "question", "", "", 5, 24);
+    const after = x(r.to ?? END) + 4;
+    const next = rounds.find((n) => n.from > r.from);
+    if (r.verdict && after < W + 60 && (!next || x(next.from) - after > 70)) h += `<span class="after" style="--c:var(--${r.verdict === "approved" ? "like" : "dislike"});left:${after}px;top:10px">${r.verdict}</span>`;
+    return h;
+  }).join(""));
+  // Board and other senders: a rail only.
+  rails.other = y + BOARD / 2 + 4;
+  laneHtml.push(`<div class="lane"><span class="name"><b>Board &amp; others</b></span><span class="track" style="height:${BOARD}px"><span class="rail" style="top:${BOARD / 2 + 4}px"></span>${markHtml(marksIn("other"), BOARD / 2 + 4)}</span></div>`);
+  y += BOARD + 1;
+  // Builds and tests: one row unless runs overlap.
+  for (const [phase, name] of [["build", "Builds"], ["test", "Tests"]]) {
+    const list = runs.filter((r) => r.phase === phase);
+    const [placed, count] = rowsOf(list);
+    const h = count * ROW + 8;
+    const red = list.filter((r) => r.result === "red").length;
+    let body = "";
+    if (DATA.runs_from && DATA.runs_from > view.from) {
+      const a = Math.max(0, x(view.from)), b = x(Math.min(DATA.runs_from, view.to));
+      if (b > a) body += `<span class="notkept" style="left:${a}px;width:${b - a}px">${b - a > 210 ? `<span>not kept before ${day(DATA.runs_from)} ${clock(DATA.runs_from)}</span>` : ""}</span>`;
+    }
+    list.forEach((r, i) => {
+      const from = r.started ?? r.queued, to = r.ended ?? END;
+      if (!vis(from, to)) return;
+      const [a, w] = clip(from, to);
+      const text = w >= 30 ? esc(`${words(r)} · ${took(to - from)}`) : "";
+      body += `<span class="run" title="${esc(r.label)} · ${clock(from)}–${clock(to)} · ${took(to - from)} · ${r.result}" style="--c:var(--${runTone(r)});left:${a}px;width:${w}px;top:${placed[i] * ROW + 6}px">${text}</span>`;
+    });
+    laneHtml.push(`<div class="lane"><span class="name"><b>${name}</b><small>${list.length} runs · ${red} red</small></span><span class="track" style="height:${h}px">${body}</span></div>`);
+    y += h + 1;
+  }
+  // Gates.
+  laneHtml.push(`<div class="lane" style="border-bottom:0"><span class="name"><b>Gates</b></span><span class="track" style="height:20px"></span></div>`);
+  y += 20;
+  for (const g of gates) {
+    let body = "";
+    g.states.forEach((s, i) => {
+      const to = g.states[i + 1]?.from ?? END;
+      if (!vis(s.from, to)) return;
+      const [a, w] = clip(s.from, to);
+      body += `<span class="g ${s.state}" style="--c:var(--${s.state === "met" ? "like" : "question"});left:${a}px;width:${w}px"></span>`;
+    });
+    laneHtml.push(`<div class="gate"><span class="name">${g.name}</span><span class="track">${body}</span></div>`);
+    y += 18;
+  }
+  const H = y;
+  // Hour lines and the skipped stretches across every lane.
+  let over = "";
+  for (const q of sc.skipped) {
+    over += `<div class="brk" data-open="${q.from}" title="Skipped: ${day(q.from)} ${clock(q.from)} → ${day(q.to)} ${clock(q.to)}, ${took(q.to - q.from)}. Nothing recorded on the task: no run, no role held, no message or change. Click to show it." style="left:${152 + x(q.from)}px;width:${BREAK}px;top:22px;bottom:0;color:var(--muted-foreground)">${zigzag(H, "brk-l")}${zigzag(H, "brk-r")}<span>quiet · task done, nothing recorded</span></div>`;
+  }
+  // The arrow of the selected message, from its mark's point on its sender's rail to the same
+  // instant on the addressed lane's rail.
+  let arrow = "", chip = "";
+  const sel = messages.find((m) => m.id === view.sel);
+  if (sel && rails[sel.fromLane] !== undefined && rails[sel.toLane] !== undefined) {
+    const ax = x(sel.at), y0 = rails[sel.fromLane], y1 = rails[sel.toLane];
+    const dir = y1 > y0 ? 1 : -1;
+    const tip = y1, base = y1 - dir * 9;
+    // Both ends on one lane: no arrow, the tick ringed; an arrow always joins two lanes.
+    if (sel.fromLane === sel.toLane) arrow = `<svg class="arrows" width="${W}" height="${H}" style="color:var(--foreground)">
+      <circle cx="${ax}" cy="${y0}" r="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <circle cx="${ax}" cy="${y0}" r="4.5" fill="currentColor" stroke="var(--card)" stroke-width="1.5"/></svg>`;
+    else arrow = `<svg class="arrows" width="${W}" height="${H}" style="color:var(--foreground)">
+      <line x1="${ax}" y1="${y0}" x2="${ax}" y2="${base}" stroke="var(--card)" stroke-width="6"/>
+      <line x1="${ax}" y1="${y0}" x2="${ax}" y2="${base}" stroke="currentColor" stroke-width="2"/>
+      <path d="M${ax - 5} ${base} L${ax} ${tip} L${ax + 5} ${base} Z" fill="currentColor" stroke="var(--card)" stroke-width="1"/>
+      <circle cx="${ax}" cy="${y0}" r="4.5" fill="currentColor" stroke="var(--card)" stroke-width="1.5"/>
+      <circle cx="${ax}" cy="${y1}" r="3" fill="var(--card)" stroke="currentColor" stroke-width="1.5"/></svg>`;
+    chip = `<span class="guide" style="left:${152 + ax}px;top:20px;height:${Math.min(y0, y1) - (sel.fromLane === sel.toLane ? 28 : 20)}px"></span><span class="chip" style="left:${152 + ax}px;top:-1px;transform:translateX(${ax > W - 330 ? "-100%" : "-12px"})">#${sel.id} · ${esc(sel.sender)} → ${esc(sel.recipient ?? "Everyone on task")} · ${clock(sel.at)}${sel.kind === "verdict" ? " · verdict" : ""}</span>`;
+  }
+  const hours = `<div class="hours">${ticks.map((t) => `<span class="hour" style="left:${t.x}px"></span>`).join("")}</div>`;
+  html += `<div class="lanes" style="height:auto">${hours}${lanesHtml}${laneHtml.join("")}${over}${arrow}${chip}</div>`;
+  html += `<ul class="legend"><li><i style="background:color-mix(in srgb,var(--primary) 30%,transparent);border:1px solid var(--primary)"></i>worked or ran</li><li><i style="background:color-mix(in srgb,var(--like) 70%,transparent)"></i>green run</li><li><i style="background:color-mix(in srgb,var(--dislike) 70%,transparent)"></i>red run</li><li><i style="width:2px;height:8px;background:var(--muted-foreground)"></i>message, on its sender's lane</li><li><i style="background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted-foreground) 45%,transparent) 0 2px,transparent 2px 5px);border:1px dashed var(--muted-foreground)"></i>not kept: unknown, never skipped</li>${view.clock ? "" : `<li><i style="background:var(--card);border-left:1px dashed var(--muted-foreground);border-right:1px dashed var(--muted-foreground);width:12px"></i>quiet stretch skipped: nothing recorded</li>`}<li><i style="background:none;border-top:4px solid var(--like);height:0"></i>gate met</li><li><i style="background:none;border-top:4px dotted var(--question);height:0"></i>gate missing</li></ul>`;
+  if (sel) html += `<div class="details"><h3>Message #${sel.id} · ${esc(sel.sender)} → ${esc(sel.recipient ?? "Everyone on task")}</h3><p class="muted">${day(sel.at)} ${clock(sel.at)} · ${sel.kind} · its text and the link to its thread entry, as now</p></div>`;
+  app.innerHTML = `<h2>Timeline</h2><p class="mock-note">Mockup, drawn from the recorded timeline of ${DATA.slug} (read ${day(DATA.now)} ${clock(DATA.now)}). It reads and writes nothing.</p><section class="panel">${html}</section>`;
+  wire(view);
+}
+
+// ---- The phone list ------------------------------------------------------------------------------
+function phone(view) {
+  const rows = [];
+  for (const s of stages) {
+    if (s.status === "done") { rows.push({ t: s.from, k: 0, html: `<li class="stage" style="--c:var(--like)"><span class="t">${clock(s.from)}</span><span class="dot"></span><span class="lbl">Done</span><span></span></li>` }); continue; }
+    const name = s.status === "ready" ? "Ready" : s.status === "in_progress" ? "In progress · keen-swift-85" : `Review, round ${s.round} · gilded-gecko-838`;
+    rows.push({ t: s.from, k: 0, html: `<li class="stage" style="--c:var(--${tone(s.status)})"><span class="t">${clock(s.from)}</span><span class="dot"></span><span class="lbl">${name}</span><span class="len">${took((s.to ?? END) - s.from)}</span><span></span><span></span><span class="pbar" style="width:${Math.min(100, 8 + ((s.to ?? END) - s.from) / 250)}%"></span></li>` });
+  }
+  for (const r of roles) if (r.role === "orchestrator") rows.push({ t: r.from, k: 1, html: `<li class="msg"><span class="t">${clock(r.from)}</span><span class="dia"></span><span class="lbl">Orchestrator: ${esc(r.by)}</span><span></span></li>` });
+  for (const m of messages) rows.push({ t: m.at, k: 2, html: `<li class="msg"><span class="t">${clock(m.at)}</span><span class="dia"></span><span class="lbl">${esc(m.sender)} → ${esc(m.recipient ?? "Everyone on task")}</span><span></span></li>` });
+  for (const r of runs) {
+    const from = r.started ?? r.queued, to = r.ended ?? END;
+    rows.push({ t: r.queued, k: 3, html: `<li><span class="t">${clock(r.queued)}</span><span class="dot" style="--c:var(--${runTone(r)});width:7px;height:7px"></span><span class="lbl">${esc(words(r))}</span><span class="len">${took(to - from)}${r.result === "red" ? ' <span class="red">red</span>' : ""}</span></li>` });
+  }
+  if (DATA.runs_from) rows.push({ t: DATA.runs_from - 0.01, k: 1, html: `<li class="kept"><span class="t">${clock(DATA.runs_from)}</span><span class="sw"></span><span class="lbl">Builds and tests kept from here on</span><span></span></li>` });
+  for (const q of QUIET) rows.push({ t: q.from + 0.01, k: 0, html: `<li class="quiet"><span><b>${took(q.to - q.from)} quiet, ${clock(q.from)} → ${day(q.to)} ${clock(q.to)}</b><small>Task done. No role held, no run, message or change recorded.</small></span></li>` });
+  rows.sort((a, b) => a.t - b.t || a.k - b.k);
+  const out = [];
+  let lastDay = null;
+  for (const r of rows) {
+    const d = day(r.t);
+    if (d !== lastDay) { out.push(`<li class="day"><span class="t">${d}</span></li>`); lastDay = d; }
+    out.push(r.html);
+  }
+  const machine = runs.reduce((n, r) => n + ((r.ended ?? END) - (r.started ?? r.queued)), 0);
+  const head = `<p class="totals">${took(END - START)} in all · ${rounds.length} review rounds · ${DATA.bounces} bounces<br>Machine ${took(machine)}, queued 0 m</p>`;
+  const foot = `<div class="pfoot"><span><i style="display:inline-block;width:14px;height:8px;border-radius:2px;background:var(--primary);vertical-align:middle"></i> worked or ran</span>${view.all ? "" : `<button>Show all</button>`}</div>`;
+  const list = `<ul class="plist">${out.join("")}</ul>`;
+  document.getElementById("app").innerHTML = `<h2>Timeline</h2><p class="mock-note">Mockup from ${DATA.slug}'s recorded timeline. It reads and writes nothing.</p><section class="panel">${view.all ? head + list + foot : `<div class="pbox">${head}<div class="pclip">${list}</div>${foot}</div>`}</section>`;
+}
+
+// ---- Controls (this page only) and presets ------------------------------------------------------
+const PRESETS = {
+  fit: { from: START, to: END, skip: true, sel: null },
+  "fit-true": { from: START, to: END, skip: false, sel: null },
+  // Option A: the true clock always, no switch.
+  "fit-clock": { from: START, to: END, skip: false, sel: null, clock: true },
+  "fit-selected": { from: START, to: END, skip: true, sel: 15266 },
+  zoom: { from: 1795082700, to: 1795087080, skip: true, sel: 15396 },
+};
+let view;
+function render() { if (view.phone) phone(view); else wide(view); }
+function wire(v) {
+  const app = document.getElementById("app");
+  app.querySelectorAll("[data-act]").forEach((el) => el.addEventListener(el.type === "checkbox" ? "change" : "click", () => {
+    const act = el.dataset.act, mid = (v.from + v.to) / 2, half = (v.to - v.from) / 2;
+    if (act === "fit") Object.assign(v, { from: START, to: END });
+    if (act === "in") Object.assign(v, { from: mid - half / 2, to: mid + half / 2 });
+    if (act === "out") Object.assign(v, { from: Math.max(START, mid - half * 2), to: Math.min(END, mid + half * 2) });
+    if (act === "skip") v.skip = el.checked;
+    render();
+  }));
+  app.querySelectorAll(".brk").forEach((el) => el.addEventListener("click", () => { v.open.add(Number(el.dataset.open)); render(); }));
+  app.querySelectorAll(".mark").forEach((el) => el.addEventListener("click", () => { const id = Number(el.title.slice(1).split(" ")[0]); v.sel = id; render(); }));
+  app.onwheel = (e) => {
+    if (!(e.ctrlKey || e.metaKey || e.shiftKey)) return;
+    e.preventDefault();
+    const span = v.to - v.from;
+    if (e.shiftKey) { const d = (e.deltaX || e.deltaY) / 1000 * span; v.from = Math.max(START, v.from + d); v.to = Math.min(END, v.from + span); }
+    else { const f = e.deltaY > 0 ? 1.25 : 0.8, mid = (v.from + v.to) / 2; v.from = Math.max(START, mid - span * f / 2); v.to = Math.min(END, mid + span * f / 2); }
+    render();
+  };
+}
+function start() {
+  const key = location.hash.slice(1) || (innerWidth < 900 ? "phone" : "fit");
+  if (key.startsWith("phone")) view = { phone: true, all: key === "phone-all" };
+  else view = { ...(PRESETS[key] ?? PRESETS.fit), open: new Set() };
+  render();
+}
+addEventListener("hashchange", start);
+addEventListener("resize", () => { if (!view.phone) render(); });
+start();
+</script>
+</body>
+</html>

@@ -38,8 +38,8 @@ pub const MAJOR: i64 = 2;
 /// The api's minor within [`MAJOR`]: 1 added a task's `id`, `bound`, `edit_bound` and
 /// `integration_state`; 2 added `evidence`; 3 added `import` to its `assessment`, where the
 /// assessment names one; 4 added `workflow_read`, `workflow_actions` and `workflow_apply`; 5 added
-/// `attempts`.
-pub const MINOR: i64 = 5;
+/// `attempts`; 6 added `workflow_apply`'s `attestations` and `workflow_observe`.
+pub const MINOR: i64 = 6;
 
 /// Why a call has no result.
 enum Fail {
@@ -607,13 +607,26 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
                 &crate::workflow::Host::local()
             )?)
         }
+        // A guarded edge's `attestations`, each its project authority's signed word, none by
+        // default; `workflow_observe` hands the board that authority's signed observation.
         "workflow_apply" => {
-            args!(handle: actor, request: need);
+            args!(handle: actor, request: need, attestations: take);
             let (handle, request): (String, symphony_api::workflow::OperationRequest) =
                 (handle, request);
+            let attestations: Option<Vec<symphony_api::workflow::Signed>> = attestations;
             let principal = crate::workflow::agent_session(&handle);
             let store = board.get()?;
-            json!(store.apply_operation(&principal, &crate::workflow::Host::local(), &request)?)
+            json!(store.apply_attested(
+                &principal,
+                &crate::workflow::Host::local(),
+                &request,
+                attestations.as_deref().unwrap_or_default()
+            )?)
+        }
+        "workflow_observe" => {
+            args!(signed: need);
+            let signed: symphony_api::workflow::Signed = signed;
+            board.get()?.observe_authority(&signed)?.answer()
         }
         // A task's execution attempts (docs/EXECUTION_ATTEMPTS.md), read as the board's own
         // service under its scope: the project the call runs in, and the board's database.

@@ -70,7 +70,7 @@ pub(super) fn read(store: &Store, pending: &Pending) -> Result<Option<Observatio
             json!({"slug":pending.slug}),
         )
         .map_err(recovery_error)?;
-    let inputs = serde_json::from_value(value.clone()).map_err(|e| Error::Db(e.to_string()))?;
+    let inputs = crate::objects::read(&value).map_err(|e| Error::Db(e.to_string()))?;
     Ok(Some(Observation { value, inputs }))
 }
 

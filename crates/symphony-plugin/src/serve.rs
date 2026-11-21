@@ -434,6 +434,13 @@ fn answer(plugin: &dyn Plugin, request: Request, pages: &Pages) -> Result<Box<Ra
             })?;
             reply(&gates.kept_while(&asked.root, &asked.task.task()))
         }
+        Request::Attest(asked) => {
+            let authority = named(plugin.authorities(), "authority", &asked.authority, |a| {
+                a.adapter()
+            })?;
+            let within = std::time::Duration::from_millis(asked.within_ms);
+            reply(&authority.attest(&asked.root, &asked.operation, within))
+        }
         Request::Changed(asked) => {
             let watches = plugin.watches();
             let watch = watches

@@ -926,3 +926,129 @@ async fn the_route_refuses_a_bad_ask_first_and_answers_the_hubs_folders_at_its_c
     let kept = &shared.api.get().unwrap().reports_kept;
     assert_eq!((kept.passes(), kept.gits()), (1, 1));
 }
+
+/// `n` million input tokens of `role` on Opus 5.5, $4 a million at the table every build embeds,
+/// in `round`.
+fn opus(role: &str, round: u32, n: u64) -> TokenSum {
+    TokenSum {
+        role: role.into(),
+        round,
+        model: "claude-opus-5-5".into(),
+        speed: "standard".into(),
+        input: n * 1_000_000,
+        calls: 1,
+        ..TokenSum::default()
+    }
+}
+
+#[test]
+fn a_period_sums_its_hours_tokens_by_role_and_prices_them_and_an_hour_with_none_told_is_unknown() {
+    let tree = Tree::new();
+    let mut nine = hour(MONDAY + 9.0 * HOUR, 0, 0);
+    nine.tokens = Some(vec![opus("reviewer", 0, 1), opus("executor", 0, 2)]);
+    let mut ten = hour(MONDAY + 10.0 * HOUR, 0, 0);
+    ten.tokens = Some(vec![
+        opus("executor", 0, 1),
+        TokenSum {
+            model: "gpt-x".into(),
+            ..opus("worker", 0, 3)
+        },
+    ]);
+    let mut eleven = hour(MONDAY + 11.0 * HOUR, 0, 0);
+    eleven.tokens = Some(Vec::new());
+    // Twelve: the roll-up wrote the hour and told no tokens of it.
+    let twelve = hour(MONDAY + 12.0 * HOUR, 0, 0);
+    report(&tree, MONDAY, vec![nine, ten, eleven, twelve], |_| {});
+    let said = |spend: &Option<Vec<RoleSpend>>| {
+        spend.as_ref().map(|roles| {
+            (roles.iter())
+                .map(|role| {
+                    let cost = &role.cost;
+                    (
+                        role.role.clone(),
+                        role.tokens.input,
+                        cost.dollars,
+                        cost.unpriced.len(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    let now = MONDAY + 12.5 * HOUR;
+    let by_hour = page(&folders(&tree), Grain::Hour, 1, now, none);
+    assert_eq!(by_hour.prices, Prices::embedded().read);
+    let hours: Vec<_> = (by_hour.buckets.iter())
+        .filter(|bucket| bucket.start >= MONDAY + 9.0 * HOUR)
+        .map(|bucket| said(&bucket.spend))
+        .collect();
+    assert_eq!(
+        hours,
+        [
+            Some(vec![
+                ("executor".to_string(), 2_000_000, 8.0, 0),
+                ("reviewer".to_string(), 1_000_000, 4.0, 0),
+            ]),
+            Some(vec![
+                ("executor".to_string(), 1_000_000, 4.0, 0),
+                ("worker".to_string(), 3_000_000, 0.0, 1),
+            ]),
+            Some(vec![]),
+            None,
+        ],
+        "executor first; the model with no price named, in no dollar; none gained is known"
+    );
+    let by_day = page(&folders(&tree), Grain::Day, 1, now, none);
+    assert_eq!(
+        said(&by_day.buckets[0].spend),
+        Some(vec![
+            ("executor".to_string(), 3_000_000, 12.0, 0),
+            ("reviewer".to_string(), 1_000_000, 4.0, 0),
+            ("worker".to_string(), 3_000_000, 0.0, 1),
+        ])
+    );
+    assert_eq!(by_day.landed, None, "no task landed");
+}
+
+#[test]
+fn the_tasks_landed_in_the_window_are_priced_once_each_at_their_last_landing() {
+    let tree = Tree::new();
+    let landed = |slug: &str, at: f64, spent: Vec<TokenSum>| Landed {
+        slug: slug.into(),
+        at,
+        spent,
+    };
+    report(&tree, MONDAY, vec![hour(MONDAY, 0, 0)], |day| {
+        day.landed = vec![
+            landed("a/again", MONDAY + HOUR, vec![opus("executor", 1, 9)]),
+            landed("a/cheap", MONDAY + 2.0 * HOUR, vec![opus("executor", 1, 1)]),
+            landed("a/none", MONDAY + 3.0 * HOUR, vec![]),
+        ];
+    });
+    let wednesday_start = MONDAY + 2.0 * DAY;
+    report(
+        &tree,
+        wednesday_start,
+        vec![hour(wednesday_start, 0, 0)],
+        |day| {
+            day.landed = vec![landed(
+                "a/again",
+                wednesday_start + HOUR,
+                vec![opus("executor", 1, 2), opus("reviewer", 2, 1)],
+            )];
+        },
+    );
+    let page = page(&folders(&tree), Grain::Day, 3, wednesday(), none);
+    let landed = page.landed.unwrap();
+    let dearest: Vec<(&str, f64)> = (landed.dearest.iter())
+        .map(|task| (task.slug.as_str(), task.cost.dollars))
+        .collect();
+    assert_eq!(dearest, [("a/again", 12.0), ("a/cheap", 4.0)]);
+    assert_eq!((landed.tasks, landed.without, landed.again), (2, 1, 1));
+    assert_eq!(landed.median, Some(8.0));
+    assert_eq!(landed.first_round.cost.dollars, 12.0);
+    assert_eq!(landed.later_rounds.cost.dollars, 4.0);
+    assert_eq!(landed.first_round.cost.prices, Prices::embedded().read);
+    // A window that holds only Wednesday sees its landing alone.
+    let today = super::page(&folders(&tree), Grain::Day, 1, wednesday(), none);
+    assert_eq!(today.landed.unwrap().tasks, 1);
+}

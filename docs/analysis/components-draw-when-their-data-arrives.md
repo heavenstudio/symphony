@@ -9,7 +9,11 @@ it is answered.
 
 Every claim says how it is known: **measured** (by the run named), **read in code** (main at
 `6b223845`), **read in docs** (looked up on 2026-11-15) or **inferred** (reasoned from those, not
-tried). The probe is `experiments/keyed-reads/`.
+tried). The probe is `experiments/keyed-reads/` at commit
+`a40751dc2428b708045ed2ad4d6e27c15d94c314`, removed from the tree since; it reads nothing outside
+that folder, and a checkout of that revision runs it:
+`git worktree add --detach DIR a40751dc2428b708045ed2ad4d6e27c15d94c314`, then `npm ci` and
+`npm run measure` in `DIR/experiments/keyed-reads`.
 
 ## The choice
 
@@ -162,7 +166,8 @@ the part that needs the most care, and the reason for doing it once: `task-live.
 ### b. A library for the client side
 
 Measured: each page of the probe built alone with the web client's Vite settings, gzipped at the
-best level, bytes beyond the same page read whole (`experiments/keyed-reads`, `npm run measure`):
+best level, bytes beyond the same page read whole (`experiments/keyed-reads` at commit
+`a40751dc2428b708045ed2ad4d6e27c15d94c314`, `npm run measure`, run as the top of this page says):
 
 | way | minified | gzip |
 |---|---|---|

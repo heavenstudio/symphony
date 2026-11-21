@@ -327,3 +327,125 @@ fn a_copy_carries_the_rows_and_the_dump_reads_them_back() {
         f.store.spent_on(&["sim/jump"]).unwrap()
     );
 }
+
+/// `t` as the roll-up's read gives a sum of it.
+fn token_sum(role: &str, round: u32, model: &str, t: Tokens) -> symphony_api::reports::TokenSum {
+    symphony_api::reports::TokenSum {
+        role: role.into(),
+        round,
+        model: model.into(),
+        speed: "standard".into(),
+        input: t.input,
+        cache_write_5m: t.cache_write_5m,
+        cache_write_1h: t.cache_write_1h,
+        cache_read: t.cache_read,
+        output: t.output,
+        calls: t.calls,
+    }
+}
+
+on_both! {
+fn the_roll_ups_read_sums_the_table_and_names_a_landed_task_with_its_subtasks(backend: Backend) {
+    let f = working(backend);
+    f.task_with(symphony_board::NewTask {
+        parent: Some("sim/jump".into()),
+        ..symphony_board::NewTask::new("sim/jump/fix", "Fix it", "ochre-owl")
+    });
+    let wren = f.session("worker");
+    f.store.claim("sim/jump/fix", &wren).unwrap();
+    assert!(f.store.bind_agent("fix", &wren, false).unwrap());
+    assert!(f.store.bind_agent("owl", "ochre-owl", false).unwrap());
+    beat(&f, "exec", &[opus(1)]);
+    beat(&f, "fix", &[opus(4)]);
+    // Orchestrating is no task's: in the table's sums, in no task's.
+    beat(&f, "owl", &[at("gpt-x", "standard", 5)]);
+    f.store
+        .move_to("sim/jump", "review", "amber-heron")
+        .unwrap();
+    f.store
+        .take_role("sim/jump", "brisk-finch", "reviewer")
+        .unwrap();
+    beat(&f, "rev", &[opus(2)]);
+    let open = f.store.report_records(NOW).unwrap();
+    let usage = [
+        token_sum("executor", 0, "claude-opus-5-5", sum(&[1, 4])),
+        token_sum("reviewer", 0, "claude-opus-5-5", sum(&[2])),
+        token_sum("worker", 0, "gpt-x", tokens(5)),
+    ];
+    assert_eq!(open.usage, usage, "the whole table, by role, model and speed");
+    assert!(open.spent.is_empty(), "no task is done yet");
+    f.store
+        .verdict("sim/jump", "brisk-finch", "approve", "fine")
+        .unwrap();
+    f.store
+        .landed(
+            "sim/jump",
+            "ochre-owl",
+            "landed sim/jump on main at 3e0c661",
+            false,
+            &["done"],
+        )
+        .unwrap();
+    let log = f.store.database().queries();
+    let (before, writes) = log.report(symphony_board::sweep::trigger::now());
+    let landed = f.store.report_records(NOW).unwrap();
+    let (after, writes_after) = log.report(symphony_board::sweep::trigger::now());
+    assert_eq!(after.count - before.count, 1, "still one round trip");
+    assert_eq!(writes_after.count, writes.count, "and no write");
+    assert_eq!(landed.usage, usage);
+    let spent: Vec<(&str, &symphony_api::reports::TokenSum)> = (landed.spent.iter())
+        .map(|(slug, sum)| (slug.as_str(), sum))
+        .collect();
+    assert_eq!(
+        spent,
+        [
+            // Its subtask's round 1 is added to its own.
+            ("sim/jump", &token_sum("executor", 1, "claude-opus-5-5", sum(&[1, 4]))),
+            ("sim/jump", &token_sum("reviewer", 2, "claude-opus-5-5", sum(&[2]))),
+        ]
+    );
+}
+}
+
+on_both! {
+fn the_cards_read_gives_each_task_its_subtasks_spend_in_one_round_trip(backend: Backend) {
+    let f = working(backend);
+    f.task_with(symphony_board::NewTask {
+        parent: Some("sim/jump".into()),
+        ..symphony_board::NewTask::new("sim/jump/fix", "Fix it", "ochre-owl")
+    });
+    f.task_with(symphony_board::NewTask::new("sim/quiet", "Quiet", "ochre-owl"));
+    let wren = f.session("worker");
+    f.store.claim("sim/jump/fix", &wren).unwrap();
+    assert!(f.store.bind_agent("fix", &wren, false).unwrap());
+    beat(&f, "exec", &[opus(1)]);
+    beat(&f, "fix", &[opus(4), at("gpt-x", "standard", 2)]);
+    let log = f.store.database().queries();
+    let (before, writes) = log.report(symphony_board::sweep::trigger::now());
+    let read = f
+        .store
+        .spent_under(&["sim/jump", "sim/jump/fix", "sim/quiet", "sim/none"])
+        .unwrap();
+    let (after, writes_after) = log.report(symphony_board::sweep::trigger::now());
+    assert_eq!(after.count - before.count, 1, "one round trip for every slug");
+    assert_eq!(writes_after.count, writes.count, "and no write");
+    let prices = Prices::embedded();
+    let spend = |rows: &[&str]| {
+        let mut all = symphony_board::usage::Spend::default();
+        for row in f.store.spent_on(rows).unwrap() {
+            all.add(&row.spend(prices));
+        }
+        all
+    };
+    // A task's figure is its page's: its own and its subtasks', every model's.
+    assert_eq!(read["sim/jump"], spend(&["sim/jump", "sim/jump/fix"]));
+    assert_eq!(read["sim/jump/fix"], spend(&["sim/jump/fix"]));
+    assert_eq!(read["sim/jump"].cost.unpriced.len(), 1, "gpt-x has no price");
+    assert_eq!(
+        read.keys().collect::<Vec<_>>(),
+        ["sim/jump", "sim/jump/fix"],
+        "one that took none, or no task at all, is left out"
+    );
+    assert!(f.store.spent_under(&[]).unwrap().is_empty());
+}
+}

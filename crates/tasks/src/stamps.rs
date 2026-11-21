@@ -27,6 +27,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+pub mod posted;
 pub mod read;
 
 /// The stamps the Symphony has a reader for, by name, in the order the catalogue is listed.
@@ -420,7 +421,7 @@ impl Needs {
     /// What a task's `fields` record of its needs, when they record any.
     pub fn of(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> Option<Needs> {
         let value = fields.get(crate::red::FIELDS)?.get(NEEDS)?;
-        serde_json::from_value(value.clone()).ok()
+        crate::objects::read(value).ok()
     }
 
     /// Where the assessment stands: `at 1a2b3c4`, or `from the brief` when it read no tip; with

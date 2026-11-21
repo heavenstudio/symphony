@@ -21,15 +21,33 @@ import {
   type Unit,
 } from "./chart";
 import { PageNotices } from "./live";
+import { href } from "./project";
 import { getIf, said } from "./request";
 import { field } from "./shared";
+import {
+  amount,
+  costSaid,
+  dollars,
+  estimate,
+  isCost,
+  isTokens,
+  total,
+  unpricedSaid,
+} from "./spend";
 import { Backoff } from "./state";
 import { load, save } from "./storage";
 // biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: reports reads again every EVERY_MS with no feed of its own, where a feed event of a roll-up is the wait
 import { sleep } from "./timing";
 import { failed, ready } from "./trouble";
 import { NearViewport } from "./viewport";
-import { type Grain, REPORTS_PATH, type ReportMark } from "./wire";
+import {
+  type AgentCost,
+  type Grain,
+  type LandedSpend,
+  REPORTS_PATH,
+  type ReportMark,
+  type Spend,
+} from "./wire";
 
 const HOUR = 3_600;
 const DAY = 86_400;
@@ -155,6 +173,11 @@ export interface Page {
   first: number | null;
   marks: ReportMark[];
   unread: string[];
+  /** What the tasks landed in the window took; none where none landed. */
+  landed: LandedSpend | null;
+  /** The day the API list prices every dollar is estimated at were read; empty from a server that
+   * prices nothing. */
+  prices: string;
 }
 
 /** The list `value` holds, none where it is missing; null where it is something else. */
@@ -180,6 +203,32 @@ function isMark(value: unknown): value is Omit<ReportMark, "changed"> {
 /** What a mark that names nothing changed: the settings, all a mark said before it named any. */
 const SETTINGS = ["settings"];
 
+const isCount = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
+const isSpend = (value: unknown): value is Spend =>
+  isTokens(field(value, "tokens")) && isCost(field(value, "cost"));
+
+/**
+ * The landed tasks' spend as the server writes it, or none where it is not: absent or `null` is
+ * none landed, as from a server that wrote none.
+ */
+function readLanded(value: unknown): LandedSpend | null | undefined {
+  if (value === undefined || value === null) return null;
+  const median = field(value, "median") ?? null;
+  const dearest = listed(field(value, "dearest"));
+  return ["tasks", "without", "again"].every((count) => isCount(field(value, count) ?? 0)) &&
+    (median === null || typeof median === "number") &&
+    dearest?.every(
+      (task) =>
+        typeof field(task, "slug") === "string" &&
+        typeof field(task, "at") === "number" &&
+        isSpend(task),
+    ) === true &&
+    isSpend(field(value, "first_round")) &&
+    isSpend(field(value, "later_rounds"))
+    ? ({ ...(value as LandedSpend), median, dearest } as LandedSpend)
+    : undefined;
+}
+
 /**
  * The reports as this client reads them, or none for a value without what the page draws: a grain,
  * its days, the window's ends, the periods (each read by path as it is drawn), the first roll-up,
@@ -194,7 +243,11 @@ export function readReports(value: unknown): Page | null {
   const buckets = listed(field(value, "buckets"));
   const marks = listed(field(value, "marks"));
   const unread = listed(field(value, "unread"));
+  const landed = readLanded(field(value, "landed"));
+  const prices = field(value, "prices") ?? "";
   if (
+    landed === undefined ||
+    typeof prices !== "string" ||
     typeof grain !== "string" ||
     parseGrain(grain) === null ||
     typeof days !== "number" ||
@@ -223,23 +276,33 @@ export function readReports(value: unknown): Page | null {
       return { ...mark, changed: changed.length > 0 ? changed : SETTINGS };
     }),
     unread: unread as string[],
+    landed,
+    prices,
   };
 }
 
 /**
  * Where a series' value is read from in a period: the number at a path; the number at a path the
  * answer always writes (none where it is missing, as in an answer from a server built before it);
- * the mean of the sessions running work in a role, or every other role's together for none; or the
- * sum of the numbers at two paths.
+ * the mean of the sessions running work in a role, or every other role's together for none; the
+ * estimated dollars or the tokens of a role's model calls, or every other role's together for none;
+ * or the sum of the numbers at two paths.
  */
 type Pick =
   | { at: string }
   | { written: string }
   | { role: string | null }
+  | { spend: string | null; of: "dollars" | "tokens" }
   | { sum: [string, string] };
 
 /** The roles a chart of the agents names; the rest are its other roles. */
 const NAMED = ["orchestrator", "executor", "reviewer"];
+
+/** Every token of a role's spend, none where its tokens are not the wire's. */
+function tokensOf(spend: unknown): number | null {
+  const tokens = field(spend, "tokens");
+  return isTokens(tokens) ? total(tokens) : null;
+}
 
 /** The value `pick` reads in `bucket`: none where its source has no record of the period. */
 function picked(pick: Pick, bucket: Bucket): number | null {
@@ -259,6 +322,22 @@ function picked(pick: Pick, bucket: Bucket): number | null {
       });
     return sum(means);
   }
+  if ("spend" in pick) {
+    const roles = field(bucket.raw, "spend");
+    if (!Array.isArray(roles)) return null;
+    return sum(
+      roles
+        .filter((one) => {
+          const name = field(one, "role");
+          return pick.spend === null ? !NAMED.includes(name as string) : name === pick.spend;
+        })
+        .flatMap((one) => {
+          const value =
+            pick.of === "dollars" ? field(field(one, "cost"), "dollars") : tokensOf(one);
+          return typeof value === "number" ? [value] : [];
+        }),
+    );
+  }
   const [one, other] = pick.sum;
   const first = bucket.number(one);
   const second = bucket.number(other);
@@ -272,8 +351,11 @@ interface Series {
   pick: Pick;
 }
 
-/** The source a chart's coverage is read from. */
-type Source = "rollup" | "agents" | "health";
+/**
+ * The source a chart's coverage is read from: the roll-up's hours, the agents' or the board's
+ * health, or the hours whose tokens the roll-up told.
+ */
+type Source = "rollup" | "agents" | "health" | "spend";
 
 interface Spec {
   id: string;
@@ -297,6 +379,24 @@ const role = (name: string, which: string | null): Series => ({
   mark: "bar",
   pick: { role: which },
 });
+/** The bars of each role's estimated dollars or tokens, the roles a chart of the agents names. */
+const spent = (of: "dollars" | "tokens"): Series[] =>
+  (
+    [
+      ["Orchestrators", "orchestrator"],
+      ["Executors", "executor"],
+      ["Reviewers", "reviewer"],
+      ["Other roles", null],
+    ] as const
+  ).map(([name, which]) => ({ name, mark: "bar", pick: { spend: which, of } }));
+
+/** The heading of the section the landed tasks' costs follow the charts of. */
+export const SPEND = "Tokens and cost";
+
+/** How the roll-up tells an hour's tokens, said under each chart of them. */
+const TOLD =
+  "An hour's tokens are what the board's usage gained between two hourly roll-ups, shared among " +
+  "the hours between them by time: an hour no two roll-ups span is a gap, never a zero.";
 
 /** The page's sections, each a heading and its charts. */
 export const SECTIONS: [string, Spec[]][] = [
@@ -401,6 +501,32 @@ export const SECTIONS: [string, Spec[]][] = [
         unit: "load",
         source: "agents",
         series: [line("Peak", "agents.load_1m.peak"), line("Mean", "agents.load_1m.mean")],
+      },
+    ],
+  ],
+  [
+    SPEND,
+    [
+      {
+        id: "cost",
+        title: "Estimated cost",
+        note:
+          "What the model calls the board recorded cost in each {per}, by role, estimated at API " +
+          "list prices read {prices}: never money spent, as a subscription is not billed by the " +
+          `token. Tokens of a model with no price are in no bar. ${TOLD}`,
+        unit: "dollars",
+        source: "spend",
+        series: spent("dollars"),
+      },
+      {
+        id: "tokens",
+        title: "Tokens",
+        note:
+          "The tokens the board recorded in each {per}, by role: input, cache writes, cache reads " +
+          `and output together, every model's. ${TOLD}`,
+        unit: "tokens",
+        source: "spend",
+        series: spent("tokens"),
       },
     ],
   ],
@@ -514,6 +640,7 @@ export function paths(): [string, string, string][] {
 
 /** How much of `bucket` `source` recorded, from 0 to 1. */
 function cover(bucket: Bucket, source: Source): number {
+  if (source === "spend") return Array.isArray(field(bucket.raw, "spend")) ? 1 : 0;
   const [start, end] = bucket.span();
   const seconds =
     source === "rollup"
@@ -642,7 +769,9 @@ function fixedCharts(page: Page, hidden: string[]): [string, ChartData[]][] {
     specs.map((spec) => ({
       id: spec.id,
       title: spec.title,
-      note: spec.note.replaceAll("{per}", page.grain),
+      note: spec.note
+        .replaceAll("{per}", page.grain)
+        .replaceAll("{prices}", page.prices === "" ? "on a day not named" : page.prices),
       unit: spec.unit,
       series: spec.series.map((series) => ({
         name: series.name,
@@ -842,6 +971,127 @@ export function figures(page: Page): [Figure, Figure, Figure, Figure] {
             `${short(total(cards, "decisions.answered"), 0)} answered in the window`,
         };
   return [done, lead, agents, decisions];
+}
+
+/** What the window's periods told of tokens, summed. */
+export interface WindowSpend {
+  dollars: number;
+  tokens: number;
+  /** Whether some of them had no price. */
+  unpriced: boolean;
+  /** The periods that told any. */
+  told: number;
+}
+
+/** The tokens the periods of `page` told, all told: none where no period told any. */
+export function windowSpend(page: Page): WindowSpend | null {
+  const told = page.buckets.flatMap((bucket) => {
+    const roles = field(bucket.raw, "spend");
+    return Array.isArray(roles) ? [roles as unknown[]] : [];
+  });
+  if (told.length === 0) return null;
+  const spend: WindowSpend = { dollars: 0, tokens: 0, unpriced: false, told: told.length };
+  for (const role of told.flat()) {
+    const cost = field(role, "cost");
+    if (isCost(cost)) {
+      spend.dollars += cost.dollars;
+      spend.unpriced ||= cost.unpriced.length > 0;
+    }
+    spend.tokens += tokensOf(role) ?? 0;
+  }
+  return spend;
+}
+
+/** Dollars as a figure says them: `+ unpriced` after where some tokens had no price. */
+function dollarsSaid(figure: number, unpriced: boolean): string {
+  if (unpriced && figure === 0) return "unpriced";
+  return unpriced ? `${dollars(figure)} + unpriced` : dollars(figure);
+}
+
+/** The models `costs` name no price for, each once, with its tokens summed. */
+function unpricedOf(costs: AgentCost[]): AgentCost {
+  const merged: AgentCost["unpriced"] = [];
+  for (const one of costs.flatMap((cost) => cost.unpriced)) {
+    const kept = merged.find((each) => each.model === one.model && each.speed === one.speed);
+    if (kept === undefined) {
+      merged.push({ ...one, tokens: { ...one.tokens } });
+      continue;
+    }
+    for (const kind of [
+      "input",
+      "cache_write_5m",
+      "cache_write_1h",
+      "cache_read",
+      "output",
+      "calls",
+    ] as const) {
+      kept.tokens[kind] += one.tokens[kind];
+    }
+  }
+  const [first] = costs;
+  return { ...(first as AgentCost), unpriced: merged };
+}
+
+/**
+ * Under the charts of tokens: the window's all told; what the tasks landed in it took, each with
+ * its subtasks (the median, the dearest ten, each a link to its page, and their first rounds
+ * against the rounds after); and that every dollar is an estimate at API list prices, with the
+ * day they were read, never money spent.
+ */
+export function SpendSummary({ page }: { page: Page }) {
+  const told = windowSpend(page);
+  const { landed, grain } = page;
+  const periods = page.buckets.length;
+  const unpriced =
+    landed === null || landed.tasks === 0
+      ? ""
+      : unpricedSaid(unpricedOf([landed.first_round.cost, landed.later_rounds.cost]));
+  return (
+    <div className="reports-spend">
+      <p>
+        {told === null
+          ? `No ${grain} of the window told its tokens: an hour's are told once two roll-ups span it.`
+          : `${told.told === periods ? "In the window" : `In the ${told.told} of ${periods} ${grain}s that told them`}: ` +
+            `${dollarsSaid(told.dollars, told.unpriced)} estimated, ${amount(told.tokens)} tokens.`}
+      </p>
+      <h3>Cost per landed task</h3>
+      {landed === null ? (
+        <p>No task landed in the window.</p>
+      ) : landed.tasks === 0 ? (
+        <p>{`${landed.without} landed, none with tokens recorded.`}</p>
+      ) : (
+        <>
+          <p>
+            {`${landed.tasks} landed with tokens recorded` +
+              (landed.without > 0 ? ` (${landed.without} with none, in no figure)` : "") +
+              `, each with its subtasks: a median of ${
+                landed.median === null ? "unpriced" : dollars(landed.median)
+              } a task. The dearest:`}
+          </p>
+          <ol className="reports-dearest">
+            {landed.dearest.map((task) => (
+              <li key={task.slug} className="reports-landed-task">
+                <a href={href(`/task/${task.slug}`)}>{task.slug}</a>
+                <span>{`${costSaid(task.cost)} · ${amount(total(task.tokens))} tokens`}</span>
+              </li>
+            ))}
+          </ol>
+          <p>
+            {`First rounds ${costSaid(landed.first_round.cost)} ` +
+              `(${amount(total(landed.first_round.tokens))} tokens), the review rounds after them ` +
+              `${costSaid(landed.later_rounds.cost)} ` +
+              `(${amount(total(landed.later_rounds.tokens))} tokens): ${landed.again} of ` +
+              `${landed.tasks} went past their first round.`}
+          </p>
+        </>
+      )}
+      <p className="reports-note">
+        {`Every dollar here is ${estimate(page.prices === "" ? "on a day not named" : page.prices)}; ` +
+          "a figure marked + unpriced leaves out the tokens of a model the price table does not name" +
+          (unpriced === "" ? "." : `: ${unpriced}.`)}
+      </p>
+    </div>
+  );
 }
 
 /** The four figures, each with the id of the chart it sums up, which its link opens. */
@@ -1091,6 +1341,7 @@ function Report({ page: whole, hidden, onToggle, lands }: ReportProps) {
                 </NearViewport>
               ))}
             </div>
+            {heading === SPEND && <SpendSummary page={page} />}
           </section>
         ))}
     </>

@@ -28,6 +28,9 @@ export const UPLOAD_ACCEPT =
   "image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log,.docx,.xlsx,.pptx";
 export const QUICK_TASK_TITLE_MAX = 200;
 export const TASK_ACTION_ROUTE = "/api/task-action";
+export const TASK_TOKENS_PATH = "/api/task-tokens";
+export const TASK_COSTS_PATH = "/api/task-costs";
+export const TASK_COSTS_MOST = 200;
 export const TASK_GATES_PATH = "/api/task-gates";
 export const TASK_TIMELINE_PATH = "/api/task-timeline";
 export const TASK_DIFF_PATH = "/api/task-diff";
@@ -392,6 +395,49 @@ export type ReportMark = {
    */
   changed: Array<string>;
 };
+
+export type LandedSpend = {
+  /**
+   * The landed tasks the board recorded tokens for.
+   */
+  tasks: number;
+  /**
+   * The landed tasks it recorded none for: in no figure here.
+   */
+  without: number;
+  /**
+   * The median estimated cost of those with a priced token, in US dollars; none with none.
+   */
+  median: number | null;
+  /**
+   * The dearest of them, at most ten, the dearest first.
+   */
+  dearest: Array<LandedTask>;
+  /**
+   * What they took up to their first review, all told.
+   */
+  first_round: Spend;
+  /**
+   * What they took in every round after it: each review, and the fixes it asked for.
+   */
+  later_rounds: Spend;
+  /**
+   * How many of them took anything after their first round.
+   */
+  again: number;
+};
+
+export type LandedTask = {
+  slug: string;
+  /**
+   * When it landed.
+   */
+  at: number;
+  tokens: AgentTokens;
+  cost: AgentCost;
+};
+
+export type Spend = { tokens: AgentTokens; cost: AgentCost };
 
 export type RunsPage = {
   /**
@@ -1068,6 +1114,47 @@ export type AgentCost = {
 };
 
 export type AgentUnpriced = { model: string; speed: string; tokens: AgentTokens };
+
+export type TaskTokens = {
+  total: AgentTokens;
+  cost: AgentCost;
+  /**
+   * By role, executor first.
+   */
+  by_role: Array<RoleTokens>;
+  /**
+   * By review round, the first first: round 1 is the work up to the first review, round 0 the
+   * calls of a session that worked no task.
+   */
+  by_round: Array<RoundTokens>;
+};
+
+export type RoleTokens = { role: string; tokens: AgentTokens; cost: AgentCost };
+
+export type RoundTokens = { round: number; tokens: AgentTokens; cost: AgentCost };
+
+export type TaskCosts = {
+  /**
+   * The day the API list prices every figure is estimated at were read.
+   */
+  prices: string;
+  /**
+   * Each task asked for that took any tokens, by its slug; one that took none is left out.
+   */
+  costs: Array<TaskCost>;
+};
+
+export type TaskCost = {
+  slug: string;
+  /**
+   * In US dollars, at API list prices: never money spent.
+   */
+  dollars: number;
+  /**
+   * Whether some of its tokens were of a model the price table names no price for, in no dollar.
+   */
+  unpriced: boolean;
+};
 
 export type SessionGo = {
   /**

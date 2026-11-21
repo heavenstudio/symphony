@@ -14,7 +14,8 @@
 //! - `HANDLE released ROLE (released)` and `HANDLE released every role (left)` ([`RELEASED`]): work
 //!   in progress whose last executor let go is ready again.
 //! - `blocked: cancelled dependencies: … (was STATUS)` ([`BLOCK_LINE`]) and
-//!   `unblocked: no cancelled dependency left; back to STATUS` ([`UNBLOCK_LINE`]).
+//!   `unblocked: WHY; back to STATUS` ([`unblocked_line`]): the end of a block, its WHY no
+//!   cancelled dependency left ([`UNBLOCK_LINE`]) or the owner's word that ended it.
 //! - a `verdict` message: `changes…` sends a task in review back to in progress; any other
 //!   (`approve…`, a subtask's `done: …`, a landing) closes it.
 //!
@@ -63,6 +64,24 @@ pub const EVERY_ROLE: &str = "every role";
 pub const BLOCK_LINE: &str = "blocked: cancelled dependencies: ";
 /// What starts the line that gives a task so blocked its status back, before that status.
 pub const UNBLOCK_LINE: &str = "unblocked: no cancelled dependency left; back to ";
+/// What starts every line that ends a block ([`unblocked_line`]).
+pub const UNBLOCKED: &str = "unblocked: ";
+/// Between why a block ended and the status its line gives the task back ([`unblocked_line`]).
+pub const BACK_TO: &str = "; back to ";
+
+/// The line that ends a block for `why` (a few words with no `; back to` in them), giving the task
+/// `to` back: `unblocked: WHY; back to TO`.
+pub fn unblocked_line(why: &str, to: &str) -> String {
+    format!("{UNBLOCKED}{why}{BACK_TO}{to}")
+}
+
+/// The status a line that ends a block gives the task back ([`unblocked_line`]), as written: the
+/// text after its last `; back to`, up to what follows it (` (its block line recorded …)`). None
+/// for any other line, and for one whose status is no word of a status (checked by the caller).
+pub fn unblocked_to(text: &str) -> Option<&str> {
+    let (_, rest) = text.strip_prefix(UNBLOCKED)?.rsplit_once(BACK_TO)?;
+    Some(rest.split_once(' ').map_or(rest, |(to, _)| to))
+}
 
 /// The statuses nothing leaves.
 pub const CLOSED: [&str; 2] = ["done", "cancelled"];
@@ -254,8 +273,7 @@ fn event(line: &Line) -> Option<Event<'_>> {
             .and_then(|(_, was)| status(was));
         return Some(Event::Block { was });
     }
-    if let Some(rest) = text.strip_prefix(UNBLOCK_LINE) {
-        let to = rest.split_once(' ').map_or(rest, |(to, _)| to);
+    if let Some(to) = unblocked_to(text) {
         return status(to).map(|to| Event::Unblock { to });
     }
     if let Some((_, rest)) = text.split_once(MOVED) {

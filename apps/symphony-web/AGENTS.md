@@ -46,9 +46,20 @@ lockfile written again, in a task of their own.
   the registry.
 - **React 19** (`react`, `react-dom`), the only run-time dependencies.
 - **TypeScript**, strict (`tsconfig.json`: `strict`, `noUncheckedIndexedAccess`,
-  `exactOptionalPropertyTypes`, `verbatimModuleSyntax`), checked by `tsc --noEmit`. It emits
-  nothing: Vite strips the types. `skipLibCheck` leaves the packages' own declarations unchecked,
-  which name Node's types this package does not take.
+  `exactOptionalPropertyTypes`, `verbatimModuleSyntax`), checked by `tsc --noEmit` as two
+  programs: the code a page runs (`tsconfig.json`: `src/` but its tests and the dev server, the
+  shell's `shell/cache.ts` and `shell/shell.ts`, and the Mac app's `notification.ts`), which knows
+  no Node, and the code Node runs (`tsconfig.node.json`: the Node scripts, the tests, the dev
+  server and `vite.config.ts`). It emits nothing: Vite strips the kinds' types, and the pinned
+  Node its scripts' and the shell's (`shell/strip.ts`, its own stripper, which puts blanks where
+  each type was, so a line of the result is the source's). So the shell and the scripts are
+  written in the syntax a type erases alone (no `enum`, `namespace` or parameter property), which
+  the stripper refuses. `skipLibCheck` leaves the packages' own declarations unchecked, Vite's
+  among them, which name Node's types the page's program does not take.
+- **`@types/node`**, Node's own API typed, pinned to the line of the Node `.node-version` names
+  and read by `tsconfig.node.json` alone: the Node scripts and the tests call `fs`, `path` and
+  `process` typed, where each would otherwise declare by hand the part it calls, and no page's
+  code can reach a Node API, as its program has no such types.
 - **Vite** builds the kinds (`vite.config.ts`): one entry per kind, `src/kinds/NAME.tsx`, named in
   `KINDS`; JSX by Vite's own transform, so no React plugin; no public folder and no module
   preload of Vite's, as the Symphony's server and shell serve and load the files. Its dev server
@@ -72,9 +83,17 @@ lockfile written again, in a task of their own.
   `no-timed-waits baseline:`.
 - **Vitest** runs the unit tests, with `@vitest/coverage-v8` for their coverage.
 
-`just client-lint` (`check.sh`) runs the wire types' check and the tests of the example that
-writes them, Biome, `tsc --noEmit` and the unit tests with their coverage, each whatever the ones
-before it did, and `just lint-rs` runs it, so a
+**Hand-written code here is TypeScript**: the kinds, the shell's store and script, the Node
+scripts around Vite (`dev.ts`, `report.ts`, `shell/minify.ts`, `shell/strip.ts`) and the Mac app's
+one script in a page (`apps/symphony-desktop/src/notification.ts`). JavaScript is what a build
+writes. A script a page runs as it is written is TypeScript with no syntax of its own, every type
+inferred, as the Mac app's is; one Node runs is TypeScript, which Node strips. `typescript-only.sh`
+refuses a JavaScript file (`.js`, `.jsx`, `.mjs`, `.cjs`) anywhere in the checkout, tracked or
+written and not ignored, outside the client's distribution (`apps/symphony-server/client/public/`).
+
+`just client-lint` (`check.sh`) runs `typescript-only.sh`, the wire types' check and the tests of
+the example that writes them, Biome, `tsc --noEmit` over both programs and the unit tests with
+their coverage, each whatever the ones before it did, and `just lint-rs` runs it, so a
 task's gate and the release run's lint both do. `just client-wire` writes the wire types.
 
 ## The wire types
@@ -177,8 +196,9 @@ its styles, the shared stylesheet first and then the CSS its chunks and its entr
 shared stylesheet is the build's entry for `src/styles/shared.css`, which imports its sheets in
 the order written there (the board's, the controls' theme, the frame's, then the shared
 controls'): the order of the cascade is stated in that file, never derived from a file's name. The
-shell is the manifest's line, then the device cache's store and `shell/shell.js`, minified by the
-minifier Vite ships (`shell/minify.js`), named by its bytes, with the server's notice styles'
+shell is the manifest's line, then the device cache's store and `shell/shell.ts`, each with its
+types stripped and the two joined (a join that is no module, a name both declare, refused), minified
+by the minifier Vite ships (`shell/minify.ts`), named by its bytes, with the server's notice styles'
 hash as its last line. The step refuses a build with no Vite manifest, no shared stylesheet or no
 kind, and publishes nothing then. `symphony-build publish-client` exchanges the stage with
 `OUT/public` whole. Files are named `NAME-HASH16.EXT` with a hex hash, as the server caches such a
@@ -221,7 +241,7 @@ it: an effect's own (its cleanup aborts it), or, for a handler or a read with no
 (a click's post, a document's versions read), the kind's mount (`useMount()`, `src/mount.ts`, which
 `stop` aborts). A kind the shell stopped does nothing more: Later answered after the reader left
 moves no one, and a late read writes nothing over the next kind's. The device
-cache's store is the shell's (`shell/cache.js`, `symphonyCache`, which `src/cache.ts` names what
+cache's store is the shell's (`shell/cache.ts`, `symphonyCache`, which `src/cache.ts` names what
 to keep in), and it opens every IndexedDB transaction: this client opens none of its own.
 
 A move between two kinds stops one and runs the other; a move within a kind is the shell's
@@ -294,7 +314,7 @@ already had and the written style does not set (a centred container's `text-alig
 ## The dev server
 
 `just symphony-ui-dev SERVER [PORT]` shows this client's kinds as their sources stand, with no
-client build, the page loaded again on each save: Vite's own dev server (`dev.js`, the Node around
+client build, the page loaded again on each save: Vite's own dev server (`dev.ts`, the Node around
 `src/dev-server.ts`), on the loopback address alone at PORT (0, the default, for any), over a
 Symphony server of the developer's own on port SERVER, which `just symphony --port 0` starts and
 prints (`--root DIR` another project's). It refuses 8765, the shared server's, as either port, and
@@ -305,8 +325,8 @@ the pages, the API, the feed (its WebSocket's upgrade too, `ws`) and the build's
 no CORS header
 (`cors: false`, where Vite's default lets a page on any loopback port read every answer), so a page
 of another origin reads through it no more than from the server. What it makes itself is the page's
-shell script: this checkout's shell (`shell/cache.js` and `shell/shell.js`,
-unminified) with Vite's client first, and each of `KINDS` as its entry under Vite (one the
+shell script: this checkout's shell (`shell/cache.ts` and `shell/shell.ts`, their types
+stripped, unminified) with Vite's client first, and each of `KINDS` as its entry under Vite (one the
 server's build has as another client's or not at all among them) with the server's shared
 stylesheet, each kind's own styles kept before the project's theme as the built shell keeps them;
 a kind the server's build has and this checkout does not is left out. So a kind added on a branch, or a
@@ -354,6 +374,13 @@ A project whose board runs a custom workflow gets a Workflow section after Flow
 each phase or state under each label its hours were spent under (its ID after it where two share
 a label), the four largest and Other past five; drawn only while a period of the window records a
 workflow, so a board that runs none draws the page it did.
+_Tokens and cost_ charts each period's estimated cost and its tokens by role, from the period's
+`spend` (`ReportBucket::spend`, the server pricing the day files' tokens at read), a period with
+no record hatched, and sums the window under them (`SpendSummary`): tokens and cost all told, the
+cost per landed task (`ReportsPage::landed`: the median and the ten dearest, each a link to its
+page) and the review rounds after the first against the first, every dollar said as estimated at
+the prices read on `ReportsPage::prices`, and how an hour's tokens are counted (`TOLD`). Its two
+units, `tokens` and `dollars`, are formats of the one bar chart, not a chart of their own.
 `src/chart.tsx` draws each chart by hand, with no charting library: bars as boxes over a column
 a period, lines as one SVG whose strokes keep their width, both on one axis with its unit; a
 period no file recorded is hatched and its line broken, never a zero. Each entry of a chart's
@@ -417,7 +444,9 @@ the board is back reads the first page again, merged into what is drawn, both cu
 lost agents kept, and the events heard during a read are replayed onto its answer (`ReadCursor`,
 `src/journal.ts`, the board's as well and no other kind's, so they alone carry it). It keeps
 nothing on the device. Its text orders and trims as Rust's does (`textOrder` by UTF-8
-bytes, `whiteSpace` for `trim`), so its lists and lines are the server's.
+bytes, `whiteSpace` for `trim`), so its lists and lines are the server's. An agent with tokens
+has a line of them under its own (`agentSpent`): how many in how many calls, and their cost
+estimated at the prices read on a named day, with the models no price was found for.
 
 ## The documents
 
@@ -526,6 +555,24 @@ history it answers; a view opens a blank window within the click, cuts its opene
 address `/api/attempt-view` resolved, which the page keeps nowhere
 ([EXECUTION_ATTEMPTS](../../docs/EXECUTION_ATTEMPTS.md#on-a-tasks-page)).
 
+Last, under the thread's composer, _Tokens and estimated cost_ (`TokensPart`, `src/task-page.tsx`)
+is a closed disclosure, last so it moves nothing that loads (above the thread it pushed the
+thread's region, which mounts as it comes into view, off the first screen it began on): its
+heading is all a first visit draws, and opening it asks for its part from
+`/api/task-tokens` (`src/task-live.ts`'s `tokensPart`, read again on a change of the task) and
+imports its chunk (`src/task-tokens.tsx`, its style `src/task-tokens.css` inline, put in the page
+as it first draws, as the timeline's is: the build links no chunk's own sheet), which guards the
+answer as it draws it: the total with its kinds, the tables by role and by review round, the
+models no price was found for, and _No tokens recorded for this task._ where there are none, with
+no table. As the timeline's, the chunk imports nothing of the kind's own (the part, the store, the
+live task): one that did made the build split the kind's entry in two, a file more on every first
+visit. It is a disclosure, not a part near the screen, because the page's first visit had no room
+for its chunk and its read: mounted near the screen, they came with the first visit and passed
+`TASK_FIRST_VISIT_BYTES`. A chunk that fails to load offers its Retry, unless the shell is going
+for a new build. Every figure
+is an estimate at API list prices with the day they were read (`src/spend.ts`, which says them as
+`just tasks show` does).
+
 ## The panel
 
 The kind `panel` (`src/kinds/panel.tsx`, `src/panel.tsx`) is the shell's persistent kind, which it
@@ -591,7 +638,7 @@ What holds on every page, and each page's contract where its section above names
   can end that (`whenFree`: the focus leaving the fields, a busy region, list box or details
   changing, or an element added or removed), never on a timer.
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
-  ([the client cache](../../docs/analysis/client-cache.md)). The store is `shell/cache.js`
+  ([the client cache](../../docs/analysis/client-cache.md)). The store is `shell/cache.ts`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
   kind shares it, and it opens every IndexedDB transaction. `src/cache.ts` and
   `src/cache-document.ts` reach it: an
@@ -690,8 +737,8 @@ What holds on every page, and each page's contract where its section above names
   `Site::set_document` serves a document's outline, its first part and its sections by their keys
   as the server does).
   Once a page has its data, its feed is open and the browser is idle, the shell reads ahead the
-  first 8 task and document links on the screen in its `main` (`ahead` in `shell/shell.js` and
-  `shell/cache.js`; [Read ahead](../../docs/analysis/client-cache.md#read-ahead)): one after
+  first 8 task and document links on the screen in its `main` (`ahead` in `shell/shell.ts` and
+  `shell/cache.ts`; [Read ahead](../../docs/analysis/client-cache.md#read-ahead)): one after
   another, at `priority: "low"`, marked `Purpose: prefetch`, naming any tag kept, and kept
   unvisited. A task is its page and its thread's newest page; a document its first part
   (`/api/document?view=first`: the head, every heading among it, and the leading sections whole
@@ -729,22 +776,23 @@ What holds on every page, and each page's contract where its section above names
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,303 bytes, `/tasks` 123,942, `/agents`
-  114,658, `/queue` 108,165, `/reports` 112,121, `/runs` 110,061, `/docs/` 138,998, a document
-  140,683 and a task's page 142,946, and a return that finds what it kept unchanged 3,229, 3,727,
-  3,544, 3,493, 1,737, 2,171, 1,802, 1,976 and 3,620. A first visit to a kind is its entry and its
+  each page's requests) a first visit to `/` takes 112,818 bytes, `/tasks` 126,128 (the cards'
+  costs' read among them), `/agents` 116,078, `/queue` 108,694, `/reports` 115,859, `/runs`
+  111,747, `/docs/` 139,525, a document 141,339 and a task's page 143,621, and a return that finds
+  what it kept unchanged 3,228, 3,786, 3,557, 3,492, 1,756, 2,217, 1,801, 1,975 and 3,622. A first
+  visit to a kind is its entry and its
   sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
   the others (the board's feed and keep; the card and the task readers of the board and the agents
   page; the media layer's chunk and sheet, home's, the documents', a task's page's and the chat's),
   beside the HTML, the shell and the page's reads; a move to another kind takes its entry and the
   pieces no kind before it took (`apps/symphony-web-tests/tests/browser/preload.rs`). A task's page's timeline, a chunk of
   its own, comes once its box nears the screen and its part has something to draw
-  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 16,805 bytes. The
+  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 16,825 bytes. The
   reads ahead start only once the page's own reads have answered (`cache_ahead.rs`) and go marked
   as prefetches, so the budget counts them outside the first visit, with the warmed modules
   (`prefetched_bytes`). Once a page has its data and is idle, the shell warms the chat's files
   (its entry, the chunks it imports and its sheets the page has not) and then the menus' (the
-  same of theirs): 29,701 bytes outside home's first visit, and neither the chat's first open nor
+  same of theirs): 29,714 bytes outside home's first visit, and neither the chat's first open nor
   the menus' transfers anything more. Later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
@@ -816,7 +864,15 @@ What holds on every page, and each page's contract where its section above names
   stays on its one line in the card's box; opened, each is drawn as written. A positive authoritative `review_rounds`
   adds one `1 review` / `N reviews` mark before the title, on open and finished cards; zero or
   unavailable summaries show no mark. Live fields update known counts; a full replacement clears
-  an unavailable summary. No task detail read or subtask count supplies the mark.
+  an unavailable summary. No task detail read or subtask count supplies the mark. A card whose
+  task and subtasks took tokens shows their estimated cost before its priority (`$1.23`, `$1.23+`
+  where some had no price, `unpriced` where none had; its title says it is an estimate and of what
+  day's prices), the slug
+  giving way before it. The listings carry none of it: each card names its task as it mounts
+  (`useCardCost`, `src/card-costs.ts`), and the board asks for the cards named in one turn in one
+  read of `/api/task-costs` apart (`CardCosts`, at most `TASK_COSTS_MOST` slugs a read, under the
+  mount's signal), each once until its record's `updated` moves, so a heartbeat that adds tokens
+  reads nothing. A read that fails leaves its cards without a figure until they change.
   The one orchestrator banner is amber
   for stale holders and red when none is there, absent while one is live or no ready work waits.
   Counts load first, then nearby column pages; finished work defaults to 24 hours with a week switch. A feed event
@@ -925,9 +981,12 @@ What holds on every page, and each page's contract where its section above names
   the outline guesses for a task this browser knows nothing of (four signed gates, one waited
   on) stays under 0.05 in both. A task of another shape (two gates, one unsigned) stays under
   0.05 on a return and on a wide first visit, and on a phone's first visit moves what is under
-  its gates once: it is held under 0.14 with the page's answer first (it scores 0.1399) and
-  under 0.064 with the gates' first (0.0636). Those two limits only go down; the board task
-  `app/task-first-visit-holds-still` brings them to 0.05. For every other ghost:
+  its gates once, the move the owner kept (the card `task-first-visit-head-first`). Both tasks
+  are measured under each colour scheme, which the test sets itself and never takes from the
+  machine, as the box a shift moves holds the card's shadow and the light theme's is the
+  larger: dark it is held under 0.14 with the page's answer first (it scores 0.1399) and under
+  0.064 with the gates' first (0.0636), light under 0.156 (0.1556) and 0.069 (0.0689), the same
+  elements moving the same 32 px. Those four limits only go down. For every other ghost:
   `apps/symphony-web-tests/tests/browser/landmarks.rs` compares each region's place on the ghost and on the page,
   on a first visit and the next, on a board, a queue and tasks shaped as the live ones (a
   later card, a later queue group, the board's lower row, a task opened first and after
@@ -936,8 +995,8 @@ What holds on every page, and each page's contract where its section above names
   (`NO_SCROLLBARS`), so the kind Chrome draws cannot change every region's width. `apps/symphony-web-tests/tests/browser/skeleton.rs`
   covers the rest.
 - **The page.** `package.sh` writes the shell, whose single history adapter is
-  `shell/shell.js`: the page kinds' manifest on its first line (`const modules =
-  …;`), then the store and that script minified by the minifier Vite ships (`shell/minify.js`).
+  `shell/shell.ts`: the page kinds' manifest on its first line (`const modules =
+  …;`), then the store and that script minified by the minifier Vite ships (`shell/minify.ts`).
   Every kind names its script, the chunks that script imports (`imports`) and its styles:
   the shell imports that script, a module exporting `run` and `stop`, with a module preload of
   each chunk it has not asked for yet beside it. Its
@@ -946,12 +1005,14 @@ What holds on every page, and each page's contract where its section above names
   after the new page mounts instead of applying its late top reset. A scroll to the
   element the address names, its own or a web kind's (`route.ts`), is held there while
   the page draws around it (`land`): the sections a landing brings near draw after
-  it, often taller than their ghosts, and the browser's own scroll anchoring holds nothing
-  under a page's ghost (`.settle`). A landing is one hold for each navigation. It ends
-  when it goes quiet (nothing moved and nothing waiting or busy within reach for four
-  frames, or 1800 at most), at the reader's input that scrolls (a wheel, a touch that
-  moves, a press on the page's scrollbar, a scroll key; not a click, a tap, a selection
-  or another key) and at any scroll that moves the page and the element alike (find in
+  it, often taller than their ghosts, and the browser's own scroll anchoring, which holds
+  nothing under a page's ghost (`.settle`), is off while it holds (`overflow-anchor` on the
+  root, the root's own value put back after), as an adjustment of its own would scroll the page
+  and the element alike, a scroll away to the hold. A landing is one hold for each navigation.
+  It ends when it goes quiet (nothing moved and nothing waiting or busy within reach for four
+  frames, or 1800 at most), once no element has its id, at the reader's input that scrolls (a
+  wheel, a touch that moves, a press on the page's scrollbar, a scroll key; not a click, a tap, a
+  selection or another key) and at any scroll that moves the page and the element alike (find in
   the page, a focus, a script). Only the next navigation lands again: a later call (a
   section's read in, an outline read again) does nothing once it has ended.
   Compilation leaves `OUT/public` serving its last build;
@@ -969,7 +1030,7 @@ What holds on every page, and each page's contract where its section above names
   the builds before it, and the folder weighs up to `KEEP` builds. Once its build is gone, an
   import that fails asks for the page's own shell past the cache: a 404 loads the
   page again, onto the build served, once per build in the tab's storage
-  (`gone` in `shell/shell.js`); anything else says the failure with its retry.
+  (`gone` in `shell/shell.ts`); anything else says the failure with its retry.
   A kind's `stop` unmounts it and awaits its cleanup before another kind starts, its feed and
   event subscriptions among it. Back and forward use this same adapter. The persistent panel remains mounted once opened,
   retaining chat, task form and conversation state across kinds. The initial
@@ -1126,7 +1187,7 @@ What holds on every page, and each page's contract where its section above names
 
 1. Draw the page in a module of its own (`src/NAME.tsx`), its reads guarded and its pure parts
    exported for the unit tests, with an entry in `src/kinds/NAME.tsx` and the name in `KINDS`
-   (`vite.config.ts`); its route is the shell's (`shell/shell.js`) and, for a route the Symphony
+   (`vite.config.ts`); its route is the shell's (`shell/shell.ts`) and, for a route the Symphony
    answers itself, `symphony_api::SYMPHONY_ROUTES`.
 2. Give it browser tests in `apps/symphony-web-tests/tests/browser`, and name it in the build
    test's kinds (`tests/build.rs`) with the sheets it loads.

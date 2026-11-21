@@ -1,9 +1,10 @@
 //! What the hourly roll-up of a project's reports reads of its board ([`crate::reports`]): every
 //! task open now, every one written since the window opened and every one with a line since then,
-//! top-level and subtasks alike, each with its thread's lines, and whether the board runs a custom
-//! workflow, in one round trip. On a board that runs one, each of those tasks' recorded workflow
-//! transitions are read after it ([`Store::report_places`]); a board that runs none is asked
-//! nothing more.
+//! top-level and subtasks alike, each with its thread's lines, the tokens the board recorded
+//! ([`crate::usage`]: the whole table summed, and the rows of each done top-level task of the
+//! read) and whether the board runs a custom workflow, in one round trip. On a board that runs
+//! one, each of those tasks' recorded workflow transitions are read after it
+//! ([`Store::report_places`]); a board that runs none is asked nothing more.
 
 use super::postgres::report_lines as pg;
 use super::statement::both;
@@ -12,6 +13,7 @@ use super::workflow::Transition;
 use super::{Error, Store};
 use crate::stages::Line;
 use serde_json::{Value, json};
+use symphony_api::reports::TokenSum;
 use symphony_api::workflow::Definition;
 
 /// A task of the window and its thread.
@@ -42,6 +44,12 @@ pub struct ReportRead {
     /// Each task open now, written since the window opened or with a line since then, in the order
     /// they were made.
     pub tasks: Vec<ReportTask>,
+    /// Every token the board's `usage` table holds, summed by role, model and speed, in that
+    /// order, each `round` 0.
+    pub usage: Vec<TokenSum>,
+    /// The tokens recorded on each top-level task of `tasks` that is done, its subtasks' with
+    /// them, by the task's slug, then role, round, model and speed, a sum each.
+    pub spent: Vec<(String, TokenSum)>,
     /// Whether the board runs a custom workflow: it has activated one.
     pub workflow: bool,
     /// Where a custom workflow put each of `tasks`, a list for each in their order
@@ -159,6 +167,38 @@ fn taken_apart(answer: &Value) -> Option<ReportRead> {
             .is_some_and(|active| !active.is_null()),
         ..ReportRead::default()
     };
+    // A read made by a build that asked for no tokens has neither list.
+    for row in answer
+        .get("usage")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        merge(&mut read.usage, tokens_of(row, false)?);
+    }
+    let under = answer.get("under").and_then(Value::as_array);
+    for row in answer
+        .get("spent")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let slug = text(row, "slug")?;
+        // A subtask's are its parent's, where the read names it.
+        let parent = under.into_iter().flatten().find_map(|pair| {
+            (pair.get("slug")?.as_str()? == slug).then(|| text(pair, "parent"))?
+        });
+        let sum = tokens_of(row, true)?;
+        let slug = parent.unwrap_or(slug);
+        // Kept in order as it is made, as `merge` keeps `usage`.
+        let at = (read.spent).binary_search_by(|(of, kept)| {
+            (of.as_str(), key(kept)).cmp(&(slug.as_str(), key(&sum)))
+        });
+        match at {
+            Ok(at) => add(&mut read.spent[at].1, &sum),
+            Err(at) => read.spent.insert(at, (slug, sum)),
+        }
+    }
     for (task, thread) in tasks.iter().zip(threads) {
         let mut lines = Vec::new();
         for line in thread.as_array()? {
@@ -184,6 +224,65 @@ fn taken_apart(answer: &Value) -> Option<ReportRead> {
     Some(read)
 }
 
+/// What tells one sum from another.
+fn key(sum: &TokenSum) -> (&str, u32, &str, &str) {
+    (&sum.role, sum.round, &sum.model, &sum.speed)
+}
+
+fn add(to: &mut TokenSum, sum: &TokenSum) {
+    to.input += sum.input;
+    to.cache_write_5m += sum.cache_write_5m;
+    to.cache_write_1h += sum.cache_write_1h;
+    to.cache_read += sum.cache_read;
+    to.output += sum.output;
+    to.calls += sum.calls;
+}
+
+/// `sum` added to the one of `sums` of its key, or put in its place: `sums` is kept in the order
+/// of their keys as it is made, which links no sort into the binaries (docs/CHECKS.md, size
+/// budgets).
+fn merge(sums: &mut Vec<TokenSum>, sum: TokenSum) {
+    match sums.binary_search_by(|kept| key(kept).cmp(&key(&sum))) {
+        Ok(at) => add(&mut sums[at], &sum),
+        Err(at) => sums.insert(at, sum),
+    }
+}
+
+/// The tokens a read's `row` of the `usage` table gives, a count it lacks 0, with its round where
+/// `rounds` asks for it; none when it names no role, model or speed.
+fn tokens_of(row: &Value, rounds: bool) -> Option<TokenSum> {
+    let text = |name: &str| row.get(name).and_then(Value::as_str).map(str::to_owned);
+    // A sum is a whole number, which PostgreSQL may write as a decimal.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a count of tokens: whole and never negative"
+    )]
+    let count = |name: &str| {
+        let value = row.get(name);
+        value
+            .and_then(Value::as_u64)
+            .or_else(|| value.and_then(Value::as_f64).map(|n| n.max(0.0) as u64))
+            .unwrap_or(0)
+    };
+    Some(TokenSum {
+        role: text("role")?,
+        round: if rounds {
+            u32::try_from(count("round")).unwrap_or(u32::MAX)
+        } else {
+            0
+        },
+        model: text("model")?,
+        speed: text("speed")?,
+        input: count("input"),
+        cache_write_5m: count("cache_write_5m"),
+        cache_write_1h: count("cache_write_1h"),
+        cache_read: count("cache_read"),
+        output: count("output"),
+        calls: count("calls"),
+    })
+}
+
 /// A thread's line as a read's `row` gives it, taken apart by hand as [`taken_apart`] takes its
 /// rows: its key (`sid`), kind and time must be there, its text and sender may be missing. None
 /// when one it must have is not.
@@ -205,6 +304,71 @@ mod places_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tokens_are_summed_by_role_model_and_speed_and_a_subtasks_are_its_parents() {
+        let row = |slug: &str, role: &str, round: u64, input: Value| {
+            json!({"slug": slug, "role": role, "model": "m", "speed": "standard", "round": round,
+                "input": input, "cache_read": 10, "calls": 1})
+        };
+        let answer = json!({
+            "tasks": [], "lines": [],
+            // PostgreSQL writes a sum as a decimal; a sum of nothing may be missing.
+            "usage": [
+                {"role": "reviewer", "model": "m", "speed": "standard", "input": 2.0, "calls": 1},
+                {"role": "executor", "model": "m", "speed": "fast", "input": 5},
+                {"role": "executor", "model": "m", "speed": "standard", "input": 3, "calls": 2},
+            ],
+            "spent": [
+                row("sim/b", "executor", 1, json!(4)),
+                row("sim/a/review", "reviewer", 2, json!(1)),
+                row("sim/a", "reviewer", 2, json!(6)),
+                row("sim/a", "executor", 1, json!(7)),
+            ],
+            "under": [{"slug": "sim/a/review", "parent": "sim/a"}],
+        });
+        let read = taken_apart(&answer).unwrap();
+        let usage: Vec<(&str, &str, u64, u64, u32)> = (read.usage.iter())
+            .map(|s| (s.role.as_str(), s.speed.as_str(), s.input, s.calls, s.round))
+            .collect();
+        assert_eq!(
+            usage,
+            [
+                ("executor", "fast", 5, 0, 0),
+                ("executor", "standard", 3, 2, 0),
+                ("reviewer", "standard", 2, 1, 0),
+            ]
+        );
+        let spent: Vec<(&str, &str, u32, u64, u64)> = (read.spent.iter())
+            .map(|(slug, s)| {
+                (
+                    slug.as_str(),
+                    s.role.as_str(),
+                    s.round,
+                    s.input,
+                    s.cache_read,
+                )
+            })
+            .collect();
+        assert_eq!(
+            spent,
+            [
+                ("sim/a", "executor", 1, 7, 10),
+                ("sim/a", "reviewer", 2, 7, 20),
+                ("sim/b", "executor", 1, 4, 10),
+            ],
+            "the review subtask's tokens are its parent's, added to the same role and round"
+        );
+        // A read from a build that asked for no tokens has none.
+        let bare = taken_apart(&json!({"tasks": [], "lines": []})).unwrap();
+        assert!(bare.usage.is_empty() && bare.spent.is_empty());
+        for bad in [
+            json!({"tasks": [], "lines": [], "usage": [{"role": "a", "speed": "s"}]}),
+            json!({"tasks": [], "lines": [], "spent": [{"role": "a", "model": "m", "speed": "s"}]}),
+        ] {
+            assert_eq!(taken_apart(&bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn a_row_without_what_it_must_have_or_lists_that_do_not_pair_read_as_none() {

@@ -65,6 +65,55 @@ pub struct ReportDay {
     /// What git was read for the hours' [`ReportHour::git`]; none where it could not be read.
     #[serde(default)]
     pub git: Option<GitRead>,
+    /// Every token the board's `usage` table held at `read`, summed by role, model and speed
+    /// (`round` 0): what the next roll-up takes from its own read to tell what the hours since
+    /// gained ([`ReportHour::tokens`]). None in a file whose roll-up read none.
+    #[serde(default)]
+    pub usage: Option<Vec<TokenSum>>,
+    /// Each top-level task landed in the day, once at its last landing in it, with the tokens it
+    /// and its subtasks took, oldest first.
+    #[serde(default)]
+    pub landed: Vec<Landed>,
+}
+
+/// Tokens of the four kinds a price tells apart and the model calls they came from (the board's
+/// `usage::Tokens`), of one role on one model at one speed. Tokens are kept, never dollars: a
+/// reader prices them at the table its build embeds, so an edit of a price reprices every day.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenSum {
+    /// The role they were spent in: a task's (`executor`, `reviewer`, `reserved`), or the
+    /// session's kind for calls made while it worked none (`orchestrator`, `worker`).
+    pub role: String,
+    /// The review round, 1 for the work up to a task's first review, in a task's
+    /// [`Landed::spent`]; 0 where rounds are not told apart.
+    #[serde(default)]
+    pub round: u32,
+    pub model: String,
+    pub speed: String,
+    #[serde(default)]
+    pub input: u64,
+    #[serde(default)]
+    pub cache_write_5m: u64,
+    #[serde(default)]
+    pub cache_write_1h: u64,
+    #[serde(default)]
+    pub cache_read: u64,
+    #[serde(default)]
+    pub output: u64,
+    #[serde(default)]
+    pub calls: u64,
+}
+
+/// A top-level task landed in a day and what it took.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Landed {
+    pub slug: String,
+    /// When its landing wrote its `landed` verdict.
+    pub at: f64,
+    /// The tokens the board recorded on it and on its subtasks up to the file's read, by role,
+    /// round, model and speed; empty where it recorded none.
+    #[serde(default)]
+    pub spent: Vec<TokenSum>,
 }
 
 /// One hour of a day: what adds up, so the hours of any span sum to that span's figure.
@@ -96,6 +145,12 @@ pub struct ReportHour {
     /// What reached the default branch; none where git could not be read.
     #[serde(default)]
     pub git: Option<GitCounts>,
+    /// The tokens the board's `usage` table gained in the hour, by role, model and speed: what it
+    /// held at a roll-up less what it held at the one before ([`ReportDay::usage`]), shared among
+    /// the hours between the two by the time of each between them, so each token is counted once.
+    /// None for an hour no pair of roll-ups spans: unknown, never none spent.
+    #[serde(default)]
+    pub tokens: Option<Vec<TokenSum>>,
     /// Where a custom workflow's tasks spent the hour, by delivery phase and by coordination
     /// state; left out of the file of a board that runs no workflow of its own, which stays as it
     /// was written before this was counted.

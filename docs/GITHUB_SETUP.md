@@ -6,14 +6,20 @@ project's board to one repository on GitHub.com, and it does three things, each 
 - **The issue exchange.** Open issues carrying a label you choose become proposals on the board,
   and tasks you opt in are published as issues. It needs one token and no GitHub App:
   [its steps](#the-issue-exchange).
-- **Delivery by pull request.** `just land` opens a pull request for the task, writes its
-  evidence there as checks, and has GitHub squash it, in place of merging and pushing the default
-  branch itself. It needs three GitHub Apps installed on the repository and two rulesets on its
-  default branch: [its steps](#delivery-by-pull-request).
+- **Delivery by pull request.** A task's move to review opens a pull request for it, writes its
+  evidence there as checks and turns on GitHub's auto-merge, and GitHub squashes it once the
+  evidence stands, in place of a land merging and pushing the default branch itself. It needs one
+  GitHub App installed on the repository, with no administration, and one ruleset on its default
+  branch, verified by someone who administers the repository:
+  [its steps](#delivery-by-pull-request).
 - **GitHub Releases.** A release run publishes a GitHub Release for each tag it pushes, its text
   the release's notes. It needs the exchange's one token with contents read and write, and is
   the release run's alone, so it serves the Symphony's own repository:
   [its steps](#github-releases).
+- **A release verified on GitHub's runners.** A release run has its commit's full verification
+  run on GitHub's macOS runners in place of the machine it runs on. It needs the same token with
+  actions read and write, and is the release run's alone:
+  [its steps](#a-release-verified-on-githubs-runners).
 
 This page is the setup, in order, from nothing to a check that passes. How each part behaves,
 every setting and every refusal are in [GITHUB](GITHUB.md).
@@ -23,21 +29,22 @@ every setting and every refusal are in [GITHUB](GITHUB.md).
 - It is run by hand. Nothing runs the exchange on a schedule, from a webhook or from a page: a
   person runs `preview`, then `reconcile`. A land runs the delivery itself.
 - One repository on GitHub.com. Another host, GitHub Enterprise among them, is refused.
-- The program makes and renews each GitHub App's installation token itself, at the use that
+- The program makes and renews the GitHub App's installation token itself, at the use that
   needs it, from the App's key ([step 6](#delivery-by-pull-request)). Nothing makes one between
   uses, and a token file with no App's key named keeps whatever you write in it.
 - `pull_requests = "track"` is accepted and does nothing in this build.
-- An organization's own rulesets count only where GitHub shows the policy reader their bypass
-  lists, which was not tried: put the rulesets of [step 7](#delivery-by-pull-request) on the
-  repository.
+- An organization's own rulesets count only where GitHub shows the repository's administrator
+  their bypass lists through the repository, which was not tried: put the ruleset of
+  [step 7](#delivery-by-pull-request) on the repository.
 
 ## Before you start
 
 - A project set up as [the README](../README.md#on-your-own-project) says: a main checkout in
   git, the board made, and its `tasks` command working.
 - `git` and `curl` on `PATH`: the program reads its settings with git and reaches GitHub with
-  curl, and needs no `gh`. For delivery, `openssl` as well, which signs each App's request for
-  its token (macOS has one; most Linux systems too).
+  curl. For delivery, `openssl` as well, which signs the App's request for its token (macOS has
+  one; most Linux systems too), and the `gh` CLI where the repository's administrator verifies
+  the ruleset (step 8): no land runs it.
 - The repository on GitHub.com, named `OWNER/NAME`. For delivery, it is the main checkout's
   `origin`, and your own `git push` to it works: the land pushes the task's branch with it.
 - Rust, to build the program: the toolchain this repository's `rust-toolchain.toml` names.
@@ -54,8 +61,10 @@ cargo install --locked --path crates/symphony-github
 
 That puts it in Cargo's `bin` folder (`~/.cargo/bin`), beside the `tasks` that
 `cargo install symphony-board` put there. It runs the `tasks` its `--tasks PROGRAM` option
-names, else the one beside it, else the one on `PATH`. A land runs it by name, so for delivery it
-must be on the `PATH` of whoever runs `just land`.
+names, else the one beside it, else the one on `PATH`. A land runs it by the name `[land]
+delivery` gives, and so does the dispatch a move to review starts: named bare, it must be on the
+`PATH` of every session that moves a task or gives a verdict, and named by its path
+(`.target/bin/symphony-github`) it need not be.
 
 `symphony-github --version` prints its version, and `symphony-github --help` its commands. Run
 every command below in the project's main checkout.
@@ -109,49 +118,50 @@ kept apart from its brief ([the commands](GITHUB.md#the-commands)).
 Someone who administers the organization and the repository does these steps on GitHub, in this
 order. Symphony does none of them, and no agent does them without that person's word.
 
-**Read this first.** Once the rulesets of step 7 are active, GitHub takes no push to the default
-branch, from anyone: it changes only by a pull request the landing App merges. Every land, the
-regenerator's work and the app's document saves are delivered that way once `[land] delivery` is
-set ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); anything else that pushes there,
-a person's own `git push` among them, is refused. Steps 1 to 5 change nothing a land does. The
-settings of step 6 land by the ordinary merge and push, so they come before the rulesets: from
-then on every land is delivered by a pull request, and refused, pushing nothing, until step 7 is
-done.
+**Read this first.** Once the ruleset of step 7 is active, GitHub takes no push to the default
+branch, from anyone: it changes only by a pull request whose `symphony/eligible` the App wrote
+green. Every land, the regenerator's work and the app's document saves are delivered that way
+once `[land] delivery` is set ([TASKS](TASKS.md#a-land-delivered-by-a-pull-request)); anything
+else that pushes there, a person's own `git push` among them, is refused. Steps 1 to 5 change
+nothing a land does. The settings of step 6 land by the ordinary merge and push, so they come
+before the ruleset: from then on every land is delivered by a pull request, and refused, pushing
+nothing, until steps 7 and 8 are done.
 
-1. **Three GitHub Apps** in the organization (its settings, Developer settings, GitHub Apps, New
-   GitHub App). Each takes a name and a homepage URL, any address; untick the webhook's Active
-   box, set these repository permissions and no others (GitHub adds Metadata, read), and let it
-   be installed only on this account. Each App's number is the App ID on its settings page.
+1. **One GitHub App** in the organization (its settings, Developer settings, GitHub Apps, New
+   GitHub App). It takes a name and a homepage URL, any address; untick the webhook's Active box,
+   set these repository permissions and no others (GitHub adds Metadata, read), and let it be
+   installed only on this account. Its number, the App ID on its settings page, goes in
+   `app_id`.
 
-   | App | Repository permissions | Its number goes in |
-   | --- | --- | --- |
-   | the check publisher | Checks: Read and write | `checks_app_id` |
-   | the landing App | Contents: Read and write; Pull requests: Read and write; Issues: Read and write where `close_issues` is set or the issue exchange is on | `landing_app_id` |
-   | the policy reader | Administration: Read and write | `policy_app_id` |
+   | Repository permission | For |
+   | --- | --- |
+   | Checks: Read and write | the evidence, written as checks |
+   | Contents: Read and write | the pull request's merge, and a release where `releases = "publish"` |
+   | Pull requests: Read and write | the pull request, opened, marked ready, armed for auto-merge, merged and closed |
+   | Issues: Read and write | only where `close_issues` is set or the issue exchange is on |
+   | Actions: Read and write | only where `verification = "hosted"`: the workflow's start and the reads of its run |
 
-   The policy reader's permission could change or remove the rules of step 7. It is asked
-   because GitHub shows a ruleset's bypass list to nothing less
-   ([the rights each read needs](GITHUB.md#the-protection-a-delivery-needs)), and the program
-   sends its token with that one read alone.
-2. **Install each App** on the one repository: Install App, then "Only select repositories". Its
+   Never Administration: the App must not be able to change the rules it is held to. Who
+   bypasses them is read by a person instead, in step 8.
+2. **Install the App** on the one repository: Install App, then "Only select repositories". Its
    installation's number is the last part of the address of the installation's settings page.
-3. **A private key for each App** (Generate a private key, on its settings page), kept outside
-   every checkout and readable by its owner alone. Whoever holds a key can act as its App.
-   GitHub downloads it as a `.pem` file:
+3. **A private key** (Generate a private key, on the App's settings page), kept outside every
+   checkout and readable by its owner alone. Whoever holds the key can act as the App. GitHub
+   downloads it as a `.pem` file:
 
    ```sh
    mkdir -p ~/.config/symphony-github
-   (umask 077 && cp ~/Downloads/NAME.DATE.private-key.pem ~/.config/symphony-github/landing.pem)
+   (umask 077 && cp ~/Downloads/NAME.DATE.private-key.pem ~/.config/symphony-github/app.pem)
    ```
 
-   and the same for `checks.pem` and `policy.pem`; then delete the downloads.
-4. **Nothing to make by hand.** The program makes each App's installation token from its key
+   then delete the download.
+4. **Nothing to make by hand.** The program makes the App's installation token from its key
    ([tokens it makes](GITHUB.md#tokens-it-makes)): asked for the one repository and the least its
-   calls need, written to its token file, and made again before it expires. The token files need
-   not be there yet. With the issue exchange on as well, `token_file` is the landing App's token
-   for both.
+   calls need, written to its token file, and made again before it expires. The token file need
+   not be there yet. With the issue exchange on as well, the same token serves both.
 5. **The repository's merge settings** (Settings, General, Pull Requests): squash merging
-   allowed, merge commits and rebase merging not, auto-merge off.
+   allowed, merge commits and rebase merging not, and "Allow auto-merge" ticked, which `arm`
+   turns on for a pull request.
 6. **The settings, landed while the default branch still takes a push.** `symphony-github.toml`,
    at the root:
 
@@ -159,23 +169,15 @@ done.
    enabled = true
    repository = "OWNER/NAME"
    pull_requests = "publish"
-   token_file = "/Users/YOU/.config/symphony-github/landing-token"
-   landing_app_id = 1000001
-   landing_installation_id = 2000001
-   landing_key_file = "/Users/YOU/.config/symphony-github/landing.pem"
-   checks_token_file = "/Users/YOU/.config/symphony-github/checks-token"
-   checks_app_id = 1000002
-   checks_installation_id = 2000002
-   checks_key_file = "/Users/YOU/.config/symphony-github/checks.pem"
-   policy_token_file = "/Users/YOU/.config/symphony-github/policy-token"
-   policy_app_id = 1000003
-   policy_installation_id = 2000003
-   policy_key_file = "/Users/YOU/.config/symphony-github/policy.pem"
+   token_file = "/Users/YOU/.config/symphony-github/token"
+   app_id = 1000001
+   installation_id = 2000001
+   key_file = "/Users/YOU/.config/symphony-github/app.pem"
    ```
 
-   Each `_installation_id` is the number of step 2, each `_key_file` the key of step 3. Naming
-   them hands each token file to the program, which writes it from then on. Left out, the
-   program makes no token, and each file must hold a current one made otherwise.
+   `installation_id` is the number of step 2, `key_file` the key of step 3. Naming them hands the
+   token file to the program, which writes it from then on. Left out, the program makes no token,
+   and the file must hold a current one made otherwise.
 
    and in `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#land)):
 
@@ -188,26 +190,42 @@ done.
    past a check it would have run on its own merge, and the pull request's required check takes
    its place. The land of this task merges and pushes as before, as a land reads
    `[land] delivery` from the default branch before it merges. Every land after it is delivered
-   by a pull request, and until step 7 is done it is refused, pushing nothing, with each thing
-   missing named.
-7. **Two rulesets** on the default branch (the repository's Settings, Rules, Rulesets), both
-   with enforcement Active and the default branch as their target:
-   - **the requirements**, its bypass list empty: restrict deletions; block force pushes;
-     require a pull request before merging, with Squash its one allowed merge method; require
-     status checks to pass, adding `symphony/eligible` with the check publisher as its source,
-     and "Require branches to be up to date before merging" off.
-   - **the update restriction**, its one rule restrict updates, with the landing App as its
-     only bypass actor.
+   by a pull request, and until steps 7 and 8 are done it is refused, pushing nothing, with each
+   thing missing named.
+7. **One ruleset** on the default branch (the repository's Settings, Rules, Rulesets), with
+   enforcement Active, the default branch as its target and its bypass list empty: restrict
+   deletions; block force pushes; require a pull request before merging, with Squash its one
+   allowed merge method; require status checks to pass, adding `symphony/eligible` with the App as
+   its source, and "Require branches to be up to date before merging" off. No other ruleset may
+   restrict updates of the branch.
 
    Other Apps installed on the repository are worth a look: one that holds Administration can
-   edit these rules.
+   edit this ruleset.
+8. **Verify it**, signed in to the gh CLI as someone who administers the repository (`gh auth
+   status` says who), in a checkout of the project:
+
+   ```sh
+   symphony-github rulesets --verify
+   ```
+
+   It reads the ruleset in full, its bypass list among them, which GitHub shows the App never,
+   and says each thing missing; where nothing is, it keeps who bypasses each ruleset, and every
+   land from then on takes that while the ruleset has not changed
+   ([who bypasses the rules](GITHUB.md#who-bypasses-the-rules)). Any change to a ruleset, its
+   bypass list or its enforcement, stops every delivery until it is verified again.
+
+   On the Symphony's own repository, whose release run is the one there is, each release run can
+   verify it again: commit `rulesets = ["symphony-github", "rulesets", "--verify"]` to the
+   `[releases]` table of `symphony.toml` ([RELEASES](RELEASES.md#who-bypasses-the-rules-again)).
+   The run starts that program by name, so it is on the `PATH` of whoever starts the release run,
+   whose gh is signed in as above. A run where the policy does not hold is red, and files it.
 
 A repository that imports an upstream ([delivering an import](GITHUB.md#delivering-an-import))
-differs in three places: its merge settings allow merge commits beside squash; the requirements
-ruleset names Merge beside Squash, and no ruleset requires a linear history; and the settings add
+differs in three places: its merge settings allow merge commits beside squash; the ruleset
+names Merge beside Squash, and no ruleset requires a linear history; and the settings add
 `upstream_id`, the upstream's repository number, to `symphony-github.toml` and `[land.upstream]`
 to `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#landupstream)). With a private upstream,
-leave out `landing_installation_id` and `landing_key_file`: a token the program makes reads the
+leave out `installation_id` and `key_file`: a token the program makes reads the
 one repository, so `token_file` stays kept by hand, with a token that reads the upstream too.
 
 ## GitHub Releases
@@ -230,6 +248,27 @@ so these steps are for that repository.
 `symphony-github status` then says `releases: publish`, and the release run's `--status` counts
 the releases published and names each one pending with why.
 
+## A release verified on GitHub's runners
+
+The release run ([RELEASES](RELEASES.md#on-githubs-runners)) is the Symphony's own repository's,
+so these steps are for that repository.
+
+1. **The workflow.** The default branch commits `.github/workflows/release-verify.yml`, and the
+   repository's settings allow Actions to run it.
+2. **The token.** `token_file`'s token with actions read and write on the repository, which
+   starts the workflow and reads its runs, logs and artifacts. Where the program makes the token,
+   the App is given that permission (step 1 of [delivery](#delivery-by-pull-request)) and whoever
+   owns the installation accepts it; the next token is asked for it.
+3. **The adapter's word.** Commit `verification = "hosted"` to `symphony-github.toml` on the
+   default branch, beside `enabled = true`, `repository` and `token_file`.
+4. **The run's command.** Commit `hosted = ["symphony-github", "verify"]` to the `[releases]`
+   table of `symphony.toml` ([PROJECT_FILE](PROJECT_FILE.md#releases)). The run starts that
+   program by name, so it is on the `PATH` of whoever starts the release run, as `unzip` is,
+   which opens each job's artifact.
+
+`symphony-github status` then says `verification: hosted`, and each release run says which
+judged it: `verify verified on GitHub (RUN)`, or `verify verified here, not on GitHub: WHY`.
+
 ## Checking it
 
 **The settings.** `symphony-github status` says what the committed settings allow, reading
@@ -247,7 +286,7 @@ nothing is kept: /PATH/TO/PROJECT/.git/symphony/integrations/github is not there
 
 Its first line is the one to read: one that starts `turned off:` is a step missed
 ([below](#when-it-does-not-work)). With delivery set up it says `pull requests: publish` and
-names the policy token's file as well.
+names the App's number as well.
 
 **The exchange.** `symphony-github preview` reads GitHub and the board and writes nothing. The
 first one binds the program to the repository by its number, then lists each labelled issue it
@@ -265,28 +304,38 @@ Run that last line with your handle. The exchange works once `symphony-github st
 `bound to OWNER/NAME (id 123456789)` with no `paused:` line, and a second `preview` ends
 `Nothing to reconcile with OWNER/NAME.` while nobody changed an issue or a task in between.
 
-**Delivery.** `symphony-github preflight` reads the default branch's protection as a land does
-before it pushes, and writes nothing anywhere:
+**Delivery.** `symphony-github rulesets` says, as step 8 does, each ruleset and who bypasses it,
+read with gh, and keeps nothing without `--verify`:
 
 ```text
-OWNER/NAME (id 123456789, bound to nothing here yet), main: checks from App 1000002, merged by App 1000001, bypass lists read by App 1000003
+OWNER/NAME (id 123456789), main: 1 ruleset(s) in effect, read with gh
+  ruleset 4567890 "Symphony delivery" (active), last changed 2026-11-20T05:05:05.939+01:00: bypassed by nobody
+holds; `--verify` keeps it, which a delivery takes while each ruleset is unchanged
+```
+
+`symphony-github preflight` reads the default branch's protection as a land does before it
+pushes, with the App's token alone, and writes nothing anywhere:
+
+```text
+OWNER/NAME (id 123456789, bound to nothing here yet), main: checks written and merged by App 1000001, who else bypasses the rules as verified
 holds: a delivery would go on (policy 0123abc)
 ```
 
-It exits 0 on `holds` alone, and has made each token it needed. The next
-`just land SLUG --as HANDLE` then publishes the task as a draft pull request with its checks, and
-has it squashed.
+It exits 0 on `holds` alone, and has made the token it needed. The next task moved to review is
+then dispatched: its pull request opened with its checks and its auto-merge armed. GitHub
+squashes it once `symphony/eligible` is green, which takes an assessment at its head (`just tasks
+needs SLUG STAMP… --tip HEAD`) and every stamp that names standing there. A task nobody assessed
+waits in review with its checks pending, and nothing merges it. A task that reached done
+before the settings landed is published and armed by `just land SLUG --as HANDLE`.
 
-**The tokens.** `symphony-github tokens` says whether each is current, reading nothing remote
-and writing nothing, and never prints a token:
+**The token.** `symphony-github tokens` says whether it is current, reading nothing remote and
+writing nothing, and never prints it:
 
 ```text
-token_file /Users/YOU/.config/symphony-github/landing-token: current until 2026-11-19T18:04:05Z (in 47 min)
-checks_token_file /Users/YOU/.config/symphony-github/checks-token: expired at 2026-11-19T16:58:12Z; App 1000002 makes another at its next use
-policy_token_file /Users/YOU/.config/symphony-github/policy-token: absent; App 1000003 makes one at its next use
+token_file /Users/YOU/.config/symphony-github/token: current until 2026-11-19T18:04:05Z (in 47 min)
 ```
 
-An expired or absent one is not a fault where its App makes it: the next land makes it.
+An expired or absent one is not a fault where the App makes it: the next land makes it.
 
 ## When it does not work
 
@@ -311,15 +360,17 @@ reading nothing is not an error: read its first line.
 | `PATH is in no git repository` | Run it in the project's checkout. |
 | `turned off: its settings do not read: the repository has no branch main` | The default branch has another name: `[project] default_branch` in `symphony.toml` says which. |
 | `turned off: the committed settings do not say enabled = true and pull_requests = "publish"` (`preflight`) | The delivery's settings of step 6 are not landed yet. |
-| `does not hold: a delivery would be refused`, then a `missing:` line for each thing (`preflight`) | Each line names the rule or setting to put right in steps 5 to 7: `no rule in effect for main requires a pull request` is the requirements ruleset missing or not active; `no rule restricts updates of main to the landing App` is the update restriction missing; `who bypasses ruleset N is not known` is the policy reader not installed or without Administration; `ruleset N is bypassed by …` is an actor to take off the requirements' bypass list; `symphony/eligible is required of main from another source` is the check's source to set to the check publisher; `a rule holds main's pull requests up to date` is the box to untick; `auto-merge is allowed` is the merge setting to turn off. |
+| `does not hold: a delivery would be refused`, then a `missing:` line for each thing (`preflight`, `rulesets`) | Each line names the rule or setting to put right in steps 5 to 8: `no rule in effect for main requires a pull request` is the ruleset missing or not active; `who bypasses ruleset N is not known (it was never verified …)` or `(it changed at … after it was verified …)` is step 8 to run again; `ruleset N is bypassed by …` is an actor to take off its bypass list; `symphony/eligible is required of main from another source` is the check's source to set to the App; `a rule holds main's pull requests up to date` is the box to untick; `a rule restricts updates of main` is a ruleset to delete or take that rule out of. |
+| `its bypass list is not shown: gh is not signed in as someone who administers the repository` (`rulesets`) | `gh auth login` as an administrator of the repository, and run it again. |
 | A land refused: `[land] delivery is set and so is the land's merge check` | Add `check = false` to `[land]`, as step 6 says. |
 | A land refused: `the protection of main does not hold a delivery to its evidence` | As `preflight` says, which lists each thing missing. |
 | A land stopped on `GitHub refused the credential (401)` | A token was refused, or expired in a file whose App's key is not named: name the keys of step 6, or write a current token in it, and land again. Where GitHub revoked a token the program made before it expires, delete its file: the next land makes a new one. |
-| `landing_key_file PATH is readable by others; chmod 600 it` (or `checks_key_file`, `policy_key_file`) | `chmod 600 PATH`. A key not there, or inside the repository, is said the same way. |
-| `openssl is not on PATH: … so install it; nothing was sent` | Install openssl, which signs each App's request for its token. |
-| `openssl could not sign with …_key_file PATH: write the App's private key there as GitHub gave it, a PEM file with no passphrase` | The file is not the key GitHub gave: generate a key again (step 3) and copy it there. |
-| `making token_file's token as App N: GitHub refused the App's JWT (401: …)` | GitHub's words follow the status. The key is not App N's, `landing_app_id` is not that App's number (check both on the App's settings page), or this machine's clock is more than a minute ahead of GitHub's or nine minutes behind it (a message naming `iat` or `exp` says so): set the clock right. |
-| `… GitHub found no installation N of App M (404)` | `…_installation_id` is not the installation's number (step 2), or the App is not installed. |
+| `key_file PATH is readable by others; chmod 600 it` | `chmod 600 PATH`. A key not there, or inside the repository, is said the same way. |
+| `… checks_token_file is gone: one GitHub App …` (or another `checks_`, `landing_` or `policy_` key) | The settings of three Apps: write the one App's `app_id`, `installation_id` and `key_file` (step 6), and land them. |
+| `openssl is not on PATH: … so install it; nothing was sent` | Install openssl, which signs the App's request for its token. |
+| `openssl could not sign with key_file PATH: write the App's private key there as GitHub gave it, a PEM file with no passphrase` | The file is not the key GitHub gave: generate a key again (step 3) and copy it there. |
+| `making token_file's token as App N: GitHub refused the App's JWT (401: …)` | GitHub's words follow the status. The key is not App N's, `app_id` is not that App's number (check both on the App's settings page), or this machine's clock is more than a minute ahead of GitHub's or nine minutes behind it (a message naming `iat` or `exp` says so): set the clock right. |
+| `… GitHub found no installation N of App M (404)` | `installation_id` is not the installation's number (step 2), or the App is not installed. |
 | `… GitHub refused a token for OWNER/NAME with … (422: …)` | GitHub's words follow the status: give the App the permissions named (step 1) and install it on that repository (step 2). |
 | `making …'s token as App N: GitHub answered 5XX` (`unavailable`) | GitHub did not answer: the file is as it was, and the next land asks again. |
 

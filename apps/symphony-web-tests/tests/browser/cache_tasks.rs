@@ -407,7 +407,7 @@ fn the_landing_offer_is_read_on_every_visit_and_never_kept() {
         "the landing button, once current",
     );
     // The task's head links the task it depends on, which the shell may read ahead and keep once
-    // the page is idle, however soon that comes (`ahead`, apps/symphony-web/shell/shell.js): a
+    // the page is idle, however soon that comes (`ahead`, apps/symphony-web/shell/shell.ts): a
     // task's page and its thread, as a visit keeps them. Whichever tasks are kept, none keeps its
     // offer.
     let parts = kept(&mut chrome);

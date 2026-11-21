@@ -165,6 +165,7 @@ fn tests_are_met_by_the_newest_run_of_each_command_at_the_tip_green_with_a_test_
             commit: Some(TIP.into()),
             detail: "Green at 4be91c2: `just test-rs`, `just lint-rs`".into(),
             line: None,
+            ..Reading::default()
         }
     );
 }
@@ -186,6 +187,7 @@ fn tests_read_at_a_later_commit_are_stale_naming_the_commit_they_last_ran_at() {
             commit: Some(TIP.into()),
             detail: "No build or test at 7c0ffee: the last ran at 4be91c2".into(),
             line: None,
+            ..Reading::default()
         }
     );
     let none = tests(&[], TIP, ours);
@@ -494,6 +496,7 @@ fn pictures_are_met_by_a_post_naming_the_tip_and_stale_at_a_later_commit() {
             commit: Some(TIP.into()),
             detail: "Pictures at 4be91c2, posted by teal-merlin".into(),
             line: Some(1),
+            ..Reading::default()
         }
     );
     let stale = pictures(&thread, LATER, FOLDER);
@@ -544,6 +547,7 @@ fn the_owners_stamp_is_the_owners_approve_naming_the_tip_and_stale_at_a_later_co
             commit: Some(TIP.into()),
             detail: "Approved by the owner at 4be91c2".into(),
             line: Some(4),
+            ..Reading::default()
         }
     );
     let stale = owner(&thread, LATER);
@@ -566,4 +570,60 @@ fn the_owners_stamp_is_the_owners_approve_naming_the_tip_and_stale_at_a_later_co
         (none.met, none.by, none.detail.as_str()),
         (false, None, "Waits on the owner's approve of 4be91c2")
     );
+}
+
+/// The one reader of the `owner` stamp: the thread's approve of the tip first, the cards the branch
+/// posted asked only without it; met by the cards, it names them and stands on no thread line.
+#[test]
+fn the_owners_stamp_is_met_by_the_thread_or_else_by_the_cards_the_branch_posted() {
+    let approve = [post(4, "msg", "owner", &format!("approve {TIP}"))];
+    let cards = |names: &[&str]| Posted::Approved {
+        cards: strings(names),
+    };
+    // The thread's approve of the tip stands without asking the cards.
+    let thread = owner_with(&approve, TIP, || panic!("the cards are not asked"));
+    assert_eq!(thread, owner(&approve, TIP));
+    // No approve of the tip on the thread: the cards' approve stands, naming them.
+    for thread in [
+        &[][..],
+        &[post(5, "msg", "owner", &format!("approve {LATER}"))],
+    ] {
+        assert_eq!(
+            owner_with(thread, TIP, || cards(&["layout"])),
+            Reading {
+                met: true,
+                by: Some("owner".into()),
+                at: None,
+                commit: Some(TIP.into()),
+                detail: "Approved by the owner on card layout, at 4be91c2".into(),
+                line: None,
+                cards: strings(&["layout"]),
+            }
+        );
+    }
+    let two = owner_with(&[], TIP, || cards(&["layout", "colour"]));
+    assert_eq!(
+        two.detail,
+        "Approved by the owner on cards layout, colour, at 4be91c2"
+    );
+    // Nothing of the cards: the thread's reading as it is.
+    assert_eq!(owner_with(&[], TIP, || Posted::Nothing), owner(&[], TIP));
+    // An approve of the cards a commit came after: the thread's reading, saying which commit.
+    let changed = owner_with(&[], TIP, || Posted::Changed {
+        cards: strings(&["layout"]),
+        commit: LATER.into(),
+    });
+    assert_eq!(
+        (changed.met, changed.cards.len(), changed.detail.as_str()),
+        (
+            false,
+            0,
+            "Waits on the owner's approve of 4be91c2; the owner's approve of card layout came \
+             before 7c0ffee, which changes more than the owner's lines"
+        )
+    );
+    // `owner_at` reads the cards in the checkout it names; none there, the thread's reading.
+    let nowhere = std::path::Path::new("/nowhere");
+    assert_eq!(owner_at(&[], TIP, nowhere), owner(&[], TIP));
+    assert!(owner_at(&approve, TIP, nowhere).met);
 }

@@ -176,8 +176,9 @@ impl Held {
     /// What the refresh said holds the board now: its writers behind, judged by the rule.
     fn holding(&self) -> String {
         let lines = self.home().writers(symphony_board::DATABASE).unwrap();
-        let found = writers::lagging(lines, SCHEMA, now(), &machine(&self.fixture));
-        writers::holding(BEHIND, &found.behind, RELEASE, SCHEMA, &found.gone, now())
+        let runs = writers::Runs::of(&self.alpha);
+        let found = writers::lagging(lines, SCHEMA, now(), &machine(&self.fixture), &runs);
+        found.holding(BEHIND, RELEASE, SCHEMA, now())
     }
 
     fn round(&self, host: &Machine) -> Vec<String> {

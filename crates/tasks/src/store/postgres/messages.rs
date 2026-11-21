@@ -125,6 +125,27 @@ pub(in crate::store) fn unread(keyed: bool) -> Pg<'static> {
     Pg::script(format!("{write} board_answer := 'null';"))
 }
 
+/// `v ->> 'said'`, a record line `v ->> 'sender'` puts on `v ->> 'slug'`'s thread, to no one, made
+/// once per `v ->> 'key'` ([`once`]).
+pub(in crate::store) fn record_once() -> Pg<'static> {
+    let line = logged(
+        "v ->> 'slug'",
+        "v ->> 'sender'",
+        "'system'",
+        "v ->> 'said'",
+        "NULL",
+    );
+    Pg::script(format!("{} board_answer := 'null';", once(&line, None)))
+}
+
+/// Whether a line was made under `v ->> 'key'` on `v ->> 'slug'`'s thread ([`once`]).
+pub(in crate::store) fn keyed() -> Pg<'static> {
+    Pg::read(
+        "to_jsonb(EXISTS (SELECT 1 FROM delivery_key \
+         WHERE id = jsonb_build_array(v -> 'slug', v -> 'key')))",
+    )
+}
+
 pub(in crate::store) fn ack() -> Pg<'static> {
     Pg::script(format!(
         "{} \

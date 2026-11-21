@@ -75,6 +75,8 @@ fn committed(text: &str, digit: char) -> Custom {
         definition,
         revision,
         mappings,
+        authorities: Vec::new(),
+        project: None,
     }
 }
 

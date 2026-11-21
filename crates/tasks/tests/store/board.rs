@@ -364,6 +364,7 @@ fn claimed_mid_read<T: Send>(read: impl FnOnce(&Store) -> T + Send) -> T {
         .write(
             &format!(
                 "BEGIN TRANSACTION;
+                 DEFINE TABLE gate SCHEMALESS;
                  DEFINE FIELD stall ON task COMPUTED {{ IF (SELECT VALUE held FROM ONLY gate:read) ?? false {{ {} }}; NONE }};
                  UPSERT gate:read SET held = true;
                  COMMIT TRANSACTION;",

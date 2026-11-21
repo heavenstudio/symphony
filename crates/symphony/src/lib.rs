@@ -32,6 +32,7 @@ pub mod cli;
 pub mod clock;
 pub mod commit;
 pub mod dashboard;
+pub mod decided;
 pub mod docs_audit;
 pub mod docview;
 pub mod edit;

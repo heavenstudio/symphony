@@ -146,11 +146,19 @@ owner values more, and it is chosen after the move is, if the client moves to JS
 
 ## The experiment
 
-`experiments/client-jsx/` holds a JSX client of three pages, with a manifest and lockfile of its
-own (React 19.3.1, Preact 11.2.0, Vite 8.3.8, `@vitejs/plugin-react` 6.3.0, plain JSX, no
-TypeScript); nothing the Symphony builds, tests or serves reads it, and its README names the
-commands. One source builds twice: `--mode react`, and `--mode preact`, where Vite aliases
-`react` and `react-dom` to `preact/compat`.
+`experiments/client-jsx/` at commit `a40751dc2428b708045ed2ad4d6e27c15d94c314`, removed from the
+tree since, holds a JSX client of three pages, with a manifest and lockfile of its own (React
+19.3.1, Preact 11.2.0, Vite 8.3.8, `@vitejs/plugin-react` 6.3.0, plain JSX, no TypeScript);
+nothing the Symphony built, tested or served read it, and its README names the commands. It
+reads three things outside its folder: its build copies a Dioxus distribution's style sheets
+(`SYMPHONY_DIOXUS_DIST`, the [baseline's](#method)), its document page imports
+`apps/symphony-ui/assets/attach.css`, and its bench builds the workspace's Chrome driver by path.
+That style sheet left with the Dioxus client (`e82ca23a7`), before `a40751dc`, so it runs from a
+checkout of commit `6cc256bfd05ab36822f02ef793ecbd8c501f0bdf`, main just before that merge, whose
+`experiments/` is the same, with that revision's server:
+`git worktree add --detach DIR 6cc256bfd05ab36822f02ef793ecbd8c501f0bdf`, then its README in
+`DIR/experiments/client-jsx`. One source builds twice: `--mode react`, and `--mode preact`, where
+Vite aliases `react` and `react-dom` to `preact/compat`.
 
 - **The board** (`/tasks`): the counts, each column's first page once the column nears the
   screen, Load more, the cards as the Dioxus page draws them, and the feed's task events applied
@@ -218,7 +226,8 @@ port's latch rather than its rendering ([a feed update](#a-feed-update-reaching-
 
 **Where.** One Mac (Apple M3 Max, 16 cores, 64 GB, macOS 26.6.2), headless Chrome
 157.0.8103.79 driven by the workspace's own driver (`crates/chrome-devtools`) from a Rust program
-(`experiments/client-jsx/bench`), a fresh Chrome on a profile of its own for every run. Each
+(`experiments/client-jsx/bench` at commit `a40751dc2428b708045ed2ad4d6e27c15d94c314`, run as
+[the experiment](#the-experiment) says), a fresh Chrome on a profile of its own for every run. Each
 client was served by a Symphony server of its own, the worktree's development build of
 `symphony-server` with `--port 0`, on a scratch project with a board of its own in a temporary
 machine folder; every file of each client was asked for once before any timing, so the server's
@@ -250,8 +259,9 @@ sides compare under the same conditions, and that the method controls for:
 while this ran, sharing one program between the task pages and four other kinds; what that
 changes is read from main's build under [Size](#size).
 
-**The fixture.** Made by `experiments/client-jsx/fixture/make.mjs` from a seeded generator, so
-every run sees the same words. `bench`: 120 tasks (ready 29, done 30, backlog 20, in progress 13,
+**The fixture.** Made by `experiments/client-jsx/fixture/make.mjs` at commit
+`a40751dc2428b708045ed2ad4d6e27c15d94c314` (run as [the experiment](#the-experiment) says) from
+a seeded generator, so every run sees the same words. `bench`: 120 tasks (ready 29, done 30, backlog 20, in progress 13,
 review 8, concept 6, design 6, blocked 4, cancelled 4), with long briefs; the task
 `bench/task-page`, an 80-message thread and a brief of several blocks; `docs/GUIDE.md`, 60
 sections with lists, code and tables, 249 parts and about 34,000 px tall in a wide window; and
@@ -789,8 +799,9 @@ not in what it can reach.
 
 ### The prototype
 
-`experiments/client-jsx` draws one block of a project's own, plain JSON
-`{"kind", "module", "data"}`: the data, and the address of the project's module that draws it
+`experiments/client-jsx` at commit `a40751dc2428b708045ed2ad4d6e27c15d94c314`
+([the experiment](#the-experiment) says how to run it) draws one block of a project's own, plain
+JSON `{"kind", "module", "data"}`: the data, and the address of the project's module that draws it
 (`src/custom.jsx`). The vocabulary has no such kind, and none was added, so the experiment reads a
 fenced code block in the language `custom` as one. The sample module, `fixture/blocks/chart.js`,
 draws a bar chart of this document's first-visit figures with DOM calls only, so a label is always

@@ -50,11 +50,12 @@ A coordinator proposes each attempt it ends to the workflow that holds its task,
 recovery service of its host's grants (`Host::local` unless `Coordinator::with_workflow` names
 another): after its own write that ends an attempt, by an answer or a cancel, it calls
 `Store::observe_attempt`, which a host may call again for an attempt whose worker died first. A
-failure takes the automatic edge out of the task's pair within its retry bound, or the position's
-`attempt_failure` action, and a cancel that took its `cancellation_acknowledged` action; a
-success, a stop or a supersession moves nothing, nor an ending from where the task no longer
-stands, which stays on the attempt ([WORKFLOW](WORKFLOW.md#attempts)). A refusal of the proposal
-never fails the coordinator's call: the ending is recorded either way. A local terminal is
+failure takes the automatic edge out of the task's pair within its retry bound and while
+admission takes it, or the position's `attempt_failure` action, and a cancel that took its
+`cancellation_acknowledged` action; a failure nothing can answer is said once on its task's
+thread; a success, a stop or a supersession moves nothing, nor an ending from where the task no
+longer stands, which stays on the attempt ([WORKFLOW](WORKFLOW.md#attempts)). A refusal of the
+proposal never fails the coordinator's call: the ending is recorded either way. A local terminal is
 proposed the same way ([local terminals](#local-terminals)): a close, cleanup or the idle sweep
 ends it stopped, which moves nothing; a start hc refuses is a failure and a launch's or restore's
 rollback a cancel that took, each from where the task stood when the launch admitted it. A

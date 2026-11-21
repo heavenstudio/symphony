@@ -25,7 +25,7 @@ types cross.
 
 The kit's crates depend on no other workspace crate but each other, and build wherever Rust's
 standard library does: only a file's stamp, which tells `read_text` a file changed, reads more of it
-on Unix (its device, inode and change time). They carry one version, 1.0.1 now, and are made to be
+on Unix (its device, inode and change time). They carry one version, 1.1.0 now, and are made to be
 published on crates.io ([RELEASES](RELEASES.md#packages-on-cratesio)), so they export what a plugin
 uses, and beside it the file's stamp (`text::FileStamp`, its fields private), which `read_text` and
 the library's board cache share, and no more: the text rules only the library uses (a one-sided
@@ -226,6 +226,21 @@ trip of its own; in one request, a register of 500 cards is one request of 1,000
 with its document and with none), 206 KB asked and 410 KB answered, well within a line. What the
 three reads cost in time is the second test of [Measured](#measured), taken as that section says.
 
+## Approval authorities
+
+A project whose workflow guards an edge commits its approval authority's key
+([PROJECT_FILE](PROJECT_FILE.md)), and a plugin may answer for that authority, by the adapter its
+guards name (`Authority`, declared in `authorities`). When the owner takes a guarded edge from the
+app with no attestation given, the host asks the authority of each guard's adapter,
+`authorities.attest` (0.4), for one guard of the operation: the project's committed id, the task,
+the edge, the guard, the place it is taken from, the input revisions and the principal
+(`Operation`), and the time it has (`within_ms`, ten seconds, a call's wait). Its answer is the
+authority's signed statement as it signed it (`Signed`), or why it cannot say. The host hands what
+it answered to the board unchanged, which verifies it as one pushed to it
+([WORKFLOW](WORKFLOW.md#guards)); an error, a panic or no answer in its time refuses the operation
+as `guard_unavailable`, naming the guard and why. Nothing is kept: the next operation asks again.
+A plugin linked or answering from its process answers alike.
+
 ## The line
 
 Each line is one JSON object, the envelope: an `id`, and exactly one of
@@ -268,20 +283,22 @@ is a page of its own.
 ## Versions
 
 The host names its protocol in the first request, `plugin.declare`
-(`{"protocol":{"major":0,"minor":3}}`), and the plugin its own in its declaration: its name, each
+(`{"protocol":{"major":0,"minor":4}}`), and the plugin its own in its declaration: its name, each
 seam object's name and what it says of itself, its navigation and theme. They speak the lower minor
 of their major. A plugin of another major is refused by name, saying to install a Symphony that
 speaks the plugin's major or to rebuild the plugin with a `symphony-plugin` of the host's, and its
-process is killed and not started again until its program changes. The protocol is 0.3.
+process is killed and not started again until its program changes. The protocol is 0.4.
 
 Each call names the minor it came in (`since` in `symphony_plugin::protocol`, listed in `MINORS`).
 The host never sends a call newer than the minor the two agreed: the seam's own default answers it,
 as for a plugin that does not implement that method, and a call the seam requires (a component's
-`render`) is shown failed, naming the protocol the plugin speaks. Every call but one is 0.1's. 0.2
+`render`) is shown failed, naming the protocol the plugin speaks. Every call but two is 0.1's. 0.2
 hands a page its project's artifacts folder (`artifacts` in its page, the checkout's `artifacts`
 unless `[project] artifacts` names another), which a plugin of 0.1 reads past and one of 0.2 reads
 as `artifacts` from a host of 0.1. 0.3 adds `card_kinds.read`, a register read's card kinds in one
-request: a plugin of 0.2 is asked them card by card, and answers the same.
+request: a plugin of 0.2 is asked them card by card, and answers the same. 0.4 adds
+`authorities.attest` ([below](#approval-authorities)) and the declaration's `authorities`, which a
+plugin of 0.3 does not write and a host reads as none: no authority is asked of it.
 
 - A field the reader does not know is ignored, wherever it stands: in a request's fields, in a card,
   in an answer, in the declaration. A newer peer's additions reach an older one unread.

@@ -338,6 +338,48 @@ pub fn page(
     })
 }
 
+/// What the model calls of the task `slug` took, its subtasks' with them, and their estimated
+/// cost at the prices this build embeds: `tasks show --json`'s `tokens` without its rows, from
+/// the same two reads, so the page's figures are that command's.
+pub fn tokens(
+    store: &symphony_board::Store,
+    slug: &str,
+) -> Result<symphony_api::TaskTokens, symphony_board::Error> {
+    let children = store.children(slug)?;
+    let slugs: Vec<&str> = std::iter::once(slug)
+        .chain(children.iter().map(|child| child.slug.as_str()))
+        .collect();
+    let spent = store.spent_on(&slugs)?;
+    let prices = symphony_board::usage::Prices::embedded();
+    let tally = symphony_board::usage::Tally::at(&spent, prices);
+    serde_json::from_value(tally.json(&[], prices))
+        .map_err(|e| symphony_board::Error::Db(format!("a task's tokens do not read: {e}")))
+}
+
+/// What each of `slugs` cost, its subtasks' with it, as its page's figure all told
+/// ([`tokens`]), at the prices this build embeds: one read of the board however many it names
+/// ([`symphony_board::Store::spent_under`]). One that took none is left out.
+pub fn costs(
+    store: &symphony_board::Store,
+    slugs: &[String],
+) -> Result<symphony_api::TaskCosts, symphony_board::Error> {
+    let asked: Vec<&str> = slugs.iter().map(String::as_str).collect();
+    let prices = symphony_board::usage::Prices::embedded();
+    let costs = (store.spent_under(&asked)?.into_iter())
+        .map(|(slug, spend)| symphony_api::TaskCost {
+            dollars: spend.cost.json(&prices.read)["dollars"]
+                .as_f64()
+                .unwrap_or_default(),
+            unpriced: !spend.cost.unpriced.is_empty(),
+            slug,
+        })
+        .collect();
+    Ok(symphony_api::TaskCosts {
+        prices: prices.read.clone(),
+        costs,
+    })
+}
+
 /// The next part of the brief of `record` from byte `from`, for the owner who asks for what the
 /// page left out.
 pub fn brief(record: &symphony_board::Task, from: usize, root: &Path) -> symphony_api::TaskBrief {
@@ -733,7 +775,7 @@ fn fields(
 
 #[cfg(test)]
 #[path = "taskview/page_tests.rs"]
-mod page_tests;
+pub(crate) mod page_tests;
 
 #[cfg(test)]
 #[path = "taskview/agents_tests.rs"]

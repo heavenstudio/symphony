@@ -32,6 +32,7 @@ own crates/symphony-build/src/release/cadence.rs release
 own crates/symphony-build/src/release/candidate.rs release
 own crates/symphony-build/src/release/crates.rs release
 own crates/symphony-build/src/release/github.rs release
+own crates/symphony-build/src/release/hosted.rs verify
 own crates/symphony-build/src/release/record.rs release
 own crates/symphony-build/src/release/refresh.rs release
 own crates/symphony-build/src/release/updates.rs release

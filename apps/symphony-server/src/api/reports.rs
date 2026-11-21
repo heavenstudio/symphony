@@ -3,7 +3,9 @@
 //! ([`Folders`]) and, for the marks of a change of the project's settings or the instructions its
 //! agents work under, one `git log` of the default branch; never the board, so a board slow or down
 //! leaves it as it is. Each source's part of a period is none when no file holds an hour of it:
-//! missing, never a zero.
+//! missing, never a zero. The tokens the roll-up's files hold are priced here, at the table this
+//! build embeds ([`symphony_board::usage::Prices`]): a period's by role, and what the tasks landed
+//! in the window took ([`landed`]).
 //!
 //! A file is read whole only up to [`REPORTS_FILE_BYTES`] and the answer reads at most
 //! [`REPORTS_READ_BYTES`], newest days first; a file past either, one that does not read, a link or
@@ -23,13 +25,16 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use symphony_api::agent_activity::{AgentHour, Gauge, KindLevel, Level, RoleLevel};
 use symphony_api::report_page::{
-    BucketAgents, BucketFlow, BucketHealth, BucketVerdicts, BucketWaits, Grain, REPORTS_FILE_BYTES,
-    REPORTS_READ_BYTES, ReportBucket, ReportMark, ReportsPage,
+    BucketAgents, BucketFlow, BucketHealth, BucketVerdicts, BucketWaits, Grain, LandedSpend,
+    LandedTask, REPORTS_FILE_BYTES, REPORTS_READ_BYTES, ReportBucket, ReportMark, ReportsPage,
+    RoleSpend, Spend,
 };
 use symphony_api::reports::{
-    ByStatus, DecisionCounts, GitCounts, PlacedHours, ReportDay, Spent, Spread,
+    ByStatus, DecisionCounts, GitCounts, Landed, PlacedHours, ReportDay, Spent, Spread, TokenSum,
 };
 use symphony_api::{HealthHour, report_file, run_day};
+use symphony_board::reports::spend;
+use symphony_board::usage::Prices;
 
 mod kept;
 pub(crate) use kept::{Answer, Kept};
@@ -198,6 +203,9 @@ pub(crate) fn page(
     let mut unread = Vec::new();
     let mut budget = REPORTS_READ_BYTES;
     let mut reds: Vec<(String, f64, f64)> = Vec::new();
+    // The tasks landed in the window, the newest day's first, so a task landed again is its last
+    // landing's.
+    let mut landings: Vec<Landed> = Vec::new();
     let place = |at: f64| {
         let after = spans.partition_point(|span| span.0 <= at);
         (after > 0 && at < spans[after - 1].1).then(|| after - 1)
@@ -229,6 +237,11 @@ pub(crate) fn page(
                         {
                             sums[at].day(&report);
                         }
+                        landings.extend(
+                            (report.landed.iter().rev())
+                                .filter(|task| from <= task.at && task.at < to)
+                                .cloned(),
+                        );
                         for red in &report.reds {
                             if let (Some(closed), "done") = (red.closed, red.status.as_str())
                                 && !reds.iter().any(|(slug, _, _)| *slug == red.slug)
@@ -291,15 +304,18 @@ pub(crate) fn page(
             Vec::new()
         }
     };
+    let prices = Prices::embedded();
     ReportsPage {
         grain,
         days,
         from,
         to,
+        landed: landed(&landings, prices),
+        prices: prices.read.clone(),
         buckets: spans
             .iter()
             .zip(sums)
-            .map(|(&(start, end), sums)| sums.bucket(start, end, grain))
+            .map(|(&(start, end), sums)| sums.bucket(start, end, grain, prices))
             .collect(),
         first: folders
             .reports
@@ -309,6 +325,48 @@ pub(crate) fn page(
         marks,
         unread,
     }
+}
+
+/// `spend` on the wire: its tokens and their estimated cost in dollars, as the board's own JSON
+/// gives them (`tasks show --json`), at `prices`.
+fn wire(spend: &symphony_board::usage::Spend, prices: &Prices) -> Spend {
+    Spend {
+        tokens: serde_json::from_value(spend.tokens.json()).unwrap_or_default(),
+        cost: serde_json::from_value(spend.cost.json(&prices.read)).unwrap_or_default(),
+    }
+}
+
+/// What the tasks of `landings` took at `prices` ([`spend::landed_costs`]); none when none landed.
+fn landed(landings: &[Landed], prices: &Prices) -> Option<LandedSpend> {
+    if landings.is_empty() {
+        return None;
+    }
+    let costs = spend::landed_costs(landings, prices);
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a dollar figure in JSON: an f64 keeps fifteen significant digits of it"
+    )]
+    let median = costs.median.map(|pico| pico as f64 / 1e12);
+    Some(LandedSpend {
+        tasks: count(costs.tasks.len()),
+        without: count(costs.without),
+        median,
+        dearest: (costs.tasks.iter().take(spend::DEAREST))
+            .map(|(slug, at, spent)| {
+                let Spend { tokens, cost } = wire(spent, prices);
+                LandedTask {
+                    slug: slug.clone(),
+                    at: *at,
+                    tokens,
+                    cost,
+                }
+            })
+            .collect(),
+        first_round: wire(&costs.first, prices),
+        later_rounds: wire(&costs.later, prices),
+        again: count(costs.again),
+    })
 }
 
 /// The text of the day file at `path`, its bytes taken from `budget`; none when there is none. A
@@ -418,6 +476,8 @@ struct Sums {
     red_fix: Vec<f64>,
     agents: Vec<AgentHour>,
     health: Option<BucketHealth>,
+    /// The tokens of its hours that tell them, by role, model and speed; none when none does.
+    tokens: Option<Vec<TokenSum>>,
     /// Where a custom workflow's top-level tasks spent its hours that record it.
     workflow: Option<PlacedHours>,
 }
@@ -485,6 +545,12 @@ impl Sums {
             kept.removed += git.removed;
             kept.reverts += git.reverts;
         }
+        if let Some(tokens) = &hour.tokens {
+            let kept = self.tokens.get_or_insert_default();
+            for sum in tokens {
+                spend::add(kept, sum);
+            }
+        }
         if let Some(placed) = &hour.workflow {
             let kept = self.workflow.get_or_insert_default();
             add_spent(&mut kept.phases, &placed.top.phases);
@@ -532,7 +598,7 @@ impl Sums {
     }
 
     /// The period from `start` to `end` of a window by `grain`, as its files summed it.
-    fn bucket(self, start: f64, end: f64, grain: Grain) -> ReportBucket {
+    fn bucket(self, start: f64, end: f64, grain: Grain, prices: &Prices) -> ReportBucket {
         let [to_reviewer, to_resumed, to_review, to_landed] = self.waits;
         let any_wait = [&to_reviewer, &to_resumed, &to_review, &to_landed]
             .iter()
@@ -559,6 +625,18 @@ impl Sums {
             red_fix: spread(self.red_fix),
             agents: agents(&self.agents),
             health: self.health,
+            spend: self.tokens.map(|sums| {
+                (spend::by_role(&sums, prices).iter())
+                    .map(|(role, spent)| {
+                        let Spend { tokens, cost } = wire(spent, prices);
+                        RoleSpend {
+                            role: role.clone(),
+                            tokens,
+                            cost,
+                        }
+                    })
+                    .collect()
+            }),
             workflow: self.workflow,
         }
     }

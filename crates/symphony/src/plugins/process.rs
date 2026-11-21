@@ -58,15 +58,15 @@ use symphony_plugin::protocol::{
 };
 use symphony_plugin::vocabulary::{Block, NavItem, Picture};
 use symphony_plugin::{
-    BoardAction, Card, CardKind, Command, Component, DocCheck, HomeRegion, Page, Plugin, Renderer,
-    Route, Theme, Watch,
+    Authority, BoardAction, Card, CardKind, Command, Component, DocCheck, HomeRegion, Page, Plugin,
+    Renderer, Route, Theme, Watch,
 };
 
 use super::measure::{self, Line, Record};
 use crate::project::{PluginProcess, Project, Stamp};
 use seams::{
-    RemoteAction, RemoteCheck, RemoteCommand, RemoteRegion, RemoteRenderer, RemoteRoute,
-    RemoteWatch,
+    RemoteAction, RemoteAuthority, RemoteCheck, RemoteCommand, RemoteRegion, RemoteRenderer,
+    RemoteRoute, RemoteWatch,
 };
 
 /// How long a call waits for its answer, as the gates seam waits for its answerers.
@@ -1245,6 +1245,14 @@ impl Plugin for Remote {
                 .collect()
         })
     }
+    fn authorities(&self) -> Vec<&dyn Authority> {
+        self.each(|d| {
+            d.authorities
+                .iter()
+                .map(|a| -> &dyn Authority { a })
+                .collect()
+        })
+    }
     fn watches(&self) -> Vec<&dyn Watch> {
         self.each(|d| d.watches.iter().map(|w| -> &dyn Watch { w }).collect())
     }
@@ -1273,6 +1281,7 @@ struct Declared {
     routes: Vec<RemoteRoute>,
     home_regions: Vec<RemoteRegion>,
     board_actions: Vec<RemoteAction>,
+    authorities: Vec<RemoteAuthority>,
     watches: Vec<RemoteWatch>,
     doc_checks: Vec<RemoteCheck>,
     commands: Vec<RemoteCommand>,
@@ -1336,6 +1345,14 @@ impl Declared {
                 .map(|name| RemoteAction {
                     remote,
                     name: name.clone(),
+                })
+                .collect(),
+            authorities: declaration
+                .authorities
+                .iter()
+                .map(|adapter| RemoteAuthority {
+                    remote,
+                    adapter: adapter.clone(),
                 })
                 .collect(),
             watches: declaration

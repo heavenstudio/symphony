@@ -1,5 +1,5 @@
 //! Token usage recorded atomically with the beat of its bound session.
-use super::{Pg, listed};
+use super::{Pg, listed, rows};
 
 /// `s_` is the beat's session. Choose one working role and add each usage sample.
 pub(in crate::store) const SPEND: &str = "DECLARE on_ record; slug_ text; role_ text; round_ bigint; x_ jsonb;
@@ -24,6 +24,22 @@ pub(in crate::store) fn spent_on() -> Pg<'static> {
         "u.handle, u.slug, u.role, u.model, u.speed, u.round",
     )
 }
+/// [`super::super::surreal::spending::SPENT_UNDER`]'s answer: the rows spent on `slugs` and on
+/// their subtasks, and each such subtask's parent.
+pub(in crate::store) fn spent_under() -> Pg<'static> {
+    let slugs = "(SELECT jsonb_array_elements_text(v -> 'slugs'))";
+    Pg::read(format!(
+        "(WITH under AS (SELECT slug, parent FROM task WHERE parent IN {slugs}) \
+         SELECT jsonb_build_object('rows', {}, 'under', coalesce((SELECT jsonb_agg(\
+         jsonb_build_object('slug', slug, 'parent', parent) ORDER BY slug) FROM under), '[]')))",
+        rows(
+            "u",
+            &format!("usage u WHERE u.slug IN {slugs} OR u.slug IN (SELECT slug FROM under)"),
+            "u.id"
+        )
+    ))
+}
+
 pub(in crate::store) fn spent_by() -> Pg<'static> {
     listed(
         "u",

@@ -137,6 +137,11 @@ pub struct State {
     /// id: none is mapped to that task again, or taken for its publication.
     #[serde(default)]
     pub dropped: BTreeMap<String, BTreeSet<i64>>,
+    /// The rulesets in effect on the default branch as someone who administers the repository
+    /// verified them (`rulesets --verify`), by number: who bypasses each, which the App's token is
+    /// not shown ([`crate::preflight`]).
+    #[serde(default)]
+    pub rulesets: BTreeMap<i64, Verified>,
     /// The `updated_at` the next listing starts from.
     pub cursor: Option<String>,
     /// The settings' revision the cursor was read under. Under another, what the listing
@@ -147,6 +152,19 @@ pub struct State {
     pub paused: Option<String>,
     /// The second before which nothing is sent.
     pub rate_limited_until: Option<i64>,
+}
+
+/// One ruleset as it was verified: who bypassed it when GitHub said it last changed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Verified {
+    /// The repository's number it was read of.
+    pub repository: i64,
+    /// When GitHub said it last changed, as it said it.
+    pub updated_at: String,
+    /// Who may bypass it: each actor's type, number and mode.
+    pub bypass: Vec<(String, Option<i64>, String)>,
+    /// The second it was verified at.
+    pub at: i64,
 }
 
 impl State {

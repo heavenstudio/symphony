@@ -7,6 +7,37 @@ their dated history work is in [REVIEW](REVIEW.md).
 <!-- register:start -->
 ## Auto-approved: spot-check
 
+### GitHub delivery
+
+- [a] **github-delivery-turn-on** — Symphony's own tasks would land through pull requests on `heavenstudio/symphony`: GitHub merges each one by itself about 20 seconds after its last approve, nobody runs a land, and nobody, you included, pushes `main` any more. It was rehearsed today on the throwaway repository with nothing done by hand, and it can be turned off again. A: turn it on once `tools/delivery-watcher-closes-merged` and `tools/delivery-rearm-at-new-head` have landed. B: as A, and each release run also checks again who may get past the rule (`[releases] rulesets`). C: not yet. Recommended: A. Approve and say A, B or C in the note, or comment. [[GITHUB_SETUP#Delivery by pull request]]
+  [2026-11-21 14:27] agent — Posted for the board task `tools/github-delivery-on-this-repository`.
+
+    **What you do on GitHub, in this order.** The merge settings (squash alone, auto-merge allowed) and the Landing App's installation are done already.
+    1. Take `heavenstudio/symphony` off the two Apps that one App replaced: the Policy Reader (installation 183519005), whose Administration (write) could edit or delete the rule, and the Evidence Publisher (183503562). Untick the repository on each installation's page, or uninstall them.
+    2. Right after the settings task lands (it lands the old way), add the one rule on `main` exactly as rehearsed: nobody bypasses it, no deletion or force push, a pull request with squash alone, and `symphony/eligible` required from the Landing App. Its exact body is on the task's thread.
+    3. `symphony-github rulesets --verify`, signed in to gh, which reads who may get past the rule and records it. It only reads, so I can run it with your gh.
+    4. A look at whether vercel's installation reaches `heavenstudio/symphony`: its Administration (write) could edit the rule.
+
+    **What you see change.**
+    - `main` becomes one squash commit per task, by symphony-landing[bot], verified by GitHub; no more merge commits.
+    - Each task's branch, and a pull request for it, are public from its move to review, with checks naming its stamps, never the thread's words or handles.
+    - A push to `main` is refused by GitHub, yours too.
+    - A task waits in review with its pull request open until it is assessed and its last stamp stands, then lands in about 20 seconds.
+    - The client build and your saves from the app each land as a task of their own: one more pull request each.
+
+    **Rehearsed today** on the throwaway repository, one App and one rule: the move to review opened and armed the pull request in 20 seconds; after the approve GitHub merged it in 17 seconds and the board closed the task at 22.
+
+    **The way back**, tried once today: a task that takes the setting out lands by pull request, then the rule is turned off and `main` pushed once by hand.
+
+    **Why those two tasks first.** One closes a task whose merge GitHub made but whose close on the board was cut short, which happened once today on a test board. The other makes the squash name the head that was merged when a branch moves after its first push. The switch waits for both.
+
+    **Why A over B.** B lets a release run take a changed rule again by itself, but it needs `symphony-github` on the release run's path, and every land already stops, naming the command, when the rule changes. B is one line in the settings, which can come later.
+
+    **Earlier verdicts checked.** **github-delivery-policy-reader-standing**, approved as A, put a third App with Administration (write) on `heavenstudio/symphony`; your words in chat on 2026-11-20, "I prefer to have one app, way easier to install and amange", replaced it, and step 1 takes that App off. Your "DO NOT WAIT FOR MY YES. LAND IT" of 2026-11-20 was given on the three-App design, before you changed it to GitHub merging on green, so it does not decide this card. **github-delivery-proof-setup** gives the Apps no Administration, which holds.
+  [2026-11-21 15:19] agent — Both tasks A waits for are on main now: `tools/delivery-rearm-at-new-head` and `tools/delivery-watcher-closes-merged`. So A turns it on as soon as you answer.
+  [2026-11-21 17:16] agent · auto-approved — A: your own words decide it, so it is not asked. On the board task `tools/github-delivery-on-this-repository`, 2026-11-19: "we should move Github to finish line". On its list of what turning it on changes (thread post #17253, which already said nobody pushes `main` any more), 2026-11-20: "DO NOT WAIT FOR MY YES. LAND IT". What changed since is what you asked for in the same chat: "Just land should delegate the command the Github, Github should auto merge things on green", "but it should not wait for it", and "I prefer to have one app, way easier to install and amange"; a design changed to your words needs no second yes. In chat on 2026-11-21, of a card that waited on you the same way: "Unless there's a decision I need to make (which there isn't, agreement to move has been done long ago), you should push whatever needed to done", then "This applies to all other cards there by the way." C is against those words. B adds a release check you did not ask for, which starts a program that is on no path here; it is one settings line and can be a card of its own. Everything A waited for is on main: both tasks it names, the rehearsal of them on the throwaway repository (thread post #18753), and the fix of the defect that rehearsal found (`tools/delivery-publish-waits-for-pushed-head`). The GitHub steps above stay the orchestrator's to run with your gh, each read back on the thread; this line changed nothing on GitHub. Any verdict here overrides this.
+  [2026-11-21 17:47] agent — Applied as A. The settings task `tools/github-delivery-settings` landed the old way at 17:45. Step 2's rule went on `main` 14 seconds later, exactly as rehearsed, and step 3 verified it: nobody bypasses it. From now on every task lands through its pull request, this card's own change first. Step 1 is still yours: GitHub refused it to the gh login here ("You do not have permission to modify this app on heavenstudio"), so the two retired Apps still reach `heavenstudio/symphony`. Nothing here uses their keys, and any change they made to the rule would stop every delivery until it is verified again. Step 4, vercel's reach, is yours too. Both pages are on the task's thread.
+
 ### Releases
 
 - [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
@@ -24,6 +55,74 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
+
+## Waiting on an agent
+
+### Settings page
+
+- [x] **settings-agent-off** — The page you approved has a switch for Claude Code and one for Codex, and today neither can be off: one setting picks which a launch starts, a launch may still name either, and both agents' files are installed in every project. What should off mean? A: the board refuses to launch it and the pages stop offering it; its files stay installed, so on again is the switch alone. B: as A, and `symphony init` takes its files out of the project (rules, hooks, skill links), which is a landed change. C: the pages stop offering it, and a launch that names it still starts it. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#Turning an agent off]]
+  [2026-11-21 10:20] agent — Posted for the board task `app/settings-page`, round two. Base: today `[agents.launch] default` is `"codex"` or `"claude"`, and nothing refuses the other.
+
+    **Under every option** the launch default cannot be turned off (the switch says to pick another first), the page says whether the program is on this machine, and off can hold for the project or for one machine.
+
+    **Why A.** Off should stop agents being started, which C does not. B makes on and off a change of committed files, so a switch becomes a landing, to remove files that do nothing while the agent is never launched.
+
+    **What each costs.** A: one setting, one refusal in the launch, the switch. B: A, and init learning to leave out and take out one agent's files. C: the switch alone.
+
+    **Earlier verdicts checked.** **settings-page-shape** (B) gives the agents a switch and does not say what off does. None decides this.
+  [2026-11-21 17:34] owner · approved — A
+  [2026-11-21 17:40] agent — Recorded: A. An agent that is off is refused at launch, with where it was turned off, and no page offers it; its files stay installed. Settled by it and **settings-board-store** without a card: off is a preference like the others, so the switch is kept in the board first and holds at once, and "make it the project's" commits it. Filed as `app/agent-off`. [[analysis/settings-page#Turning an agent off]]
+- [x] **settings-board-store** — Your note on **settings-page-project-save** adds a place for settings: the board's database, read first, with the settings file used where it has no entry. Which preferences should the Settings page keep there? A: only those with no key in a file (whether a plugin's entry is on, a person's own choices later); a model, a limit or Herdr on or off is committed, as you approved. B: every preference the page changes is kept in the board first and holds at once; beside it a "make it the project's" control commits it, as you approved, and clears the board's entry. C: none. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#What the board keeps]]
+  [2026-11-21 10:20] agent — Posted for the board task `app/settings-page`, round two. Base: today the board's database holds no setting; a value comes from the default, `symphony.toml` or `symphony.local.toml`.
+
+    **The order a value is read in:** the default, the committed file, the board, then the local file by hand. A board never told anything has no entries, so a fresh clone and a project that never opens the page behave as now.
+
+    **Never there:** a setting that runs a command or decides what lands, by the line you approved on **settings-page-shape**.
+
+    **Why B.** It behaves the same in three cases A does not: where lands go by pull request (a committed change waits for its delivery, a stored one holds at once), on a hosted board (no checkout to commit from), and for a change you mean to try before making it the project's. Each stored change keeps a record of what, from what and when. Under B the page stops writing `symphony.local.toml`; that file stays the override by hand.
+
+    **What B costs.** A new table, so a move of the board's layout with its release run. And a stored value is not in a clone: two machines of one project can differ until it is made the project's, as with a local file today. The page says where each value comes from.
+
+    **Earlier verdicts checked.** **settings-page-project-save** (A, with your note) decides the commit's route and that the database is a place; it does not say which preferences go there. **schema-landing-then-release** and **live-board-schema-moves** decide how a layout move lands, which B follows. None decides this.
+  [2026-11-21 17:33] owner · approved — B
+  [2026-11-21 17:40] agent — Recorded: B. Every preference the page changes is kept in the board first and holds at once, with a control beside it that commits it for the project and clears the board's entry, and one that removes the entry and goes back to the file's value. The page does not write `symphony.local.toml`. Filed in two tasks: `app/settings-store` (the table and the order a value is read in) and `app/settings-page-writes` (the switches, the values and the commit). Nothing of this concept is left to choose. [[analysis/settings-page#What the board keeps]]
+
+### Task timeline
+
+- [x] **timeline-navigation** — A task's wide timeline would still open on the whole task, and gain zoom and sideways movement. Builds and tests would sit on one or two rows at their recorded times, not in a pile, and messages would be small ticks under the bars, not rings on them. One choice is open: what to do with a long stretch in which the task's records hold nothing. The 10 h 54 m after `tools/workflow-revision-guards` closed takes 40% of its width today. A: always the true clock, with zoom alone to get past such a stretch. B: such stretches skipped by default, each a narrow band that says its length, a click or a switch showing true time. C: as B, but off until switched on. Time the records do not cover is never skipped. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/timeline-navigation#The choice]]
+  [2026-11-20 04:56] agent — Base: today, `tools/workflow-revision-guards` at 1440 wide on the shared server. Its builds and tests take 26 rows, its messages are rings on the bars, and the 10 h 54 m after it closed is the empty 40% in the middle. ![Today, the whole task](analysis/timeline-navigation/before-wide.webp)
+
+    A message selected, then the same mark held down, before the repair below: ![A message selected, then held down, before the repair](analysis/timeline-navigation/before-selected-held.webp)
+
+    **The arrow was a defect, not part of this choice, and is repaired.** Its overlay was on a scale 8 px off the marks', it stopped 6 px above them, and a held mark jumped 12 px to the right. The board task `app/timeline-message-alignment` repaired all three and landed after these pictures; its source is this proposal's baseline. The hour lines share the 8 px offset, and a phone's message words sit 16 px below their diamond. The repair left both to this proposal, under every option.
+  [2026-11-20 04:56] agent — Posted for the board task `inbox/timeline-ui-needs-improvement`. The whole task under each option, from a mockup that draws this task's recorded timeline; nothing is built: ![The whole task under A](analysis/timeline-navigation/proposed-fit-clock.webp) ![The whole task under B](analysis/timeline-navigation/proposed-fit.webp) ![The whole task under C](analysis/timeline-navigation/proposed-fit-true.webp)
+
+    **A** keeps every width to scale. The empty 40% stays, and zoom gets past it. **B** gives the work 1.6 times the width. A band's 10 h 54 m is 36 px, and its label, the hours line and the range readout all say so. **C** draws A until its switch is on.
+
+    **What counts as quiet.** At least an hour with no build or test, no executor or reviewer role held, and no message or change of stage, role, round or gate, and only where those records are kept. Here the 10 h 54 m after the close is quiet. The 6 h 33 m of ready time is not: no runs are kept before 11:09, so that time is unknown and stays on the true clock. A session's heartbeat is not used: keen-swift-85 kept beating through the closed stretch.
+
+    **What each costs.** No option needs a server or schema change. B and C need the same client work: one slice more than A, the band and its switch.
+
+    **Why B.** Your request: “Could also have a "skipped range" for when no work was done”, with the whole task kept as the default: “having the default be "100% view of the timeline does make sense tho”. B narrows only measured emptiness and labels each band with its length. C leaves the empty hours in the first view.
+
+    **Earlier verdicts checked.**
+    - **reports-task-page-pictures** (A): lanes wide and a list on a phone, kept.
+    - **task-page-timeline-place** (C): the phone's 240 px box, kept.
+    - Your note on `inbox/timeline-should-not-be-collapsed-by-defa`, “Desktop collapse save almost no space and hides really good information from view.”: the whole task stays the default and nothing is collapsed. By its rule, a band holds no record.
+    - Your rejection of **timeline-burst-drawing**, “yes. rework the proposal to be more horizontal based.”: runs keep their own bars at their recorded times, on one row unless they overlap, with no folding. At the whole-task scale, runs seconds apart share pixels, and zoom parts them.
+    - **timeline-orchestrator-messages** (approved): one arrow for the selected message, and the message list and its keys, kept. The mark becomes a tick under the bars, a change of drawing only.
+
+    None of them decides whether quiet time is skipped.
+  [2026-11-20 04:56] agent — Under every option:
+    - The whole task shows first. Whole task, − and +, ⌘/Ctrl + scroll and a drag across the hours zoom, Shift + scroll moves, and an overview strip shows where the view is while zoomed.
+    - A run takes another row only when it overlaps one, so the lanes are 353 px tall against 818.
+    - Where runs are not kept, the Builds and Tests lanes are hatched, in place of the sentence above them.
+    - A selected message's arrow joins its two marks. A message whose two ends share a lane, such as an outside post to everyone, draws no arrow: its tick is ringed, and the hours line names both ends. Today it draws a 12 px stub.
+
+    Zoomed to 73 minutes, a verdict selected: ![Proposed, zoomed, a verdict selected](analysis/timeline-navigation/proposed-zoom.webp) [Open the mockup](analysis/timeline-navigation/mockup.html).
+
+    **On a phone** the list and its 240 px box stay under every option. The box shows four steps where it shows one today: the "not kept" sentence becomes a row at its time, and a message takes one line. A quiet stretch is a row of its own: ![Today on a phone](analysis/timeline-navigation/before-phone.webp) ![Proposed on a phone](analysis/timeline-navigation/proposed-phone.webp) ![Proposed on a phone, Show all, at the closed stretch](analysis/timeline-navigation/proposed-phone-all.webp)
+  [2026-11-20 05:04] owner · approved — B
 
 ## Rejected and replaced
 
@@ -279,69 +378,47 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ## Resolved
 
-### Project workflows
+### Settings page
 
-- [x] **workflow-board-labels** — On a board a custom workflow holds, the project's own words can match the board's: a phase named Build beside the machine's Build column, a state chip Working beside the Working wait chip. As built, the machine's columns read Machine build and Machine test, and the workflow's chips follow a small Workflow label. A board with no workflow is unchanged.
-  [2026-11-20 00:04] agent — Posted for the board task `app/workflow-pages-follow-ups`, at its tip 57ac59eb3; the change is its commit f80b7c2bc. Both pictures are the browser test's board, drawn from main's build at e00700b13 and from that tip.
+- [x] **settings-page-shape** — You asked for a Settings page that turns things on and off. Today no page shows or changes a setting: they are in three files, changed by hand or by a command. How far should the page go? A: it shows everything in force and where each value comes from, and changes nothing. B: as A, with switches and values for the preferences (the agents, Herdr panes, models, limits), each saved for the project or for this machine; a setting that runs a command or decides what lands is shown and never written there. C: a form over every key of every file. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#The page]]
+  [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`, the first of several rounds. Base: there is no page today, so nothing to picture. Each option drawn by hand with this repository's values, nothing built: ![The page under A](analysis/settings-page/proposed-a-wide.webp) ![The page under B](analysis/settings-page/proposed-b-wide.webp) ![The page under C](analysis/settings-page/proposed-c-wide.webp)
 
-    **Before**, wide and on a phone: ![The board before, wide](analysis/workflow-board-labels/before-wide.png) ![The board before, on a phone](analysis/workflow-board-labels/before-phone.png)
+    **What "on and off" covers.** Your four examples are three kinds of change. Herdr is a switch already (`panes`). Claude Code and Codex are not: one setting picks which a launch starts, and both are always installed. GitHub off is one line, and on is a setup with tokens and GitHub Apps no page can do. B gives the first two a switch and the third a row that says why it is off and opens its guide.
 
-    **As built**, wide and on a phone: ![The board as built, wide](analysis/workflow-board-labels/after-wide.png) ![The board as built, on a phone](analysis/workflow-board-labels/after-phone.png)
+    **Why not C.** Whoever reaches the server from this machine or your tailnet is you. That is enough for a verdict. It is not enough for `[board] on_land`, a command this machine runs after every land. Two rules already sort every key this way: the local file refuses those keys, and a landing that changes one needs a reviewer. B takes that line as it is.
 
-    **What changes:**
-    - The machine's two columns, their links in the row above the columns and their phone tabs read Machine build and Machine test.
-    - The row of the workflow's own chips opens with a small WORKFLOW label, so its Working and Parked read apart from the wait chips of the same words above.
-    - Both only on a board a workflow holds.
-    - **Cost:** on a phone the label takes room, so the row's last chip starts at the edge and scrolls.
+    **What each costs.** A: one page and one read. B: A, two writers (the local file's exists in the model command) and a control per kind of value. C: a control for every shape in the file, the workflow and the landing's generators among them, and the comments a project wrote beside its values to keep.
 
-    **Rejecting it** drops both with one revert, and the board looks as in the before pictures. Other words are a one-line change.
+    **Earlier verdicts checked.** **hosted-ingress-boundary** (B) says where a hosted server checks who visits, not what a page may write. **project-workflow-shape** and **configurable-workflow-activation** decide the workflow's settings, which B only shows. None decides a Settings page.
+  [2026-11-20 06:56] agent — B on a phone, and the page the three pictures are of: ![Option B on a phone](analysis/settings-page/proposed-phone.webp) [Open the mockup](analysis/settings-page/mockup.html).
+  [2026-11-20 06:40] owner · approved — B
+  [2026-11-21 10:20] agent — Recorded: B. Settled by it without a card: GitHub's settings decide what lands, so its row shows the state and why and files a task for on and for off; the page is at `settings` under the project, in the header after Reports. [[analysis/settings-page#Settled by the answered cards]]
+- [x] **settings-page-project-save** — If the Settings page may change a preference for the whole project (a model, a limit, Herdr on or off), the change is to a committed file. How does it reach main? A: as your answers on cards do: the page commits it straight to main, after the settings check passes on the result; where a project lands by pull request it is kept and delivered as a document save is. B: always a task: the page files one with the change, and it lands on the settings check when its orchestrator lands it. C: the page writes nothing committed and shows the command to run. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/settings-page#What a save writes]]
+  [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`. Base: today such a change is an edit or `just symphony-cli model`, then a task that lands on `just settings-check` green with no reviewer.
 
-    **Earlier verdicts checked.** **project-workflow-shape** (C) and **configurable-workflow-activation** (B) decide what a workflow may name and when it takes effect, not how the board tells its own columns from the project's words. No card decides these labels.
+    **The gate is the same under A and B:** the settings check. A drops the task around it, and the commit is the record. Under A a switch holds when you flip it; under B when someone lands it.
 
-    Approve to keep it, reject to drop it, or comment with other words.
-  [2026-11-20 04:14] owner · approved
-- [r] **configurable-workflow-activation** — When a project commits a changed workflow, should its board start using it at once, or wait for a deliberate activation? A: preview the affected tasks and explicitly activate that committed version, applying all required mappings together. B: automatically activate a valid committed version when the board next reads it, stopping if a mapping or prerequisite is missing. Recommended: A. Approve and say A or B, or comment. [[analysis/configurable-delivery-workflow#Version changes, migration and rollback]]
-  [2026-11-17 19:30] agent — Proposed for `tools/configurable-delivery-workflow`. Both options preserve the approved C graph, task and evidence history, reject stale requests, fence old writers and require complete mappings for removed IDs. This asks only when an otherwise valid change takes effect; it authorizes no live migration now.
+    **What A may write** is only what lands without a reviewer today. A setting that runs a command or decides what lands is not written by the page under any option (**settings-page-shape**).
 
-    **A** keeps the current workflow running until a project administrator accepts a preview against the current board revision. It adds one operational action per change, including a rollback, and the interface must show committed versus active versions. A task changing during the preview makes activation stale and requires another preview.
+    **A change for this machine alone** is not asked here: it goes in `symphony.local.toml` and lands nothing, as now.
 
-    **B** needs no separate action for a compatible change. A commit can change routing or staffing for live work as soon as it is observed; incompatible changes still stop for mappings. Operators must treat every workflow commit as an activation and use another committed change to roll it back.
+    **What each costs.** A: the committer your saves use, with one more kind of edit. B: a task, an assessor's read and a land for each flip. C: nothing.
 
-    **Required under either option:** unknown or removed IDs stop activation until every affected task and blocked resume target has a valid mapping. Active attempts must drain or be explicitly invalidated. Concurrent writers and stale requests are fenced; failure leaves the previous version active, with no partial mapping. Rollback is a new audited activation with mappings and retained history, not a schema downgrade. Neither option decides project artifact-guard semantics.
+    **Earlier verdicts checked.** **github-outbound-pr-delivery** and **github-delivery-proof-setup** decide that a land may be delivered by pull request; A follows what document saves do there and changes none of it. None decides how a settings change lands from a page.
+  [2026-11-20 06:39] owner · approved — A, but some things could also just be in symphony's DB too. And a fallback mechanism could exist where when missing db entries, the settings file are used.
+  [2026-11-21 10:20] agent — Recorded: A, a project-wide change is committed straight to main after the settings check. Your note is taken as you wrote it: the board's database is a place of its own, read before the settings file, and the file is used where it has no entry. It never holds a setting that runs a command or decides what lands. Which preferences go there is not said by the note, so it is asked on **settings-board-store**. [[analysis/settings-page#What the board keeps]]
+- [x] **settings-page-entries** — You expect more things to turn on and off than the four you named. Where does the page's list come from? A: the Symphony holds it: the page knows GitHub, the agents, Herdr and the plugins by name, and a new one is new page code. B: each thing describes itself in one small shape (its name, its state and why, what it needs, its settings and whether each is a preference or reviewed), and the page draws whatever is described; the Symphony's own first, then programs like the GitHub exchange and a project's plugins. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/settings-page#What makes an entry]]
+  [2026-11-20 06:55] agent — Posted for the board task `app/settings-page`. Base: today nothing lists these; GitHub says its state in `symphony-github status`, the agents and Herdr in `just tasks limits` and the agents page.
 
-    **Why A.** A workflow change can move existing blocked resume targets, replace who gets staffed and affect pending delivery. The preview makes those consequences reviewable before the board changes them. Activation remains one audited transaction; reverting Git alone cannot downgrade stored history.
+    **Under B a plugin can add a row** (a calendar, an identity provider) with no change to the page, and a blueprint can name the entries it turns on. Under A neither can.
 
-    **Earlier verdicts checked.** **project-workflow-shape** approved C, including configurable staffing, recovery and completion with unchanged defaults. It does not choose automatic versus explicit activation. **needed-stamps** keeps evidence in the existing catalogue and project landing policy; neither option changes that. The separate artifact-guard design owns approval enforcement, not this activation choice.
-  [2026-11-17 20:42] owner · approved — B
-  [2026-11-17 20:45] agent — Your “B” selects automatic activation of a valid committed workflow when the board reads it. Missing mappings or prerequisites must stop activation; stale writers and active attempts remain fenced, failures keep the previous version, and rollback is a new audited activation with history retained. Implementation will follow this choice rather than require a separate activation action.
-  [2026-11-17 20:45] agent · resolved
-- [r] **revision-bound-project-guards** — A project could require a person's approval of exact requirements, a candidate or a package and destination before a delivery handoff. Where should the authoritative approval record live? A: Symphony stores the common human request/decision records; the project supplies criteria and gate membership. B: each project owns its approval ledger and supplies exact, versioned attestations to Symphony's transition service. Both check current inputs and authorized people at admission and before an adapter sends a merge or deployment. Recommended: A. Approve and say A or B, or comment. [[analysis/revision-bound-transition-guards#Where approval authority lives]]
-  [2026-11-17 20:14] agent — Proposed for `design/revision-bound-transition-guards`. This is design only: no runtime enforcement, human identity service, consumer edit or live migration is claimed or authorized here.
+    **What B costs.** A shape to agree on and keep stable for plugins, under the kit's version rules, as a block is. It is built in two steps: the Symphony's own entries in that shape, then the seam for programs and plugins. The first step costs about what A does.
 
-    **A:** Symphony implements the record lifecycle, authenticated decision methods and audit once, beside its paired-store admission checks. Projects adopt those common facts and fresh-approval rules. **B:** projects choose or build their own ledger and preserve its decision semantics, but must supply bounded availability, history and versioned revocation/freshness integration. Today's cached Gates answer and custom landing command are not that contract. Both preserve existing stamps, project landing ownership and unchanged projects with no guards.
+    **A description runs nothing.** It cannot lower a setting's class: whatever would run a command or decide what lands is reviewed, whatever its plugin says.
 
-    **Shared limit.** A changed bound input, policy or workflow activation requires a fresh approval; the recommended contract has no carry-forward. External effects are authorized at their last validated dispatch snapshot: a later withdrawal cannot recall an already sent request. A project requiring stronger remote revocation needs a cooperating adapter before that edge can activate. A supplies no human login or membership service by itself; B cannot authorize advancement from an unavailable or outdated ledger.
-
-    **Earlier verdicts checked.** **project-workflow-shape** approved C and its unchanged defaults; it does not decide the artifact/approval authority or external-effect guarantee. **needed-stamps** keeps its four generic readers and project replacement policy: this extension adds no stamp kind, check runner or assessor waiver. **configurable-workflow-activation** remains a separate pending choice about when a graph becomes active. **hosted-ingress-boundary** also remains pending; its visitor context alone would not establish project gate membership. None approves this concrete guard/principal/record contract. Gate placements in the linked delivery requirements do not assign project approvers or deployment targets.
-  [2026-11-17 20:28] agent — Clarified the source-backed alternatives: the delivery requirements prescribe human decisions on exact artifacts, while the existing gate/landing seams retain project evidence policy; neither chooses approval-record custody. The analysis details A and B's required authority adapter. This asks only the new guard policy, separately from workflow activation and durable byte storage.
-  [2026-11-17 20:44] owner · approved — B
-  [2026-11-17 20:54] agent — Your “B” selects project-owned approval ledgers supplying exact, versioned attestations to Symphony. Admission must refuse unavailable, stale or revoked authority and recheck current inputs and authorized people before dispatch. Symphony will not own the human approval ledger; the analysis and implementation handoff will be aligned to B while preserving the existing stamps and project landing policy.
-  [2026-11-17 20:54] agent · resolved
-- [r] **project-workflow-shape** — A project could give its board extra steps, such as Implement then Validate, while a project with no settings keeps today's flow. How much can it replace? A: names and column order only; the steps and permissions stay fixed. B: extra preparation and work steps, each tied to today's lifecycle, with rules for who moves between them; one ready stage, one review and the existing completion rules remain. C: any state graph, including several review or delivery stages, with new rules for staffing, recovery and completion. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/project-workflow#The workflow choice]]
-  [2026-11-17 10:34] agent — Posted for `tools/studio/project-workflow`. This is a design only; no project changes its flow before implementation.
-
-    **A costs least:** a presentation setting and client labels, with no task migration or change to landing. It cannot add Validate as a real step.
-
-    **B:** one workflow definition in `symphony.toml`, a step stored beside each task's current status, and one permission check used by every move. The board's staffing and recovery keep their current meanings. Columns, phone tabs, filters, timeline and agent instructions read that definition. The default land checks that the task reached review, then reads the same evidence as today; a project's own land adopts the step contract before custom steps activate. Both database backends need migration and tests.
-
-    **C costs most:** a workflow engine replaces the fixed lifecycle in the board, settings, client, skills and every landing adapter. Each project must specify what claiming, losing an agent, a verdict and completion do. It is warranted by a project whose real process B cannot express; this task names none.
-
-    **Gates and migration under every option:** existing configurable stamps and the project's own landing policy keep deciding the evidence. Its checks, tiers and nightly remain its own. A project with no workflow setting keeps today's operations; the consuming project's flow and gates must give the same decisions before and after. Neither a live migration nor a consumer edit is authorized by this card.
-
-    **Earlier verdicts checked:** **needed-stamps**, approved as "it's exactly what I had asked for", already decides the generic catalogue and project replacement, so no new gate engine is offered. **board-at-a-glance** (B) keeps blocked work in the step it stopped in; all options preserve that. Neither decides whether projects can add steps or replace the lifecycle, which is this card's choice.
-  [2026-11-17 12:16] owner · approved — C
-  [2026-11-17 12:28] agent — C is the chosen direction: projects can define their own states and transitions, including multiple review or delivery stages, with explicit rules for staffing, recovery and completion. The board, Agents page, timeline and agent guidance must read that configured workflow. Projects without a workflow setting retain today’s behavior, and existing stamps and project landing policies continue to decide the required evidence. This supersedes the recommendation for B in the design analysis; the workflow implementation remains to be built.
-  [2026-11-17 12:28] agent · resolved
+    **Earlier verdicts checked.** **kit-new-block-version** decides how the kit takes a new block, which B's seam would follow. **plugin-delivery-choice** decides how a plugin is delivered, not what it may describe. None decides this.
+  [2026-11-20 06:38] owner · approved — B
+  [2026-11-21 10:20] agent — Recorded: B. The Symphony's own entries are built in that shape first, with the page's reading half, filed as `app/settings-page-reads`; programs and plugins follow once it has held.
 
 ### GitHub delivery
 
@@ -917,6 +994,70 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-17 20:42] owner · approved — A
   [2026-11-17 20:47] agent — Your “A” approves the optional shared contract for verified uploads, project access, revision-bound evidence references and restore, with each project supplying its private storage provider. Local files and links, and Git-backed document/card pictures, remain supported. Implementation will prove durability and access behavior before any live provider activation.
   [2026-11-17 20:47] agent · resolved
+
+### Project workflows
+
+- [x] **workflow-board-labels** — On a board a custom workflow holds, the project's own words can match the board's: a phase named Build beside the machine's Build column, a state chip Working beside the Working wait chip. As built, the machine's columns read Machine build and Machine test, and the workflow's chips follow a small Workflow label. A board with no workflow is unchanged.
+  [2026-11-20 00:04] agent — Posted for the board task `app/workflow-pages-follow-ups`, at its tip 57ac59eb3; the change is its commit f80b7c2bc. Both pictures are the browser test's board, drawn from main's build at e00700b13 and from that tip.
+
+    **Before**, wide and on a phone: ![The board before, wide](analysis/workflow-board-labels/before-wide.png) ![The board before, on a phone](analysis/workflow-board-labels/before-phone.png)
+
+    **As built**, wide and on a phone: ![The board as built, wide](analysis/workflow-board-labels/after-wide.png) ![The board as built, on a phone](analysis/workflow-board-labels/after-phone.png)
+
+    **What changes:**
+    - The machine's two columns, their links in the row above the columns and their phone tabs read Machine build and Machine test.
+    - The row of the workflow's own chips opens with a small WORKFLOW label, so its Working and Parked read apart from the wait chips of the same words above.
+    - Both only on a board a workflow holds.
+    - **Cost:** on a phone the label takes room, so the row's last chip starts at the edge and scrolls.
+
+    **Rejecting it** drops both with one revert, and the board looks as in the before pictures. Other words are a one-line change.
+
+    **Earlier verdicts checked.** **project-workflow-shape** (C) and **configurable-workflow-activation** (B) decide what a workflow may name and when it takes effect, not how the board tells its own columns from the project's words. No card decides these labels.
+
+    Approve to keep it, reject to drop it, or comment with other words.
+  [2026-11-20 04:14] owner · approved
+- [r] **configurable-workflow-activation** — When a project commits a changed workflow, should its board start using it at once, or wait for a deliberate activation? A: preview the affected tasks and explicitly activate that committed version, applying all required mappings together. B: automatically activate a valid committed version when the board next reads it, stopping if a mapping or prerequisite is missing. Recommended: A. Approve and say A or B, or comment. [[analysis/configurable-delivery-workflow#Version changes, migration and rollback]]
+  [2026-11-17 19:30] agent — Proposed for `tools/configurable-delivery-workflow`. Both options preserve the approved C graph, task and evidence history, reject stale requests, fence old writers and require complete mappings for removed IDs. This asks only when an otherwise valid change takes effect; it authorizes no live migration now.
+
+    **A** keeps the current workflow running until a project administrator accepts a preview against the current board revision. It adds one operational action per change, including a rollback, and the interface must show committed versus active versions. A task changing during the preview makes activation stale and requires another preview.
+
+    **B** needs no separate action for a compatible change. A commit can change routing or staffing for live work as soon as it is observed; incompatible changes still stop for mappings. Operators must treat every workflow commit as an activation and use another committed change to roll it back.
+
+    **Required under either option:** unknown or removed IDs stop activation until every affected task and blocked resume target has a valid mapping. Active attempts must drain or be explicitly invalidated. Concurrent writers and stale requests are fenced; failure leaves the previous version active, with no partial mapping. Rollback is a new audited activation with mappings and retained history, not a schema downgrade. Neither option decides project artifact-guard semantics.
+
+    **Why A.** A workflow change can move existing blocked resume targets, replace who gets staffed and affect pending delivery. The preview makes those consequences reviewable before the board changes them. Activation remains one audited transaction; reverting Git alone cannot downgrade stored history.
+
+    **Earlier verdicts checked.** **project-workflow-shape** approved C, including configurable staffing, recovery and completion with unchanged defaults. It does not choose automatic versus explicit activation. **needed-stamps** keeps evidence in the existing catalogue and project landing policy; neither option changes that. The separate artifact-guard design owns approval enforcement, not this activation choice.
+  [2026-11-17 20:42] owner · approved — B
+  [2026-11-17 20:45] agent — Your “B” selects automatic activation of a valid committed workflow when the board reads it. Missing mappings or prerequisites must stop activation; stale writers and active attempts remain fenced, failures keep the previous version, and rollback is a new audited activation with history retained. Implementation will follow this choice rather than require a separate activation action.
+  [2026-11-17 20:45] agent · resolved
+- [r] **revision-bound-project-guards** — A project could require a person's approval of exact requirements, a candidate or a package and destination before a delivery handoff. Where should the authoritative approval record live? A: Symphony stores the common human request/decision records; the project supplies criteria and gate membership. B: each project owns its approval ledger and supplies exact, versioned attestations to Symphony's transition service. Both check current inputs and authorized people at admission and before an adapter sends a merge or deployment. Recommended: A. Approve and say A or B, or comment. [[analysis/revision-bound-transition-guards#Where approval authority lives]]
+  [2026-11-17 20:14] agent — Proposed for `design/revision-bound-transition-guards`. This is design only: no runtime enforcement, human identity service, consumer edit or live migration is claimed or authorized here.
+
+    **A:** Symphony implements the record lifecycle, authenticated decision methods and audit once, beside its paired-store admission checks. Projects adopt those common facts and fresh-approval rules. **B:** projects choose or build their own ledger and preserve its decision semantics, but must supply bounded availability, history and versioned revocation/freshness integration. Today's cached Gates answer and custom landing command are not that contract. Both preserve existing stamps, project landing ownership and unchanged projects with no guards.
+
+    **Shared limit.** A changed bound input, policy or workflow activation requires a fresh approval; the recommended contract has no carry-forward. External effects are authorized at their last validated dispatch snapshot: a later withdrawal cannot recall an already sent request. A project requiring stronger remote revocation needs a cooperating adapter before that edge can activate. A supplies no human login or membership service by itself; B cannot authorize advancement from an unavailable or outdated ledger.
+
+    **Earlier verdicts checked.** **project-workflow-shape** approved C and its unchanged defaults; it does not decide the artifact/approval authority or external-effect guarantee. **needed-stamps** keeps its four generic readers and project replacement policy: this extension adds no stamp kind, check runner or assessor waiver. **configurable-workflow-activation** remains a separate pending choice about when a graph becomes active. **hosted-ingress-boundary** also remains pending; its visitor context alone would not establish project gate membership. None approves this concrete guard/principal/record contract. Gate placements in the linked delivery requirements do not assign project approvers or deployment targets.
+  [2026-11-17 20:28] agent — Clarified the source-backed alternatives: the delivery requirements prescribe human decisions on exact artifacts, while the existing gate/landing seams retain project evidence policy; neither chooses approval-record custody. The analysis details A and B's required authority adapter. This asks only the new guard policy, separately from workflow activation and durable byte storage.
+  [2026-11-17 20:44] owner · approved — B
+  [2026-11-17 20:54] agent — Your “B” selects project-owned approval ledgers supplying exact, versioned attestations to Symphony. Admission must refuse unavailable, stale or revoked authority and recheck current inputs and authorized people before dispatch. Symphony will not own the human approval ledger; the analysis and implementation handoff will be aligned to B while preserving the existing stamps and project landing policy.
+  [2026-11-17 20:54] agent · resolved
+- [r] **project-workflow-shape** — A project could give its board extra steps, such as Implement then Validate, while a project with no settings keeps today's flow. How much can it replace? A: names and column order only; the steps and permissions stay fixed. B: extra preparation and work steps, each tied to today's lifecycle, with rules for who moves between them; one ready stage, one review and the existing completion rules remain. C: any state graph, including several review or delivery stages, with new rules for staffing, recovery and completion. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/project-workflow#The workflow choice]]
+  [2026-11-17 10:34] agent — Posted for `tools/studio/project-workflow`. This is a design only; no project changes its flow before implementation.
+
+    **A costs least:** a presentation setting and client labels, with no task migration or change to landing. It cannot add Validate as a real step.
+
+    **B:** one workflow definition in `symphony.toml`, a step stored beside each task's current status, and one permission check used by every move. The board's staffing and recovery keep their current meanings. Columns, phone tabs, filters, timeline and agent instructions read that definition. The default land checks that the task reached review, then reads the same evidence as today; a project's own land adopts the step contract before custom steps activate. Both database backends need migration and tests.
+
+    **C costs most:** a workflow engine replaces the fixed lifecycle in the board, settings, client, skills and every landing adapter. Each project must specify what claiming, losing an agent, a verdict and completion do. It is warranted by a project whose real process B cannot express; this task names none.
+
+    **Gates and migration under every option:** existing configurable stamps and the project's own landing policy keep deciding the evidence. Its checks, tiers and nightly remain its own. A project with no workflow setting keeps today's operations; the consuming project's flow and gates must give the same decisions before and after. Neither a live migration nor a consumer edit is authorized by this card.
+
+    **Earlier verdicts checked:** **needed-stamps**, approved as "it's exactly what I had asked for", already decides the generic catalogue and project replacement, so no new gate engine is offered. **board-at-a-glance** (B) keeps blocked work in the step it stopped in; all options preserve that. Neither decides whether projects can add steps or replace the lifecycle, which is this card's choice.
+  [2026-11-17 12:16] owner · approved — C
+  [2026-11-17 12:28] agent — C is the chosen direction: projects can define their own states and transitions, including multiple review or delivery stages, with explicit rules for staffing, recovery and completion. The board, Agents page, timeline and agent guidance must read that configured workflow. Projects without a workflow setting retain today’s behavior, and existing stamps and project landing policies continue to decide the required evidence. This supersedes the recommendation for B in the design analysis; the workflow implementation remains to be built.
+  [2026-11-17 12:28] agent · resolved
 
 ### Task timeline
 

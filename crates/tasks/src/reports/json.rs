@@ -7,7 +7,7 @@
 use serde::Serialize;
 use symphony_api::reports::{
     Answer, ByStatus, DayFlow, Decisions, Flow, PlacedHours, Red, ReportDay, ReportHour, Spent,
-    Wait, Waits,
+    TokenSum, Wait, Waits,
 };
 
 /// The text of `day`.
@@ -48,8 +48,39 @@ pub fn day(day: &ReportDay) -> Vec<u8> {
         }
         None => out.null("git"),
     }
+    sums(&mut out, "usage", day.usage.as_deref());
+    out.list("landed", &day.landed, |out, landed| {
+        out.open();
+        out.text("slug", &landed.slug);
+        out.number("at", landed.at);
+        out.list("spent", &landed.spent, sum);
+        out.close();
+    });
     out.close();
     out.0
+}
+
+/// A list of sums of tokens, or none.
+fn sums(out: &mut Out, name: &str, sums: Option<&[TokenSum]>) {
+    match sums {
+        Some(sums) => out.list(name, sums, sum),
+        None => out.null(name),
+    }
+}
+
+fn sum(out: &mut Out, sum: &TokenSum) {
+    out.open();
+    out.text("role", &sum.role);
+    out.count("round", sum.round.into());
+    out.text("model", &sum.model);
+    out.text("speed", &sum.speed);
+    out.count("input", sum.input);
+    out.count("cache_write_5m", sum.cache_write_5m);
+    out.count("cache_write_1h", sum.cache_write_1h);
+    out.count("cache_read", sum.cache_read);
+    out.count("output", sum.output);
+    out.count("calls", sum.calls);
+    out.close();
 }
 
 /// A text under way: a key or an item that follows another in its object or list gets a comma.
@@ -167,6 +198,7 @@ fn hour(out: &mut Out, hour: &ReportHour) {
         }
         None => out.null("git"),
     }
+    sums(out, "tokens", hour.tokens.as_deref());
     // Left out where there is none, as serde leaves it out: a board with no workflow of its own
     // writes the file it wrote before.
     if let Some(placed) = &hour.workflow {

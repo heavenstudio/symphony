@@ -3,14 +3,16 @@
 //! (a remote's transport, a test's server) runs on. A group is told from a later one given the same
 //! id by its leader's start ([`Stamp`], [`lives`]).
 
-use std::io;
+use std::io::{self, Write as _};
 use std::path::Path;
 use std::process::Output;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use symphony_board::sys::{Boottime, Command, Start, process_starts, spawn_output, wait_output};
+use symphony_board::sys::{
+    Boottime, Command, Start, process_starts, spawn_output, spawn_piped, wait_output,
+};
 
 /// How long a stopped group has to end on SIGTERM before SIGKILL.
 pub(crate) const GRACE: Duration = Duration::from_secs(10);
@@ -91,9 +93,18 @@ pub(crate) fn stamp(pid: i64) -> Option<Stamp> {
     }
 }
 
-/// Whether the process group `group`, whose leader started at `start`, still has a process: its
-/// leader, or what that left running when it ended. A group of that id whose living leader started
-/// at another time is another group; one whose start cannot be told counts as that group.
+/// Whether the process group `group`, whose leader started at `start`, still runs: a member that
+/// is neither exiting nor a zombie, its leader or what that left running when it ended. A group of
+/// that id whose living leader started at another time is another group; one whose start cannot be
+/// told counts as that group.
+///
+/// It is asked of the group of a check this user's release run started, unattended, every member
+/// of which is this user's (a set-user-id program keeps the real user), so this user's signal
+/// reaches each of them while it runs. A signal that reaches no member (EPERM) says what ESRCH
+/// does, that none of the check runs: it is Darwin's answer once each member is exiting or a
+/// zombie, and otherwise one of a later group of another user's, which is not the check's either.
+/// Linux's signal still reaches a zombie, so a member must also be one the census reads live
+/// ([`members`]); a census that cannot be read leaves the group running.
 pub(crate) fn lives(group: i64, start: Option<&Stamp>) -> bool {
     let Ok(id) = libc::pid_t::try_from(group) else {
         return false;
@@ -101,9 +112,20 @@ pub(crate) fn lives(group: i64, start: Option<&Stamp>) -> bool {
     if id <= 1 {
         return false;
     }
-    // SAFETY: signal 0 sends nothing: killpg only says whether the group has a process.
+    // SAFETY: signal 0 sends nothing: killpg only says whether the group has a process this user
+    // may signal.
     let asked = unsafe { libc::killpg(id, 0) };
-    if asked != 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+    if asked != 0
+        && matches!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH | libc::EPERM)
+        )
+    {
+        return false;
+    }
+    let runs =
+        members(id.cast_unsigned()).map_or(true, |found| found.iter().any(|member| member.live));
+    if !runs {
         return false;
     }
     match (start, stamp(group)) {
@@ -462,9 +484,38 @@ fn stat_member(pid: u32, stat: &str, group: u32) -> io::Result<Option<Member>> {
 /// `command` run in a process group of its own, stdin null and its output read, within `bound`: a
 /// command still running when it ends has its whole group killed.
 pub(crate) fn output_until(command: &mut Command, bound: Bound<'_>) -> Result<Output, Failed> {
+    output_fed_until(command, None, bound)
+}
+
+/// [`output_until`], `input` written to the command's stdin, then closed, by a thread of its own,
+/// so a command that answers as it reads (`git cat-file --batch-check`) is read meanwhile and
+/// neither waits on the other. A command that ends before reading it all is answered by its own
+/// status, and the writer then ends at the broken pipe.
+pub(crate) fn fed_until(
+    command: &mut Command,
+    input: Vec<u8>,
+    bound: Bound<'_>,
+) -> Result<Output, Failed> {
+    output_fed_until(command, Some(input), bound)
+}
+
+fn output_fed_until(
+    command: &mut Command,
+    input: Option<Vec<u8>>,
+    bound: Bound<'_>,
+) -> Result<Output, Failed> {
     let started = Instant::now();
     command.process_group(0);
-    let child = spawn_output(command).map_err(Failed::Io)?;
+    let mut child = match input {
+        None => spawn_output(command),
+        Some(_) => spawn_piped(command),
+    }
+    .map_err(Failed::Io)?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+        });
+    }
     let pid = child.id();
     let (tell, heard) = mpsc::channel();
     std::thread::spawn(move || {
@@ -1461,6 +1512,26 @@ mod tests {
         assert!(matches!(missing, Err(Failed::Io(_))), "{missing:?}");
     }
 
+    /// More than a pipe holds either way: what it is fed is read while what it prints is, and one
+    /// that ends without reading what it is fed is answered by its own status.
+    #[test]
+    fn a_fed_command_reads_its_input_while_it_answers_and_may_end_without_it() {
+        let input: Vec<u8> = (0..200_000).map(|at| b'a' + (at % 26) as u8).collect();
+        let done = fed_until(&mut command("cat"), input.clone(), far()).unwrap();
+        assert!(done.status.success());
+        assert_eq!(done.stdout, input);
+        let done = fed_until(
+            command("sh").args(["-c", "echo early; exit 4"]),
+            input,
+            far(),
+        )
+        .unwrap();
+        assert_eq!(done.status.code(), Some(4));
+        assert_eq!(done.stdout, b"early\n");
+        let missing = fed_until(&mut command("/no/such/program"), Vec::new(), far());
+        assert!(matches!(missing, Err(Failed::Io(_))), "{missing:?}");
+    }
+
     /// A shell that starts a helper which outlives any wait of a test, writes its pid in `pid` and
     /// waits for it.
     fn with_helper(pid: &Path) -> String {
@@ -1549,6 +1620,57 @@ mod tests {
         for nothing in [0, 1, -5, i64::MAX] {
             assert!(!lives(nothing, None), "{nothing}");
         }
+    }
+
+    /// Our child `pid`'s exit, waited for and left unreaped: a zombie, its id still its group's.
+    fn exited(pid: u32) -> libc::c_int {
+        // SAFETY: siginfo_t is plain output data for which all zeroes is valid.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        retry_interrupted(|| {
+            // SAFETY: waits for our unreaped child alone, writing one siginfo_t and reaping none.
+            let waited = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    libc::id_t::from(pid),
+                    &raw mut info,
+                    libc::WEXITED | libc::WNOWAIT,
+                )
+            };
+            if waited == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        })
+        .unwrap();
+        info.si_code
+    }
+
+    #[test]
+    fn a_group_whose_every_member_is_exiting_or_a_zombie_does_not_live() {
+        let mut child = Owned(
+            command("sleep")
+                .arg("1000")
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        let pid = child.0.id();
+        let group = i64::from(pid);
+        let start = stamp(group);
+        assert!(start.is_some(), "a running process's start is read");
+        assert!(lives(group, start.as_ref()));
+        signal(group_of(pid), libc::SIGKILL);
+        assert_eq!(exited(pid), libc::CLD_KILLED);
+        // Darwin's killpg reaches no member of it, Linux's still reaches its zombie: either way
+        // nothing of it runs, whatever start was recorded for it.
+        assert!(
+            !lives(group, start.as_ref()),
+            "its killed leader, left unreaped, runs nothing"
+        );
+        assert!(!lives(group, None), "nor when its start is unknown");
+        child.0.wait().unwrap();
+        assert!(!lives(group, start.as_ref()), "nor once it is reaped");
     }
 
     #[test]

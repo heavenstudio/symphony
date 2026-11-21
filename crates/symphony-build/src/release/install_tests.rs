@@ -134,6 +134,7 @@ fn a_green_build_is_installed_whole_with_its_manifest_and_current_pointed_at_it(
         manifest.serves,
         Serves {
             schema: 18,
+            additions: 0,
             protocol: Version { major: 0, minor: 3 },
             tasks_api: Version {
                 major: 1,
@@ -423,6 +424,16 @@ fn what_the_binaries_say_is_read_whole_or_refused() {
     // A server built before it said its pin is read at pin 0, older than every project's.
     let unpinned = r#"{"protocol":{"major":0,"minor":3},"schema":18}"#;
     assert_eq!(read_serves(unpinned, board).map(|serves| serves.pin), Ok(0));
+    // Its additive steps on the schema: none from a server built before it said them.
+    assert_eq!(
+        read_serves(server, board).map(|serves| serves.additions),
+        Ok(0)
+    );
+    let stepped = r#"{"protocol":{"major":0,"minor":3},"schema":18,"additions":2,"pin":1}"#;
+    assert_eq!(
+        read_serves(stepped, board).map(|serves| serves.additions),
+        Ok(2)
+    );
     for (server, board, why) in [
         (
             "nonsense",
@@ -464,6 +475,16 @@ fn what_the_binaries_say_is_read_whole_or_refused() {
             r#"{"protocol":{"major":0,"minor":3},"schema":18,"pin":4294967296}"#,
             board,
             "the release's symphony-server names the pin 4294967296",
+        ),
+        (
+            r#"{"protocol":{"major":0,"minor":3},"schema":18,"additions":-1}"#,
+            board,
+            "the release's symphony-server names the additive steps -1",
+        ),
+        (
+            r#"{"protocol":{"major":0,"minor":3},"schema":18,"additions":"2"}"#,
+            board,
+            "the release's symphony-server names the additive steps \"2\"",
         ),
     ] {
         let refused = read_serves(server, board).unwrap_err();
@@ -620,4 +641,36 @@ fn a_checkout_git_cannot_read_is_installed_without_notes_and_its_log_says_so() {
     assert_eq!(release::noted(&tree.path("machine")), None);
     let log = tree.read("logs/refresh-install.log");
     assert!(log.contains("no notes.md: git "), "{log}");
+}
+
+#[test]
+fn the_installs_line_names_the_additive_steps_of_its_schema_when_it_has_any() {
+    let line = |additions| {
+        served(&Manifest {
+            release: TAG.into(),
+            commit: COMMIT.into(),
+            serves: Serves {
+                schema: 28,
+                additions,
+                protocol: Version { major: 0, minor: 3 },
+                tasks_api: Version {
+                    major: 1,
+                    minor: 14,
+                },
+                pin: 1,
+            },
+            client: "client/abc".into(),
+            artifacts: Vec::new(),
+        })
+    };
+    let rest = "plugin protocol 0.3 and tasks api 1.14, at Symphony pin 1";
+    assert_eq!(line(0), format!("{TAG} serves board schema 28, {rest}"));
+    assert_eq!(
+        line(1),
+        format!("{TAG} serves board schema 28 with its additive step, {rest}")
+    );
+    assert_eq!(
+        line(3),
+        format!("{TAG} serves board schema 28 with its 3 additive steps, {rest}")
+    );
 }

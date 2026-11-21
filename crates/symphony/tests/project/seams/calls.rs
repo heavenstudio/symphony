@@ -6,9 +6,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use symphony::plugins::{Plugins, Reply};
 use symphony::project::{PluginCalls, Project};
+use symphony_plugin::authority::{Operation, Snapshot};
+use symphony_plugin::execution::{Principal, PrincipalKind};
 use symphony_plugin::vocabulary::{FieldValue, Gate};
 use symphony_plugin::{
     BoardField, Card, Docs, FieldKind, File, Gates, Page, Plugin, Submission, TaskRef, ThreadLine,
@@ -34,7 +37,7 @@ const LOOPBACK: PluginCalls = PluginCalls {
 };
 
 /// Every call of every seam, as the record names it (`seam.call`).
-const EVERY_CALL: [&str; 28] = [
+const EVERY_CALL: [&str; 29] = [
     "components.render",
     "components.resolve",
     "components.cache_version",
@@ -54,6 +57,7 @@ const EVERY_CALL: [&str; 28] = [
     "board_fields.validate",
     "gates.answer",
     "gates.kept_while",
+    "authorities.attest",
     "watches.changed",
     "watches.forget",
     "doc_checks.check",
@@ -152,6 +156,50 @@ pub(super) fn with_card<R>(text: &str, read: impl FnOnce(&Card<'_>) -> R) -> R {
         text,
         thread: &thread,
     })
+}
+
+/// An operation `principal` takes on sim/jump from `snapshot`, binding `revisions`.
+fn operation(principal: Principal, snapshot: Snapshot, revisions: &[(&str, &str)]) -> Operation {
+    Operation::new(
+        "symphony".into(),
+        "sim/jump".into(),
+        "accept · ✅".into(),
+        "approved \"twice\"".into(),
+        snapshot,
+        revisions
+            .iter()
+            .map(|(input, revision)| (input.to_string(), revision.to_string()))
+            .collect(),
+        principal,
+    )
+}
+
+/// The operations [`EVERY`]'s authority is asked to attest: each kind of principal, the largest
+/// numbers a snapshot holds and none, input revisions and none.
+fn operations() -> Vec<Operation> {
+    vec![
+        operation(
+            Principal::new(PrincipalKind::Human, "local".into(), "owner ✅".into()),
+            Snapshot::new(
+                "sha256:d1".into(),
+                u64::MAX,
+                u64::MAX,
+                "verify".into(),
+                "awaiting".into(),
+            ),
+            &[("brief", "r7"), ("diff ü", "")],
+        ),
+        operation(
+            Principal::new(PrincipalKind::Agent, "board".into(), "amber-heron".into()),
+            Snapshot::new(String::new(), 0, 0, String::new(), String::new()),
+            &[],
+        ),
+        operation(
+            Principal::new(PrincipalKind::Service, String::new(), "ci\t1".into()),
+            Snapshot::new("d2".into(), 2, 3, "land".into(), "ready".into()),
+            &[("tip", "c0ffee")],
+        ),
+    ]
 }
 
 #[test]
@@ -284,6 +332,20 @@ fn every_seam_answers_the_same(both: &Both, tree: &Tree) {
         both.same("kept_while", |p| {
             p.list()[0].gates()[0].kept_while(root, &task)
         });
+    }
+    // The authority as the host finds it for a guard's adapter; no time at all it refuses.
+    for operation in operations() {
+        for within in [
+            Duration::from_secs(10),
+            Duration::from_millis(1),
+            Duration::ZERO,
+        ] {
+            both.same("attest", |p| {
+                p.authority("every")
+                    .unwrap()
+                    .attest(root, &operation, within)
+            });
+        }
     }
     for value in [
         FieldValue::Text(" 3.5 ".into()),
@@ -824,12 +886,13 @@ fn a_seam_trait_the_source_reading_misses_is_named_with_the_file_to_add() {
 
 /// The method a seam's declared entry is the answer of, where the entry is that answer alone: a
 /// component declared by its name, a route by its path…
-const DECLARED_BY: [(&str, &str); 8] = [
+const DECLARED_BY: [(&str, &str); 9] = [
     ("components", "name"),
     ("routes", "path"),
     ("home_regions", "id"),
     ("board_actions", "name"),
     ("gates", "name"),
+    ("authorities", "adapter"),
     ("watches", "paths"),
     ("prose_rules", "name"),
     ("transports", "name"),
@@ -840,6 +903,9 @@ fn every_method_of_every_seam_is_a_call_or_declared_and_the_wrapper_measures_eac
     let mut seams_traits = traits(include_str!("../../../../symphony-plugin/src/lib.rs"));
     seams_traits.extend(traits(include_str!(
         "../../../../symphony-plugin/src/renderer.rs"
+    )));
+    seams_traits.extend(traits(include_str!(
+        "../../../../symphony-plugin/src/authority.rs"
     )));
     seams_traits.extend(traits(include_str!(
         "../../../../symphony-docs/src/check.rs"
@@ -1006,6 +1072,12 @@ fn every_call(plugins: &Plugins, root: &Path, docs: &Docs) {
     let _ = black_box(field.map(|f| f.validate(&FieldValue::Text(" 3.5 ".into()))));
     let _ = black_box(plugin.gates()[0].answer(root, &task, Some("c0ffee")));
     let _ = black_box(plugin.gates()[0].kept_while(root, &task));
+    let operation = &operations()[0];
+    let _ = black_box(
+        plugins
+            .authority("every")
+            .map(|a| a.attest(root, operation, Duration::from_secs(10))),
+    );
     let _ = black_box(plugins.watches()[0].changed(root));
     plugins.watches()[0].forget(root);
     let _ = black_box(plugins.doc_checks()[0].check(docs));

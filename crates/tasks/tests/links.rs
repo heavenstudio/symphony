@@ -2,7 +2,7 @@
 //! macOS no symbol is exported, as no other code loads them. The size it would add is their
 //! budgets' to hold (docs/CHECKS.md, "Size budgets").
 
-// Whether a Mach-O binary exports a symbol, read from its export trie.
+// The symbols a Mach-O binary exports, read from its export trie.
 #[cfg(target_os = "macos")]
 #[path = "../../../tools/test-support/macho_exports.rs"]
 mod macho_exports;
@@ -16,17 +16,19 @@ mod macho_exports;
 fn the_shipped_binaries_export_no_symbols() {
     let this = std::fs::read(std::env::current_exe().unwrap()).unwrap();
     assert!(
-        macho_exports::exports_any(&this),
+        !macho_exports::exports(&this).is_empty(),
         "this test's executable exports nothing: the reading no longer finds an export trie"
     );
     for (name, path) in [
         ("tasks", env!("CARGO_BIN_EXE_tasks")),
         ("agent-send", env!("CARGO_BIN_EXE_agent-send")),
     ] {
+        let exports = macho_exports::exports(&std::fs::read(path).unwrap());
         assert!(
-            !macho_exports::exports_any(&std::fs::read(path).unwrap()),
+            exports.is_empty(),
             "the {name} binary exports symbols: its link lost `-Wl,-no_exported_symbols` \
-             (crates/tasks/build.rs)"
+             (crates/tasks/build.rs): {}",
+            macho_exports::said(&exports)
         );
     }
 }

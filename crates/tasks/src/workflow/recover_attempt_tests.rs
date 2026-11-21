@@ -75,15 +75,53 @@ fn proposed(
     observation: &Observation,
     transitions: &[Transition],
 ) -> Result<Proposal, Refusal> {
+    deciding(custom, facts, observation, transitions, false)
+}
+
+/// What `observation` proposes once admission refused the board's take of the automatic edge.
+fn refused(
+    custom: &Custom,
+    facts: &Facts,
+    observation: &Observation,
+    transitions: &[Transition],
+) -> Result<Proposal, Refusal> {
+    deciding(custom, facts, observation, transitions, true)
+}
+
+fn deciding(
+    custom: &Custom,
+    facts: &Facts,
+    observation: &Observation,
+    transitions: &[Transition],
+    refused: bool,
+) -> Result<Proposal, Refusal> {
     let service = board_service("recovery");
     observed(
         context(custom),
         facts,
         observation,
         transitions,
+        refused,
         &service,
         7.0,
     )
+}
+
+/// The workflow of [`attempts`] with `change` made to its definition.
+fn changed(stay: bool, change: impl FnOnce(&mut Definition)) -> Custom {
+    let mut definition = custom(&attempts(stay)).definition.definition().clone();
+    change(&mut definition);
+    Custom {
+        definition: crate::workflow::Validated::new(definition).unwrap(),
+        ..custom(&attempts(stay))
+    }
+}
+
+/// `definition`'s position at `phase/state`.
+fn position_at<'a>(definition: &'a mut Definition, phase: &str, state: &str) -> &'a mut Position {
+    (definition.positions.iter_mut())
+        .find(|p| p.at == pair(phase, state))
+        .unwrap()
 }
 
 fn recovery(proposal: Result<Proposal, Refusal>) -> Recovery {
@@ -110,7 +148,7 @@ fn dropped(rows: &[(&str, &str)]) -> Vec<(String, String)> {
 
 /// A transition of sim/a at `revision`: the board's take of `edge` on an attempt's failure, or the
 /// exhaustion of `exhausted`'s bound, which sends it to verify/stuck.
-fn past(revision: u64, edge: Option<&str>, exhausted: Option<&str>) -> Transition {
+pub(crate) fn past(revision: u64, edge: Option<&str>, exhausted: Option<&str>) -> Transition {
     Transition {
         id: Transition::id_of("sim/a", revision),
         slug: "sim/a".into(),
@@ -322,18 +360,9 @@ fn a_failed_check_takes_the_automatic_edge_until_its_bound_is_exhausted() {
 
 #[test]
 fn an_exhausted_bound_with_no_failure_action_moves_and_lets_nothing_go() {
-    let mut definition = custom(&attempts(false)).definition.definition().clone();
-    let checking = (definition.positions.iter_mut())
-        .find(|p| p.at == pair("verify", "checking"))
-        .unwrap();
-    checking.recovery = None;
-    let validated = crate::workflow::Validated::new(definition).unwrap();
-    let revision = custom(&attempts(false)).revision;
-    let custom = Custom {
-        definition: validated,
-        revision,
-        mappings: Vec::new(),
-    };
+    let custom = changed(false, |definition| {
+        position_at(definition, "verify", "checking").recovery = None;
+    });
     let facts = at(&custom, "verify", "checking", &[("cedar", "reserved")]);
     let failed = ending(&facts, Trigger::AttemptFailure);
     let twice = [past(2, Some("rework"), None), past(3, Some("rework"), None)];
@@ -432,19 +461,16 @@ fn an_ending_from_where_its_task_no_longer_stands_is_refused_as_stale() {
 
 #[test]
 fn two_automatic_edges_from_the_failed_pair_are_refused_for_the_board_cannot_choose() {
-    let mut definition = custom(&attempts(false)).definition.definition().clone();
-    let mut again = (definition.edges.iter())
-        .find(|e| e.id == "rework")
-        .unwrap()
-        .clone();
-    again.id = "again".into();
-    again.operation = Operation::Advance;
-    again.retry = None;
-    definition.edges.push(again);
-    let custom = Custom {
-        definition: crate::workflow::Validated::new(definition).unwrap(),
-        ..custom(&attempts(false))
-    };
+    let custom = changed(false, |definition| {
+        let mut again = (definition.edges.iter())
+            .find(|e| e.id == "rework")
+            .unwrap()
+            .clone();
+        again.id = "again".into();
+        again.operation = Operation::Advance;
+        again.retry = None;
+        definition.edges.push(again);
+    });
     let facts = at(&custom, "verify", "checking", &[]);
     assert_eq!(
         proposed(
@@ -487,15 +513,9 @@ fn a_holders_exit_never_takes_an_attempts_action() {
 fn a_stay_where_dependants_are_satisfied_keeps_the_output_accepted_there_and_a_move_supersedes_it()
 {
     let satisfying = |stay: bool| {
-        let mut definition = custom(&attempts(stay)).definition.definition().clone();
-        let working = (definition.positions.iter_mut())
-            .find(|p| p.at == pair("build", "working"))
-            .unwrap();
-        working.satisfies_dependencies = true;
-        Custom {
-            definition: crate::workflow::Validated::new(definition).unwrap(),
-            ..custom(&attempts(stay))
-        }
+        changed(stay, |definition| {
+            position_at(definition, "build", "working").satisfies_dependencies = true;
+        })
     };
     for (stay, kept) in [(true, Some("sim/a@4")), (false, None)] {
         let custom = satisfying(stay);
@@ -517,4 +537,139 @@ fn a_stay_where_dependants_are_satisfied_keeps_the_output_accepted_there_and_a_m
             );
         }
     }
+}
+
+#[test]
+fn a_refused_take_answers_a_failure_by_the_positions_action_as_if_no_automatic_edge_left() {
+    // verify/checking's own attempt_failure action stays there for a person.
+    let custom = custom(&attempts(false));
+    let facts = at(&custom, "verify", "checking", &[("cedar", "reserved")]);
+    let mut check = ending(&facts, Trigger::AttemptFailure);
+    check.handle = None;
+    check.role = "checker".into();
+    assert!(matches!(
+        proposed(&custom, &facts, &check, &[]),
+        Ok(Proposal::Edge { .. })
+    ));
+    let stay = match refused(&custom, &facts, &check, &[]) {
+        Ok(Proposal::Recovery {
+            recovery,
+            exhausted: None,
+        }) => *recovery,
+        other => panic!("expected the position's action, got {other:?}"),
+    };
+    assert!(stay.drop.is_empty());
+    let transition = stay.transition.unwrap();
+    assert_eq!(
+        (&transition.edge, &transition.from, &transition.to),
+        (
+            &None,
+            &Some(pair("verify", "checking")),
+            &pair("verify", "checking")
+        )
+    );
+    assert_eq!(transition.key.as_deref(), Some("attempt/ab12"));
+    assert_eq!(
+        transition.position().manual,
+        Some(Recovered {
+            holder: "ab12".into(),
+            role: "checker".into(),
+            ..answered(Trigger::AttemptFailure, true)
+        })
+    );
+    // One that moves moves the task where it says, the board taking no edge.
+    let moving = changed(false, |definition| {
+        let checking = position_at(definition, "verify", "checking");
+        let actions = checking.recovery.as_mut().unwrap();
+        actions.attempt_failure = RecoveryAction {
+            target: Some(pair("build", "available")),
+            manual: false,
+            slot: Slot::Release,
+            release_role: false,
+            release_reservation: true,
+        };
+    });
+    let moved = recovery(refused(&moving, &facts, &check, &[]));
+    assert_eq!(moved.drop, dropped(&[("cedar", "reserved")]));
+    let transition = moved.transition.unwrap();
+    assert_eq!(
+        (&transition.edge, &transition.to, transition.status.as_str()),
+        (&None, &pair("build", "available"), "ready")
+    );
+    assert!(!transition.recovery.unwrap().manual);
+}
+
+#[test]
+fn a_refused_take_at_a_position_with_no_failure_action_is_refused_as_undeclared() {
+    let custom = changed(false, |definition| {
+        position_at(definition, "verify", "checking").recovery = None;
+    });
+    let facts = at(&custom, "verify", "checking", &[]);
+    let failed = ending(&facts, Trigger::AttemptFailure);
+    assert_eq!(
+        refused(&custom, &facts, &failed, &[])
+            .unwrap_err()
+            .to_string(),
+        "explicit_action_required: verify/checking declares no attempt_failure recovery: sim/a \
+         stays as it was"
+    );
+}
+
+#[test]
+fn a_refused_take_spends_no_retry_and_a_bound_already_exhausted_still_sends_the_task_on() {
+    let custom = custom(&attempts(false));
+    let facts = at(&custom, "verify", "checking", &[]);
+    let failed = ending(&facts, Trigger::AttemptFailure);
+    // Two failures answered by the position's action while the take was refused: no take of the
+    // board's, so the edge is proposed again.
+    let fallback = |revision| Transition {
+        to: pair("verify", "checking"),
+        ..past(revision, None, None)
+    };
+    let answered_by_hand = Transition {
+        recovery: Some(answered(Trigger::AttemptFailure, true)),
+        ..fallback(3)
+    };
+    let fell_back = [
+        past(2, Some("rework"), None),
+        answered_by_hand.clone(),
+        Transition {
+            revision: 4,
+            ..answered_by_hand
+        },
+    ];
+    assert!(matches!(
+        proposed(&custom, &facts, &failed, &fell_back),
+        Ok(Proposal::Edge { edge, .. }) if edge == "rework"
+    ));
+    // At the bound, a refused take changes nothing: the bound sends it to verify/stuck.
+    let twice = [past(2, Some("rework"), None), past(3, Some("rework"), None)];
+    assert!(matches!(
+        refused(&custom, &facts, &failed, &twice),
+        Ok(Proposal::Recovery { exhausted: Some(edge), .. }) if edge == "rework"
+    ));
+}
+
+#[test]
+fn a_refused_take_leaves_an_acknowledged_cancel_to_its_own_action() {
+    let custom = custom(&attempts(false));
+    let facts = at(&custom, "verify", "checking", &[]);
+    let cancelled = ending(&facts, Trigger::CancellationAcknowledged);
+    assert_eq!(
+        refused(&custom, &facts, &cancelled, &[]),
+        proposed(&custom, &facts, &cancelled, &[])
+    );
+}
+
+#[test]
+fn an_observation_records_the_handle_it_ran_as_or_the_attempt_where_none() {
+    let custom = custom(&attempts(false));
+    let facts = at(&custom, "build", "working", &[]);
+    let mut observation = ending(&facts, Trigger::AttemptFailure);
+    assert_eq!(
+        observation.recovered(),
+        answered(Trigger::AttemptFailure, false)
+    );
+    observation.handle = None;
+    assert_eq!(observation.recovered().holder, "ab12");
 }

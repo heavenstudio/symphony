@@ -577,7 +577,8 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
         "(() => {{ const head = document.querySelector('main .ghost-head'), page = head.parentElement;
             const real = document.createElement('div'); real.className = 'task-head card'; real.innerHTML = '<h1>A title</h1>'; page.append(real);
             const line = parseFloat(getComputedStyle(real.querySelector('h1')).lineHeight); real.remove();
-            return {{cards: page.querySelectorAll('.card').length, pills: head.querySelectorAll('.ghost-pill').length,
+            return {{cards: page.querySelectorAll('.card').length, tokens: page.querySelector('details.task-tokens.card:not([open])') !== null,
+                pills: head.querySelectorAll('.ghost-pill').length,
                 entries: page.querySelectorAll('.ghost-history > .ghost-entry').length, fields: page.querySelectorAll('.ghost-composer .ghost-field').length,
                 head: {SAME_BOX}(head, 'task-head card'),
                 title: Math.round(head.querySelector('.ghost-title').getBoundingClientRect().height / line * 10) / 10,
@@ -586,9 +587,9 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
     ));
     assert_eq!(
         ghost,
-        json!({"cards": 5, "pills": 2, "entries": 2, "fields": 4, "head": [], "title": 2,
+        json!({"cards": 6, "tokens": true, "pills": 2, "entries": 2, "fields": 4, "head": [], "title": 2,
             "said": ["Loading task…"], "busy": "true"}),
-        "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, timeline, brief, Changes card, thread and composer, and says once that the task loads"
+        "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, timeline, brief, Changes card, thread and composer, the tokens' closed card last, and says once that the task loads"
     );
     // The thread answers first: its messages replace their outlines while the head, brief and
     // composer still wait on the page's own read.

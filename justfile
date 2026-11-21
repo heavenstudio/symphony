@@ -73,7 +73,7 @@ settings-check:
 symphony-ui-dist OUT="build/symphony-ui":
     @{{record}} --pipeline client build "just symphony-ui-dist" bash apps/symphony-web/build.sh {{quote(OUT)}}
 
-# apps/symphony-web/dev.js (its guide's "The dev server"), on loopback port PORT (0 for any), over
+# apps/symphony-web/dev.ts (its guide's "The dev server"), on loopback port PORT (0 for any), over
 # a server of your own (`just symphony --port 0`) on port SERVER; 8765 it refuses as either.
 # The web client's dev server: its kinds from their sources, the page loaded again on each save.
 [no-exit-message]

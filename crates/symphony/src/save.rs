@@ -11,6 +11,7 @@ use symphony_board::NewAsk;
 
 use crate::{Who, asks, branches, clock, commit, edit, register, taskview};
 
+mod attest;
 mod failure;
 mod quick;
 mod quick_task;
@@ -37,9 +38,11 @@ pub const ROUTES: [&str; 14] = [
 ];
 
 /// The owner's operation on a task a custom workflow holds, through the board's one admission
-/// (`symphony_board::Store::apply_operation`): `{"slug": SLUG, "request": OperationRequest}`, the
-/// principal the local owner, never one the payload names
-/// ([`symphony_api::workflow::WORKFLOW_APPLY_ROUTE`], which the pages post to).
+/// (`symphony_board::Store::apply_attested`): `{"slug": SLUG, "request": OperationRequest}`, with
+/// `"attestations": [Signed]` for a guarded edge, or with none, each guard's asked of the project
+/// authority a selected plugin answers for its adapter (`attest.rs`); the principal the local
+/// owner, never one the payload names ([`symphony_api::workflow::WORKFLOW_APPLY_ROUTE`], which
+/// the pages post to).
 pub const WORKFLOW_APPLY: &str = symphony_api::workflow::WORKFLOW_APPLY_ROUTE;
 
 /// The routes that write to one task, named by the payload's `slug`.
@@ -423,10 +426,33 @@ impl Saves {
                     )
                     .into());
                 }
-                let result = self.store()?.apply_operation(
-                    &symphony_board::workflow::local_owner(),
+                // A guarded edge's attestations, each the project authority's signed word: the
+                // payload's as given, or where it gives none, asked of the authorities the
+                // project's plugins answer for (attest.rs).
+                let given: Option<Vec<symphony_api::workflow::Signed>> =
+                    match payload.get("attestations") {
+                        None | Some(Value::Null) => None,
+                        Some(given) => Some(
+                            serde_json::from_value(given.clone())
+                                .map_err(|e| format!("attestations: not signed statements: {e}"))?,
+                        ),
+                    };
+                let (store, owner) = (self.store()?, symphony_board::workflow::local_owner());
+                let attestations = match given {
+                    Some(given) => given,
+                    None => attest::fetched(
+                        &store,
+                        &crate::plugins::Plugins::of(&self.root),
+                        &self.root,
+                        &request,
+                        &owner,
+                    )?,
+                };
+                let result = store.apply_attested(
+                    &owner,
                     &symphony_board::workflow::Host::local(),
                     &request,
+                    &attestations,
                 )?;
                 Ok(json!({"ok": true, "result": result}))
             }

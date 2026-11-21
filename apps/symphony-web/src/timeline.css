@@ -821,15 +821,19 @@
   }
 }
 
-/* Message marks keep their exact x; a separate chooser retains colliding instants. */
+/* Message marks keep their exact x; a separate chooser retains colliding instants. A mark is
+   centred on its time by its margin, not a transform, which a press's shrink would replace
+   (styles/board.css), and is its own height over a button's least, so its dot sits on its lane's
+   middle, where an arrow meets a lane. */
 .tl-message-mark {
   position: absolute;
   z-index: 2;
   top: 6px;
   width: 24px;
   height: 24px;
+  min-height: 0;
+  margin-left: -12px;
   padding: 0;
-  transform: translateX(-50%);
   border: 0;
   background: transparent;
   color: var(--foreground);
@@ -862,8 +866,10 @@
   pointer-events: none;
   z-index: 3;
 }
+/* Its left is its line's middle. */
 .tl-address-arrow {
   position: absolute;
+  margin-left: -1px;
   border-left: 2px solid var(--foreground);
 }
 .tl-address-arrow::after {

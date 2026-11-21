@@ -60,6 +60,7 @@ pub mod live;
 pub mod local;
 mod maps;
 mod move_cli;
+mod objects;
 pub mod on_land;
 pub mod on_review;
 pub mod orchestration;

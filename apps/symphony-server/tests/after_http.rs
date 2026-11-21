@@ -1383,6 +1383,48 @@ fn task_pages(f: &Fixture) {
     f.get("/api/task-brief?from=0").status(400);
     f.get("/api/task-brief?slug=fixture%2Fno-such-task")
         .status(404);
+    // A task no session took tokens for: its page's figures all none, no card's cost.
+    let tokens = f
+        .get("/api/task-tokens?slug=fixture%2Flong-brief")
+        .status(200);
+    assert_eq!(tokens.header("cache-control"), "no-store");
+    let tokens = tokens.json();
+    assert_eq!(
+        (&tokens["by_role"], &tokens["by_round"]),
+        (&json!([]), &json!([]))
+    );
+    assert_eq!(tokens["total"]["calls"], 0);
+    f.get("/api/task-tokens?slug=fixture%2Fno-such-task")
+        .status(404);
+    let listed = |slugs: &[String]| {
+        let list = serde_json::to_string(slugs).unwrap();
+        let encoded: String = (list.chars())
+            .map(|c| match c {
+                '[' => "%5B".to_string(),
+                ']' => "%5D".to_string(),
+                '"' => "%22".to_string(),
+                ',' => "%2C".to_string(),
+                '/' => "%2F".to_string(),
+                c => c.to_string(),
+            })
+            .collect();
+        format!("/api/task-costs?slugs={encoded}")
+    };
+    let costs = f
+        .get(&listed(&[
+            "fixture/long-brief".into(),
+            "fixture/none".into(),
+        ]))
+        .status(200)
+        .json();
+    assert_eq!(costs["costs"], json!([]));
+    assert!(costs["prices"].as_str().is_some_and(|day| day.len() == 10));
+    let most: Vec<String> = (0..=symphony_api::TASK_COSTS_MOST)
+        .map(|n| format!("w/t{n}"))
+        .collect();
+    f.get(&listed(&most[1..])).status(200);
+    f.get(&listed(&most)).status(400);
+    f.get("/api/task-costs?slugs=fixture").status(400);
 }
 
 #[test]

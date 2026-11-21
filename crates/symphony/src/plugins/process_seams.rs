@@ -1,5 +1,5 @@
 //! The seams a plugin's process answers besides its components and card kinds: its renderers,
-//! routes, home regions, board actions, watches and doc checks, each the object its declaration
+//! routes, home regions, board actions, approval authorities, watches and doc checks, each the object its declaration
 //! names, forwarding each call. What the declaration says of an object (a renderer's extensions and
 //! content type, a watch's paths, a check's inputs) is answered from it, with no call. A call that
 //! gets no answer is shown where its answer would go, as the seam has room for it: a renderer's
@@ -11,15 +11,17 @@
 
 use std::io::{self, Write};
 use std::path::Path;
+use std::time::Duration;
 
+use symphony_plugin::authority::{Operation, Signed};
 use symphony_plugin::protocol::{
-    Ask, Changed, CheckDocs, DocComponents, Draw, FileData, Forget, Offer, PageData, ProblemData,
-    Serve, ShowRegion, Submit, TaskData,
+    Ask, Attest, Changed, CheckDocs, DocComponents, Draw, FileData, Forget, Offer, PageData,
+    ProblemData, Serve, ShowRegion, Submit, TaskData,
 };
 use symphony_plugin::vocabulary::{Region, TaskOffer};
 use symphony_plugin::{
-    BoardAction, Command, DocCheck, Docs, Drawing, File, HomeRegion, Page, Problem, Renderer,
-    Reply, Route, Submission, Submitted, TaskRef, Watch,
+    Authority, BoardAction, Command, DocCheck, Docs, Drawing, File, HomeRegion, Page, Problem,
+    Renderer, Reply, Route, Submission, Submitted, TaskRef, Watch,
 };
 
 use super::{Failure, Remote};
@@ -171,6 +173,41 @@ impl BoardAction for RemoteAction {
             TaskData::of(task),
             submission.clone(),
         ))
+    }
+}
+
+/// An approval authority the remote declared, named by its adapter.
+pub(super) struct RemoteAuthority {
+    pub(super) remote: &'static Remote,
+    pub(super) adapter: String,
+}
+
+impl Authority for RemoteAuthority {
+    fn adapter(&self) -> &str {
+        &self.adapter
+    }
+    fn attest(
+        &self,
+        root: &Path,
+        operation: &Operation,
+        within: Duration,
+    ) -> Result<Signed, String> {
+        let within_ms = u64::try_from(within.as_millis()).unwrap_or(u64::MAX);
+        let asked = Attest::new(
+            self.adapter.clone(),
+            root.to_path_buf(),
+            operation.clone(),
+            within_ms,
+        );
+        match self.remote.ask(&self.adapter, asked) {
+            Ok(answered) => answered,
+            // Declared, so its minor has the call; an answer of none attests nothing.
+            Err(Failure::Newer(agreed)) => Err(self.remote.failed(&format!(
+                "it speaks protocol {agreed}, which has no {}",
+                Attest::TAG
+            ))),
+            Err(Failure::Down(why)) => Err(self.remote.failed(&why)),
+        }
     }
 }
 

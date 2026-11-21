@@ -429,3 +429,213 @@ fn a_scratch_board_handover_and_both_directions_reach_the_real_task_page() {
         );
     }
 }
+
+/// Where message `id`'s mark is drawn and where its time puts it: the mark's middle, its time's x
+/// on its track and the track's middle; and the selected message's arrow as drawn: its line's x,
+/// the y of its sender's and its recipient's ends, and the middle of its recipient's track.
+fn mark_geometry(chrome: &mut crate::chrome::Chrome, id: i64) -> Value {
+    chrome.eval(&format!(
+        r#"(() => {{
+            const mark = document.querySelector('.tl-message-mark[data-message="{id}"]');
+            const track = mark.parentElement.getBoundingClientRect(), m = mark.getBoundingClientRect();
+            const arrow = document.querySelector('.tl-address-arrow');
+            const a = arrow?.getBoundingClientRect(), up = arrow?.classList.contains('tl-arrow-up');
+            const to = arrow && document.querySelector(`[data-lane="${{arrow.dataset.to}}"] .tl-track`).getBoundingClientRect();
+            return {{
+                active: mark.matches(':active'), pressed: mark.getAttribute('aria-pressed'),
+                focused: document.activeElement === mark,
+                x: m.left + m.width / 2, y: m.top + m.height / 2,
+                time: track.left + parseFloat(mark.style.left) / 100 * track.width,
+                middle: track.top + track.height / 2,
+                line: a ? a.left + a.width / 2 : null,
+                sender: a ? (up ? a.bottom : a.top) : null,
+                recipient: a ? (up ? a.top : a.bottom) : null,
+                recipient_middle: to ? to.top + to.height / 2 : null,
+            }};
+        }})()"#
+    ))
+}
+
+/// Each pair of `geometry`'s figures within half a pixel of each other.
+fn alike(geometry: &Value, pairs: &[(&str, &str)], what: &str) {
+    for (got, want) in pairs {
+        let off = geometry[got].as_f64().unwrap_or(f64::NAN)
+            - geometry[want].as_f64().unwrap_or(f64::NAN);
+        assert!(
+            off.abs() < 0.5,
+            "{what}: {got} is {off:+.2}px from {want}: {geometry}"
+        );
+    }
+}
+
+/// The mark sits at its time, on its lane's middle.
+const AT_ITS_TIME: &[(&str, &str)] = &[("x", "time"), ("y", "middle")];
+/// The arrow's line runs through the mark's middle, from it to its recipient's lane's middle.
+const MEETS: &[(&str, &str)] = &[
+    ("line", "x"),
+    ("sender", "y"),
+    ("recipient", "recipient_middle"),
+];
+
+/// Message `id`'s mark, once its press's shrink or release has eased out.
+fn settled_mark(chrome: &mut crate::chrome::Chrome, id: i64) -> Value {
+    assert!(chrome.wait_for(
+        &format!("document.querySelector('.tl-message-mark[data-message=\"{id}\"]').getAnimations().length === 0"),
+        SHOWN
+    ));
+    frames(chrome);
+    mark_geometry(chrome, id)
+}
+
+#[test]
+fn a_held_or_keyed_message_mark_stays_at_its_time_and_the_selected_arrow_meets_it() {
+    let site = message_site(&history_fixture());
+    let Some(mut page) = chrome() else { return };
+    view(&mut page, 1280, false);
+    page.open(&site.url(TASK));
+    assert!(page.wait_for(
+        "document.querySelectorAll('.tl-message-mark').length === 3",
+        SHOWN
+    ));
+    for width in [1280, 960] {
+        view(&mut page, width, false);
+        if width != 1280 {
+            // The last message chosen at the wider view keeps its arrow on its mark as the lanes narrow.
+            let kept = settled_mark(&mut page, 5);
+            alike(
+                &kept,
+                &[("line", "x"), ("sender", "y")],
+                &format!("{width}: #5 after narrowing"),
+            );
+        }
+        // A pointer held on a mark sinks it about its middle, at its time; released, it is chosen.
+        let at = page.eval("(() => { const e = document.querySelector('.tl-message-mark[data-message=\"2\"]'); e.scrollIntoView({block: 'center'}); const b = e.getBoundingClientRect(); return {x: b.left + b.width / 2, y: b.top + b.height / 2}; })()");
+        let rest = mark_geometry(&mut page, 2);
+        alike(&rest, AT_ITS_TIME, &format!("{width}: #2 at rest"));
+        page.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mousePressed","x":at["x"],"y":at["y"],"button":"left","clickCount":1}),
+        );
+        let held = settled_mark(&mut page, 2);
+        assert_eq!(held["active"], json!(true), "{width}: #2 is held: {held}");
+        alike(&held, AT_ITS_TIME, &format!("{width}: #2 held"));
+        page.call(
+            "Input.dispatchMouseEvent",
+            json!({"type":"mouseReleased","x":at["x"],"y":at["y"],"button":"left","clickCount":1}),
+        );
+        let chosen = settled_mark(&mut page, 2);
+        assert_eq!(
+            [&chosen["active"], &chosen["pressed"]],
+            [&json!(false), &json!("true")],
+            "{width}: #2 chosen: {chosen}"
+        );
+        alike(&chosen, AT_ITS_TIME, &format!("{width}: #2 chosen"));
+        alike(&chosen, MEETS, &format!("{width}: #2's arrow"));
+        // Space held on the focused mark sinks it in place too, and its release chooses it, the
+        // focus staying on it; the arrow runs up to the orchestrator.
+        page.eval("document.querySelector('.tl-message-mark[data-message=\"4\"]').focus()");
+        page.call("Input.dispatchKeyEvent", json!({"type":"keyDown","key":" ","code":"Space","windowsVirtualKeyCode":32,"text":" ","unmodifiedText":" "}));
+        let keyed = settled_mark(&mut page, 4);
+        assert_eq!(
+            keyed["active"],
+            json!(true),
+            "{width}: #4 is held by Space: {keyed}"
+        );
+        alike(&keyed, AT_ITS_TIME, &format!("{width}: #4 held by Space"));
+        page.call(
+            "Input.dispatchKeyEvent",
+            json!({"type":"keyUp","key":" ","code":"Space","windowsVirtualKeyCode":32}),
+        );
+        let chosen = settled_mark(&mut page, 4);
+        assert_eq!(
+            [&chosen["pressed"], &chosen["focused"]],
+            [&json!("true"), &json!(true)],
+            "{width}: #4 chosen by key: {chosen}"
+        );
+        assert_eq!(
+            page.eval(
+                "document.querySelector('.tl-address-arrow').classList.contains('tl-arrow-up')"
+            ),
+            json!(true)
+        );
+        alike(&chosen, AT_ITS_TIME, &format!("{width}: #4 chosen"));
+        alike(&chosen, MEETS, &format!("{width}: #4's arrow"));
+        // A message at the same instant, chosen from the chooser, is drawn at that instant too,
+        // and the arrow moves to its mark on its own lane.
+        pick(&mut page, 5);
+        let collided = mark_geometry(&mut page, 5);
+        alike(&collided, AT_ITS_TIME, &format!("{width}: #5"));
+        alike(
+            &collided,
+            &[("line", "x"), ("sender", "y")],
+            &format!("{width}: #5's arrow"),
+        );
+        let other = mark_geometry(&mut page, 4);
+        alike(
+            &json!({"x": other["x"], "x5": collided["x"]}),
+            &[("x", "x5")],
+            &format!("{width}: #4 and #5 at one instant"),
+        );
+        assert_ne!(
+            other["y"], collided["y"],
+            "{width}: #4 and #5 keep their own lanes"
+        );
+        assert_eq!(
+            page.eval("document.documentElement.scrollWidth <= innerWidth"),
+            json!(true)
+        );
+    }
+    // A phone draws the messages as rows of the list: a row held sinks in its place beside its
+    // dot, and its release, or Enter on another, chooses it and keeps the focus there.
+    view(&mut page, 390, true);
+    assert!(page.wait_for(
+        "[...document.querySelectorAll('.tl-message-row')].every(b => b.tabIndex === 0)",
+        SHOWN
+    ));
+    tap(&mut page, ".tl-more");
+    let row = |id: i64| {
+        format!(
+            "(() => {{ const r = document.querySelector('.tl-message-row[data-message=\"{id}\"]'); const b = r.getBoundingClientRect(), d = r.parentElement.querySelector('.tl-mark').getBoundingClientRect(); return {{x: b.left + b.width / 2, y: b.top + b.height / 2, dot: [d.left, d.top], active: r.matches(':active'), pressed: r.getAttribute('aria-pressed'), focused: document.activeElement === r}}; }})()"
+        )
+    };
+    page.eval("document.querySelector('.tl-message-row[data-message=\"4\"]').scrollIntoView({block: 'center'})");
+    frames(&mut page);
+    let rest = page.eval(&row(4));
+    page.call(
+        "Input.dispatchMouseEvent",
+        json!({"type":"mousePressed","x":rest["x"],"y":rest["y"],"button":"left","clickCount":1}),
+    );
+    assert!(page.wait_for("document.querySelector('.tl-message-row[data-message=\"4\"]').getAnimations().length === 0", SHOWN));
+    let held = page.eval(&row(4));
+    assert_eq!(held["active"], json!(true), "the row is held: {held}");
+    alike(
+        &json!({"x": held["x"], "y": held["y"], "rx": rest["x"], "ry": rest["y"]}),
+        &[("x", "rx"), ("y", "ry")],
+        "the held row",
+    );
+    assert_eq!(held["dot"], rest["dot"], "the held row's dot");
+    page.call(
+        "Input.dispatchMouseEvent",
+        json!({"type":"mouseReleased","x":rest["x"],"y":rest["y"],"button":"left","clickCount":1}),
+    );
+    assert!(page.wait_for(
+        "document.querySelector('.tl-message-details h3')?.textContent.startsWith('Message #4 ')",
+        SHOWN
+    ));
+    page.eval("document.querySelector('.tl-message-row[data-message=\"2\"]').focus()");
+    components::key(&mut page, "Enter", "Enter", 13);
+    assert!(page.wait_for(
+        "document.querySelector('.tl-message-details h3')?.textContent.startsWith('Message #2 ')",
+        SHOWN
+    ));
+    let keyed = page.eval(&row(2));
+    assert_eq!(
+        [&keyed["pressed"], &keyed["focused"]],
+        [&json!("true"), &json!(true)],
+        "the row chosen by Enter: {keyed}"
+    );
+    assert_eq!(
+        page.eval("document.documentElement.scrollWidth <= innerWidth"),
+        json!(true)
+    );
+}

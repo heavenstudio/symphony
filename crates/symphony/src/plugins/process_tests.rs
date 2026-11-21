@@ -719,7 +719,7 @@ fn a_plugin_of_another_major_is_refused_killed_and_not_started_again_until_its_p
     let refused = remote.declaration().unwrap_err();
     assert_eq!(
         refused,
-        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.3: install a \
+        "its process is refused: the plugin speaks protocol 1.0 and this Symphony 0.4: install a \
          Symphony that speaks protocol 1; it is not started again until its program or the \
          project's settings change"
     );
@@ -2521,4 +2521,99 @@ impl Plugin for BarePlugin {
     fn card_kinds(&self) -> Vec<&dyn CardKind> {
         vec![&BareKind]
     }
+}
+
+/// A project's approval authorities: `approvals` signs the guard it is asked of with the time it
+/// was given, `closed` cannot say, `broken` panics.
+struct Approver(&'static str);
+
+static APPROVERS: Approvers = Approvers;
+
+struct Approvers;
+
+impl Plugin for Approvers {
+    fn name(&self) -> &str {
+        "approvers"
+    }
+    fn authorities(&self) -> Vec<&dyn symphony_plugin::Authority> {
+        static EACH: [Approver; 3] = [
+            Approver("approvals"),
+            Approver("closed"),
+            Approver("broken"),
+        ];
+        EACH.iter()
+            .map(|a| -> &dyn symphony_plugin::Authority { a })
+            .collect()
+    }
+}
+
+impl symphony_plugin::Authority for Approver {
+    fn adapter(&self) -> &str {
+        self.0
+    }
+    fn attest(
+        &self,
+        _: &Path,
+        operation: &symphony_plugin::authority::Operation,
+        within: Duration,
+    ) -> Result<symphony_plugin::authority::Signed, String> {
+        match self.0 {
+            "approvals" => Ok(symphony_plugin::authority::Signed::new(
+                format!("{} within {} ms", operation.guard, within.as_millis()),
+                "ab".repeat(64),
+            )),
+            "closed" => Err("the ledger is closed".into()),
+            _ => panic!("the ledger's file is gone"),
+        }
+    }
+}
+
+#[test]
+fn a_plugins_process_answers_its_authorities_as_it_does_linked_and_shows_a_panic_as_its_refusal() {
+    use symphony_plugin::authority::{Operation, Snapshot};
+    use symphony_plugin::execution::{Principal, PrincipalKind};
+    let tree = Tree::new();
+    let remote = Remote::leaked(
+        "approvers",
+        process_in(&tree, "approvers"),
+        peer(&APPROVERS, Arc::default()),
+        patient(),
+    );
+    assert_eq!(
+        remote.declaration().map(|d| d.authorities.clone()),
+        Ok(vec!["approvals".into(), "closed".into(), "broken".into()])
+    );
+    let operation = Operation::new(
+        "sim".into(),
+        "sim/a".into(),
+        "accept".into(),
+        "approved".into(),
+        Snapshot::new("d1".into(), 2, 3, "verify".into(), "awaiting".into()),
+        std::collections::BTreeMap::new(),
+        Principal::new(PrincipalKind::Human, "local".into(), "owner".into()),
+    );
+    let within = Duration::from_millis(2500);
+    let (remote_ones, linked_ones) = (remote.authorities(), APPROVERS.authorities());
+    for (far, near) in remote_ones.iter().zip(&linked_ones).take(2) {
+        assert_eq!(far.adapter(), near.adapter());
+        assert_eq!(
+            far.attest(&tree.root, &operation, within),
+            near.attest(&tree.root, &operation, within)
+        );
+    }
+    assert_eq!(
+        remote_ones[0].attest(&tree.root, &operation, within),
+        Ok(symphony_plugin::authority::Signed::new(
+            "approved within 2500 ms".into(),
+            "ab".repeat(64)
+        ))
+    );
+    assert_eq!(
+        remote_ones[2].attest(&tree.root, &operation, within),
+        Err(
+            "plugin approvers: it refused authorities.attest: approvers panicked: the ledger's \
+             file is gone"
+                .into()
+        )
+    );
 }

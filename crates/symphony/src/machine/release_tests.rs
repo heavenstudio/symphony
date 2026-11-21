@@ -7,6 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 
 const SERVES: Serves = Serves {
     schema: 18,
+    additions: 0,
     protocol: Version { major: 0, minor: 3 },
     tasks_api: Version {
         major: 1,

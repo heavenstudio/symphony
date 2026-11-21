@@ -2523,7 +2523,7 @@ fn a_board_whose_next_card_shows_a_mockup_is_shot_with_the_mockup_drawn() {
     );
 }
 
-/// Resolves once the shell has begun warming the persistent modules (assets/shell.js, `warm`): it
+/// Resolves once the shell has begun warming the persistent modules (shell/shell.ts, `warm`): it
 /// does so once the page has drawn its data and gone quiet, as it starts reading ahead the links
 /// on the screen (`ahead`), so the shot's settle after it spans the page's reads ahead. Neither
 /// warming nor this wait reads this device's store.

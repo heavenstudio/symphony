@@ -51,6 +51,17 @@ impl Store {
     /// read before the copy is refused after it and one read before a copy that failed still
     /// holds; the new generation is then published to this store's authority, when it has one.
     pub fn copy(&self, dump: &Dump) -> Result<(), Error> {
+        self.copy_limited(dump, copy_limit)
+    }
+
+    /// [`Store::copy`], the server ending a PostgreSQL board's copy at `limit` of its client's
+    /// wait: [`copy_limit`] for every copy the board takes. A test gives a limit of its own, so a
+    /// copy it holds is ended soon while its client still waits on the server as any board's does.
+    fn copy_limited(
+        &self,
+        dump: &Dump,
+        limit: impl FnOnce(Duration) -> Duration,
+    ) -> Result<(), Error> {
         let keyed = |rows: Vec<Value>, key: &dyn Fn(&Value) -> Value| -> Vec<Value> {
             rows.into_iter()
                 .map(|mut row| {
@@ -67,8 +78,12 @@ impl Store {
         // A workflow's records go in before the tasks: the task fence finds each managed task's
         // transition among them as the task is written (`crate::schema`'s `workflow_position`).
         // A dump with none lists no table for them, so its copy says what it said before
-        // workflows; the copy empties the board's records either way.
+        // workflows; the copy empties the board's records either way. What the board accepted
+        // from an approval authority is never copied: a copy or a restore may be older than the
+        // authority's last report, so its guards are refused until the authority reports again
+        // (`crate::workflow::guard`).
         let workflow: Vec<Value> = (dump.workflow.iter())
+            .filter(|row| row.kind != "authority")
             .map(|row| json!({ "id": row.key, "kind": row.kind, "body": row.body, "at": row.at }))
             .collect();
         let workflow = (!workflow.is_empty()).then_some(("workflow", workflow));
@@ -174,7 +189,7 @@ impl Store {
         let last_ask = dump.asks.iter().map(|a| a.id).max().unwrap_or(0);
         let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
         if let Some(wait) = self.db.postgresql_wait() {
-            let limit = copy_limit(wait);
+            let limit = limit(wait);
             let generation =
                 self.copy_in_one(&tables, last, last_ts, last_task, last_ask, limit)?;
             return self.copied(&generation);
@@ -270,7 +285,7 @@ impl Store {
         counters: Value,
     ) -> Result<String, Error> {
         let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
-        let swap = sql::swap(staging, &names);
+        let swap = sql::swap(staging, &names, self.db.database());
         let sent: serde_json::Map<String, Value> = (tables.iter())
             .map(|(table, rows)| ((*table).to_string(), json!(rows.len())))
             .collect();
@@ -334,11 +349,18 @@ impl Store {
     /// value agrees with its saved JSON: jsonb alone expands exponents and forgets negative zero.
     /// Every task-field setter updates `copied_fields` at the assigned path; replacements do not
     /// inherit the old value's spelling. A copy replaces the text, and task deletion removes it.
+    ///
+    /// Refused on a board of its contract with other additive steps than its own, whose tables and
+    /// fields it would leave out ([`Store::with_own_steps`]).
     pub fn dump(&self) -> Result<Dump, Error> {
+        self.with_own_steps(|| self.dump_read())
+    }
+
+    fn dump_read(&self) -> Result<Dump, Error> {
         let dump = || both(sql::DUMP, Pg::read(postgres::copy::DUMP.as_str()));
         let mut dump: Dump = if self.db.is_postgresql() {
             let (mut dump, copied): (Dump, Vec<(String, String, Value)>) =
-                self.retrying(|| self.transact(dump(), json!({})))?;
+                read_strictly(self.retrying(|| self.transact(dump(), json!({})))?)?;
             for (slug, original, normalized) in copied {
                 let original: Value = serde_json::from_str(&original)
                     .map_err(|e| Error::Db(format!("copied fields: {e}")))?;
@@ -356,7 +378,7 @@ impl Store {
             }
             dump
         } else {
-            self.retrying(|| self.transact(dump(), json!({})))?
+            read_strictly(self.retrying(|| self.transact(dump(), json!({})))?)?
         };
         // The execution tables' rows in the order of their ids, and each row's fields in one order
         // at every depth, as the two databases neither return rows nor order a document's fields
@@ -386,6 +408,14 @@ impl Store {
         }
         Ok(dump)
     }
+}
+
+/// `read`, the board's rows as the dump reads them, as a `T`, refused where a row holds a field the
+/// dump does not know, which a copy of it would drop: read exactly ([`crate::objects::read_exact`]),
+/// where the store's answers hand an open table's row only its own ([`crate::rows::open_row`]).
+fn read_strictly<T: serde::de::DeserializeOwned>(read: Value) -> Result<T, Error> {
+    crate::objects::read_exact(&read)
+        .map_err(|why| Error::Refused(format!("the board's rows are not the dump's: {why}")))
 }
 
 /// The tables a move of the board to another engine carries beside the dump's

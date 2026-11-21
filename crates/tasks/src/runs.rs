@@ -273,7 +273,7 @@ fn lines_holding(folder: &Path, day: &str, needle: &str) -> Vec<RunLine> {
             line.windows(needle.len())
                 .any(|window| window == needle.as_bytes())
         })
-        .filter_map(|line| serde_json::from_slice(line).ok())
+        .filter_map(crate::objects::parse)
         .collect()
 }
 

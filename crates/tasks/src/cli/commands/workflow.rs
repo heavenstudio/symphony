@@ -13,14 +13,20 @@
 //! the edge) makes a repeated command answer the first one's result. An edge depending on
 //! accepted outputs takes the one the session names of each task it depends on
 //! (`--accept SLUG=OUTPUT`, which `actions` prints), never the one standing when it is sent: an
-//! output superseded since is refused as stale_input.
+//! output superseded since is refused as stale_input. A guarded edge takes the project
+//! authority's signed attestation of each guard (`--attestation FILE`, its JSON
+//! `{"payload", "signature"}`), and the input revisions it attests (`--input-revision NAME=REV`);
+//! `observe FILE` hands the board that authority's signed observation of its ledger, which moves
+//! the state its attestations are checked at ([`Store::observe_authority`]). Either file is the
+//! authority's word as it signed it: the board verifies it by the key the project commits, so
+//! whoever runs the command adds nothing to it.
 
 use super::{Context, Stop};
 use crate::Store;
-use crate::workflow::{Host, admit::word, agent_session};
+use crate::workflow::{Host, Observing, admit::word, agent_session};
 use std::collections::BTreeMap;
 use symphony_api::workflow::{
-    Authority, InputValue, NextActions, Operation, OperationRequest, Pair, RefusalCode,
+    Authority, InputValue, NextActions, Operation, OperationRequest, Pair, RefusalCode, Signed,
 };
 
 pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
@@ -28,10 +34,11 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "show" => show(store, c),
         "actions" => actions(store, c),
         "apply" => apply(store, c),
+        "observe" => observe(store, c),
         "recover" => recover(store, c),
         other => Err(Stop::Refused(format!(
-            "workflow takes show, actions SLUG, apply SLUG EDGE --revision N or recover SLUG \
-             HOLDER, not {other:?}"
+            "workflow takes show, actions SLUG, apply SLUG EDGE --revision N, observe FILE or \
+             recover SLUG HOLDER, not {other:?}"
         ))),
     }
 }
@@ -193,13 +200,29 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
             .ok_or_else(|| Stop::Refused(format!("--input is NAME=TEXT, not {given:?}")))?;
         inputs.insert(name.to_string(), InputValue::Text(value.to_string()));
     }
+    // Each name once, by either option: a second would replace the first unsaid.
     let mut input_revisions = BTreeMap::new();
-    for given in c.parsed.all("accept") {
-        let (prerequisite, output) = given
-            .split_once('=')
-            .ok_or_else(|| Stop::Refused(format!("--accept is SLUG=OUTPUT, not {given:?}")))?;
-        input_revisions.insert(prerequisite.to_string(), output.to_string());
+    for (option, shape, key) in [
+        ("--accept", "SLUG=OUTPUT", "accept"),
+        ("--input-revision", "NAME=REVISION", "input_revision"),
+    ] {
+        for given in c.parsed.all(key) {
+            let (name, revision) = given
+                .split_once('=')
+                .ok_or_else(|| Stop::Refused(format!("{option} is {shape}, not {given:?}")))?;
+            if input_revisions
+                .insert(name.to_string(), revision.to_string())
+                .is_some()
+            {
+                return Err(Stop::Refused(format!(
+                    "{name} is given twice (--accept and --input-revision name each input once)"
+                )));
+            }
+        }
     }
+    let attestations = (c.parsed.all("attestation").iter())
+        .map(|path| signed(path, "--attestation"))
+        .collect::<Result<Vec<_>, _>>()?;
     let key = (c.parsed.get("key").map(str::to_string))
         .unwrap_or_else(|| format!("{slug}@{revision}:{edge}"));
     let request = OperationRequest {
@@ -225,7 +248,7 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         _ => request,
     };
-    let result = store.apply_operation(&principal, &host, &request)?;
+    let result = store.apply_attested(&principal, &host, &request, &attestations)?;
     if c.parsed.flag("json") {
         c.say(&pretty(&result));
         return Ok(());
@@ -237,6 +260,46 @@ fn apply(store: &Store, c: &mut Context) -> Result<(), Stop> {
     // An edge to a terminal position finishes the task: its terminals close and its sweep starts.
     super::finish::after_finish(store, c, &store.get(&slug)?);
     Ok(())
+}
+
+/// The authority's signed observation in `FILE` handed to the board, and what the board accepted
+/// from it.
+fn observe(store: &Store, c: &mut Context) -> Result<(), Stop> {
+    let path = required(c, "slug", "workflow observe FILE")?;
+    let observed = store.observe_authority(&signed(&path, "workflow observe")?)?;
+    if c.parsed.flag("json") {
+        c.say(&pretty(&observed.answer()));
+        return Ok(());
+    }
+    let (what, accepted) = match &observed {
+        Observing::Accepted(a) => ("accepted", a),
+        Observing::Unchanged(a) => ("already at", a),
+        Observing::Conflicted(a) => ("in conflict at", a),
+    };
+    c.say(&format!(
+        "{}: {what} generation {} of {} ({}){}",
+        accepted.adapter,
+        accepted.generation,
+        accepted.epoch,
+        accepted.state,
+        if accepted.conflicted {
+            "; nothing it attests is admitted until it reports a state following this one"
+        } else {
+            ""
+        }
+    ));
+    Ok(())
+}
+
+/// The signed statement in the file at `path`: its JSON `{"payload", "signature"}`.
+fn signed(path: &str, flag: &str) -> Result<Signed, Stop> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| Stop::Refused(format!("{flag} {path}: {e}")))?;
+    serde_json::from_str(&text).map_err(|e| {
+        Stop::Refused(format!(
+            "{flag} {path}: not a signed statement ({{\"payload\", \"signature\"}}): {e}"
+        ))
+    })
 }
 
 /// `HOLDER`'s lost work on `SLUG` recovered by its position's lost-holder action, at the word of

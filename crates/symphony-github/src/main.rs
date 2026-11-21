@@ -68,6 +68,8 @@ fn main() -> ExitCode {
             }),
         repository,
         openssl: "openssl",
+        gh: "gh",
+        rest: &symphony_github::deliver::rest,
     };
     let code = symphony_github::cli::run(&args, &ctx, &mut out, &mut err);
     ExitCode::from(u8::try_from(code).unwrap_or(1))

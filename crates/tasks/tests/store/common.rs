@@ -32,7 +32,7 @@ use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
 use symphony_board::pg;
 use symphony_board::port::{NotStarted, Start};
 use symphony_board::rpc::{self, Client, DbError};
-use symphony_board::server::{Home, Postgres};
+use symphony_board::server::{Home, Postgres, Storage};
 use symphony_board::sys::{Child, Command};
 use symphony_board::{Database, Health, NewSession, NewTask, Store, Task};
 
@@ -231,6 +231,18 @@ pub fn launch_on(
     log: &Path,
     engine: &str,
 ) -> Result<(String, ServerChild), NotStarted<Infallible>> {
+    launch_under(binary, log, engine, None)
+}
+
+/// [`launch_on`], the server keeping its data as `storage` says where one is given: without one,
+/// SurrealKV's memtable is its own, a share of the machine's memory, so what one transaction may
+/// hold differs from machine to machine.
+pub fn launch_under(
+    binary: &Path,
+    log: &Path,
+    engine: &str,
+    storage: Option<Storage>,
+) -> Result<(String, ServerChild), NotStarted<Infallible>> {
     if let Some(folder) = log.parent() {
         std::fs::create_dir_all(folder).unwrap_or_else(|error| {
             panic!(
@@ -275,6 +287,7 @@ pub fn launch_on(
                 .arg(&addr)
                 .arg(project_root().join("tools/fixture_process.sh"))
                 .arg(engine)
+                .envs(storage.into_iter().flat_map(Storage::environment))
                 .stdout(announcer)
                 .stderr(output),
         )
@@ -936,6 +949,8 @@ pub fn held_flow() -> symphony_board::workflow::Custom {
         definition,
         revision,
         mappings: Vec::new(),
+        authorities: Vec::new(),
+        project: None,
     }
 }
 

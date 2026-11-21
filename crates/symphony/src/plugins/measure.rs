@@ -28,18 +28,19 @@ use std::sync::{LazyLock, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
+use symphony_plugin::authority::{Operation, Signed};
 use symphony_plugin::protocol::{
-    Alive, AnswerGates, Answered, ApprovalNeedsAgent, Ask, AutoApprovable, CacheVersion, CardData,
-    CardGates, Changed, CheckDocs, CheckProse, Chosen, Declaration, Declare, Deliver,
+    Alive, AnswerGates, Answered, ApprovalNeedsAgent, Ask, Attest, AutoApprovable, CacheVersion,
+    CardData, CardGates, Changed, CheckDocs, CheckProse, Chosen, Declaration, Declare, Deliver,
     DocComponents, Draw, FileData, Forget, KeptWhile, Offer, PROTOCOL, PageData, Pictures,
     ProblemData, Recognises, RegisterAgent, Render, Request, Resolve, RunCommand, Serve,
     ShowRegion, Slot, Submit, TaskData, TriageCategory, Validate,
 };
 use symphony_plugin::vocabulary::{Block, FieldValue, Gate, NavItem, Picture, Region, TaskOffer};
 use symphony_plugin::{
-    BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Docs, Drawing,
-    FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule, Renderer,
-    Reply, Route, Submission, Submitted, TaskRef, Theme, Transport, Watch,
+    Authority, BoardAction, BoardField, Card, CardKind, Command, Component, DocCheck, Docs,
+    Drawing, FieldKind, File, Gates, Generator, HomeRegion, Page, Plugin, Problem, ProseRule,
+    Renderer, Reply, Route, Submission, Submitted, TaskRef, Theme, Transport, Watch,
 };
 
 /// The record of a project's plugin calls, under its artifacts folder: one JSON line per call.
@@ -496,6 +497,7 @@ struct Measured {
     board_actions: Vec<On<dyn BoardAction>>,
     board_fields: Vec<On<dyn BoardField>>,
     gates: Vec<On<dyn Gates>>,
+    authorities: Vec<On<dyn Authority>>,
     watches: Vec<On<dyn Watch>>,
     doc_checks: Vec<On<dyn DocCheck>>,
     prose_rules: Vec<On<dyn ProseRule>>,
@@ -531,6 +533,7 @@ impl Measured {
             board_actions: each(plugin.board_actions(), meter, |a| a.name().into()),
             board_fields: each(plugin.board_fields(), meter, |f| f.name().into()),
             gates: each(plugin.gates(), meter, |g| g.name().into()),
+            authorities: each(plugin.authorities(), meter, |a| a.adapter().into()),
             watches: each(plugin.watches(), meter, |w| w.paths().join(", ")),
             doc_checks: each(plugin.doc_checks(), meter, |c| c.name().into()),
             prose_rules: each(plugin.prose_rules(), meter, |r| r.name().into()),
@@ -580,6 +583,9 @@ impl Plugin for Measured {
     }
     fn gates(&self) -> Vec<&dyn Gates> {
         objects!(self.gates, Gates)
+    }
+    fn authorities(&self) -> Vec<&dyn Authority> {
+        objects!(self.authorities, Authority)
     }
     fn watches(&self) -> Vec<&dyn Watch> {
         objects!(self.watches, Watch)
@@ -862,6 +868,35 @@ impl Gates for On<dyn Gates> {
             || self.inner.kept_while(root, task),
             || KeptWhile::new(self.name.clone(), root.to_path_buf(), TaskData::of(task)),
             |asked| self.inner.kept_while(&asked.root, &asked.task.task()),
+        )
+    }
+}
+
+impl Authority for On<dyn Authority> {
+    fn adapter(&self) -> &str {
+        self.inner.adapter()
+    }
+    fn attest(
+        &self,
+        root: &Path,
+        operation: &Operation,
+        within: Duration,
+    ) -> Result<Signed, String> {
+        self.meter.call(
+            &self.name,
+            || self.inner.attest(root, operation, within),
+            || {
+                Attest::new(
+                    self.name.clone(),
+                    root.to_path_buf(),
+                    operation.clone(),
+                    u64::try_from(within.as_millis()).unwrap_or(u64::MAX),
+                )
+            },
+            |asked| {
+                let within = Duration::from_millis(asked.within_ms);
+                self.inner.attest(&asked.root, &asked.operation, within)
+            },
         )
     }
 }
