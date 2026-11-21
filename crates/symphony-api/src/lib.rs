@@ -157,6 +157,13 @@ pub const FEED_PATH: &str = "/api/feed";
 /// kept on a `304`, which has no body, opens the feed from it, and a page whose feed is open
 /// drops what the feed says of a read at or before the read's cursor.
 pub const VERSION_HEADER: &str = "symphony-version";
+/// The guide a new project starts from, `docs/operations/GETTING_STARTED.md`, where a project that has no
+/// Symphony checkout reads it: in the Symphony's repository. An empty board and an empty folder
+/// of documents link it.
+pub const GETTING_STARTED: &str = concat!(
+    env!("CARGO_PKG_REPOSITORY"),
+    "/blob/main/docs/operations/GETTING_STARTED.md"
+);
 /// A server-update failure, a JSON string (empty clears it). It does not advance the document
 /// cursor. A retiring server finishes its feed normally; reconnects fetch a fresh snapshot.
 pub const SERVER_EVENT: &str = "server";

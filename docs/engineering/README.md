@@ -2,6 +2,9 @@
 
 The contracts a project or a provider builds against, and how the Symphony's own code is built. The other areas are in the [index](../README.md).
 
+- [Writing a plugin and a theme](PLUGIN_WRITING.md) — a first plugin from nothing: its crate, its
+  code and test, its settings, its component in a document and how to see it drawn; a theme's
+  tokens by name, in the project file alone and from a plugin.
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
   setting, the seams it answers, its process, its commands, a register read in one request, the
   line, each call's minor, the versions and the wire's shape.
@@ -14,8 +17,8 @@ The contracts a project or a provider builds against, and how the Symphony's own
 - [Execution adapter](EXECUTION_ADAPTER.md) — bounded provider operations, scoped identities,
   trusted actor context, capabilities and the independent execution wire contract.
 - [Execution attempts](EXECUTION_ATTEMPTS.md) — the board's durable record of each provider
-  attempt: admission, fenced recovery, controls, evidence eligibility and host grants; no route or
-  client reaches it yet.
+  attempt: admission, fenced recovery, controls, evidence eligibility and host grants; a task's
+  page reads its attempts, and no setting reaches them yet.
 
 ## Analysis
 

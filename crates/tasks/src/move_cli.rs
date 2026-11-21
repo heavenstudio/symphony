@@ -30,7 +30,9 @@ used and left standing, otherwise one is set and released at the end.
       symphony/tasks/moved/, the new one in, the identity, the commit. A
       failure before the commit leaves the board on the engine it was on;
       after it the board is on ENGINE. A board at another schema than this
-      build's, or a store that holds another database, is refused.
+      build's is refused. The databases the store holds beside the board's
+      own (scratch boards, `just tasks --database NAME`) are not moved: they
+      stay in the old store, kept whole, and the answer names them.
   tasks-move --restore SNAPSHOT --as ACTOR
       Put a snapshot of the board's PostgreSQL (`just tasks snapshot --list`,
       by its name or path) back over the board it was taken from, under the
@@ -143,7 +145,7 @@ fn switched(asked: &Asked, home: &Home, env: &Env, by: &str) -> Result<String, S
         Asked::Move(to) => {
             let moved = (home.move_to(*to, &programs, by, now)).map_err(|why| why.to_string())?;
             Ok(format!(
-                "the board is on {}{}. Its {} store is kept in {}{}{}. {rebind}. {}",
+                "the board is on {}{}. Its {} store is kept in {}{}{}{}. {rebind}. {}",
                 moved.to,
                 if moved.finished {
                     ": a move that had committed is finished".to_string()
@@ -161,6 +163,7 @@ fn switched(asked: &Asked, home: &Home, env: &Env, by: &str) -> Result<String, S
                     ", and its snapshot in {}",
                     snapshot.display()
                 )),
+                left(&moved.left),
                 if moved.held {
                     "The board is still held, by the hold set before the move"
                 } else {
@@ -194,10 +197,43 @@ fn switched(asked: &Asked, home: &Home, env: &Env, by: &str) -> Result<String, S
     }
 }
 
+/// What a move's answer says of the databases the old store held beside the board's own,
+/// which it left there: nothing where there were none.
+fn left(databases: &[String]) -> String {
+    match databases {
+        [] => String::new(),
+        [one] => format!(
+            "; it keeps the database it held beside the board's, which was not moved: {one}"
+        ),
+        many => format!(
+            "; it keeps the {} databases it held beside the board's, which were not moved: {}",
+            many.len(),
+            many.join(", ")
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// The databases a move left in the old store are named, each once and in the order the
+    /// store gave, and none says nothing.
+    #[test]
+    fn the_databases_left_in_the_kept_store_are_named() {
+        assert_eq!(left(&[]), "");
+        assert_eq!(
+            left(&["sf/vp3scratch".into()]),
+            "; it keeps the database it held beside the board's, which was not moved: \
+             sf/vp3scratch"
+        );
+        assert_eq!(
+            left(&["sf/a".into(), "sf/b".into(), "sf/c".into()]),
+            "; it keeps the 3 databases it held beside the board's, which were not moved: \
+             sf/a, sf/b, sf/c"
+        );
+    }
 
     fn ran(args: &[&str]) -> (i32, String, String) {
         let env = Env {

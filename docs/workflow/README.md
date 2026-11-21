@@ -3,13 +3,14 @@
 How work moves: review, the board, checks, releases and the records of what ran. The other areas are in the [index](../README.md).
 
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
-- [Task board](TASKS.md) — the board, sessions, roles and agent communication.
-- [Workflow definitions](WORKFLOW.md) — the additive candidate format, validation and wire
-  records; custom workflow activation remains unavailable.
+- [Task board](TASKS.md) — the board, sessions, roles and agent communication; the pages are
+  [the task board](../product/BOARD.md) and [a task's page](../product/TASK.md).
+- [Workflow definitions](WORKFLOW.md) — a project's own delivery workflow: the format, its
+  validation, activation, admission and wire records.
 - [Checks](CHECKS.md) — what a task in this repository proves before review, and the release run's
   full verification.
-- [Releases](RELEASES.md) — how a release is cut by the release run or out of cycle, named and
-  read, and the release run's schedule.
+- [Releases](RELEASES.md) — taking a release on a project, then how a release is cut by the
+  release run or out of cycle, named and read, and the release run's schedule.
 - [Machine build and test work](MACHINE_WORK.md) — observed build/test phases, the board's build
   and test recorder (`tasks run`), and advisory machine targets.
 - [Runs](RUNS.md) — the day files of a project's runs and their steps: the line each writes,

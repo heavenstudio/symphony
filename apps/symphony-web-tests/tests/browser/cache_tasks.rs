@@ -25,13 +25,14 @@ const KEPT: [&str; 2] = [
 ];
 /// Every read the task page makes as it opens, which the stand-in holds back to show what the
 /// page draws before any answer.
-pub(super) const READS: [&str; 8] = [
+pub(super) const READS: [&str; 9] = [
     "/api/board",
     "/api/task-page",
     "/api/task-history",
     "/api/task-offer",
     "/api/task-gates",
     "/api/task-timeline",
+    "/api/task-tokens",
     "/api/activity",
     "/api/pending",
 ];

@@ -5,8 +5,9 @@ checkout's artifacts folder) is made a PostgreSQL board in place; a board anywhe
 one only by a move of its store, `tasks-move postgresql`
 ([the cutover procedure](analysis/board-pg-cutover.md#one-boards-move)), and with no identity
 PostgreSQL makes and starts nothing there. The machine server and the board commands use the same
-home selection. No live board has moved: that waits for what the cutover's
-[choice](analysis/board-pg-cutover.md#the-choice) names.
+home selection. This repository's board is on PostgreSQL since 2026-11-21
+([its move](analysis/board-pg-cutover.md#this-repositorys-board-moved-2026-11-21)); each other
+project's board moves after its own pin.
 
 ## The board home owns its engine
 

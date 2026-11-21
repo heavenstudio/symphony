@@ -4,8 +4,38 @@ How a Symphony release is cut, named and read. Projects that use the Symphony fo
 tags, never main ([its card](../DECISIONS.md#symphony-update-command)), since other projects use it. A
 release comes from a run that verifies main in full; an urgent fix may be released out of cycle. It
 is judged by the checks this repository owns, never by a consuming project's suite: a project's
-own reds stay on its own board. The evidence and the update command that takes a release are in
-[the analysis](analysis/symphony-update.md).
+own reds stay on its own board. A project moves to a release itself, by the steps
+[below](#taking-a-release); everything after them is how this repository cuts one. The evidence
+for following tags is in [the analysis](analysis/symphony-update.md).
+
+## Taking a release
+
+Nothing moves a project to a newer Symphony but the project. In order:
+
+1. **Read what it asks of you.** A release's tag message says what a project does to take it
+   ([its notes](#its-notes)): the board's schema when it moved, a `symphony.toml` key that came or
+   went, anything to run once. `git ls-remote --tags https://github.com/heavenstudio/symphony
+   'release-*'` lists the releases, and in a clone `git tag -l --format='%(contents)' NAME` prints
+   one's message. On a machine that holds an installed release ([the install](#the-install)),
+   `just symphony-cli release-notes` prints every section since the project's own release, in
+   order.
+2. **Take the commands.** Installed from crates.io: run [the install line](#packages-on-cratesio)
+   again, which builds the newer version when one is published. Built from a clone: fetch the
+   tags, check the release's tag out and build again. A project that links the libraries by Git
+   names the tag in its `Cargo.toml` and lets Cargo move its lockfile, the related packages
+   together.
+3. **Run `symphony init` again** in the main checkout and commit what it rewrote: the skills,
+   recipes, hooks and rules the release changed. It says of each file whether it was written or
+   is current.
+4. **Move the board when the notes say its schema moved:** `just tasks migrate` in the main
+   checkout, once no session still runs the older commands
+   ([who writes a board](TASKS.md#who-writes-a-board)). An older command refuses a newer board
+   before it writes, naming what to rebuild.
+5. **Start the newer server:** `just symphony --stop`, then `just symphony`.
+
+Going back is the commands of the release before, installed or built the same way; a board that
+moved stays at the newer schema, which the older commands refuse to write. On a machine whose
+releases are installed in its machine folder it is [the way back](#the-way-back).
 
 ## A release
 
@@ -1196,14 +1226,18 @@ verification of one commit ([its card](../DECISIONS.md#release-main-judged-in-st
   now rather than at the count's, and nothing else is shortened: a red one is held as the release
   candidate as any run is ([the release candidate](#the-release-candidate)), and `current` then
   moves under the refresh's rule on writers as for any release ([the refresh](#the-refresh)).
-  The orchestrator who landed it runs `just release` once the land is done ([who runs
-  it](#who-runs-it)), unless the land's own `--due` started a run, which is that run. Such a
-  landing waits, approved, while a run or the release candidate holds the release (`just release
+  The task's orchestrator runs `just release` once the board's landed line is on its thread
+  ([who runs it](#who-runs-it)), unless the land's own `--due` started a run, which is that run.
+  Such a landing waits while a run or the release candidate holds the release (`just release
   --status`: `next run: in progress`, or a candidate open), since a run started then judges
   nothing of main's newest commit ([main while it is open](#main-while-it-is-open)), and lands
-  once neither does. A second one does not wait for `current` to name a release serving the
-  first's schema: the board may then stand more than one schema ahead of the machine's server
-  until a release at its schema is `current`.
+  once neither does. Where a pull request delivers it, its last stamp is its land, as the host
+  merges within seconds of it ([TASKS](TASKS.md#a-land-dispatched-at-review)): so it waits before
+  that stamp, its reviewer (or its assessor, where it needs no review) started only once
+  `just release --status` shows neither; elsewhere it waits approved, and its land waits. A
+  second one does not wait for `current` to name a release serving the first's schema: the board
+  may then stand more than one schema ahead of the machine's server until a release at its schema
+  is `current`.
 - **A landing of an additive step** raises no `VERSION` ([the contract](CHECKS.md#the-board-is-a-contract)):
   it owes no `board` note and starts no run of its own, as every build of the contract, the
   machine's server among them, keeps reading and writing the board. Main's build adds the step to
@@ -1681,13 +1715,15 @@ refresh points `current` at the release it installs.
 ## Who runs it
 
 The release run is the one thing that pushes a tag to `origin`: the release that run cut, and
-nothing else. An orchestrator pushes main and never a tag ([AGENTS](../../AGENTS.md)). A release
+nothing else. Nobody pushes main, which GitHub's squash of each task's pull request moves, and an
+orchestrator pushes no tag ([AGENTS](../../AGENTS.md#this-repository-as-its-own-project)). A release
 cannot be taken back once a project fetches it, so running `just release` or
 `just release --commit` by hand and installing its schedule are the owner's call: an orchestrator
 does either only on the owner's word. The cadence's run has that word (*The cadence*, above): a
 land starts `--due` without asking, and the release it runs is automatic. So has the run that
-follows a landing that moves the board's schema (*The cadence*, above): the orchestrator who
-landed it runs `just release` without asking each time, the owner's standing word for those runs
+follows a landing that moves the board's schema (*The cadence*, above): the task's orchestrator
+runs `just release` once the board's landed line is on its thread, without asking each time, the
+owner's standing word for those runs
 alone, and any other run by hand stays the owner's call. So has a green release's
 refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
 run without asking on a red refresh's task or a failed update's once it is fixed, or once a

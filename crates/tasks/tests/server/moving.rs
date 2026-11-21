@@ -326,58 +326,102 @@ fn a_move_is_refused_with_the_board_left_as_it_was() {
     ));
     home.release(OTHER, None).unwrap();
 
-    // A store with another database is refused: the whole store would change places.
-    let addr = home.ensure().unwrap().addr;
-    rpc::Client::new(&addr, "sf", "beside")
-        .define_then("CREATE row SET n = 1;", json!({}))
-        .unwrap();
-    let beside = refusal(b.move_to(&home, Engine::PostgreSql));
-    assert!(
-        beside.contains("the store holds sf/beside beside the board's own"),
-        "{beside}"
-    );
-    assert!(
-        beside.contains("It is on SurrealDB as it was, and its hold is released"),
-        "{beside}"
-    );
     assert_eq!(home.held(), None);
     assert_eq!(home.backend().unwrap(), Engine::SurrealDb);
-    assert!(
-        !b.dir().join("moving").exists(),
-        "the work folder is removed"
-    );
-    assert!(!b.dir().join("postgresql").exists());
     assert_eq!(board(&b.store()), before);
+}
 
-    // The same on PostgreSQL: a cluster with a database beside the board's stays where it is.
-    let addr = home.ensure().unwrap().addr;
-    rpc::Client::new(&addr, "sf", "tasks")
-        .query("REMOVE DATABASE beside;", json!({}))
+/// The names of the databases of the cluster `socket` serves, its own and templates left out.
+fn databases(socket: &Path) -> Vec<String> {
+    let answers = pg::Client::new(socket, "postgres")
+        .simple(
+            "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' \
+             ORDER BY 1",
+        )
         .unwrap();
-    b.move_to(&home, Engine::PostgreSql).unwrap();
+    (answers.iter().flat_map(|answer| &answer.rows))
+        .filter_map(|row| row.first().cloned().flatten())
+        .collect()
+}
+
+/// The databases of the SurrealDB namespace `sf` the server at `addr` holds.
+fn namespace(addr: &str) -> Vec<String> {
+    let info = rpc::Client::new(addr, "sf", "tasks")
+        .query("INFO FOR NS;", json!({}))
+        .unwrap();
+    let mut names: Vec<String> = (info[0]["databases"].as_object())
+        .map(|databases| databases.keys().cloned().collect())
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_move_leaves_every_other_database_in_the_store_it_keeps_and_names_them() {
+    let b = Board::new("move-beside");
+    let home = b.home();
+    let before = board(&b.seeded());
+    // Two scratch boards in the board's SurrealDB store, as `just tasks --database NAME` makes
+    // them, each with a row of its own.
+    let addr = home.ensure().unwrap().addr;
+    for (db, n) in [("beside", 1), ("second", 2)] {
+        rpc::Client::new(&addr, "sf", db)
+            .define_then(&format!("CREATE row SET n = {n};"), json!({}))
+            .unwrap();
+    }
+
+    let moved = b.move_to(&home, Engine::PostgreSql).unwrap();
+    assert_eq!(moved.left, ["sf/beside", "sf/second"], "{moved:?}");
+    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
+    assert_eq!(board(&b.store()), before, "the board moved as it was");
     let serving = home.postgresql(&programs()).ensure().unwrap();
+    assert_eq!(
+        databases(&serving.socket),
+        ["tasks"],
+        "only the board moved"
+    );
+    // The store it replaced is kept whole, the two beside the board's with their rows.
+    let kept = Home::new(&moved.aside, b.scratch.surreal())
+        .supervised(true)
+        .snapshotting(false);
+    let running = kept.ensure().unwrap();
+    assert_eq!(namespace(&running.addr), ["beside", "second", "tasks"]);
+    for (db, n) in [("beside", 1), ("second", 2)] {
+        let rows = rpc::Client::new(&running.addr, "sf", db)
+            .query("SELECT VALUE n FROM row;", json!({}))
+            .unwrap();
+        assert_eq!(rows, [json!([n])], "{db}");
+    }
+    kept.stop().unwrap();
+
+    // The way back: a database beside the board's in its cluster stays in the cluster kept.
     pg::Client::new(&serving.socket, "postgres")
         .simple("CREATE DATABASE beside")
         .unwrap();
-    let beside = refusal(b.move_to(&home, Engine::SurrealDb));
-    assert!(
-        beside.contains("the store holds beside beside the board's own"),
-        "{beside}"
+    let back = b.move_to(&home, Engine::SurrealDb).unwrap();
+    assert_eq!(back.left, ["beside"], "{back:?}");
+    assert_eq!(home.backend().unwrap(), Engine::SurrealDb);
+    assert_eq!(board(&b.store()), before, "the board came back as it was");
+    assert_eq!(
+        namespace(&home.ensure().unwrap().addr),
+        ["tasks"],
+        "nothing beside the board came back"
     );
-    assert!(
-        beside.contains("It is on PostgreSQL as it was, and its hold is released"),
-        "{beside}"
+    // Marked as PostgreSQL's, as putting a kept store back by hand marks it, to be served.
+    std::fs::write(
+        back.aside.join("backend.json"),
+        r#"{"format":1,"engine":"postgresql"}"#,
+    )
+    .unwrap();
+    let cluster = Home::new(&back.aside, Path::new("/no/surreal")).postgresql(&programs());
+    let socket = cluster.ensure().unwrap().socket;
+    assert_eq!(
+        databases(&socket),
+        ["beside", "tasks"],
+        "the cluster is kept whole"
     );
-    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
-    assert!(!b.dir().join("moving").exists() && !b.dir().join("data").exists());
-    assert_eq!(board(&b.store()), before);
-
-    // The caller's own hold is left standing by a move that is refused.
-    home.postgresql(&programs()).hold(HANDLE, "a move").unwrap();
-    let held = refusal(b.move_to(&home, Engine::SurrealDb));
-    assert!(held.contains("as it was, and still held"), "{held}");
-    assert_eq!(home.held().map(|hold| hold.by), Some(HANDLE.into()));
-    home.release(HANDLE, None).unwrap();
+    cluster.stop().unwrap();
+    assert!(!b.dir().join("moving").exists() && !b.dir().join("postgresql").exists());
 }
 
 #[test]
@@ -388,9 +432,47 @@ fn a_board_at_another_schema_is_not_moved() {
     b.store_as(&Opening::write().at(newer).migrating().leave_behind());
     let refused = refusal(b.move_to(&home, Engine::PostgreSql));
     assert!(refused.contains("a move migrates nothing"), "{refused}");
+    assert!(refused.contains("and its hold is released"), "{refused}");
     assert_eq!(home.backend().unwrap(), Engine::SurrealDb);
     assert!(b.dir().join("data").is_dir() && !b.dir().join("moving").exists());
     assert_eq!(home.held(), None);
+
+    // The caller's own hold is left standing by a move that is refused.
+    home.hold(HANDLE, "a move").unwrap();
+    let held = refusal(b.move_to(&home, Engine::PostgreSql));
+    assert!(held.contains("as it was, and still held"), "{held}");
+    assert_eq!(home.held().map(|hold| hold.by), Some(HANDLE.into()));
+    home.release(HANDLE, None).unwrap();
+}
+
+#[test]
+fn a_board_at_another_schema_on_postgresql_is_not_moved_back() {
+    let b = Board::new("move-schema-pg");
+    let home = b.home();
+    b.seeded();
+    b.move_to(&home, Engine::PostgreSql).unwrap();
+    let newer = Schema::this_build().then_each("DEFINE TABLE fixture_next;", "");
+    b.store_as(&Opening::write().at(newer).migrating().leave_behind());
+    let refused = refusal(b.move_to(&home, Engine::SurrealDb));
+    assert!(refused.contains("a move migrates nothing"), "{refused}");
+    assert!(
+        refused.contains("It is on PostgreSQL as it was, and its hold is released"),
+        "{refused}"
+    );
+    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
+    assert!(b.dir().join("postgresql").is_dir());
+    assert!(!b.dir().join("moving").exists() && !b.dir().join("data").exists());
+    assert_eq!(home.held(), None);
+    assert_eq!(b.moved().len(), 1, "only the first move kept a store");
+
+    // The caller's own hold is left standing by a move that is refused.
+    home.postgresql(&programs()).hold(HANDLE, "a move").unwrap();
+    let held = refusal(b.move_to(&home, Engine::SurrealDb));
+    assert!(held.contains("as it was, and still held"), "{held}");
+    assert_eq!(home.held().map(|hold| hold.by), Some(HANDLE.into()));
+    home.release(HANDLE, None).unwrap();
+    assert_eq!(home.backend().unwrap(), Engine::PostgreSql);
+    assert!(!b.dir().join("moving").exists() && !b.dir().join("data").exists());
 }
 
 /// A switch that a test cut is refused to everything but its holder's next move.

@@ -94,7 +94,9 @@ A board behind the running host needs a compatible project board command linked 
 `just tasks migrate` in that project's main checkout under its migration policy. Registration,
 init and the reader never migrate it or replace the shared host. Failed board operations retry
 after 1, 2, 4, 8, 16, 32, then at most 60 seconds; requests and filesystem changes keep that
-deadline. After an external migration, the worker or page reader recovers on its next due
+deadline. The one exception is a board held stopped (`just tasks database hold`, a move, a
+snapshot): an attempt refused by the hold is made again at the first tick or page request after
+its release, whatever was left of its deadline. After an external migration, the worker or page reader recovers on its next due
 attempt without a server restart (`src/live/retry.rs`). The worker's next board tick publishes
 the recovered JSON; page-reader success alone does not refresh that snapshot.
 

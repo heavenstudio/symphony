@@ -863,11 +863,13 @@ closest to them. This project names no verdict generator, so no generated branch
 generator added later adds its outputs' own tests to it.
 
 `just land` runs that check on the merge it lands unless `[land] check = false`, which this
-project sets: a land here is its merge, its move and its push, in seconds
-([the default landing](TASKS.md#the-default-landing)). The docs audit is evidence at a
-document change's tip ([by kind](#evidence-by-kind-of-change)); once a land moves main, the
-regenerator it starts runs it on what its round left main holding (its own commit once landed,
-with whatever main gained during the build), and a red there is one task with one owner,
+project sets, as its delivery by pull request requires: a land here makes no merge of its own,
+GitHub squashing the task's pull request once its checks pass
+([a land delivered by a pull request](TASKS.md#a-land-delivered-by-a-pull-request)). The docs
+audit is evidence at a document change's tip ([by kind](#evidence-by-kind-of-change)); once a
+land moves main, the regenerator it starts runs it on what its round left main holding (its own
+commit once landed, with whatever main gained during the build), and a red there is one task with
+one owner,
 `tests/main-red-check` at p0, closed by the round it passes on
 ([TASKS](TASKS.md#the-regenerator)). The owner's verdicts, whose commit runs the same check on
 main, are refused from that land on; the regenerator shortens the time to finding out why, to
@@ -879,15 +881,17 @@ main's newest tip after it ([TASKS](TASKS.md#the-regenerator)). This project's o
 client distribution. Its key (`tools/client-key.sh`, the hash of the client's package) skips a tip
 whose client inputs and committed distribution passed before; otherwise `just client-check`
 builds the client fresh and compares it with the committed one, and only when they differ does
-`just client-update` rebuild it and `just client-check` compare again, the change landed on main
-as one commit. A branch commits no distribution: the land keeps main's side of every
-distribution file a branch changed, in a conflict or not, its approved tip unchanged; a conflict
-in any other file still goes back to its executor. Between a land and the regenerator's commit
+`just client-update` rebuild it and `just client-check` compare again, the change committed on a
+branch of its own and delivered as the task `generated/outputs-at-TIP-COMMIT`
+([TASKS](TASKS.md#what-the-generators-make-delivered-by-a-pull-request)). A branch commits no
+distribution: a land refuses a head that changes one, before anything is published, and tells its
+executor to put it back as main has it. Between a land and the delivery of the regenerator's task
 main's committed client is behind its sources: `just tasks regenerate --status` says how far,
 and the release run waits for it and releases nothing of a main still behind. The one exception
 is a release candidate's fix that changes what the client is built from: no regenerator builds
-the candidate, so it commits the distribution its own sources make (`just client-update`), which
-its rerun's client check proves, and the land still keeps main's side of it
+the candidate, so the head its approve names commits the distribution its own sources make
+(`just client-update`), which its rerun's client check proves, and the branch then merges main
+once, keeping main's side of it, and delivers that second head
 ([RELEASES](RELEASES.md#the-release-candidate)).
 
 ## No second build in review
@@ -981,7 +985,10 @@ settles documents alone or given afresh for the merged tip
 ([TASKS](TASKS.md#the-default-landing)), leaves
 the candidate on the commit approved before the merge; a fix that needed no review has none, so
 its land then drops the candidate. One that merges main before any approve gives the candidate
-nothing it can take, and drops it.
+nothing it can take, and drops it. Where a pull request delivers it, a fix that changes what the
+client is built from merges main once before its land, from a second head after its first is
+approved, keeping main's side of the generated paths, and that head is assessed, tested and
+approved as any new head ([RELEASES](RELEASES.md#the-release-candidate)).
 
 **At the land: nothing automatic, and nothing that blocks.** A land's only check on the merge is
 `[verdicts] check`, which this project turns off (`[land] check = false`, `symphony.toml`), for

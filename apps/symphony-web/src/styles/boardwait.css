@@ -266,11 +266,6 @@
   display: block;
   white-space: pre-wrap;
 }
-/* A card's estimated cost (card-costs.ts): kept whole, the slug giving way before it. */
-.waiting-slug .card-cost {
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
 .waiting-slug .prio {
   flex-shrink: 0;
   font: inherit;
@@ -315,6 +310,16 @@
 }
 .task-wait .age.old {
   color: var(--dislike);
+}
+/* A card's estimated cost (card-costs.ts), before its time and drawn as it is, whatever the
+   time's age colours it; the dot between them is lighter. */
+.task-wait .card-cost {
+  color: var(--foreground);
+}
+.task-wait .card-cost-dot {
+  padding: 0 3px;
+  font-weight: 400;
+  color: var(--muted-foreground);
 }
 .blocked-mark,
 .review-mark {

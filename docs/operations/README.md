@@ -1,11 +1,16 @@
 # Operations
 
-Setting the Symphony up and running it: the project file, the board's database, GitHub and the repositories around this one. The other areas are in the [index](../README.md).
+Setting the Symphony up and running it: a first project, the commands, the project file, the board's database, GitHub and the repositories around this one. The other areas are in the [index](../README.md).
 
+- [Getting started](GETTING_STARTED.md) — a project of your own, in order: install, `symphony
+  init`, a first document and decision card, a first task to its landing, agents on the work.
+- [The commands](COMMANDS.md) — the recipes, which command to reach for, and where each is
+  explained.
 - [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
   with its default.
-- [PostgreSQL board lifecycle](POSTGRESQL.md) — scratch engine identity, server selection, holds,
-  snapshots, recovery and space reclamation.
+- [PostgreSQL board lifecycle](POSTGRESQL.md) — a board on PostgreSQL: scratch engine identity,
+  server selection, holds, snapshots, recovery and space reclamation; the hosted board, which no
+  command reaches yet.
 - [Setting up GitHub](GITHUB_SETUP.md) — the optional `symphony-github` from nothing to a check
   that passes: building it, the token for the issue exchange, the GitHub Apps and rulesets a
   delivery by pull request needs, in order, and what each failure a newcomer meets says.
@@ -22,7 +27,7 @@ Setting the Symphony up and running it: the project file, the board's database, 
 An analysis holds a proposal and its evidence: an approved design can still await implementation, and its approval alone does not make it current behavior.
 
 - [The board's cutover to PostgreSQL](analysis/board-pg-cutover.md) — the order for moving live
-  boards, one board's move, the way back, what is not built yet and what the move waits for.
+  boards, one board's move, the way back, and this repository's board's move on 2026-11-21.
 - [The board's store, measured before it moves](analysis/board-store-baseline.md) — what the board
   costs on SurrealDB, and the meter the two stores are compared by.
 - [Managed PostgreSQL](analysis/hosted-postgresql.md) — the proposed hosted connection, connection

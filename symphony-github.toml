@@ -1,0 +1,7 @@
+enabled = true
+repository = "heavenstudio/symphony"
+pull_requests = "publish"
+token_file = "/Users/Shared/symphony-github/token"
+app_id = 5825234
+installation_id = 183503996
+key_file = "/Users/Shared/symphony-github/landing.pem"

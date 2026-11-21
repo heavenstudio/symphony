@@ -1390,8 +1390,8 @@ fn task_pages(f: &Fixture) {
     assert_eq!(tokens.header("cache-control"), "no-store");
     let tokens = tokens.json();
     assert_eq!(
-        (&tokens["by_role"], &tokens["by_round"]),
-        (&json!([]), &json!([]))
+        (&tokens["by_role"], &tokens["by_round"], &tokens["rows"]),
+        (&json!([]), &json!([]), &json!([]))
     );
     assert_eq!(tokens["total"]["calls"], 0);
     f.get("/api/task-tokens?slug=fixture%2Fno-such-task")

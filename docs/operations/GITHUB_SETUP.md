@@ -1,15 +1,17 @@
 # Setting up GitHub
 
 Symphony runs without GitHub. `symphony-github` is an optional program that connects a
-project's board to one repository on GitHub.com, and it does three things, each set up on its own:
+project's board to one repository on GitHub.com, and it does four things, each set up on its own;
+the first two are a project's, the last two serve the Symphony's own releases:
 
 - **The issue exchange.** Open issues carrying a label you choose become proposals on the board,
   and tasks you opt in are published as issues. It needs one token and no GitHub App:
   [its steps](#the-issue-exchange).
-- **Delivery by pull request.** `just land` opens a pull request for the task, writes its
-  evidence there as checks, and has GitHub squash it, in place of merging and pushing the default
-  branch itself. It needs one GitHub App installed on the repository, with no administration, and
-  one ruleset on its default branch, verified by someone who administers the repository:
+- **Delivery by pull request.** A task's move to review opens a pull request for it, writes its
+  evidence there as checks and turns on GitHub's auto-merge, and GitHub squashes it once the
+  evidence stands, in place of a land merging and pushing the default branch itself. It needs one
+  GitHub App installed on the repository, with no administration, and one ruleset on its default
+  branch, verified by someone who administers the repository:
   [its steps](#delivery-by-pull-request).
 - **GitHub Releases.** A release run publishes a GitHub Release for each tag it pushes, its text
   the release's notes. It needs the exchange's one token with contents read and write, and is
@@ -60,8 +62,10 @@ cargo install --locked --path crates/symphony-github
 
 That puts it in Cargo's `bin` folder (`~/.cargo/bin`), beside the `tasks` that
 `cargo install symphony-board` put there. It runs the `tasks` its `--tasks PROGRAM` option
-names, else the one beside it, else the one on `PATH`. A land runs it by name, so for delivery it
-must be on the `PATH` of whoever runs `just land`.
+names, else the one beside it, else the one on `PATH`. A land runs it by the name `[land]
+delivery` gives, and so does the dispatch a move to review starts: named bare, it must be on the
+`PATH` of every session that moves a task or gives a verdict, and named by its path
+(`.target/bin/symphony-github`) it need not be.
 
 `symphony-github --version` prints its version, and `symphony-github --help` its commands. Run
 every command below in the project's main checkout.
@@ -318,9 +322,12 @@ OWNER/NAME (id 123456789, bound to nothing here yet), main: checks written and m
 holds: a delivery would go on (policy 0123abc)
 ```
 
-It exits 0 on `holds` alone, and has made the token it needed. The next
-`just land SLUG --as HANDLE` then publishes the task as a pull request with its checks, and
-has it squashed.
+It exits 0 on `holds` alone, and has made the token it needed. The next task moved to review is
+then dispatched: its pull request opened with its checks and its auto-merge armed. GitHub
+squashes it once `symphony/eligible` is green, which takes an assessment at its head (`just tasks
+needs SLUG STAMP… --tip HEAD`) and every stamp that names standing there. A task nobody assessed
+waits in review with its checks pending, and nothing merges it. A task that reached done
+before the settings landed is published and armed by `just land SLUG --as HANDLE`.
 
 **The token.** `symphony-github tokens` says whether it is current, reading nothing remote and
 writing nothing, and never prints it:
