@@ -341,6 +341,33 @@ fn an_activation_moves_the_boards_marker_and_a_board_read_carries_its_generation
 }
 
 #[test]
+fn a_return_moves_the_boards_marker_and_a_board_read_carries_no_generation() {
+    for backend in BACKENDS {
+        let f = Fixture::on(backend, Seed::default());
+        f.store.activate_workflow(&mapped(), &Host::local()).unwrap();
+        assert_eq!(f.store.clock_board().unwrap().workflow_generation, Some(1));
+        let marker = f.store.marker().unwrap();
+        assert_eq!(
+            f.store.follow_committed(&dropped(BACK), &Host::local()),
+            Ok(Followed::Returned { generation: 2 }),
+            "{backend:?}"
+        );
+        assert_ne!(
+            f.store.marker().unwrap(),
+            marker,
+            "a return that keeps and moves no task: {backend:?}"
+        );
+        // The kept read is read again, so the page hears that no workflow is active.
+        assert_eq!(
+            f.store.clock_board().unwrap().workflow_generation,
+            None,
+            "{backend:?}"
+        );
+        assert_eq!(f.store.board().unwrap().workflow_generation, None);
+    }
+}
+
+#[test]
 fn an_activation_refused_leaves_the_board_and_the_previous_workflow_as_they_were() {
     for backend in BACKENDS {
         let f = board(backend);

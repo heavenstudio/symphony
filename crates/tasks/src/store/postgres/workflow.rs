@@ -154,7 +154,8 @@ END;
     )
 }
 
-/// Twin of `super::super::surreal::workflow::RETURN_DEFAULT`.
+/// Twin of `super::super::surreal::workflow::RETURN_DEFAULT`, the board's marker moved by
+/// `board_bump`, once in its transaction as every trigger's.
 pub(in crate::store) fn return_default() -> Pg<'static> {
     Pg::script(
         "
@@ -213,6 +214,7 @@ BEGIN
         RAISE EXCEPTION '%', 'refused: stale_task: ' || stale_ || ' was filed or reopened while its workflow returned';
     END IF;
     DELETE FROM workflow WHERE id = '[\"active\"]'::jsonb;
+    PERFORM board_bump();
 END;
 ",
     )

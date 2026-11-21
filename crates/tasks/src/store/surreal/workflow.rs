@@ -137,7 +137,9 @@ RETURN NONE;";
 /// task the read would select is neither kept nor moved (one filed or reopened since, which would
 /// keep a position with no workflow active), as an activation is, by its slug: a closed task the
 /// return moves leaves the selection, so a count would let one task it did not plan pass beside
-/// it; and the active generation deleted: none is active after it.
+/// it; then the board's marker moved, as an activation moves it (a board read carries the
+/// generation, and a return may move no task), and the active generation deleted: none is active
+/// after it.
 pub(in crate::store) const RETURN_DEFAULT: &str = "
 LET $active = (SELECT VALUE body FROM ONLY workflow:['active']) ?? NONE;
 IF ($active.generation ?? 0) != $expected {
@@ -174,6 +176,7 @@ LET $unplanned = array::sort(array::complement($standing,
 IF array::len($unplanned) > 0 {
     THROW string::concat('refused: stale_task: ', $unplanned[0], ' was filed or reopened while its workflow returned');
 };
+IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; };
 DELETE workflow:['active'] RETURN NONE;
 RETURN NONE;";
 

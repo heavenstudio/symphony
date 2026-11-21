@@ -645,10 +645,11 @@ absent on a board with none, and `states`, `[state, count]` for the open tasks t
 holds, by state ID in its order, counted after search and window and before `wait`;
 `wait=state:ID` lists one state's open tasks across their phases, as a wait kind's are. The
 server learns the generation from the board's own read, which carries it in its round trip, and
-an activation moves the board's marker, so a relabel, which moves no task, still reaches the page.
-The board loads the workflow's chunk (`apps/symphony-web/src/flow.tsx`) only once a listing
-names a generation, reads the definition, and reads it again when the generation moves; a chunk
-that does not load is said with its retry, and the board draws its own lanes meanwhile. It draws the phases that are columns
+an activation or a return moves the board's marker, so a relabel, which moves no task, and a
+return on a board with no task to move still reach the page. The board loads the workflow's
+chunk (`apps/symphony-web/src/flow.tsx`) only once a listing names a generation, reads the
+definition, and reads it again when the generation moves; a chunk that does not load is said
+with its retry, and the board draws its own lanes meanwhile. It draws the phases that are columns
 by their `order`, then Build and Test, then any status the board's own writers still hold a task
 in; on a phone, a tab for every phase by its `phone_order`; on a desk, a button for each phase
 that is no column, which opens it as a list as Backlog opens; and a chip for each state with
