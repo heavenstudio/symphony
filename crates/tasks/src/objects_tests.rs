@@ -1,4 +1,4 @@
-use super::read;
+use super::{parse, read};
 use crate::execution::{
     Artifact, Asked, Binding, Cancellation, Cleanup, Collection, Dispatch, Ending, Identity, Lease,
     Pending, Pin, Relation, Row, State,
@@ -441,4 +441,110 @@ fn the_shapes_no_row_holds_read_as_from_value_reads_them() {
     for value in [json!({"a": 1}), json!({"a": "s"}), json!(null)] {
         agree::<std::collections::HashMap<String, u8>>(value);
     }
+}
+
+/// A map's key as a derived unit enum reads it.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Derived)]
+#[serde(rename_all = "snake_case")]
+enum Key {
+    First,
+    Second,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Derived)]
+struct Named(String);
+
+#[test]
+fn a_maps_key_reads_as_the_string_it_is() {
+    use std::collections::BTreeMap;
+    agree::<BTreeMap<String, u8>>(json!({"1": 2, "true": 3}));
+    agree::<BTreeMap<Key, u8>>(json!({"first": 1, "second": 2}));
+    agree::<BTreeMap<Key, u8>>(json!({"third": 1}));
+    agree::<BTreeMap<std::path::PathBuf, u8>>(json!({"a/b": 1}));
+    // The keys `serde_json` parses from their strings, which no type the board reads has.
+    let (objects, values) = both::<BTreeMap<u32, u8>>(json!({"1": 2}));
+    assert_eq!(
+        objects.unwrap_err(),
+        "invalid type: string \"1\", expected u32"
+    );
+    assert_eq!(values.unwrap(), BTreeMap::from([(1, 2)]));
+    let (objects, values) = both::<BTreeMap<bool, u8>>(json!({"true": 2}));
+    assert_eq!(
+        objects.unwrap_err(),
+        "invalid type: string \"true\", expected a boolean"
+    );
+    assert_eq!(values.unwrap(), BTreeMap::from([(true, 2)]));
+    let (objects, values) = both::<BTreeMap<Named, u8>>(json!({"a": 2}));
+    assert_eq!(
+        objects.unwrap_err(),
+        "invalid type: string \"a\", expected tuple struct Named"
+    );
+    assert_eq!(values.unwrap(), BTreeMap::from([(Named("a".into()), 2)]));
+}
+
+/// `text` as [`parse`] reads it, then as `serde_json::from_str` does, its refusal dropped.
+fn texts<T: DeserializeOwned>(text: &str) -> (Option<T>, Option<T>) {
+    (parse(text), serde_json::from_str(text).ok())
+}
+
+#[test]
+fn text_reads_as_serde_json_reads_it_and_is_dropped_where_it_does_not() {
+    let binding = Binding {
+        id: "res".into(),
+        generation: "g1".into(),
+    };
+    let written = r#" {"id": "res", "generation": "g1"} "#;
+    assert_eq!(
+        texts::<Binding>(written),
+        (Some(binding.clone()), Some(binding.clone()))
+    );
+    assert_eq!(parse::<Binding>(written.as_bytes()), Some(binding.clone()));
+    assert_eq!(parse::<Binding>(written.to_string()), Some(binding));
+    for row in requests().into_iter().map(row) {
+        let text = serde_json::to_string(&row).unwrap();
+        let (parsed, direct) = texts::<Row>(&text);
+        assert_eq!(parsed, direct, "{text}");
+        assert_eq!(parsed, Some(row));
+    }
+    assert_eq!(
+        texts::<Vec<(u8, Option<f64>)>>("[[1, 1.50], [2, null]]"),
+        (
+            Some(vec![(1, Some(1.5)), (2, None)]),
+            Some(vec![(1, Some(1.5)), (2, None)])
+        )
+    );
+    for unread in [
+        "",
+        "{",
+        "null",
+        "7",
+        r#"{"id": "res"}"#,
+        r#"{"id": 1, "generation": "g1"}"#,
+        r#"{"id": "res", "generation": "g1"} {"id": "res", "generation": "g1"}"#,
+        r#"{"id": "res", "generation": "g1"} trailing"#,
+        "\u{feff}{\"id\": \"res\", \"generation\": \"g1\"}",
+    ] {
+        assert_eq!(texts::<Binding>(unread), (None, None), "{unread}");
+    }
+    assert_eq!(parse::<Binding>([0xff, 0xfe]), None);
+}
+
+#[test]
+fn text_reads_differently_only_for_an_array_as_a_struct_and_a_field_said_twice() {
+    // Its fields in an array's order: dropped here, read by `serde_json`.
+    let (parsed, direct) = texts::<Binding>(r#"["res", "g1"]"#);
+    assert_eq!(parsed, None);
+    assert_eq!(direct.unwrap().id, "res");
+    let (parsed, direct) = texts::<Vec<Binding>>(r#"[{"id": "a", "generation": "g"}, ["b", "g"]]"#);
+    assert_eq!(parsed, None);
+    assert_eq!(direct.unwrap().len(), 2);
+    // A field said twice: the later one here, refused by `serde_json`.
+    let twice = r#"{"id": "first", "generation": "g1", "id": "second"}"#;
+    assert_eq!(
+        serde_json::from_str::<Binding>(twice)
+            .unwrap_err()
+            .to_string(),
+        "duplicate field `id` at line 1 column 44"
+    );
+    assert_eq!(parse::<Binding>(twice).unwrap().id, "second");
 }

@@ -848,9 +848,7 @@ impl Record {
             .iter()
             .find_map(|path| {
                 let text = fs::read_to_string(path).ok()?;
-                serde_json::from_str::<Record>(&text)
-                    .ok()
-                    .filter(|record| record.slug == slug)
+                crate::objects::parse::<Record>(&text).filter(|record| record.slug == slug)
             })
     }
 
@@ -871,7 +869,7 @@ impl Record {
         let dashed = Record::dashed(folder, slug);
         let ours = fs::read_to_string(&dashed)
             .ok()
-            .and_then(|text| serde_json::from_str::<Record>(&text).ok())
+            .and_then(|text| crate::objects::parse::<Record>(&text))
             .is_some_and(|record| record.slug == slug);
         if ours {
             let _ = fs::remove_file(dashed);

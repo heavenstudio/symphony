@@ -129,7 +129,7 @@ impl Home {
     /// The replay's record, while there is one; one that does not read names no server.
     pub(super) fn replay_record(&self) -> Option<Replay> {
         match fs::read_to_string(self.dir.join(RECORD)) {
-            Ok(text) => Some(serde_json::from_str(&text).unwrap_or_default()),
+            Ok(text) => Some(crate::objects::parse(&text).unwrap_or_default()),
             Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => None,
             Err(_) => Some(Replay::default()),
         }

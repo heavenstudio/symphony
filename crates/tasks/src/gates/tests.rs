@@ -84,6 +84,27 @@ fn the_board_field_reads_every_decision_and_the_newest_on_a_gate_stands() {
         BTreeMap::from([(GATES.to_string(), json!("not a list"))]),
     );
     assert!(of(&fields).is_empty());
+    // Nor does a decision written as its fields in order, which no writer writes: the list is
+    // none, where a reading of a struct from an array would take it for `first`.
+    let positional = json!([[
+        "a.toml:x",
+        "raise",
+        1,
+        2,
+        null,
+        "orch",
+        "measured after the cut",
+        0.0
+    ]]);
+    assert_eq!(
+        serde_json::from_value::<Vec<Decision>>(positional.clone()).unwrap(),
+        vec![first]
+    );
+    fields.insert(
+        crate::red::FIELDS.to_string(),
+        BTreeMap::from([(GATES.to_string(), positional)]),
+    );
+    assert!(of(&fields).is_empty());
 }
 
 #[test]
