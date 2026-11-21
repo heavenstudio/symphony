@@ -301,7 +301,7 @@ impl<'de> MapAccess<'de> for Entries<'de> {
 
     /// Never inlined: a field's value is a type of its own, often a struct read in many places,
     /// and inlined its whole reader went into the reader of each struct holding it, a copy each
-    /// (two pages of `tasks`, 32,848 bytes, where it was measured with the open rows' reader).
+    /// (four pages of `tasks`, 65,808 bytes, measured over every read through this reader).
     #[inline(never)]
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {
         match self.value.take() {
