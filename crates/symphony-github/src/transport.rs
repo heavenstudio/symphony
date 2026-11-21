@@ -6,10 +6,15 @@
 //! and no environment variable of any process, and `-q` keeps a `~/.curlrc` from adding to the
 //! request. No redirect is followed, so the token goes to the one host named and nowhere else.
 //! What `curl` says when it fails is redacted before anything else sees it.
+//!
+//! A download GitHub answers with a redirect (a job's log, an artifact's archive) is fetched by a
+//! second `curl` that is given no token ([`Transport::fetch`]): its URL, which carries the
+//! download's own signature, is read from standard input too, and is said nowhere past its `?`.
 
 use crate::credential::Secret;
 use std::collections::BTreeMap;
 use std::io::Write as _;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// A request, relative to the API's base.
@@ -48,6 +53,21 @@ pub trait Transport {
     ///
     /// No answer came, and whether the request may have been taken.
     fn send(&self, request: &Request) -> Result<Response, Failure>;
+
+    /// What `url` serves, written to the file `to`: its status. A download GitHub redirected a
+    /// request to (a job's log, an artifact), so `url` is another host's and is asked without
+    /// the token. A transport that downloads nothing says so.
+    ///
+    /// # Errors
+    ///
+    /// No answer came.
+    fn fetch(&self, url: &str, to: &Path) -> Result<u16, Failure> {
+        let _ = to;
+        Err(Failure::NotSent(format!(
+            "this transport downloads nothing: {}",
+            url.split('?').next().unwrap_or_default()
+        )))
+    }
 }
 
 /// The API of GitHub.com, the only host the adapter's own program reaches.
@@ -137,7 +157,21 @@ impl Curl {
         let config = lines.concat();
         Ok(config)
     }
+
+    /// Whether a download may be asked of `url`: an `https://` URL, or a loopback one where the
+    /// API itself is a fixture's, with nothing a quoted `curl` value cannot hold.
+    fn fetches(&self, url: &str) -> bool {
+        let plain = (url.chars()).all(|c| c.is_ascii_graphic() && c != '"' && c != '\\');
+        let loopback =
+            self.base.starts_with("http://127.0.0.1:") && url.starts_with("http://127.0.0.1:");
+        plain && (url.starts_with("https://") || loopback)
+    }
 }
+
+/// The longest one download may take, and the most it may hold: a job's log or an artifact of a
+/// step's logs.
+const FETCH_SECONDS: &str = "600";
+const FETCH_BYTES: &str = "1073741824";
 
 /// The answer in what `curl --include` printed: the last block of headers, past any interim
 /// `1xx` answer, then the body.
@@ -232,6 +266,73 @@ impl Transport for Curl {
             });
         }
         parse(&done.stdout).map_err(|why| Failure::Unknown(said(&why)))
+    }
+
+    fn fetch(&self, url: &str, to: &Path) -> Result<u16, Failure> {
+        let named = url.split('?').next().unwrap_or_default().to_string();
+        let file = to.to_string_lossy();
+        if !self.fetches(url)
+            || file
+                .chars()
+                .any(|c| c == '"' || c == '\\' || c.is_control())
+        {
+            return Err(Failure::NotSent(format!(
+                "no download is asked of {named} into {file}"
+            )));
+        }
+        let config = format!("url = \"{url}\"\noutput = \"{file}\"\n");
+        let mut child = Command::new(&self.program)
+            .args([
+                "-q",
+                "--config",
+                "-",
+                "--silent",
+                "--show-error",
+                "--max-time",
+                FETCH_SECONDS,
+                "--max-filesize",
+                FETCH_BYTES,
+                "--max-redirs",
+                "0",
+                "--proto",
+                "=http,https",
+                "--write-out",
+                "%{http_code}",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| {
+                Failure::NotSent(format!("{} did not start: {error}", self.program))
+            })?;
+        let wrote = child
+            .stdin
+            .take()
+            .map(|mut stdin| stdin.write_all(config.as_bytes()));
+        let done = child
+            .wait_with_output()
+            .map_err(|error| Failure::Unknown(format!("curl was not waited for: {error}")))?;
+        if let Some(Err(error)) = wrote {
+            return Err(Failure::NotSent(format!(
+                "curl did not read the request: {error}"
+            )));
+        }
+        if !done.status.success() {
+            // What curl says of a failure names the URL, whose query is the download's signature.
+            let why = String::from_utf8_lossy(&done.stderr).replace(url, &named);
+            return Err(Failure::Unknown(format!(
+                "curl failed ({}) downloading {named}: {}",
+                done.status,
+                self.token.redact(why.trim())
+            )));
+        }
+        String::from_utf8_lossy(&done.stdout)
+            .trim()
+            .parse::<u16>()
+            .map_err(|error| {
+                Failure::Unknown(format!("the download of {named} has no status: {error}"))
+            })
     }
 }
 

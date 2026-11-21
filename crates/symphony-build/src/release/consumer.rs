@@ -28,7 +28,7 @@ use std::path::Path;
 
 use super::git::git;
 use super::notes::{PIN_FILE, SCHEMA_FILE, constant};
-use super::receipts::Receipts;
+use super::receipts::{Proof, Receipts};
 use super::tags::Release;
 
 /// The trailer a commit says an entry by.
@@ -322,10 +322,12 @@ fn entries_of(root: &Path, revs: &[&str]) -> Result<Vec<(String, String)>, Strin
 /// receipt kept, the commits that head holds beyond the squash's parent, beyond `before` (which
 /// a release on a delivered head said already) and beyond each head delivered onto the line
 /// before it ([`Receipts::landed_before`]): a head started at another delivered head holds that
-/// one's commits, which its own squash said, and no entry is said twice. Oldest squash first.
+/// one's commits, which its own squash said, and no entry is said twice. Oldest squash first. What
+/// git bears out is `proof`'s, asked of `receipts` once ([`Receipts::proof`]).
 fn delivered(
     root: &Path,
     receipts: &Receipts,
+    proof: &Proof,
     before: &str,
     commit: &str,
 ) -> Result<Vec<(String, String)>, String> {
@@ -341,7 +343,7 @@ fn delivered(
         let Some(receipt) = receipts.squashed(squash) else {
             continue;
         };
-        if !Receipts::proved(root, receipt) {
+        if !proof.proved(receipt) {
             continue;
         }
         let mut revs = vec![
@@ -349,7 +351,7 @@ fn delivered(
             format!("^{}", receipt.parent),
             format!("^{before}"),
         ];
-        revs.extend((receipts.landed_before(root, receipt).iter()).map(|head| format!("^{head}")));
+        revs.extend((receipts.landed_before(proof, receipt).iter()).map(|head| format!("^{head}")));
         let revs: Vec<&str> = revs.iter().map(String::as_str).collect();
         found.extend(entries_of(root, &revs)?);
     }
@@ -466,6 +468,7 @@ pub(crate) fn history(root: &Path, releases: &[(String, String)]) -> Result<Vec<
     let mut all: Vec<Notes> = Vec::new();
     let mut said: Vec<(usize, String, Entry)> = Vec::new();
     let receipts = Receipts::read(root);
+    let proof = receipts.proof(root);
     for (at, (name, commit)) in releases.iter().enumerate() {
         let before = at.checked_sub(1).map(|before| &releases[before]);
         let mut notes = Notes {
@@ -478,7 +481,7 @@ pub(crate) fn history(root: &Path, releases: &[(String, String)]) -> Result<Vec<
         // The first release's entries would be every commit's before it: it says none.
         if let Some((_, before)) = before {
             let mut read = entries(root, &format!("{before}..{commit}"))?;
-            read.extend(delivered(root, &receipts, before, commit)?);
+            read.extend(delivered(root, &receipts, &proof, before, commit)?);
             for (by, value) in read {
                 match parse(&value) {
                     Ok(entry) => said.push((at, by, entry)),
