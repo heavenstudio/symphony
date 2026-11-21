@@ -34,6 +34,7 @@ their dated history work is in [REVIEW](REVIEW.md).
     **Why A over B.** B lets a release run take a changed rule again by itself, but it needs `symphony-github` on the release run's path, and every land already stops, naming the command, when the rule changes. B is one line in the settings, which can come later.
 
     **Earlier verdicts checked.** **github-delivery-policy-reader-standing**, approved as A, put a third App with Administration (write) on `heavenstudio/symphony`; your words in chat on 2026-11-20, "I prefer to have one app, way easier to install and amange", replaced it, and step 1 takes that App off. Your "DO NOT WAIT FOR MY YES. LAND IT" of 2026-11-20 was given on the three-App design, before you changed it to GitHub merging on green, so it does not decide this card. **github-delivery-proof-setup** gives the Apps no Administration, which holds.
+  [2026-11-21 15:19] agent — Both tasks A waits for are on main now: `tools/delivery-rearm-at-new-head` and `tools/delivery-watcher-closes-merged`. So A turns it on as soon as you answer.
 
 ## Auto-approved: spot-check
 
