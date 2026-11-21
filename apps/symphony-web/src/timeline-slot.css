@@ -27,11 +27,12 @@
   height: auto;
   min-height: var(--tl-narrow);
 }
-/* On a phone, a run's row a tap focused grows to say all of the run (src/timeline.css): a box that
-   holds every step grows with it, never under its height; one that clips keeps its height, the row
-   growing upward over the earliest steps. */
+/* On a phone, a row a tap focused grows to say all of its step, and the total's cost its words
+   (src/timeline.css): a box that holds every step grows with it, never under its height; one that
+   clips keeps its height, the row growing upward over the earliest steps. The words of the total's
+   cost grow either, a clipped one's steps hidden while they are said. */
 @media (max-width: 899.98px) {
-  .tl-box:has(.tl-drawn:not(.tl-clipped) .tl-sub:focus) {
+  .tl-box:has(.tl-drawn:not(.tl-clipped) .tl-row:focus, .tl-cost:focus) {
     height: auto;
     min-height: var(--tl-narrow);
   }

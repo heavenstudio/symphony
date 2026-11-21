@@ -18,7 +18,8 @@ are under [Design and history](#design-and-history).
 ## Using it
 
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
-- [Task board](TASKS.md) — the board, sessions, roles and agent communication.
+- [Task board](TASKS.md) — the board, sessions, roles and agent communication; the pages are
+  [the task board](product/BOARD.md) and [a task's page](product/TASK.md).
 - [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
   with its default.
 - [Releases](RELEASES.md) — taking a release on a project, then how a release is cut by the

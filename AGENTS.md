@@ -368,7 +368,9 @@ a private headless Chrome (`crates/chrome-devtools`) opens URL, waits until the 
 dismissing each dialog, runs the steps `--click CSS`, `--type CSS=TEXT`, `--key NAME`,
 `--hover CSS`, `--eval JS` (its JSON on stdout), `--pause MS` and `--shot FILE.png` in the order
 given, then saves the PNG. `--phone`, `--size WxH`, `--full-page` and `--scheme dark` set the
-view, `--wait-for CSS` and `--timeout SECS` bound the waits, `--report` prints the console errors,
+view, `--clock SECS` holds the page's own clock at that moment (seconds since 1970, UTC), so a
+page that draws an age or a time is the same picture on any day, `--wait-for CSS` and
+`--timeout SECS` bound the waits, `--report` prints the console errors,
 failed requests, dialogs dismissed and horizontal overflow it saw, and `--help` says the rest. A
 capture without interaction steps reads the page, so the live board
 (`http://127.0.0.1:8765/symphony/tasks`) is fair to shoot. Inspect interaction steps and script
