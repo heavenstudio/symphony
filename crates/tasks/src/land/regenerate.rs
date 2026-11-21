@@ -1474,32 +1474,12 @@ impl Regenerator<'_, '_> {
             Move::Done => {}
             Move::Raced(_) => return Ok(None),
             Move::Not { why, restored } => {
-                let mut line = format!(
-                    "{default} could not move to {} in the main checkout: {why}",
-                    short(&commit)
-                );
-                match restored {
-                    Ok(restored) => {
-                        if let Some(said) = restored.said(&default, base) {
-                            line.push_str(&format!("; {said}"));
-                        }
-                    }
-                    Err(why) => line.push_str(&format!(
-                        "; what the move half-wrote in the main checkout could not be restored \
-                         ({why}): the next land tries again"
-                    )),
-                }
-                return Err(line);
+                return Err(super::moving::not_moved(
+                    &default, &commit, base, &why, &restored, false,
+                ));
             }
         }
-        let pushed = match landing.push(&commit) {
-            super::Pushed::Done => format!("; pushed to {}", super::REMOTE),
-            super::Pushed::Off => "; not pushed: [land] push is off".into(),
-            super::Pushed::NoRemote => format!("; not pushed: no {} remote", super::REMOTE),
-            super::Pushed::Failed(why, retry) => {
-                format!("; NOT PUSHED, landed here only: {why}. Push it with: {retry}")
-            }
-        };
+        let pushed = landing.push(&commit).said();
         Ok(Some(Round::Landed {
             tip: tip.into(),
             commit: commit.clone(),
