@@ -15,6 +15,7 @@ import {
   useEffect,
   useState,
 } from "react";
+import { trimmed } from "./gates-model";
 import { PartsContext, usePart } from "./parts";
 import { snapshot } from "./shared";
 import { load, save } from "./storage";
@@ -50,12 +51,6 @@ const MOST = 0xffff_ffff;
 /** The key a task's drawn heights are kept under in this browser, before its project's id. */
 export function key(slug: string): string {
   return `timeline-height:${slug}`;
-}
-
-/** `text` without its leading and trailing whitespace, as Rust's `str::trim` (the Unicode
- * White_Space property): this module imports none of the timeline's own. */
-function trimmed(text: string): string {
-  return text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
 }
 
 /** A height as Rust's `str::parse::<u32>` reads it: digits, a `+` before them allowed. */

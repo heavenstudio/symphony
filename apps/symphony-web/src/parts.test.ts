@@ -4,20 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FRESH, opened, shown as shownFromDevice, taskItem, waits } from "./cache";
 import { KEPT_EVENTS, type Part, Parts, PartsContext, type Shown, usePart } from "./parts";
 import { field } from "./shared";
-import { VERSION_HEADER } from "./wire";
-
-/** A response as a read takes one: its status, its JSON body, its tag and the cursor it names. */
-function answer(status: number, body: unknown = null, etag = "", version?: number): Response {
-  const headers: Record<string, string> = {};
-  if (etag !== "") headers.ETag = etag;
-  if (version !== undefined) headers[VERSION_HEADER] = `${version}`;
-  return {
-    status,
-    ok: status >= 200 && status < 300,
-    headers: { get: (name: string) => headers[name] ?? null },
-    json: async () => body,
-  } as unknown as Response;
-}
+import { fakeAnswer as answer } from "./testing";
 
 /** A count the tests' server answers, and what the tests' feed says of one. */
 interface Count {
