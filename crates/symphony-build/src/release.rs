@@ -71,6 +71,7 @@ mod updates;
 #[cfg(test)]
 mod waits;
 
+use std::ffi::OsStr;
 use std::fs::{self, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -432,8 +433,12 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     // default. A count runs on the build the main checkout links, which may be older than the
     // file a landing just changed, so it is a build of the tip that says whether the file loads
     // ([`hand_off`]); the run below stops red only where that build is this one, or none is made.
-    let unread_count = parsed.flag("--due") && repo.unread.is_some();
+    // None is made for a file no build reads ([`written`]), which stops this count red at once.
+    let unread_count = parsed.flag("--due") && repo.unread.is_some() && written(&repo.main);
     if parsed.flag("--due") && repo.unread.is_none() {
+        if stale() {
+            renew(&repo, out);
+        }
         if let [slug, landed] = &parsed.positionals[..] {
             let _ = writeln!(out, "release: {slug} landed ({})", short(landed));
         }
@@ -519,6 +524,10 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
 
 /// What a run a due count handed its run to is told ([`hand_off`]): the build it is.
 const DRIVER: &str = "SYMPHONY_RELEASE_DRIVER";
+/// What that run is told as well when the count's own build could not load the project file: the
+/// build the main checkout links is older than the file, which a build that loads it renews
+/// ([`renew`]).
+const STALE: &str = "SYMPHONY_RELEASE_STALE";
 /// The time the checkout and the build a due count's run starts from have.
 const DRIVER_BUILD: Duration = Duration::from_secs(3600);
 
@@ -553,6 +562,83 @@ fn driven() -> bool {
     std::env::var_os(DRIVER).is_some()
 }
 
+/// Whether this process is the build a count handed over to because its own, the one the main
+/// checkout links, could not load the project file ([`STALE`]).
+fn stale() -> bool {
+    driven() && std::env::var_os(STALE).is_some()
+}
+
+/// Whether the project file of the main checkout `main` is written as one at all: a file that is
+/// not TOML, or cannot be read, is read by no build, an older one's or a newer one's, so a count
+/// over it builds none.
+fn written(main: &Path) -> bool {
+    fs::read_to_string(main.join(symphony::project::FILE))
+        .is_ok_and(|text| toml::from_str::<toml::Table>(&text).is_ok())
+}
+
+/// `tools/rs-bin.sh MODE symphony-build` run at `launcher` in the checkout `tree`, within `until`,
+/// what the build said going to `out`: what it printed, or why it made no build.
+fn launch(
+    launcher: &Path,
+    mode: &str,
+    tree: &Path,
+    until: Bound<'_>,
+    out: &mut dyn Write,
+) -> Result<Vec<u8>, String> {
+    let mut build = symphony::children::command(launcher);
+    build
+        .args([mode, "symphony-build"])
+        .current_dir(tree)
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove(DRIVER)
+        .env_remove(STALE);
+    let tree = tree.display();
+    let done = group::output_until(&mut build, until).map_err(|failed| match failed {
+        group::Failed::Io(e) => format!("{} could not run: {e}", launcher.display()),
+        group::Failed::Late(took) | group::Failed::Interrupted(took) => format!(
+            "the build of its tip in {tree} was stopped after {} s",
+            took.as_secs()
+        ),
+    })?;
+    let _ = out.write_all(&done.stderr);
+    if !done.status.success() {
+        return Err(format!(
+            "the build of its tip in {tree} failed ({})",
+            done.status
+        ));
+    }
+    Ok(done.stdout)
+}
+
+/// The main checkout's link to `symphony-build` renewed, by the build of the tip a count handed
+/// over to because the linked one could not load the project file this one loads: the linked build
+/// is older than the file, and stays so at every land, each count building the tip, until
+/// `tools/rs-bin.sh --link symphony-build` builds it in the main checkout, which this runs once.
+/// It is one build in the main checkout's own build folder, of what the next board command there
+/// builds as well. A main checkout without the launcher, or whose build fails, is left as it was,
+/// the second said: the count goes on either way.
+fn renew(repo: &Repo, out: &mut dyn Write) {
+    let launcher = repo.main.join("tools/rs-bin.sh");
+    if !launcher.is_file() {
+        return;
+    }
+    let until = Bound::until(Instant::now() + DRIVER_BUILD);
+    let link = repo.main.join(".target/bin/symphony-build");
+    let said = match launch(&launcher, "--link", &repo.main, until, out) {
+        Ok(_) => format!(
+            "the build {} links was older than the project file: renewed, so the next count \
+             builds nothing",
+            link.display()
+        ),
+        Err(why) => format!(
+            "the build {} links is older than the project file and was not renewed ({why}): each \
+             count builds the tip until `just release --status` there renews it",
+            link.display()
+        ),
+    };
+    note(out, &[said]);
+}
+
 /// Say each line of `noted` on `out`, as a run says what it did on the way.
 fn note(out: &mut dyn Write, noted: &[String]) {
     for line in noted {
@@ -569,7 +655,8 @@ fn note(out: &mut dyn Write, noted: &[String]) {
 /// the build failed, which is said and which the run then meets as it would. An exit code when a
 /// run holds the lock: the count waits for it and nothing more runs. A count over a project file
 /// its build cannot load is handed over the same way, undone: the tip's build counts if it loads
-/// the file, and stops red if it cannot either.
+/// the file and renews the link the count's build came by ([`renew`]), and stops red if it cannot
+/// either.
 fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write) -> Option<i32> {
     if driven() {
         return None;
@@ -619,7 +706,10 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
         .chain(args.iter().cloned())
         .collect();
     // A start that fails leaves this process as it was, which the run then goes on in.
-    let named = [(DRIVER, driver.as_os_str())];
+    let mut named = vec![(DRIVER, driver.as_os_str())];
+    if repo.unread.is_some() {
+        named.push((STALE, OsStr::new("1")));
+    }
     let error = crate::replace::replace(driver.as_os_str(), &words, &named);
     let _ = writeln!(
         out,
@@ -643,27 +733,8 @@ fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<
         return Ok(None);
     }
     let tree = place.checkout.display();
-    let mut build = symphony::children::command(&launcher);
-    build
-        .args(["--build", "symphony-build"])
-        .current_dir(&place.checkout)
-        .env_remove("CARGO_TARGET_DIR")
-        .env_remove(DRIVER);
-    let done = group::output_until(&mut build, until).map_err(|failed| match failed {
-        group::Failed::Io(e) => format!("{} could not run: {e}", launcher.display()),
-        group::Failed::Late(took) | group::Failed::Interrupted(took) => format!(
-            "the build of its tip in {tree} was stopped after {} s",
-            took.as_secs()
-        ),
-    })?;
-    let _ = out.write_all(&done.stderr);
-    if !done.status.success() {
-        return Err(format!(
-            "the build of its tip in {tree} failed ({})",
-            done.status
-        ));
-    }
-    let printed = String::from_utf8_lossy(&done.stdout);
+    let printed = launch(&launcher, "--build", &place.checkout, until, out)?;
+    let printed = String::from_utf8_lossy(&printed);
     let path = PathBuf::from(printed.lines().last().unwrap_or_default().trim());
     if !path.is_file() {
         return Err(format!(

@@ -380,7 +380,12 @@ unsaid. A land's count (`--due`) does not count over such a file, and does not j
 it runs on the build the main checkout links, which a landing that adds a key may be newer than,
 so it hands over to a build of the tip as a due count does ([the count](#the-count)), which
 counts if it loads the file and stops red if it cannot; the count stops red in its own build only
-where no such build is made (the tip holds no `tools/rs-bin.sh`, or it does not build). `--status` says it
+where no such build is made (the tip holds no `tools/rs-bin.sh`, or it does not build) or would
+read it: a file that is not TOML, or cannot be read, is no newer build's either, so the tip is not
+built for it. The tip's build that loads the file renews the link the count came by
+(`tools/rs-bin.sh --link symphony-build` in the main checkout, one build in its build folder), as
+the linked build would otherwise be handed over at every land, each building the tip, and says so
+or why it could not; the count goes on either way. `--status` says it
 first and prints the rest; `--schedule`, `--drop` and `--github` refuse, naming it.
 
 1. **The candidate.** It fetches `origin/main` (`--remote` and `--branch` name another remote and
@@ -1150,7 +1155,8 @@ verification of one commit ([its card](DECISIONS.md#release-main-judged-in-steps
   release-…, the last SLUG`). A red run files its reds, as any release run does. The link comes
   from `just release`: every run of the recipe in the main checkout, `--status` too, builds
   `symphony-build` and makes the link or renews it (`tools/rs-bin.sh --link symphony-build` does
-  it alone). A main checkout that links none starts no count: the land shows its refusal. No
+  it alone), and from a count the linked build handed over because it could not load the project
+  file ([the release run](#the-release-run)). A main checkout that links none starts no count: the land shows its refusal. No
   landing is lost meanwhile: the next count reads them all from git.
 - **A landing whose command never ran.** The count is read from the line and the receipts each
   time, never added to by the command, so a land cut between its merge and its `on_land` (a

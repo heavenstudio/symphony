@@ -4,7 +4,9 @@
 //! checks nothing, tags nothing and files `tests/release-red-run`, which the run after the file is
 //! put right closes. A land's count (`--due`) does not count over it and hands over to a build of
 //! the tip, as its own build may be older than the file: that build counts, or stops red when it
-//! cannot load it either, as the count does where no such build is made. `--status` says it and
+//! cannot load it either, as the count does where no such build is made: at a tip with no
+//! launcher, and over a file that is not TOML, which no build reads. The build that loads it renews
+//! the main checkout's link, so the next count is not handed over again. `--status` says it and
 //! runs nothing, and `--schedule`, `--drop` and `--github` refuse.
 
 use std::fs;
@@ -150,15 +152,26 @@ fn program(path: &Path, text: &str) {
 /// Land a launcher at the tip that names `build` as the tip's build, and a project file the
 /// count's build cannot load.
 fn tip_builds(fixture: &Fixture, build: &Path) {
-    fs::create_dir_all(fixture.main.join("tools")).unwrap();
-    program(
-        &fixture.main.join("tools/rs-bin.sh"),
-        &format!("#!/bin/sh\necho '{}'\n", build.display()),
-    );
+    launcher(fixture, &format!("echo '{}'", build.display()));
     land(
         fixture,
         &Fixture::project_file("a_key_of_a_newer_build = 1\n"),
     );
+}
+
+/// Write the main checkout's launcher, which the next landing lands: it says where and how it was
+/// asked in the log it names, then runs `then`.
+fn launcher(fixture: &Fixture, then: &str) -> PathBuf {
+    let asked = fixture.root.join("launcher.log");
+    fs::create_dir_all(fixture.main.join("tools")).unwrap();
+    program(
+        &fixture.main.join("tools/rs-bin.sh"),
+        &format!(
+            "#!/bin/sh\necho \"$PWD $*\" >> '{}'\n{then}\n",
+            asked.display()
+        ),
+    );
+    asked
 }
 
 #[test]
@@ -170,7 +183,8 @@ fn a_count_whose_build_cannot_load_the_file_hands_over_to_the_tips_and_stops_not
     program(
         &newer,
         &format!(
-            "#!/bin/sh\necho \"$* driven by $SYMPHONY_RELEASE_DRIVER\" >> '{}'\n",
+            "#!/bin/sh\necho \"$* driven by $SYMPHONY_RELEASE_DRIVER, stale \
+             $SYMPHONY_RELEASE_STALE\" >> '{}'\n",
             asked.display()
         ),
     );
@@ -190,10 +204,15 @@ fn a_count_whose_build_cannot_load_the_file_hands_over_to_the_tips_and_stops_not
         )),
         "{out}"
     );
-    // The count as given, to that build, and nothing judged by the older one.
+    // The count as given, to that build, told the linked one is older than the file, and nothing
+    // judged by the older one.
     assert_eq!(
         fs::read_to_string(&asked).unwrap(),
-        format!("release {} driven by {}\n", args.join(" "), newer.display())
+        format!(
+            "release {} driven by {}, stale 1\n",
+            args.join(" "),
+            newer.display()
+        )
     );
     assert!(!err.contains("does not load"), "nothing stops here: {err}");
     assert!(
@@ -234,4 +253,105 @@ fn a_tips_build_that_cannot_load_it_either_stops_red_once_and_hands_over_no_furt
     assert_eq!(fixture.runs().len(), 1, "one run, the tip build's");
     assert_eq!(fixture.reds().keys().collect::<Vec<_>>(), [RED]);
     assert!(!ran.exists(), "no check ran");
+}
+
+/// The tip's build of a count handed over for its file, which this test's own build is told it is.
+const HANDED: [(&str, &str); 2] = [
+    ("SYMPHONY_RELEASE_DRIVER", super::BIN),
+    ("SYMPHONY_RELEASE_STALE", "1"),
+];
+
+#[test]
+fn the_tips_build_that_loads_the_file_renews_the_main_checkouts_link_once_and_counts() {
+    let (fixture, ran, check) = fixture();
+    let asked = launcher(&fixture, "echo linking >&2");
+    let landed = fixture.land("landed", Some("one\n"), "a landing");
+    let args = ["--check", check.as_str(), "--due", "tools/last", &landed];
+    let link = fixture.main.join(".target/bin/symphony-build");
+
+    let (code, out, err) = fixture.release_with(NOW, &args, &HANDED);
+    assert_eq!(code, 0, "stdout:\n{out}\nstderr:\n{err}");
+    // In the main checkout, by the launcher's own word for it, and never the release checkout's.
+    assert_eq!(
+        fs::read_to_string(&asked).unwrap(),
+        format!("{} --link symphony-build\n", fixture.main.display())
+    );
+    let renewed = format!(
+        "linking\nrelease: the build {} links was older than the project file: renewed, so the \
+         next count builds nothing\n",
+        link.display()
+    );
+    assert!(out.contains(&renewed), "{out}");
+    let counted = out.split_once(&renewed).unwrap().1;
+    assert!(counted.contains("landings"), "then it counts: {out}");
+    assert!(!ran.exists() && fixture.runs().is_empty(), "nothing is due");
+
+    // A build handed a due count, whose linked build loaded the file, renews nothing; neither
+    // does one nobody handed anything.
+    for told in [&HANDED[..1], &HANDED[1..], &[]] {
+        let (code, out, err) = fixture.release_with(NOW, &args, told);
+        assert_eq!(code, 0, "{told:?}\nstdout:\n{out}\nstderr:\n{err}");
+        assert!(!out.contains("links"), "{told:?}: {out}");
+    }
+    assert_eq!(fs::read_to_string(&asked).unwrap().lines().count(), 1);
+}
+
+#[test]
+fn a_link_that_cannot_be_renewed_is_said_and_the_count_goes_on() {
+    let (fixture, _, check) = fixture();
+    let asked = launcher(&fixture, "echo 'error: main does not build' >&2\nexit 1");
+    let landed = fixture.land("landed", Some("one\n"), "a landing");
+    let args = ["--check", check.as_str(), "--due", "tools/last", &landed];
+    let (code, out, err) = fixture.release_with(NOW, &args, &HANDED);
+    assert_eq!(code, 0, "stdout:\n{out}\nstderr:\n{err}");
+    let said = format!(
+        "release: the build {} links is older than the project file and was not renewed (the \
+         build of its tip in {} failed (exit status: 1)): each count builds the tip until `just \
+         release --status` there renews it\n",
+        fixture.main.join(".target/bin/symphony-build").display(),
+        fixture.main.display()
+    );
+    assert!(
+        out.contains(&format!("error: main does not build\n{said}")),
+        "{out}"
+    );
+    assert!(
+        out.split_once(&said).unwrap().1.contains("landings"),
+        "{out}"
+    );
+
+    // A main checkout with no launcher has no link to renew: nothing is said of it.
+    fs::remove_file(fixture.main.join("tools/rs-bin.sh")).unwrap();
+    let (code, out, err) = fixture.release_with(NOW, &args, &HANDED);
+    assert_eq!(code, 0, "stdout:\n{out}\nstderr:\n{err}");
+    assert!(!out.contains("links") && out.contains("landings"), "{out}");
+    assert_eq!(fs::read_to_string(&asked).unwrap().lines().count(), 1);
+}
+
+#[test]
+fn a_count_over_a_file_no_build_reads_builds_no_tip_and_stops_red_itself() {
+    let (fixture, ran, check) = fixture();
+    let asked = launcher(&fixture, "echo /no/build/is/asked/for");
+    // Not TOML, then not text: neither is a newer build's to read.
+    for (bytes, wrong) in [
+        (&b"[releases\nrefresh = false\n"[..], "symphony.toml"),
+        (&b"[releases]\nrefresh = \xff\n"[..], "UTF-8"),
+    ] {
+        fs::write(fixture.main.join("symphony.toml"), bytes).unwrap();
+        fixture.commit("a project file no build reads");
+        super::git(&fixture.main, &["push", "-q", "origin", "main"]);
+        let landed = super::git(&fixture.main, &["rev-parse", "HEAD"]);
+        let before = fixture.runs().len();
+        let args = ["--check", check.as_str(), "--due", "tools/last", &landed];
+        let (code, out, err) = fixture.release_at(NOW, &args);
+        assert_eq!(code, 1, "{wrong}\nstdout:\n{out}\nstderr:\n{err}");
+        let said = format!("the project file {} does not load", file(&fixture));
+        assert!(err.contains(&said) && err.contains(wrong), "{wrong}: {err}");
+        assert!(!out.contains("a build of the tip"), "{wrong}: {out}");
+        assert!(!asked.exists(), "{wrong}: the tip was built for nothing");
+        assert!(!fixture.worktree().exists(), "{wrong}: nor checked out");
+        assert_eq!(fixture.runs().len(), before + 1, "{wrong}: the red run");
+        assert_eq!(fixture.reds().keys().collect::<Vec<_>>(), [RED]);
+        assert!(!ran.exists(), "no check ran");
+    }
 }
