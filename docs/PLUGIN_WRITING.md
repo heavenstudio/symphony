@@ -23,10 +23,11 @@ one crate from crates.io, `symphony-plugin`, and on nothing else of the Symphony
 In the project's checkout, make a binary crate. It may live anywhere; here it is `plugins/hello`:
 
 ```sh
-cargo new --bin plugins/hello
+cargo new --bin --vcs none plugins/hello
 ```
 
-Its `plugins/hello/Cargo.toml` names the kit:
+`--vcs none` keeps Cargo from making a repository inside the project's. Its
+`plugins/hello/Cargo.toml` names the kit:
 
 ```toml
 [package]
@@ -219,7 +220,8 @@ cargo build --release --manifest-path plugins/hello/Cargo.toml
 ```
 
 The build leaves the program at `plugins/hello/target/release/hello`. It is a build product, so
-it is not committed: each machine that serves the project builds it.
+it is not committed: add `plugins/hello/target/` to the project's `.gitignore`, and each machine
+that serves the project builds it.
 
 ### 4. The project file
 
