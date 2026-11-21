@@ -245,7 +245,7 @@ fn a_merges_method_is_its_kinds_own_and_its_head_one_whole_commit() {
         (asked("rebase"), head.as_str(), false),
         (json!({}), head.as_str(), false),
         (json!({"method": null}), head.as_str(), true),
-        (asked("squash"), &head[..39], false),
+        (asked("squash"), "a".repeat(39).as_str(), false),
         (asked("squash"), "main", false),
         (asked("merge"), "", true),
         (asked("squash"), "g".repeat(40).as_str(), false),
