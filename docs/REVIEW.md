@@ -182,16 +182,18 @@ under the heading of its [group](#groups). A whole register with one new card:
 <!-- register:start -->
 ## Needs your decision
 
+### General
+
 - [ ] **lamp-count** — Sell twelve lamps at launch, or twenty? Approve and say A or B in the note, or comment.
 <!-- register:end -->
 ```
 
-A card's line starts at column 0 with its marker and its slug in bold. Without
-the two comments its slug reads as a slug in prose, which the lint refuses
-([below](#slugs-in-prose)); under no group heading the card is counted and
+A card's line starts at column 0 with its marker and its slug in bold. Between
+the two comments and under no group heading the card is counted and
 listed in the queue, but its page draws it as a list item with no verdict
 editor, until `just symphony-status --tidy` regroups the register and writes
-the headings. A topic heading (`### Releases`) under a group's heading sorts
+the headings. A card outside the two comments is inline in its document
+([below](#where-a-card-is-written)) and needs neither them nor a heading. A topic heading (`### Releases`) under a group's heading sorts
 its cards; a card under none is filed under *General*. The project's register
 is `DECISIONS.md` in its first entrypoint's folder unless
 [the project file](PROJECT_FILE.md#project) names another, and any document
@@ -349,6 +351,24 @@ exceptions are `docs/history/` and `docs/analysis/`, which are records. A
 project's own checks may also refuse the verdict words themselves (approved,
 rejected, superseded, dismissed) outside the register of the pages they name: such
 a page shows the chosen pictures and traits, never a list of what else was approved.
+
+- [r] **guides-keep-owner-quotes** — The documents under `docs/` no longer quote your words or say who decided what and when: that lives in this register and on task threads, and a document links the card where the reason matters. The guides agents read first, `AGENTS.md`, `RULES.md` and the packages' `AGENTS.md`, still quote you, dated, as the basis of their rules: 23 quoted passages in 19 places. Should the guides keep those quotes? A: yes, each rule keeps the words it rests on. B: no, each guide states its rules in plain words, and the quotes move word for word to a record under `docs/history/`, so none is lost. Recommended: B. Approve and say A or B in the note, or comment. [[REVIEW#Slugs in prose]]
+  [2026-11-13 19:55] agent — Posted for the board task `docs/documents-carry-no-ledger`, from your comment on the consumer contract analysis, which names docs and not the guides.
+
+    **Where the quotes are:** `RULES.md` 14 in 11 rules; `AGENTS.md` 6 in 4 places (the land's push, the land with no prompt, the release cadence and its refresh); `apps/symphony-ui/AGENTS.md` 2, and one dated attribution (the move to Dioxus, the first-visit budget); `crates/tasks/AGENTS.md` 1 (idle sessions closed within the hour). The root `README.md` and the servers' and components' guides quote none.
+
+    **A, keep them.** An agent reading a rule sees the words it rests on beside it. The guides keep a ledger the documents no longer do, and each new rule adds a dated line.
+
+    **B, the rule alone.** Each guide says what to do, as the documents now do. The words are kept word for word in `docs/history/`, beside the review ledger, and the threads keep theirs. One task here makes the move; no rule changes meaning.
+
+    **Why B.** The reason you gave for documents holds for the guides: they are what agents read as current instruction, and `RULES.md` already says guides say how things are now. B loses nothing, since the words move to a record.
+
+    **Earlier verdicts checked.** No card says whether the guides count as documents, so none decides this one.
+
+    This card is the only change.
+  [2026-11-13 20:05] owner · approved — B
+  [2026-11-14 01:14] agent — B it is. Your approval was saved in the app on 2026-11-13 20:05, but into the worktree of the branch that posted this card, which had already landed, so the register on main never showed it. It is copied here word for word, and that fault is filed as a bug. The move is filed as the board task `docs/guides-state-rules-without-quotes`: each guide states its rules in plain words, and the quotes go word for word to a record under `docs/history/`.
+  [2026-11-14 01:16] agent · resolved
 
 An agent registers with `just tasks callback --chat --as HANDLE`. Each ask,
 follow-up, card message, verdict note and callout you save is queued by that
