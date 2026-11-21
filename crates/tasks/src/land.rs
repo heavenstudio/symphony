@@ -1216,6 +1216,7 @@ fn landing(
         named: false,
         transport,
         delivery,
+        dispatch: matches!(mode, Mode::Dispatch),
         out,
     };
     let landed = match mode {
@@ -1869,6 +1870,9 @@ struct Landing<'a> {
     transport: Option<&'a dyn delivery::Transport>,
     /// `[land] delivery` ([`delivery::command`]): empty where the land merges here and pushes.
     delivery: Vec<String>,
+    /// Whether it is a dispatch ([`dispatch`]), which runs detached with its lines in its log
+    /// alone: what stops it is said on the task's thread as well ([`Landing::refuse`]).
+    dispatch: bool,
     out: &'a mut dyn Write,
 }
 
@@ -1987,6 +1991,18 @@ impl Landing<'_> {
     /// do; the stop it makes.
     fn refuse(&self, refusal: Refusal) -> Stop {
         if !refusal.thread || !self.task {
+            if self.dispatch && self.task {
+                // Nobody reads a dispatch's log: a task its dispatch left undelivered says so.
+                let slug = self.slug;
+                self.post(
+                    &format!(
+                        "land {slug}: its dispatch stopped: {}; `just land {slug} --dispatch` \
+                         dispatches it again, as a later write to it does",
+                        refusal.line
+                    ),
+                    Some("@orchestrator"),
+                );
+            }
             return Stop::Refused(refusal.line);
         }
         let slug = self.slug;

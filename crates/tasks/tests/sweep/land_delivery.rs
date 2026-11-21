@@ -1715,6 +1715,7 @@ fn a_run_cut_short_after_the_board_closed_the_task_closes_and_dispatches_nothing
         held: None,
         import: None,
         green: None,
+        armed: false,
     };
     // Killed after the board's write and before the journal said closed: the line is found.
     journal(Stage::Reconciled).write(&lands(&r)).unwrap();
@@ -2085,6 +2086,7 @@ fn a_slug_filed_again_at_the_very_head_delivered_before_is_refused_as_delivered(
         held: None,
         import: None,
         green: None,
+        armed: false,
     };
     for other in [journal(&first, 3), journal(&receipt.parent, 2)] {
         other.write(&lands(&r)).unwrap();
@@ -2281,6 +2283,7 @@ fn a_delivery_proved_again_after_a_run_cut_short_keeps_the_receipt_it_has_and_la
         held: None,
         import: None,
         green: None,
+        armed: false,
     };
     journal.write(&lands(&r)).unwrap();
     let (said, result) = landed(&r, SLUG, &people.orch, &host);

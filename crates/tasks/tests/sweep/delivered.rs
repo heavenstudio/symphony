@@ -548,6 +548,7 @@ fn journal(r: &Repo, receipt: &Receipt, stage: Stage) {
         held: None,
         import: None,
         green: None,
+        armed: false,
     }
     .write(&lands(r))
     .unwrap();

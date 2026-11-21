@@ -2674,13 +2674,18 @@ Nobody runs a land of a task the host delivers: a write to the board that can ch
 starts its dispatch, the host merges it once its last stamp stands, within seconds, and the
 watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
 
-- **What dispatches.** A top-level task's move to review, and after its first publication each
-  later move, assessment (`tasks needs`), verdict and gate decision, starts `tasks land SLUG
-  --dispatch` detached from the main checkout, as the one who wrote, with the land's mark; the
-  write returns at once and its lines go to `dispatch.log` in the lands' folder. A board that
-  `TASKS_SERVER` names (a test's) starts one only under `TASKS_DISPATCH=on`; `TASKS_DISPATCH=off`
-  starts none anywhere. One dispatch runs at a time under the land's lock, and one asked while
-  another runs runs after it.
+- **What dispatches.** A top-level task's move to review, and after it each later move,
+  assessment (`tasks needs`), verdict and gate decision, starts `tasks land SLUG --dispatch`
+  detached from the main checkout, as the one who wrote, with the land's mark; the write returns
+  at once and its lines go to `dispatch.log` in the lands' folder. The move to review leaves
+  `SLUG.dispatching` there, naming who moved it, until a dispatch binds the task's pull request,
+  and from then on its binding is what a later write dispatches it by: so a first dispatch that
+  stopped before it published is made again by the next write, and a task never moved to review,
+  or delivered and closed, starts none. A dispatch that stops says why on the task's thread, to
+  `@orchestrator`, with the `just land SLUG --dispatch` that dispatches it again: nobody reads its
+  log. A board that `TASKS_SERVER` names (a test's) starts one only under `TASKS_DISPATCH=on`;
+  `TASKS_DISPATCH=off` starts none anywhere. One dispatch runs at a time under the land's lock,
+  and one asked while another runs runs after it.
 - **What a dispatch does.** What a land does up to the publication, the refusals at the head
   above among it (each goes to the thread, to whom it names, and nothing is pushed); then the head
   pushed, never forced, its pull request opened ready and the checks written from the evidence at
@@ -2692,11 +2697,16 @@ watcher closes the task (`crates/tasks/src/land/dispatch.rs`).
   nothing at another; a new commit is pushed to the same pull request at the next dispatch, the
   merge armed across it and pending until the approve names the new head. One whose head and
   evidence are as last published asks the host nothing more. Armed only while the task is in
-  review, blocked or done: a task moved back to work (a changes verdict) has its checks said again
-  and its merge turned off until it moves to review.
+  review, blocked or done: a task moved back to work (a changes verdict) has its merge turned off
+  first and its checks said again after, so no check published meanwhile lets the host merge it,
+  and stays so until it moves to review.
 - **Who watches.** One watcher per project, `tasks land --watch` (`watch.lock` in the lands'
   folder, `watch.log` its lines), started by each arming where none runs, which reads each armed
-  task every `[land] watch_seconds` (30) and ends once none is left. A task whose evidence does not
+  task every `[land] watch_seconds` (30) and ends once none is left. Armed means the host answered
+  an arming and has not answered a disarm since: a publication between keeps it so, as the host
+  keeps its merge armed across a push, and one that stopped before the host answered its arming
+  again (an answer lost, a host away) has its pull request read every round, whatever its checks
+  said, and is published and armed again. A task whose evidence does not
   stand yet costs it no read of the host, which merges nothing while eligible is pending; it reads
   its evidence again, so a write no command dispatches for (the owner's through the Symphony, a run
   recorded at the head) is published at its next round. One whose evidence stands has its pull

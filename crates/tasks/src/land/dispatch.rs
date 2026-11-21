@@ -168,13 +168,21 @@ pub fn start(env: &Env, cwd: &Path, slug: &str, actor: &str) -> Option<String> {
     )
 }
 
-/// What a move of `task` by `actor` starts: its dispatch, where it moved to review or was
-/// dispatched before ([`poke`]), for a task the delivery pipeline takes; else none.
+/// What a move of `task` by `actor` starts: its dispatch, where it moved to review (its mark left
+/// first, [`mark`]) or was dispatched before ([`poke`]), for a task the delivery pipeline takes;
+/// else none.
 pub fn on_move(env: &Env, cwd: &Path, task: &Task, actor: &str) -> Option<String> {
     if !crate::on_review::delivery_task(task.parent.as_deref(), task.instruction) {
         return None;
     }
     if task.status == "review" {
+        if enabled(env)
+            && let Some(main) = delivering(cwd)
+            && let Ok(folder) = lands(&main)
+            && fs::create_dir_all(&folder).is_ok()
+        {
+            let _ = fs::write(mark(&folder, &task.slug), actor);
+        }
         return start(env, cwd, &task.slug, actor);
     }
     poke(env, cwd, &task.slug, actor)
@@ -182,15 +190,36 @@ pub fn on_move(env: &Env, cwd: &Path, task: &Task, actor: &str) -> Option<String
 
 /// The dispatch of `slug`, started as [`start`] does, only where it was dispatched before: a
 /// write that can change its evidence (an assessment, a verdict, a gate decision) after its pull
-/// request was published. None for a task never published.
+/// request was published, or after a move to review whose dispatch has not bound one yet (its
+/// [`mark`]), so a first dispatch that stopped before it published is made again. None for a
+/// task never dispatched, or delivered and closed.
 pub fn poke(env: &Env, cwd: &Path, slug: &str, actor: &str) -> Option<String> {
     if !enabled(env) {
         return None;
     }
     let main = delivering(cwd)?;
     let folder = lands(&main).ok()?;
-    Journal::read(&folder, slug)?.binding?;
+    let bound = Journal::read(&folder, slug).is_some_and(|journal| journal.binding.is_some());
+    if !(bound || mark(&folder, slug).exists()) {
+        return None;
+    }
     start(env, &main, slug, actor)
+}
+
+/// The mark a move to review leaves in the lands' `folder` for `slug` until a dispatch binds its
+/// pull request: what [`poke`] starts a dispatch by before there is a binding to start it by.
+/// It names who moved it.
+fn mark(folder: &Path, slug: &str) -> PathBuf {
+    folder.join(format!("{}{MARK}", super::file_stem(slug)))
+}
+
+/// A mark's ending in the lands' folder ([`mark`]).
+const MARK: &str = ".dispatching";
+
+/// `slug`'s [`mark`] taken away: its pull request bound, or its dispatch due no more (cancelled,
+/// or out of review before it bound one).
+pub(super) fn unmark(folder: &Path, slug: &str) {
+    let _ = fs::remove_file(mark(folder, slug));
 }
 
 /// The watcher started detached from the main checkout `main` where none runs and `env` starts one
@@ -250,7 +279,8 @@ fn taken(file: std::fs::File) -> Option<sys::FileLock> {
     Some(held)
 }
 
-/// Each task the lands' folder `folder` holds a journal of armed at the host, by slug.
+/// Each task the lands' folder `folder` holds a journal of armed at the host, by slug: those the
+/// watcher reads ([`Journal::watched`]).
 pub fn armed(folder: &Path) -> Vec<Journal> {
     let Ok(entries) = fs::read_dir(folder) else {
         return Vec::new();
@@ -260,7 +290,7 @@ pub fn armed(folder: &Path) -> Vec<Journal> {
         .filter(|entry| entry.file_name().to_string_lossy().ends_with(".delivery"))
         .filter_map(|entry| fs::read_to_string(entry.path()).ok())
         .filter_map(|text| serde_json::from_str::<Journal>(&text).ok())
-        .filter(|journal| journal.stage == Stage::Armed)
+        .filter(Journal::watched)
         .collect();
     armed.sort_by(|a, b| a.slug.cmp(&b.slug));
     armed
@@ -368,6 +398,24 @@ pub fn watch(
     }
 }
 
+/// What turning a task's merge off as it left review came to ([`Landing::left_review`]).
+enum Left {
+    /// Off, the journal written so.
+    Off,
+    /// Ended there, merged or still armed: the line it ends with.
+    Ended(String),
+}
+
+/// The line a task's merge turned off as it left review is said by: `slug` at `status`, its
+/// checks published at `head`.
+fn off(slug: &str, status: &str, head: &str) -> String {
+    format!(
+        "land {slug}: its auto-merge is off while {slug} is {status}, its checks as its evidence \
+         says at {}; it is armed again once it moves to review",
+        short(head)
+    )
+}
+
 /// What a disarm came to.
 enum Disarm {
     /// Off: no check that passes later merges it.
@@ -420,7 +468,13 @@ impl Landing<'_> {
             return self.cancelled(journal);
         }
         let bound = (journal.as_ref()).is_some_and(|journal| journal.binding.is_some());
-        if !(CLOSES.contains(&task.status.as_str()) || bound) {
+        let closes = CLOSES.contains(&task.status.as_str());
+        if bound || !closes {
+            // Bound, a later write dispatches it by its binding; out of review unbound, its next
+            // move to review marks it again.
+            unmark(&self.folder, slug);
+        }
+        if !(closes || bound) {
             return Ok(format!(
                 "{slug} is {}: it is dispatched once it moves to review",
                 task.status
@@ -439,8 +493,18 @@ impl Landing<'_> {
         {
             return done;
         }
-        let armed = (journal.as_ref()).is_some_and(|journal| journal.stage == Stage::Armed);
-        let closes = CLOSES.contains(&task.status.as_str());
+        // Out of review with its merge armed: turned off before anything is published, as a
+        // publication that keeps its evidence standing would leave the host seconds to merge a
+        // task moved back to work.
+        if !closes && let Some(earlier) = journal.clone().filter(|journal| journal.armed) {
+            if let Left::Ended(line) = self.left_review(earlier, &task.status)? {
+                return Ok(line);
+            }
+            self.publish_head(&task, &tip, &CLOSES, String::new(), false)?;
+            let line = off(slug, &task.status, &tip);
+            self.post(&line, None);
+            return Ok(line);
+        }
         let snapshot = self.read_evidence(&task, &tip, false)?;
         if let Some(journal) = journal.filter(|journal| {
             closes
@@ -462,9 +526,6 @@ impl Landing<'_> {
             return self.arm(journal, eligible);
         }
         // Published for its checks to say where it stands; armed only once it is back in review.
-        if armed {
-            return self.left_review(journal, &task.status);
-        }
         Ok(format!(
             "{slug} is {}: its checks say its evidence at {}, and it is armed once it moves to \
              review",
@@ -500,9 +561,7 @@ impl Landing<'_> {
     /// while `symphony/eligible` is pending.
     pub(super) fn watched(mut self, clock: i64) -> Result<String, Stop> {
         let slug = self.slug;
-        let Some(journal) =
-            Journal::read(&self.folder, slug).filter(|journal| journal.stage == Stage::Armed)
-        else {
+        let Some(journal) = Journal::read(&self.folder, slug).filter(Journal::watched) else {
             return Ok(format!("{slug} is not armed at the host"));
         };
         let task = self.store.get(slug)?;
@@ -513,8 +572,11 @@ impl Landing<'_> {
             return Ok(format!("{slug} is armed and bound to no pull request"));
         };
         let tip = rev(&self.main, &format!("refs/heads/{slug}"));
+        // A publication that stopped before the host answered its arming again: whatever its
+        // checks said when it stopped, the host may merge it, so it is read every round.
+        let unfinished = journal.stage != Stage::Armed;
         let mut read = Value::Null;
-        if journal.green.is_some() {
+        if journal.green.is_some() || unfinished {
             let request = json!({
                 "verb": "result", "slug": slug,
                 "repository": binding.repository, "pull": binding.pull,
@@ -548,18 +610,29 @@ impl Landing<'_> {
             }
         }
         if !CLOSES.contains(&task.status.as_str()) {
-            return self.left_review(journal, &task.status);
+            let head = journal.head.clone();
+            return Ok(match self.left_review(journal, &task.status)? {
+                Left::Ended(line) => line,
+                Left::Off => {
+                    let line = off(slug, &task.status, &head);
+                    self.post(&line, None);
+                    line
+                }
+            });
         }
-        // A head or evidence that changed since it was published: dispatched again.
+        // A head or evidence that changed since it was published, or a publication that did not
+        // end: dispatched again.
         if let Some(tip) = tip {
             let snapshot = self.read_evidence(&task, &tip, false)?;
-            if tip != journal.head || snapshot.revision != journal.revision {
+            if unfinished || tip != journal.head || snapshot.revision != journal.revision {
                 self.say(&format!(
-                    "land {slug}: its {} changed since it was published: publishing it again",
-                    if tip == journal.head {
-                        "evidence"
+                    "land {slug}: {}: publishing it again",
+                    if tip != journal.head {
+                        "its head changed since it was published"
+                    } else if unfinished {
+                        "its publication did not end while its merge is armed"
                     } else {
-                        "head"
+                        "its evidence changed since it was published"
                     }
                 ));
                 let (journal, eligible) =
@@ -647,6 +720,7 @@ impl Landing<'_> {
         } else {
             journal.stage = Stage::Eligible;
             journal.green = None;
+            journal.armed = false;
             journal.write(&self.folder).map_err(Stop::Refused)?;
         }
         let line = format!("land {slug}: not merged: {why}; nothing merged, its auto-merge off");
@@ -719,30 +793,26 @@ impl Landing<'_> {
     }
 
     /// The host's merge of this task, armed, turned off as it moved back to `status`, where no
-    /// merge closes it: armed again once it moves to review. One the host made meanwhile is
-    /// settled, the task closed from `status` as well.
-    fn left_review(&mut self, mut journal: Journal, status: &str) -> Result<String, Stop> {
-        let slug = self.slug;
+    /// merge closes it: armed again once it moves to review. [`Left::Off`] once it is, which the
+    /// caller says ([`off`]); [`Left::Ended`] where it ends there: merged by the host meanwhile,
+    /// settled, the task closed from `status` as well; or not turned off, still armed and read
+    /// again by the watcher's next round.
+    fn left_review(&mut self, mut journal: Journal, status: &str) -> Result<Left, Stop> {
         match self.disarm(&journal) {
             Disarm::Off => {}
-            Disarm::Merged => return self.merged(journal, Some(status)),
+            Disarm::Merged => return self.merged(journal, Some(status)).map(Left::Ended),
             Disarm::Not(line) => {
-                // Still armed: the watcher's next round tries again.
-                journal.stage = Stage::Armed;
-                journal.write(&self.folder).map_err(Stop::Refused)?;
-                return Ok(line);
+                if let Some(said) = watch_start(self.env, &self.main) {
+                    self.say(&format!("land {}: {said}", self.slug));
+                }
+                return Ok(Left::Ended(line));
             }
         }
         journal.stage = Stage::Eligible;
         journal.green = None;
+        journal.armed = false;
         journal.write(&self.folder).map_err(Stop::Refused)?;
-        let line = format!(
-            "land {slug}: its auto-merge is off while {slug} is {status}, its checks as its \
-             evidence says at {}; it is armed again once it moves to review",
-            short(&journal.head)
-        );
-        self.post(&line, None);
-        Ok(line)
+        Ok(Left::Off)
     }
 
     /// The task back in progress, from review, blocked or done (by review, as a done task goes
@@ -825,6 +895,7 @@ impl Landing<'_> {
     /// closes a cancelled task. Nothing with no pull request.
     fn cancelled(&mut self, journal: Option<Journal>) -> Result<String, Stop> {
         let slug = self.slug;
+        unmark(&self.folder, slug);
         let Some(journal) = journal else {
             return Ok(format!("{slug} is cancelled: nothing to close"));
         };
@@ -866,7 +937,7 @@ impl Landing<'_> {
         let slug = self.slug;
         let pull = journal.binding.as_ref().map_or(0, |binding| binding.pull);
         let line = format!("{slug} is cancelled and pull request #{pull} was not closed ({why})");
-        if journal.stage == Stage::Armed {
+        if journal.watched() {
             if let Some(said) = watch_start(self.env, &self.main) {
                 self.say(&format!("land {slug}: {said}"));
             }

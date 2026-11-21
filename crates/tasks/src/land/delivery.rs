@@ -226,6 +226,13 @@ pub struct Journal {
     /// while it is not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub green: Option<i64>,
+    /// Whether the host's own merge of its pull request is armed, as far as the board knows: set
+    /// once the host answers an arming, cleared only once it answers a disarm. A publication
+    /// between keeps it, as the host keeps the merge armed across a push: what the watcher reads
+    /// ([`Journal::watched`]), so a publication that stops before the host answers an arming
+    /// again leaves a merge the host may still make in sight.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub armed: bool,
 }
 
 /// What an import delivers, as the land read it before it published, and what it proved after:
@@ -271,6 +278,16 @@ impl Journal {
 
     pub fn drop_in(folder: &Path, slug: &str) {
         let _ = fs::remove_file(Journal::path(folder, slug));
+    }
+
+    /// Whether the watcher reads it: its merge armed at the host and nothing here settling it
+    /// yet, the stage short of a merge asked and no person holding it. One whose last publication
+    /// stopped before the host answered its arming again ([`Stage::Prepared`] or
+    /// [`Stage::Eligible`]) is among them: the host may merge it all the same.
+    pub fn watched(&self) -> bool {
+        (self.armed || self.stage == Stage::Armed)
+            && self.held.is_none()
+            && matches!(self.stage, Stage::Prepared | Stage::Eligible | Stage::Armed)
     }
 }
 
@@ -862,6 +879,8 @@ impl Landing<'_> {
         let green = (earlier.as_ref())
             .filter(|journal| journal.head == tip)
             .and_then(|journal| journal.green);
+        // A merge armed before stays armed at the host through this publication.
+        let armed = (earlier.as_ref()).is_some_and(|journal| journal.armed);
         let (title, body) = match &import {
             Some(import) => (
                 format!("Merge branch '{slug}'"),
@@ -896,6 +915,7 @@ impl Landing<'_> {
             held: None,
             import,
             green,
+            armed,
         };
         let here = |line: String| Stop::Refused(line);
         if !agrees(&snapshot, &journal) {
@@ -929,6 +949,8 @@ impl Landing<'_> {
             journal.revision = snapshot.revision.clone();
             journal.stage = Stage::Eligible;
             journal.write(&self.folder).map_err(here)?;
+            // Bound: a later write dispatches it by its binding, no longer by its mark.
+            super::dispatch::unmark(&self.folder, slug);
             let again = self.read_evidence(task, tip, eligible_only)?;
             if !agrees(&again, &journal) {
                 return Err(changed());
@@ -987,20 +1009,39 @@ impl Landing<'_> {
             "repository": binding.repository, "pull": binding.pull, "method": journal.method(),
             "title": journal.title, "body": journal.body,
         });
+        // Armed before, the host may merge the head published all the same: the watcher reads
+        // it every round and arms it again ([`Journal::watched`]).
+        let (before, at) = (journal.armed, short(&journal.head).to_string());
         let not_armed = |why: &str| {
-            format!(
-                "pull request #{} of {slug} was not armed ({why}): nothing merged, and the next \
-                 dispatch asks again",
-                binding.pull
-            )
+            if before {
+                format!(
+                    "pull request #{} of {slug} was not armed again at {at} ({why}): its merge \
+                     armed before stands, which the watcher reads every round and arms again",
+                    binding.pull
+                )
+            } else {
+                format!(
+                    "pull request #{} of {slug} was not armed ({why}): nothing merged, and the \
+                     next dispatch asks again",
+                    binding.pull
+                )
+            }
         };
-        let answer = (self.ask("arm", &delivering(request, &journal)))
-            .map_err(|why| self.refuse(Refusal::here(not_armed(&why))))?;
+        let answer = match self.ask("arm", &delivering(request, &journal)) {
+            Ok(answer) => answer,
+            Err(why) => {
+                if before && let Some(said) = super::dispatch::watch_start(self.env, &self.main) {
+                    self.say(&format!("land {slug}: {said}"));
+                }
+                return Err(self.refuse(Refusal::here(not_armed(&why))));
+            }
+        };
         let (said, why) = state(&answer);
         match said {
             "armed" => {
                 let first = journal.stage != Stage::Armed;
                 journal.stage = Stage::Armed;
+                journal.armed = true;
                 journal.green = if eligible {
                     journal.green.or_else(|| Some(super::dispatch::seconds()))
                 } else {
@@ -1095,11 +1136,13 @@ impl Landing<'_> {
                     ),
                 }))
             }
-            other => Err(self.refuse(Refusal::here(not_armed(if why.is_empty() {
-                other
-            } else {
-                why
-            })))),
+            other => {
+                let line = not_armed(if why.is_empty() { other } else { why });
+                if before && let Some(said) = super::dispatch::watch_start(self.env, &self.main) {
+                    self.say(&format!("land {slug}: {said}"));
+                }
+                Err(self.refuse(Refusal::here(line)))
+            }
         }
     }
 
@@ -1972,6 +2015,7 @@ impl Landing<'_> {
             }
         }
         Journal::drop_in(&self.folder, slug);
+        super::dispatch::unmark(&self.folder, slug);
         Ok(line)
     }
 }

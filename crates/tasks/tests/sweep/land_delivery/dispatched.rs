@@ -9,7 +9,7 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 use symphony_board::land::dispatch::{self, CLOSES, FAILED, Watching};
-use symphony_board::land::dispatch_by;
+use symphony_board::land::{dispatch_by, file_stem};
 
 /// The dispatch of `slug` as `actor` with `host` answering: what it printed, and how it ended.
 fn dispatched(
@@ -323,9 +323,11 @@ fn a_changes_verdict_turns_the_merge_off_and_a_new_head_is_pushed_pending_at_it(
             &tip[..7]
         )
     );
-    assert_eq!(host.verbs()[2..], ["result", "publish", "disarm"]);
+    // Off before anything is published: nothing the host reads after can merge it.
+    assert_eq!(host.verbs()[2..], ["result", "disarm", "publish"]);
     assert!(!host.is_armed());
-    assert_eq!(journal(&r, SLUG).stage, Stage::Eligible);
+    let kept = journal(&r, SLUG);
+    assert_eq!((kept.stage, kept.armed), (Stage::Eligible, false));
     // Dispatched again while in progress: published, nothing armed.
     let (_, result) = dispatched(&r, SLUG, &people.orch, &host);
     assert!(
@@ -931,6 +933,111 @@ fn a_close_the_host_does_not_make_is_asked_again_while_armed_and_said_where_noth
     assert!(landings(&r, SLUG).is_empty());
 }
 
+#[test]
+fn a_merge_armed_before_stays_watched_through_a_publication_that_stops_and_is_closed_once() {
+    for case in ["arm lost", "publish unavailable", "watcher, arm lost"] {
+        let (r, bare) = delivering();
+        let base = head(&bare, "main");
+        let (people, _, tip) = pending(&r, SLUG, "sim/jump.gd");
+        let host = Host::new(&r, &bare);
+        dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+        assert!(host.is_armed(), "{case}");
+        // The approve, and its publication stopped before the host answered its arming again:
+        // eligible green at the head all the same, and the host's merge armed still.
+        approve(&r, SLUG, &format!("{tip}: reads well"));
+        match case {
+            "publish unavailable" => {
+                let away =
+                    json!({"state": "unavailable", "why": "its checks did not read back yet"});
+                host.says.borrow_mut().push(("publish", away));
+            }
+            _ => host.lost.borrow_mut().push("arm"),
+        }
+        let line = match case {
+            "publish unavailable" => format!("{SLUG} was not published (unavailable)"),
+            _ => format!(
+                "pull request #3 of {SLUG} was not armed again at {} (arm: no answer): its merge \
+                 armed before stands, which the watcher reads every round and arms again",
+                &tip[..7]
+            ),
+        };
+        if case.starts_with("watcher") {
+            // The watcher's own round publishes the approve no dispatch was started for.
+            let (said, ..) = watched(&r, &host, dispatch::seconds(), 1, &[]);
+            assert!(said.contains(&line), "{case}: {said}");
+        } else {
+            let stopped = dispatched(&r, SLUG, &people.orch, &host).1.unwrap_err();
+            assert!(stopped.starts_with(&line), "{case}: {stopped}");
+            // Said on the thread, as nobody reads a dispatch's log.
+            let (text, to) = last_post(&r, SLUG);
+            assert!(
+                text.starts_with(&format!("land {SLUG}: its dispatch stopped: {line}")),
+                "{case}: {text}"
+            );
+            assert_eq!(to.as_deref(), Some("@orchestrator"), "{case}");
+        }
+        host.says.borrow_mut().clear();
+        assert_eq!(head(&bare, "main"), base, "{case}: nothing merged yet");
+        assert_eq!(host.request("publish")["snapshot"]["eligible"], true);
+        let kept = journal(&r, SLUG);
+        assert!(kept.armed && kept.watched(), "{case}: {:?}", kept.stage);
+        assert_ne!(kept.stage, Stage::Armed, "{case}");
+        // The host merges on green; the watcher's next round reads it and closes the task once.
+        let (said, line, _) = watched(&r, &host, dispatch::seconds(), 3, &[]);
+        assert_eq!(
+            line, "nothing is armed at the host: the watcher ends",
+            "{case}"
+        );
+        let squash = head(&bare, "main");
+        assert_ne!(squash, base, "{case}");
+        assert!(
+            said.contains(&format!("landed {SLUG} on main at {}", &squash[..12])),
+            "{case}: {said}"
+        );
+        assert_eq!(head(&r.root, "main"), squash, "{case}");
+        assert_eq!(landings(&r, SLUG).len(), 1, "{case}");
+        assert_eq!(status(&r, SLUG), "done", "{case}");
+        assert_eq!(Receipt::read(&lands(&r), SLUG).unwrap().head, tip, "{case}");
+    }
+}
+
+#[test]
+fn a_first_dispatch_that_stops_before_it_binds_is_said_and_made_by_the_next_dispatch() {
+    let (r, bare) = delivering();
+    let (people, _, tip) = pending(&r, SLUG, "sim/jump.gd");
+    let host = Host::new(&r, &bare).losing(&["publish"]);
+    let stopped = dispatched(&r, SLUG, &people.exe, &host).1.unwrap_err();
+    assert!(stopped.contains("publish: no answer"), "{stopped}");
+    let kept = journal(&r, SLUG);
+    assert_eq!(
+        (kept.stage, kept.binding.is_none(), kept.armed),
+        (Stage::Prepared, true, false)
+    );
+    assert!(
+        !kept.watched(),
+        "nothing the host may merge: nothing was armed"
+    );
+    assert_eq!(
+        last_post(&r, SLUG),
+        (
+            format!(
+                "land {SLUG}: its dispatch stopped: {stopped}; `just land {SLUG} --dispatch` \
+                 dispatches it again, as a later write to it does"
+            ),
+            Some("@orchestrator".into())
+        )
+    );
+    // The next dispatch, a later write's: bound, published and armed.
+    let line = dispatched(&r, SLUG, &people.exe, &host).1.unwrap();
+    assert!(
+        line.contains(&format!("dispatched {} as pull request #3", &tip[..7])),
+        "{line}"
+    );
+    assert!(host.is_armed());
+    let kept = journal(&r, SLUG);
+    assert_eq!((kept.stage, kept.armed), (Stage::Armed, true));
+}
+
 // -- what a dispatch leaves alone ------------------------------------------------------------------
 
 #[test]
@@ -1103,6 +1210,70 @@ fn a_move_to_review_and_a_later_verdict_start_its_dispatch_detached_with_the_lan
         started(&record, 2)[1],
         format!("land {SLUG} --dispatch --as {reviewer}|dispatch|unset")
     );
+}
+
+#[test]
+fn a_move_to_review_marks_it_so_a_write_dispatches_it_before_any_pull_request_binds() {
+    let (r, bare) = delivering();
+    let (program, record) = stand_in(&r);
+    let bin = program.to_string_lossy().into_owned();
+    let on = [("TASKS_DISPATCH", "on"), ("TASKS_BIN", bin.as_str())];
+    let wt = r.add("sim-jump", Some(SLUG), "main");
+    write(&wt, "sim/jump.gd", "extends Node\n");
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", "work"]);
+    r.task(SLUG);
+    let (orch, exe) = (r.board.session("orchestrator"), r.board.session("worker"));
+    let store = &r.board.store;
+    store.take_role(SLUG, &orch, "orchestrator").unwrap();
+    store.claim(SLUG, &exe).unwrap();
+    let mark = lands(&r).join(format!("{}.dispatching", file_stem(SLUG)));
+    assert!(!mark.exists());
+    let (code, out, err) = tasks(&r, &exe, &["move", SLUG, "review"], &on);
+    assert_eq!(code, 0, "{out}{err}");
+    started(&record, 1);
+    assert_eq!(
+        fs::read_to_string(&mark).unwrap(),
+        exe,
+        "it names who moved it"
+    );
+    // Its dispatch bound nothing (the stand-in dispatches nothing, as one that stopped): a later
+    // write, the approve, dispatches it again by its mark.
+    let reviewer = r.board.session("reviewer");
+    store.take_role(SLUG, &reviewer, "reviewer").unwrap();
+    let (code, out, err) = tasks(&r, &reviewer, &["verdict", SLUG, "approve", "fine"], &on);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("→ its dispatch to the host started detached"),
+        "{out}"
+    );
+    assert_eq!(
+        started(&record, 2)[1],
+        format!("land {SLUG} --dispatch --as {reviewer}|dispatch|unset")
+    );
+    // Bound by a dispatch, the mark goes: from then on its binding starts it.
+    let env = landing(&r, &on);
+    let host = Host::new(&r, &bare);
+    dispatched(&r, SLUG, &exe, &host).1.unwrap();
+    assert!(!mark.exists());
+    assert!(dispatch::poke(&env, &r.root, SLUG, &exe).is_some());
+    started(&record, 3);
+    // A task never moved to review is marked by nothing and bound to nothing: none started.
+    r.task("sim/walk");
+    assert_eq!(dispatch::poke(&env, &r.root, "sim/walk", &exe), None);
+    // Nor one out of review before it bound one: its dispatch takes its mark away.
+    fs::write(
+        lands(&r).join(format!("{}.dispatching", file_stem("sim/walk"))),
+        &exe,
+    )
+    .unwrap();
+    let said = dispatched(&r, "sim/walk", &exe, &host).1.unwrap();
+    assert!(
+        said.ends_with("it is dispatched once it moves to review"),
+        "{said}"
+    );
+    assert_eq!(dispatch::poke(&env, &r.root, "sim/walk", &exe), None);
+    assert_eq!(fs::read_to_string(&record).unwrap().lines().count(), 3);
 }
 
 #[test]

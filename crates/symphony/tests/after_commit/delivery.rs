@@ -689,6 +689,7 @@ fn journaled(root: &Path, slug: &str, stage: symphony_board::land::delivery::Sta
         held: (!held.is_empty()).then(|| held.into()),
         import: None,
         green: None,
+        armed: false,
     };
     journal
         .write(&root.join(".git/symphony/tasks/land"))

@@ -712,6 +712,7 @@ fn a_land_cut_before_it_started_the_regenerator_loses_no_output_and_makes_none_t
         held: None,
         import: None,
         green: None,
+        armed: false,
     }
     .write(&lands(&r))
     .unwrap();
