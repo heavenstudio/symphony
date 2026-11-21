@@ -989,7 +989,7 @@ fn a_failed_chat_waits_without_writes_and_retries_at_its_deadline() {
         )
         .unwrap();
     drop(listener);
-    f.store.client().query("DEFINE EVENT state_writes ON callback_state WHEN true THEN { UPSERT callback_audit:writes SET count = (count ?? 0) + 1; };", json!({})).unwrap();
+    f.store.client().query("DEFINE TABLE callback_audit SCHEMALESS; DEFINE EVENT state_writes ON callback_state WHEN true THEN { UPSERT callback_audit:writes SET count = (count ?? 0) + 1; };", json!({})).unwrap();
     f.store
         .owner_callback("deadline", "retry this owner message")
         .unwrap();

@@ -92,15 +92,20 @@ fn table<T: DeserializeOwned>(
     })
 }
 
-/// `value` as a `T`, refused, naming each, where it has a field `T` does not know, at any depth: what
-/// a row's struct reads past on an ordinary read ([`crate::schema::OPEN`]) a dump would drop.
+/// `value` as a `T`, refused, naming each with where it is (`unknown field `estimate` at
+/// 1.estimate`), where it has a field `T` does not know, at any depth: what a row's struct reads
+/// past on an ordinary read ([`crate::schema::OPEN`]) a dump would drop.
 pub fn strictly<T: DeserializeOwned>(value: Value) -> Result<T, String> {
     let mut unknown = Vec::new();
-    let read: T = serde_ignored::deserialize(value, |path| unknown.push(path.to_string()))
-        .map_err(|e| e.to_string())?;
+    let read: T = serde_ignored::deserialize(value, |path| {
+        let path = path.to_string();
+        let name = path.rsplit('.').next().unwrap_or(&path);
+        unknown.push(format!("unknown field `{name}` at {path}"));
+    })
+    .map_err(|e| e.to_string())?;
     match unknown.is_empty() {
         true => Ok(read),
-        false => Err(format!("a field it does not know: {}", unknown.join(", "))),
+        false => Err(unknown.join(", ")),
     }
 }
 
@@ -421,6 +426,44 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&role).unwrap(),
             serde_json::json!({"slug": "a", "handle": "h", "role": "executor", "since": 1.0})
+        );
+    }
+
+    #[test]
+    fn a_row_of_an_open_table_reads_past_a_field_it_does_not_know_and_a_strict_read_names_it() {
+        let row = serde_json::json!({
+            "slug": "a", "handle": "h", "role": "executor", "since": 1.0, "fixture_note": "x"});
+        let role: RoleRow = serde_json::from_value(row.clone()).unwrap();
+        assert_eq!(role.handle, "h");
+        assert_eq!(
+            strictly::<RoleRow>(row).unwrap_err(),
+            "unknown field `fixture_note` at fixture_note"
+        );
+        // Each field it does not know, at any depth, in the order read; a list's place by its index.
+        let rows = serde_json::json!([
+            {"slug": "a", "handle": "h", "role": "executor", "since": 1.0},
+            {"slug": "b", "handle": "h", "role": "executor", "since": 1.0, "one": 1, "two": 2},
+        ]);
+        assert_eq!(
+            strictly::<Vec<RoleRow>>(rows).unwrap_err(),
+            "unknown field `one` at 1.one, unknown field `two` at 1.two"
+        );
+        // A struct that denies what it does not know refuses it itself, as serde says it.
+        let held = serde_json::json!({"tasks": [], "fixture_table": []});
+        assert!(
+            strictly::<Dump>(held)
+                .unwrap_err()
+                .starts_with("unknown field `fixture_table`, expected one of `tasks`"),
+        );
+        // What it knows it reads as the tolerant read does, and a type that is wrong is refused
+        // as serde says it.
+        let known =
+            serde_json::json!({"slug": "a", "handle": "h", "role": "executor", "since": 1.0});
+        assert_eq!(strictly::<RoleRow>(known).unwrap(), role);
+        let wrong = serde_json::json!({"slug": 1, "handle": "h", "role": "executor", "since": 1.0});
+        assert_eq!(
+            strictly::<RoleRow>(wrong).unwrap_err(),
+            "invalid type: number, expected a string"
         );
     }
 
