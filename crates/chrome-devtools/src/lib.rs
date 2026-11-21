@@ -38,6 +38,9 @@ mod tests;
 
 const POLL: Duration = Duration::from_millis(25);
 const PROTOCOL_CPU: Duration = Duration::from_secs(60);
+/// What [`Chrome::rooted`] asks: `null` of a document with no root element, else the time the
+/// document began, which no two documents of a page share.
+const ROOTED: &str = "document.documentElement === null ? null : performance.timeOrigin";
 const CLEANUP_CPU: Duration = Duration::from_secs(1);
 /// A wait ends at the latest this many times its allowance after it started, on the wall clock,
 /// and never sooner than [`BACKSTOP_FLOOR`]: the stalls of a page's renderer seen on a loaded
@@ -1587,12 +1590,21 @@ impl Chrome {
     /// condition: it never had the turns to make the condition true. An evaluation the page's
     /// navigation took from it ([`LOST_TO_NAVIGATION`]) is a turn whose condition is not met yet,
     /// and the document the page went to is asked again, and so is a condition that threw on a
-    /// document with no element yet ([`Chrome::rootless`]); any other error reply ends the wait. A
+    /// document not known to have had its element when it was asked ([`Chrome::rooted`]): one
+    /// with none yet, or one first seen with it only after the throw, which may have got it in
+    /// between. A throw on a document seen with its element before the ask is the condition's own
+    /// and ends the wait, as any other error reply does. A
     /// page that closed, or whose renderer crashed, before the wait or under it, ends it at once
     /// with an error saying which ([`Gone`]): Chrome answers none of its evaluations then.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> Result<bool> {
         let mut budget = self.page_budget(cpu)?;
+        // The document a throw of the condition was last followed by its element on.
+        let mut rooted: Option<Value> = None;
+        // The last answer, where it was a throw the wait asked again on such a document: the
+        // wait's answer if its allowance ends there, as a throw is never a false condition.
+        let mut thrown: Option<Error>;
         let state = loop {
+            thrown = None;
             if let Some(gone) = self.gone {
                 return Err(Error::gone(expression, gone));
             }
@@ -1606,9 +1618,15 @@ impl Chrome {
                 ),
                 Ok(None) => break "evaluation still pending",
                 Err(error) if error.navigated => (false, "evaluation lost to a navigation"),
-                Err(error) if error.threw && self.rootless(&mut budget)? => {
-                    (false, "the document has no element yet")
-                }
+                Err(error) if error.threw => match self.rooted(&mut budget)? {
+                    None => (false, "the document has no element yet"),
+                    Some(document) if rooted.as_ref() == Some(&document) => return Err(error),
+                    Some(document) => {
+                        rooted = Some(document);
+                        thrown = Some(error);
+                        (false, "the condition threw")
+                    }
+                },
                 Err(error) => return Err(error),
             };
             if met {
@@ -1624,18 +1642,24 @@ impl Chrome {
         if budget.stalled() {
             return Err(Error::stall(expression, &budget));
         }
+        if let Some(error) = thrown {
+            return Err(error);
+        }
         eprintln!("Chrome {state} after {}: {expression}", budget.spent());
         Ok(false)
     }
 
-    /// Whether the page's document has no root element yet, or the page went on while it was
-    /// asked: a document the page has just gone to and not begun to read, which a busy machine
-    /// leaves so for a while. A condition that reads the root (`document.documentElement.dataset`)
-    /// throws there, and says nothing of the page it waits for.
-    fn rootless(&mut self, budget: &mut WaitBudget) -> Result<bool> {
-        match self.evaluate("document.documentElement === null", budget, true) {
-            Ok(rootless) => Ok(rootless != Some(json!(false))),
-            Err(error) if error.navigated => Ok(true),
+    /// The page's document, by the time it began (`performance.timeOrigin`, each document's
+    /// own), once it has its root element; `None` while it has none, or as the page went on while
+    /// it was asked: a document the page has just gone to and not begun to read, which a busy
+    /// machine leaves so for a while. A condition that reads the root
+    /// (`document.documentElement.dataset`) throws there, and says nothing of the page it waits
+    /// for. This is asked after the throw, so a document it names may have got its element in
+    /// between: only a second throw on the document it named says the element was there.
+    fn rooted(&mut self, budget: &mut WaitBudget) -> Result<Option<Value>> {
+        match self.evaluate(ROOTED, budget, true) {
+            Ok(document) => Ok(document.filter(|document| !document.is_null())),
+            Err(error) if error.navigated => Ok(None),
             Err(error) => Err(error),
         }
     }
