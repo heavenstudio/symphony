@@ -39,10 +39,13 @@ one it holds over), the scopes it may be written in and its class. A setting is 
 the local settings file refuses its table or key by name (`PROTECTED` and `PROTECTED_KEYS` in
 `crates/tasks/src/local.rs`, the one list) and a *preference* otherwise; a reviewed table is said
 as a sentence with its file and line. Its parts are the integrations and tools (the launch agents,
-Herdr's panes, GitHub, which is read from the committed `symphony-github.toml` without running
-that program, and the plugins), the models and limits, the project's name, documents and theme,
+Herdr's panes, GitHub, and the plugins), the models and limits, the project's name, documents and theme,
 the reviewed settings (the landing, the board's commands, the stamps, the releases and the
-workflow) and the device's appearance. A project file that does not load is said at the top of
+workflow) and the device's appearance. GitHub is said by what the
+`symphony-github.toml` the default branch commits writes, the branch being the one the main
+checkout's HEAD names, as that program reads it. The page runs no program and holds no copy of
+its rules, so a file that writes `enabled = true` is said as enabled in its file and never as on:
+a file the program refuses runs as off, which its own status tells. A project file that does not load is said at the top of
 the page with what holds in its place, as is a local file that is refused. The page shows a
 preference as its value alone: no control on it changes one.
 

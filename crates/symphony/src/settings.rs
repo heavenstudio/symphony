@@ -333,7 +333,7 @@ pub fn page(root: &Path, machine: &Machine) -> SettingsPage {
                 agent(machine, &defaults, "claude", "Claude Code"),
                 agent(machine, &defaults, "codex", "Codex"),
                 herdr(machine, &file, &project),
-                github(machine, &main, &project.default_branch),
+                github(machine, &main),
                 plugins(&file, &project),
             ],
         },
@@ -472,70 +472,105 @@ fn committed(main: &Path, branch: &str, file: &str) -> Result<Option<String>, St
         .map_err(|e| e.to_string())
 }
 
-/// The GitHub exchange, from the settings the default branch commits, as its program reads them:
-/// no file there is off, and one that does not read is off too. Its settings decide what lands
-/// and what is written to an outside service, so on and off are both reviewed.
-fn github(machine: &Machine, main: &Path, branch: &str) -> SettingsEntry {
-    let on_branch = format!("{GITHUB_FILE} on {branch}");
-    let read = committed(main, branch, GITHUB_FILE);
-    let table = match &read {
-        Ok(Some(text)) => toml::from_str::<toml::Table>(text).map_err(|e| e.message().to_string()),
-        Ok(None) => Ok(toml::Table::new()),
+/// The default branch as the GitHub program names it: `[project] default_branch` of the
+/// `symphony.toml` the main checkout's HEAD commits, `main` where none is committed or it names
+/// none. An edit of the working file names no branch until it is committed.
+fn committed_branch(main: &Path) -> Result<String, String> {
+    let text = committed(main, "HEAD", "symphony.toml")?.unwrap_or_default();
+    let table = toml::from_str::<toml::Table>(&text)
+        .map_err(|e| format!("symphony.toml at HEAD: {}", e.message()))?;
+    Ok(table
+        .get("project")
+        .and_then(|project| project.get("default_branch"))
+        .and_then(Value::as_str)
+        .unwrap_or("main")
+        .to_string())
+}
+
+/// What the page can say of the GitHub exchange without running its program.
+enum Exchange {
+    /// Nothing turns it on: no committed file, or one that leaves `enabled` out or false.
+    Off(String),
+    /// The committed file, or the branch's name, does not read: the program runs as off.
+    Unread(String),
+    /// The committed file writes `enabled = true`, with what else it writes. Whether the program
+    /// accepts the file is its own to say: one it refuses runs as off.
+    Written(String),
+}
+
+/// The GitHub exchange, by what the default branch's committed settings write. The page runs no
+/// program and holds no copy of its rules, so it says what the file writes and claims the
+/// exchange on for none: a file its program refuses runs as off, which that program's own status
+/// tells. Its settings decide what lands and what is written to an outside service, so they are
+/// reviewed.
+fn github(machine: &Machine, main: &Path) -> SettingsEntry {
+    let branch = committed_branch(main);
+    let on_branch = match &branch {
+        Ok(branch) => format!("{GITHUB_FILE} on {branch}"),
+        Err(_) => GITHUB_FILE.to_string(),
+    };
+    let text = match &branch {
+        Ok(branch) => committed(main, &format!("refs/heads/{branch}"), GITHUB_FILE),
         Err(problem) => Err(problem.clone()),
     };
-    let text = read.ok().flatten();
-    let enabled = table
-        .as_ref()
-        .ok()
-        .and_then(|table| table.get("enabled"))
-        .and_then(Value::as_bool)
-        == Some(true);
-    let why = match (&table, &text) {
-        (Err(problem), _) => format!("Off: {on_branch} does not read ({problem})."),
-        (Ok(_), None) => format!("Off: no {on_branch}."),
-        (Ok(table), Some(_)) => {
+    let table = match &text {
+        Ok(Some(text)) => toml::from_str::<toml::Table>(text)
+            .map(Some)
+            .map_err(|e| e.message().to_string()),
+        Ok(None) => Ok(None),
+        Err(problem) => Err(problem.clone()),
+    };
+    let enabled = match &table {
+        Ok(Some(table)) => table.get("enabled").and_then(Value::as_bool) == Some(true),
+        _ => false,
+    };
+    let exchange = match &table {
+        Err(problem) => Exchange::Unread(format!("Off: {on_branch} does not read ({problem}).")),
+        Ok(None) => Exchange::Off(format!("Off: no {on_branch}.")),
+        Ok(Some(table)) => {
             let word = |key: &str| table.get(key).map_or_else(|| "off".to_string(), shown);
-            let repository = word("repository");
-            format!(
-                "{}: {on_branch}; repository {repository}, issues {}, pull requests {}, \
-                 releases {}.",
-                if enabled { "On" } else { "Off" },
+            let writes = format!(
+                "repository {}, issues {}, pull requests {}, releases {}",
+                word("repository"),
                 word("issues"),
                 word("pull_requests"),
                 word("releases")
-            )
+            );
+            if enabled {
+                Exchange::Written(format!(
+                    "{on_branch} writes enabled = true; {writes}. Whether the exchange runs is \
+                     its program's to say: a file it refuses, or a token it lacks, leaves it \
+                     off (docs/GITHUB_SETUP.md)."
+                ))
+            } else {
+                Exchange::Off(format!("Off: {on_branch} does not enable it; {writes}."))
+            }
         }
     };
-    let written = text.as_deref().filter(|_| table.is_ok()).and_then(|text| {
-        table.as_ref().ok()?.get("enabled")?;
-        Some(Written {
+    let written = match (&text, &table) {
+        (Ok(Some(text)), Ok(Some(table))) if table.contains_key("enabled") => Some(Written {
             at: "enabled".into(),
             line: limits::line(text, &[], "enabled"),
-        })
-    });
+        }),
+        _ => None,
+    };
     let found = builds::of_main(main, GITHUB_PROGRAM, &machine.beyond);
     SettingsEntry {
-        state: state(if enabled { "On" } else { "Off" }, Some(enabled), why),
-        needs: vec![
-            EntryNeed {
-                what: format!("the {GITHUB_PROGRAM} program"),
-                met: found.is_some(),
-                said: match found {
-                    Some(path) => format!("Found on this machine: {}.", path.display()),
-                    None => "Not found on this machine: nothing is exchanged from here.".into(),
-                },
+        state: match exchange {
+            Exchange::Off(why) | Exchange::Unread(why) => state("Off", Some(false), why),
+            Exchange::Written(why) => state("Enabled in its file", None, why),
+        },
+        needs: vec![EntryNeed {
+            what: format!("the {GITHUB_PROGRAM} program"),
+            met: found.is_some(),
+            said: match found {
+                Some(path) => format!("Found on this machine: {}.", path.display()),
+                None => "Not found on this machine: nothing is exchanged from here.".into(),
             },
-            EntryNeed {
-                what: "a token and, for delivery, a GitHub App and its rulesets".into(),
-                met: enabled,
-                said: "Set up on GitHub and on this machine, which no page can do: \
-                       docs/GITHUB_SETUP.md."
-                    .into(),
-            },
-        ],
+        }],
         settings: vec![Setting {
             key: "enabled".into(),
-            name: "Whether the exchange is on".into(),
+            name: "What its committed file writes for the exchange".into(),
             kind: SettingKind::Switch,
             value: if enabled { "on" } else { "off" }.into(),
             choices: Vec::new(),

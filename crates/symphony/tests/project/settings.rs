@@ -428,13 +428,21 @@ fn github_is_read_from_what_the_default_branch_commits_never_the_working_file() 
     git(&tree.root, &["commit", "-q", "-m", "on"]);
     let committed = page(&tree.root, &bare());
     let github = entry(&committed, "github");
+    // The file is one its program refuses (enabled with no token file, import with no labels),
+    // which runs as off: the page says what the file writes and claims the exchange on for none.
     let state = github.state.as_ref().unwrap();
-    assert_eq!((state.word.as_str(), state.on), ("On", Some(true)));
+    assert_eq!(
+        (state.word.as_str(), state.on),
+        ("Enabled in its file", None)
+    );
     assert_eq!(
         state.why,
-        "On: symphony-github.toml on main; repository lamp/shop, issues import, pull requests \
-         off, releases off."
+        "symphony-github.toml on main writes enabled = true; repository lamp/shop, issues import, \
+         pull requests off, releases off. Whether the exchange runs is its program's to say: a \
+         file it refuses, or a token it lacks, leaves it off (docs/GITHUB_SETUP.md)."
     );
+    assert!(!state.why.contains("On"), "{state:?}");
+    assert_eq!(github.needs.len(), 1, "the page claims no token or App");
     let enabled = &github.settings[0];
     assert_eq!(enabled.class, SettingClass::Reviewed);
     assert_eq!(enabled.value, "on");
@@ -453,6 +461,72 @@ fn github_is_read_from_what_the_default_branch_commits_never_the_working_file() 
         state
             .why
             .starts_with("Off: symphony-github.toml on main does not read ("),
+        "{state:?}"
+    );
+}
+
+/// The branch is the one the main checkout's HEAD commits in its project file, as the program
+/// reads it: a working edit of the project file names none, and a file that leaves `enabled` out
+/// or false is off.
+#[test]
+fn github_reads_the_branch_head_commits_and_a_file_that_does_not_enable_is_off() {
+    let tree = Tree::new();
+    git(&tree.root, &["init", "-q", "-b", "main"]);
+    tree.write("symphony.toml", "[project]\ndefault_branch = \"trunk\"\n");
+    tree.write(
+        "symphony-github.toml",
+        "enabled = true\nrepository = \"lamp/shop\"\n",
+    );
+    git(&tree.root, &["add", "."]);
+    git(&tree.root, &["commit", "-q", "-m", "on main"]);
+    // HEAD names trunk, which no branch is: nothing is committed there.
+    let none = page(&tree.root, &bare());
+    let state = entry(&none, "github").state.clone().unwrap();
+    assert_eq!(state.on, Some(false));
+    assert_eq!(state.why, "Off: no symphony-github.toml on trunk.");
+    git(&tree.root, &["branch", "trunk"]);
+    let trunk = page(&tree.root, &bare());
+    let github = entry(&trunk, "github");
+    assert_eq!(github.state.as_ref().unwrap().on, None);
+    assert_eq!(
+        github.settings[0].source.said,
+        "symphony-github.toml on trunk, enabled, line 1"
+    );
+    // A working edit of the project file names no branch until it is committed.
+    tree.write("symphony.toml", "[project]\ndefault_branch = \"main\"\n");
+    let edited = page(&tree.root, &bare());
+    assert!(
+        entry(&edited, "github").settings[0]
+            .source
+            .said
+            .contains("on trunk"),
+    );
+    git(&tree.root, &["checkout", "-q", "--", "symphony.toml"]);
+    // Committed with the exchange not enabled: off, and said with what it writes.
+    tree.write(
+        "symphony-github.toml",
+        "enabled = false\nrepository = \"lamp/shop\"\n",
+    );
+    git(&tree.root, &["commit", "-q", "-am", "off"]);
+    git(&tree.root, &["branch", "-f", "trunk"]);
+    let off = page(&tree.root, &bare());
+    let state = entry(&off, "github").state.clone().unwrap();
+    assert_eq!((state.word.as_str(), state.on), ("Off", Some(false)));
+    assert_eq!(
+        state.why,
+        "Off: symphony-github.toml on trunk does not enable it; repository lamp/shop, issues \
+         off, pull requests off, releases off."
+    );
+    // A project file HEAD commits that does not read names no branch: off, and said.
+    tree.write("symphony.toml", "[project\n");
+    git(&tree.root, &["commit", "-q", "-am", "broken"]);
+    let broken = page(&tree.root, &bare());
+    let state = entry(&broken, "github").state.clone().unwrap();
+    assert_eq!(state.on, Some(false));
+    assert!(
+        state
+            .why
+            .starts_with("Off: symphony-github.toml does not read (symphony.toml at HEAD: "),
         "{state:?}"
     );
 }
