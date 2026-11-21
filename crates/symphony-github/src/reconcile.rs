@@ -11,7 +11,7 @@
 //! the preview: the next preview reads the task again.
 
 use crate::board::{Board, BoardError, Bound, Token};
-use crate::config::{Config, Loaded, Repository, Role, Source};
+use crate::config::{Config, Loaded, Repository, Source};
 use crate::credential::Secret;
 use crate::github::{ApiError, Client, Comment, Issue};
 use crate::mint;
@@ -45,6 +45,8 @@ pub struct Context<'a> {
     pub repository: Vec<PathBuf>,
     /// The program that signs a GitHub App's JSON Web Token ([`crate::mint`]): `openssl`.
     pub openssl: &'a str,
+    /// The gh CLI that reads the rulesets as who is signed in to it ([`crate::rulesets`]): `gh`.
+    pub gh: &'a str,
     /// What a delivery rests by between two reads of the checks it wrote, which GitHub lists a
     /// little after it takes them: [`crate::deliver::rest`], or a test's, which waits on nothing.
     pub rest: &'a dyn Fn(Duration),
@@ -90,7 +92,7 @@ fn enabled(ctx: &Context<'_>) -> Result<Loaded, String> {
 }
 
 fn connect(ctx: &Context<'_>, loaded: &Loaded) -> Result<Box<dyn Transport>, String> {
-    let token = mint::token(ctx, &loaded.config, Role::Landing).map_err(mint::Stop::said)?;
+    let token = mint::token(ctx, &loaded.config).map_err(mint::Stop::said)?;
     (ctx.connect)(token)
 }
 

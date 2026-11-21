@@ -54,13 +54,13 @@ struct Inner {
     /// What the repository says of itself beside its number and name.
     about: Value,
     /// The rulesets that apply to the default branch, by number: each with its `rules`, its
-    /// `bypass_actors` (none where the asker is not shown them) and where it is from.
+    /// `bypass_actors` (shown to a person alone, as GitHub shows them only to who may write the
+    /// ruleset, which no App here may), where it is from and when it last changed.
     rulesets: BTreeMap<i64, Value>,
+    /// How many times a ruleset changed: each change's `updated_at` is later than the last.
+    changes: i64,
     /// Other repositories the token reads, by `OWNER/NAME`: what each says of itself.
     neighbours: BTreeMap<String, Value>,
-    /// The one GitHub App shown a ruleset's `bypass_actors`, as GitHub shows them only to who
-    /// may write the ruleset; none is every asker, for the exchange that reads no ruleset.
-    reader: Option<i64>,
     /// The requests each App made, as `asked` keeps them for all.
     asked_as: Vec<(i64, String, String)>,
     /// The tags, each with the commit it names and, where it is annotated, its own object's name.
@@ -102,7 +102,6 @@ impl Fake {
             late: 0,
             unlisted: BTreeMap::new(),
             acting: 0,
-            reader: None,
             asked_as: Vec::new(),
             tags: BTreeMap::new(),
             tags_made: Vec::new(),
@@ -114,6 +113,7 @@ impl Fake {
                 "allow_auto_merge": false, "permissions": {"admin": false, "push": true},
             }),
             rulesets: BTreeMap::new(),
+            changes: 0,
             neighbours: BTreeMap::new(),
         }))
     }
@@ -237,9 +237,18 @@ impl Fake {
         self.inner().tags_made.clone()
     }
 
-    /// From now a ruleset's bypass list is shown to the App `app` alone.
-    pub(crate) fn shown_to(&self, app: i64) {
-        self.inner().reader = Some(app);
+    /// What GitHub answers a person's `GET path` now, kept out of what was asked.
+    pub(crate) fn person_reads(&self, path: &str) -> Response {
+        let mut inner = self.inner();
+        let acting = std::mem::replace(&mut inner.acting, 0);
+        let read = inner.answer("GET", path, None);
+        inner.acting = acting;
+        read
+    }
+
+    /// The numbers of the rulesets there.
+    pub(crate) fn ruleset_ids(&self) -> Vec<i64> {
+        self.inner().rulesets.keys().copied().collect()
     }
 
     /// The requests that change the repository.
@@ -277,9 +286,9 @@ impl Fake {
     }
 
     /// The default branch protected as a delivery needs it: ruleset 1, which nobody bypasses,
-    /// requires a pull request merged by squash, `symphony/eligible` from the App `checks`, and
-    /// blocks force pushes and deletion; ruleset 2 restricts updates to the App `landing`.
-    pub(crate) fn protect(&self, checks: i64, landing: i64) {
+    /// requires a pull request merged by squash, `symphony/eligible` from the App `app`, and
+    /// blocks force pushes and deletion.
+    pub(crate) fn protect(&self, app: i64) {
         self.ruleset(
             1,
             &json!([]),
@@ -288,22 +297,16 @@ impl Fake {
                 {"type": "required_status_checks", "parameters": {
                     "strict_required_status_checks_policy": false,
                     "required_status_checks":
-                        [{"context": "symphony/eligible", "integration_id": checks}],
+                        [{"context": "symphony/eligible", "integration_id": app}],
                 }},
                 {"type": "non_fast_forward"},
                 {"type": "deletion"},
             ]),
         );
-        self.ruleset(
-            2,
-            &json!([{"actor_type": "Integration", "actor_id": landing, "bypass_mode": "always"}]),
-            &json!([{"type": "update"}]),
-        );
     }
 
     /// Ruleset `id` of the repository, active on the default branch, as it is from now: who
-    /// bypasses it (null where the asker is not shown) and its rules. `Value::Null` rules
-    /// remove it.
+    /// bypasses it (null where no one is shown) and its rules. `Value::Null` rules remove it.
     pub(crate) fn ruleset(&self, id: i64, bypass: &Value, rules: &Value) {
         let mut inner = self.inner();
         if rules.is_null() {
@@ -311,23 +314,27 @@ impl Fake {
             return;
         }
         let source = format!("{}/{}", inner.owner, inner.name);
+        let changed = inner.changed();
         inner.rulesets.insert(
             id,
             json!({
                 "id": id, "name": format!("ruleset {id}"), "target": "branch",
                 "source_type": "Repository", "source": source, "enforcement": "active",
-                "bypass_actors": bypass, "rules": rules,
+                "bypass_actors": bypass, "rules": rules, "updated_at": changed,
             }),
         );
     }
 
-    /// Ruleset `id` changed there, field by field.
+    /// Ruleset `id` changed there, field by field: as on GitHub, any change moves its
+    /// `updated_at`, unless `fields` say what it is.
     pub(crate) fn set_ruleset(&self, id: i64, fields: &Value) {
         let mut inner = self.inner();
+        let changed = inner.changed();
         let ruleset = inner
             .rulesets
             .get_mut(&id)
             .expect("a ruleset of that number");
+        ruleset["updated_at"] = json!(changed);
         for (field, value) in fields.as_object().unwrap() {
             ruleset[field] = value.clone();
         }
@@ -748,6 +755,16 @@ impl Inner {
         })
     }
 
+    /// The time of a ruleset's next change, each later than the last.
+    fn changed(&mut self) -> String {
+        self.changes += 1;
+        format!(
+            "2026-02-01T00:00:{:02}.{:03}Z",
+            self.changes / 1000 % 60,
+            self.changes % 1000
+        )
+    }
+
     /// The rules in effect for a branch, a page of them, and one ruleset.
     fn protection(&self, parts: &[&str], query: &str) -> Response {
         match parts {
@@ -771,9 +788,23 @@ impl Inner {
                 match id.parse().ok().and_then(|id| self.rulesets.get(&id)) {
                     Some(ruleset) => {
                         let mut shown = ruleset.clone();
-                        // As GitHub: a list the asker may not see is left out, never shown empty.
-                        let hidden = self.reader.is_some_and(|reader| reader != self.acting);
-                        if hidden || shown["bypass_actors"].is_null() {
+                        // As GitHub: whether the asker bypasses it, said to anyone.
+                        let own = (ruleset["bypass_actors"].as_array().into_iter().flatten()).find(
+                            |actor| {
+                                actor["actor_type"] == json!("Integration")
+                                    && actor["actor_id"] == json!(self.acting)
+                            },
+                        );
+                        shown["current_user_can_bypass"] = json!(match own {
+                            None => "never",
+                            Some(actor) if actor["bypass_mode"] == json!("pull_request") => {
+                                "pull_requests_only"
+                            }
+                            Some(_) => "always",
+                        });
+                        // A list the asker may not see is left out, never shown empty: an App's
+                        // token administers nothing here, and a person's does.
+                        if self.acting != 0 || shown["bypass_actors"].is_null() {
                             shown.as_object_mut().unwrap().remove("bypass_actors");
                         }
                         answer(200, &shown)
