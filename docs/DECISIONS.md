@@ -5,11 +5,31 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
+## Auto-approved: spot-check
+
+### Releases
+
+- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
+  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
+
+    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
+
+    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
+
+    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
+
+    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
+
+    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
+
+    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
+  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
+
+## Waiting on an agent
 
 ### People and sign-in
 
-- [ ] **owner-with-several-people** — Once several people can be on a board, the rules that say "the owner" need to say who that is: whose approve is the owner stamp, and who decides a card. A: one owner for a project, as now; other people join as members who read, comment, ask and file tasks, and never decide. B: owner is a role a few named people hold; any one of them decides, and their line says who. C: owners by area; each card or task names who decides it. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the owner becomes]]
+- [-] **owner-with-several-people** — Once several people can be on a board, the rules that say "the owner" need to say who that is: whose approve is the owner stamp, and who decides a card. A: one owner for a project, as now; other people join as members who read, comment, ask and file tasks, and never decide. B: owner is a role a few named people hold; any one of them decides, and their line says who. C: owners by area; each card or task names who decides it. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#What the owner becomes]]
   [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`, from your ask: "an admin/user system so that multiple users could be on the board by leveraging some IdP (which itself would likely be a plugin too)". A concept: nothing is built by this card.
 
     **Base (today).** There is one owner and no person. Every browser the server admits writes as `owner`: this Mac, your phone, and equally any other machine in the tailnet. Nobody's name is on a line.
@@ -32,21 +52,8 @@ their dated history work is in [REVIEW](REVIEW.md).
     - **hosted-ingress-boundary** (B) passes a verified visitor and their permissions to the server's handlers. It names no role.
 
     None of them decides this.
-- [ ] **people-kept-where** — With several people, the Symphony must keep a list of who they are and what each may do, and someone must be able to change it. Where it is kept decides who that someone is. A: in the project's `symphony.toml`, committed; a change is a landing. B: with the server and in no repository (the machine folder here, a hosted board's protected store); an admin changes it from a People page. C: in the identity provider; its groups are read as roles. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where people are kept]]
-  [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
-
-    **Base (today).** No person is recorded anywhere. The nearest things are the server's list of projects, in the machine folder, and a workflow authority's public key, in the project file.
-
-    **A.** The list is reviewed, in git's history, and the same on every machine. But each person's sign-in name (an email) is committed, in a repository that may be public. Whoever can land a change to the file can make themselves an owner. Adding a person is a landing.
-
-    **B.** A clone holds nobody's sign-in: a document carries only the short name chosen for a person (`ana`). Each change is kept in a log of its own, since git no longer keeps it. Each server has its own list. With no list, the person at the machine is its admin and the owner of every project, as today.
-
-    **C.** The Symphony keeps no list. But which group means which role must still be written down under A or B, each provider says groups its own way, and Tailscale, the first provider proposed, gives a login and no group.
-
-    **Why B.** Who may enter is asked before any project is opened, so it is the server's to keep, and one server serves many projects. C can come later as one more way to fill B's list.
-
-    **Earlier verdicts checked.** **hosted-ingress-boundary** (B) has the hosted adapter pass permissions to the handlers, and its analysis says trust settings never come from a document a visitor can edit. That is the reasoning behind B here, and it was said of a hosted board alone: it does not decide where a machine's server, or the product, keeps people. **revision-bound-project-guards** (B) commits a project's authority key in its file. That is a key that checks a signature, not a list of people. Neither decides this.
-- [ ] **identity-provider-plug** — You expected the identity provider to be a plugin. It should be replaceable, and it cannot be a project's plugin: a project's plugins are named in `symphony.toml`, so whoever lands a change to that file would choose who everyone is. The choice is how a provider is added. A: it is part of the server, chosen where the server is started; the Symphony ships two (Tailscale's login for a machine, a signing proxy's header for a hosted board), and draws no sign-in page. B: a provider is a program of its own that the server's settings name, as a process plugin is; anyone writes one. C: the Symphony signs people in itself, with Google or GitHub. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a provider plugs in]]
+  [2026-11-21 09:49] owner · rejected — Added a comment in the analysis page that better describes the vision, use it to understand or reformulate this decision.
+- [-] **identity-provider-plug** — You expected the identity provider to be a plugin. It should be replaceable, and it cannot be a project's plugin: a project's plugins are named in `symphony.toml`, so whoever lands a change to that file would choose who everyone is. The choice is how a provider is added. A: it is part of the server, chosen where the server is started; the Symphony ships two (Tailscale's login for a machine, a signing proxy's header for a hosted board), and draws no sign-in page. B: a provider is a program of its own that the server's settings name, as a process plugin is; anyone writes one. C: the Symphony signs people in itself, with Google or GitHub. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#How a provider plugs in]]
   [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
 
     **Base (today).** This Mac's server asks Tailscale whether an address is a machine of the tailnet. Tailscale's answer also says whose machine it is, and that part is not read. For a hosted board there is a place in the server's code where a host says who a visitor is, and no provider is shipped for it.
@@ -62,28 +69,22 @@ their dated history work is in [REVIEW](REVIEW.md).
     **Why A.** It covers the two places a Symphony runs today. B's contract is A's seam with a process boundary added, so nothing built for A is lost when a third provider is in fact needed.
 
     **Earlier verdicts checked.** **hosted-ingress-boundary** (B) put the hosted checks in an adapter inside the server, against a separate gateway. It does not say whether the Symphony ships providers, opens the adapter to other programs or signs people in itself. **desktop-client** (A) left a hosted server's login to a later card, which is this one. **consumer-contract-versioning** (B) keeps a project's code outside the library; under A and B a host's own provider stays the host's. None decides this.
+  [2026-11-21 09:49] owner · rejected — this needs some diagrams to be understood
+- [x] **people-kept-where** — With several people, the Symphony must keep a list of who they are and what each may do, and someone must be able to change it. Where it is kept decides who that someone is. A: in the project's `symphony.toml`, committed; a change is a landing. B: with the server and in no repository (the machine folder here, a hosted board's protected store); an admin changes it from a People page. C: in the identity provider; its groups are read as roles. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/users-and-identity#Where people are kept]]
+  [2026-11-20 06:40] agent — Posted for the board task `app/users-and-identity`. A concept: nothing is built by this card.
 
-## Auto-approved: spot-check
+    **Base (today).** No person is recorded anywhere. The nearest things are the server's list of projects, in the machine folder, and a workflow authority's public key, in the project file.
 
-### Releases
+    **A.** The list is reviewed, in git's history, and the same on every machine. But each person's sign-in name (an email) is committed, in a repository that may be public. Whoever can land a change to the file can make themselves an owner. Adding a person is a landing.
 
-- [a] **contract-tool-route** — Under B a consuming project links nothing of Symphony but the plugin kit and the small helpers. Two of its tools use more of Symphony's library today, so each needs another way to get what it uses. Its art tool, which checks its art cards, sorts the register's cards with the project's plugin inside the library, runs Symphony's status and triage, and draws a card as a page draws it. Its landing tool uses the checks a landing makes (whether generated files must be made again, what counts as a document, whether your open lines are left) and the reader of the project's settings. A: Symphony's commands: both tools run the machine's own commands, which start the project's plugin as the machine does; Symphony adds the commands it lacks (one that draws a single card, one that answers the landing's checks for a branch) and keeps those commands' output stable. B: the project's own copies: it copies what the two tools use into its own code, and Symphony builds nothing. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/consumer-contract#Open choices]]
-  [2026-11-13 20:27] agent — Posted for the board task `design/contract-b-breakdown`: the one choice B leaves open, a card of its own as your note on **consumer-contract-versioning** asks.
+    **B.** A clone holds nobody's sign-in: a document carries only the short name chosen for a person (`ana`). Each change is kept in a log of its own, since git no longer keeps it. Each server has its own list. With no list, the person at the machine is its admin and the owner of every project, as today.
 
-    **What they use:** the art tool, in 9 files; the landing tool, in three files and a test. Both also read the register and use small text helpers, which are copied under either option.
+    **C.** The Symphony keeps no list. But which group means which role must still be written down under A or B, each provider says groups its own way, and Tailscale, the first provider proposed, gives a login and no group.
 
-    **The lock.** The landing tool also takes the lock the machine's server takes while it writes the main checkout. Under either option the lock's place and rule are written down as part of what Symphony promises, and the landing takes it itself, so it does not decide this card.
+    **Why B.** Who may enter is asked before any project is opened, so it is the server's to keep, and one server serves many projects. C can come later as one more way to fill B's list.
 
-    **A** costs Symphony two new commands, and keeping their output and status's and triage's stable for the project to read. **B** costs Symphony nothing. The project keeps copies of how a card is sorted and drawn and of the landing's checks. They keep passing while the machine does otherwise, until someone copies again.
-
-    **Why A.** Both tools exist to check what the machine does: the card you will see, and whether the machine would hold a land. Only the machine's own commands answer that.
-
-    **When.** No Symphony task waits on this. It is needed when the project moves these two tools off the library, after its plugin.
-
-    **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
-  [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
-
-## Waiting on an agent
+    **Earlier verdicts checked.** **hosted-ingress-boundary** (B) has the hosted adapter pass permissions to the handlers, and its analysis says trust settings never come from a document a visitor can edit. That is the reasoning behind B here, and it was said of a hosted board alone: it does not decide where a machine's server, or the product, keeps people. **revision-bound-project-guards** (B) commits a project's authority key in its file. That is a key that checks a signature, not a list of people. Neither decides this.
+  [2026-11-21 09:48] owner · approved — B. This is a board specific setting. There could even be multiple boards for the same project where people have different permissions. There should however be some "non db id" in use to identify people in their comments and interactions (who decided things for example). So there will be some information that isn't the the DB only.
 
 ### Task timeline
 

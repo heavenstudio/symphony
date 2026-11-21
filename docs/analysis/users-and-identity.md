@@ -160,6 +160,8 @@ Three choices, each a card. They are the ones every later question rests on.
   person's queue holds only theirs. It needs an area on every card, a rule for a card with none,
   and a queue per person.
 
+> [!comment] C, but it could be "group owned". As mentioned, there can be an engineering group -> people there would get "notified" and assigned to resolve. There's also certainly a different setting for when an agent can be interact with. For example, there could be a role that allows people to comment in any place they want, including the board tasks, but that doesn't automatically trigger an execution from an agent. On the other hand, there could be a group or a person that holds the ability to interact with agents, even if those are not "their agents" (meaning not running under their token "credits" or even computer resources. And there's certainly those agents that are personal and run in your own computer for example that only you can interact with them. However interactions between people should be possible in any place.
+
 An approval that must be several people's (two of three, a named sign-off) is not offered: a
 workflow guard is that, kept in the project's own ledger
 ([its card](../DECISIONS.md#revision-bound-project-guards)).
