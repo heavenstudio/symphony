@@ -94,6 +94,9 @@ pub(crate) struct Write {
     pub artifacts: Vec<Value>,
 }
 
+/// What a caller decides on the row it read, less what it answers: the write, or none.
+type Decide<'a> = dyn FnMut(&Value) -> Result<Option<Box<Write>>, Error> + 'a;
+
 impl Store {
     /// Admit attempt `vars["attempt"]` as [`sql::ADMIT`] says, tried again while the board moves
     /// under it. A retry or a resume names its `predecessor`, whose row `follow` is asked about on
@@ -182,7 +185,7 @@ impl Store {
     fn execution_written(
         &self,
         attempt: &str,
-        decide: &mut dyn FnMut(&Value) -> Result<Option<Box<Write>>, Error>,
+        decide: &mut Decide<'_>,
     ) -> Result<Option<Commit>, Error> {
         self.retrying(|| {
             let row: Option<Value> = self.read(
