@@ -365,6 +365,7 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **timeline-navigation** (B): drawn on it; the build counts token rows among what the quiet rule reads, so a skipped stretch never hides a cost. **task-page-timeline-place** (C): the phone's box is today's. **reports-task-page-pictures** (A): lanes wide, a list on a phone. **timeline-orchestrator-messages**: messages kept. **task-cost-display**: A's board card, as you chose; the rest follows your note.
   [2026-11-21 17:30] owner · approved
+  [2026-11-21 17:40] agent — Recorded: the design as drawn, built by the board task `app/task-cost-after-time`. Its brief carries the attribution rule and this task's figures as the test's oracle. It builds on today's timeline: **timeline-navigation**'s zoom, and its quiet rule counting token rows, come with that card's own build.
 
 ### GitHub delivery
 
